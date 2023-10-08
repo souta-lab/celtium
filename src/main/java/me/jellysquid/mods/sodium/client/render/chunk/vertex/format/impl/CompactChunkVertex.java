@@ -40,6 +40,11 @@ public class CompactChunkVertex implements ChunkVertexType {
         };
     }
 
+    @Override
+    public String getDefine() {
+        return "VERTEX_FORMAT_COMPACT";
+    }
+
     private static int encodePosition(float value) {
         return (int) ((MODEL_ORIGIN + value) * (POSITION_MAX_VALUE / MODEL_SCALE));
     }
