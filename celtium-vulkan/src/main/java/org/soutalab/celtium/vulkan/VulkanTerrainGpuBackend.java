@@ -462,9 +462,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         String handoff = takeHandoffSummary();
+        String detail = this.frameTarget == null ? null : this.frameTarget.takeTimingSummary();
         String base = describe();
         String withHandoff = handoff == null ? base : base + " | " + handoff;
-        return withHandoff + " | " + this.depthSharingSummary;
+        String withDetail = detail == null ? withHandoff : withHandoff + " | " + detail;
+        return withDetail + " | " + this.depthSharingSummary;
     }
 
     @Override

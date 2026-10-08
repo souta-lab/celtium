@@ -75,6 +75,30 @@ reported `vkResetCommandBuffer-00045`, `vkBeginCommandBuffer-00049`, `vkQueueSub
 `vkResetFences-01123` before the game crashed. Any future change in this area has to close the frame on the render
 thread at a point where the renderer knows the terrain passes are finished.
 
+### 7. The handoff is measured step by step, and it is not copy-bound
+
+*Commit:* this one - the debug line now carries the breakdown.
+
+`VulkanFrameTarget` times every step of `beginFrame()`/`endFrame()` and reports the average per frame:
+
+```
+handoff detail (avg/frame): wait 326 us, colour-in 1 us, depth-in 0 us,
+                            convert-in 12 us, colour-out 1 us, convert-out 12 us
+```
+
+on the RX 6400, alongside `handoff: avg 172 us over 1092 calls (546 opens, 546 closes, 1638 pass calls), worst
+1018 us`.
+
+This changes what the next optimisation should be. The copies are free (1 us each - `glBlitNamedFramebuffer` just
+queues them), the two depth conversions cost 12 us each, and **326 us of the frame is spent blocked on the
+semaphores**, i.e. GL waiting for the Vulkan terrain submission before it can composite. Cheaper copies cannot help;
+the cost is the serialisation of the two APIs on one set of shared images.
+
+The structural fix is double buffering - two shared image sets, so Vulkan rasterises frame N while GL composites
+frame N-1 - which removes the stall at the price of one frame of latency and twice the shared image memory. It is
+recorded here as the next performance item rather than attempted blind, because the parity fixture compares exact
+frames and a latency change has to be judged against that.
+
 ### 6b. Buffer growth drains the queue before destroying the old buffer
 
 *Commit:* this one - *Measured:* validation went from two

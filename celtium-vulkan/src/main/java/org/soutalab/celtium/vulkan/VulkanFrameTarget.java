@@ -198,6 +198,18 @@ public final class VulkanFrameTarget {
     private int gameDepthRenderbuffer;
 
     private boolean frameOpen;
+
+    /**
+     * Per-step CPU time of the handoff, so the debug overlay can show where the milliseconds go instead of leaving
+     * it to guesswork. Each accumulator holds nanoseconds since the last {@link #takeTimingSummary()}.
+     */
+    private long tWait;
+    private long tColorIn;
+    private long tDepthIn;
+    private long tConvertIn;
+    private long tColorOut;
+    private long tConvertOut;
+    private long tTimedFrames;
     private boolean deleted;
 
     private VulkanFrameTarget(VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue, int queueFamilyIndex,
@@ -324,15 +336,24 @@ public final class VulkanFrameTarget {
             gameColorTexture = colorTexture;
             gameDepthRenderbuffer = depthRenderbuffer;
 
+            long step = System.nanoTime();
             glBlitNamedFramebuffer(fbo, sharedFbo, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
                     GL_NEAREST);
+            long afterColor = System.nanoTime();
+            this.tColorIn += afterColor - step;
             glBlitNamedFramebuffer(fbo, scratchFbo, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
                     GL_NEAREST);
+            long afterDepth = System.nanoTime();
+            this.tDepthIn += afterDepth - afterColor;
             convertDepth(scratchDepthTexture, sharedFbo);
+            this.tConvertIn += System.nanoTime() - afterDepth;
             glCheck("beginFrame: RGBA8 colour copy and D24 to D32 depth conversion");
 
+            step = System.nanoTime();
             signalFromGl(waitSemaphore.gl, "beginFrame: glSignalSemaphoreEXT(GL to Vulkan)");
             glFlush();
+            this.tWait += System.nanoTime() - step;
+            this.tTimedFrames++;
             frameOpen = true;
         }
     }
@@ -491,6 +512,30 @@ public final class VulkanFrameTarget {
      *                               recreated it) no longer matches the verified contract; the caller must then
      *                               discard this target and create a new one
      */
+    /**
+     * {@return a one-line breakdown of the handoff cost in microseconds per frame, or {@code null} when nothing was
+     * timed yet}. The accumulators are reset, so the caller gets the average over the period since the last call.
+     */
+    public String takeTimingSummary() {
+        if (this.tTimedFrames == 0L) {
+            return null;
+        }
+        long frames = Math.max(1L, this.tTimedFrames / 2L);
+        String summary = "handoff detail (avg/frame): wait " + (this.tWait / frames / 1000L) + " us, colour-in "
+                + (this.tColorIn / frames / 1000L) + " us, depth-in " + (this.tDepthIn / frames / 1000L)
+                + " us, convert-in " + (this.tConvertIn / frames / 1000L) + " us, colour-out "
+                + (this.tColorOut / frames / 1000L) + " us, convert-out " + (this.tConvertOut / frames / 1000L)
+                + " us";
+        this.tWait = 0L;
+        this.tColorIn = 0L;
+        this.tDepthIn = 0L;
+        this.tConvertIn = 0L;
+        this.tColorOut = 0L;
+        this.tConvertOut = 0L;
+        this.tTimedFrames = 0L;
+        return summary;
+    }
+
     public void endFrame() {
         checkAlive();
         if (!frameOpen) {
@@ -503,12 +548,18 @@ public final class VulkanFrameTarget {
         try (GlState state = new GlState()) {
             drainGlErrors();
             requireVerifiedContract(gameFbo, gameColorTexture, gameDepthRenderbuffer, "endFrame");
+            long step = System.nanoTime();
             waitGlOn(doneSemaphore.gl, "endFrame: glWaitSemaphoreEXT(Vulkan to GL)");
             glFlush();
+            this.tWait += System.nanoTime() - step;
 
+            step = System.nanoTime();
             glBlitNamedFramebuffer(sharedFbo, gameFbo, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
                     GL_NEAREST);
+            long afterColor = System.nanoTime();
+            this.tColorOut += afterColor - step;
             convertDepth(depth.glTexture, gameFbo);
+            this.tConvertOut += System.nanoTime() - afterColor;
             glCheck("endFrame: RGBA8 colour return and D32 to D24 depth conversion");
         }
     }
