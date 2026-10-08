@@ -129,6 +129,7 @@ vec4 _expFog(vec4 fragColor, float fragDistance, vec4 fogColor, float fogDensity
 void main() {
     vec4 diffuseColor = texture(u_BlockTex, v_TexCoord, v_MaterialMipBias);
 
+
     // #ifdef USE_FRAGMENT_DISCARD
     if (celtium.u_FragmentDiscardEnabled != 0 && diffuseColor.a < v_MaterialAlphaCutoff) {
         discard;

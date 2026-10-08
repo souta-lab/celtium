@@ -157,6 +157,7 @@ public final class VulkanGlTexture {
         requireAlive();
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
+            dumpForDebugging(glTextureId, level);
             if (level.width != width || level.height != height) {
                 recreateImageResources(level.width, level.height);
             }
@@ -367,6 +368,41 @@ public final class VulkanGlTexture {
                     0, null, null, barrier);
         } finally {
             context.endCommands(commandBuffer);
+        }
+    }
+
+    /**
+     * Writes the mirrored pixels to a PNG when {@code -Dceltium.vulkan.dumpTextures=<dir>} is set. Used while
+     * bringing the backend up: comparing what GL hands over with what the shader sees separates an upload problem
+     * from a sampling problem. One file per texture per run.
+     */
+    private void dumpForDebugging(int glTextureId, GlLevel level) {
+        String directory = System.getProperty("celtium.vulkan.dumpTextures");
+        if (directory == null || directory.isEmpty()) {
+            return;
+        }
+        try {
+            java.io.File target = new java.io.File(directory,
+                    "gl-texture-" + glTextureId + "-" + level.width + "x" + level.height + ".png");
+            if (target.isFile()) {
+                return;
+            }
+            target.getParentFile().mkdirs();
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(level.width, level.height,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < level.height; y++) {
+                for (int x = 0; x < level.width; x++) {
+                    int offset = ((y * level.width) + x) * BYTES_PER_PIXEL;
+                    int r = level.pixels.get(offset) & 0xFF;
+                    int g = level.pixels.get(offset + 1) & 0xFF;
+                    int b = level.pixels.get(offset + 2) & 0xFF;
+                    int a = level.pixels.get(offset + 3) & 0xFF;
+                    image.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
+                }
+            }
+            javax.imageio.ImageIO.write(image, "png", target);
+        } catch (Throwable ignored) {
+            // Debug-only path: never let a dump failure affect rendering.
         }
     }
 

@@ -41,15 +41,19 @@ The forced Vulkan path now runs end to end: the device matches the GL GPU, meshe
 the pipeline is created and 62 sections are drawn into the shared image, which is handed back to OpenGL. Three
 defects remain and are the next work items:
 
-1. The terrain appears vertically mirrored. The Y flip was moved from a negative-height viewport to the projection
-   matrix and the output did not change, so the flip is being applied twice somewhere in the chain
-   (`beginFrame`'s blit, the projection, or `endFrame`'s blit back) and must be traced with a fixed test pattern.
-2. The terrain is nearly black: the lightmap never uploads. `boundTextureId(1)` returns 0 during the pass, so the
-   lightmap is not bound on unit 1 at that moment. The texture must be resolved from the renderer or the texture
-   manager instead of from the current GL binding.
-3. `VulkanGlTexture.uploadFromGlTexture` and the texture capture change the active texture unit with raw LWJGL
-   calls while the game's `GlStateManager` caches that state, which can make later GL binds land on the wrong unit.
-   The capture and upload paths must not touch GL state outside the state manager.
+1. The terrain appears vertically mirrored. Moving the Y flip from a negative-height viewport to the projection
+   matrix did not change the output, so a flip is being applied twice in the chain (`beginFrame`'s blit, the
+   projection, or `endFrame`'s blit back). A fixed test pattern has to be pushed through the bridge to locate it.
+2. The atlas has no mip chain, so grazing-angle terrain aliases into noise. `VulkanGlTexture` mirrors level 0 only;
+   the mip levels must be copied or generated, and `u_MipBiasAdd` then becomes meaningful.
+3. The final colour is much darker than the albedo. With the light map verified (a dump of GL texture 12 shows a
+   correct 16x16 light map) and the albedo forced to screen, the remaining suspects are the light-map coordinate
+   decode and the per-vertex AO shade, both of which reach the shader through the VanillaLike vertex layout.
+   `-Dceltium.vulkan.dumpTextures=<dir>` writes what GL hands over, which is how the light map was cleared.
+4. `VulkanGlTexture.uploadFromGlTexture` changes the active texture unit and the pack alignment with raw LWJGL
+   calls while the game's `GlStateManager` caches that state. It restores both, but the capture should use
+   `glGetTextureImage` (GL 4.5 is present) so no GL state changes at all, and the texture ids should come from the
+   renderer rather than from whichever unit happens to be bound during the pass.
 
 `maxUniformBufferRange` also reads back as -1 from `VkPhysicalDeviceProperties` in this runtime while its
 neighbours are correct, so the pipeline logs `device limits were not reported` and skips that one check instead of
