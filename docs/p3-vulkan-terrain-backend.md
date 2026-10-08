@@ -64,7 +64,16 @@ defects remain and are the next work items:
    outputting `fragColor = lightColor` or by comparing a readback of the Vulkan image against the GL dump - to see
    whether the image content, its layout or the sampler LOD is at fault.
 
-   Further measurements that narrow it: the mirrored light map has alpha 255 everywhere (so the light map's alpha
+   The uniform block is logged too: `fogColor=[0.497,0.576,0.711,1.0] start=96 end=128 density=1 shape=0
+   glFogMode=3 cutoff=128`, so fog is a bright sky colour with full weight, and with the observed dark output the
+   fog factor must be near zero for the sampled pixels - fog is not the darkener. Since `albedo x v_Color`
+   reproduces the frame exactly and `v_Color` measures as a *grey*, while `lightColor` would have to exceed 1.0 in
+   blue to make the decoded green vertex colour grey, the vertex colour attribute the shader reads cannot be the
+   `0xff59bd91` that sits at offset 12. The next step is to compare the pipeline's attribute description against
+   the buffer the backend actually binds (the arena is shared per region, and a wrong vertex binding offset or a
+   stale buffer handle after an arena growth would produce exactly this).
+
+   Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
    terrain averages `(37,37,37)`, which is exactly atlas(`0.32`) x `v_Color`(`0.44`) - so every multiplier that is

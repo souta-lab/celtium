@@ -117,6 +117,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long lastDrawCommands;
     private int command0Logged;
     private boolean verticesLogged;
+    private boolean uniformsLogged;
     private long lastSectionsDrawn;
     private long lastUploadedBytes;
 
@@ -701,6 +702,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         block.putFloat(base + 12, 0.0f);
 
         float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
+        if (!uniformsLogged) {
+            uniformsLogged = true;
+            record("uniforms: fogColor=" + java.util.Arrays.toString(fogColor)
+                    + " start=" + (this.fogService != null ? this.fogService.getFogStart() : 0.0f)
+                    + " end=" + (this.fogService != null ? this.fogService.getFogEnd() : 0.0f)
+                    + " density=" + (this.fogService != null ? this.fogService.getFogDensity() : 0.0f)
+                    + " shape=" + (this.fogService != null ? this.fogService.getFogShapeIndex() : -1)
+                    + " glFogMode=" + fogMode() + " cutoff=" + (this.fogService != null ? this.fogService.getFogCutoff() : 0.0f)
+                    + " regionOffset=(" + ((region.getOriginX() - camera.intX) - camera.fracX) + ","
+                    + ((region.getOriginY() - camera.intY) - camera.fracY) + ","
+                    + ((region.getOriginZ() - camera.intZ) - camera.fracZ) + ")");
+        }
         block.putFloat(base + 16, fogColor != null && fogColor.length > 0 ? fogColor[0] : 0.0f);
         block.putFloat(base + 20, fogColor != null && fogColor.length > 1 ? fogColor[1] : 0.0f);
         block.putFloat(base + 24, fogColor != null && fogColor.length > 2 ? fogColor[2] : 0.0f);
