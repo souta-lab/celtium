@@ -73,6 +73,16 @@ defects remain and are the next work items:
    the buffer the backend actually binds (the arena is shared per region, and a wrong vertex binding offset or a
    stale buffer handle after an arena growth would produce exactly this).
 
+   The decisive observation: with the fragment stage forced to output `v_Color`, the whole terrain becomes a
+   **perfectly uniform grey (112,112,112), one unique colour for all 921600 pixels**, with the correct silhouette.
+   A varying that is constant over an entire surface means every vertex carries the same value, and no light-map
+   texel is anywhere near that grey (the mirrored light map only contains values from 14 to 252 along its
+   gradient), while the decoded vertex colour is the plains green `(145,189,89)`. `green x light` cannot produce
+   that grey for any light <= 1, so the colour the shader interpolates is not the colour in the buffer.
+   Next experiment, chosen so the answer cannot be misread: write `a_Color.rgb` straight into `gl_Position` (and
+   keep the rest unchanged). The resulting silhouette then *is* the attribute value, which shows directly whether
+   the fetch returns the green bytes, a constant, or something else entirely.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
