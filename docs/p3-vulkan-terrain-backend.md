@@ -349,6 +349,14 @@ defects remain and are the next work items:
    correct in colour, and the remaining difference to the OpenGL reference is the aliasing signature (2677 distinct
    colours against 59), i.e. the atlas mip chain is still not being sampled - the next item.
 
+   With the culling fixed the frame is within one unit of the OpenGL reference on average. Mirroring the light map
+   every frame instead of on a 20-frame cadence (it is 16x16 and changes every frame) halves the remaining mean
+   difference to 2.74, but 13% of pixels still differ by more than 8 and the Vulkan frame still shows 2677 distinct
+   colours against the reference's 59, which is the aliasing signature: the atlas mip chain exists in the image but
+   is evidently not what the shader samples. The next items are therefore the mip/LOD path (sampler minLod/maxLod
+   and the per-material bias) and the remaining frame-order differences (light map update ordering, chunk fade,
+   fog), after which the comparison should run on both GPUs.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

@@ -1013,10 +1013,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 int[] lightmapSize = textureSize(lightmapId);
                 record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
                 this.lightmapGlId = lightmapId;
-                this.lightmapRefreshCountdown = 20;
+                // The light map changes every frame (torch flicker, sun angle, weather), and it is 16x16, so it is
+                // mirrored every frame instead of on a cadence: a stale copy shows up as a small uniform colour
+                // shift against the OpenGL render.
+                this.lightmapRefreshCountdown = 1;
             } catch (RuntimeException | LinkageError error) {
                 record("lightmap upload failed: " + describe(error));
-                this.lightmapRefreshCountdown = 20;
+                this.lightmapRefreshCountdown = 1;
             }
         }
         this.lightmapRefreshCountdown--;
