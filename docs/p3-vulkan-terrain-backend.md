@@ -35,6 +35,26 @@ uniforms, and the material mip bias stays per-vertex exactly as the OpenGL shade
 - The frame is rendered by one command buffer per terrain pass; the OpenGL context keeps drawing GUI, entities,
   TESRs, particles and everything else.
 
+### First on-GPU results (RX 6400, in-game fixture)
+
+The forced Vulkan path now runs end to end: the device matches the GL GPU, meshes upload, the draw list is built,
+the pipeline is created and 62 sections are drawn into the shared image, which is handed back to OpenGL. Three
+defects remain and are the next work items:
+
+1. The terrain appears vertically mirrored. The Y flip was moved from a negative-height viewport to the projection
+   matrix and the output did not change, so the flip is being applied twice somewhere in the chain
+   (`beginFrame`'s blit, the projection, or `endFrame`'s blit back) and must be traced with a fixed test pattern.
+2. The terrain is nearly black: the lightmap never uploads. `boundTextureId(1)` returns 0 during the pass, so the
+   lightmap is not bound on unit 1 at that moment. The texture must be resolved from the renderer or the texture
+   manager instead of from the current GL binding.
+3. `VulkanGlTexture.uploadFromGlTexture` and the texture capture change the active texture unit with raw LWJGL
+   calls while the game's `GlStateManager` caches that state, which can make later GL binds land on the wrong unit.
+   The capture and upload paths must not touch GL state outside the state manager.
+
+`maxUniformBufferRange` also reads back as -1 from `VkPhysicalDeviceProperties` in this runtime while its
+neighbours are correct, so the pipeline logs `device limits were not reported` and skips that one check instead of
+refusing to draw.
+
 ### Known gaps (why OpenGL is still the default)
 
 - Chunk fade-in and per-region age uniforms are not ported. The shader has the switch and it is off, which is the

@@ -5,6 +5,7 @@ import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.CompactChunkVertex;
 import org.joml.Matrix4fc;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
 
 import java.nio.ByteBuffer;
@@ -18,43 +19,55 @@ import static org.lwjgl.vulkan.VK10.*;
  * The Vulkan graphics pipeline for exactly one {@link TerrainRenderPass}.
  * <p>
  * One instance is created per terrain render pass and kept by the backend in a map; nothing is cached statically,
- * because pass configuration (blending, culling, shader defines) is baked into the pipeline object and differs
- * between passes.
+ * because pass configuration (blending, culling) is baked into the pipeline object and differs between passes.
  * <p>
- * <b>Shader contract.</b> The shaders written for this backend declare five vertex inputs (locations 0..4, the
- * {@code a_PosId} / {@code a_Color} / {@code a_TexCoord} / {@code a_LightCoord} / {@code a_RdhFactor} attributes of
- * the compact 24 byte terrain vertex), a push constant block of two {@code mat4} ({@code u_ProjectionMatrix} then
- * {@code u_ModelViewMatrix}, 128 bytes, vertex stage only) and a descriptor set 0 with binding 0 = uniform buffer
- * (vertex + fragment), binding 1 = block atlas, binding 2 = lightmap. This class bakes exactly that contract.
+ * <b>Shader contract.</b> The terrain shaders declare five vertex inputs (locations 0..4, the {@code a_PosId} /
+ * {@code a_Color} / {@code a_TexCoord} / {@code a_LightCoord} / {@code a_RdhFactor} attributes of the compact 24
+ * byte terrain vertex), a push constant block of two {@code mat4} ({@code u_ProjectionMatrix} at offset 0 then
+ * {@code u_ModelViewMatrix} at offset 64, 128 bytes, vertex stage only) and descriptor set 0 with binding 0 =
+ * uniform buffer (80 bytes, vertex + fragment), <b>binding 1 = lightmap ({@code u_LightTex}, sampled by the vertex
+ * stage)</b> and <b>binding 2 = block atlas ({@code u_BlockTex}, sampled by the fragment stage)</b>. This class
+ * bakes exactly that contract; see {@link #LIGHTMAP_BINDING} for why the lightmap is not at binding 2.
  * <p>
- * All passes currently use the {@code SpirvShaders.SOLID_*} pair, which is the only terrain shader named in the
- * published contract; the pass specific behaviour that the GL path gets from its shader defines (alpha test on the
- * cutout passes) has to come from that shader. If per pass shader variants are added later, the stage selection in
- * {@code createPipeline} is the single place to change.
+ * The same {@code SpirvShaders.SOLID_*} pair is used for every pass. That is not a shortcut: the shaders select
+ * alpha test, fog mode and fog shape at runtime from the uniform block, so one pipeline covers solid, cutout and
+ * translucent terrain, and only blending and culling differ per pass.
+ * <p>
+ * <b>Y direction and winding.</b> The backend renders with a negative-height viewport so the OpenGL projection and
+ * the OpenGL Y direction can be reused, and that viewport transform mirrors the framebuffer Y axis, which inverts
+ * the sign of the triangle area Vulkan computes for the front-face test. The chunk mesher emits OpenGL
+ * counter-clockwise front faces, so this pipeline declares {@link #FRONT_FACE} = {@code VK_FRONT_FACE_CLOCKWISE}.
+ * Setting the OpenGL value here would mark every visible terrain face as back facing and cull it.
  * <p>
  * <b>API surface used from the sibling classes in this package.</b> Every call this class makes on them is listed
  * here so a signature change is easy to reconcile:
  * <ul>
  *   <li>{@code VulkanContext.device()} - the {@code VkDevice} for every object created here.</li>
  *   <li>{@code VulkanContext.physicalDevice()} - queried for {@code minUniformBufferOffsetAlignment},
- *       {@code maxPushConstantsSize} and vertex format support before anything is created.</li>
+ *       {@code maxPushConstantsSize}, {@code maxUniformBufferRange} and vertex format support before anything is
+ *       created.</li>
  *   <li>{@code VulkanGlTexture.view()} and {@code VulkanGlTexture.sampler()} - the two {@code long} handles written
  *       into the descriptor set by {@link #bindTextures}.</li>
  *   <li>{@code VulkanBuffer.buffer()} and {@code VulkanBuffer.size()} - the uniform buffer handle and its size, used
- *       for the descriptor write and to validate the dynamic offset at bind time.</li>
+ *       by the {@code VulkanBuffer} overload of {@link #bindTextures}. The backend's own uniform buffer is a
+ *       {@code VulkanUniformBuffer}, which is a different type, so {@link #bindTextures(VulkanGlTexture,
+ *       VulkanGlTexture, long, long)} takes its two handles directly.</li>
+ *   <li>{@code VulkanFrameTarget.COLOR_RENDER_LAYOUT} / {@code DEPTH_RENDER_LAYOUT} - the layouts the frame target's
+ *       acquire and release barriers use; the render pass reuses those constants so the two can never drift.</li>
  *   <li>{@code SpirvShaders.load(String)} with {@code SpirvShaders.SOLID_VERTEX} / {@code SpirvShaders.SOLID_FRAGMENT}
- *       - the SPIR-V for the two stages. The returned buffer is only read and is never freed here, because the
- *       ownership of that buffer is not part of the published contract.</li>
+ *       - the SPIR-V for the two stages. {@code SpirvShaders} documents that the caller owns the returned buffer and
+ *       must free it once the module exists, so {@code createPipeline} frees both in a {@code finally}.</li>
  * </ul>
  * {@code VulkanContext.queue()}, {@code queueFamilyIndex()}, {@code beginCommands()}, {@code endCommands(...)} and
  * {@code uploadToBuffer(...)} are deliberately unused: this class allocates no device memory and submits no work.
  * <p>
  * <b>Render pass ownership.</b> The pipeline creates its own {@code VkRenderPass} because pipeline creation needs
- * one. It is exposed through {@link #renderPass()} so the backend can record {@code vkCmdBeginRenderPass} with it.
- * A render pass the backend creates itself is compatible as long as it uses the same attachment formats, sample
- * counts, load/store operations and layouts - the exact description is documented on {@link #COLOR_ATTACHMENT_LAYOUT}
- * and the constants next to it. Both attachments are kept in {@code VK_IMAGE_LAYOUT_GENERAL}, which is what the
- * validated GL/Vulkan interop path in this project uses for images that alternate between the two APIs.
+ * one. It is exposed through {@link #renderPass()} so the backend can record {@code vkCmdBeginRenderPass} with it,
+ * and the backend builds its framebuffer from that same handle. The layout transition into the attachment layouts is
+ * done by {@code VulkanFrameTarget.recordAcquireBarriers} before the render pass and back to
+ * {@code VK_IMAGE_LAYOUT_GENERAL} by {@code recordReleaseBarriers} after it; this render pass therefore declares no
+ * layout transitions of its own and needs no subpass dependencies, because those two barriers already publish and
+ * claim the attachment accesses with {@code VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} on both sides.
  * <p>
  * All methods must be called from the render thread. The class is not thread safe.
  */
@@ -75,18 +88,33 @@ public final class VulkanTerrainPipeline {
      * The layout the color attachment is expected to be in when the render pass begins, and the layout it is left
      * in when the render pass ends.
      * <p>
-     * {@code VK_IMAGE_LAYOUT_GENERAL} is not the fastest color attachment layout, but the image is an external
-     * image shared with OpenGL: GL has no equivalent of Vulkan layouts, so the image cannot be left in an
-     * attachment-optimal layout across an ownership handoff. Keeping it in GENERAL makes the acquire barrier a
-     * plain GENERAL to GENERAL transition and matches the barrier code already validated for this project.
+     * This is {@code VulkanFrameTarget.COLOR_RENDER_LAYOUT} by reference rather than by value: the frame target
+     * transitions the shared color image from {@code VK_IMAGE_LAYOUT_GENERAL} (the layout OpenGL declares through
+     * {@code GL_LAYOUT_GENERAL_EXT}) into this layout in {@code recordAcquireBarriers} and back in
+     * {@code recordReleaseBarriers}. Reusing the constant makes a mismatch impossible; a literal here would be a
+     * silent validation error the first time the frame target changes.
      */
-    public static final int COLOR_ATTACHMENT_LAYOUT = VK_IMAGE_LAYOUT_GENERAL;
+    public static final int COLOR_ATTACHMENT_LAYOUT = VulkanFrameTarget.COLOR_RENDER_LAYOUT;
 
     /**
      * The layout the depth attachment is expected to be in when the render pass begins, and the layout it is left
-     * in when the render pass ends. See {@link #COLOR_ATTACHMENT_LAYOUT} for why this is GENERAL.
+     * in when the render pass ends. See {@link #COLOR_ATTACHMENT_LAYOUT} for why this references the frame target.
      */
-    public static final int DEPTH_ATTACHMENT_LAYOUT = VK_IMAGE_LAYOUT_GENERAL;
+    public static final int DEPTH_ATTACHMENT_LAYOUT = VulkanFrameTarget.DEPTH_RENDER_LAYOUT;
+
+    /**
+     * The front face orientation the terrain vertex data needs.
+     * <p>
+     * The chunk mesher emits OpenGL counter-clockwise front faces, and the backend renders through a negative
+     * height viewport so the OpenGL projection can be reused. That viewport transform flips the framebuffer Y axis,
+     * and the Vulkan front-face test uses the sign of the triangle area in framebuffer coordinates, so the flip
+     * inverts the result: OpenGL counter-clockwise geometry is Vulkan {@code VK_FRONT_FACE_CLOCKWISE}. Using
+     * {@code VK_FRONT_FACE_COUNTER_CLOCKWISE} here would classify every visible terrain face as back facing and,
+     * with {@code blockFaceCulling}, cull it. If the backend ever stops flipping Y (for example by baking the flip
+     * into the projection matrix instead), pass {@code VK_FRONT_FACE_COUNTER_CLOCKWISE} to
+     * {@link #create(VulkanContext, TerrainRenderPass, boolean, int)}.
+     */
+    public static final int FRONT_FACE = VK_FRONT_FACE_CLOCKWISE;
 
     /**
      * The descriptor range used for the dynamic uniform buffer at binding 0, and therefore the size of one uniform
@@ -95,10 +123,9 @@ public final class VulkanTerrainPipeline {
      * A dynamic uniform buffer binding cannot use {@code VK_WHOLE_SIZE}: the effective range is
      * {@code dynamicOffset .. dynamicOffset + range} and validation rejects anything that reaches past the end of
      * the buffer. Since {@link #bindTextures} does not receive a block size, the block size is fixed here: every
-     * uniform block in the buffer passed to {@code bindTextures} must be exactly this many bytes (or the caller
-     * must ensure that {@code offset + UNIFORM_BLOCK_SIZE <= buffer size} for every offset it passes to
-     * {@link #bindDescriptors}). 256 bytes covers the region offset and fog parameters with room to spare, and it
-     * is a multiple of the {@code minUniformBufferOffsetAlignment} values desktop drivers report (1, 16, 64, 128,
+     * uniform block in the buffer passed to {@code bindTextures} must be at least this large (the terrain uniform
+     * block itself is 80 bytes, and the backend's stride is 256 bytes aligned up to the device limit). 256 bytes is
+     * a multiple of the {@code minUniformBufferOffsetAlignment} values desktop drivers report (1, 16, 64, 128,
      * 256), so a 256 byte stride always produces legal dynamic offsets.
      */
     public static final int UNIFORM_BLOCK_SIZE = 256;
@@ -119,7 +146,7 @@ public final class VulkanTerrainPipeline {
      * normalized float conversion in the input assembler would destroy the packing. {@code a_Color} and
      * {@code a_RdhFactor} are normalized because the GL vertex format marks them normalized too.
      */
-    private static final int[] VERTEX_ATTRIBUTE_FORMATS = {
+    private static final int[] COMPACT_ATTRIBUTE_FORMATS = {
             VK_FORMAT_R16G16B16A16_UINT, // 0: a_PosId     4 x unsigned short, raw
             VK_FORMAT_R8G8B8A8_UNORM,    // 1: a_Color     4 x unsigned byte, normalized
             VK_FORMAT_R16G16_UINT,       // 2: a_TexCoord  2 x unsigned short, raw
@@ -127,16 +154,71 @@ public final class VulkanTerrainPipeline {
             VK_FORMAT_R8G8B8A8_SNORM,    // 4: a_RdhFactor 4 x signed byte, normalized
     };
 
-    private static final int[] VERTEX_ATTRIBUTE_OFFSETS = { 0, 8, 12, 16, 20 };
+    /** VanillaLikeChunkVertex: positions and texture coordinates are floats, so no unpacking is needed. */
+    private static final int[] VANILLA_ATTRIBUTE_FORMATS = {
+            VK_FORMAT_R32G32B32_SFLOAT,  // 0: a_PosId     3 x float
+            VK_FORMAT_R8G8B8A8_UNORM,    // 1: a_Color     4 x unsigned byte, normalized
+            VK_FORMAT_R32G32_SFLOAT,     // 2: a_TexCoord  2 x float
+            VK_FORMAT_R32_UINT,          // 3: a_LightCoord 1 x unsigned int, raw
+            VK_FORMAT_R8G8B8A8_SNORM,    // 4: a_RdhFactor 4 x signed byte, normalized
+    };
+
+    private static final int[] COMPACT_ATTRIBUTE_OFFSETS = { 0, 8, 12, 16, 20 };
+    private static final int[] VANILLA_ATTRIBUTE_OFFSETS = { 0, 12, 16, 24, 28 };
+
+    /**
+     * The two vertex layouts this build can draw. The game picks one through the "compact vertex format" option,
+     * and the choice changes both the attribute layout and the position decoding in the vertex shader, so a
+     * configuration using a format this backend does not know must be refused rather than drawn wrong.
+     */
+    private static final class VertexLayout {
+        final int stride;
+        final int[] formats;
+        final int[] offsets;
+        final String vertexModule;
+
+        VertexLayout(int stride, int[] formats, int[] offsets, String vertexModule) {
+            this.stride = stride;
+            this.formats = formats;
+            this.offsets = offsets;
+            this.vertexModule = vertexModule;
+        }
+
+        static VertexLayout forPass(TerrainRenderPass pass) {
+            int stride = pass.vertexType().getVertexFormat().getStride();
+            if (stride == 24) {
+                return new VertexLayout(24, COMPACT_ATTRIBUTE_FORMATS, COMPACT_ATTRIBUTE_OFFSETS,
+                        SpirvShaders.SOLID_VERTEX);
+            }
+            if (stride == 32) {
+                return new VertexLayout(32, VANILLA_ATTRIBUTE_FORMATS, VANILLA_ATTRIBUTE_OFFSETS,
+                        SpirvShaders.SOLID_VERTEX_VANILLA);
+            }
+            throw new IllegalArgumentException("Terrain pass '" + pass.name() + "' uses a " + stride
+                    + " byte vertex format that the Vulkan backend does not implement; OpenGL stays active");
+        }
+    }
 
     private static final int UNIFORM_BINDING = 0;
-    private static final int BLOCK_ATLAS_BINDING = 1;
-    private static final int LIGHTMAP_BINDING = 2;
+
+    /**
+     * The block atlas sampler binding.
+     * <p>
+     * Note the numbering: the shader sources declare {@code u_LightTex} at binding 1 (vertex stage) and
+     * {@code u_BlockTex} at binding 2 (fragment stage), so the atlas is binding 2 and the lightmap is binding 1.
+     * The descriptor writes follow the shaders, because a descriptor that does not match the shader's declaration
+     * silently samples the wrong texture. The public API still takes the atlas first and the lightmap second.
+     */
+    private static final int BLOCK_ATLAS_BINDING = 2;
+
+    /** The lightmap sampler binding; see {@link #BLOCK_ATLAS_BINDING} for why it is 1 and not 2. */
+    private static final int LIGHTMAP_BINDING = 1;
 
     private final VulkanContext context;
     private final String passName;
     private final boolean blended;
     private final boolean blockFaceCulling;
+    private final int frontFace;
     private final boolean hasNoLightmap;
     private final long minUniformBufferOffsetAlignment;
 
@@ -149,27 +231,38 @@ public final class VulkanTerrainPipeline {
 
     private long uniformsSize;
     private int uniformsRange;
+
+    /** The vertex layout of the pass this pipeline draws. */
+    private final VertexLayout vertexLayout;
+
+    /** What the device reported for the limits this pipeline depends on. Used for diagnostics. */
+    private String limitsSummary = "unqueried";
+
+    /** Non-null when a limit was not reported and a check had to be skipped. */
+    private String limitsWarning;
     /** True once {@link #bindTextures} has written a complete descriptor set; until then binding it is invalid. */
     private boolean descriptorsWritten;
     private boolean deleted;
 
-    private VulkanTerrainPipeline(VulkanContext context, TerrainRenderPass pass, boolean blockFaceCulling) {
+    private VulkanTerrainPipeline(VulkanContext context, TerrainRenderPass pass, boolean blockFaceCulling, int frontFace) {
         this.context = context;
         this.passName = pass.name();
+        this.vertexLayout = VertexLayout.forPass(pass);
         this.blended = needsBlending(pass);
         this.blockFaceCulling = blockFaceCulling;
+        this.frontFace = frontFace;
         this.hasNoLightmap = pass.hasNoLightmap();
         this.minUniformBufferOffsetAlignment = queryLimits(context);
     }
 
     /**
-     * Creates the pipeline for one terrain render pass.
+     * Creates the pipeline for one terrain render pass with the front face orientation the backend's negative
+     * height viewport requires (see {@link #FRONT_FACE}).
      *
      * @param context          the live Vulkan device wrapper
      * @param pass             the render pass this pipeline is built for; its name selects the blending rule and its
      *                         {@code hasNoLightmap()} flag is remembered for {@link #bindTextures}
-     * @param blockFaceCulling {@code true} to cull back faces (the vanilla behaviour for terrain), {@code false} to
-     *                         draw both faces
+     * @param blockFaceCulling {@code true} to cull back faces, {@code false} to draw both faces
      * @return a fully created pipeline; delete it with {@link #delete()}
      * @throws IllegalArgumentException if the pass cannot be rendered by a triangle list pipeline
      * @throws IllegalStateException    if the device lacks a limit this pipeline depends on, or if Vulkan object
@@ -177,11 +270,38 @@ public final class VulkanTerrainPipeline {
      */
     public static VulkanTerrainPipeline create(VulkanContext context, TerrainRenderPass pass,
                                                boolean blockFaceCulling) {
+        return create(context, pass, blockFaceCulling, FRONT_FACE);
+    }
+
+    /**
+     * Creates the pipeline for one terrain render pass with an explicit front face orientation.
+     * <p>
+     * Only use this overload when the Y flip convention changes: the default {@link #FRONT_FACE} assumes the backend
+     * renders through a negative height viewport, and a backend that flips Y in the projection matrix instead needs
+     * {@code VK_FRONT_FACE_COUNTER_CLOCKWISE} for the same visual result.
+     *
+     * @param context          the live Vulkan device wrapper
+     * @param pass             the render pass this pipeline is built for
+     * @param blockFaceCulling {@code true} to cull back faces (the vanilla behaviour for terrain), {@code false} to
+     *                         draw both faces
+     * @param frontFace        {@code VK_FRONT_FACE_CLOCKWISE} or {@code VK_FRONT_FACE_COUNTER_CLOCKWISE}
+     * @return a fully created pipeline; delete it with {@link #delete()}
+     * @throws IllegalArgumentException if the pass cannot be rendered by a triangle list pipeline, or if
+     *                                  {@code frontFace} is neither Vulkan value
+     * @throws IllegalStateException    if the device lacks a limit this pipeline depends on, or if Vulkan object
+     *                                  creation fails
+     */
+    public static VulkanTerrainPipeline create(VulkanContext context, TerrainRenderPass pass,
+                                               boolean blockFaceCulling, int frontFace) {
         if (context == null) {
             throw new NullPointerException("context");
         }
         if (pass == null) {
             throw new NullPointerException("pass");
+        }
+        if (frontFace != VK_FRONT_FACE_CLOCKWISE && frontFace != VK_FRONT_FACE_COUNTER_CLOCKWISE) {
+            throw new IllegalArgumentException("frontFace must be VK_FRONT_FACE_CLOCKWISE or"
+                    + " VK_FRONT_FACE_COUNTER_CLOCKWISE, but was " + frontFace);
         }
         // A quad list pass would need GL_QUADS, which Vulkan core does not have. Rejecting it here is much easier
         // to diagnose than the garbage geometry a triangle list draw of quad indices would produce.
@@ -189,7 +309,7 @@ public final class VulkanTerrainPipeline {
             throw new IllegalArgumentException("Terrain pass '" + pass.name() + "' uses direct quads, which a"
                     + " triangle list Vulkan pipeline cannot draw; use a triangulated pass");
         }
-        VulkanTerrainPipeline result = new VulkanTerrainPipeline(context, pass, blockFaceCulling);
+        VulkanTerrainPipeline result = new VulkanTerrainPipeline(context, pass, blockFaceCulling, frontFace);
         try {
             result.createResources();
             return result;
@@ -246,6 +366,16 @@ public final class VulkanTerrainPipeline {
      *
      * @return {@code VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment}
      */
+    /** {@return the device limits this pipeline read, for diagnostics} */
+    public String limitsSummary() {
+        return this.limitsSummary;
+    }
+
+    /** {@return a warning about skipped limit checks, or null when every check ran} */
+    public String limitsWarning() {
+        return this.limitsWarning;
+    }
+
     public long minUniformBufferAlignment() {
         return minUniformBufferOffsetAlignment;
     }
@@ -278,46 +408,63 @@ public final class VulkanTerrainPipeline {
      *
      * @param atlas    the block atlas image; required
      * @param lightmap the lightmap image; may be {@code null} only for a pass whose {@code hasNoLightmap()} is true,
-     *                 in which case the atlas is bound to binding 2 as a placeholder so the set stays valid
-     * @param uniformBuffer the uniform buffer handle holding region offset and fog parameters, one block per
-     *                      section; the caller owns it and must keep it alive while the pipeline draws
-     * @param uniformBufferSize the size of that buffer in bytes
+     *                 in which case the atlas takes its place so the descriptor set stays valid
+     * @param uniforms the uniform buffer holding region offset and fog parameters, one block per section
      * @throws NullPointerException     if {@code atlas} or {@code uniforms} is {@code null}
      * @throws IllegalArgumentException if the uniform buffer has no storage
      * @throws IllegalStateException    if this pass samples the lightmap but no lightmap was supplied
      */
-    public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, long uniformBuffer, long uniformBufferSize) {
+    public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, VulkanBuffer uniforms) {
+        if (uniforms == null) {
+            throw new NullPointerException("uniforms");
+        }
+        bindTextures(atlas, lightmap, uniforms.buffer(), uniforms.size());
+    }
+
+    /**
+     * Fills the descriptor set from the two textures and the native handle and size of the uniform buffer.
+     * <p>
+     * This overload exists because the backend's uniform buffer ({@code VulkanUniformBuffer}) is not a
+     * {@link VulkanBuffer}: both expose the native handle and the size, so the handles can be passed directly
+     * without forcing either class to change.
+     *
+     * @param atlas             the block atlas image; required
+     * @param lightmap          the lightmap image; may be {@code null} only for a pass whose
+     *                          {@code hasNoLightmap()} is true
+     * @param uniformBuffer     the native {@code VkBuffer} holding the terrain uniforms, one block per section
+     * @param uniformBufferSize the size of that buffer in bytes
+     * @throws NullPointerException     if {@code atlas} is {@code null}
+     * @throws IllegalArgumentException if the uniform buffer handle is 0 or the buffer has no storage
+     * @throws IllegalStateException    if this pass samples the lightmap but no lightmap was supplied
+     */
+    public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, long uniformBuffer,
+                             long uniformBufferSize) {
         requireAlive();
         if (atlas == null) {
             throw new NullPointerException("atlas");
         }
         if (uniformBuffer == 0L) {
-            throw new IllegalArgumentException("The uniform buffer handle is 0");
+            throw new IllegalArgumentException("The uniform buffer has no VkBuffer; it was deleted or never written");
+        }
+        if (uniformBufferSize <= 0L) {
+            throw new IllegalArgumentException("The uniform buffer has no storage");
         }
         if (lightmap == null) {
             if (!hasNoLightmap) {
                 throw new IllegalStateException("Terrain pass '" + passName + "' samples the lightmap,"
                         + " so bindTextures must receive a non-null lightmap");
             }
-            // The shader variant for a pass without a lightmap never samples binding 2, but the descriptor must
-            // still hold a valid image view and sampler, otherwise the set is invalid.
+            // The shader variant for a pass without a lightmap never samples the lightmap binding, but the
+            // descriptor must still hold a valid image view and sampler, otherwise the set is invalid.
             lightmap = atlas;
         }
-        long buffer = uniformBuffer;
-        long size = uniformBufferSize;
-        if (buffer == 0L) {
-            throw new IllegalArgumentException("The uniform buffer has no VkBuffer; it was deleted or never written");
-        }
-        if (size <= 0L) {
-            throw new IllegalArgumentException("The uniform buffer has no storage");
-        }
 
-        this.uniformsSize = size;
-        this.uniformsRange = (int) Math.min(size, (long) UNIFORM_BLOCK_SIZE);
+        this.uniformsSize = uniformBufferSize;
+        this.uniformsRange = (int) Math.min(uniformBufferSize, (long) UNIFORM_BLOCK_SIZE);
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, stack);
-            bufferInfo.get(0).buffer(buffer).offset(0L).range(uniformsRange);
+            bufferInfo.get(0).buffer(uniformBuffer).offset(0L).range(uniformsRange);
 
             VkDescriptorImageInfo.Buffer atlasInfo = VkDescriptorImageInfo.calloc(1, stack);
             atlasInfo.get(0).sampler(atlas.sampler()).imageView(atlas.view())
@@ -326,6 +473,8 @@ public final class VulkanTerrainPipeline {
             lightmapInfo.get(0).sampler(lightmap.sampler()).imageView(lightmap.view())
                     .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+            // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
+            // goes to BLOCK_ATLAS_BINDING (2) and the lightmap to LIGHTMAP_BINDING (1), matching the shader source.
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(3, stack);
             writes.get(0).sType$Default().dstSet(descriptorSet).dstBinding(UNIFORM_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
@@ -418,6 +567,10 @@ public final class VulkanTerrainPipeline {
      * Destroys every device object this pipeline owns: the pipeline, the descriptor pool (which frees the
      * descriptor set allocated from it), the descriptor set layout, the pipeline layout and the render pass.
      * <p>
+     * The shader modules are not listed because they no longer exist at this point: the driver copies the SPIR-V
+     * into the pipeline, so both modules are destroyed (and their native buffers freed) as soon as
+     * {@code vkCreateGraphicsPipelines} returns.
+     * <p>
      * Idempotent: calling it twice, or after a partially failed {@link #create}, is safe. The caller must ensure
      * the device is idle with respect to this pipeline before deleting it.
      */
@@ -459,15 +612,25 @@ public final class VulkanTerrainPipeline {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(context.physicalDevice(), properties);
+            // The Vulkan minimum for maxUniformBufferRange is 16384 and for maxPushConstantsSize 128, so a value
+            // at or below zero can only mean the query did not answer. Report it and continue instead of refusing
+            // to draw terrain on a device that is in fact capable.
             int maxPushConstants = properties.limits().maxPushConstantsSize();
-            if (maxPushConstants < PUSH_CONSTANT_BYTES) {
+            limitsSummary = "maxPushConstantsSize=" + maxPushConstants
+                    + " maxUniformBufferRange=" + properties.limits().maxUniformBufferRange()
+                    + " minUniformBufferOffsetAlignment=" + properties.limits().minUniformBufferOffsetAlignment();
+            if (maxPushConstants > 0 && maxPushConstants < PUSH_CONSTANT_BYTES) {
                 throw new IllegalStateException("The device allows only " + maxPushConstants
                         + " bytes of push constants but the terrain shaders need " + PUSH_CONSTANT_BYTES);
             }
-            if (properties.limits().maxUniformBufferRange() < UNIFORM_BLOCK_SIZE) {
-                throw new IllegalStateException("The device allows only "
-                        + properties.limits().maxUniformBufferRange()
+            int maxUniformRange = properties.limits().maxUniformBufferRange();
+            if (maxUniformRange > 0 && maxUniformRange < UNIFORM_BLOCK_SIZE) {
+                throw new IllegalStateException("The device allows only " + maxUniformRange
                         + " bytes per uniform range but the terrain uniform block is " + UNIFORM_BLOCK_SIZE);
+            }
+            if (maxUniformRange <= 0 || maxPushConstants <= 0) {
+                limitsWarning = "device limits were not reported (" + limitsSummary + "); the uniform range and push"
+                        + " constant checks were skipped and the pipeline is created on trust";
             }
             requireVertexFormatSupport(stack);
 
@@ -485,8 +648,8 @@ public final class VulkanTerrainPipeline {
      */
     private void requireVertexFormatSupport(MemoryStack stack) {
         VkFormatProperties features = VkFormatProperties.calloc(stack);
-        for (int i = 0; i < VERTEX_ATTRIBUTE_FORMATS.length; i++) {
-            int format = VERTEX_ATTRIBUTE_FORMATS[i];
+        for (int i = 0; i < this.vertexLayout.formats.length; i++) {
+            int format = this.vertexLayout.formats[i];
             vkGetPhysicalDeviceFormatProperties(context.physicalDevice(), format, features);
             if ((features.bufferFeatures() & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) == 0) {
                 throw new IllegalStateException("Vertex attribute " + i + " of the terrain format uses Vulkan"
@@ -529,42 +692,19 @@ public final class VulkanTerrainPipeline {
                 .pColorAttachments(colorReferences)
                 .pDepthStencilAttachment(depthReference);
 
-        // The implicit external dependencies of a render pass carry no access masks, so the load operations would
-        // not see earlier writes to the shared images and the release barrier would have nothing to source from.
-        // Declaring them explicitly makes the render pass self contained: everything written before it (by Vulkan
-        // or by the GL side of the handoff) is available to the loads, and the terrain writes are made available
-        // to whatever runs afterwards.
-        VkSubpassDependency.Buffer dependencies = VkSubpassDependency.calloc(2, stack);
-        dependencies.get(0)
-                .srcSubpass(VK_SUBPASS_EXTERNAL)
-                .dstSubpass(0)
-                .srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                        | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT)
-                .dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                        | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
-                .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                        | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
-                .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                        | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                        | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
-                .dependencyFlags(VK_DEPENDENCY_BY_REGION_BIT);
-        dependencies.get(1)
-                .srcSubpass(0)
-                .dstSubpass(VK_SUBPASS_EXTERNAL)
-                .srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                        | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT)
-                // BOTTOM_OF_PIPE with no destination access only makes the writes available; visibility is the
-                // job of the release barrier that hands the images back to OpenGL.
-                .dstStageMask(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
-                .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                        | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
-                .dstAccessMask(0)
-                .dependencyFlags(VK_DEPENDENCY_BY_REGION_BIT);
-
+        // No subpass dependencies are declared, for two reasons. First, this render pass performs no layout
+        // transition of its own: initialLayout and finalLayout are the same attachment layouts, and
+        // VulkanFrameTarget.recordAcquireBarriers / recordReleaseBarriers do the transitions outside the pass.
+        // Second, those two barriers already carry every dependency this pass needs: both use
+        // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT on both sides with the attachment read and write access masks, so the
+        // GL blit written into the shared images is available and visible to the attachment loads, and the terrain
+        // writes are available for the release barrier that hands the images back to OpenGL. That barrier-driven
+        // pattern is the one the interop probe was validated with on both target GPUs. The implicit external
+        // dependencies Vulkan adds carry no access masks, so declaring narrower explicit dependencies on top would
+        // only add ways to get the stage masks wrong.
         VkRenderPassCreateInfo create = VkRenderPassCreateInfo.calloc(stack).sType$Default()
                 .pAttachments(attachments)
-                .pSubpasses(subpasses)
-                .pDependencies(dependencies);
+                .pSubpasses(subpasses);
         LongBuffer handle = stack.mallocLong(1);
         check(vkCreateRenderPass(device, create, null, handle), "vkCreateRenderPass");
         renderPass = handle.get(0);
@@ -609,10 +749,15 @@ public final class VulkanTerrainPipeline {
     private void createPipeline(MemoryStack stack, VkDevice device) {
         long vertexModule = 0L;
         long fragmentModule = 0L;
+        ByteBuffer vertexCode = null;
+        ByteBuffer fragmentCode = null;
         try {
-            vertexModule = createShaderModule(stack, device, SpirvShaders.load(SpirvShaders.SOLID_VERTEX), "vertex");
-            fragmentModule = createShaderModule(stack, device, SpirvShaders.load(SpirvShaders.SOLID_FRAGMENT),
-                    "fragment");
+            // SpirvShaders.load hands over a native buffer that the caller owns, so both modules are loaded into
+            // locals and released in the finally below, once the driver has copied the code into the modules.
+            vertexCode = SpirvShaders.load(this.vertexLayout.vertexModule);
+            fragmentCode = SpirvShaders.load(SpirvShaders.SOLID_FRAGMENT);
+            vertexModule = createShaderModule(stack, device, vertexCode, "vertex");
+            fragmentModule = createShaderModule(stack, device, fragmentCode, "fragment");
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
             stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                     .pName(stack.UTF8("main"));
@@ -620,13 +765,13 @@ public final class VulkanTerrainPipeline {
                     .pName(stack.UTF8("main"));
 
             VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-            binding.get(0).binding(0).stride(CompactChunkVertex.STRIDE).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+            binding.get(0).binding(0).stride(this.vertexLayout.stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
             VkVertexInputAttributeDescription.Buffer attributes =
-                    VkVertexInputAttributeDescription.calloc(VERTEX_ATTRIBUTE_FORMATS.length, stack);
-            for (int i = 0; i < VERTEX_ATTRIBUTE_FORMATS.length; i++) {
+                    VkVertexInputAttributeDescription.calloc(this.vertexLayout.formats.length, stack);
+            for (int i = 0; i < this.vertexLayout.formats.length; i++) {
                 attributes.get(i).location(i).binding(0)
-                        .format(VERTEX_ATTRIBUTE_FORMATS[i])
-                        .offset(VERTEX_ATTRIBUTE_OFFSETS[i]);
+                        .format(this.vertexLayout.formats[i])
+                        .offset(this.vertexLayout.offsets[i]);
             }
             VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
                     .sType$Default()
@@ -644,9 +789,9 @@ public final class VulkanTerrainPipeline {
                     .depthClampEnable(false)
                     .rasterizerDiscardEnable(false)
                     .polygonMode(VK_POLYGON_MODE_FILL)
-                    // The compact vertex format and the chunk mesher emit counter-clockwise front faces, the same
-                    // winding the OpenGL terrain path uses.
-                    .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                    // The mesh winding is OpenGL counter-clockwise; see FRONT_FACE for why the negative height
+                    // viewport turns that into VK_FRONT_FACE_CLOCKWISE for Vulkan's framebuffer space test.
+                    .frontFace(frontFace)
                     .cullMode(blockFaceCulling ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE)
                     .depthBiasEnable(false)
                     .lineWidth(1.0f);
@@ -730,6 +875,15 @@ public final class VulkanTerrainPipeline {
             }
             if (vertexModule != 0L) {
                 vkDestroyShaderModule(device, vertexModule, null);
+            }
+            // SpirvShaders.load transfers ownership of its native buffer to the caller, so both modules are
+            // released here: after the module exists the driver has its own copy, and on the failure path the code
+            // would otherwise leak.
+            if (fragmentCode != null) {
+                MemoryUtil.memFree(fragmentCode);
+            }
+            if (vertexCode != null) {
+                MemoryUtil.memFree(vertexCode);
             }
         }
     }

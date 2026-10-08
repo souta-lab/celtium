@@ -31,6 +31,8 @@ import java.nio.ByteOrder;
 public final class SpirvShaders {
     /** Classpath name of the SOLID terrain pass vertex module. */
     public static final String SOLID_VERTEX = "terrain_solid.vert";
+    /** Vertex module for the uncompressed VanillaLikeChunkVertex layout (stride 32). */
+    public static final String SOLID_VERTEX_VANILLA = "terrain_solid_vanilla.vert";
 
     /** Classpath name of the SOLID terrain pass fragment module. */
     public static final String SOLID_FRAGMENT = "terrain_solid.frag";

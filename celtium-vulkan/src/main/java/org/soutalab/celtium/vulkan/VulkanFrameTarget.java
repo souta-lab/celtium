@@ -75,7 +75,8 @@ import static org.lwjgl.vulkan.VK11.*;
  * <li>{@link #beginFrame()} captures and validates that framebuffer, copies the game's colour and depth into the
  * shared images and makes GL signal {@link #waitSemaphore()};</li>
  * <li>{@link #recordAcquireBarriers(VkCommandBuffer)} is recorded <i>first</i> in the caller's command buffer: it
- * takes ownership of both images from the external client (GL) and transitions them to the attachment layouts;</li>
+ * takes ownership of both images from the external client (GL) and leaves them in the layout the render pass
+ * declares, {@link #COLOR_RENDER_LAYOUT} / {@link #DEPTH_RENDER_LAYOUT};</li>
  * <li>the caller records its terrain rendering into the same command buffer. Render passes must declare
  * {@code initialLayout} and {@code finalLayout} of {@link #COLOR_RENDER_LAYOUT} for the colour attachment and
  * {@link #DEPTH_RENDER_LAYOUT} for the depth attachment, and must use {@code VK_ATTACHMENT_LOAD_OP_LOAD} for both:
@@ -337,7 +338,7 @@ public final class VulkanFrameTarget {
     }
 
     /**
-     * The shared colour image; {@code VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL} between
+     * The shared colour image, in {@link #COLOR_RENDER_LAYOUT} between
      * {@link #recordAcquireBarriers(VkCommandBuffer)} and {@link #recordReleaseBarriers(VkCommandBuffer)}.
      * <p>
      * In LWJGL 3 every non-dispatchable Vulkan handle is a plain {@code long} (there is no {@code VkImage} type), so
@@ -388,17 +389,17 @@ public final class VulkanFrameTarget {
     }
 
     /**
-     * Records the ownership acquire and the layout transition of both shared images into the caller's command buffer.
+     * Records the ownership acquire of both shared images into the caller's command buffer: each image is taken from
+     * {@code VK_QUEUE_FAMILY_EXTERNAL} (GL) to {@code queueFamilyIndex}, and it is put into
+     * {@link #COLOR_RENDER_LAYOUT} / {@link #DEPTH_RENDER_LAYOUT} for the caller's rendering.
      * <p>
-     * Each barrier takes the image from {@code VK_QUEUE_FAMILY_EXTERNAL} (GL) to {@code queueFamilyIndex} and moves it
-     * from {@code VK_IMAGE_LAYOUT_GENERAL}, the layout GL declares through {@code GL_LAYOUT_GENERAL_EXT}, to
-     * {@link #COLOR_RENDER_LAYOUT} or {@link #DEPTH_RENDER_LAYOUT}. Recording both the ownership transfer and the
-     * layout transition in one barrier is what the Vulkan specification defines for an acquire from an external queue
-     * family, and it is the only difference from the proven experiment, which stayed in GENERAL layout because it only
-     * blitted.
+     * The queue family indices, the access masks, the stage masks and the layouts are the ones the interop experiment
+     * ran with validation enabled on both target GPUs: an acquire claims the external client's writes with the
+     * attachment accesses as its destination mask, and {@code VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} on both sides makes
+     * everything recorded later depend on that acquisition.
      * <p>
-     * Must be recorded before any command that reads or writes the shared images; the stage masks used here are
-     * {@code VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} in both directions, so every later command sees the new layout.
+     * Must be recorded after the submission has waited on {@link #waitSemaphore()} and before any command that reads
+     * or writes the shared images.
      *
      * @throws IllegalArgumentException if {@code commandBuffer} is null
      */
@@ -411,9 +412,9 @@ public final class VulkanFrameTarget {
     }
 
     /**
-     * Records the layout transition back to {@code VK_IMAGE_LAYOUT_GENERAL} and the ownership release of both shared
-     * images from {@code queueFamilyIndex} to {@code VK_QUEUE_FAMILY_EXTERNAL}, so GL may read them after waiting on
-     * {@link #doneSemaphore()}.
+     * Records the ownership release of both shared images and their return to the layout GL expects: each image goes
+     * from {@code queueFamilyIndex} back to {@code VK_QUEUE_FAMILY_EXTERNAL}, publishing the caller's attachment
+     * writes so GL may read them after waiting on {@link #doneSemaphore()}.
      * <p>
      * Must be recorded after the last command that touches the shared images and before the command buffer is ended,
      * so the semaphore the caller signals with that submission is only signalled once the images are GL's again.
@@ -622,8 +623,8 @@ public final class VulkanFrameTarget {
             if ((supported & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0) {
                 usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
             }
-            // Unlike the pure blit experiment, the terrain backend renders into these images, and the acquire and
-            // release barriers name the attachment optimal layouts, which requires the attachment usage bit.
+            // The terrain backend renders into these images as render pass attachments, so the matching usage bit is
+            // not optional; the experiment only blitted, this bridge is the first thing that requires it.
             if ((usage & attachmentUsage) == 0) {
                 throw new IllegalStateException("Vulkan format " + format + " cannot be used as an external "
                         + what + " attachment on this device");
@@ -937,13 +938,14 @@ public final class VulkanFrameTarget {
 
     /**
      * Records the two image barriers that either take both images from GL ({@code acquire}) or give them back to GL
-     * ({@code release}) and move them between {@code VK_IMAGE_LAYOUT_GENERAL} and the attachment layouts.
+     * ({@code release}). Every barrier performs a queue family ownership transfer; it also performs a layout
+     * transition whenever {@link #COLOR_RENDER_LAYOUT} / {@link #DEPTH_RENDER_LAYOUT} differ from
+     * {@code VK_IMAGE_LAYOUT_GENERAL}, which they do not in the proven GENERAL configuration.
      * <p>
      * The queue family indices, the access masks and the stage masks are the ones the interop experiment ran with
      * validation enabled on both target GPUs: a release publishes the attachment writes with a source access mask of
      * the attachment accesses, an acquire claims them with that same mask as its destination, and
-     * {@code VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} on both sides makes the transitioned layout visible to everything
-     * recorded later.
+     * {@code VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} on both sides makes the acquire visible to everything recorded later.
      */
     private void recordOwnershipBarriers(VkCommandBuffer command, boolean release, boolean initialize) {
         int colorAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;

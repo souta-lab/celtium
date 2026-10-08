@@ -115,6 +115,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final Matrix4f vulkanProjection = new Matrix4f();
 
     private long lastDrawCommands;
+    private int command0Logged;
     private long lastSectionsDrawn;
     private long lastUploadedBytes;
 
@@ -153,6 +154,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         builder.append(" draws=").append(this.lastDrawCommands);
         builder.append(" sections=").append(this.lastSectionsDrawn);
         builder.append(" uploaded=").append(this.lastUploadedBytes).append("B");
+        builder.append(" index=").append(this.sharedIndexBuffers.size());
         if (this.frameTarget != null) {
             builder.append(" target=").append(this.targetWidth).append('x').append(this.targetHeight);
         }
@@ -222,9 +224,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("render failed: " + describe(error));
         } finally {
             if (!submitted) {
-                // The command buffer is still recording or already submitted; make the frame consistent before GL
-                // resumes, because the shared images must always be handed back to OpenGL.
-                waitForIdle();
+                // endFrame() makes GL wait on the Vulkan->GL semaphore, and GL has no timeout. A submission must
+                // therefore consume and signal it even when recording failed: an empty acquire/release round trip
+                // hands the untouched images straight back, which is exactly what the game expects.
+                try {
+                    waitForIdle();
+                    beginCommands();
+                    this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                    this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                    submitCommands();
+                } catch (RuntimeException | LinkageError error) {
+                    record("frame recovery failed: " + describe(error));
+                }
             }
             try {
                 this.frameTarget.endFrame();
@@ -299,7 +310,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public String getTransferQueueDebugString() {
-        return "Vulkan staging (" + this.lastUploadedBytes + " B last upload)";
+        // The debug overlay shows this line, so it carries the backend's own state: without it a terrain pass that
+        // silently skips (missing textures, no frame target, a failed pipeline) would look like a rendering bug.
+        return describe();
     }
 
     @Override
@@ -506,6 +519,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 indexBound = true;
             }
 
+            if (this.lastDrawCommands == 0 && command0Logged < 2) {
+                command0Logged++;
+                record("firstDraw region=" + region.getId() + " pass=" + pass.name()
+                        + " stride=" + this.commonVertexStride
+                        + " vertexArenaBytes=" + resources.vertexArena.deviceAllocatedMemoryL()
+                        + " baseVertex=" + batch.baseVertex(0) + " elements=" + batch.elementCount(0)
+                        + " indexBytes=" + batch.indexByteOffset(0)
+                        + " batchSize=" + batch.size()
+                        + " sharedIndexPrimitives=" + this.sharedIndexPrimitives.get(primitiveType));
+            }
             for (int command = 0; command < batch.size(); command++) {
                 long byteOffset = batch.indexByteOffset(command);
                 int firstIndex;
@@ -540,10 +563,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private Matrix4fc vulkanProjection(Matrix4fc projection) {
         this.vulkanProjection.set(projection);
+        // z: OpenGL clip depth [-1, 1] to Vulkan [0, 1]  ->  row 2 becomes 0.5 * (row 2 + row 3)
         float c0z = 0.5f * (projection.m02() + projection.m03());
         float c1z = 0.5f * (projection.m12() + projection.m13());
         float c2z = 0.5f * (projection.m22() + projection.m23());
         float c3z = 0.5f * (projection.m32() + projection.m33());
+        // y: OpenGL clip +Y is up, Vulkan framebuffer +Y is down  ->  negate row 1
+        this.vulkanProjection.m01(-projection.m01());
+        this.vulkanProjection.m11(-projection.m11());
+        this.vulkanProjection.m21(-projection.m21());
+        this.vulkanProjection.m31(-projection.m31());
         this.vulkanProjection.m02(c0z);
         this.vulkanProjection.m12(c1z);
         this.vulkanProjection.m22(c2z);
@@ -601,8 +630,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private void setViewportAndScissor(MemoryStack stack) {
         org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
-        // Negative height flips Y so the OpenGL projection can be reused verbatim (VK_KHR_maintenance1, core in 1.1).
-        viewport.get(0).x(0.0f).y(this.targetHeight).width(this.targetWidth).height(-this.targetHeight)
+        // Vulkan's framebuffer Y axis points down and OpenGL's points up. The flip is applied to the projection
+        // matrix rather than through a negative viewport height, so no driver extension behaviour is involved.
+        viewport.get(0).x(0.0f).y(0.0f).width(this.targetWidth).height(this.targetHeight)
                 .minDepth(0.0f).maxDepth(1.0f);
         vkCmdSetViewport(this.commandBuffer, 0, viewport);
         org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
@@ -616,10 +646,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long offset = this.uniformWriteCursor;
         this.uniformWriteCursor += this.uniformStride;
         if (this.uniformWriteCursor > this.uniforms.size()) {
-            // A frame with more regions than the buffer has blocks would need a bigger buffer; wrapping would let a
-            // later draw overwrite a block an earlier draw still reads, so grow instead.
-            ensureUniformCapacity(this.regionResources.size() + 8);
-            offset = this.uniformWriteCursor - this.uniformStride;
+            // A frame with more region draws than the buffer has blocks needs a bigger buffer: wrapping would let a
+            // later draw overwrite a block that an earlier recorded draw still reads. Grow against the cursor, not
+            // against the region count, or the buffer stops growing while the cursor keeps advancing.
+            this.uniforms.ensureCapacity(this.uniformWriteCursor);
+            this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
         }
 
         ByteBuffer block = this.uniforms.mapped();
@@ -688,6 +719,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             pipeline = VulkanTerrainPipeline.create(this.context, pass, !pass.isSorted());
             this.pipelines.put(pass, pipeline);
+            record("pipeline for " + pass.name() + " created [" + pipeline.limitsSummary() + "]");
+            if (pipeline.limitsWarning() != null) {
+                record(pipeline.limitsWarning());
+            }
             return pipeline;
         } catch (RuntimeException | LinkageError error) {
             record("pipeline for " + pass.name() + " failed: " + describe(error));
@@ -752,6 +787,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.atlasTexture = VulkanGlTexture.create(this.context, size[0], size[1]);
                 }
                 this.atlasTexture.uploadFromGlTexture(atlasId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                int[] atlasSize = textureSize(atlasId);
+                record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);
                 this.atlasGlId = atlasId;
                 this.atlasRefreshCountdown = 400;
             } catch (RuntimeException | LinkageError error) {
@@ -768,6 +805,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.lightmapTexture = VulkanGlTexture.create(this.context, size[0], size[1]);
                 }
                 this.lightmapTexture.uploadFromGlTexture(lightmapId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                int[] lightmapSize = textureSize(lightmapId);
+                record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
                 this.lightmapGlId = lightmapId;
                 this.lightmapRefreshCountdown = 20;
             } catch (RuntimeException | LinkageError error) {
@@ -847,7 +886,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             LongBuffer waitSemaphores = stack.mallocLong(1);
             waitSemaphores.put(0, this.frameTarget.waitSemaphore());
             IntBuffer waitStages = stack.mallocInt(1);
-            waitStages.put(0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
             LongBuffer signalSemaphores = stack.mallocLong(1);
             signalSemaphores.put(0, this.frameTarget.doneSemaphore());
             org.lwjgl.PointerBuffer commandBuffers = stack.mallocPointer(1);
