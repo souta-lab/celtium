@@ -69,6 +69,21 @@ the entry point it uses and whether its output was verified is.
 Each stage lands with the validation harness extended to cover it, and the documents state implemented /
 not implemented / verified on hardware separately.
 
+### Foundation code landed so far (S4/S5, not yet wired into the renderer)
+
+- `celtium-vulkan/.../VulkanDynamicMesh.java` - host-visible vertex and index streams for the geometry Minecraft
+  builds per frame, with layouts that mirror `DefaultVertexFormats` (`POSITION_COLOR` + light,
+  `POSITION_TEX_LIGHTMAP_COLOR`, `POSITION_TEX_COLOR`, `POSITION_NORMAL_TEX_LIGHTMAP_COLOR`). This is what
+  `Tessellator`/`BufferBuilder` output has to become in S4.
+- `celtium-vulkan/.../VulkanTexture2D.java` - a sampled image with its own sampler, a staging upload path, an
+  optional mip chain and the NEAREST/LINEAR choice the atlas and the GUI need. This is the S5 foundation for every
+  texture that is not the terrain atlas.
+
+Both compile and are covered by the module build; neither is used by the renderer yet, so nothing about them is
+hardware-verified and the hybrid status of the build is unchanged by them. The next step is wiring
+`VulkanDynamicMesh` behind a `Tessellator`-compatible entry point for one simple case (GUI quads or particles)
+before the wider S4/S6 work, so the abstraction is proven against real drawing rather than in isolation.
+
 ## Mod compatibility policy
 
 Minecraft's own abstraction layer is the preferred route: a mod that draws through `Tessellator`, `BufferBuilder`,
