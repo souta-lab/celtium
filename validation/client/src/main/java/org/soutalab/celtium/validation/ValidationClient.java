@@ -230,6 +230,16 @@ public final class ValidationClient {
         if (!expected) {
             return;
         }
+        // The device bootstrap can succeed while the *terrain* backend still falls back to OpenGL (for example when
+        // the validation layer is requested but not installed). A run that claims to exercise Vulkan terrain must
+        // therefore check the live terrain backend too, not only the device report.
+        if (Boolean.getBoolean("celtium.validation.expectVulkanTerrain")) {
+            String description = report.has("terrainBackendDescription")
+                    ? report.get("terrainBackendDescription").getAsString() : null;
+            if (description == null || !description.startsWith("vulkan")) {
+                throw new IllegalStateException("Vulkan terrain was expected but the live backend is: " + description);
+            }
+        }
         if (!"DEVICE_READY".equals(device.get("status").getAsString())) {
             throw new IllegalStateException("Vulkan device was expected but the bootstrap reported "
                     + device.get("status") + ": " + device.get("reasons"));
