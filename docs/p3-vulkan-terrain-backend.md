@@ -104,6 +104,13 @@ defects remain and are the next work items:
    several meshes (not just the first upload) and of the mesh that belongs to a section that is actually visible in
    the captured frame.
 
+   Split test: with `v_Color = _vert_color` (the light map removed from the equation) the terrain is still grey
+   (mean `(41.9,42.7,42.5)`, 3106 distinct values from AO), not the green the buffer holds. So `a_Color` at draw time
+   is *not* the green `(145,189,89)` that was read out of the upload buffer - the two are different data, which
+   means the mesh that is drawn is not the mesh that was logged, or the colour bytes are rewritten between the
+   upload and the draw. Next step: log the colour bytes of several meshes (and of a mesh in a section that is
+   visible in the captured frame) instead of only the first upload, and compare that against what the shader sees.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
