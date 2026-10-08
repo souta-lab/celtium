@@ -478,6 +478,15 @@ defects remain and are the next work items:
    against the OpenGL reference's `17.00` and the earlier `21.24` - while the frame stays identical to the reference
    (same 6.86 mean difference), the validation log stays clean and the F3 per-pass timings keep working.
 
+   **Harness note.** On this rolling distribution the game crashes with a SIGSEGV inside `libxkbcommon`
+   (`xkb_state_key_get_layout`) about eight seconds into a headless run, before the fixture can report anything.
+   The crash is in GLFW's Wayland keyboard path: the compositor's keymap reaches the client, `xkb_state_new` fails
+   there and GLFW queries the null state. It is not caused by the mod - the tree was unchanged and had verified
+   green minutes earlier - and pinning `XKB_DEFAULT_*` for the compositor does not help. What does help is
+   `scripts/prism_validation.py --force-x11`, which hides `WAYLAND_DISPLAY`/`WAYLAND_SOCKET` from the game so GLFW
+   uses the Xwayland display instead: runs complete normally again, and the verification that follows was taken
+   with it. Any future "the fixture cannot even start" report should try that flag first.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

@@ -124,6 +124,10 @@ def main():
     parser.add_argument("--game-dir", type=Path, help="Create a fresh isolated game directory")
     parser.add_argument("--mod", type=Path, action="append", default=[])
     parser.add_argument("--library", type=Path, action="append", default=[], help="Extra test-only classpath jar; the source profile stays unchanged")
+    parser.add_argument("--force-x11", action="store_true",
+                        help="Hide the Wayland socket from the game so GLFW uses the Xwayland display instead; the "
+                             "Wayland keyboard path compiles the compositor's keymap with libxkbcommon and a "
+                             "rolling distribution can break that path for the client")
     parser.add_argument("--jvm-arg", action="append", default=[])
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--validate", action="store_true", help="Enable and require the separately installed validation fixture")
@@ -199,6 +203,9 @@ def main():
     display = HeadlessWayland(game / "headless", args.render_node) if args.headless else nullcontext()
     with display as headless, (game / "validation-console.log").open("wb") as log:
         environment = headless.environment if headless else os.environ.copy()
+        if args.force_x11:
+            environment.pop("WAYLAND_DISPLAY", None)
+            environment.pop("WAYLAND_SOCKET", None)
         # Keep the test client's OpenAL audio off the desktop speakers.
         if args.headless:
             environment["ALSOFT_DRIVERS"] = "null"
