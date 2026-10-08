@@ -41,9 +41,11 @@ The forced Vulkan path now runs end to end: the device matches the GL GPU, meshe
 the pipeline is created and 62 sections are drawn into the shared image, which is handed back to OpenGL. Three
 defects remain and are the next work items:
 
-1. The terrain appears vertically mirrored. Moving the Y flip from a negative-height viewport to the projection
-   matrix did not change the output, so a flip is being applied twice in the chain (`beginFrame`'s blit, the
-   projection, or `endFrame`'s blit back). A fixed test pattern has to be pushed through the bridge to locate it.
+1. ~~The terrain appears vertically mirrored.~~ **Fixed**: the shared-image bridge already carries the orientation
+   OpenGL expects, so any additional Y flip (negative-height viewport or projection negation) mirrors the result.
+   The projection and viewport now use the Vulkan convention unchanged, and the pipeline culls
+   counter-clockwise front faces to match. The rendered frame now has the sky above the horizon exactly like the
+   OpenGL reference.
 2. The atlas has no mip chain, so grazing-angle terrain aliases into noise. `VulkanGlTexture` mirrors level 0 only;
    the mip levels must be copied or generated, and `u_MipBiasAdd` then becomes meaningful.
 3. The final colour is much darker than the albedo. With the light map verified (a dump of GL texture 12 shows a

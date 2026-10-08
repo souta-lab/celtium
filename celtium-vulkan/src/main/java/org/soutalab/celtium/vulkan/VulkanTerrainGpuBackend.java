@@ -568,11 +568,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         float c1z = 0.5f * (projection.m12() + projection.m13());
         float c2z = 0.5f * (projection.m22() + projection.m23());
         float c3z = 0.5f * (projection.m32() + projection.m33());
-        // y: OpenGL clip +Y is up, Vulkan framebuffer +Y is down  ->  negate row 1
-        this.vulkanProjection.m01(-projection.m01());
-        this.vulkanProjection.m11(-projection.m11());
-        this.vulkanProjection.m21(-projection.m21());
-        this.vulkanProjection.m31(-projection.m31());
+        // No Y flip: the shared colour image already carries the orientation OpenGL expects, so flipping here (or
+        // through a negative-height viewport) rendered the terrain mirror-imaged. Culling compensates instead: the
+        // pipeline uses VK_FRONT_FACE_COUNTER_CLOCKWISE for the same reason.
         this.vulkanProjection.m02(c0z);
         this.vulkanProjection.m12(c1z);
         this.vulkanProjection.m22(c2z);
@@ -630,8 +628,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private void setViewportAndScissor(MemoryStack stack) {
         org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
-        // Vulkan's framebuffer Y axis points down and OpenGL's points up. The flip is applied to the projection
-        // matrix rather than through a negative viewport height, so no driver extension behaviour is involved.
+        // Positive height: see vulkanProjection() for why the Vulkan convention is used unchanged.
         viewport.get(0).x(0.0f).y(0.0f).width(this.targetWidth).height(this.targetHeight)
                 .minDepth(0.0f).maxDepth(1.0f);
         vkCmdSetViewport(this.commandBuffer, 0, viewport);

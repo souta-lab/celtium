@@ -114,7 +114,7 @@ public final class VulkanTerrainPipeline {
      * into the projection matrix instead), pass {@code VK_FRONT_FACE_COUNTER_CLOCKWISE} to
      * {@link #create(VulkanContext, TerrainRenderPass, boolean, int)}.
      */
-    public static final int FRONT_FACE = VK_FRONT_FACE_CLOCKWISE;
+    public static final int FRONT_FACE = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     /**
      * The descriptor range used for the dynamic uniform buffer at binding 0, and therefore the size of one uniform
