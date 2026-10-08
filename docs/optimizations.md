@@ -42,6 +42,16 @@ and leave every level in `SHADER_READ_ONLY_OPTIMAL`.
 *Commit:* `adf7a9d7d` - timestamp queries per pass, read once the frame fence has signalled, so the debug overlay
 reports real terrain times under Vulkan instead of `?? ms`.
 
+### 6. Buffer growth drains the queue before destroying the old buffer
+
+*Commit:* this one - *Measured:* validation went from two
+`VUID-vkDestroyBuffer-buffer-00922` messages per run to zero, frame unchanged.
+
+`VulkanBuffer.ensureCapacity` creates a larger buffer, copies the contents across and destroys the old one. Commands
+submitted in an earlier frame can still refer to that buffer, so the queue is now drained before the destroy.
+Validation reported the alternative as a buffer destroyed while still in use, which is a use-after-free hazard even
+when it happens to be harmless on a given driver.
+
 ## Planned, with the reason each is not in yet
 
 ### Indirect multi-draw per region - investigated, not enabled

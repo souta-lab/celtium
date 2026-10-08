@@ -129,6 +129,9 @@ public final class VulkanBuffer {
             this.context.endCommands(commandBuffer);
         } catch (RuntimeException | Error error) {
             // The contents were not copied, so the new buffer is undefined: drop it and stay on the intact one.
+            // The old buffer may still be referenced by commands submitted in an earlier frame, so the queue is
+            // drained before it is destroyed; validation reports the alternative as a buffer destroyed while in use.
+            check(vkQueueWaitIdle(this.context.queue()), "vkQueueWaitIdle(buffer growth)");
             vkDestroyBuffer(this.context.device(), this.handle, null);
             vkFreeMemory(this.context.device(), this.memory, null);
             this.handle = oldHandle;
