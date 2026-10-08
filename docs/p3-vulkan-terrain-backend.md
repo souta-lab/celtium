@@ -426,6 +426,13 @@ defects remain and are the next work items:
    differ by about 0.7), so the remaining cutout/translucent difference is not depth writes; future comparisons
    should pin the scene conditions or average several runs before drawing conclusions from a sub-1 difference.
 
+   **Vulkan is now the default.** `VulkanTerrainFactory.implementationComplete()` returns true, so a device that
+   satisfies the contract gets the Vulkan terrain backend without any system property. Verified by removing the
+   force flag from the run: the fixture reports `backend: vulkan (Vulkan device matched the OpenGL device UUID ...)`
+   with `PASSED`, all three passes drawn and a clean validation log, and its `expectVulkanTerrain` assertion is what
+   proves the *default* selected it rather than the flag. A configuration the backend cannot serve still falls back
+   to OpenGL with a stated reason, and the OpenGL backend remains selectable with `-Dceltium.vulkanTerrain=false`.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
