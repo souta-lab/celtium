@@ -93,6 +93,17 @@ defects remain and are the next work items:
    pipeline report the module it loaded and the pass it belongs to, and to give each pass a distinct debug colour so
    the drawing pipeline can be identified unambiguously.
 
+   Resolved by a module marker: forcing `_vert_color = vec4(0,1,0,1)` inside the stride-32 vertex module turns the
+   whole terrain pure green (mean `(0,74.5,0)` over the terrain area, with the albedo and light map multiplying it),
+   so that module **is** the vertex stage in use, the vertex-colour path works, and vertex-shader edits do reach the
+   GPU. The earlier `gl_Position` probe must therefore have been inserted where it had no effect (an earlier
+   assignment in the file), not because the module was unused.
+   The remaining question is what `a_Color` actually contains at draw time: the buffer content that was logged is
+   the plains green `(145,189,89)`, but the rendered colour behaves like a uniform white/AO-only value, which
+   matches a drawn mesh whose colours differ from the logged one. The next step is to log the colour bytes of
+   several meshes (not just the first upload) and of the mesh that belongs to a section that is actually visible in
+   the captured frame.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
