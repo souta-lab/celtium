@@ -398,6 +398,13 @@ defects remain and are the next work items:
    pass - alpha discard, the mip level it samples, or the order it is drawn in - and that is the next thing to
    isolate before the default backend is switched.
 
+   The fixture world carries a leaves layer and a glass layer on top of the grass so the cutout and translucent
+   passes are exercised. The run draws `solid` and `cutout_mipped`, but the `translucent` pass never appears in the
+   per-pass section counts even with the glass on top, so glass geometry is not reaching it - either the blocks are
+   not in that layer, or their faces are culled. `VintageRenderPassConfigurationBuilder` shows the translucent pass
+   is built and mapped to `BlockRenderLayer.TRANSLUCENT`, so the next check is on the world side (for example a
+   water or stained-glass layer, or a block placed on a raised column) rather than in the backend.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
