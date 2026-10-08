@@ -192,6 +192,15 @@ defects remain and are the next work items:
    the handles created for the atlas and the light map - a swap or a stale handle would explain the desaturated
    result and would also survive every edit made to the atlas itself.
 
+   Build trust was checked after the mip chain appeared to do nothing: `recordMipChain` is present in the compiled
+   class and the module recompiles on every source change, so the "no effect" result is real, not a stale build
+   (one earlier edit - the binding log - had silently not applied, which is worth remembering when a diagnostic
+   does not appear). Two calls are confirmed present: `bindTextures` runs once per pass before the render pass and
+   `bindDescriptors` runs per draw inside it. The frame being pixel-identical with and without a mip chain, while
+   fragment-module edits do change it, points at the sampled image having uniform content: a deliberate test
+   pattern uploaded as the atlas (for example a checkerboard) would show immediately whether binding 2 really
+   samples the mirrored atlas.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
