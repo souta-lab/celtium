@@ -53,6 +53,8 @@ public final class VulkanSwapchain {
     private int width;
     private int height;
 
+    private String argumentSummary = "not attempted";
+
     private VulkanSwapchain(VulkanContext context, long surface, String platform) {
         this.context = context;
         this.surface = surface;
@@ -146,6 +148,11 @@ public final class VulkanSwapchain {
 
     public long swapchain() {
         return this.swapchain;
+    }
+
+    /** {@return the argument values of the last swapchain creation attempt}, for diagnostics */
+    public String argumentSummary() {
+        return this.argumentSummary;
     }
 
     public long surface() {
@@ -337,9 +344,23 @@ public final class VulkanSwapchain {
                     .clipped(true)
                     .oldSwapchain(VK_NULL_HANDLE);
             LongBuffer handle = stack.mallocLong(1);
+            // The argument values are recorded next to the call: LWJGL's generated checks throw a
+            // NullPointerException when a buffer it considers required is null, and a bare frame list does not say
+            // which one. Everything LWJGL could dereference is logged with its value here.
+            this.argumentSummary = "create-info: surface=" + this.surface + " minImages=" + create.minImageCount()
+                    + " format=" + create.imageFormat() + " colourSpace=" + create.imageColorSpace()
+                    + " extent=" + create.imageExtent().width() + "x" + create.imageExtent().height()
+                    + " layers=" + create.imageArrayLayers() + " usage=" + create.imageUsage()
+                    + " sharing=" + create.imageSharingMode() + " queueFamilies=" + create.queueFamilyIndexCount()
+                    + " queueFamilyPtr=" + (create.queueFamilyIndexCount() == 0 ? "unused" : "set")
+                    + " transform=" + create.preTransform() + " compositeAlpha=" + create.compositeAlpha()
+                    + " presentMode=" + create.presentMode() + " clipped=" + create.clipped()
+                    + " oldSwapchain=" + create.oldSwapchain() + " next=" + (create.pNext() == 0L ? "null" : "set")
+                    + " swapchainOut=" + handle.remaining();
             result = vkCreateSwapchainKHR(this.context.device(), create, null, handle);
             if (result != VK_SUCCESS) {
-                reasons.add("vkCreateSwapchainKHR returned " + result + " (formats " + availableFormats + ")");
+                reasons.add("vkCreateSwapchainKHR returned " + result + " (formats " + availableFormats + ") ["
+                        + this.argumentSummary + "]");
                 return false;
             }
             this.swapchain = handle.get(0);

@@ -1145,7 +1145,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 where.append(trace[i].getClassName().substring(trace[i].getClassName().lastIndexOf('.') + 1))
                         .append(':').append(trace[i].getLineNumber());
             }
-            record("swapchain probe failed at " + step + ": " + describe(error) + " [" + where + "]");
+            String arguments = this.swapchain == null ? "" : " args[" + this.swapchain.argumentSummary() + "]";
+            record("swapchain probe failed at " + step + ": " + describe(error) + " [" + where + "]" + arguments);
         }
     }
 
