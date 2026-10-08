@@ -413,6 +413,13 @@ defects remain and are the next work items:
    worse (6.86) and was reverted, so the remaining causes are elsewhere: the blend state, the per-section sorting
    of the translucent pass, or the stained-glass texture path.
 
+   The GL pass state was checked against the Vulkan sampler: `VintageRenderPassConfigurationBuilder.MIPMAP_CONTROLLED_STATE`
+   calls `setBlurMipmapDirect(false, mipmapLevels > 0)` on the block atlas, which is `GL_NEAREST` magnification with
+   `GL_NEAREST_MIPMAP_LINEAR` minification - exactly the filter pair the Vulkan sampler now uses, so the multi-pass
+   residual is not a filtering difference. The remaining candidates for the cutout/translucent difference (mean
+   absolute difference 6.13, 42% of pixels above 8) are the alpha-discard cutoff, the blend state and the
+   per-section sorting of the translucent pass.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
