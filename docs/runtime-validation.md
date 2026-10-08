@@ -35,10 +35,17 @@ The agreed development preference is headless execution. `--headless` starts a p
 
 The fixture is enabled by `--validate`, which supplies `-Dceltium.validation=true`. It creates a seed-locked flat world, positions the camera, renders 200 client ticks, observes the Minecraft FBO, invokes the available Celtium commands, captures the scene and requests normal shutdown. Its sources are in `validation/client/`; none are embedded in the renderer mod. The same fixture works with the pinned upstream Celeritas jar, where no Celtium command is expected.
 
+The fixture calls `/celtium`, `/celtium probe` and `/celtium vulkan` when the command is registered. Add
+`--library .celtium-work/runtime/celtium-headless-interop/test-libraries/lwjgl-vulkan-3.4.1.jar` and
+`--jvm-arg=-Dceltium.validation.expectVulkan=true` to require a created Vulkan logical device; without them the
+fixture records the missing-bindings diagnostic instead and still has to pass. See
+[the P3 bootstrap record](p3-vulkan-device-bootstrap.md).
+
 Inspect these outputs inside the test game directory:
 
 - `logs/celtium-validation.json`: fixture status, actual GPU, framebuffer formats, camera and renderer information, startup frame intervals and command results.
 - `logs/celtium-capabilities.json`: optional probe result when the Celtium command is available.
+- `logs/celtium-vulkan-device.json`: optional Vulkan device-bootstrap result when the Celtium command is available.
 - `screenshots/celtium-validation.png`: captured scene.
 - `validation-console.log`: full process log.
 - `validation-process.json`: exit status and whether the fixture passed or a time limit stopped the process.

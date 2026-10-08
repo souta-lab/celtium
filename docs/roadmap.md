@@ -8,7 +8,7 @@ The first increment establishes the fork and a capability-query tool. All terrai
 | P1a | Isolated GL/Vulkan capability query and fail-closed eligibility tests | CLI built; 15 tests passed; RX 6400 and UHD 630 queries recorded |
 | P1b | External image import, color/depth in both directions, binary semaphores, resize and cost measurement | RGBA8 / D32 sharing and D24 conversion verified on RX 6400 and UHD 630; standalone recreation/retirement/cost and real Cleanroom FBO tested; contract restricted to no stencil, one sample |
 | P2 | Extract the narrow terrain GPU boundary; verify the GL backend against stock Celeritas | Boundary extracted behind `TerrainGpuBackend`, selection is fail-closed and reported; stock and Celtium captures are pixel-identical on RX 6400 and UHD 630 for the fixed flat world |
-| P3 | Vulkan mesh upload, arena, atlas/lightmap and SOLID rendering | Pending |
+| P3 | Vulkan mesh upload, arena, atlas/lightmap and SOLID rendering | Device bootstrap done: a logical device is created for the GL GPU's UUID on both targets and destroyed again; upload, arena and SOLID draws pending |
 | P4 | Cutout/translucency, index updates, resource reload and deferred destruction | Pending |
 | P5 | Batching, performance work and declared modpack regression | Pending |
 
@@ -45,7 +45,7 @@ See [the P2 record](p2-backend-boundary.md).
 
 1. Device bootstrap: create the Vulkan instance/device for the GL device's UUID, with the required extensions and
    the interop contract already proven in P1b. Diagnostics, not a fallback, when bindings or the contract are
-   missing; the selection stays `opengl` and says why.
+   missing; the selection stays `opengl` and says why. **Done — see [the bootstrap record](p3-vulkan-device-bootstrap.md).**
 2. Backend-neutral upload records: vertices, indices, vertex format, pass, per-face ranges and generation, so the
    GPU placement decision is no longer read out of GL arena state.
 3. Vulkan arena and mesh upload through the boundary, with the existing CPU meshing, graph and sort code untouched.

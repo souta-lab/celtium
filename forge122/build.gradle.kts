@@ -102,6 +102,9 @@ dependencies {
     // Own Java-8-compatible classes only. LWJGL and native libraries belong to the active loader.
     implementation(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
     modEmbedDependencies(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
+    // In-mod Vulkan bootstrap/backend classes. Compiled against LWJGL, never bundled with it.
+    implementation(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }
+    modEmbedDependencies(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }
     val lombokVersion = rootProject.findProperty("lombok_version").toString()
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")

@@ -97,6 +97,7 @@ public final class ValidationClient {
                 if (present) {
                     report.addProperty("statusCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium"));
                     report.addProperty("probeCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium probe"));
+                    report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
                 }
             }
             if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")) {
@@ -190,6 +191,71 @@ public final class ValidationClient {
             if (entity != mc.player && !entity.isRidingOrBeingRiddenBy(mc.player)) count++;
         }
         return count;
+    }
+
+    /**
+     * Records the P3 device-bootstrap result. With Vulkan bindings on the test classpath
+     * ({@code -Dceltium.validation.expectVulkan=true}) the device must be created for the same GPU as the GL
+     * context; without them the run must still report a reason and keep rendering with OpenGL.
+     */
+    private void checkVulkanBootstrap(Minecraft mc, Path logDirectory) {
+        boolean expected = Boolean.getBoolean("celtium.validation.expectVulkan");
+        boolean registered = report.get("celtiumCommandRegistered").getAsBoolean();
+        if (!registered) {
+            report.addProperty("vulkanBootstrapStatus", "unavailable: the Celtium command is not registered");
+            if (expected) throw new IllegalStateException("Vulkan bootstrap was expected but the command is missing");
+            return;
+        }
+        if (report.get("vulkanCommandResult").getAsInt() != 1) {
+            throw new IllegalStateException("The /celtium vulkan command did not execute");
+        }
+        Path file = logDirectory.resolve("celtium-vulkan-device.json");
+        if (!Files.isRegularFile(file)) {
+            report.addProperty("vulkanBootstrapStatus", "unavailable: no report was written");
+            if (expected) throw new IllegalStateException("Vulkan bootstrap was expected but wrote no report");
+            return;
+        }
+        JsonObject device;
+        try {
+            device = JsonParser.parseString(new String(Files.readAllBytes(file), StandardCharsets.UTF_8)).getAsJsonObject();
+        } catch (Exception error) {
+            throw new IllegalStateException("Vulkan device report is not readable JSON", error);
+        }
+        report.add("vulkanDevice", device);
+        report.addProperty("vulkanBootstrapStatus", device.get("status").getAsString());
+        if (device.get("effectiveTerrainBackend").getAsString().equals("opengl") == false
+                || device.get("nativeTerrainImplemented").getAsBoolean()) {
+            throw new IllegalStateException("The Vulkan bootstrap changed or misreported the terrain backend");
+        }
+        if (!expected) {
+            return;
+        }
+        if (!"DEVICE_READY".equals(device.get("status").getAsString())) {
+            throw new IllegalStateException("Vulkan device was expected but the bootstrap reported "
+                    + device.get("status") + ": " + device.get("reasons"));
+        }
+        if (!device.get("logicalDeviceCreated").getAsBoolean()) {
+            throw new IllegalStateException("Vulkan bootstrap did not create a logical device");
+        }
+        JsonObject matched = device.getAsJsonObject("matched");
+        if (!matched.get("uuidMatchesOpenGl").getAsBoolean()) {
+            throw new IllegalStateException("The Vulkan device UUID does not match the OpenGL device UUID");
+        }
+        if (!matched.get("driverUuidMatchesOpenGl").getAsBoolean()) {
+            throw new IllegalStateException("The Vulkan driver UUID does not match the OpenGL driver UUID");
+        }
+        if (!matched.get("externalMemoryFd").getAsBoolean() || !matched.get("externalSemaphoreFd").getAsBoolean()) {
+            throw new IllegalStateException("The Vulkan device is missing the external memory/semaphore FD extensions");
+        }
+        if (!matched.get("binarySemaphoreImportable").getAsBoolean() || !matched.get("binarySemaphoreExportable").getAsBoolean()) {
+            throw new IllegalStateException("The Vulkan device cannot import and export binary semaphores");
+        }
+        if (!matched.get("colorImportable").getAsBoolean() || !matched.get("depthImportable").getAsBoolean()) {
+            throw new IllegalStateException("The Vulkan device cannot import the required color/depth formats");
+        }
+        if (matched.get("queueFamilyIndex").getAsInt() < 0) {
+            throw new IllegalStateException("The Vulkan device has no graphics/transfer queue family");
+        }
     }
 
     private static JsonObject framebuffer(Framebuffer target) {
@@ -288,6 +354,7 @@ public final class ValidationClient {
                 }
                 report.add("capabilities", capabilities);
             }
+            checkVulkanBootstrap(mc, probe.getParent());
             report.addProperty("worldFrames", worldFrames);
             report.addProperty("worldTicks", worldTicks);
             Class<?> rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");

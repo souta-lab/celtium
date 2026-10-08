@@ -1,0 +1,51 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'org.soutalab.celtium'
+version = '0.1.0-dev.1'
+
+repositories { mavenCentral() }
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 8
+    options.encoding = 'UTF-8'
+}
+
+// The mod-side Vulkan code is compiled against the LWJGL version the validated Cleanroom installation ships.
+// It is never bundled: the installation provides the bindings, and when they are missing every entry point
+// reports a diagnostic instead of failing.
+def lwjglVersion = providers.gradleProperty('celtium_mod_lwjgl_version').getOrElse('3.4.1')
+
+dependencies {
+    compileOnly platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
+    compileOnly 'org.lwjgl:lwjgl'
+    compileOnly 'org.lwjgl:lwjgl-opengl'
+    compileOnly 'org.lwjgl:lwjgl-vulkan'
+    compileOnly 'com.google.code.gson:gson:2.10.1'
+
+    testImplementation platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
+    testImplementation 'org.lwjgl:lwjgl'
+    testImplementation 'org.lwjgl:lwjgl-opengl'
+    testImplementation 'org.lwjgl:lwjgl-vulkan'
+    testImplementation 'com.google.code.gson:gson:2.10.1'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Mirror celtium-probe: the mod consumes exactly this jar, with no runtime dependencies and no
+// classes/resources directory variants for Gradle to confuse on RFG's shadow classpath.
+configurations {
+    modEmbed {
+        canBeConsumed = true
+        canBeResolved = false
+        attributes {
+            attribute(Attribute.of('com.gtnewhorizons.retrofuturagradle.obfuscation', String), 'mcp')
+            attribute(Attribute.of('rfgDeobfuscatorTransformed', Boolean), true)
+        }
+    }
+}
+artifacts {
+    modEmbed(tasks.named('jar'))
+}
+tasks.named('test') { useJUnitPlatform() }

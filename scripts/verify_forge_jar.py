@@ -73,9 +73,10 @@ def verify(path):
             "org/soutalab/celtium/forge/CeltiumCommand.class",
             "org/embeddedt/embeddium/impl/shadow/joml/Matrix4f.class",
         }
-        probe_prefix = "org/soutalab/celtium/probe/"
-        sources = repository / "celtium-probe/src/main/java" / probe_prefix
-        required.update(probe_prefix + source.stem + ".class" for source in sources.glob("*.java"))
+        for prefix, module in (("org/soutalab/celtium/probe/", "celtium-probe"),
+                               ("org/soutalab/celtium/vulkan/", "celtium-vulkan")):
+            sources = repository / module / "src/main/java" / prefix
+            required.update(prefix + source.stem + ".class" for source in sources.glob("*.java"))
         errors.extend(f"Missing entry: {name}" for name in sorted(required - names))
 
         manifest = read_manifest(jar.read("META-INF/MANIFEST.MF"))

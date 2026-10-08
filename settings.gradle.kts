@@ -89,6 +89,7 @@ rootProject.name = "celtium"
 includeBuild("plugins/celeritas-mdg-plugin")
 include("common")
 include("celtium-probe")
+include("celtium-vulkan")
 
 val versionFilter: (String) -> Boolean =
     if (extra.has("celeritas_target_versions")) {

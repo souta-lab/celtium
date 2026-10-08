@@ -184,6 +184,25 @@ Full method, artifacts and limitations: [the P2 record](p2-backend-boundary.md).
 `.celtium-work/p2-forge-jar-verification.json`. The probe suite still passes 15/15 tests with
 `--rerun-tasks`. This stage adds no Vulkan device, allocation, draw or performance result.
 
+## P3 step 1 follow-up: Vulkan device bootstrap
+
+`/celtium vulkan` now creates a Vulkan logical device for the GPU the GL context runs on, verifies the P1b interop
+contract against it, reports JSON and destroys the device again. With LWJGL `lwjgl-vulkan-3.4.1.jar` on the test
+classpath both targets report `DEVICE_READY`: RX 6400 matches `RADV NAVI24` and UHD 630 matches `Intel(R) UHD
+Graphics 630 (CFL GT2)`, both with matching device *and* driver UUIDs, a graphics+transfer queue, opaque-FD
+semaphore import and export, and importable `R8G8B8A8_UNORM` / `D32_SFLOAT` images. Without bindings the same
+command reports `NoClassDefFoundError: org/lwjgl/vulkan/VK` and OpenGL keeps rendering.
+
+The device is created and destroyed on the client thread between world frames, and the P2 comparison was repeated
+afterwards: the captures are still pixel-identical to the upstream reference on both GPUs (0 differing pixels of
+921600), with the same visible sections, framebuffer contract, camera, used memory and buffer count. No Vulkan
+terrain draw exists and no performance claim is made. Method, artifacts and limitations:
+[the P3 bootstrap record](p3-vulkan-device-bootstrap.md). Evidence:
+`.celtium-work/runtime/p3c-celtium-{amd,intel}-bindings/`,
+`.celtium-work/runtime/p3c-celtium-{amd,intel}-nobindings/`,
+`.celtium-work/p3-bootstrap-parity-{amd,intel}.json`.
+
+
 ## GitHub Actions status
 
 Push `0e6fcc69b` triggered [run 37780359487](https://github.com/souta-lab/celtium/actions/runs/37780359487). GitHub rejected both jobs before any step because of the account's recent payment/spending-limit state. No CI build log exists. Local builds, packaging verification and hardware tests above are the evidence; CI is not reported as passing.
