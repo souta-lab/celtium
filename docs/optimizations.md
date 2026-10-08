@@ -47,9 +47,20 @@ reports real terrain times under Vulkan instead of `?? ms`.
 *Commit:* this one - the debug line now carries both numbers every second.
 
 The handoff is the one cost that is specific to this design, so it is measured instead of estimated: the backend
-times every `beginFrame()` and `endFrame()` call and reports
-`handoff: avg 165 us over 1102 calls, worst 1223 us` on the RX 6400 - about 4.4 calls per frame, so roughly 0.7 ms
-of every 16 ms frame. The worst case is the tail the frame-time percentiles show.
+times every `beginFrame()` and `endFrame()` call and counts opens, closes and pass calls, reporting
+`handoff: avg 168 us over 1096 calls (548 opens, 548 closes, 1644 pass calls), worst 811 us` on the RX 6400.
+
+The counters answer the question the timing alone could not: opens equal closes and there are three pass calls per
+open, so the images already change hands exactly **once per frame** - there is no redundant pair to remove, and the
+earlier estimate of "4.4 calls per frame" was an arithmetic error from dividing by a different frame count. With
+three terrain passes per frame, one pair per frame is the minimum this design can do. The cost that remains is
+per-handoff, about 0.34 ms per frame on average with occasional 0.8-1.5 ms outliers, and the depth conversion inside
+it cannot be removed on this driver (see below).
+
+An attempt to reduce the pair count by teaching the backend the renderer's frame counter was made, measured and
+reverted: it removed the close-and-reopen for a pass object rendered twice in one frame, but the counters showed the
+same 1 pair per frame before and after, so the change bought nothing measurable and added a parameter to the backend
+interface. The frame-counter plumbing was therefore dropped rather than kept on faith.
 
 The obvious way to remove that cost is to stop converting depth on every handoff, which only exists because the
 shared depth image is `VK_FORMAT_D32_SFLOAT` while the game's depth attachment is a D24 renderbuffer. A probe now
@@ -58,14 +69,11 @@ asks the device directly whether a shared `D24_UNORM_S8_UINT` depth image is pos
 RX 6400, so the conversion cannot be replaced by a same-format blit on this driver and the two full-screen
 conversion passes per handoff stay.
 
-An attempt to halve the number of handoff pairs per frame was made and reverted: the frame logic closed and
-reopened the images when the same pass object was rendered twice in one frame (which happens under render pass
-consolidation, where the CUTOUT and CUTOUT_MIPPED layers share a pass), and removing that reopening left the frame
-open across frames. Closing it instead from the renderer's once-per-frame hook submitted a command buffer while the
-previous submission was still pending - validation reported `vkResetCommandBuffer-00045`,
-`vkBeginCommandBuffer-00049`, `vkQueueSubmit-00071` and `vkResetFences-01123` and the game crashed. The verified
-logic is restored; a correct version of that change needs the frame to be closed where the renderer knows the
-terrain passes are finished, not from an asynchronous task hook.
+Closing the frame from the renderer's once-per-frame hook (`updateTimings`, called from `runAsyncTasks`) was also
+tried and reverted: it submitted a command buffer while the previous submission was still pending, and validation
+reported `vkResetCommandBuffer-00045`, `vkBeginCommandBuffer-00049`, `vkQueueSubmit-00071` and
+`vkResetFences-01123` before the game crashed. Any future change in this area has to close the frame on the render
+thread at a point where the renderer knows the terrain passes are finished.
 
 ### 6b. Buffer growth drains the queue before destroying the old buffer
 

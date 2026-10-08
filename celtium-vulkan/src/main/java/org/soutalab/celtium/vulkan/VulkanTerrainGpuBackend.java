@@ -135,6 +135,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long handoffNanos;
     private long handoffSamples;
     private long handoffWorstNanos;
+    private int frameOpens;
+    private int frameCloses;
+    private int renderCalls;
     private boolean frameSubmittedSomething;
     private final ReferenceOpenHashSet<TerrainRenderPass> framePasses = new ReferenceOpenHashSet<>();
 
@@ -241,10 +244,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.frameIndex++;
 
         boolean acquire = false;
+        this.renderCalls++;
         try {
             if (!this.frameOpen) {
                 long handoffStart = System.nanoTime();
                 this.frameTarget.beginFrame();
+                this.frameOpens++;
                 recordHandoff(System.nanoTime() - handoffStart);
                 this.frameOpen = true;
                 this.frameSubmittedSomething = false;
@@ -256,6 +261,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 closeFrame(true);
                 long handoffStart = System.nanoTime();
                 this.frameTarget.beginFrame();
+                this.frameOpens++;
                 recordHandoff(System.nanoTime() - handoffStart);
                 this.frameOpen = true;
                 this.frameSubmittedSomething = false;
@@ -320,6 +326,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             long handoffStart = System.nanoTime();
             this.frameTarget.endFrame();
+            this.frameCloses++;
             recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
             record("frame end failed: " + describe(error));
@@ -432,7 +439,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return null;
         }
         String summary = "handoff: avg " + (this.handoffNanos / this.handoffSamples / 1000L) + " us over "
-                + this.handoffSamples + " calls, worst " + (this.handoffWorstNanos / 1000L) + " us";
+                + this.handoffSamples + " calls (" + this.frameOpens + " opens, " + this.frameCloses + " closes, "
+                + this.renderCalls + " pass calls), worst " + (this.handoffWorstNanos / 1000L) + " us";
+        this.frameOpens = 0;
+        this.frameCloses = 0;
+        this.renderCalls = 0;
         this.handoffNanos = 0L;
         this.handoffSamples = 0L;
         this.handoffWorstNanos = 0L;
