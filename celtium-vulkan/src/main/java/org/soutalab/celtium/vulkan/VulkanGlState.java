@@ -1,0 +1,374 @@
+package org.soutalab.celtium.vulkan;
+
+import java.util.ArrayDeque;
+
+/**
+ * The renderer state that Minecraft's and Forge's {@code GlStateManager} calls are translated into.
+ * <p>
+ * This is the state half of the Forge API swap ({@code docs/forge-api-vulkan-inventory.md}). A mod calls
+ * {@code GlStateManager.func_179147_l()} (blend on) or pushes a matrix; those calls must not reach OpenGL. They land
+ * here instead, and the draw entry turns the accumulated state plus the batch's vertex format into a pipeline key,
+ * so a pipeline is only created when a draw actually needs it - the deferred selection the policy asks for.
+ * <p>
+ * Matrices are kept as {@code float[16]} column-major arrays, matching what the terrain path already uploads into its
+ * push-constant block, so no conversion is needed at draw time and this class carries no matrix library dependency
+ * that the shadow step would have to relocate.
+ * <p>
+ * Threading: render thread only, like the rest of the backend.
+ */
+public final class VulkanGlState {
+    private static final int MATRIX_FLOATS = 16;
+
+    /** The default state Minecraft starts a frame with, as far as this renderer tracks it. */
+    private final ArrayDeque<float[]> modelViewStack = new ArrayDeque<float[]>();
+    private final ArrayDeque<float[]> projectionStack = new ArrayDeque<float[]>();
+    private final ArrayDeque<float[]> textureStack = new ArrayDeque<float[]>();
+
+    private int matrixMode = MATRIX_MODE_MODELVIEW;
+    private boolean blendEnabled;
+    private int blendSrcRgb = BLEND_SRC_ALPHA;
+    private int blendDstRgb = BLEND_ONE_MINUS_SRC_ALPHA;
+    private int blendSrcAlpha = BLEND_ONE;
+    private int blendDstAlpha = BLEND_ONE_MINUS_SRC_ALPHA;
+    private boolean depthTestEnabled = true;
+    private int depthFunc = DEPTH_LEQUAL;
+    private boolean depthMask = true;
+    private boolean cullEnabled;
+    private int cullFace = CULL_BACK;
+    private boolean alphaTestEnabled;
+    private int alphaFunc = ALPHA_GREATER;
+    private float alphaRef = 0.1f;
+    private boolean lightingEnabled;
+    private boolean texture2dEnabled = true;
+    private int shadeModel = SHADE_SMOOTH;
+    private float colorRed = 1.0f;
+    private float colorGreen = 1.0f;
+    private float colorBlue = 1.0f;
+    private float colorAlpha = 1.0f;
+    private long boundTexture;
+    private int activeTextureUnit;
+
+    /** Matrix mode identifiers, matching the values Minecraft passes around. */
+    public static final int MATRIX_MODE_MODELVIEW = 0;
+    public static final int MATRIX_MODE_PROJECTION = 1;
+    public static final int MATRIX_MODE_TEXTURE = 2;
+
+    /** Blend factor identifiers, matching the {@code GlStateManager.SourceFactor}/{@code DestFactor} ordinals. */
+    public static final int BLEND_ZERO = 0;
+    public static final int BLEND_ONE = 1;
+    public static final int BLEND_SRC_ALPHA = 2;
+    public static final int BLEND_ONE_MINUS_SRC_ALPHA = 3;
+    public static final int BLEND_DST_COLOR = 4;
+    public static final int BLEND_ONE_MINUS_DST_COLOR = 5;
+    public static final int BLEND_SRC_COLOR = 6;
+    public static final int BLEND_ONE_MINUS_SRC_COLOR = 7;
+    public static final int BLEND_DST_ALPHA = 8;
+    public static final int BLEND_ONE_MINUS_DST_ALPHA = 9;
+
+    /** Depth and alpha function identifiers, matching the values Minecraft passes around. */
+    public static final int DEPTH_NEVER = 0;
+    public static final int DEPTH_LESS = 1;
+    public static final int DEPTH_EQUAL = 2;
+    public static final int DEPTH_LEQUAL = 3;
+    public static final int DEPTH_GREATER = 4;
+    public static final int DEPTH_NOTEQUAL = 5;
+    public static final int DEPTH_GEQUAL = 6;
+    public static final int DEPTH_ALWAYS = 7;
+    public static final int ALPHA_NEVER = 0;
+    public static final int ALPHA_LESS = 1;
+    public static final int ALPHA_EQUAL = 2;
+    public static final int ALPHA_LEQUAL = 3;
+    public static final int ALPHA_GREATER = 4;
+    public static final int ALPHA_NOTEQUAL = 5;
+    public static final int ALPHA_GEQUAL = 6;
+    public static final int ALPHA_ALWAYS = 7;
+
+    /** Cull face identifiers. */
+    public static final int CULL_FRONT = 0;
+    public static final int CULL_BACK = 1;
+    public static final int CULL_BOTH = 2;
+
+    /** Shade model identifiers. */
+    public static final int SHADE_FLAT = 0;
+    public static final int SHADE_SMOOTH = 1;
+
+    public VulkanGlState() {
+        this.modelViewStack.push(identity());
+        this.projectionStack.push(identity());
+        this.textureStack.push(identity());
+    }
+
+    /** Pushes the current matrix of the active mode; paired with {@link #popMatrix()}. */
+    public void pushMatrix() {
+        stack(this.matrixMode).push(copy(top(this.matrixMode)));
+    }
+
+    public void popMatrix() {
+        ArrayDeque<float[]> stack = stack(this.matrixMode);
+        if (stack.size() > 1) {
+            stack.pop();
+        }
+    }
+
+    /** Replaces the active matrix; Minecraft uses this for {@code glLoadIdentity} and ortho/projection setup. */
+    public void loadMatrix(float[] matrix) {
+        if (matrix == null || matrix.length < MATRIX_FLOATS) {
+            throw new IllegalArgumentException("a matrix must have at least " + MATRIX_FLOATS + " floats");
+        }
+        System.arraycopy(matrix, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+    }
+
+    /** Multiplies the active matrix in place, the {@code glMultMatrixf} case. */
+    public void multiplyMatrix(float[] matrix) {
+        if (matrix == null || matrix.length < MATRIX_FLOATS) {
+            throw new IllegalArgumentException("a matrix must have at least " + MATRIX_FLOATS + " floats");
+        }
+        float[] result = new float[MATRIX_FLOATS];
+        multiply(top(this.matrixMode), matrix, result);
+        System.arraycopy(result, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+    }
+
+    /** {@return a copy of the active matrix}, for the push-constant block a draw uploads. */
+    public float[] matrix(int mode) {
+        return copy(top(mode));
+    }
+
+    public int matrixMode() {
+        return this.matrixMode;
+    }
+
+    public void matrixMode(int mode) {
+        this.matrixMode = mode;
+    }
+
+    public boolean blendEnabled() {
+        return this.blendEnabled;
+    }
+
+    public void blendEnabled(boolean enabled) {
+        this.blendEnabled = enabled;
+    }
+
+    public void blendFunc(int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
+        this.blendSrcRgb = srcRgb;
+        this.blendDstRgb = dstRgb;
+        this.blendSrcAlpha = srcAlpha;
+        this.blendDstAlpha = dstAlpha;
+    }
+
+    public int blendSrcRgb() {
+        return this.blendSrcRgb;
+    }
+
+    public int blendDstRgb() {
+        return this.blendDstRgb;
+    }
+
+    public int blendSrcAlpha() {
+        return this.blendSrcAlpha;
+    }
+
+    public int blendDstAlpha() {
+        return this.blendDstAlpha;
+    }
+
+    public boolean depthTestEnabled() {
+        return this.depthTestEnabled;
+    }
+
+    public void depthTestEnabled(boolean enabled) {
+        this.depthTestEnabled = enabled;
+    }
+
+    public int depthFunc() {
+        return this.depthFunc;
+    }
+
+    public void depthFunc(int func) {
+        this.depthFunc = func;
+    }
+
+    public boolean depthMask() {
+        return this.depthMask;
+    }
+
+    public void depthMask(boolean mask) {
+        this.depthMask = mask;
+    }
+
+    public boolean cullEnabled() {
+        return this.cullEnabled;
+    }
+
+    public void cullEnabled(boolean enabled) {
+        this.cullEnabled = enabled;
+    }
+
+    public int cullFace() {
+        return this.cullFace;
+    }
+
+    public void cullFace(int face) {
+        this.cullFace = face;
+    }
+
+    public boolean alphaTestEnabled() {
+        return this.alphaTestEnabled;
+    }
+
+    public void alphaTestEnabled(boolean enabled) {
+        this.alphaTestEnabled = enabled;
+    }
+
+    public int alphaFunc() {
+        return this.alphaFunc;
+    }
+
+    public float alphaRef() {
+        return this.alphaRef;
+    }
+
+    public void alphaFunc(int func, float reference) {
+        this.alphaFunc = func;
+        this.alphaRef = reference;
+    }
+
+    public boolean lightingEnabled() {
+        return this.lightingEnabled;
+    }
+
+    public void lightingEnabled(boolean enabled) {
+        this.lightingEnabled = enabled;
+    }
+
+    public boolean texture2dEnabled() {
+        return this.texture2dEnabled;
+    }
+
+    public void texture2dEnabled(boolean enabled) {
+        this.texture2dEnabled = enabled;
+    }
+
+    public int shadeModel() {
+        return this.shadeModel;
+    }
+
+    public void shadeModel(int model) {
+        this.shadeModel = model;
+    }
+
+    public void color(float red, float green, float blue, float alpha) {
+        this.colorRed = red;
+        this.colorGreen = green;
+        this.colorBlue = blue;
+        this.colorAlpha = alpha;
+    }
+
+    public float colorRed() {
+        return this.colorRed;
+    }
+
+    public float colorGreen() {
+        return this.colorGreen;
+    }
+
+    public float colorBlue() {
+        return this.colorBlue;
+    }
+
+    public float colorAlpha() {
+        return this.colorAlpha;
+    }
+
+    public long boundTexture() {
+        return this.boundTexture;
+    }
+
+    public void boundTexture(long texture) {
+        this.boundTexture = texture;
+    }
+
+    public int activeTextureUnit() {
+        return this.activeTextureUnit;
+    }
+
+    public void activeTextureUnit(int unit) {
+        this.activeTextureUnit = unit;
+    }
+
+    /**
+     * {@return a key that changes exactly when a different pipeline is required}.
+     * <p>
+     * Blend factors, depth state, culling, alpha test, lighting and the shade model all bake into the pipeline
+     * object, while matrices, colour and texture bindings do not (they are push constants and descriptors), so they
+     * are deliberately left out of the key.
+     */
+    public long pipelineKey(int vertexFormatHash) {
+        long key = vertexFormatHash;
+        key = (key * 31) + (this.blendEnabled ? 1 : 0);
+        key = (key * 31) + (this.blendEnabled ? this.blendSrcRgb : 0);
+        key = (key * 31) + (this.blendEnabled ? this.blendDstRgb : 0);
+        key = (key * 31) + (this.blendEnabled ? this.blendSrcAlpha : 0);
+        key = (key * 31) + (this.blendEnabled ? this.blendDstAlpha : 0);
+        key = (key * 31) + (this.depthTestEnabled ? this.depthFunc + 1 : 0);
+        key = (key * 31) + (this.depthMask ? 1 : 0);
+        key = (key * 31) + (this.cullEnabled ? this.cullFace + 1 : 0);
+        key = (key * 31) + (this.alphaTestEnabled ? this.alphaFunc + 1 : 0);
+        key = (key * 31) + (this.lightingEnabled ? 1 : 0);
+        key = (key * 31) + this.shadeModel;
+        return key;
+    }
+
+    /** {@return a one-line description of the state that affects pipeline selection}, for diagnostics */
+    public String describe() {
+        return "blend=" + this.blendEnabled + "(" + this.blendSrcRgb + "," + this.blendDstRgb + ","
+                + this.blendSrcAlpha + "," + this.blendDstAlpha + ") depthTest=" + this.depthTestEnabled
+                + " depthFunc=" + this.depthFunc + " depthMask=" + this.depthMask + " cull=" + this.cullEnabled
+                + "(" + this.cullFace + ") alphaTest=" + this.alphaTestEnabled + "(" + this.alphaFunc + ","
+                + this.alphaRef + ") lighting=" + this.lightingEnabled + " shade=" + this.shadeModel;
+    }
+
+    private ArrayDeque<float[]> stack(int mode) {
+        switch (mode) {
+            case MATRIX_MODE_PROJECTION:
+                return this.projectionStack;
+            case MATRIX_MODE_TEXTURE:
+                return this.textureStack;
+            case MATRIX_MODE_MODELVIEW:
+            default:
+                return this.modelViewStack;
+        }
+    }
+
+    private float[] top(int mode) {
+        return stack(mode).peek();
+    }
+
+    private static float[] identity() {
+        float[] matrix = new float[MATRIX_FLOATS];
+        matrix[0] = 1.0f;
+        matrix[5] = 1.0f;
+        matrix[10] = 1.0f;
+        matrix[15] = 1.0f;
+        return matrix;
+    }
+
+    private static float[] copy(float[] source) {
+        float[] copy = new float[MATRIX_FLOATS];
+        System.arraycopy(source, 0, copy, 0, MATRIX_FLOATS);
+        return copy;
+    }
+
+    /** Column-major {@code result = left * right}, the order Minecraft's matrix stack implies. */
+    private static void multiply(float[] left, float[] right, float[] result) {
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; k++) {
+                    sum += left[k * 4 + row] * right[column * 4 + k];
+                }
+                result[column * 4 + row] = sum;
+            }
+        }
+    }
+}
