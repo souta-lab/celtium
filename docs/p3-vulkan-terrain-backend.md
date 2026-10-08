@@ -275,6 +275,16 @@ defects remain and are the next work items:
    2795 distinct colours against the OpenGL reference's `(73.4,95.7,45.1)` with 59), but the frame is now free of
    undefined behaviour, which is the precondition for judging anything else.
 
+   Re-running the colour probe on the validation-clean build changes the answer: the shader now reads a **green**
+   vertex colour - the max over the terrain is `(97,127,60)` and the mean `(73.4,95.7,45.1)`, i.e. the buffer's
+   `(145,189,89)` scaled by about 0.67 at the brightest vertex and less elsewhere, which is the per-vertex AO
+   gradient (`ChunkColorWriter.EMBEDDIUM` multiplies the tint by the AO value). The uniform grey of every earlier
+   probe was therefore an artefact of the undefined behaviour that the validation fixes removed, not the data. What
+   is left is a brightness question - about 0.67 at the brightest vertex - which the light map and the AO term
+   should account for, and the fact that the *rendered* frame (as opposed to the probe) still measures
+   `(36.7,37.4,37.2)`; the next step is to re-measure the normal frame on this same clean build, since every earlier
+   frame measurement predates the fixes.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
