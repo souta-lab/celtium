@@ -79,10 +79,19 @@ not implemented / verified on hardware separately.
   optional mip chain and the NEAREST/LINEAR choice the atlas and the GUI need. This is the S5 foundation for every
   texture that is not the terrain atlas.
 
-Both compile and are covered by the module build; neither is used by the renderer yet, so nothing about them is
-hardware-verified and the hybrid status of the build is unchanged by them. The next step is wiring
-`VulkanDynamicMesh` behind a `Tessellator`-compatible entry point for one simple case (GUI quads or particles)
-before the wider S4/S6 work, so the abstraction is proven against real drawing rather than in isolation.
+Both are now wired: with `-Dceltium.vulkan.uiTest=true` the backend builds a textured quad through
+`VulkanDynamicMesh` (the `POSITION_TEX_LIGHTMAP_COLOR` layout), draws it with `VulkanUiPipeline`
+(`celtium-vulkan/.../VulkanUiPipeline.java`, SPIR-V from `ui_quad.vert`/`ui_quad.frag`) into the terrain colour image
+inside the same render pass, and samples the block atlas through a second descriptor set. That exercises, on real
+hardware, the dynamic host-visible vertex stream, a second graphics pipeline, a second texture binding, straight
+alpha blending and the push-constant convention - the pieces every later stage needs.
+
+Evidence (RX 6400, `p5h-uitest-amd` against the same build without the flag): exactly 36864 pixels change, in a
+192x192 region at x 32..287, y 18..161 - the quad's declared NDC extent - with 13 distinct colours from the atlas
+(mean `(209.5, 99.1, 24.8)`), `status PASSED`, `nativeTerrainVerified True`, 1635 passes, 0 skipped, 0 errors and no
+validation message. This is a *test quad*, not the GUI port: no Minecraft GUI code path calls Vulkan yet, and the
+flag is off by default. What it establishes is that the abstraction works against real drawing; the next step is
+routing an actual `Tessellator`/`BufferBuilder` consumer (GUI quads, then particles) through it.
 
 ## Mod compatibility policy
 

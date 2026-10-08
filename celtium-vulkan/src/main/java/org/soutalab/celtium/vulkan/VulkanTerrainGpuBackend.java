@@ -134,6 +134,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int frameOpens;
     private int frameCloses;
     private int renderCalls;
+    private TerrainRenderPass lastUiPass;
     private int passSubmissions;
     private int passSkips;
     private int passErrors;
@@ -259,6 +260,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.frameIndex++;
 
         this.renderCalls++;
+        this.lastUiPass = pass;
 
         // One complete handoff per pass. GL signals its GL->Vulkan semaphore exactly once in beginFrame() and waits
         // for the Vulkan->GL semaphore exactly once in endFrame(), so exactly one submission must consume the first
@@ -426,6 +428,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private String depthSharingSummary;
+
+    /**
+     * Roadmap S4/S6 wiring: when enabled, the first non-terrain geometry (a textured quad built through
+     * {@link VulkanDynamicMesh} and drawn by {@link VulkanUiPipeline}) is recorded into the same render pass as the
+     * terrain, so the whole path - dynamic vertex stream, second pipeline, second texture binding, blending and
+     * push constants - is exercised inside the frame that the validation harness already checks.
+     */
+    private final boolean uiTestEnabled = Boolean.getBoolean("celtium.vulkan.uiTest");
+    private VulkanUiPipeline uiPipeline;
+    private VulkanDynamicMesh uiMesh;
 
     private void recordHandoff(long nanos) {
         this.handoffNanos += nanos;
@@ -889,6 +901,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
 
+        if (this.uiTestEnabled && pass.isSorted()) {
+            drawUiTestQuad(primitiveType);
+        }
+
         vkCmdEndRenderPass(this.commandBuffer);
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
@@ -1281,6 +1297,69 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         this.uniformWriteCursor = 0;
+    }
+
+    /**
+     * Records the non-terrain test geometry: one textured quad in normalised device coordinates, drawn with the UI
+     * pipeline into the terrain colour image. The projection and model-view are identities, so the quad lands in a
+     * fixed corner regardless of the camera, which makes the pixel check in the harness unambiguous.
+     */
+    private void drawUiTestQuad(ChunkPrimitiveType primitiveType) {
+        try {
+            VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+            if (terrain == null) {
+                return;
+            }
+            if (this.uiPipeline == null) {
+                this.uiPipeline = VulkanUiPipeline.create(this.context, terrain.renderPass());
+                this.uiMesh = new VulkanDynamicMesh(this.context);
+            }
+            if (this.atlasTexture == null) {
+                return;
+            }
+            this.uiMesh.begin(VulkanDynamicMesh.Layout.positionTexLightColor());
+            float u = 1.0f / 32.0f;
+            float v = 1.0f / 32.0f;
+            addQuadVertex(-0.95f, 0.95f, 0.0f, 0.0f);
+            addQuadVertex(-0.55f, 0.95f, u, 0.0f);
+            addQuadVertex(-0.55f, 0.55f, u, v);
+            addQuadVertex(-0.95f, 0.55f, 0.0f, v);
+            this.uiMesh.index(0);
+            this.uiMesh.index(1);
+            this.uiMesh.index(2);
+            this.uiMesh.index(0);
+            this.uiMesh.index(2);
+            this.uiMesh.index(3);
+            this.uiPipeline.bindTexture(this.atlasTexture);
+            ByteBuffer push = MemoryUtil.memAlloc(128);
+            try {
+                // Identity projection and model-view: the vertices above are already in clip space.
+                putIdentity(push, 0);
+                putIdentity(push, 64);
+                this.uiPipeline.draw(this.commandBuffer, this.uiMesh, push);
+            } finally {
+                MemoryUtil.memFree(push);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            this.passErrors++;
+            record("ui test quad failed: " + describe(error));
+        }
+    }
+
+    private void addQuadVertex(float x, float y, float u, float v) {
+        this.uiMesh.nextVertex();
+        this.uiMesh.putPosition(x, y, 0.0f);
+        this.uiMesh.putUv(u, v);
+        this.uiMesh.putLight(0, 240);
+        this.uiMesh.putColor(255, 255, 255, 255);
+    }
+
+    private static void putIdentity(ByteBuffer target, int offset) {
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                target.putFloat(offset + ((column * 4) + row) * 4, column == row ? 1.0f : 0.0f);
+            }
+        }
     }
 
     private void submitCommands() {

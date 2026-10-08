@@ -37,6 +37,12 @@ public final class SpirvShaders {
     /** Classpath name of the SOLID terrain pass fragment module. */
     public static final String SOLID_FRAGMENT = "terrain_solid.frag";
 
+    /** Vertex module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */
+    public static final String UI_VERTEX = "ui_quad.vert";
+
+    /** Fragment module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */
+    public static final String UI_FRAGMENT = "ui_quad.frag";
+
     private static final String RESOURCE_DIRECTORY = "/org/soutalab/celtium/vulkan/spirv/";
     private static final String RESOURCE_SUFFIX = ".spv";
 
