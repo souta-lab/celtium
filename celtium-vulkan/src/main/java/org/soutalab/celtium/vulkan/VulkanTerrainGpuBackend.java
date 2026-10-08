@@ -118,6 +118,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int command0Logged;
     private int verticesLogged;
     private boolean uniformsLogged;
+    private long readbackBuffer;
+    private long readbackMemory;
+    private long readbackMapped;
+    private boolean readbackPending;
+    private boolean readbackDone;
     private long lastSectionsDrawn;
     private long lastUploadedBytes;
 
@@ -222,6 +227,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             submitCommands();
             submitted = true;
+            if (this.readbackPending) {
+                readBackAndLog();
+            }
         } catch (RuntimeException | LinkageError error) {
             record("render failed: " + describe(error));
         } finally {
@@ -344,6 +352,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.lightmapTexture != null) {
             this.lightmapTexture.delete();
             this.lightmapTexture = null;
+        }
+        if (this.readbackMapped != 0) {
+            vkUnmapMemory(this.context.device(), this.readbackMemory);
+            this.readbackMapped = 0;
+        }
+        if (this.readbackBuffer != 0) {
+            vkDestroyBuffer(this.context.device(), this.readbackBuffer, null);
+            this.readbackBuffer = 0;
+        }
+        if (this.readbackMemory != 0) {
+            vkFreeMemory(this.context.device(), this.readbackMemory, null);
+            this.readbackMemory = 0;
         }
         destroyFramebuffer();
         if (this.frameTarget != null) {
@@ -571,6 +591,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
             pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
 
+            if (!this.readbackDone && !this.readbackPending) {
+                recordReadback(resources, (long) batch.baseVertex(0) * this.commonVertexStride);
+            }
             bindVertexBuffer(stack, resources);
             if (!indexBound) {
                 bindIndexBuffer(stack, this.sharedIndexBuffers.get(primitiveType));
@@ -1048,6 +1071,84 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static long align(long value, int alignment) {
         long mask = alignment - 1;
         return (value + mask) & ~mask;
+    }
+
+    /**
+     * Debug aid: copies the first vertices of the buffer the first draw uses into host-visible memory and decodes
+     * them. It answers the one question the CPU-side logs cannot: what the GPU actually holds.
+     */
+    private void ensureReadback() {
+        if (this.readbackBuffer != 0) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkBufferCreateInfo create = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack).sType$Default()
+                    .size(256).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateBuffer(this.context.device(), create, null, handle), "vkCreateBuffer(readback)");
+            this.readbackBuffer = handle.get(0);
+            org.lwjgl.vulkan.VkMemoryRequirements requirements = org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
+            vkGetBufferMemoryRequirements(this.context.device(), this.readbackBuffer, requirements);
+            org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties properties =
+                    org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties.calloc(stack);
+            vkGetPhysicalDeviceMemoryProperties(this.context.physicalDevice(), properties);
+            int type = -1;
+            for (int i = 0; i < properties.memoryTypeCount(); i++) {
+                int flags = properties.memoryTypes(i).propertyFlags();
+                if ((requirements.memoryTypeBits() & (1 << i)) != 0
+                        && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0
+                        && (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0) {
+                    type = i;
+                    break;
+                }
+            }
+            if (type < 0) {
+                throw new IllegalStateException("No host-visible coherent memory type for the debug readback");
+            }
+            org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
+                    .sType$Default().allocationSize(requirements.size()).memoryTypeIndex(type);
+            check(vkAllocateMemory(this.context.device(), allocate, null, handle), "vkAllocateMemory(readback)");
+            this.readbackMemory = handle.get(0);
+            check(vkBindBufferMemory(this.context.device(), this.readbackBuffer, this.readbackMemory, 0),
+                    "vkBindBufferMemory(readback)");
+            org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
+            check(vkMapMemory(this.context.device(), this.readbackMemory, 0, 256, 0, pointer), "vkMapMemory(readback)");
+            this.readbackMapped = pointer.get(0);
+        }
+    }
+
+    private void recordReadback(RegionResources resources, long sourceOffset) {
+        ensureReadback();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkBufferCopy.Buffer region = org.lwjgl.vulkan.VkBufferCopy.calloc(1, stack);
+            region.get(0).srcOffset(sourceOffset).dstOffset(0L).size(64L);
+            vkCmdCopyBuffer(this.commandBuffer, resources.vertexArena.buffer().buffer(), this.readbackBuffer, region);
+            org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_HOST_READ_BIT);
+            vkCmdPipelineBarrier(this.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                    barrier, null, null);
+        }
+        this.readbackPending = true;
+    }
+
+    private void readBackAndLog() {
+        this.readbackPending = false;
+        this.readbackDone = true;
+        waitForIdle();
+        ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, 64);
+        view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        StringBuilder line = new StringBuilder("gpu vertex0:");
+        for (int vertex = 0; vertex < 2; vertex++) {
+            int base = vertex * 32;
+            line.append(" [").append(vertex).append("] pos=(").append(view.getFloat(base)).append(',')
+                    .append(view.getFloat(base + 4)).append(',').append(view.getFloat(base + 8)).append(')')
+                    .append(" colour=0x").append(Integer.toHexString(view.getInt(base + 12)))
+                    .append(" uv=(").append(view.getFloat(base + 16)).append(',')
+                    .append(view.getFloat(base + 20)).append(')')
+                    .append(" light=0x").append(Integer.toHexString(view.getInt(base + 24)));
+        }
+        record(line.toString());
     }
 
     private void record(String diagnostic) {

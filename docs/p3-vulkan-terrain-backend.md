@@ -148,6 +148,16 @@ defects remain and are the next work items:
    the next measurement copies the arena's bytes back to host memory for the range the first draw uses and decodes
    them there.
 
+   The GPU side is now measured directly: a debug readback copies the first 64 bytes of the range the first draw
+   uses into host-visible memory, and it returns exactly the uploaded data
+   (`[0] pos=(0.0,4.0,0.0) colour=0xff59bd91 uv=(0.125,0.469) light=0xf000fc01`). The buffer, the draw offsets and
+   the fetch are therefore all correct, so the search moves to the light-map sample: solving
+   `v_Color = a_Color x lightColor` for the measured uniform `(0.439,0.439,0.439)` gives `lightColor =
+   (0.77,0.59,1.26)`, which a UNORM sample cannot produce ((0.569,0.741,0.349) x (0.77,0.59,1.26) matches all three
+   channels exactly, so the algebra is not the problem - the plausibility of the sample is). The next measurement
+   is therefore to output the light-map sample itself (`fragColor = lightColor`) so its true value is known, and to
+   check the descriptor and the image view that binding 1 actually holds.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
