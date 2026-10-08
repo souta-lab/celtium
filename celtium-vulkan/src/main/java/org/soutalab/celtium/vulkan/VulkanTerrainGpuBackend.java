@@ -116,7 +116,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private long lastDrawCommands;
     private int command0Logged;
-    private boolean verticesLogged;
+    private int verticesLogged;
     private boolean uniformsLogged;
     private long lastSectionsDrawn;
     private long lastUploadedBytes;
@@ -443,7 +443,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * bytes in hand.
      */
     private void logFirstVertex(java.util.List<PendingMesh> pending) {
-        if (verticesLogged) {
+        if (verticesLogged >= 8) {
             return;
         }
         for (PendingMesh mesh : pending) {
@@ -471,8 +471,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 line.append(" colorARGB=0x").append(Integer.toHexString(vertices.getInt(8)));
                 line.append(" light=0x").append(Integer.toHexString(vertices.getInt(16)));
             }
-            verticesLogged = true;
-            record(line.toString());
+            verticesLogged++;
+            record("mesh" + verticesLogged + " pass=" + mesh.pass.name() + " " + line);
             return;
         }
     }

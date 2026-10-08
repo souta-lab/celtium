@@ -111,6 +111,13 @@ defects remain and are the next work items:
    upload and the draw. Next step: log the colour bytes of several meshes (and of a mesh in a section that is
    visible in the captured frame) instead of only the first upload, and compare that against what the shader sees.
 
+   Arena growth is ruled out: starting each region's vertex arena at 8 MiB so it never grows leaves the frame
+   identical (mean `(36.7,37.4,37.2)`), and eight logged meshes from different regions all carry the same green
+   colour and UV, so the upload content is consistently correct while the shader still reads a grey. The next
+   measurement has to look at the GPU side of that gap: read the arena's bytes back for the range the first draw
+   uses and compare them with the bytes that were uploaded - that separates "the shader reads the wrong place" from
+   "the buffer the draw binds is not the buffer that was written".
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
