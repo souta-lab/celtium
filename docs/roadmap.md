@@ -41,6 +41,18 @@ Capability-based selection and multiple GPU support are core completion requirem
 P2 is complete as the boundary and GL-parity stage; the partial item 5 stays open and is re-estimated with P3.
 See [the P2 record](p2-backend-boundary.md).
 
+## P3 sequence
+
+1. Device bootstrap: create the Vulkan instance/device for the GL device's UUID, with the required extensions and
+   the interop contract already proven in P1b. Diagnostics, not a fallback, when bindings or the contract are
+   missing; the selection stays `opengl` and says why.
+2. Backend-neutral upload records: vertices, indices, vertex format, pass, per-face ranges and generation, so the
+   GPU placement decision is no longer read out of GL arena state.
+3. Vulkan arena and mesh upload through the boundary, with the existing CPU meshing, graph and sort code untouched.
+4. Atlas and lightmap binding for the SOLID pass only, reusing the interop path validated on both GPUs.
+5. Compare against GL with the P2 fixture: same visible sections per pass, then address cutout/translucency (P4),
+   batching and performance (P5).
+
 The design's effort ranges are provisional. Re-estimate P2 onward after this evidence is available.
 
 See [the validation record](validation-2026-10-08.md), [interop reproduction](interop-validation.md) and [the Codex handoff](HANDOFF.md). The RX 6400 D24 query still fails. Successful D32 sharing with explicit D24 conversion is established by the separate experiment, rather than inferred from that query. The supported source contract is RGBA8 / D24 renderbuffer, no stencil, one sample. Other targets must retain GL until separately validated.
