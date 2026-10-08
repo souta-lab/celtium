@@ -63,6 +63,9 @@ public final class VulkanGlTexture {
     /** Number of mip levels of the current image; the OpenGL atlas is sampled with a mip chain. */
     private int mipLevels = 1;
 
+    /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
+    private boolean nearestFilter;
+
     private static final int BYTES_PER_PIXEL = 4;
 
     /**
@@ -112,10 +115,19 @@ public final class VulkanGlTexture {
      *                                  object creation fails
      */
     public static VulkanGlTexture create(VulkanContext context, int width, int height) {
+        return create(context, width, height, true);
+    }
+
+    /**
+     * @param nearestFilter {@code true} for the pixel-art block atlas, {@code false} for the light map, whose
+     *                      OpenGL texture is filtered linearly
+     */
+    public static VulkanGlTexture create(VulkanContext context, int width, int height, boolean nearestFilter) {
         if (context == null) {
             throw new NullPointerException("context");
         }
         VulkanGlTexture result = new VulkanGlTexture(context);
+        result.nearestFilter = nearestFilter;
         try {
             result.createSampler();
             result.createImageResources(width, height);
@@ -309,8 +321,12 @@ public final class VulkanGlTexture {
         VkDevice device = context.device();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSamplerCreateInfo create = VkSamplerCreateInfo.calloc(stack).sType$Default()
-                    .magFilter(VK_FILTER_LINEAR)
-                    .minFilter(VK_FILTER_LINEAR)
+                    // Minecraft's block atlas is a pixel-art texture: the OpenGL texture uses GL_NEAREST for
+                    // magnification and GL_NEAREST_MIPMAP_LINEAR for minification, so linear magnification here
+                    // blurred every magnified texel and the frame measured four times fewer texture edges than
+                    // the OpenGL reference. NEAREST filters with a linear mipmap mode reproduce that combination.
+                    .magFilter(this.nearestFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
+                    .minFilter(this.nearestFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
                     .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)
                     .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)

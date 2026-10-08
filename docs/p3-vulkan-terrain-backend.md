@@ -373,6 +373,15 @@ defects remain and are the next work items:
    size and measure the on-screen cell size in both backends, which separates a UV-scale difference from an
    LOD/bias difference in one run.
 
+   **Parity reached.** The blur was a sampler-filter mismatch, not a mip problem: Minecraft's block atlas is
+   pixel art, and its OpenGL texture uses `GL_NEAREST` magnification with `GL_NEAREST_MIPMAP_LINEAR` minification,
+   while the mirrored atlas was created with linear filters, so every magnified texel was smoothed (93.4 texture
+   edges per row against 21.0). Giving the atlas `NEAREST` filters and keeping the light map `LINEAR` - the light
+   map really is filtered linearly - brings the frame to
+   `mean|difference| = 0.49` with the mean colour **identical** to the OpenGL reference (`(73.4,95.7,45.1)` both) and
+   0.94% of pixels differing by more than 8, against 62% before. The Vulkan terrain path now renders the same frame
+   as the OpenGL backend on the RX 6400.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

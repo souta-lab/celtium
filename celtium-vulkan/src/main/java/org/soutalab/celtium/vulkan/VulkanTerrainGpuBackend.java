@@ -989,7 +989,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 if (this.atlasTexture == null) {
                     int[] size = textureSize(atlasId);
-                    this.atlasTexture = VulkanGlTexture.create(this.context, size[0], size[1]);
+                    this.atlasTexture = VulkanGlTexture.create(this.context, size[0], size[1], true);
                 }
                 this.atlasTexture.uploadFromGlTexture(atlasId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                 int[] atlasSize = textureSize(atlasId);
@@ -1007,7 +1007,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 if (this.lightmapTexture == null) {
                     int[] size = textureSize(lightmapId);
-                    this.lightmapTexture = VulkanGlTexture.create(this.context, size[0], size[1]);
+                    this.lightmapTexture = VulkanGlTexture.create(this.context, size[0], size[1], false);
                 }
                 this.lightmapTexture.uploadFromGlTexture(lightmapId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                 int[] lightmapSize = textureSize(lightmapId);
