@@ -1,6 +1,5 @@
 package org.embeddedt.embeddium.impl.render.chunk.data;
 
-import org.embeddedt.embeddium.impl.gl.arena.GlBufferSegment;
 import org.embeddedt.embeddium.impl.gl.util.VertexRange;
 import org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFacing;
 import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType;
@@ -12,8 +11,8 @@ import java.util.Arrays;
 import java.util.Map;
 
 public class SectionRenderDataStorage {
-    private final GlBufferSegment[] allocations = new GlBufferSegment[RenderRegion.REGION_SIZE];
-    private final GlBufferSegment[] indexAllocations = new GlBufferSegment[RenderRegion.REGION_SIZE];
+    private final MeshBufferSegment[] allocations = new MeshBufferSegment[RenderRegion.REGION_SIZE];
+    private final MeshBufferSegment[] indexAllocations = new MeshBufferSegment[RenderRegion.REGION_SIZE];
 
     private final long pMeshDataArray;
     private final ChunkPrimitiveType primitiveType;
@@ -51,7 +50,7 @@ public class SectionRenderDataStorage {
     }
 
     public void setMeshes(int localSectionIndex,
-                          GlBufferSegment allocation, @Nullable GlBufferSegment indexAllocation, Map<ModelQuadFacing, VertexRange> ranges) {
+                          MeshBufferSegment allocation, @Nullable MeshBufferSegment indexAllocation, Map<ModelQuadFacing, VertexRange> ranges) {
         if (this.allocations[localSectionIndex] != null) {
             this.allocations[localSectionIndex].delete();
             this.allocations[localSectionIndex] = null;
@@ -99,7 +98,7 @@ public class SectionRenderDataStorage {
         }
     }
 
-    public void replaceIndexBuffer(int localSectionIndex, GlBufferSegment indexAllocation) {
+    public void replaceIndexBuffer(int localSectionIndex, MeshBufferSegment indexAllocation) {
         removeIndexBuffer(localSectionIndex);
 
         this.indexAllocations[localSectionIndex] = indexAllocation;

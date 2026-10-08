@@ -22,6 +22,8 @@ public final class TerrainBackendStatus {
                 return description;
             }
         }
-        return TerrainBackendSelection.select().describe();
+        // No live renderer yet (main menu, or terrain not initialized): state what this build would do.
+        return TerrainBackendSelection.opengl(
+                "terrain is not initialized yet; the live selection is reported once a world is loaded").describe();
     }
 }

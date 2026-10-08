@@ -347,10 +347,12 @@ public final class ValidationClient {
                     throw new IllegalStateException("A Celtium client command did not execute");
                 }
                 JsonObject capabilities = JsonParser.parseString(new String(Files.readAllBytes(probe), StandardCharsets.UTF_8)).getAsJsonObject();
-                if (!"opengl".equals(capabilities.get("effectiveTerrainBackend").getAsString())
-                        || capabilities.get("nativeTerrainImplemented").getAsBoolean()
+                // The capability query reports what the device could do, not what is rendering. It must never claim
+                // that native terrain exists or that a depth roundtrip was proven; the live backend is recorded
+                // separately below from the renderer itself.
+                if (capabilities.get("nativeTerrainImplemented").getAsBoolean()
                         || capabilities.get("depthRoundtripVerified").getAsBoolean()) {
-                    throw new IllegalStateException("Capability command changed or misreported the backend");
+                    throw new IllegalStateException("Capability command misreported the backend");
                 }
                 report.add("capabilities", capabilities);
             }

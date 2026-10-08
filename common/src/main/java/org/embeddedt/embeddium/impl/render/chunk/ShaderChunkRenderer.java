@@ -92,6 +92,14 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
         return componentFactories;
     }
 
+    /**
+     * The fog inputs this renderer uses. A backend that draws terrain itself needs the same values; reading them
+     * from GL state instead would silently diverge when a fog service provides them procedurally.
+     */
+    public FogService getFogService() {
+        return this.environment.fogService();
+    }
+
     protected void begin(TerrainRenderPass pass) {
         pass.startDrawing();
 

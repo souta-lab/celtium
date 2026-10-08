@@ -7,6 +7,7 @@ import lombok.Getter;
 import org.embeddedt.embeddium.impl.common.util.TimeUtil;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
 import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
+import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainBackendLoader;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainBackendSelection;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
 import org.embeddedt.embeddium.impl.render.chunk.backend.GlTerrainGpuBackend;
@@ -158,8 +159,16 @@ public abstract class RenderSectionManager {
         this.renderDistance = renderDistance;
 
         this.regions = new RenderRegionManager(commandList, this.renderPassConfiguration);
-        this.terrainBackendSelection = TerrainBackendSelection.select();
-        this.terrainBackend = new GlTerrainGpuBackend(RenderDevice.INSTANCE, this.chunkRenderer, this.regions);
+
+        // Prefer a native backend when one can be created for this exact device. The loader never links against
+        // Vulkan, so a missing module or missing bindings degrade to OpenGL with a stated reason instead of failing.
+        List<String> backendReasons = new ArrayList<>();
+        TerrainGpuBackend nativeBackend = TerrainBackendLoader.createVulkan(configuration, this.chunkRenderer,
+                this.regions, backendReasons);
+        this.terrainBackendSelection = TerrainBackendSelection.select(nativeBackend, backendReasons);
+        this.terrainBackend = nativeBackend != null
+                ? nativeBackend
+                : new GlTerrainGpuBackend(RenderDevice.INSTANCE, this.chunkRenderer, this.regions);
 
         this.minSection = minSection;
         this.maxSection = maxSection;

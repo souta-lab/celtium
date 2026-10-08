@@ -1,6 +1,8 @@
 package org.embeddedt.embeddium.impl.gl.arena;
 
-public class GlBufferSegment {
+import org.embeddedt.embeddium.impl.render.chunk.data.MeshBufferSegment;
+
+public class GlBufferSegment implements MeshBufferSegment {
     private final GlBufferArena arena;
 
     private boolean free = false;
@@ -17,6 +19,7 @@ public class GlBufferSegment {
         this.length = length;
     }
 
+    @Override
     public void delete() {
         this.arena.free(this);
     }
@@ -25,6 +28,7 @@ public class GlBufferSegment {
         return this.offset + this.length;
     }
 
+    @Override
     public int getLength() {
         return this.length;
     }
@@ -37,6 +41,7 @@ public class GlBufferSegment {
         this.length = len;
     }
 
+    @Override
     public int getOffset() {
         return this.offset;
     }

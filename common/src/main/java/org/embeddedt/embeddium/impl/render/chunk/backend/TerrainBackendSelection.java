@@ -1,18 +1,21 @@
 package org.embeddedt.embeddium.impl.render.chunk.backend;
 
+import java.util.List;
+
 /**
  * The terrain GPU backend chosen for the current GL device, together with the reason for that choice.
  * <p>
  * Selection is fail-closed. A configuration is only moved off the retained OpenGL backend once the capability
  * contract for that exact device (GL device/driver UUIDs, image and semaphore support, required usage and sample
- * counts, and required features) has been checked. Nothing here switches to another physical GPU implicitly, and
- * every fallback states why it happened so it can be reported to the user and asserted by a validation fixture.
+ * counts, and required features) has been checked and the alternative backend implements every render pass in use.
+ * Nothing here switches to another physical GPU implicitly, and every fallback states why it happened so it can be
+ * reported to the user and asserted by a validation fixture.
  */
 public final class TerrainBackendSelection {
     /** The retained backend: Celeritas' original OpenGL terrain renderer. */
     public static final String OPENGL = "opengl";
 
-    /** The native Vulkan terrain backend. Not implemented yet; never selected by this build. */
+    /** The native Vulkan terrain backend. */
     public static final String VULKAN = "vulkan";
 
     private final String name;
@@ -27,14 +30,24 @@ public final class TerrainBackendSelection {
 
     /**
      * Chooses the terrain backend for the device Celtium is currently running on.
-     * <p>
-     * Native Vulkan terrain does not exist in this build, so the OpenGL backend is always retained. When the Vulkan
-     * upload path lands, this method gains the per-device capability verdict as its input and the OpenGL result
-     * becomes conditional; until then the previous behaviour is preserved exactly.
+     *
+     * @param vulkan the Vulkan backend, or {@code null} when OpenGL must be retained
+     * @param reasons why Vulkan was rejected; empty when it was selected
      */
-    public static TerrainBackendSelection select() {
-        return new TerrainBackendSelection(OPENGL, false,
-                "native Vulkan terrain is not implemented in this build");
+    public static TerrainBackendSelection select(TerrainGpuBackend vulkan, List<String> reasons) {
+        if (vulkan != null) {
+            return new TerrainBackendSelection(vulkan.getName(), true,
+                    "Vulkan device matched the OpenGL device UUID and the interop contract was satisfied");
+        }
+        if (reasons.isEmpty()) {
+            reasons.add("no native terrain backend was offered for this device");
+        }
+        return new TerrainBackendSelection(OPENGL, false, String.join("; ", reasons));
+    }
+
+    /** The fail-closed answer used before a device or renderer exists, e.g. for the client command and the log. */
+    public static TerrainBackendSelection opengl(String reason) {
+        return new TerrainBackendSelection(OPENGL, false, reason);
     }
 
     public String getName() {
