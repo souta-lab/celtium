@@ -447,6 +447,12 @@ defects remain and are the next work items:
    make the round trip per frame instead of per pass, and to give the one-shot command buffers a small fence-based
    pool instead of a queue drain - both are structural changes that need the parity fixture to stay green.
 
+   First optimisation applied: `VulkanGlTexture` hashes the level-0 pixels it just read and skips the copy, the
+   command buffer and the queue drain when the content is unchanged, which is the common case for the light map
+   (re-read every frame, but only different when the sun moves or a torch flickers). The RX 6400 tail improves from
+   `p99 = 21.24 ms` to `18.33 ms` with the median unchanged (`16.12` against the OpenGL reference's `16.15`) and the
+   frame still matches (same 6.86 mean difference as before the change).
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

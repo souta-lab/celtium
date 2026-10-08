@@ -66,6 +66,9 @@ public final class VulkanGlTexture {
     /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
     private boolean nearestFilter;
 
+    /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
+    private long lastPixelHash;
+
     private static final int BYTES_PER_PIXEL = 4;
 
     /**
@@ -172,6 +175,17 @@ public final class VulkanGlTexture {
         requireAlive();
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
+            long hash = 1469598103934665603L;
+            for (int i = 0; i < level.width * level.height * BYTES_PER_PIXEL; i++) {
+                hash = (hash ^ (level.pixels.get(i) & 0xFF)) * 1099511628211L;
+            }
+            if (hash == lastPixelHash && level.width == width && level.height == height) {
+                // The content is identical to what is already on the device: skip the copy, the command buffer and
+                // the queue drain it would otherwise cost. The light map in particular is re-read every frame but
+                // only changes when the sun moves or a torch flickers.
+                return;
+            }
+            lastPixelHash = hash;
             dumpForDebugging(glTextureId, level);
             if (level.width != width || level.height != height) {
                 recreateImageResources(level.width, level.height);
