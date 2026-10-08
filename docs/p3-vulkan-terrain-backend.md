@@ -296,6 +296,20 @@ defects remain and are the next work items:
    if the colour follows *those* bytes, the two attributes are wired to the wrong offsets somewhere the description
    does not show.
 
+   Two controlled repaints on the validation-clean Vulkan build separate hue from luminance, and they disagree
+   with each other in a way that is itself the clue:
+   - colours replaced by magenta `(1,0,1)` render magenta `(45,0,45)`..`(76,0,76)`, so the hue of the replaced
+     bytes does reach the frame and the fetch is not simply constant;
+   - colours replaced by white `(1,1,1)` render a bright neutral grey `(73.1,74.5,74.1)`, i.e. albedo x light with
+     a shading factor of about 0.29;
+   - the real green `(145,189,89)` renders `(36.7,37.4,37.2)` - neutral, and almost exactly half of the white
+     result in every channel, as if the hue were dropped and only luminance survived.
+   Three different vertex colours giving three different results rules out a constant attribute, and the shading
+   factor itself differs between runs (0.176 for magenta against 0.287 for white), which points at something that
+   varies per run and per draw rather than at a wrong offset. The next measurement should keep one vertex colour
+   fixed and vary only the light map (for example by forcing the light coordinate) so the two factors can be
+   separated without cross-run comparisons.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
