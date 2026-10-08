@@ -201,6 +201,16 @@ defects remain and are the next work items:
    pattern uploaded as the atlas (for example a checkerboard) would show immediately whether binding 2 really
    samples the mirrored atlas.
 
+   The checkerboard settled the texture question and produced a sharper symptom. Painting the mirrored atlas as
+   8x8 red/blue squares renders the terrain as alternating **blue `(0,0,128)` and black `(0,0,0)`** cells with a
+   50/50 split, so binding 2 really does sample the mirrored atlas and the pattern survives to the screen - but only
+   the blue channel does: the red squares, which are `(255,0,0)`, come out black. A channel-wise multiply cannot
+   move colour between channels, so `m_color.r` and `m_color.g` must both be zero while `m_color.b` is about 0.5.
+   That is a much narrower statement than "the colour is grey": the vertex colour the fragment stage applies is
+   `(0,0,~0.5)`, i.e. blue-only, while the buffer holds green. The next probe should therefore print `m_color` and
+   its two factors in the same frame *with the checkerboard in place*, so the zeroed channels can be attributed to
+   either `a_Color` or the light-map sample.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
