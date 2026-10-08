@@ -125,6 +125,17 @@ and the shader decode (`position`, `tex_coord`, `material`, `draw_id`, light coo
 bakes the section offset into the packed position - changes the frame but not into a correct one (58.5 mean
 difference), so the fault is not that single term.
 
+A reference for the broken path now exists as well: the *upstream* OpenGL renderer was run with the same fixture
+and the same option (`-Dceltium.validation.compactVertexFormat=true`), and it renders the expected scene, so
+`.celtium-work/runtime/p5c-ref-compact` is a correct compact frame to compare against
+(`.celtium-work/runtime/p5d-compact-amd` is the Vulkan one, 77.15 mean difference apart). Side by side, the OpenGL
+frame shows the terrain plane with the glass grid filling the lower half while the Vulkan frame shows sky with two
+dark wedges - the Vulkan geometry is displaced or scaled away rather than merely coloured differently.
+
+Also verified while looking for the fault: the compiled compact SPIR-V really does contain `VERT_POS_SCALE`
+(`1.5258789e-05`) and `VERT_POS_OFFSET` (`-8.0`), and the arena/index plumbing takes its vertex offset from the
+section storage rather than a hardcoded stride.
+
 The option is therefore left alone (default off) and the fixture keeps a switch
 (`-Dceltium.validation.compactVertexFormat=true`) so the encoding can be exercised from the same scene. The next
 attempt should compare the packed fields against the encoder in `CompactChunkVertex` for one section with a known
