@@ -174,6 +174,14 @@ defects remain and are the next work items:
    the screen. The next measurement therefore has to read back several draws (and ideally the one covering the
    centre of the screen) instead of only the first, so the colour of the visible mesh is known rather than assumed.
 
+   Reading several draws back shows only one region has geometry in the first pass, and its colour is the green
+   `0xff59bd91`. That makes the shader-side measurement (`a_Color.r = 0.439`) and the buffer-side measurement
+   disagree about the *same* draw, which no data-flow explanation covers; the remaining suspects are the
+   instrumentation itself (the screenshot region assumed to be terrain, the per-pixel averages of a varying that
+   may not be uniform) rather than the pipeline. A fresh look should therefore start from a controlled scene - one
+   section, one block, a fixed camera - instead of the fixture's full view, so every number can be traced to one
+   vertex. Until that is done, the colour defect stays open and the OpenGL backend stays the default.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

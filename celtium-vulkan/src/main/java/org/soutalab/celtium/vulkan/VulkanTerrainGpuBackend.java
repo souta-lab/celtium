@@ -121,6 +121,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackBuffer;
     private long readbackMemory;
     private long readbackMapped;
+    private int readbackSlots;
     private boolean readbackPending;
     private boolean readbackDone;
     private long lastSectionsDrawn;
@@ -591,8 +592,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
             pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
 
-            if (!this.readbackDone && !this.readbackPending) {
-                recordReadback(resources, (long) batch.baseVertex(0) * this.commonVertexStride);
+            if (!this.readbackDone && this.readbackSlots < 8) {
+                recordReadback(resources, (long) batch.baseVertex(0) * this.commonVertexStride, this.readbackSlots);
+                this.readbackSlots++;
+                this.readbackPending = true;
             }
             bindVertexBuffer(stack, resources);
             if (!indexBound) {
@@ -1083,7 +1086,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkBufferCreateInfo create = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack).sType$Default()
-                    .size(256).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+                    .size(8 * 64).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateBuffer(this.context.device(), create, null, handle), "vkCreateBuffer(readback)");
             this.readbackBuffer = handle.get(0);
@@ -1112,16 +1115,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             check(vkBindBufferMemory(this.context.device(), this.readbackBuffer, this.readbackMemory, 0),
                     "vkBindBufferMemory(readback)");
             org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
-            check(vkMapMemory(this.context.device(), this.readbackMemory, 0, 256, 0, pointer), "vkMapMemory(readback)");
+            check(vkMapMemory(this.context.device(), this.readbackMemory, 0, 8 * 64, 0, pointer), "vkMapMemory(readback)");
             this.readbackMapped = pointer.get(0);
         }
     }
 
-    private void recordReadback(RegionResources resources, long sourceOffset) {
+    private void recordReadback(RegionResources resources, long sourceOffset, int slot) {
         ensureReadback();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkBufferCopy.Buffer region = org.lwjgl.vulkan.VkBufferCopy.calloc(1, stack);
-            region.get(0).srcOffset(sourceOffset).dstOffset(0L).size(64L);
+            region.get(0).srcOffset(sourceOffset).dstOffset((long) slot * 64L).size(64L);
             vkCmdCopyBuffer(this.commandBuffer, resources.vertexArena.buffer().buffer(), this.readbackBuffer, region);
             org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -1136,17 +1139,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.readbackPending = false;
         this.readbackDone = true;
         waitForIdle();
-        ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, 64);
+        ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, Math.max(64, this.readbackSlots * 64));
         view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        StringBuilder line = new StringBuilder("gpu vertex0:");
-        for (int vertex = 0; vertex < 2; vertex++) {
-            int base = vertex * 32;
-            line.append(" [").append(vertex).append("] pos=(").append(view.getFloat(base)).append(',')
-                    .append(view.getFloat(base + 4)).append(',').append(view.getFloat(base + 8)).append(')')
-                    .append(" colour=0x").append(Integer.toHexString(view.getInt(base + 12)))
-                    .append(" uv=(").append(view.getFloat(base + 16)).append(',')
-                    .append(view.getFloat(base + 20)).append(')')
-                    .append(" light=0x").append(Integer.toHexString(view.getInt(base + 24)));
+        StringBuilder line = new StringBuilder("gpu draws:");
+        for (int slot = 0; slot < this.readbackSlots; slot++) {
+            int base = slot * 64;
+            line.append(" [").append(slot).append("] colour=0x")
+                    .append(Integer.toHexString(view.getInt(base + 12)))
+                    .append(" light=0x").append(Integer.toHexString(view.getInt(base + 24)))
+                    .append(" pos=(").append(view.getFloat(base)).append(',')
+                    .append(view.getFloat(base + 4)).append(',').append(view.getFloat(base + 8)).append(')');
         }
         record(line.toString());
     }
