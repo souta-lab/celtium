@@ -310,6 +310,15 @@ defects remain and are the next work items:
    fixed and vary only the light map (for example by forcing the light coordinate) so the two factors can be
    separated without cross-run comparisons.
 
+   The three repaints can be reconciled arithmetically: the white-vertex frame measures `(0.287,0.292,0.290)`, so
+   `albedo x light = 0.29` per channel, and the real green data renders `(0.144,0.147,0.146)` - exactly that value
+   times **0.5**. The shader therefore multiplies by a uniform `0.5` grey (byte `0x80`) for the real vertices, while
+   the census reads `0x91/0xbd/0x59` from the same offset of the same meshes, and a repaint of offset 12 does change
+   the frame. The two facts together say the *arena* does not hold the bytes that were handed to the upload path at
+   the moment of the draw, so the next measurement is to read the arena back immediately after an upload (with the
+   same host-visible copy path the draw-time readback uses) and compare it byte for byte with the mesh buffer that
+   fed it - the one comparison that has not been made yet.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
