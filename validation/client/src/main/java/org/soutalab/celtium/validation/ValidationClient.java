@@ -65,6 +65,19 @@ public final class ValidationClient {
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         enabled = Boolean.getBoolean("celtium.validation");
+        // The compact vertex format packs the same data into 24 bytes per vertex instead of 32; the fixture can
+        // switch it on before the terrain renderer is created so both encodings can be compared from one scene.
+        if (enabled && Boolean.getBoolean("celtium.validation.compactVertexFormat")) {
+            try {
+                Class<?> mod = Class.forName("org.taumc.celeritas.CeleritasVintage");
+                Object options = mod.getMethod("options").invoke(null);
+                Object performance = options.getClass().getField("performance").get(options);
+                performance.getClass().getField("useCompactVertexFormat").setBoolean(performance, true);
+                report.addProperty("compactVertexFormat", true);
+            } catch (ReflectiveOperationException error) {
+                report.addProperty("compactVertexFormat", "unavailable: " + error);
+            }
+        }
         if (enabled) MinecraftForge.EVENT_BUS.register(this);
     }
 

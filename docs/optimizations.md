@@ -109,6 +109,27 @@ submitted in an earlier frame can still refer to that buffer, so the queue is no
 Validation reported the alternative as a buffer destroyed while still in use, which is a use-after-free hazard even
 when it happens to be harmless on a given driver.
 
+### 8. Compact vertex format: measured, still broken, kept out of the default path
+
+The compact (24-byte) vertex encoding would cut vertex bandwidth by 25% against the vanilla-like (32-byte) one that
+this fork defaults to. It is not usable in the Vulkan backend yet: with the option on, the same scene that matches
+the OpenGL reference at 6.86 renders at **76.8** mean difference with 80.6% of pixels above 8, and the frame shows
+mostly sky with dark wedges where terrain should be.
+
+What has been checked so far: the pipeline's vertex input (`R16G16B16A16_UINT @0`, `R8G8B8A8_UNORM @8`,
+`R16G16_UINT @12`, `R32_UINT @16`, `R8G8B8A8_SNORM @20`, stride 24) matches the Java vertex format exactly, the
+module used is the compact one, 62 sections are drawn, the meshes are compact (`uploaded` shrinks by exactly 24/32)
+and the shader decode (`position`, `tex_coord`, `material`, `draw_id`, light coordinate, `VERT_POS_SCALE`
+`32/2097152`, `VERT_POS_OFFSET -8`, `VERT_TEX_SCALE 1/131072`) is a line-for-line match of the reference
+`chunk_vertex.glsl`. Dropping the `_get_draw_translation(_draw_id)` term - on the theory that the mesher already
+bakes the section offset into the packed position - changes the frame but not into a correct one (58.5 mean
+difference), so the fault is not that single term.
+
+The option is therefore left alone (default off) and the fixture keeps a switch
+(`-Dceltium.validation.compactVertexFormat=true`) so the encoding can be exercised from the same scene. The next
+attempt should compare the packed fields against the encoder in `CompactChunkVertex` for one section with a known
+block, rather than against the whole frame.
+
 ## Planned, with the reason each is not in yet
 
 ### Indirect multi-draw per region - investigated, not enabled
