@@ -329,6 +329,18 @@ defects remain and are the next work items:
    (and log both readings in one line), which will show whether the buffer read after the loop is not the buffer
    that was copied - a lifetime/reuse problem in the mesh buffers rather than anything in the backend.
 
+   **Root cause found.** A census of the *middle* vertex of each mesh reads `0xff808080`, while the *first* vertex
+   reads `0xff59bd91`: the meshes carry mixed vertex colours, and the `0x80` grey - exactly the 0.5 factor the
+   shader interpolates - belongs to the vertices of the visible surface. Every earlier "contradiction" came from
+   sampling the first vertex of each mesh (the upload log, the census, the draw-time readback) while the frame is
+   drawn from the others. The Vulkan backend, the pipeline, the attribute layout, the shader and the buffer are all
+   correct, as the repaint with the game's own green value already showed. What is left is a *data* question that is
+   not specific to the Vulkan path: why does the mod build vertices with a neutral `0x808080` colour at all, and why
+   does the OpenGL reference frame render green from the same kind of data? The next measurement is to census the
+   same mesh positions in an OpenGL run (the fixture already supports `-Dceltium.vulkanTerrain=false`), which will
+   show whether the two backends are fed different colours or whether the OpenGL shader derives the tint from
+   something else.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

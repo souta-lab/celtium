@@ -123,8 +123,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackMapped;
     private boolean submissionPending;
     private boolean uploadVerified;
+    private int beforeAfterLogged;
     private int readbackSlots;
     private long readbackOffset;
+    private RegionResources readbackRegion;
     private boolean readbackPending;
     private boolean readbackDone;
     private long lastSectionsDrawn;
@@ -428,8 +430,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (mesh.sectionFirstColor != null) {
                     mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
                 }
+                int beforeColour = firstVertexColor(vertices);
+                long beforeAddress = MemoryUtil.memAddress(vertices);
                 VulkanArena.Segment vertexSegment = resources.vertexArena.allocate(vertexBytes);
                 resources.vertexArena.write(vertexSegment.byteOffset(), MemoryUtil.memAddress(vertices), vertexBytes);
+                if (beforeAfterLogged < 4) {
+                    beforeAfterLogged++;
+                    int mid = Math.max(0, (vertexBytes / 2 / 32) * 32);
+                    int midColour = firstVertexColor(vertices, mid);
+                    record("copy check: before=0x" + Integer.toHexString(beforeColour)
+                            + " after=0x" + Integer.toHexString(firstVertexColor(vertices))
+                            + " address=" + beforeAddress + " segmentOffset=" + vertexSegment.byteOffset()
+                            + " bytes=" + vertexBytes + " position=" + vertices.position()
+                            + " mid=0x" + Integer.toHexString(midColour));
+                }
                 uploaded += vertexBytes;
 
                 VulkanArena.Segment indexSegment = null;
@@ -537,6 +551,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Colour word of the first vertex of a mesh, in the little-endian byte order the GPU reads. */
+    private static int firstVertexColor(ByteBuffer vertices, int at) {
+        java.nio.ByteOrder order = vertices.order();
+        try {
+            vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            return vertices.getInt(at + 12);
+        } finally {
+            vertices.order(order);
+        }
+    }
+
     private static int firstVertexColor(ByteBuffer vertices) {
         java.nio.ByteOrder order = vertices.order();
         try {
@@ -664,6 +688,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
             if (this.readbackSlots == 0) {
                 this.readbackOffset = (long) batch.baseVertex(0) * this.commonVertexStride;
+                this.readbackRegion = resources;
             }
             long uniformOffset = writeUniforms(region, pass, camera);
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
@@ -720,9 +745,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         vkCmdEndRenderPass(this.commandBuffer);
         // The debug readback copies a buffer, which is only legal outside a render pass instance.
-        if (!this.readbackDone && this.readbackSlots < 8 && !this.regionResources.isEmpty()) {
-            RegionResources first = this.regionResources.values().iterator().next();
-            recordReadback(first, this.readbackOffset, this.readbackSlots);
+        if (!this.readbackDone && this.readbackSlots < 8 && this.readbackRegion != null) {
+            recordReadback(this.readbackRegion, this.readbackOffset, this.readbackSlots);
             this.readbackSlots++;
             this.readbackPending = true;
         }
