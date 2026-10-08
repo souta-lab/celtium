@@ -63,6 +63,16 @@ defects remain and are the next work items:
    the row order is not the cause; the next step is to sample the mirrored light map directly - for example by
    outputting `fragColor = lightColor` or by comparing a readback of the Vulkan image against the GL dump - to see
    whether the image content, its layout or the sampler LOD is at fault.
+
+   Further measurements that narrow it: the mirrored light map has alpha 255 everywhere (so the light map's alpha
+   is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
+   memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
+   terrain averages `(37,37,37)`, which is exactly atlas(`0.32`) x `v_Color`(`0.44`) - so every multiplier that is
+   currently applied is consistent, and the remaining suspects are the ones that should *not* be darkening:
+   `v_Color` measures as a uniform grey instead of the green tint decoded from the vertex data, and the fog term
+   in the fragment shader (`mix(diffuseColor.rgb, u_FogColor.rgb, fogValue * u_FogColor.a)`) would darken the
+   whole terrain if `u_FogColor` is black with a non-zero weight. The next run should therefore print the uniform
+   block it writes and the `v_Color`/fog split per pixel.
    `-Dceltium.vulkan.dumpTextures=<dir>` writes what GL hands over, which is how the light map was cleared.
 4. `VulkanGlTexture.uploadFromGlTexture` changes the active texture unit and the pack alignment with raw LWJGL
    calls while the game's `GlStateManager` caches that state. It restores both, but the capture should use
