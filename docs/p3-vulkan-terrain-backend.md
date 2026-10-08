@@ -83,6 +83,16 @@ defects remain and are the next work items:
    keep the rest unchanged). The resulting silhouette then *is* the attribute value, which shows directly whether
    the fetch returns the green bytes, a constant, or something else entirely.
 
+   A probe that shifted `gl_Position.x` by the green attribute (green would move the silhouette by ~614 px, the
+   observed grey by ~154 px) changed **nothing**, and the same probe added to the *compact* vertex module changed
+   nothing either, while fragment-module probes do change the frame. So the vertex stage that produces the visible
+   surface is not the module the backend believes it selected: either `VertexLayout.forPass` picks a module the
+   pipeline does not use, `SpirvShaders.load` resolves to a different resource than the file that was edited (the
+   packaged .spv was verified byte-identical to the edited file, so a stale resource is unlikely), or the surface is
+   drawn by a pipeline whose vertex input state does not match the bound buffer. The next step is to make the
+   pipeline report the module it loaded and the pass it belongs to, and to give each pass a distinct debug colour so
+   the drawing pipeline can be identified unambiguously.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
