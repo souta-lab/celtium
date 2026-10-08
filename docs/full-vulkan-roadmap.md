@@ -56,12 +56,17 @@ the entry point it uses and whether its output was verified is.
   acquire-clear-present with its own semaphore and the two layout transitions. The surface extensions are only
   enabled in the instance when `-Dceltium.vulkan.swapchainProbe=true`, so the verified normal path keeps its exact
   extension set. The probe runs once and reports what the surface advertised.
-  Current evidence (RX 6400, run `p5k-swap-amd`, `status PASSED`, no validation message): the probe reaches
-  swapchain creation, so **surface creation and the present-support check succeed on the real window**; then
-  `vkCreateSwapchainKHR` throws a NullPointerException inside LWJGL, reported as
-  `swapchain probe failed at surface and swapchain creation: NullPointerException: null [VulkanSwapchain:336]`.
-  That call is the next thing to fix (most likely the create-info's queue-family index list, which LWJGL may
-  require to be non-null even in exclusive sharing mode); the present cycle has therefore not been verified yet.
+  Current evidence (RX 6400, runs `p5k`-`p5p`, `status PASSED`, no validation message): the probe reaches swapchain
+  creation, so **surface creation and the present-support check succeed on the real window**; the swapchain itself
+  is created (the failure is after it), and the remaining NullPointerException is thrown inside LWJGL's
+  `KHRSwapchain` argument checks, recorded as
+  `swapchain probe failed at surface and swapchain creation: NullPointerException: null [Checks:188 <- KHRSwapchain:62 <- KHRSwapchain:73 <- VulkanSwapchain:340]`.
+  Two suspects have been ruled out by measurement: the create-info's queue-family index list (a non-null list and
+  then concurrent sharing with the real family index both changed nothing) and the swapchain image-count query
+  reusing the format query's `IntBuffer` (now a dedicated buffer, still the same failure). The next diagnostic step
+  is to record the argument values at the failing call (the count in the buffer and which buffer is null) instead of
+  only the frames, because LWJGL's `Checks.check(Buffer, int)` only throws when the expected count is non-zero.
+  The present cycle has therefore not been verified yet, and nothing about presentation is claimed.
 
 - **S2 (original note) - Vulkan presentation.** `VkSurfaceKHR` for the Wayland and X11 (Xwayland) cases, swapchain creation and
   recreation, acquire/present with proper semaphores, and an image-layout contract for the frame. Capability-based:

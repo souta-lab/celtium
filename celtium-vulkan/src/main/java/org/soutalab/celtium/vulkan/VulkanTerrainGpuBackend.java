@@ -1137,13 +1137,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The failing step and the deepest frame inside this module are what make an NPE diagnosable here: the
             // probe runs once, so a bare message would leave the next attempt guessing.
             StackTraceElement[] trace = error.getStackTrace();
-            String where = "no frame";
-            for (StackTraceElement element : trace) {
-                if (element.getClassName().startsWith("org.soutalab.celtium.vulkan")) {
-                    where = element.getClassName().substring(element.getClassName().lastIndexOf('.') + 1) + ":"
-                            + element.getLineNumber();
-                    break;
+            StringBuilder where = new StringBuilder();
+            for (int i = 0; i < Math.min(4, trace.length); i++) {
+                if (i > 0) {
+                    where.append(" <- ");
                 }
+                where.append(trace[i].getClassName().substring(trace[i].getClassName().lastIndexOf('.') + 1))
+                        .append(':').append(trace[i].getLineNumber());
             }
             record("swapchain probe failed at " + step + ": " + describe(error) + " [" + where + "]");
         }

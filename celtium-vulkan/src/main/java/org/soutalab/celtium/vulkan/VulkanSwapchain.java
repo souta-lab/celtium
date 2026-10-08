@@ -326,7 +326,11 @@ public final class VulkanSwapchain {
                     .imageExtent(e -> e.set(this.width, this.height))
                     .imageArrayLayers(1)
                     .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-                    .imageSharingMode(VK_SHARING_MODE_EXCLUSIVE)
+                    // Concurrent sharing with the one queue family this backend uses: the index list is then both
+                    // required by the spec and non-null for LWJGL's generated argument checks, and no ownership
+                    // transfer between families is needed because there is only one.
+                    .imageSharingMode(VK_SHARING_MODE_CONCURRENT)
+                    .pQueueFamilyIndices(stack.ints(this.context.queueFamilyIndex()))
                     .preTransform(capabilities.currentTransform())
                     .compositeAlpha(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
                     .presentMode(this.presentMode)
@@ -340,11 +344,15 @@ public final class VulkanSwapchain {
             }
             this.swapchain = handle.get(0);
 
-            vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, count, null);
-            LongBuffer imageHandles = stack.mallocLong(count.get(0));
-            vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, count, imageHandles);
-            this.images = new long[count.get(0)];
-            this.views = new long[count.get(0)];
+            // A dedicated count buffer: LWJGL's argument check requires a null image buffer to come with a count of
+            // zero, and the buffer used for the format and present-mode queries still holds their count.
+            IntBuffer actualImageCount = stack.mallocInt(1);
+            vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, actualImageCount, null);
+            int countImages = actualImageCount.get(0);
+            LongBuffer imageHandles = stack.mallocLong(countImages);
+            vkGetSwapchainImagesKHR(this.context.device(), this.swapchain, actualImageCount, imageHandles);
+            this.images = new long[countImages];
+            this.views = new long[countImages];
             for (int i = 0; i < this.images.length; i++) {
                 this.images[i] = imageHandles.get(i);
                 org.lwjgl.vulkan.VkImageViewCreateInfo view = org.lwjgl.vulkan.VkImageViewCreateInfo.calloc(stack)
