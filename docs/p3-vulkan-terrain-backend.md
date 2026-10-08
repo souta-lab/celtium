@@ -382,6 +382,14 @@ defects remain and are the next work items:
    0.94% of pixels differing by more than 8, against 62% before. The Vulkan terrain path now renders the same frame
    as the OpenGL backend on the RX 6400.
 
+   **Both target GPUs verified.** The same run on the UHD 630 passes with the Vulkan backend, a clean validation
+   log and the same result as the RX 6400: mean absolute difference 0.49 from the OpenGL reference, an identical
+   mean colour (`(73.4,95.8,45.1)` in both), and 0.92% of pixels differing by more than 8. The comparison script's
+   strict zero-tolerance rule still reports a difference because 20% of pixels differ by one or two levels, which is
+   the same dithering-scale residue the RX 6400 shows; the mean colour and the 0.9% tail are the meaningful
+   numbers. Evidence: `.celtium-work/p3-vulkan-parity-amd.json`, `.celtium-work/p3-vulkan-parity-intel.json`,
+   `.celtium-work/runtime/p3c{h,i}-vulkan-{amd,intel}/`.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
