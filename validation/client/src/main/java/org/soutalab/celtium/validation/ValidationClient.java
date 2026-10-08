@@ -81,7 +81,8 @@ public final class ValidationClient {
                 mc.gameSettings.limitFramerate = 120;
                 mc.gameSettings.enableVsync = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
-                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass;1;");
+                // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
+                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:glass,minecraft:leaves;1;");
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
             }
             if (mc.world == null || mc.player == null) return;

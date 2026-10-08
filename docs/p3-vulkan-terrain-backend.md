@@ -390,6 +390,14 @@ defects remain and are the next work items:
    numbers. Evidence: `.celtium-work/p3-vulkan-parity-amd.json`, `.celtium-work/p3-vulkan-parity-intel.json`,
    `.celtium-work/runtime/p3c{h,i}-vulkan-{amd,intel}/`.
 
+   The fixture world now also carries a glass and a leaves layer, so the run exercises the cutout/cutout_mipped
+   passes as well as SOLID. On the RX 6400 the Vulkan run draws both passes (`solid - 62 sections` and
+   `cutout_mipped - 62 sections`), validation stays clean, and the mean colour matches the OpenGL reference almost
+   exactly (`(46.5,65.3,20.9)` against `(46.6,65.4,21.0)`), but the pixel difference grows to 4.23 mean with 17.7% of
+   pixels above 8, against 0.49 and 0.94% for the SOLID-only scene. The extra difference is therefore in the cutout
+   pass - alpha discard, the mip level it samples, or the order it is drawn in - and that is the next thing to
+   isolate before the default backend is switched.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
