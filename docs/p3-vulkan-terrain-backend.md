@@ -461,6 +461,15 @@ defects remain and are the next work items:
    `Celtium Renderer (version)` and `Terrain backend: vulkan (...)` lines, the overlay carries the same information
    it does on the OpenGL backend.
 
+   **Vulkan only.** The OpenGL terrain backend is gone: `GlTerrainGpuBackend` is deleted, `RenderSectionManager`
+   requires the Vulkan backend from `TerrainBackendLoader` and `TerrainBackendSelection.select` throws with every
+   stated reason instead of returning an OpenGL answer. `TerrainBackendSelection.pending` covers the pre-device
+   state for the client command and the log. Verified both ways: a normal run still reports
+   `backend: vulkan (Vulkan device matched the OpenGL device UUID ...)` with `PASSED`, and a run that makes Vulkan
+   unavailable (`-Dceltium.vulkan.device=NONEXISTENT`) stops with
+   `requires a Vulkan terrain backend, but none could be created: ...` in `logs/debug.log` instead of rendering the
+   terrain with OpenGL.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

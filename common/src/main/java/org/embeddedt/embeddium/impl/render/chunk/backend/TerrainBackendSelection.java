@@ -3,18 +3,14 @@ package org.embeddedt.embeddium.impl.render.chunk.backend;
 import java.util.List;
 
 /**
- * The terrain GPU backend chosen for the current GL device, together with the reason for that choice.
+ * The Vulkan terrain backend chosen for the current device, together with the reason for that choice.
  * <p>
- * Selection is fail-closed. A configuration is only moved off the retained OpenGL backend once the capability
- * contract for that exact device (GL device/driver UUIDs, image and semaphore support, required usage and sample
- * counts, and required features) has been checked and the alternative backend implements every render pass in use.
- * Nothing here switches to another physical GPU implicitly, and every fallback states why it happened so it can be
- * reported to the user and asserted by a validation fixture.
+ * Celtium renders terrain with Vulkan only. Selection checks the capability contract for the exact device that
+ * OpenGL is running on (device/driver UUIDs, image and semaphore support, required usage and sample counts, and
+ * required features) and, when the contract cannot be met, states every reason and stops rather than rendering the
+ * terrain with OpenGL. Nothing here switches to another physical GPU implicitly.
  */
 public final class TerrainBackendSelection {
-    /** The retained backend: Celeritas' original OpenGL terrain renderer. */
-    public static final String OPENGL = "opengl";
-
     /** The native Vulkan terrain backend. */
     public static final String VULKAN = "vulkan";
 
@@ -42,12 +38,13 @@ public final class TerrainBackendSelection {
         if (reasons.isEmpty()) {
             reasons.add("no native terrain backend was offered for this device");
         }
-        return new TerrainBackendSelection(OPENGL, false, String.join("; ", reasons));
+        throw new IllegalStateException("Celtium requires a Vulkan terrain backend, but none could be created: "
+                + String.join("; ", reasons));
     }
 
-    /** The fail-closed answer used before a device or renderer exists, e.g. for the client command and the log. */
-    public static TerrainBackendSelection opengl(String reason) {
-        return new TerrainBackendSelection(OPENGL, false, reason);
+    /** The state before a device or renderer exists, e.g. for the client command and the log. */
+    public static TerrainBackendSelection pending(String reason) {
+        return new TerrainBackendSelection(VULKAN, false, reason);
     }
 
     public String getName() {

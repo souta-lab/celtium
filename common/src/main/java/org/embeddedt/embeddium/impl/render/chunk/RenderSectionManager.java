@@ -10,7 +10,6 @@ import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainBackendLoader;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainBackendSelection;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
-import org.embeddedt.embeddium.impl.render.chunk.backend.GlTerrainGpuBackend;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkBuildContext;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkBuildOutput;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkTaskOutput;
@@ -160,15 +159,14 @@ public abstract class RenderSectionManager {
 
         this.regions = new RenderRegionManager(commandList, this.renderPassConfiguration);
 
-        // Prefer a native backend when one can be created for this exact device. The loader never links against
-        // Vulkan, so a missing module or missing bindings degrade to OpenGL with a stated reason instead of failing.
+        // Celtium is a Vulkan mod, so the terrain backend must be created for this device. There is deliberately no
+        // OpenGL fallback: a configuration that cannot serve Vulkan reports why and stops, rather than silently
+        // rendering with the backend this mod exists to replace.
         List<String> backendReasons = new ArrayList<>();
         TerrainGpuBackend nativeBackend = TerrainBackendLoader.createVulkan(configuration, this.chunkRenderer,
                 this.regions, backendReasons);
         this.terrainBackendSelection = TerrainBackendSelection.select(nativeBackend, backendReasons);
-        this.terrainBackend = nativeBackend != null
-                ? nativeBackend
-                : new GlTerrainGpuBackend(RenderDevice.INSTANCE, this.chunkRenderer, this.regions);
+        this.terrainBackend = nativeBackend;
 
         this.minSection = minSection;
         this.maxSection = maxSection;
