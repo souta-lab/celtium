@@ -118,6 +118,16 @@ defects remain and are the next work items:
    uses and compare them with the bytes that were uploaded - that separates "the shader reads the wrong place" from
    "the buffer the draw binds is not the buffer that was written".
 
+   The attribute path is now proven end to end: repainting every uploaded vertex colour to magenta in the upload
+   path turns the whole terrain magenta (mean `(73.1,0.0,74.1)`), so the draw really reads the bytes the backend
+   writes and the pipeline's attribute layout and the shader's usage of `a_Color` are correct. Combined with the
+   logged green bytes, what is left is *which* data the visible meshes carry (the eight logged meshes are the first
+   uploads of their batch, not necessarily the visible sections) and what the light map contributes: green x light
+   map should tint the frame, yet the frame is grey, and no UNORM light-map value can turn the logged green into a
+   grey. Next measurement: give each mesh a distinct colour (or log the colour of a mesh known to be in the visible
+   render list) so the visible sections' own colour bytes can be read, and dump the light-map sample the shader
+   computes for one of them.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
