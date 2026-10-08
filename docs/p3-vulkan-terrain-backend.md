@@ -230,6 +230,16 @@ defects remain and are the next work items:
    cross-channel assumption remains; the small parser used here is a useful starting point for checking what the
    GPU is actually told to read.
 
+   The single-frame four-value probe is decisive and finally self-consistent: the shader reads
+   `a_Color.r/g/b = (0.439, 0.439, 0.439)` - the uniform grey `0x70` - for the visible surface, while the section
+   that was read back from the GPU holds the green tint `0xff59bd91`. So the *visible* geometry's vertex colour is
+   grey in this run and the tinted sections are somewhere else in the frame or not drawn at all; every earlier
+   contradiction came from comparing two different sets of vertices. Why a grey `0x70` colour appears is the next
+   question: `ChunkColorWriter` shows the RGB channel carries the vanilla tint and the alpha the AO shade, so a
+   grey RGB means the tint was neutral for those vertices. The next measurement is to count, over *all* uploaded
+   meshes rather than the first few, how many carry `0x707070` and how many carry the green tint, and to log which
+   pass and section the visible draws belong to.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
