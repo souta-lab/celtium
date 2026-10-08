@@ -158,6 +158,13 @@ defects remain and are the next work items:
    is therefore to output the light-map sample itself (`fragColor = lightColor`) so its true value is known, and to
    check the descriptor and the image view that binding 1 actually holds.
 
+   The light-map sample on its own measures a uniform `(223,223,223)` = 0.8745 grey, not the 1.26-blue the algebra
+   had suggested, and `0.439 / 0.8745 = 0.502`: in the diagnostic runs the interpolated vertex colour behaves like a
+   uniform 0.502 grey while the GPU readback of the same range shows green `(0.569,0.741,0.349)`. The two
+   measurements were taken in different runs with different shader builds, so they cannot be reconciled by
+   reasoning alone; the next run must remove that variable by outputting `a_Color.r`, the light-map sample and their
+   product **in the same frame**, one per colour channel, so all three numbers come from one build.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
