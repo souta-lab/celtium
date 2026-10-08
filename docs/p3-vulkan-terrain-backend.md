@@ -433,6 +433,10 @@ defects remain and are the next work items:
    proves the *default* selected it rather than the flag. A configuration the backend cannot serve still falls back
    to OpenGL with a stated reason, and the OpenGL backend remains selectable with `-Dceltium.vulkanTerrain=false`.
 
+   The default selection was then verified on the second GPU as well: with no force flag, the UHD 630 run reports
+   `backend: vulkan (Vulkan device matched the OpenGL device UUID ...)`, draws all three passes and produces a clean
+   validation log, so both agreed physical targets now default to the native Vulkan terrain backend.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
