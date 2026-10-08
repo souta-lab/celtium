@@ -165,6 +165,15 @@ defects remain and are the next work items:
    reasoning alone; the next run must remove that variable by outputting `a_Color.r`, the light-map sample and their
    product **in the same frame**, one per colour channel, so all three numbers come from one build.
 
+   The single-frame measurement is in, and it settles the earlier cross-run confusion: with `a_Color.r`, the
+   light-map sample and their product written into one output, the shader reads `a_Color.r = 0.439` (112) while the
+   GPU readback of the first draw's range holds `0x91` = 0.569 for the same channel. The light-map sample is
+   0.769 (196) there. So the vertex colour the *visible* surface is shaded with is a uniform 0.439 grey - which is
+   exactly the `0x70` byte value - while the range that was read back is green. The two are different draws: the
+   readback inspects the first section of the first render list, and that is not necessarily the section that fills
+   the screen. The next measurement therefore has to read back several draws (and ideally the one covering the
+   centre of the screen) instead of only the first, so the colour of the visible mesh is known rather than assumed.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
