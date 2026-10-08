@@ -523,13 +523,22 @@ defects remain and are the next work items:
      6.86 mean / 43.7% pixel difference against the *upstream* build as a correctness criterion - it is a known
      difference between two builds measured on a fixed scene, while same-build repeatability and the documented
      threshold are what gate a change.
-   - **P2-5 unsigned device limits (open).** `maxUniformBufferRange` is read as a Java `int` and a `-1` is treated
-     as an unreliable query. `0xFFFFFFFF` is the plausible unsigned reading, so the value must be interpreted with
-     `Integer.toUnsignedLong` and validated against the real requirement instead of being trusted unconditionally.
-   - **P2-6 compatibility wording (open).** The earlier "OpenGL default/fallback" and "timestamps and mips not
-     implemented" statements are stale; Vulkan-only applies to terrain while entities, GUI and the rest stay on
-     OpenGL through the interop bridge, and the verified scope is AMD RX 6400 plus Intel UHD 630 on Linux with
-     opaque-FD/GL external objects - NVIDIA, other operating systems and major mods are unverified.
+   - **P2-5 unsigned device limits (fixed).** The limits are uint32 in Vulkan, so `maxUniformBufferRange`,
+     `maxPushConstantsSize` and `minUniformBufferOffsetAlignment` are now read as unsigned
+     (`Integer.toUnsignedLong`, or the low 32 bits for the LWJGL-long field) and checked against the real
+     requirement instead of being trusted when the signed value looked wrong: a device that cannot serve the
+     256-byte block or the 128-byte push constant range is rejected with a clear message, and a
+     non-power-of-two offset alignment is reported. `timestampValidBits` is read from the queue family (it is not a
+     device limit) and the timestamp queries are only created when the family can record them and the period is
+     non-zero; otherwise the overlay keeps `?? ms` instead of reporting fiction. Evidence: a run with no limits
+     warning, `nativeTerrainVerified True`, passes 1641, parity 6.86 and no validation message.
+   - **P2-6 compatibility wording (fixed).** The README's "terrain still renders through Celeritas' OpenGL
+     backend" and the stale "timestamps/mips not implemented" notes are replaced with the current state: Vulkan-only
+     applies to *terrain*, while entities, GUI, particles and the rest of the frame stay on OpenGL through the
+     shared-image bridge; the requirement for a device is opaque-FD external memory plus GL external objects and an
+     FBO whose colour attachment is an RGBA8 texture and whose depth attachment is a D24 renderbuffer (the bridge
+     validates that contract every frame); and the verified scope is AMD RX 6400 and Intel UHD 630 on Linux with
+     Mesa, while NVIDIA, other operating systems, major mod packs and the compact vertex format are unverified.
 
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at

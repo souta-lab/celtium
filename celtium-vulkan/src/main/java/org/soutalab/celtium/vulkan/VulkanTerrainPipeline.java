@@ -627,23 +627,33 @@ public final class VulkanTerrainPipeline {
             vkGetPhysicalDeviceProperties(context.physicalDevice(), properties);
             // The Vulkan minimum for maxUniformBufferRange is 16384 and for maxPushConstantsSize 128, so a value
             // at or below zero can only mean the query did not answer. Report it and continue instead of refusing
-            // to draw terrain on a device that is in fact capable.
-            int maxPushConstants = properties.limits().maxPushConstantsSize();
+            // to draw terrain on a device that is in fact capable of it.
+            //
+            // These limits are uint32 in Vulkan, so they must be read as unsigned: a value that prints as -1 in Java
+            // is 4294967295, i.e. no limit at all, not a broken query. Reading them as signed is what made an
+            // earlier revision reject a capable device. The real requirement is then checked against the unsigned
+            // value, and a device that genuinely cannot serve the block is rejected with a clear message.
+            long maxPushConstants = Integer.toUnsignedLong(properties.limits().maxPushConstantsSize());
+            long maxUniformRange = Integer.toUnsignedLong(properties.limits().maxUniformBufferRange());
+            // LWJGL types this one as a Java long even though Vulkan declares it uint32, so the unsigned value is
+            // taken explicitly from the low 32 bits.
+            long minUniformAlignment = properties.limits().minUniformBufferOffsetAlignment() & 0xFFFFFFFFL;
             limitsSummary = "maxPushConstantsSize=" + maxPushConstants
-                    + " maxUniformBufferRange=" + properties.limits().maxUniformBufferRange()
-                    + " minUniformBufferOffsetAlignment=" + properties.limits().minUniformBufferOffsetAlignment();
-            if (maxPushConstants > 0 && maxPushConstants < PUSH_CONSTANT_BYTES) {
+                    + " maxUniformBufferRange=" + maxUniformRange
+                    + " minUniformBufferOffsetAlignment=" + minUniformAlignment;
+            if (maxPushConstants < PUSH_CONSTANT_BYTES) {
                 throw new IllegalStateException("The device allows only " + maxPushConstants
                         + " bytes of push constants but the terrain shaders need " + PUSH_CONSTANT_BYTES);
             }
-            int maxUniformRange = properties.limits().maxUniformBufferRange();
-            // The reported limit cannot be trusted in every runtime: this one answers -1 for maxUniformBufferRange
-            // on a device that handles the 256-byte block without complaint, and an earlier revision of this check
-            // rejected the pipeline outright, which left the frame with no terrain at all. The value is logged and
-            // the pipeline is created; the descriptor range check inside the backend still guards the real usage.
-            if (maxUniformRange <= 0 || maxUniformRange < UNIFORM_BLOCK_SIZE || maxPushConstants <= 0) {
-                limitsWarning = "device limits look unreliable (" + limitsSummary + "); the uniform range and push"
-                        + " constant checks were skipped and the pipeline is created on trust";
+            if (maxUniformRange < UNIFORM_BLOCK_SIZE) {
+                throw new IllegalStateException("The device allows only " + maxUniformRange
+                        + " bytes per uniform range but the terrain uniform block is " + UNIFORM_BLOCK_SIZE);
+            }
+            if (minUniformAlignment <= 0L || (minUniformAlignment & (minUniformAlignment - 1L)) != 0L) {
+                // The backend aligns its dynamic offsets with this value; anything but a power of two would make
+                // every offset wrong, so it is reported rather than silently assumed.
+                limitsWarning = "minUniformBufferOffsetAlignment=" + minUniformAlignment
+                        + " is not a power of two (" + limitsSummary + ")";
             }
             requireVertexFormatSupport(stack);
 

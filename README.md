@@ -4,7 +4,7 @@
 
 A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2 on CleanroomMC, with existing mod compatibility as a primary goal.
 
-**Current stage: terrain GPU boundary extracted (P2). Terrain still renders through Celeritas' OpenGL backend.** A separate experiment proves color/depth sharing on RX 6400 and UHD 630; native Vulkan terrain rendering is not implemented yet. The retained OpenGL backend now sits behind a narrow `TerrainGpuBackend` boundary with a fail-closed, reported backend selection, and it renders pixel-identically to stock Celeritas on both GPUs for the fixed validation world.
+**Current stage: native Vulkan terrain rendering is the default backend.** Terrain geometry is meshed by Celeritas, uploaded to Vulkan arenas and drawn by Celtium's own Vulkan pipelines, while entities, GUI, particles and the rest of the frame stay on OpenGL through the shared colour/depth bridge (opaque-FD external memory and binary semaphores). There is no OpenGL terrain fallback: a device that cannot serve the Vulkan contract stops with a stated reason. Verified on AMD RX 6400 (RADV) and Intel UHD 630 (Linux, Mesa) for a fixed vanilla world with solid, cutout and translucent terrain, with a clean Khronos validation log including synchronization validation; NVIDIA, other operating systems and major mod packs are not verified yet, and the compact (24-byte) vertex format is not usable on this backend yet. Every optimisation is recorded in docs/optimizations.md.
 
 ## Approach
 

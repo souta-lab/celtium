@@ -146,6 +146,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int TIMESTAMP_SLOTS = 16;
     private long timestampPool;
     private float timestampPeriod = 1.0f;
+    private boolean timestampsUsable;
     private final Reference2ReferenceMap<TerrainRenderPass, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
     private boolean uploadVerified;
     private int beforeAfterLogged;
@@ -376,7 +377,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void updateTimings() {
-        if (this.timestampPool == 0 || this.timestampSlots == 0) {
+        if (this.timestampPool == 0 || this.timestampSlots == 0 || !this.timestampsUsable) {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -790,7 +791,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 .framebuffer(ensureFramebuffer(renderPass));
         begin.renderArea().offset().set(0, 0);
         begin.renderArea().extent().set(this.targetWidth, this.targetHeight);
-        int timestampSlot = this.timestampSlots < (TIMESTAMP_SLOTS / 2) ? this.timestampSlots : -1;
+        int timestampSlot = this.timestampsUsable && this.timestampSlots < (TIMESTAMP_SLOTS / 2)
+                ? this.timestampSlots : -1;
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
                     timestampSlot * 2);
@@ -1217,11 +1219,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             org.lwjgl.vulkan.VkPhysicalDeviceProperties properties =
                     org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(this.context.physicalDevice(), properties);
+            // timestampValidBits belongs to the queue family, not to the device limits, so it is read for the
+            // family this backend submits on.
+            IntBuffer familyCount = stack.mallocInt(1);
+            vkGetPhysicalDeviceQueueFamilyProperties(
+                    this.context.physicalDevice(), familyCount, null);
+            org.lwjgl.vulkan.VkQueueFamilyProperties.Buffer families =
+                    org.lwjgl.vulkan.VkQueueFamilyProperties.calloc((int) familyCount.get(0), stack);
+            vkGetPhysicalDeviceQueueFamilyProperties(
+                    this.context.physicalDevice(), familyCount, families);
+            int family = Math.min(this.context.queueFamilyIndex(), families.capacity() - 1);
+            long timestampValidBits = Integer.toUnsignedLong(families.get(Math.max(0, family)).timestampValidBits());
             this.timestampPeriod = properties.limits().timestampPeriod();
+            // Writing timestamps on a queue that cannot record them, or with a zero period, produces meaningless
+            // numbers; the overlay then keeps its "?? ms" instead of reporting fiction.
+            this.timestampsUsable = timestampValidBits > 0L && this.timestampPeriod > 0.0f;
             org.lwjgl.vulkan.VkQueryPoolCreateInfo queryPool = org.lwjgl.vulkan.VkQueryPoolCreateInfo.calloc(stack)
                     .sType$Default().queryType(VK_QUERY_TYPE_TIMESTAMP).queryCount(TIMESTAMP_SLOTS);
-            check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
-            this.timestampPool = handle.get(0);
+            if (this.timestampsUsable) {
+                check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
+                this.timestampPool = handle.get(0);
+            }
         }
     }
 
