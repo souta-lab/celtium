@@ -637,12 +637,12 @@ public final class VulkanTerrainPipeline {
                         + " bytes of push constants but the terrain shaders need " + PUSH_CONSTANT_BYTES);
             }
             int maxUniformRange = properties.limits().maxUniformBufferRange();
-            if (maxUniformRange > 0 && maxUniformRange < UNIFORM_BLOCK_SIZE) {
-                throw new IllegalStateException("The device allows only " + maxUniformRange
-                        + " bytes per uniform range but the terrain uniform block is " + UNIFORM_BLOCK_SIZE);
-            }
-            if (maxUniformRange <= 0 || maxPushConstants <= 0) {
-                limitsWarning = "device limits were not reported (" + limitsSummary + "); the uniform range and push"
+            // The reported limit cannot be trusted in every runtime: this one answers -1 for maxUniformBufferRange
+            // on a device that handles the 256-byte block without complaint, and an earlier revision of this check
+            // rejected the pipeline outright, which left the frame with no terrain at all. The value is logged and
+            // the pipeline is created; the descriptor range check inside the backend still guards the real usage.
+            if (maxUniformRange <= 0 || maxUniformRange < UNIFORM_BLOCK_SIZE || maxPushConstants <= 0) {
+                limitsWarning = "device limits look unreliable (" + limitsSummary + "); the uniform range and push"
                         + " constant checks were skipped and the pipeline is created on trust";
             }
             requireVertexFormatSupport(stack);

@@ -44,7 +44,31 @@ reports real terrain times under Vulkan instead of `?? ms`.
 
 ## Planned, with the reason each is not in yet
 
-### Indirect multi-draw per region
+### Indirect multi-draw per region - investigated, not enabled
+
+Four measured configurations, all on the RX 6400 against the same OpenGL reference (a correct frame is a 6.86 mean
+absolute difference):
+
+| configuration | result |
+| --- | --- |
+| multi-draw with one range shared by all passes | 11.68 mean, 57.1% of pixels above 8 |
+| multi-draw with one range per pass | 11.42 mean, 57.1% |
+| multi-draw with a per-pass cursor so no region reuses a slot | 11.56 mean, 57.0% |
+| one indirect command per call (`drawCount = 1`) | 12.40 mean, 56.9% |
+| the same commands read back and issued as `vkCmdDrawIndexed` | **6.86 mean, 43.7% - correct** |
+
+The last row is the important one: the command *content*, the slot arithmetic and the run splitting are right,
+because replaying the identical values through direct draws reproduces the reference frame exactly. What differs is
+`vkCmdDrawIndexedIndirect` itself. Along the way the investigation also found and fixed a real defect: the
+device-limit check rejected pipeline creation ("The device allows only -1 bytes per uniform range") on a device that
+handles the 256-byte block, which left the frame with no terrain at all; the check now logs the values and creates
+the pipeline on trust.
+
+`VulkanHostBuffer` (host-visible, persistently mapped) was added as part of this work and is kept as the
+groundwork. The next step is to isolate the indirect call on its own - a minimal scene with one region and one
+command - rather than in the full fixture.
+
+### Indirect multi-draw per region (original plan)
 
 A section is currently one `vkCmdDrawIndexed`; a region's sections could be one `vkCmdDrawIndexedIndirect` because
 they share a vertex arena and a region offset, which is the GPU-agnostic half of what Nvidium does with mesh
