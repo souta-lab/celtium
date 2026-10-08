@@ -116,6 +116,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private long lastDrawCommands;
     private int command0Logged;
+    private boolean verticesLogged;
     private long lastSectionsDrawn;
     private long lastUploadedBytes;
 
@@ -432,6 +433,47 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         this.lastUploadedBytes = uploaded;
+        logFirstVertex(pending);
+    }
+
+    /**
+     * Decodes the first vertex of the first uploaded mesh and records it. The values the shader receives are the
+     * only way to tell an attribute-layout problem from a transform problem, and the upload path already has the
+     * bytes in hand.
+     */
+    private void logFirstVertex(java.util.List<PendingMesh> pending) {
+        if (verticesLogged) {
+            return;
+        }
+        for (PendingMesh mesh : pending) {
+            if (mesh.parts == null) {
+                continue;
+            }
+            int stride = mesh.pass.vertexType().getVertexFormat().getStride();
+            ByteBuffer vertices = mesh.parts.vertexBuffer().getDirectBuffer();
+            if (vertices.remaining() < stride) {
+                continue;
+            }
+            vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            StringBuilder line = new StringBuilder("vertex0 stride=").append(stride);
+            if (stride == 32) {
+                line.append(" pos=(").append(vertices.getFloat(0)).append(',').append(vertices.getFloat(4))
+                        .append(',').append(vertices.getFloat(8)).append(')');
+                line.append(" colorARGB=0x").append(Integer.toHexString(vertices.getInt(12)));
+                line.append(" uv=(").append(vertices.getFloat(16)).append(',').append(vertices.getFloat(20)).append(')');
+                line.append(" light=0x").append(Integer.toHexString(vertices.getInt(24)));
+                int packed = vertices.getInt(24) >>> 16;
+                line.append(" block=").append(packed & 0xFF).append(" sky=").append((packed >> 8) & 0xFF);
+                line.append(" material=").append(packed & 0xFF).append(" section=").append((packed >> 8) & 0xFF);
+            } else {
+                line.append(" posId=0x").append(Integer.toHexString(vertices.getInt(0)));
+                line.append(" colorARGB=0x").append(Integer.toHexString(vertices.getInt(8)));
+                line.append(" light=0x").append(Integer.toHexString(vertices.getInt(16)));
+            }
+            verticesLogged = true;
+            record(line.toString());
+            return;
+        }
     }
 
     private RegionResources resourcesFor(RenderRegion region) {

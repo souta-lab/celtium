@@ -55,9 +55,14 @@ defects remain and are the next work items:
    - Flipping the mirrored rows made the terrain fully black, which proves the row order GL hands over is already
      the one Vulkan's texture coordinates expect (GL's `glGetTexImage` returns bottom-up, and GL's `v = 0` is that
      first row). Reverted.
-   Next step: decode the first mesh's `a_LightCoord` in Java from the uploaded bytes and compare it with what the
-   OpenGL shader receives, i.e. settle whether the light coordinate is zero, the light map mirror is stale, or the
-   binding the sampler reads is not the one the capture wrote.
+   The vertex bytes are verified good: the first uploaded vertex decodes as `pos=(0,4,0)`, `uv=(0.125,0.469)`,
+   `color=0xff59bd91` (a green tint with full alpha) and `light=0xf000fc01`, i.e. block light 0 and sky light 240,
+   which the shader turns into the light-map coordinate (0, 240) -> (0.03, 0.97). The attribute layout and the
+   decode are therefore correct, and the constant mid-dark `v_Color` means the light map sample at that
+   coordinate comes back mid-dark. Since flipping the mirrored rows breaks the atlas (which is currently correct),
+   the row order is not the cause; the next step is to sample the mirrored light map directly - for example by
+   outputting `fragColor = lightColor` or by comparing a readback of the Vulkan image against the GL dump - to see
+   whether the image content, its layout or the sampler LOD is at fault.
    `-Dceltium.vulkan.dumpTextures=<dir>` writes what GL hands over, which is how the light map was cleared.
 4. `VulkanGlTexture.uploadFromGlTexture` changes the active texture unit and the pack alignment with raw LWJGL
    calls while the game's `GlStateManager` caches that state. It restores both, but the capture should use
