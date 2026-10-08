@@ -1,0 +1,3 @@
+rootProject.name = 'celtium-interop'
+include 'celtium-probe'
+project(':celtium-probe').projectDir = file('../celtium-probe')

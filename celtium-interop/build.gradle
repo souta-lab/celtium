@@ -1,0 +1,45 @@
+plugins {
+    id 'application'
+}
+
+group = 'org.soutalab.celtium'
+version = '0.1.0-dev.1'
+repositories { mavenCentral() }
+tasks.withType(JavaCompile).configureEach {
+    options.release = 8
+    options.encoding = 'UTF-8'
+}
+
+def lwjglVersion = providers.gradleProperty('celtium_lwjgl_version').getOrElse('3.4.1')
+dependencies {
+    implementation project(':celtium-probe')
+    implementation platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
+    implementation 'org.lwjgl:lwjgl'
+    implementation 'org.lwjgl:lwjgl-opengl'
+    implementation 'org.lwjgl:lwjgl-egl'
+    implementation 'org.lwjgl:lwjgl-vulkan'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-linux"
+    runtimeOnly "org.lwjgl:lwjgl-opengl:$lwjglVersion:natives-linux"
+}
+application { mainClass = 'org.soutalab.celtium.probe.InteropMain' }
+
+def shaderOutput = layout.buildDirectory.dir('generated/shaders')
+def compileShaders = tasks.register('compileShaders') {
+    inputs.files(fileTree('src/main/shaders'))
+    def compiler = providers.gradleProperty('glslang_validator').getOrElse('glslangValidator')
+    inputs.property('compiler', compiler)
+    outputs.dir(shaderOutput)
+    doLast {
+        def directory = shaderOutput.get().asFile
+        directory.mkdirs()
+        fileTree('src/main/shaders').files.sort().each { shader ->
+            providers.exec {
+                commandLine compiler, '-V', '--target-env', 'vulkan1.2', shader.absolutePath,
+                        '-o', new File(directory, shader.name + '.spv').absolutePath
+            }.result.get().assertNormalExitValue()
+        }
+    }
+}
+sourceSets.main.resources.srcDir(shaderOutput)
+tasks.named('processResources') { dependsOn compileShaders }

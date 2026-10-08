@@ -131,3 +131,39 @@ At the user's request, validation now uses an independent Sway/Xwayland headless
 The first headless attempt failed before launching Java because the compositor's Unix socket path exceeded its length limit. The launcher now owns a short, private temporary runtime directory and does not fall back to the desktop. Headless execution preserves this test's hardware-rendering and screenshot coverage; these startup intervals remain insufficient for a performance claim.
 
 The pinned upstream jar also passes the same headless fixture (`.celtium-work/runtime/upstream-headless/`), on RX 6400 with a saved and visually inspected 1280 × 720 PNG. Both runs use the recorded camera, normal process exit and the same observed attachment formats. Their lock JSON, virtual display/session logs and client outputs provide reproduction evidence.
+
+## Actual interoperability: RX 6400 and UHD 630
+
+The user made capability-based, multiple GPU support a core requirement and selected the available RX 6400 and UHD 630 as physical validation targets. NVIDIA hardware is unavailable and remains unverified. The new separate `celtium-interop/` experiment selects the current GL GPU by valid device/driver UUIDs and exact external-image/semaphore properties, without a model-name whitelist. Terrain remains OpenGL.
+
+On **both GPUs**, actual dedicated Vulkan RGBA8/D32 memory exports and GL imports succeed. The exact query includes mutable image flags and all supported ordinary usages (color 159, depth 167), rather than reusing the earlier narrower capability query. D24 depth is copied to an ordinary D24 texture, converted by a GL shader into the shared D32 target and converted back into the original D24 renderbuffer. Color copies use GPU blits. GL/Vulkan binary semaphores explicitly cover both textures and GENERAL layouts; Vulkan releases/acquires external queue-family ownership. No per-pass device idle or GL finish is used.
+
+The functional oracle verifies GL foreground occludes Vulkan, returned Vulkan depth occludes farther GL, nearer GL remains visible and 15 depth values from zero through one return within two D24 steps. Original contents are deliberately cleared before return copies to reject no-op paths. CPU readback is limited to verification and screenshots.
+
+| Physical target | Standalone stress | Existing Cleanroom FBO | Validation errors / warnings | FD count after each cycle |
+| --- | --- | --- | --- | --- |
+| RX 6400, radeonsi / RADV | 12 cycles across 64², 720p, 1080p; 8 functional frames and 4 handoffs/frame | Pass, original IDs preserved | 0 / 0 | 26 throughout |
+| UHD 630, Mesa GL / Intel Vulkan | Same | Pass, original IDs preserved | 0 / 0 | 34 throughout |
+
+After the verification readbacks, each cycle submits eight additional handoffs and queries a GL completion fence without waiting. It is initially unsignaled in all 24 cycles. Vulkan slots are also observed pending in some cycles. Both APIs complete before GL objects, Vk images/memory and semaphores are deleted. This verifies retirement with outstanding work and stable FD counts; it does not prove the absence of all GPU-memory leaks.
+
+Earlier sequential samples with 4 handoffs/frame and 120 measured frames after 32 warmup frames show substantial overhead: RX 6400 spans approximately 1.2–1.5 ms at 720p and 2.5 ms at 1080p, versus roughly 8.8–9.6 ms and 20.7–21 ms for UHD 630. These GL timestamp spans include the test's copies, triangle, semaphores, error queries and command-slot waits. They are not raw transfer times or Minecraft FPS, and are not evidence of a performance improvement. Later parallel stress runs establish functional stability, not uncontended performance. Intel cost requires attention during later batching/copy optimization.
+
+The separate in-game fixture uses the existing **Minecraft FBO**, with RGBA8 color and D24 depth renderbuffer, zero stencil bits and one sample. It adds only Vulkan bindings 3.4.1 to the disposable test classpath. Its own proof classes/shaders are embedded in the validation mod so they share Cleanroom's initialized GL/mod classloader. A first attempt placed the proof jar on the application classpath and aborted on an uninitialized GL native dispatch. Corrected runs pass on both GPUs; loader identity and Java GL capabilities are now checked before native calls. Source/core/OpenGL/native jars remain unchanged.
+
+The stronger fixture also resumes normal world rendering for 40 ticks after the proof, checks the original target IDs and GL error state, then captures the resumed terrain/hand/GUI. RX 6400 passes with 108 subsequent world frames; UHD 630 passes with 105. Both recovery PNGs were visually inspected, and both clients exit normally with no validation errors/warnings. Unsupported source formats, stencil attachments, MSAA, shader packs, actual terrain draws and broad mod compatibility are outside this proof.
+
+Local evidence:
+
+- `.celtium-work/interop-image-import.json`, `interop-roundtrip-720p.json`: initial actual imports and occlusion.
+- `.celtium-work/interop-stress.json`, `interop-stress-intel.json`: earlier sequential six-cycle functional/cost runs.
+- `.celtium-work/interop-stress-{amd,intel}-final.json`: twelve-cycle resize/precision/retirement tests per GPU.
+- `.celtium-work/runtime/celtium-headless-interop-2/` and `celtium-headless-interop-intel/`: existing-FBO success with command query and synthetic proof.
+- `.celtium-work/runtime/celtium-interop-{amd,intel}-post/`: stronger fixture, interop JSON/PNG, normal-world recovery PNG, process outcome and locks.
+- `.celtium-work/interop-unavailable-device.json`: invalid EGL index fails without a default GPU fallback.
+
+Reproduce with [the interop guide](interop-validation.md). `celtium-probe` reports remain capability-only, and the shipping Forge jar does not contain the proof or enable native terrain.
+
+## GitHub Actions status
+
+Push `0e6fcc69b` triggered [run 37780359487](https://github.com/souta-lab/celtium/actions/runs/37780359487). GitHub rejected both jobs before any step because of the account's recent payment/spending-limit state. No CI build log exists. Local builds, packaging verification and hardware tests above are the evidence; CI is not reported as passing.

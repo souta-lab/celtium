@@ -6,7 +6,7 @@
 
 2026-10-08、Celtiumとして実装を開始。Celeritasの履歴を継承し、Linux向けのGL/Vulkan能力診断、独立CLI、1.12.2の診断コマンドを最初の開発対象にする。
 
-現段階の地形バックエンドはOpenGL。Forge jarの生成・内容検査と、本人が用意したCleanroom 0.6.13-alphaでの上流／forkの固定flat world描画・診断コマンド実行を確認した。Vulkan地形描画、外部画像のimport、深度の往復、同期・コピーの性能測定は未実装。診断結果は能力の問い合わせであり、これらの実証完了を示すものではない。
+現段階の地形バックエンドはOpenGL。Forge jarの生成・内容検査と、本人が用意したCleanroom 0.6.13-alphaでの上流／forkの固定flat world描画・診断コマンド実行を確認した。別のinterop実験でRX 6400とUHD 630のRGBA8/D32外部画像import、D24 renderbufferとのGPU深度変換、両方向の遮蔽、binary semaphore、resize、未完了資源のretirement、同期・コピー費用を確認した。実Cleanroomの既存FBOでも両GPUで往復した。Vulkan地形描画は未実装であり、probe診断は引き続き能力の問い合わせのみ。[再現手順](interop-validation.md)
 
 ## 1. 開発するもの
 
@@ -225,7 +225,7 @@ Vulkanにだけメッシュを保持した状態で、任意のdrawを即座にG
 
 これはソース調査からの概算であり、見積もり済みの実装実績や納期の約束ではない。OpenGL／VulkanとMinecraft描画の実装経験がある開発者1人、1人日＝8時間、1人週＝40時間で換算する。実装、コードレビュー、ビルド、再現場面作成、計測、修正を含む。
 
-初期alphaの対象はLinux・1 GPU（計画上はRX 6400）・固定したCleanroom／Celeritas版・本人の指定Mod構成と代表的な描画Mod群とする。既存のLWJGL 3動作を成立させる作業は含めず、Vulkan化によって生じる差分を扱う。全Mod・全driver・全shader packの互換保証は、この見積もりの範囲に含めない。
+初期alphaの対象はLinux・固定したCleanroom／Celeritas版・本人の指定Mod構成と代表的な描画Mod群とする。能力判定と複数GPU対応は本体の完成要件であり、RX 6400専用の実装を完成形にしない。現在のGL contextに対応するdevice/driver UUID、形式・usage・tiling・sample数、memory/semaphore共有、queueと必要featureから実装方式を選ぶ。GPU名による決め打ちや別GPUへの自動切り替えは行わない。少なくとも手元のAMD RX 6400とIntel UHD 630で描画・深度・同期・復帰経路を実証し、対応表に実証済み／未検証／非対応理由を区別する。Windows等の追加OSはP6の追加範囲とする。既存のLWJGL 3動作を成立させる作業は含めず、Vulkan化によって生じる差分を扱う。全Mod・全driver・全shader packの互換保証は、この見積もりの範囲に含めない。
 
 引き継ぎ後にRX 6400へ接続できる実機環境と、本人が用意したCleanroom 0.6.13-alpha／Java 25／LWJGL 3.4.1／Fugue 0.24.4／Scalar 3.9.0を固定した。描画中のFBOはRGBA8、D24 depth renderbuffer、stencilなし、single sampleだった。固定flat worldの起動と描画を確認した段階で、代表的なMod・TESR場面と正式な性能測定の範囲は引き続き確定・拡充する必要がある。[検証記録](validation-2026-10-08.md)
 

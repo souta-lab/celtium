@@ -229,6 +229,12 @@ tasks.named<JavaCompile>(validation.compileJavaTaskName) {
 }
 val validationJar = tasks.register<Jar>("validationJar") {
     from(validation.output)
+    // Keep the proof inside the mod classloader, alongside the GL bindings
+    // initialized by Cleanroom. Do not add this jar to the application classpath.
+    providers.gradleProperty("celtium_validation_interop_jar").orNull?.let {
+        from(zipTree(file(it))) { exclude("META-INF/MANIFEST.MF") }
+        inputs.file(file(it))
+    }
     archiveBaseName.set("celtium-validation-client")
     archiveClassifier.set("dev")
 }

@@ -38,6 +38,9 @@ public final class ValidationClient {
     private boolean launched;
     private boolean commandsRun;
     private boolean finished;
+    private boolean interopRun;
+    private int framesAtInterop;
+    private int fboAtInterop, colorAtInterop, depthAtInterop;
     private int worldTicks;
     private int worldFrames;
     private long previousFrame;
@@ -137,6 +140,34 @@ public final class ValidationClient {
         previousFrame = now;
         if (worldTicks < 200) return;
         try {
+            if (Boolean.getBoolean("celtium.validation.interop")) {
+                if (!interopRun) {
+                    ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                    Framebuffer target = mc.getFramebuffer();
+                    fboAtInterop = target.framebufferObject;
+                    colorAtInterop = target.framebufferTexture;
+                    depthAtInterop = target.depthBuffer;
+                    Class<?> experiment = Class.forName("org.soutalab.celtium.probe.CurrentFramebufferInterop");
+                    String json = (String) experiment.getMethod("verify", int.class, int.class, int.class, int.class, int.class,
+                            String.class, boolean.class).invoke(null, fboAtInterop, colorAtInterop, depthAtInterop,
+                            target.framebufferWidth, target.framebufferHeight, mc.gameDir.toPath().resolve("logs").toString(),
+                            Boolean.getBoolean("celtium.validation.vulkanLayer"));
+                    JsonObject interop = JsonParser.parseString(json).getAsJsonObject();
+                    report.add("interop", interop);
+                    if (!"ROUNDTRIP_PASSED".equals(interop.get("status").getAsString()))
+                        throw new IllegalStateException("Current Minecraft FBO did not pass the interop experiment");
+                    interopRun = true;
+                    framesAtInterop = worldFrames;
+                }
+                if (worldTicks < 240) return;
+                Framebuffer target = mc.getFramebuffer();
+                if (worldFrames - framesAtInterop < 30 || GL11C.glGetError() != GL11C.GL_NO_ERROR
+                        || target.framebufferObject != fboAtInterop || target.framebufferTexture != colorAtInterop
+                        || target.depthBuffer != depthAtInterop)
+                    throw new IllegalStateException("Normal world rendering did not resume with the original framebuffer after interop");
+                report.addProperty("normalWorldFramesAfterInterop", worldFrames - framesAtInterop);
+                ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation-post-interop.png", mc.displayWidth, mc.displayHeight, target);
+            }
             if (worldFrames < 100 || !report.has("framebuffer")) {
                 throw new IllegalStateException("Too few world rendering frames for startup validation");
             }
@@ -175,7 +206,7 @@ public final class ValidationClient {
             report.addProperty("frameIntervalP95Ms", percentile(0.95));
             report.addProperty("frameIntervalP99Ms", percentile(0.99));
             report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark");
-            ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+            if (!interopRun) ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
             report.addProperty("status", "PASSED");
             finish(mc);
         } catch (Throwable error) {

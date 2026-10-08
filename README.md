@@ -4,7 +4,7 @@
 
 A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2 on CleanroomMC, with existing mod compatibility as a primary goal.
 
-**Current stage: capability diagnostics. Terrain still renders through Celeritas' OpenGL backend.** Native Vulkan terrain rendering and shared-depth interoperability are not implemented yet.
+**Current stage: GL/Vulkan interoperability validation. Terrain still renders through Celeritas' OpenGL backend.** A separate experiment proves color/depth sharing on RX 6400 and UHD 630; native Vulkan terrain rendering is not implemented yet.
 
 ## Approach
 
@@ -12,6 +12,7 @@ A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2
 - Add a terrain-specific Vulkan backend after proving OpenGL/Vulkan color, depth and synchronization interoperability.
 - Keep GUI, entities, TESRs, particles and existing mod OpenGL calls on the current GL context.
 - Retain the OpenGL terrain backend and the `celeritas` mod ID. Celtium replaces Celeritas; install one of them.
+- Select implementations by capabilities and the current GL GPU's UUID. Multiple GPU support is a core requirement; physical validation targets are RX 6400 and UHD 630. NVIDIA is unverified.
 - Use the existing GPU driver. Zink is optional and is not bundled or required.
 
 The current source base is the [GTNewHorizons Celeritas mirror](https://github.com/GTNewHorizons/Celeritas/tree/989ebf2e52ceed052ec112a569e0c1d172095756) at `989ebf2e52ceed052ec112a569e0c1d172095756`. Celeritas' upstream is [embeddedt/celeritas](https://git.taumc.org/embeddedt/celeritas). This reference is not a claim that a particular installed Cleanroom/modpack combination has been tested.
@@ -65,9 +66,9 @@ Vulkan bindings must be available on the game's classpath and match that Cleanro
 
 See [the design and effort estimate](docs/design.md) and [the implementation roadmap](docs/roadmap.md).
 
-The next gate is an actual color/depth roundtrip using external memory and binary semaphores, including resource recreation and measured synchronization/copy cost. Larger terrain-backend refactoring follows that gate.
+The separate [interop experiment](docs/interop-validation.md) verifies color, D24/D32 depth conversion, bidirectional occlusion, binary semaphores, recreation and retirement on AMD and Intel, including the existing Cleanroom FBO. It does not enable Vulkan terrain. The next stage extracts the narrow terrain GPU boundary and checks the unchanged GL behavior against stock Celeritas.
 
-The observed Minecraft target is RGBA8 with a D24 depth renderbuffer, no stencil and one sample. RX 6400's D24 external-image query remains unsupported. A D32 sharing experiment must prove the conversion to and from the existing D24 target and preserve its object identities before it can be used by terrain rendering.
+The verified Minecraft target is RGBA8 with a D24 depth renderbuffer, no stencil and one sample. RX 6400's D24 external-image query remains unsupported; the tested route imports shared D32 and converts depth on the GPU while preserving the original target IDs. Other formats, stencil, MSAA and broader mod compatibility require separate validation. Interop costs are measured separately from game performance.
 
 ## License and attribution
 

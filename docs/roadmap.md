@@ -6,7 +6,7 @@ The first increment establishes the fork and a capability-query tool. All terrai
 | --- | --- | --- |
 | P0 | Pin upstream, build baseline, record an installed Cleanroom/modpack configuration | Forge jar and contents verified; supplied Cleanroom runtime locked; stock/fork flat-world startup and FBO observations recorded; representative performance/scene coverage still pending |
 | P1a | Isolated GL/Vulkan capability query and fail-closed eligibility tests | CLI built; 15 tests passed; RX 6400 and UHD 630 queries recorded |
-| P1b | External image import, color/depth in both directions, binary semaphores, resize and cost measurement | Next: RGBA8 / D32 external sharing with explicit conversion to/from the observed D24 renderbuffer on RX 6400 |
+| P1b | External image import, color/depth in both directions, binary semaphores, resize and cost measurement | RGBA8 / D32 sharing and D24 conversion verified on RX 6400 and UHD 630; standalone recreation/retirement/cost and real Cleanroom FBO tested; contract restricted to no stencil, one sample |
 | P2 | Extract the narrow terrain GPU boundary; verify the GL backend against stock Celeritas | Pending |
 | P3 | Vulkan mesh upload, arena, atlas/lightmap and SOLID rendering | Pending |
 | P4 | Cutout/translucency, index updates, resource reload and deferred destruction | Pending |
@@ -30,6 +30,8 @@ The in-game command uses the existing context, issues capability queries, and ne
 
 ## Required evidence before P2
 
+Capability-based selection and multiple GPU support are core completion requirements, at the user's explicit request. An RX 6400-only implementation is not a finished backend. Selection must use the current GL device/driver UUIDs and the exact image/semaphore/queue/feature contract. The agreed physical validation targets are RX 6400 and UHD 630; the user has no NVIDIA hardware, so NVIDIA remains unverified and is not a required physical test environment. Retain GL with a stated reason on unsupported configurations. Additional operating systems remain P6 scope.
+
 1. Identify the actual stable Cleanroom, Celeritas, Java, LWJGL, GPU driver and modpack versions.
 2. Verify GL-written depth affects Vulkan drawing and Vulkan-written depth affects subsequent GL drawing.
 3. Verify color/depth/stencil format and sample compatibility against the active Minecraft FBO.
@@ -38,4 +40,4 @@ The in-game command uses the existing context, issues capability queries, and ne
 
 The design's effort ranges are provisional. Re-estimate P2 onward after this evidence is available.
 
-See [the initial validation record](validation-2026-10-08.md) and [the Codex handoff](HANDOFF.md). On the tested RX 6400/RADV configuration, the required D24 external-image query fails while D32 succeeds. This is a format-specific gate to investigate, not evidence of successful depth sharing or a blanket exclusion of Vulkan on this GPU.
+See [the validation record](validation-2026-10-08.md), [interop reproduction](interop-validation.md) and [the Codex handoff](HANDOFF.md). The RX 6400 D24 query still fails. Successful D32 sharing with explicit D24 conversion is established by the separate experiment, rather than inferred from that query. The supported source contract is RGBA8 / D24 renderbuffer, no stencil, one sample. Other targets must retain GL until separately validated.

@@ -42,8 +42,10 @@ Minecraft 1.12.2 / CleanroomMC向けに、CeleritasをforkしたCeltiumを開発
 9. 引き継ぎ後にFabric／NeoForgedのplugin repository、probe jarのvariant、RFGのJDK要件、コマンドの`gameDir`フィールド、Shadowの外部Class-Path・module-info混入を修正。Forge jarを生成し、`scripts/verify_forge_jar.py`でmod ID・manifest・全699クラスのJava 8互換性・ライセンス・LWJGL/native未同梱を確認した。
 10. 本人が用意したCleanroomインスタンスを固定し、`scripts/prism_validation.py`で共有cacheを読み取り、独立したtest copyを起動する。認証情報は読まない。別jarの`validation/client/`が固定flat world・描画・コマンド・FBO観測を実行する。fixtureはmod jarへ同梱しない。
 11. 固定上流とCeltiumのworld起動・描画・終了を確認。`/celtium`と`/celtium probe`は実クライアントで成功。現profileにVulkan bindingsがないことを診断JSONへ記録し、OpenGL描画が継続することを確認した。probe 15 testsを再実行済み。Java 8でLWJGLなしのoptional entry smokeも通過。
+12. 独立`celtium-interop/`でRX 6400とUHD 630のRGBA8/D32外部画像import、GPUによるD24↔D32変換、両方向の遮蔽、15段階の深度精度、4往復/frame、binary semaphoreと外部ownershipを実証した。64×64/1280×720/1920×1080を12回再生成し、未完了GL/Vulkan workをfenceでretireしてから破棄する。両GPUのvalidation error/warningは0、FD数は一定（26/34）。
+13. 別のvalidation modへinteropの自前class/shaderを追加したtest copyで、実Cleanroomの既存FBOでも両GPUの往復を確認した。元FBO/texture/renderbufferを維持する。手順は`docs/interop-validation.md`。Vulkan binding 3.4.1だけをtest classpathへ追加し、source profileのcore/OpenGL/nativeは変更しない。実験jarをapplication classpathへ置くと別のGL classloaderを使ってabortしたため、validation modへ埋め込み、Java capability/loaderをnative呼び出し前に確認する。
 
-現状の地形はOpenGL。Vulkan logical deviceの作成、外部画像import、セマフォ同期、深度の往復、Vulkan地形描画、性能改善は未実装。固定flat worldの確認を、広いMod互換性や性能改善の証拠に広げない。
+現状の地形はOpenGL。別実験でlogical device、画像import、セマフォ同期、深度の往復と限定したcopy/sync費用を実証したが、Vulkan地形描画と性能改善は未実装。検証済み契約はRGBA8/D24 renderbuffer、stencilなし、single sampleだけ。固定flat worldやsynthetic occlusionを広いMod互換性・game FPS改善の証拠に広げない。
 
 ## 実機とツール
 
@@ -77,7 +79,7 @@ python3 scripts/verify_forge_jar.py build-1122/build/libs/*/*.jar --output .celt
 - 変更前の上流root buildはStonecutter `0.10-alpha.9`の取得で失敗。`maven.kikugie.dev`に到達できなかった。
 - `tiny-remapper`解決は修正済み。独立buildでcompile・remap・packaging・jar内容検査が通る。最新の成功ログは`.celtium-work/forge-build-verified.log`。
 - 上流Mixinの既にSRG名になった`RenderItem.func_175032_a` aliasでremap warningがある。固定上流buildでも同じwarningがあり、両方のworld描画は通った。
-- JDK 25をGradle、JDK 21をmod compiler、JDK 8をMinecraft preparationに使う。CIも3つのJDKを供給する設定へ修正済み。GitHub上のjob結果はpush後に確認する。
+- JDK 25をGradle、JDK 21をmod compiler、JDK 8をMinecraft preparationに使う。CIも3つのJDKを供給する設定へ修正済み。push `0e6fcc69b`のGitHub Actionsはアカウントの支払／spending limit理由でjob開始前に停止し、stepやbuild logがない。ローカル成功とCI成功を混同しない。
 - README等の同梱文書を変更するとjar hashも変わる。配布前にpackageJarと内容検査を実行して最新の検証JSONを残す。
 - fixtureは`:forge122:validationRemapJar`で別jarとして作る。実行例・結果の読み方は`docs/runtime-validation.md`。時間切れやfixture report欠落は成功扱いにしない。
 
@@ -92,7 +94,7 @@ CLIで実GPUを明示し、UUIDを照合済み。以下の番号はこの実行�
 
 query条件はopaque-FD、optimal 2D、single sample、attachmentとtransfer src/dst usage。GPU全般のdepth対応を否定する結果ではない。引き継ぎ後のworld描画で実Minecraft FBOを観測し、RGBA8（0x8058）、D24 depth renderbuffer（0x81a6）、stencilなし、single sample、RX 6400であることを確認した。実drawableはdesktop tilingにより944×1018だった。
 
-RX 6400向けにD32を使える可能性はあるが、D24からD32へ単純にdepth blitできると仮定しない。既存FBO／renderbufferのIDを保つため、普通のD24 depth textureへの同形式コピー、GL shaderで共有D32へ変換、逆方向のshader変換を小さいharnessで実証するのが次の候補。mod互換性、stencil、既存描画順、精度、コピー/同期コストを実証する。Intelでの成功をRadeonの成功として扱わない。
+上記は当初のquery結果。別実験で、普通のD24 depth textureへの同形式コピー、GL shaderで共有D32へ変換、逆方向のshader変換を両GPUで実証済み。既存FBO/renderbufferのIDを維持する。sample/stencil/formatが異なる構成へこの成功を広げない。Intelでの成功をRadeonの成功として扱わない。Intelは同方式のcopy費用が大きく、性能改善をまだ主張できない。
 
 `.celtium-work/gpu-tools/`へDebian sid公式packageからglslang-tools 16.6.0-1とvulkan-validationlayers 1.4.363.0-1をdownload・extract済み。system packageは変更していない。`extracted/usr/bin/glslangValidator`が動く。Validation Layersを使う場合は抽出したJSONのlibrary_pathとlocal library検索パスを確認する。
 
@@ -100,13 +102,17 @@ RX 6400向けにD32を使える可能性はあるが、D24からD32へ単純にd
 
 ## 次の作業順
 
+本人から追加要件：RX 6400専用の実装を完成形にせず、能力判定と複数GPU対応を本体の要件にする。実装選択は現在のGL device/driver UUIDと共有形式・usage・sample数・同期・必要featureに基づく。AMDとIntelの両実GPUで検証する。GPU名のハードコードで有効化しない。非対応条件では理由を示してGLを維持し、別GPUへ黙って切り替えない。
+
+検証対象は本人の指定でRX 6400とUHD 630の2環境。NVIDIAの実機はないので未検証と記録する。この2 GPUの実証を完成要件に含め、NVIDIA実機の入手を完了条件として要求しない。
+
 1. 現在のgit状態と上記docs/ログを読み、最新のbuild・fixture結果を確認する。依存解決とjar生成は解決済み。
 2. ソースや同梱文書を変更した後はprobeの15 tests・Forge packaging・jar内容検査を実行する。renderer owner・camera記録を含むfixtureは両rendererで正常終了を確認済み。
 3. 固定したCleanroom構成で、必要な代表場面と正式な性能基準測定を追加する。未確定の版を勝手に一斉更新しない。現段階のstartup frame intervalを速度改善の根拠にしない。
-4. 観測済みのcolor/depth/stencil/sample形式とRX 6400のD24制約を踏まえた小さいinterop harnessを作る。両方向の深度遮蔽、D24／D32変換、binary semaphore、image layout／外部ownership、resize、resource寿命、同期/copy costを検証する。実Cleanroomと一致する3.4.1 Vulkan bindingを追加する検証はtest copyに限定する。
-5. ここまで通ってからCeleritasの狭いGPU境界分離とnative terrainへ進む。`docs/design.md`のP0〜P6と工数見積もりを参照し、根拠が増えたら更新する。
+4. P1のinterop実験は両GPUで通過。最新fixtureは往復後の通常world描画を40 ticks継続し、元IDとGL errorを検査し、復帰スクショも保存する。再実行するときは`docs/interop-validation.md`を使い、Gradleの2 buildを同時実行しない。実験はprobeと別でmod jarへ混ぜない。
+5. 次はP2：Celeritasの狭いGPU境界を分離し、まずGLだけで上流と表示・イベント順・Mod動作を比較する。CPUメッシュ生成、graph、sortアルゴリズムを変えない。GLの`CommandList`へVkBufferを詰め込まない。P3 native terrain、P4各レイヤー/更新/lifetime、P5最適化とQAの順に進む。`docs/design.md`のP0〜P6を参照する。
 
-全体alphaは初期概算で約530〜1,100時間（約13〜28人週）。これは納期の約束でも実装済み工数でもない。今はP0/P1の途中で、まず「mod build成功＋実際のcolor/depth往復」の証拠を出す。問い合わせが成功しただけで「Vulkan化済み」「互換性確認済み」「高速化済み」と報告しない。
+全体alphaは初期概算で約530〜1,100時間（約13〜28人週）。これは納期の約束でも実装済み工数でもない。現在はbuildと限定したP1契約の実証を済ませ、P2へ進む段階。問い合わせや小さいharnessの成功だけで「Vulkan地形化済み」「広い互換性確認済み」「高速化済み」と報告しない。
 
 ### Headless実行の希望
 

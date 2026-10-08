@@ -123,6 +123,7 @@ def main():
     parser.add_argument("--java", type=Path)
     parser.add_argument("--game-dir", type=Path, help="Create a fresh isolated game directory")
     parser.add_argument("--mod", type=Path, action="append", default=[])
+    parser.add_argument("--library", type=Path, action="append", default=[], help="Extra test-only classpath jar; the source profile stays unchanged")
     parser.add_argument("--jvm-arg", action="append", default=[])
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--validate", action="store_true", help="Enable and require the separately installed validation fixture")
@@ -135,8 +136,8 @@ def main():
         parser.error("Only Linux x86_64 has been implemented for this validation launcher")
     if args.duration <= 0:
         parser.error("Duration must be positive")
-    if (args.mod or args.run) and not args.game_dir:
-        parser.error("--mod and --run require an isolated --game-dir")
+    if (args.mod or args.library or args.run) and not args.game_dir:
+        parser.error("--mod, --library and --run require an isolated --game-dir")
     if args.validate and not args.run:
         parser.error("--validate requires --run")
     if args.headless and (not args.run or not args.render_node):
@@ -166,6 +167,17 @@ def main():
         if target.exists():
             raise FileExistsError(f"Test mod would overwrite a copied mod: {target}")
         shutil.copy2(mod, target)
+    report["extraTestLibraries"] = []
+    if args.library:
+        library_dir = game / "test-libraries"
+        library_dir.mkdir()
+        for library in args.library:
+            target = library_dir / library.name
+            if library.suffix != ".jar" or target.exists():
+                raise ValueError(f"Extra test library must be a distinct jar: {library}")
+            shutil.copy2(library, target)
+            cp.append(str(target))
+            report["extraTestLibraries"].append({"file": target.name, "sha256": digest(target)})
     report["testMods"] = [{"file": p.name, "sha256": digest(p)} for p in sorted((game / "mods").glob("*.jar"))]
     report["isolatedGameDirectory"] = str(game)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
