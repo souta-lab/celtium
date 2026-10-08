@@ -341,6 +341,14 @@ defects remain and are the next work items:
    show whether the two backends are fed different colours or whether the OpenGL shader derives the tint from
    something else.
 
+   **Resolved.** Disabling culling for one run turned the terrain green and brought it within one unit of the OpenGL
+   reference (`(73.1,94.7,44.7)` against `(73.4,95.7,45.1)`), which identified the real fault: the pipeline declared
+   counter-clockwise front faces while the terrain matrices are OpenGL's unchanged, so the visible faces were
+   classified as back faces and culled, leaving the terrain's *undersides* (untinted dirt, the `0x808080` vertices
+   the census found) on screen. `FRONT_FACE` is clockwise again with back-face culling enabled. The frame is now
+   correct in colour, and the remaining difference to the OpenGL reference is the aliasing signature (2677 distinct
+   colours against 59), i.e. the atlas mip chain is still not being sampled - the next item.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
