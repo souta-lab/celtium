@@ -365,6 +365,14 @@ defects remain and are the next work items:
    measure the on-screen cell size in both backends, which separates a UV-scale difference from an LOD/bias
    difference in one run.
 
+   A quantitative version of the same comparison settles the direction: the OpenGL near-ground band has 93.4 texture
+   edges per row and the Vulkan one 21.0, so Vulkan samples a level roughly four times coarser - it is the *blurrier*
+   frame, not the sharper one, and the block grid still aligns. With the material bias limited to 0 or -4 (which can
+   only sharpen) the coarser level has to come from the implicit LOD, i.e. from texture coordinates that change
+   faster per pixel. The next measurement is the controlled one: mirror the atlas as a checkerboard with a known cell
+   size and measure the on-screen cell size in both backends, which separates a UV-scale difference from an
+   LOD/bias difference in one run.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
