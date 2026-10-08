@@ -230,16 +230,6 @@ public final class ValidationClient {
         if (!expected) {
             return;
         }
-        // The device bootstrap can succeed while the *terrain* backend still falls back to OpenGL (for example when
-        // the validation layer is requested but not installed). A run that claims to exercise Vulkan terrain must
-        // therefore check the live terrain backend too, not only the device report.
-        if (Boolean.getBoolean("celtium.validation.expectVulkanTerrain")) {
-            String description = report.has("terrainBackendDescription")
-                    ? report.get("terrainBackendDescription").getAsString() : null;
-            if (description == null || !description.startsWith("vulkan")) {
-                throw new IllegalStateException("Vulkan terrain was expected but the live backend is: " + description);
-            }
-        }
         if (!"DEVICE_READY".equals(device.get("status").getAsString())) {
             throw new IllegalStateException("Vulkan device was expected but the bootstrap reported "
                     + device.get("status") + ": " + device.get("reasons"));
@@ -380,6 +370,15 @@ public final class ValidationClient {
             } catch (NoSuchMethodException absent) {
                 // The pinned upstream renderer has no backend selection to report.
                 report.addProperty("terrainBackendDescription", "unavailable: renderer has no terrain backend selection");
+            }
+            // The device bootstrap can succeed while the *terrain* backend still falls back to OpenGL (for example
+            // when the validation layer is requested but not installed), so a run that claims to exercise Vulkan
+            // terrain checks the live backend here, where it has been recorded.
+            if (Boolean.getBoolean("celtium.validation.expectVulkanTerrain")) {
+                String live = report.get("terrainBackendDescription").getAsString();
+                if (!live.startsWith("vulkan")) {
+                    throw new IllegalStateException("Vulkan terrain was expected but the live backend is: " + live);
+                }
             }
             JsonObject camera = new JsonObject();
             camera.addProperty("x", mc.player.posX);

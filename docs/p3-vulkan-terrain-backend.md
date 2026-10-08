@@ -285,6 +285,17 @@ defects remain and are the next work items:
    `(36.7,37.4,37.2)`; the next step is to re-measure the normal frame on this same clean build, since every earlier
    frame measurement predates the fixes.
 
+   With the run now *provably* on the Vulkan backend (the fixture refuses a run whose live backend is not Vulkan,
+   and the run script exports `VK_LAYER_PATH`), the probe reads `_vert_color = (112,112,112)` - one single colour
+   over the whole terrain - while the arena that the readback inspects holds `(145,189,89)`. So on a validation-clean
+   Vulkan frame the contradiction is real and reproducible: the pipeline's attribute description
+   (`R8G8B8A8_UNORM @12`), the module's SPIR-V interface, the buffer contents at the drawn range and the fetch
+   (magenta) are all individually verified, yet the value the shader interpolates is a constant `0x70` grey.
+   `0x70` is exactly what the RDH factor bytes would read as if they were interpreted as UNORM rather than SNORM, so
+   the next check is the attribute at location 4 (`a_RdhFactor`) and a deliberate change of the bytes at offset 28:
+   if the colour follows *those* bytes, the two attributes are wired to the wrong offsets somewhere the description
+   does not show.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
