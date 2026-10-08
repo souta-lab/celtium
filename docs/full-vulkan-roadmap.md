@@ -49,7 +49,21 @@ the entry point it uses and whether its output was verified is.
 - **S1 - common GPU abstraction.** Introduce a device-agnostic interface for buffers, textures, samplers, pipelines,
   dynamic state and render targets in `common/`, with the Vulkan implementation behind it. Terrain moves onto it
   first so the abstraction is proven against working code before it carries anything else.
-- **S2 - Vulkan presentation.** `VkSurfaceKHR` for the Wayland and X11 (Xwayland) cases, swapchain creation and
+- **S2 - Vulkan presentation (surface path implemented, swapchain creation blocked).**
+  `VulkanSwapchain` creates a `VkSurfaceKHR` from the window GLFW owns (Wayland and X11 paths, chosen from
+  `glfwGetPlatform()` and gated on the instance extension actually being advertised), queries the surface's formats,
+  present modes and capabilities, checks that the queue family this backend submits on can present, and implements
+  acquire-clear-present with its own semaphore and the two layout transitions. The surface extensions are only
+  enabled in the instance when `-Dceltium.vulkan.swapchainProbe=true`, so the verified normal path keeps its exact
+  extension set. The probe runs once and reports what the surface advertised.
+  Current evidence (RX 6400, run `p5k-swap-amd`, `status PASSED`, no validation message): the probe reaches
+  swapchain creation, so **surface creation and the present-support check succeed on the real window**; then
+  `vkCreateSwapchainKHR` throws a NullPointerException inside LWJGL, reported as
+  `swapchain probe failed at surface and swapchain creation: NullPointerException: null [VulkanSwapchain:336]`.
+  That call is the next thing to fix (most likely the create-info's queue-family index list, which LWJGL may
+  require to be non-null even in exclusive sharing mode); the present cycle has therefore not been verified yet.
+
+- **S2 (original note) - Vulkan presentation.** `VkSurfaceKHR` for the Wayland and X11 (Xwayland) cases, swapchain creation and
   recreation, acquire/present with proper semaphores, and an image-layout contract for the frame. Capability-based:
   a surface extension that is not advertised means the platform is unsupported, not that another GPU name is tried.
 - **S3 - Vulkan render targets replace Minecraft's framebuffers.** The main framebuffer, the entity-outline

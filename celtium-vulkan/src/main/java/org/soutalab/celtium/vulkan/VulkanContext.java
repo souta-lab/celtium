@@ -75,6 +75,13 @@ public final class VulkanContext {
      */
     public static final String VALIDATION_PROPERTY = "celtium.vulkan.validation";
 
+    /**
+     * Enables the S2 swapchain probe: a surface and swapchain are created for the game window and one image is
+     * cleared and presented, which is the evidence that the presentation path works. Off by default because GL still
+     * presents the window in the hybrid build.
+     */
+    public static final String SWAPCHAIN_PROPERTY = "celtium.vulkan.swapchainProbe";
+
     private static final int REQUIRED_API_MAJOR = 1;
     private static final int REQUIRED_API_MINOR = 2;
 
@@ -160,6 +167,35 @@ public final class VulkanContext {
     }
 
     /** The Vulkan instance that owns the device. */
+    /**
+     * {@return whether the instance was created with this extension}.
+     * <p>
+     * Surface extensions such as {@code VK_KHR_wayland_surface} are instance extensions, so the swapchain asks here
+     * rather than guessing from the platform name.
+     */
+    public boolean hasInstanceExtension(String name) {
+        if (name == null || this.instance == null) {
+            return false;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer count = stack.mallocInt(1);
+            if (vkEnumerateInstanceExtensionProperties((java.nio.ByteBuffer) null, count, null) != VK_SUCCESS) {
+                return false;
+            }
+            org.lwjgl.vulkan.VkExtensionProperties.Buffer properties =
+                    org.lwjgl.vulkan.VkExtensionProperties.calloc(count.get(0), stack);
+            if (vkEnumerateInstanceExtensionProperties((java.nio.ByteBuffer) null, count, properties) != VK_SUCCESS) {
+                return false;
+            }
+            for (int i = 0; i < properties.capacity(); i++) {
+                if (name.equals(properties.get(i).extensionNameString())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
     public VkInstance instance() {
         return this.instance;
     }
@@ -396,9 +432,33 @@ public final class VulkanContext {
                     .apiVersion(VK12.VK_API_VERSION_1_2);
             VkInstanceCreateInfo createInfo = VkInstanceCreateInfo.calloc(stack).sType$Default()
                     .pApplicationInfo(application);
+            // The platform surface extensions are instance extensions, so they have to be enabled here - but only
+            // when the swapchain probe asks for them. A normal run keeps the exact extension set it was verified
+            // with, and the probe reports "extension not enabled" instead of the instance being changed silently.
+            List<String> enabledInstanceExtensions = new ArrayList<String>();
+            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)) {
+                java.util.Set<String> available = instanceExtensionNames(stack);
+                for (String candidate : new String[]{"VK_KHR_surface", "VK_KHR_xlib_surface", "VK_KHR_wayland_surface"}) {
+                    if (available.contains(candidate)) {
+                        enabledInstanceExtensions.add(candidate);
+                    }
+                }
+            }
             VkDebugUtilsMessengerCreateInfoEXT messengerInfo = null;
             if (validation) {
                 messengerInfo = enableValidation(stack, createInfo);
+            }
+            if (!enabledInstanceExtensions.isEmpty()) {
+                enabledInstanceExtensions.add(0, EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                if (!validation) {
+                    enabledInstanceExtensions.remove(EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                }
+                PointerBuffer names = stack.mallocPointer(enabledInstanceExtensions.size());
+                for (String name : enabledInstanceExtensions) {
+                    names.put(stack.UTF8(name));
+                }
+                names.flip();
+                createInfo.ppEnabledExtensionNames(names);
             }
             PointerBuffer handle = stack.mallocPointer(1);
             check(vkCreateInstance(createInfo, null, handle), "vkCreateInstance");

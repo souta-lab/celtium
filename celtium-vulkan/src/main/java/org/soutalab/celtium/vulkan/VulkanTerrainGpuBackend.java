@@ -135,6 +135,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int frameCloses;
     private int renderCalls;
     private TerrainRenderPass lastUiPass;
+    private boolean swapchainProbeDone;
+    private VulkanSwapchain swapchain;
     private int passSubmissions;
     private int passSkips;
     private int passErrors;
@@ -1108,6 +1110,45 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     // ------------------------------------------------------------------ frame target
 
+    /**
+     * S2 probe: builds the surface and swapchain for the window GLFW currently owns, reports what the surface
+     * advertises, and presents one cleared image. GL still presents this window in the hybrid build, so this runs
+     * once and only when {@code -Dceltium.vulkan.swapchainProbe=true} is set.
+     */
+    private void runSwapchainProbe() {
+        if (this.swapchainProbeDone) {
+            return;
+        }
+        this.swapchainProbeDone = true;
+        String step = "window handle";
+        try {
+            long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+            java.util.List<String> reasons = new java.util.ArrayList<String>();
+            step = "surface and swapchain creation";
+            this.swapchain = VulkanSwapchain.create(this.context, window, 1280, 720, reasons);
+            if (this.swapchain == null) {
+                record("swapchain probe: unavailable at " + step + ": " + reasons);
+                return;
+            }
+            record(this.swapchain.describe());
+            step = "clear and present";
+            record(this.swapchain.clearAndPresent(0.2f, 0.4f, 0.8f, 1.0f));
+        } catch (RuntimeException | LinkageError error) {
+            // The failing step and the deepest frame inside this module are what make an NPE diagnosable here: the
+            // probe runs once, so a bare message would leave the next attempt guessing.
+            StackTraceElement[] trace = error.getStackTrace();
+            String where = "no frame";
+            for (StackTraceElement element : trace) {
+                if (element.getClassName().startsWith("org.soutalab.celtium.vulkan")) {
+                    where = element.getClassName().substring(element.getClassName().lastIndexOf('.') + 1) + ":"
+                            + element.getLineNumber();
+                    break;
+                }
+            }
+            record("swapchain probe failed at " + step + ": " + describe(error) + " [" + where + "]");
+        }
+    }
+
     private boolean ensureFrameTarget() {
         int width = currentDrawableWidth();
         int height = currentDrawableHeight();
@@ -1255,6 +1296,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.timestampsUsable) {
                 check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
                 this.timestampPool = handle.get(0);
+
+            if (Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)) {
+                runSwapchainProbe();
+            }
             }
         }
     }

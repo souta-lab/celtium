@@ -31,6 +31,9 @@ dependencies {
     compileOnly 'org.lwjgl:lwjgl'
     compileOnly 'org.lwjgl:lwjgl-opengl'
     compileOnly 'org.lwjgl:lwjgl-vulkan'
+    // The swapchain needs the window's native handles, which GLFW exposes; like the other LWJGL modules this is
+    // never bundled and the module reports a diagnostic when it is missing.
+    compileOnly 'org.lwjgl:lwjgl-glfw'
     compileOnly 'com.google.code.gson:gson:2.10.1'
     // The mod's core API exposes joml matrices. They are relocated into the mod's own namespace by the shadow
     // step, and this module goes through that same step, so it compiles against the original coordinates.
