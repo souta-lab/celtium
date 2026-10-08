@@ -370,7 +370,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         continue;
                     }
                     needIndexBuffer |= mesh.indexBuffer() != null;
-                    pending.add(new PendingMesh(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null));
+                    pending.add(new PendingMesh(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
+                    resourcesFor(region).sectionFirstColor));
                 }
             } else if (output instanceof ChunkSortOutput) {
                 ChunkSortOutput sort = (ChunkSortOutput) output;
@@ -382,7 +383,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         storage.removeIndexBuffer(sort.render.getSectionIndex());
                     }
                     pending.add(new PendingMesh(sort.render.getSectionIndex(), meshEntry.getKey(), null,
-                            meshEntry.getValue()));
+                            meshEntry.getValue(), null));
                 }
             } else {
                 throw new IllegalStateException("Unexpected result type: " + output.getClass().getName());
@@ -400,6 +401,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (mesh.parts != null) {
                 ByteBuffer vertices = mesh.parts.vertexBuffer().getDirectBuffer();
                 int vertexBytes = mesh.parts.vertexBuffer().getLength();
+                if (mesh.sectionFirstColor != null) {
+                    mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
+                }
                 VulkanArena.Segment vertexSegment = resources.vertexArena.allocate(vertexBytes);
                 resources.vertexArena.write(vertexSegment.byteOffset(), MemoryUtil.memAddress(vertices), vertexBytes);
                 uploaded += vertexBytes;
@@ -474,6 +478,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             verticesLogged++;
             record("mesh" + verticesLogged + " pass=" + mesh.pass.name() + " " + line);
             return;
+        }
+    }
+
+    /** Colour word of the first vertex of a mesh, in the little-endian byte order the GPU reads. */
+    private static int firstVertexColor(ByteBuffer vertices) {
+        java.nio.ByteOrder order = vertices.order();
+        try {
+            vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            return vertices.getInt(12);
+        } finally {
+            vertices.order(order);
         }
     }
 
@@ -563,6 +578,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
 
             if (this.lastDrawCommands == 0 && command0Logged < 2) {
+                command0Logged++;
+                StringBuilder colors = new StringBuilder("drawn section colours:");
+                byte[] sections = renderList.getSectionsWithGeometry();
+                for (int i = 0; i < Math.min(4, sections.length); i++) {
+                    int local = sections[i] & 0xFF;
+                    colors.append(" #").append(local).append("=0x")
+                            .append(Integer.toHexString(resources.sectionFirstColor[local]));
+                }
+                record(colors.toString());
                 command0Logged++;
                 record("firstDraw region=" + region.getId() + " pass=" + pass.name()
                         + " stride=" + this.commonVertexStride
@@ -1043,6 +1067,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Per-region device memory. */
     private static final class RegionResources {
         final VulkanArena vertexArena;
+        final int[] sectionFirstColor = new int[RenderRegion.REGION_SIZE];
         VulkanArena indexArena;
 
         RegionResources(VulkanContext context, int vertexStride) {
@@ -1067,12 +1092,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         final TerrainRenderPass pass;
         final BuiltSectionMeshParts parts;
         final ChunkSortOutput.SortedMesh sorted;
+        final int[] sectionFirstColor;
 
-        PendingMesh(int sectionIndex, TerrainRenderPass pass, BuiltSectionMeshParts parts, ChunkSortOutput.SortedMesh sorted) {
+        PendingMesh(int sectionIndex, TerrainRenderPass pass, BuiltSectionMeshParts parts,
+                    ChunkSortOutput.SortedMesh sorted, int[] sectionFirstColor) {
             this.sectionIndex = sectionIndex;
             this.pass = pass;
             this.parts = parts;
             this.sorted = sorted;
+            this.sectionFirstColor = sectionFirstColor;
         }
     }
 }

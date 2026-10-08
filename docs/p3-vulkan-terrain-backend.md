@@ -128,6 +128,17 @@ defects remain and are the next work items:
    render list) so the visible sections' own colour bytes can be read, and dump the light-map sample the shader
    computes for one of them.
 
+   The drawn mesh itself is green: the backend now keeps the first vertex colour of every section as it uploads it
+   and logs the colours of the sections in the first render list, which prints `#28=0xff59bd91` - the same plains
+   green as the upload log. So for the visible geometry the shader receives green, the attribute path is proven by
+   the magenta repaint, and yet both the split test (`v_Color = _vert_color`, which renders grey) and the `v_Color`
+   diagnostic (uniform grey 112) say the interpolated colour is grey. The remaining explanations are outside the
+   vertex data: the fragment stage's own arithmetic (`m_color`, the AO term, the RDH correction), the light-map
+   sample, or the possibility that the visible surface is not the grass tops the colour was logged for. The next
+   measurement should therefore print the fragment stage's intermediate values for one pixel - `m_color` before and
+   after the RDH correction, `lightColor`, and the two multipliers - instead of the vertex inputs, which are now
+   fully accounted for.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
