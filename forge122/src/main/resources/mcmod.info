@@ -2,7 +2,7 @@
   {
     "modid": "celeritas",
     "name": "Celtium",
-    "description": "A Celeritas fork developing native Vulkan terrain rendering; current terrain backend: OpenGL",
+    "description": "Native Vulkan terrain rendering for Minecraft 1.12.2, forked from Celeritas. The terrain GPU boundary is in place; terrain still renders through the OpenGL backend.",
     "version": "${version}",
     "mcversion": "1.12.2",
     "url": "https://github.com/souta-lab/celtium",

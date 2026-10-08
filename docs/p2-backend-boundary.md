@@ -73,12 +73,15 @@ Artifacts, all JDK 21-compiled and remapped to Forge's SRG names:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar` | `5251e3a8254052623b1686a35bd90cf0fc14625b3cc1054612864273199a1d6d` |
-| `celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar` | `f4c859a1d803aa1f61860e767647d15db2e5e62db85cad27c6352af61c61826c` |
+| `celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar` | `a2d42b75adc1d43480359b2a3ad9b60fdb36641a670edaf27152bf7927340276` |
+| `celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar` | not bit-reproducible: RFG rewrites the jar with fresh timestamps; rebuilt from the committed fixture sources |
 | `celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar` | `d12425eaaf184e7925cd41d1deb4f9df69064115c8e78c8fcedfd6ecc63f93e7` |
 
-The mod jar was checked with `scripts/verify_forge_jar.py` (`verified: true`, no errors) after the change from the
-`capability-probe` to the `backend-boundary` manifest stage.
+The mod jar is reproducible: `build-1122` clears archive timestamps, so rebuilding the same sources yields the
+same hash. It was checked with `scripts/verify_forge_jar.py` (`verified: true`, no errors), which also enforces the
+rebrand: the display name must be `Celtium`, the manifest stage is `backend-boundary`, and no translation value may
+show `Celeritas` to the user. The mod ID, mixin config and resource domain deliberately stay `celeritas` so that
+existing mods, integrations and resource overrides keep working.
 
 ### Why the fixture pins the flicker
 
@@ -95,8 +98,8 @@ the renderer: vanilla's `EntityRenderer.updateTorchFlicker()` draws from `Math.r
 shifts terrain brightness by a few units. Pinning it makes the captures byte-identical, as the result table shows.
 Those earlier runs are kept in `.celtium-work/runtime/p2b-*`, `p2c-*` and `p2d-*`.
 
-Run directories: `.celtium-work/runtime/p2f-{upstream,celtium}-{amd,intel}/`. Console logs:
-`.celtium-work/p2f-*.log`. The captures are `.celtium-work/runtime/p2f-*/screenshots/celtium-validation.png`.
+Run directories: `.celtium-work/runtime/p2g-{upstream,celtium}-{amd,intel}/`. Console logs:
+`.celtium-work/p2g-*.log`. The captures are `.celtium-work/runtime/p2g-*/screenshots/celtium-validation.png`.
 
 ### Reproduce
 
@@ -106,15 +109,15 @@ CELTIUM_INSTANCE=/path/to/PrismLauncher/instances/cleanroom-0.6.13-alpha
 ./gradlew -p build-1122 :forge122:packageJar :forge122:validationRemapJar --console=plain --no-daemon
 
 python3 scripts/prism_validation.py "$CELTIUM_INSTANCE" \
-  --output .celtium-work/p2f-celtium-amd-lock.json \
-  --game-dir .celtium-work/runtime/p2f-celtium-amd \
+  --output .celtium-work/p2g-celtium-amd-lock.json \
+  --game-dir .celtium-work/runtime/p2g-celtium-amd \
   --mod build-1122/build/libs/2.5.12-celtium.0.1.0-dev.1/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar \
   --mod forge122/build/libs/celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar \
   --run --validate --duration 150 --headless \
   --render-node /dev/dri/by-path/pci-0000:03:00.0-render --require-gpu 'RX 6400'
 
 python3 scripts/compare_validation.py \
-  .celtium-work/runtime/p2f-upstream-amd .celtium-work/runtime/p2f-celtium-amd \
+  .celtium-work/runtime/p2g-upstream-amd .celtium-work/runtime/p2g-celtium-amd \
   --reference-label upstream-989ebf2e --candidate-label celtium-P2 \
   --output .celtium-work/p2-parity-final-amd.json
 ```

@@ -29,7 +29,7 @@ import org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer;
 @Mod(modid = CeleritasVintage.MODID, useMetadata = true, clientSideOnly = true, acceptableRemoteVersions = "*")
 public class CeleritasVintage {
     public static final String MODID = "celeritas";
-    private static final Logger LOGGER = LogManager.getLogger("Celeritas");
+    private static final Logger LOGGER = LogManager.getLogger("Celtium");
     public static String VERSION;
     private static final SodiumGameOptions CONFIG = loadConfig();
 

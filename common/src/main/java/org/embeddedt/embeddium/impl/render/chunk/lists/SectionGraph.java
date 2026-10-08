@@ -40,7 +40,7 @@ public final class SectionGraph {
         if (asyncMode != AsyncOcclusionMode.NONE) {
             this.executor = Executors.newSingleThreadExecutor(runnable -> {
                 Thread thread = new Thread(runnable);
-                thread.setName("Celeritas chunk graph search thread");
+                thread.setName("Celtium chunk graph search thread");
                 thread.setDaemon(true);
                 return thread;
             });

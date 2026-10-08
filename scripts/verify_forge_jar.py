@@ -26,6 +26,29 @@ def read_manifest(data):
     return attributes
 
 
+def rebrand_errors(jar):
+    """The mod ID stays `celeritas` for compatibility; every user-visible name must be Celtium.
+
+    Translation values are checked, not keys: keys such as `celeritas.options...` are API for resource packs
+    and existing overrides. Upstream attribution stays in the credits, licence notices and documentation.
+    """
+    errors = []
+    checked = 0
+    for name in jar.namelist():
+        if not name.endswith(".lang") or "/lang/" not in name:
+            continue
+        checked += 1
+        for number, line in enumerate(jar.read(name).decode("utf-8").splitlines(), start=1):
+            if line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if "Celeritas" in value:
+                errors.append(f"{name}:{number} still shows 'Celeritas' to the user: {key}")
+    if not checked:
+        errors.append("No language file was found in the distributable")
+    return {"errors": errors, "languageFiles": checked}
+
+
 def verify(path):
     repository = Path(__file__).resolve().parent.parent
     errors = []
@@ -78,6 +101,13 @@ def verify(path):
                 errors.append("Unexpected Minecraft version")
             if not metadata[0].get("version") or "${" in metadata[0]["version"]:
                 errors.append("Unexpanded mod version")
+            # The mod ID stays `celeritas` so existing integrations keep working, but every user-visible name
+            # must be Celtium. Credits and the licence notices keep the upstream attribution.
+            if metadata[0].get("name") != "Celtium":
+                errors.append(f"Mod display name must be Celtium, got {metadata[0].get('name')!r}")
+
+        rebrand = rebrand_errors(jar)
+        errors.extend(rebrand["errors"])
 
         notices = {
             "COPYING": "COPYING",

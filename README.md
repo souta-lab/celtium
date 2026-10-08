@@ -12,6 +12,7 @@ A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2
 - Add a terrain-specific Vulkan backend after proving OpenGL/Vulkan color, depth and synchronization interoperability.
 - Keep GUI, entities, TESRs, particles and existing mod OpenGL calls on the current GL context.
 - Retain the OpenGL terrain backend and the `celeritas` mod ID. Celtium replaces Celeritas; install one of them.
+- Rebrand everything a user sees to Celtium: mod display name, commands, logs, thread names, option text and documentation. The mod ID, mixin config and resource domain stay `celeritas` because existing mods, integrations and resource overrides reference them; `scripts/verify_forge_jar.py` rejects a jar whose user-visible names still say Celeritas.
 - Select implementations by capabilities and the current GL GPU's UUID. Multiple GPU support is a core requirement; physical validation targets are RX 6400 and UHD 630. NVIDIA is unverified.
 - Use the existing GPU driver. Zink is optional and is not bundled or required.
 

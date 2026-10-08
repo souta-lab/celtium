@@ -14,3 +14,12 @@ allprojects {
 }
 version = "2.5.12-celtium.0.1.0-dev.1"
 extra["celtium_repository_root"] = rootProject.file("..").canonicalFile
+
+// Evidence ties a validation run to an exact artifact. Without this, every rebuild embeds a new timestamp and
+// the same sources produce a different hash, which makes "this jar was tested" impossible to check.
+allprojects {
+    tasks.withType<AbstractArchiveTask>().configureEach {
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+    }
+}

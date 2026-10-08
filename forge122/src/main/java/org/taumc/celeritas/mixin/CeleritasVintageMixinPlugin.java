@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
-    public static final Logger LOGGER = LogManager.getLogger("CeleritasMixins");
+    public static final Logger LOGGER = LogManager.getLogger("CeltiumMixins");
 
     @Override
     public void onLoad(String mixinPackage) {
