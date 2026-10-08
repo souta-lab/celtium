@@ -211,6 +211,15 @@ defects remain and are the next work items:
    its two factors in the same frame *with the checkerboard in place*, so the zeroed channels can be attributed to
    either `a_Color` or the light-map sample.
 
+   With the mirrored texture forced to pure white the terrain renders a **uniform `(128,128,128)`** (one colour,
+   all 110000 sampled pixels), so the shading the fragment stage computes - `v_Color` multiplied by `m_color.a` - is
+   `0.502` grey. With the atlas verified as sampled (the checkerboard pattern reached the screen) and the buffer,
+   the pipeline's attribute description and the fetch all verified, the only link left unverified is the compiled
+   shader module itself: what attribute locations and types its SPIR-V actually declares. The next step is
+   therefore to read the input decorations back out of `terrain_solid_vanilla.vert.spv` (a small SPIR-V parser, or
+   `spirv-dis` if available) and compare them with the pipeline's description, which closes the last gap between
+   "green in the buffer" and "grey on the screen".
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
