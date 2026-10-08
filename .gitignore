@@ -45,3 +45,4 @@ bin/
 local/**
 
 /.celtium-work/
+__pycache__/

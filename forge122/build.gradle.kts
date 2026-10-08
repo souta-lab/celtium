@@ -27,6 +27,13 @@ val modCompileOnly = configurations.create("modCompileOnly")
 configurations.compileOnly.get().extendsFrom(modCompileOnly)
 val modRuntimeOnly = configurations.create("modRuntimeOnly")
 configurations.runtimeOnly.get().extendsFrom(modRuntimeOnly)
+// Shadow's 'shadow' configuration denotes external files for its manifest.
+// Keep jars that we actually embed in a separate configuration.
+val modEmbedDependencies = configurations.create("modEmbedDependencies") {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    attributes { attribute(ModUtils.DEOBFUSCATOR_TRANSFORMED, true) }
+}
 
 val celeritasLwjglVersion = "3.3.3"
 
@@ -93,8 +100,8 @@ configurations {
 
 dependencies {
     // Own Java-8-compatible classes only. LWJGL and native libraries belong to the active loader.
-    implementation(project(":celtium-probe")) { isTransitive = false }
-    shadow(project(":celtium-probe")) { isTransitive = false }
+    implementation(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
+    modEmbedDependencies(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
     val lombokVersion = rootProject.findProperty("lombok_version").toString()
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")
@@ -107,10 +114,10 @@ dependencies {
     implementation(project(":common", configuration = "downgraded")) {
         isTransitive = false
     }
-    shadow(project(":common", configuration = "downgraded")) {
+    modEmbedDependencies(project(":common", configuration = "downgraded")) {
         isTransitive = false
     }
-    "shadow"("org.joml:joml:1.10.5")
+    modEmbedDependencies("org.joml:joml:1.10.5")
     implementation("org.joml:joml:1.10.5")
     implementation("zone.rong:mixinbooter:10.5")
     compileOnly("com.gtnewhorizons.retrofuturabootstrap:RetroFuturaBootstrap:1.0.11") {
@@ -145,11 +152,24 @@ tasks.register<ReobfuscateCodeAndMixinsTask>("celeritasRemapJar") {
 
 ShadowHelper.createShadowRemapJar(project, "celeritasRemapJar")
 
+tasks.named<ShadowJar>("shadowRemapJar") {
+    configurations.set(listOf(modEmbedDependencies))
+    exclude("module-info.class", "**/module-info.class")
+}
+
 tasks.named<JSTTransformerTask>("applyJST") {
     accessTransformerFiles.from("src/main/resources/META-INF/celeritas_at.cfg")
 }
 
 tasks.named<Jar>("jar") {
+    val repositoryRoot = rootProject.findProperty("celtium_repository_root") ?: rootProject.projectDir
+    from(file(repositoryRoot)) {
+        include("README.md", "docs/upstream-README.md")
+    }
+    from(file("$repositoryRoot/common/src/main/java/grondag/bitraster/LICENSE")) {
+        into("licenses")
+        rename { "bitraster-LICENSE" }
+    }
     manifest {
         attributes["FMLAT"] = "celeritas_at.cfg"
         attributes["FMLCorePlugin"] = "org.taumc.celeritas.core.CeleritasLoadingPlugin"
@@ -187,4 +207,37 @@ publishing {
             }
         }
     }
+}
+
+// A separate test mod drives a fixed world and observes the existing GL FBO.
+// None of its classes or dependencies are part of Celtium's distributable.
+val validation = sourceSets.create("validation") {
+    java.srcDir("../validation/client/src/main/java")
+    compileClasspath += sourceSets.main.get().compileClasspath.filter {
+        !it.name.startsWith("jabel-javac-plugin-")
+    }
+}
+dependencies {
+    add(validation.compileOnlyConfigurationName, platform("org.lwjgl:lwjgl-bom:3.4.1"))
+    add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl")
+    add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-opengl")
+    add(validation.compileOnlyConfigurationName, "com.google.code.gson:gson:2.10.1")
+}
+tasks.named<JavaCompile>(validation.compileJavaTaskName) {
+    options.release = 8
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+}
+val validationJar = tasks.register<Jar>("validationJar") {
+    from(validation.output)
+    archiveBaseName.set("celtium-validation-client")
+    archiveClassifier.set("dev")
+}
+tasks.register<ReobfuscateCodeAndMixinsTask>("validationRemapJar") {
+    tsrgMappings = mcpTasks.srgFile("mcp-srg.srg")
+    deobfMinecraftJar = mcpTasks.taskPackagePatchedMc.flatMap { it.archiveFile }
+    classpath = validation.compileClasspath
+    archiveBaseName.set("celtium-validation-client")
+    archiveClassifier.set("")
+    input = validationJar.flatMap { it.archiveFile }
+    dependsOn(mcpTasks.taskGenerateForgeSrgMappings)
 }

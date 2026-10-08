@@ -6,7 +6,7 @@
 
 2026-10-08、Celtiumとして実装を開始。Celeritasの履歴を継承し、Linux向けのGL/Vulkan能力診断、独立CLI、1.12.2の診断コマンドを最初の開発対象にする。
 
-現段階の地形バックエンドはOpenGL。Vulkan地形描画、外部画像のimport、深度の往復、同期・コピーの性能測定は未実装。診断結果は能力の問い合わせであり、これらの実証完了を示すものではない。
+現段階の地形バックエンドはOpenGL。Forge jarの生成・内容検査と、本人が用意したCleanroom 0.6.13-alphaでの上流／forkの固定flat world描画・診断コマンド実行を確認した。Vulkan地形描画、外部画像のimport、深度の往復、同期・コピーの性能測定は未実装。診断結果は能力の問い合わせであり、これらの実証完了を示すものではない。
 
 ## 1. 開発するもの
 
@@ -227,7 +227,7 @@ Vulkanにだけメッシュを保持した状態で、任意のdrawを即座にG
 
 初期alphaの対象はLinux・1 GPU（計画上はRX 6400）・固定したCleanroom／Celeritas版・本人の指定Mod構成と代表的な描画Mod群とする。既存のLWJGL 3動作を成立させる作業は含めず、Vulkan化によって生じる差分を扱う。全Mod・全driver・全shader packの互換保証は、この見積もりの範囲に含めない。
 
-使用版、Mod一覧、driver、実機測定方法は未確定である。現在の作業環境には実GPUへの接続がないため、対象機での計測を別途確保する必要がある。実機待ちの期間は以下の作業時間とは別に暦期間へ加わる。
+引き継ぎ後にRX 6400へ接続できる実機環境と、本人が用意したCleanroom 0.6.13-alpha／Java 25／LWJGL 3.4.1／Fugue 0.24.4／Scalar 3.9.0を固定した。描画中のFBOはRGBA8、D24 depth renderbuffer、stencilなし、single sampleだった。固定flat worldの起動と描画を確認した段階で、代表的なMod・TESR場面と正式な性能測定の範囲は引き続き確定・拡充する必要がある。[検証記録](validation-2026-10-08.md)
 
 ### 段階別の工数
 

@@ -4,9 +4,9 @@ The first increment establishes the fork and a capability-query tool. All terrai
 
 | Stage | Scope | State |
 | --- | --- | --- |
-| P0 | Pin upstream, build baseline, record an installed Cleanroom/modpack configuration | Upstream pinned; mod build blocked on plugin dependency resolution; installed runtime not yet identified |
+| P0 | Pin upstream, build baseline, record an installed Cleanroom/modpack configuration | Forge jar and contents verified; supplied Cleanroom runtime locked; stock/fork flat-world startup and FBO observations recorded; representative performance/scene coverage still pending |
 | P1a | Isolated GL/Vulkan capability query and fail-closed eligibility tests | CLI built; 15 tests passed; RX 6400 and UHD 630 queries recorded |
-| P1b | External image import, color/depth in both directions, binary semaphores, resize and cost measurement | Pending |
+| P1b | External image import, color/depth in both directions, binary semaphores, resize and cost measurement | Next: RGBA8 / D32 external sharing with explicit conversion to/from the observed D24 renderbuffer on RX 6400 |
 | P2 | Extract the narrow terrain GPU boundary; verify the GL backend against stock Celeritas | Pending |
 | P3 | Vulkan mesh upload, arena, atlas/lightmap and SOLID rendering | Pending |
 | P4 | Cutout/translucency, index updates, resource reload and deferred destruction | Pending |
@@ -26,7 +26,7 @@ No successful capability result changes the renderer. Actual GL import and image
 
 The CLI creates and destroys its own surfaceless EGL context. It can run without a desktop session or a Minecraft instance.
 
-The in-game command uses the existing context, issues capability queries, and never creates or binds an FBO or texture. It runs only after an explicit command, through Minecraft's render-thread task queue. Stock startup has no Vulkan-loader initialization. The Forge jar retains `celeritas` as its mod ID and existing hooks.
+The in-game command uses the existing context, issues capability queries, and never creates or binds an FBO or texture. It runs only after an explicit command, through Minecraft's render-thread task queue. Stock startup has no Vulkan-loader initialization. The Forge jar retains `celeritas` as its mod ID and existing hooks. A separately built validation mod drives a disposable flat world, invokes the commands and observes the target through named GL queries. It is not included in Celtium's jar.
 
 ## Required evidence before P2
 

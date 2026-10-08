@@ -3,6 +3,16 @@ pluginManagement {
     repositories {
         gradlePluginPortal()
         mavenCentral()
+        // Dependencies of the included remapper plugin are also resolved on
+        // the consuming build's plugin classpath, not only in its own build.
+        exclusiveContent {
+            forRepository { maven("https://maven.fabricmc.net/") }
+            filter { includeGroupAndSubgroups("net.fabricmc") }
+        }
+        exclusiveContent {
+            forRepository { maven("https://maven.neoforged.net/releases") }
+            filter { includeGroup("net.neoforged") }
+        }
         exclusiveContent {
             forRepository { maven("https://nexus.gtnewhorizons.com/repository/public/") }
             filter { includeGroupAndSubgroups("com.gtnewhorizons") }
@@ -22,6 +32,11 @@ pluginManagement {
 
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
+require(JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)) {
+    "RetroFuturaGradle 2.0.4 requires JDK 25 or newer to run Gradle. " +
+        "Also provide JDK 21 for mod compilation and JDK 8 for Minecraft preparation."
 }
 
 rootProject.name = "celtium-1122"

@@ -50,11 +50,11 @@ The CLI has its own LWJGL distribution. `-Pceltium_lwjgl_version=<version>` chan
 ./gradlew -p build-1122 :forge122:packageJar
 ```
 
-Use JDK 21 to run Gradle, with JDK 8 also installed for Minecraft preparation. The isolated 1.12.2 build reuses the upstream source directories and required build helpers without loading the modern-version Stonecutter plugin. The original multi-version build remains for upstream reference.
+Use JDK 25 or newer to run Gradle (required by RetroFuturaGradle 2.0.4), with JDK 21 for mod compilation and JDK 8 for Minecraft preparation. This is a build requirement, not a request to change the game's Java version. The isolated 1.12.2 build reuses the upstream source directories and required build helpers without loading the modern-version Stonecutter plugin. The original multi-version build remains for upstream reference.
 
 The resulting mod is under `build-1122/build/libs/<version>/`. In-game:
 
-**Build status at the initial handoff:** the isolated CLI builds and its 15 tests pass. The Minecraft mod build is still blocked during plugin dependency resolution (`net.fabricmc:tiny-remapper:0.11.0`); the commands below are implemented but have not been verified in-game. See [validation](docs/validation-2026-10-08.md) and [the Codex handoff](docs/HANDOFF.md).
+**Build and startup status:** Forge packaging and the 15 probe tests pass. The distributable has been checked for its mod ID, manifest, probe classes, licenses, Java 8 bytecode and absence of bundled LWJGL/native libraries. Stock Celeritas and Celtium both render a fixed flat world in Cleanroom 0.6.13-alpha on RX 6400. The commands below execute on the client thread; a missing Vulkan binding produces a diagnostic report while OpenGL stays active. See [validation](docs/validation-2026-10-08.md), [runtime reproduction](docs/runtime-validation.md) and [the Codex handoff](docs/HANDOFF.md).
 
 - `/celtium` displays the current terrain-backend status.
 - `/celtium probe` queries the existing GL context and writes `logs/celtium-capabilities.json` on the render thread.
@@ -66,6 +66,8 @@ Vulkan bindings must be available on the game's classpath and match that Cleanro
 See [the design and effort estimate](docs/design.md) and [the implementation roadmap](docs/roadmap.md).
 
 The next gate is an actual color/depth roundtrip using external memory and binary semaphores, including resource recreation and measured synchronization/copy cost. Larger terrain-backend refactoring follows that gate.
+
+The observed Minecraft target is RGBA8 with a D24 depth renderbuffer, no stencil and one sample. RX 6400's D24 external-image query remains unsupported. A D32 sharing experiment must prove the conversion to and from the existing D24 target and preserve its object identities before it can be used by terrain rendering.
 
 ## License and attribution
 

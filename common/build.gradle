@@ -222,6 +222,12 @@ jar {
 
 def extraSourceSets = [sourceSets.lwjglCommon, sourceSets.lwjgl2]
 
+// The jar contains both binding adapters. Include their compile-only binding
+// types in hierarchy analysis; this does not embed either LWJGL runtime.
+tasks.named('downgradeJar') {
+    classpath = classpath + sourceSets.lwjgl2.compileClasspath + sourceSets.lwjgl3.compileClasspath
+}
+
 configurations {
     apiElements
     runtimeElements

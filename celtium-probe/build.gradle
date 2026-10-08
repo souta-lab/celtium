@@ -48,3 +48,19 @@ dependencies {
 
 application { mainClass = 'org.soutalab.celtium.probe.ProbeMain' }
 tasks.named('test') { useJUnitPlatform() }
+
+// The mod consumes only this jar, with no CLI runtime dependencies or classes /
+// resources directory variants for Gradle to confuse on RFG's shadow classpath.
+configurations {
+    modEmbed {
+        canBeConsumed = true
+        canBeResolved = false
+        attributes {
+            attribute(Attribute.of('com.gtnewhorizons.retrofuturagradle.obfuscation', String), 'mcp')
+            attribute(Attribute.of('rfgDeobfuscatorTransformed', Boolean), true)
+        }
+    }
+}
+artifacts {
+    modEmbed(tasks.named('jar'))
+}

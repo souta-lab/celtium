@@ -38,7 +38,7 @@ public final class CeltiumCommand extends CommandBase {
             // Stock Forge/LWJGL 2 or older relocated LWJGL setups can keep using the existing GL backend.
             Class<?> entry = Class.forName("org.soutalab.celtium.probe.CeltiumProbe");
             String json = (String) entry.getMethod("inspectCurrentContextJson").invoke(null);
-            Path output = minecraft.mcDataDir.toPath().resolve("logs/celtium-capabilities.json");
+            Path output = minecraft.gameDir.toPath().resolve("logs/celtium-capabilities.json");
             Files.createDirectories(output.getParent());
             Files.write(output, (json + "\n").getBytes(StandardCharsets.UTF_8));
             sender.sendMessage(new TextComponentString("Celtium capability report: " + output + ". This does not verify shared depth or enable Vulkan terrain."));
