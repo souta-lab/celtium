@@ -48,9 +48,16 @@ defects remain and are the next work items:
    OpenGL reference.
 2. The atlas has no mip chain, so grazing-angle terrain aliases into noise. `VulkanGlTexture` mirrors level 0 only;
    the mip levels must be copied or generated, and `u_MipBiasAdd` then becomes meaningful.
-3. The final colour is much darker than the albedo. With the light map verified (a dump of GL texture 12 shows a
-   correct 16x16 light map) and the albedo forced to screen, the remaining suspects are the light-map coordinate
-   decode and the per-vertex AO shade, both of which reach the shader through the VanillaLike vertex layout.
+3. The final colour is much darker than the albedo. Two experiments narrow it down:
+   - Forcing the fragment shader to output `v_Color` (vertex colour x light map x AO) gives a **uniform mid grey
+     (~0.44)** over the whole terrain, while the albedo alone varies. So the light-map *sample* is constant and
+     mid-dark, not the atlas.
+   - Flipping the mirrored rows made the terrain fully black, which proves the row order GL hands over is already
+     the one Vulkan's texture coordinates expect (GL's `glGetTexImage` returns bottom-up, and GL's `v = 0` is that
+     first row). Reverted.
+   Next step: decode the first mesh's `a_LightCoord` in Java from the uploaded bytes and compare it with what the
+   OpenGL shader receives, i.e. settle whether the light coordinate is zero, the light map mirror is stale, or the
+   binding the sampler reads is not the one the capture wrote.
    `-Dceltium.vulkan.dumpTextures=<dir>` writes what GL hands over, which is how the light map was cleared.
 4. `VulkanGlTexture.uploadFromGlTexture` changes the active texture unit and the pack alignment with raw LWJGL
    calls while the game's `GlStateManager` caches that state. It restores both, but the capture should use

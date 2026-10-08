@@ -410,7 +410,9 @@ public final class VulkanGlTexture {
         long bytes = (long) pixelWidth * (long) pixelHeight * BYTES_PER_PIXEL;
         ensureStaging(bytes);
         // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
-        // buffer into device visible memory without an intermediate Java array.
+        // buffer into device visible memory without an intermediate Java array. The row order is kept as GL
+        // returned it; a vertical flip here made the whole terrain black, so the orientation question is not
+        // settled and must be answered with a controlled pattern instead of by flipping this copy.
         MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), stagingAddress, bytes);
         if (!stagingCoherent) {
             // Non-coherent host memory needs an explicit flush before the copy; coherent memory (the common case)
