@@ -139,6 +139,15 @@ defects remain and are the next work items:
    after the RDH correction, `lightColor`, and the two multipliers - instead of the vertex inputs, which are now
    fully accounted for.
 
+   The fragment intermediates are measured and the fragment stage is exonerated: with `m_color.r`, `m_color.a` and
+   `v_Color.b` written into the three colour channels, `m_color.a` reads exactly 1.000 (so the AO multiplier does
+   not darken anything) while `m_color.r` and `v_Color.b` are both exactly 0.439 - i.e. `v_Color` is the uniform
+   grey `(0.439,0.439,0.439)`. A green `a_Color` `(0.569,0.741,0.349)` multiplied by any UNORM light-map value
+   cannot produce that, so *something* in the chain replaces the colour, yet the magenta repaint proved the draw
+   reads the bytes the backend writes. The two facts can only be reconciled by looking at what the GPU *holds*:
+   the next measurement copies the arena's bytes back to host memory for the range the first draw uses and decodes
+   them there.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

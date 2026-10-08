@@ -142,6 +142,7 @@ void main() {
             - (v_QuadCoord.x * v_QuadCoord.y);
     m_color += v_RdhFactor * correctionWeight;
 
+
     // Apply per-vertex color
     diffuseColor.rgb *= m_color.rgb;
 
