@@ -182,6 +182,16 @@ defects remain and are the next work items:
    section, one block, a fixed camera - instead of the fixture's full view, so every number can be traced to one
    vertex. Until that is done, the colour defect stays open and the OpenGL backend stays the default.
 
+   The mirrored textures now carry a full mip chain (the image is created with `mipLevels = log2(max(w,h))+1`, the
+   view covers every level, and each level is blitted from the one above), and the sampler's `maxLod` follows it -
+   the OpenGL atlas is sampled with mips, so this is a real parity gap. It did **not** change the rendered frame at
+   all (identical mean and identical 2795 distinct colours), which is itself informative: whatever the visible
+   surface samples, flipping the atlas mip chain does not affect it. Together with the earlier vertex-module probes,
+   the pattern is that fragment-module edits change the frame while texture and some vertex edits do not, so the
+   next step is to log the `VkImageView` handles handed to `bindTextures` for binding 1 and 2 and compare them with
+   the handles created for the atlas and the light map - a swap or a stale handle would explain the desaturated
+   result and would also survive every edit made to the atlas itself.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

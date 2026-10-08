@@ -238,6 +238,9 @@ public final class VulkanTerrainPipeline {
     /** What the device reported for the limits this pipeline depends on. Used for diagnostics. */
     private String limitsSummary = "unqueried";
 
+    /** The vertex input state this pipeline was created with, for diagnostics. */
+    private String vertexInputSummary = "unqueried";
+
     /** Non-null when a limit was not reported and a check had to be skipped. */
     private String limitsWarning;
     /** True once {@link #bindTextures} has written a complete descriptor set; until then binding it is invalid. */
@@ -366,6 +369,11 @@ public final class VulkanTerrainPipeline {
      *
      * @return {@code VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment}
      */
+    /** {@return the vertex input state this pipeline was created with} */
+    public String vertexInputSummary() {
+        return this.vertexInputSummary;
+    }
+
     /** {@return the device limits this pipeline read, for diagnostics} */
     public String limitsSummary() {
         return this.limitsSummary;
@@ -773,6 +781,13 @@ public final class VulkanTerrainPipeline {
                         .format(this.vertexLayout.formats[i])
                         .offset(this.vertexLayout.offsets[i]);
             }
+            StringBuilder input = new StringBuilder("vertex input stride=" + this.vertexLayout.stride
+                    + " module=" + this.vertexLayout.vertexModule);
+            for (int i = 0; i < this.vertexLayout.formats.length; i++) {
+                input.append(" loc").append(i).append("=fmt").append(this.vertexLayout.formats[i])
+                        .append("@").append(this.vertexLayout.offsets[i]);
+            }
+            vertexInputSummary = input.toString();
             VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
                     .sType$Default()
                     .pVertexBindingDescriptions(binding)

@@ -60,6 +60,9 @@ public final class VulkanGlTexture {
      */
     private static final int IMAGE_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 
+    /** Number of mip levels of the current image; the OpenGL atlas is sampled with a mip chain. */
+    private int mipLevels = 1;
+
     private static final int BYTES_PER_PIXEL = 4;
 
     /**
@@ -234,6 +237,10 @@ public final class VulkanGlTexture {
     }
 
     private void createImageResources(int newWidth, int newHeight) {
+        this.mipLevels = 1;
+        while ((1 << this.mipLevels) <= Math.max(newWidth, newHeight)) {
+            this.mipLevels++;
+        }
         if (newWidth <= 0 || newHeight <= 0) {
             throw new IllegalArgumentException("A mirrored texture size of " + newWidth + "x" + newHeight
                     + " pixels is not usable");
@@ -260,11 +267,11 @@ public final class VulkanGlTexture {
             VkImageCreateInfo createImage = VkImageCreateInfo.calloc(stack).sType$Default()
                     .imageType(VK_IMAGE_TYPE_2D)
                     .format(IMAGE_FORMAT)
-                    .mipLevels(1)
+                    .mipLevels(this.mipLevels)
                     .arrayLayers(1)
                     .samples(VK_SAMPLE_COUNT_1_BIT)
                     .tiling(VK_IMAGE_TILING_OPTIMAL)
-                    .usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                    .usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
                     .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
             createImage.extent().set(newWidth, newHeight, 1);
@@ -287,7 +294,7 @@ public final class VulkanGlTexture {
                     .image(image)
                     .viewType(VK_IMAGE_VIEW_TYPE_2D)
                     .format(IMAGE_FORMAT);
-            createView.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            createView.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
             check(vkCreateImageView(device, createView, null, handle), "vkCreateImageView(mirrored texture)");
             view = handle.get(0);
         }
@@ -318,7 +325,7 @@ public final class VulkanGlTexture {
                     .minLod(0.0f)
                     // The image has exactly one level, so clamping the LOD to 0 is what keeps implicit-derivative
                     // sampling inside the image. The GL mip chain is deliberately not mirrored.
-                    .maxLod(0.0f)
+                    .maxLod((float) this.mipLevels)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false);
             LongBuffer handle = stack.mallocLong(1);
@@ -406,6 +413,51 @@ public final class VulkanGlTexture {
         }
     }
 
+    /**
+     * Generates the mip chain by blitting each level from the one above it. The OpenGL atlas is sampled with mips,
+     * so without this every distant or grazing-angle surface aliases into noise instead of averaging like the
+     * OpenGL frame does.
+     */
+    private void recordMipChain(VkCommandBuffer commandBuffer, int pixelWidth, int pixelHeight, MemoryStack stack) {
+        if (this.mipLevels <= 1) {
+            return;
+        }
+        int levelWidth = pixelWidth;
+        int levelHeight = pixelHeight;
+        for (int level = 1; level < this.mipLevels; level++) {
+            int nextWidth = Math.max(1, levelWidth / 2);
+            int nextHeight = Math.max(1, levelHeight / 2);
+
+            VkImageMemoryBarrier.Buffer toSource = VkImageMemoryBarrier.calloc(1, stack);
+            toSource.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image);
+            toSource.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                    null, null, toSource);
+
+            VkImageBlit.Buffer blit = VkImageBlit.calloc(1, stack);
+            blit.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1)
+                    .baseArrayLayer(0).layerCount(1);
+            blit.get(0).srcOffsets().get(0).set(0, 0, 0);
+            blit.get(0).srcOffsets().get(1).set(levelWidth, levelHeight, 1);
+            blit.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level)
+                    .baseArrayLayer(0).layerCount(1);
+            blit.get(0).dstOffsets().get(0).set(0, 0, 0);
+            blit.get(0).dstOffsets().get(1).set(nextWidth, nextHeight, 1);
+            vkCmdBlitImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit, VK_FILTER_LINEAR);
+
+            levelWidth = nextWidth;
+            levelHeight = nextHeight;
+        }
+    }
+
     private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight) {
         long bytes = (long) pixelWidth * (long) pixelHeight * BYTES_PER_PIXEL;
         ensureStaging(bytes);
@@ -443,6 +495,8 @@ public final class VulkanGlTexture {
             region.get(0).imageOffset().set(0, 0, 0);
             region.get(0).imageExtent().set(pixelWidth, pixelHeight, 1);
             vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+
+            recordMipChain(commandBuffer, pixelWidth, pixelHeight, stack);
 
             // Reuse the same barrier struct for the way back: the image and subresource range are unchanged, only
             // the access masks and layouts differ.

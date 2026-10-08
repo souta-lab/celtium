@@ -821,7 +821,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             pipeline = VulkanTerrainPipeline.create(this.context, pass, !pass.isSorted());
             this.pipelines.put(pass, pipeline);
-            record("pipeline for " + pass.name() + " created [" + pipeline.limitsSummary() + "]");
+            record("pipeline for " + pass.name() + " created [" + pipeline.vertexInputSummary() + "]");
             if (pipeline.limitsWarning() != null) {
                 record(pipeline.limitsWarning());
             }
