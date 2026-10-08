@@ -43,3 +43,5 @@ bin/
 /versions-local.json
 
 local/**
+
+/.celtium-work/

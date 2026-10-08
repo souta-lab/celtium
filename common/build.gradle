@@ -207,8 +207,9 @@ publishing {
 }
 
 jar {
-    from(rootProject.file("COPYING"))
-    from(rootProject.file("COPYING.LESSER"))
+    def repositoryRoot = rootProject.findProperty('celtium_repository_root') ?: rootProject.projectDir
+    from(new File(repositoryRoot, "COPYING"))
+    from(new File(repositoryRoot, "COPYING.LESSER"))
     from(sourceSets.lwjglCommon.output)
     from(sourceSets.lwjgl2.output)
     from(sourceSets.lwjgl3.output)

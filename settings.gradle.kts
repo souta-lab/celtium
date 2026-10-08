@@ -84,10 +84,11 @@ plugins {
     id("dev.kikugie.stonecutter") version(extra["stonecutter_version"].toString())
 }
 
-rootProject.name = "celeritas"
+rootProject.name = "celtium"
 
 includeBuild("plugins/celeritas-mdg-plugin")
 include("common")
+include("celtium-probe")
 
 val versionFilter: (String) -> Boolean =
     if (extra.has("celeritas_target_versions")) {

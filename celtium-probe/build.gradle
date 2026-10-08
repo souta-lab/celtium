@@ -1,0 +1,50 @@
+plugins {
+    id 'java-library'
+    id 'application'
+}
+
+group = 'org.soutalab.celtium'
+version = '0.1.0-dev.1'
+
+repositories { mavenCentral() }
+
+java {
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 8
+    options.encoding = 'UTF-8'
+}
+
+def lwjglVersion = providers.gradleProperty('celtium_lwjgl_version').getOrElse('3.4.3')
+def platformName = System.getProperty('os.name').toLowerCase()
+def platformArch = System.getProperty('os.arch').toLowerCase()
+def natives = platformName.contains('linux') ? (platformArch.contains('aarch64') ? 'natives-linux-arm64' : 'natives-linux') :
+        platformName.contains('windows') ? 'natives-windows' :
+        (platformArch.contains('aarch64') ? 'natives-macos-arm64' : 'natives-macos')
+
+dependencies {
+    // The distribution is an isolated CLI. Forge only embeds our own classes.
+    compileOnly platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
+    compileOnly 'org.lwjgl:lwjgl'
+    compileOnly 'org.lwjgl:lwjgl-opengl'
+    compileOnly 'org.lwjgl:lwjgl-egl'
+    compileOnly 'org.lwjgl:lwjgl-vulkan'
+    compileOnly 'com.google.code.gson:gson:2.10.1'
+
+    runtimeOnly platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
+    runtimeOnly 'org.lwjgl:lwjgl'
+    runtimeOnly 'org.lwjgl:lwjgl-opengl'
+    runtimeOnly 'org.lwjgl:lwjgl-egl'
+    runtimeOnly 'org.lwjgl:lwjgl-vulkan'
+    runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:$natives"
+    runtimeOnly "org.lwjgl:lwjgl-opengl:$lwjglVersion:$natives"
+    runtimeOnly 'com.google.code.gson:gson:2.10.1'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application { mainClass = 'org.soutalab.celtium.probe.ProbeMain' }
+tasks.named('test') { useJUnitPlatform() }

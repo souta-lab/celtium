@@ -23,6 +23,7 @@ import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.embeddedt.embeddium.impl.gui.SodiumGameOptions;
 import org.taumc.celeritas.impl.command.TogglePassCommand;
+import org.soutalab.celtium.forge.CeltiumCommand;
 import org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer;
 
 @Mod(modid = CeleritasVintage.MODID, useMetadata = true, clientSideOnly = true, acceptableRemoteVersions = "*")
@@ -40,6 +41,8 @@ public class CeleritasVintage {
 
     @EventHandler
     public void onInit(FMLInitializationEvent event) {
+        ClientCommandHandler.instance.registerCommand(new CeltiumCommand());
+        LOGGER.info("Celtium terrain backend: OpenGL. Optional Vulkan capability query: /celtium probe");
         if ((Boolean) Launch.blackboard.get("fml.deobfuscatedEnvironment")) {
             ClientCommandHandler.instance.registerCommand(new TogglePassCommand());
         }
@@ -54,7 +57,8 @@ public class CeleritasVintage {
 
         var strings = event.getRight();
         strings.add("");
-        strings.add(String.format("%s%s Renderer (%s)", ChatFormatting.AQUA, "Celeritas", VERSION));
+        strings.add(String.format("%s%s Renderer (%s)", ChatFormatting.AQUA, "Celtium", VERSION));
+        strings.add("Terrain backend: OpenGL");
 
         // Embeddium: Show a lot less with reduced debug info
         if (Minecraft.getMinecraft().isReducedDebug()) {

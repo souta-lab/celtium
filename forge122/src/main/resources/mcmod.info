@@ -1,14 +1,14 @@
 [
   {
     "modid": "celeritas",
-    "name": "Celeritas",
-    "description": "An open-source client performance mod for Minecraft",
+    "name": "Celtium",
+    "description": "A Celeritas fork developing native Vulkan terrain rendering; current terrain backend: OpenGL",
     "version": "${version}",
     "mcversion": "1.12.2",
-    "url": "",
+    "url": "https://github.com/souta-lab/celtium",
     "updateUrl": "",
-    "authorList": ["embeddedt"],
-    "credits": "The Sodium project",
+    "authorList": ["souta-lab", "embeddedt"],
+    "credits": "Celeritas, Embeddium, Sodium, Oculus and their contributors",
     "logoFile": "icon.png",
     "screenshots": [],
     "dependencies": []

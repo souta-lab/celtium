@@ -21,7 +21,7 @@ java {
     }
 }
 
-base.archivesName = "celeritas-forge-mc12.2"
+base.archivesName = "celtium-forge-mc1.12.2"
 
 val modCompileOnly = configurations.create("modCompileOnly")
 configurations.compileOnly.get().extendsFrom(modCompileOnly)
@@ -92,6 +92,9 @@ configurations {
 }
 
 dependencies {
+    // Own Java-8-compatible classes only. LWJGL and native libraries belong to the active loader.
+    implementation(project(":celtium-probe")) { isTransitive = false }
+    shadow(project(":celtium-probe")) { isTransitive = false }
     val lombokVersion = rootProject.findProperty("lombok_version").toString()
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")
@@ -152,6 +155,8 @@ tasks.named<Jar>("jar") {
         attributes["FMLCorePlugin"] = "org.taumc.celeritas.core.CeleritasLoadingPlugin"
         attributes["FMLCorePluginContainsFMLMod"] = "true"
         attributes["ForceLoadAsMod"] = "true"
+        attributes["Celtium-Stage"] = "capability-probe"
+        attributes["Celtium-Upstream-Commit"] = "989ebf2e52ceed052ec112a569e0c1d172095756"
     }
 }
 
@@ -168,7 +173,8 @@ tasks.processResources.configure {
         expand(mapOf("version" to inputs.properties["version"]))
     }
 
-    from(rootProject.file("modern/src/main/resources/icon.png"))
+    val repositoryRoot = rootProject.findProperty("celtium_repository_root") ?: rootProject.projectDir
+    from(file("$repositoryRoot/modern/src/main/resources/icon.png"))
 }
 
 publishing {

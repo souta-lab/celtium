@@ -1,85 +1,72 @@
-<img src="modern/src/main/resources/icon.png" width="128">
+*Celtium was a historical proposed name for element 72, now known as hafnium. [Name origin](https://en.wiktionary.org/wiki/celtium).*
 
-# Celeritas
+# Celtium
 
-Celeritas is a free and open-source performance & shaders mod for Minecraft clients. It is a fork of Embeddium (which itself
-was based on the last FOSS-licensed version of Sodium) and Oculus 1.7.
+A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2 on CleanroomMC, with existing mod compatibility as a primary goal.
 
-I maintain this mod for personal use & experimentation and make the source code available for other projects and
-developers who may be interested. There is also no guarantee of active maintenance, including bugfixes
-or ports to any newer Minecraft versions. That said, the code remains
-LGPL-3.0, so other projects under a compatible license (including Embeddium) should feel free to incorporate bugfixes
-and features they find useful. That said, expect minimal support, and many possible bugs due to limited testing.
+**Current stage: capability diagnostics. Terrain still renders through Celeritas' OpenGL backend.** Native Vulkan terrain rendering and shared-depth interoperability are not implemented yet.
 
-**Important note:** There are currently no official Celeritas binary releases. If you download a precompiled
-Celeritas .jar file from any 3rd party source, we cannot provide any support for such files, and you do so at your own
-risk. As of writing, the only official distribution of Celeritas available is the original source code
-at https://git.taumc.org/embeddedt/celeritas, 
+## Approach
 
-## Project layout
+- Preserve Celeritas' meshing, compressed vertex formats, visibility work, translucency sorting and existing mod integrations.
+- Add a terrain-specific Vulkan backend after proving OpenGL/Vulkan color, depth and synchronization interoperability.
+- Keep GUI, entities, TESRs, particles and existing mod OpenGL calls on the current GL context.
+- Retain the OpenGL terrain backend and the `celeritas` mod ID. Celtium replaces Celeritas; install one of them.
+- Use the existing GPU driver. Zink is optional and is not bundled or required.
 
-Celeritas uses the [Stonecutter](https://codeberg.org/stonecutter/stonecutter) toolchain to reduce the effort required
-to support individual Minecraft versions. Additionally, as much core rendering code as possible is fully abstracted
-from Minecraft within a `:common` project. The common module is published on
-[Maven](https://maven.taumc.org/#/releases/org/embeddedt/celeritas/celeritas-common), to allow downstream projects to
-consume it without rebuilding the entire project from source. However, the production mod jars are not available on Maven.
+The current source base is the [GTNewHorizons Celeritas mirror](https://github.com/GTNewHorizons/Celeritas/tree/989ebf2e52ceed052ec112a569e0c1d172095756) at `989ebf2e52ceed052ec112a569e0c1d172095756`. Celeritas' upstream is [embeddedt/celeritas](https://git.taumc.org/embeddedt/celeritas). This reference is not a claim that a particular installed Cleanroom/modpack combination has been tested.
 
-## How to build
+## Capability probe
 
-**`celeritas_target_versions` must be set when building locally, as no projects are configured by default.**
-You may want to set it in your user properties file (e.g. `~/.gradle/gradle.properties`) to avoid specifying
-it in every command-line Gradle invocation or modifying the checked-in `gradle.properties`.
+The isolated Linux CLI queries:
 
-The fastest way to build for exactly one version target is to run `./gradlew -Pceleritas_target_versions=<version> packageJar`.
-The resulting jar file will be available
-in `build/libs/<celeritas version>`.
+- GL device/driver UUIDs and `GL_EXT_memory_object` / `GL_EXT_semaphore` FD support.
+- Vulkan physical devices, same-GPU identity, external-memory and binary-semaphore capabilities.
+- Export/import support for specific color/depth formats, image usages, optimal tiling and single-sample images.
 
-Note: the `celeritas_target_versions` property accepts a standard Stonecutter predicate, so you can also use syntax like
-`./gradlew -Pceleritas_target_versions="<1.8.9"`.
+It does not create a Vulkan logical device, share an image, replace a Minecraft FBO or enable Vulkan terrain. `CANDIDATE_FOR_INTEROP_TEST` means a small interoperability experiment can be attempted; it is not a compatibility or performance guarantee.
 
-Alternatively, `celeritas_target_versions_pattern` accepts a Java regex, e.g.
-`./gradlew -Pceleritas_target_versions_pattern=.* packageJar` to build every Minecraft version at once.
+Build with JDK 21 or newer:
 
-## How to use
+```sh
+./gradlew -p celtium-probe test installDist
+```
 
-Celeritas generally requires a "modernized" environment on older Minecraft versions, and will not run out-of-the-box
-with a default modded Minecraft instance. Newer Minecraft versions ship with the necessary dependencies and will not
-require any custom setup.
+Run with the normal Mesa driver:
 
-* Forge 1.12.2 is supported out of the box on Java 8 + LWJGL 2.
-* Older versions of Minecraft require lwjgl3ify (or an equivalent) & Java 21. (This requirement will begin being relaxed in the near future.)
-* For modern (1.13+) versions, the final mod jar should run as-is in a standard instance for that version (e.g. Java 17
-or 21 are not required, unless the underlying Minecraft version itself requires them).
+```sh
+celtium-probe/build/install/celtium-probe/bin/celtium-probe --output local/capabilities.json
+```
 
-## License
+On a Linux hybrid-GPU system, `--egl-device 0` (or another enumerated index) selects an EGL device explicitly. An unavailable index fails instead of falling back to the default GPU. Always verify the reported renderer and matching UUID; indices can change and `DRI_PRIME` may be ignored by a surfaceless EGL implementation.
 
-Celeritas is licensed under the Lesser GNU General Public License version 3, as it only uses code from Iris 1.7,
-Sodium 0.5.11-, and other FOSS projects.
+`--require-compatible` exits with code 2 if the query is unsupported or unavailable. Reports always distinguish unverified depth sharing and unimplemented native terrain.
 
-Portions of the option screen code are based on Reese's Sodium Options by FlashyReese, and are used under the terms of
-the [MIT license](https://opensource.org/license/mit), located in `src/main/resources/licenses/rso.txt`.
+The CLI has its own LWJGL distribution. `-Pceltium_lwjgl_version=<version>` changes that isolated distribution. Its libraries are not copied into the mod or the user's Minecraft installation.
 
-This project does not include and has no plans to include any code from Sodium 0.6+ or 0.5.12+, as these versions of
-Sodium are not available under a free and open-source license.
-Please reach out to @embeddedt on Discord if you have concerns regarding the license of any code in this project.
+## Minecraft 1.12.2 build
 
-## Credits
+```sh
+./gradlew -p build-1122 :forge122:packageJar
+```
 
-* The CaffeineMC team, for developing Sodium 0.5.11 & older, and making it open source
-* Asek3, for developing Rubidium, the original port of Sodium 0.5 to Forge
-* CelestialAbyss, for developing the Embeddium logo (which is reused here aside from recoloring), and input-Here for some very good visual touchups
-* Ven ([@basdxz](https://github.com/basdxz)), for help with translucency sorting, suggesting the general approach for async occlusion culling, and other suggestions during development
-* rdh, for leading several key improvements, including faster & better occlusion culling, better AO rendering, etc
-* douira, for researching and writing the [paper](https://douira.dev/assets/document/douira-master-thesis.pdf) on which the translucency sorting v3 implementation is based
-* grondag, for developing [bitraster](https://github.com/vram-guild/bitraster), the library we vendor for rasterized occlusion culling
-* XFactHD, Pepper, and anyone else I've forgotten to mention, for providing valuable code insights
+Use JDK 21 to run Gradle, with JDK 8 also installed for Minecraft preparation. The isolated 1.12.2 build reuses the upstream source directories and required build helpers without loading the modern-version Stonecutter plugin. The original multi-version build remains for upstream reference.
 
-[![YourKit logo](https://www.yourkit.com/images/yklogo.png)](https://www.yourkit.com/)
+The resulting mod is under `build-1122/build/libs/<version>/`. In-game:
 
-YourKit supports open source projects with innovative and intelligent tools
-for monitoring and profiling Java and .NET applications.
-YourKit is the creator of <a href="https://www.yourkit.com/java/profiler/">YourKit Java Profiler</a>,
-<a href="https://www.yourkit.com/.net/profiler/">YourKit .NET Profiler</a>,
-and <a href="https://www.yourkit.com/youmonitor/">YourKit YouMonitor</a>.
+**Build status at the initial handoff:** the isolated CLI builds and its 15 tests pass. The Minecraft mod build is still blocked during plugin dependency resolution (`net.fabricmc:tiny-remapper:0.11.0`); the commands below are implemented but have not been verified in-game. See [validation](docs/validation-2026-10-08.md) and [the Codex handoff](docs/HANDOFF.md).
 
-Special thanks to YourKit for providing a free license for my various open-source Minecraft projects.
+- `/celtium` displays the current terrain-backend status.
+- `/celtium probe` queries the existing GL context and writes `logs/celtium-capabilities.json` on the render thread.
+
+Vulkan bindings must be available on the game's classpath and match that Cleanroom installation's LWJGL version for an in-game Vulkan query. Missing bindings or an unsupported context produce diagnostics; ordinary startup does not initialize Vulkan. The mod embeds Celtium's own probe classes, not another LWJGL runtime.
+
+## Development
+
+See [the design and effort estimate](docs/design.md) and [the implementation roadmap](docs/roadmap.md).
+
+The next gate is an actual color/depth roundtrip using external memory and binary semaphores, including resource recreation and measured synchronization/copy cost. Larger terrain-backend refactoring follows that gate.
+
+## License and attribution
+
+Celtium retains Celeritas' LGPL-3.0 licensing and upstream history. See [COPYING](COPYING), [COPYING.LESSER](COPYING.LESSER), and [the preserved upstream README and credits](docs/upstream-README.md). Existing third-party notices remain in the source tree.
