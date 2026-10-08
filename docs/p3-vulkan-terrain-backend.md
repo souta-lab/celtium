@@ -220,6 +220,16 @@ defects remain and are the next work items:
    `spirv-dis` if available) and compare them with the pipeline's description, which closes the last gap between
    "green in the buffer" and "grey on the screen".
 
+   The compiled module is verified as well: a small SPIR-V reader over
+   `terrain_solid_vanilla.vert.spv` lists input variables at locations 0-4 with the expected names (`a_PosId`,
+   `a_Color`, `a_TexCoord`, `a_LightCoord`, `a_RdhFactor`), so the module's interface matches the pipeline's
+   attribute description. Every link in the chain is therefore individually verified while the result still
+   disagrees, and the cross-run numbers do not agree with each other either (`a_Color.r` measured 0.439 in one
+   frame, 0.5 implied by the product in the same frame, and 0.569 in the buffer). The next measurement has to be a
+   *single* frame that prints all four components of `a_Color` and of the light-map sample, so no cross-run or
+   cross-channel assumption remains; the small parser used here is a useful starting point for checking what the
+   GPU is actually told to read.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
