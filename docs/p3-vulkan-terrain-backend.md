@@ -266,6 +266,15 @@ defects remain and are the next work items:
      half-rewritten command stream is a plausible cause for a shader reading the wrong vertices, so this is the
      first thing to close.
 
+   **Validation is now clean**: the layer reports no VUID message at all for a full fixture run. Reaching that took
+   four fixes, each found by the layer rather than by reasoning: the upload transitions the whole mip chain from
+   `UNDEFINED` and leaves every level in `SHADER_READ_ONLY_OPTIMAL`; the blit chain moves each destination to
+   `TRANSFER_SRC_OPTIMAL` immediately so one final barrier can cover the chain and no barrier repeats an oldLayout;
+   the command buffer and its fence are never reused while a submission still reads them; and the debug readback
+   copies outside the render pass instance. The colour defect itself is unchanged (terrain `(36.7,37.4,37.2)` with
+   2795 distinct colours against the OpenGL reference's `(73.4,95.7,45.1)` with 59), but the frame is now free of
+   undefined behaviour, which is the precondition for judging anything else.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

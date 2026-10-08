@@ -428,6 +428,10 @@ public final class VulkanGlTexture {
             int nextWidth = Math.max(1, levelWidth / 2);
             int nextHeight = Math.max(1, levelHeight / 2);
 
+            // Level 0 is in TRANSFER_DST_OPTIMAL after the copy; every later level was already moved to
+            // TRANSFER_SRC_OPTIMAL by the post-blit barrier of the previous iteration, so only the first pass needs
+            // this transition. Doing it twice is an invalid oldLayout and validation rejects it.
+            if (level == 1) {
             VkImageMemoryBarrier.Buffer toSource = VkImageMemoryBarrier.calloc(1, stack);
             toSource.get(0).sType$Default()
                     .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -440,6 +444,7 @@ public final class VulkanGlTexture {
             toSource.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                     null, null, toSource);
+            }
 
             VkImageBlit.Buffer blit = VkImageBlit.calloc(1, stack);
             blit.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1)
@@ -452,6 +457,23 @@ public final class VulkanGlTexture {
             blit.get(0).dstOffsets().get(1).set(nextWidth, nextHeight, 1);
             vkCmdBlitImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit, VK_FILTER_LINEAR);
+
+            // The blit leaves the destination in TRANSFER_DST_OPTIMAL. Moving it to TRANSFER_SRC_OPTIMAL right away
+            // keeps every level in one known layout, so the single transition to SHADER_READ_ONLY_OPTIMAL at the end
+            // can cover the whole chain with one barrier instead of one per level (validation rejects a range whose
+            // members sit in different layouts).
+            VkImageMemoryBarrier.Buffer toSrc = VkImageMemoryBarrier.calloc(1, stack);
+            toSrc.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image);
+            toSrc.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                    null, null, toSrc);
 
             levelWidth = nextWidth;
             levelHeight = nextHeight;

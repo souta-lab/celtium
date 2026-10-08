@@ -121,7 +121,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackBuffer;
     private long readbackMemory;
     private long readbackMapped;
+    private boolean submissionPending;
     private int readbackSlots;
+    private long readbackOffset;
     private boolean readbackPending;
     private boolean readbackDone;
     private long lastSectionsDrawn;
@@ -618,15 +620,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
             VulkanMultiDrawBatch batch = (VulkanMultiDrawBatch) cached.getBatch();
 
+            if (this.readbackSlots == 0) {
+                this.readbackOffset = (long) batch.baseVertex(0) * this.commonVertexStride;
+            }
             long uniformOffset = writeUniforms(region, pass, camera);
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
             pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
 
-            if (!this.readbackDone && this.readbackSlots < 8) {
-                recordReadback(resources, (long) batch.baseVertex(0) * this.commonVertexStride, this.readbackSlots);
-                this.readbackSlots++;
-                this.readbackPending = true;
-            }
             bindVertexBuffer(stack, resources);
             if (!indexBound) {
                 bindIndexBuffer(stack, this.sharedIndexBuffers.get(primitiveType));
@@ -677,6 +677,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         vkCmdEndRenderPass(this.commandBuffer);
+        // The debug readback copies a buffer, which is only legal outside a render pass instance.
+        if (!this.readbackDone && this.readbackSlots < 8 && !this.regionResources.isEmpty()) {
+            RegionResources first = this.regionResources.values().iterator().next();
+            recordReadback(first, this.readbackOffset, this.readbackSlots);
+            this.readbackSlots++;
+            this.readbackPending = true;
+        }
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
     }
 
