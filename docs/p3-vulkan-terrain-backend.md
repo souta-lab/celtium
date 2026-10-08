@@ -420,6 +420,12 @@ defects remain and are the next work items:
    absolute difference 6.13, 42% of pixels above 8) are the alpha-discard cutoff, the blend state and the
    per-section sorting of the translucent pass.
 
+   Vanilla's `RenderGlobal.renderBlockLayer` enables blending and clears the depth mask for the translucent layer, so
+   the Vulkan pipeline now leaves depth writes off for a blended pass, matching it. The frame difference against the
+   OpenGL reference is unchanged within run-to-run variation (6.86 both ways, while two runs of the same build
+   differ by about 0.7), so the remaining cutout/translucent difference is not depth writes; future comparisons
+   should pin the scene conditions or average several runs before drawing conclusions from a sub-1 difference.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

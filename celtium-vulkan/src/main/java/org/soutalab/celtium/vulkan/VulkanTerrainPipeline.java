@@ -826,7 +826,7 @@ public final class VulkanTerrainPipeline {
                     .depthTestEnable(true)
                     // Depth writes stay enabled for every pass, including translucent, matching the pass contract
                     // used by this backend; the vanilla GL renderer disables them for its translucent layer.
-                    .depthWriteEnable(true)
+                    .depthWriteEnable(!this.blended) // Minecraft draws its translucent layer with depth writes off
                     .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL)
                     .depthBoundsTestEnable(false)
                     .stencilTestEnable(false)
