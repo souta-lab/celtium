@@ -357,6 +357,14 @@ defects remain and are the next work items:
    and the per-material bias) and the remaining frame-order differences (light map update ordering, chunk fade,
    fog), after which the comparison should run on both GPUs.
 
+   Forcing the sampler's `maxLod` to zero changes nothing at all, so the mip chain is not what the frame is
+   sampling, and a magnified side-by-side crop of the same near-ground region shows the real difference: the block
+   grid aligns, the colours match, but the OpenGL render shows large smooth texels while the Vulkan render shows a
+   finer, denser pattern - the two are sampling different levels of the same texture, with Vulkan on the sharper
+   one. The next measurement is a controlled one: mirror the atlas as a checkerboard of a known cell size and
+   measure the on-screen cell size in both backends, which separates a UV-scale difference from an LOD/bias
+   difference in one run.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
