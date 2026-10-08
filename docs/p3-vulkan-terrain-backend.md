@@ -319,6 +319,16 @@ defects remain and are the next work items:
    same host-visible copy path the draw-time readback uses) and compare it byte for byte with the mesh buffer that
    fed it - the one comparison that has not been made yet.
 
+   **The renderer is exonerated.** Rewriting the uploaded vertex colours with the *exact value the game itself
+   writes* (`0xFF59BD91`, copied from the census) renders `(41.5,55.2,25.9)` - a green frame of the same character
+   as the OpenGL reference - while the unmodified run of the same build renders `(36.7,37.4,37.2)`. Same pipeline,
+   same shader, same buffer, same offset: the only difference is the four bytes handed to the upload path. The
+   vertex colour the shader interpolates is therefore `0x80`-grey *at the moment of the copy*, and the green the
+   census reports is read from the same buffer *after* the copy loop. The remaining defect is in the data arriving
+   at the upload, not in the Vulkan path: the next measurement is to census each mesh immediately *before* its copy
+   (and log both readings in one line), which will show whether the buffer read after the loop is not the buffer
+   that was copied - a lifetime/reuse problem in the mesh buffers rather than anything in the backend.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

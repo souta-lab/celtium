@@ -122,6 +122,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackMemory;
     private long readbackMapped;
     private boolean submissionPending;
+    private boolean uploadVerified;
     private int readbackSlots;
     private long readbackOffset;
     private boolean readbackPending;
@@ -462,6 +463,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         this.lastUploadedBytes = uploaded;
         logFirstVertex(pending);
+
     }
 
     /**
@@ -542,6 +544,46 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return vertices.getInt(12);
         } finally {
             vertices.order(order);
+        }
+    }
+
+    /**
+     * Debug aid: copies the arena bytes for the just-uploaded range back to host memory and decodes them. This is
+     * the one comparison that the draw-time readback cannot make - whether the arena holds what the upload path was
+     * given.
+     */
+    private void verifyUpload(RegionResources resources, java.util.List<PendingMesh> pending) {
+        if (uploadVerified || resources.vertexArena.isEmpty()) {
+            return;
+        }
+        for (PendingMesh mesh : pending) {
+            if (mesh.parts == null) {
+                continue;
+            }
+            uploadVerified = true;
+            ensureReadback();
+            long offset = 0;
+            VkCommandBuffer commands = this.context.beginCommands();
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkBufferCopy.Buffer region = org.lwjgl.vulkan.VkBufferCopy.calloc(1, stack);
+                region.get(0).srcOffset(offset).dstOffset(0L).size(64L);
+                vkCmdCopyBuffer(commands, resources.vertexArena.buffer().buffer(), this.readbackBuffer, region);
+                org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+                barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_HOST_READ_BIT);
+                vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                        barrier, null, null);
+            } finally {
+                this.context.endCommands(commands);
+            }
+            ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, 64);
+            view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            record("arena after upload: pos=(" + view.getFloat(0) + "," + view.getFloat(4) + ","
+                    + view.getFloat(8) + ") colour=0x" + Integer.toHexString(view.getInt(12))
+                    + " uv=(" + view.getFloat(16) + "," + view.getFloat(20) + ") light=0x"
+                    + Integer.toHexString(view.getInt(24))
+                    + " | source meshes=" + pending.size());
+            return;
         }
     }
 
