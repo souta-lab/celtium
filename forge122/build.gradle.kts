@@ -175,7 +175,7 @@ tasks.named<Jar>("jar") {
         attributes["FMLCorePlugin"] = "org.taumc.celeritas.core.CeleritasLoadingPlugin"
         attributes["FMLCorePluginContainsFMLMod"] = "true"
         attributes["ForceLoadAsMod"] = "true"
-        attributes["Celtium-Stage"] = "capability-probe"
+        attributes["Celtium-Stage"] = "backend-boundary"
         attributes["Celtium-Upstream-Commit"] = "989ebf2e52ceed052ec112a569e0c1d172095756"
     }
 }

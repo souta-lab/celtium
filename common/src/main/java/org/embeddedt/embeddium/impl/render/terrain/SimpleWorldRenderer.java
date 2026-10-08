@@ -81,6 +81,13 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     }
 
     /**
+     * @return The active terrain backend and the reason it was selected, or {@code null} before terrain is initialized
+     */
+    public @Nullable String getTerrainBackendDescription() {
+        return this.renderSectionManager != null ? this.renderSectionManager.getTerrainBackendDescription() : null;
+    }
+
+    /**
      * Notifies the chunk renderer that the graph scene has changed and should be re-computed.
      */
     public void scheduleTerrainUpdate() {

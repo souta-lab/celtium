@@ -4,7 +4,7 @@
 
 A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2 on CleanroomMC, with existing mod compatibility as a primary goal.
 
-**Current stage: GL/Vulkan interoperability validation. Terrain still renders through Celeritas' OpenGL backend.** A separate experiment proves color/depth sharing on RX 6400 and UHD 630; native Vulkan terrain rendering is not implemented yet.
+**Current stage: terrain GPU boundary extracted (P2). Terrain still renders through Celeritas' OpenGL backend.** A separate experiment proves color/depth sharing on RX 6400 and UHD 630; native Vulkan terrain rendering is not implemented yet. The retained OpenGL backend now sits behind a narrow `TerrainGpuBackend` boundary with a fail-closed, reported backend selection, and it renders pixel-identically to stock Celeritas on both GPUs for the fixed validation world.
 
 ## Approach
 
@@ -57,7 +57,7 @@ The resulting mod is under `build-1122/build/libs/<version>/`. In-game:
 
 **Build and startup status:** Forge packaging and the 15 probe tests pass. The distributable has been checked for its mod ID, manifest, probe classes, licenses, Java 8 bytecode and absence of bundled LWJGL/native libraries. Stock Celeritas and Celtium both render a fixed flat world in Cleanroom 0.6.13-alpha on RX 6400. The commands below execute on the client thread; a missing Vulkan binding produces a diagnostic report while OpenGL stays active. See [validation](docs/validation-2026-10-08.md), [runtime reproduction](docs/runtime-validation.md) and [the Codex handoff](docs/HANDOFF.md).
 
-- `/celtium` displays the current terrain-backend status.
+- `/celtium` displays the active terrain backend and why it was selected.
 - `/celtium probe` queries the existing GL context and writes `logs/celtium-capabilities.json` on the render thread.
 
 Vulkan bindings must be available on the game's classpath and match that Cleanroom installation's LWJGL version for an in-game Vulkan query. Missing bindings or an unsupported context produce diagnostics; ordinary startup does not initialize Vulkan. The mod embeds Celtium's own probe classes, not another LWJGL runtime.
@@ -66,7 +66,7 @@ Vulkan bindings must be available on the game's classpath and match that Cleanro
 
 See [the design and effort estimate](docs/design.md) and [the implementation roadmap](docs/roadmap.md).
 
-The separate [interop experiment](docs/interop-validation.md) verifies color, D24/D32 depth conversion, bidirectional occlusion, binary semaphores, recreation and retirement on AMD and Intel, including the existing Cleanroom FBO. It does not enable Vulkan terrain. The next stage extracts the narrow terrain GPU boundary and checks the unchanged GL behavior against stock Celeritas.
+The separate [interop experiment](docs/interop-validation.md) verifies color, D24/D32 depth conversion, bidirectional occlusion, binary semaphores, recreation and retirement on AMD and Intel, including the existing Cleanroom FBO. It does not enable Vulkan terrain. [The P2 record](docs/p2-backend-boundary.md) documents the extracted terrain GPU boundary, the fail-closed backend selection and the pixel-identical comparison against stock Celeritas on both GPUs. The next stage is P3: Vulkan mesh upload, arena and SOLID rendering.
 
 The verified Minecraft target is RGBA8 with a D24 depth renderbuffer, no stencil and one sample. RX 6400's D24 external-image query remains unsupported; the tested route imports shared D32 and converts depth on the GPU while preserving the original target IDs. Other formats, stencil, MSAA and broader mod compatibility require separate validation. Interop costs are measured separately from game performance.
 

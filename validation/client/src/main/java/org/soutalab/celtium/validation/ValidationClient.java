@@ -22,6 +22,7 @@ import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL45C;
 
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +33,17 @@ import java.util.List;
 /** Explicitly installed validation fixture; never embedded in the renderer mod. */
 @Mod(modid = "celtium_validation", name = "Celtium validation fixture", version = "0.1.0", clientSideOnly = true)
 public final class ValidationClient {
+    /** Time of day pinned for comparison runs: noon, so the sun angle cannot drift between runs. */
+    private static final long PINNED_WORLD_TIME = 6000L;
+
+    /**
+     * MCP field names followed by the SRG names Forge uses at runtime. Vanilla regenerates the lightmap with a
+     * {@code Math.random()} flicker on every frame, which shifts terrain brightness slightly and differently per
+     * run. Pinning the two flicker fields removes that run-to-run noise so two runs can be compared exactly.
+     */
+    private static final String[] FLICKER_X_NAMES = {"torchFlickerX", "field_78514_e"};
+    private static final String[] FLICKER_DX_NAMES = {"torchFlickerDX", "field_175075_L"};
+
     private final JsonObject report = new JsonObject();
     private final List<Double> frameIntervals = new ArrayList<Double>();
     private boolean enabled;
@@ -44,6 +56,11 @@ public final class ValidationClient {
     private int worldTicks;
     private int worldFrames;
     private long previousFrame;
+    private int entitiesRemoved;
+    private Field flickerX;
+    private Field flickerDX;
+    private boolean flickerFieldsResolved;
+    private boolean flickerPinned;
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
@@ -82,6 +99,18 @@ public final class ValidationClient {
                     report.addProperty("probeCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium probe"));
                 }
             }
+            if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")) {
+                // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
+                // non-player entity and particle well before the capture. Entity and TESR behaviour stays on the
+                // existing GL path and is deliberately outside what this comparison measures.
+                entitiesRemoved += removeNonPlayerEntities(mc);
+            }
+            if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
+                // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
+                // that the next render builds, and pinning the world time keeps the sun angle identical.
+                flickerPinned = pinLightmapFlicker(mc);
+                mc.world.setWorldTime(PINNED_WORLD_TIME);
+            }
         } catch (Throwable error) {
             fail(mc, error);
         }
@@ -102,6 +131,65 @@ public final class ValidationClient {
         } catch (Throwable error) {
             fail(Minecraft.getMinecraft(), error);
         }
+    }
+
+    /**
+     * Zeroes vanilla's random torch-flicker term so the lightmap texture is identical on every run.
+     * The field names are resolved once, MCP name first and SRG name second. Returns whether the fields are
+     * currently pinned; a run that cannot pin them reports it and is not usable as an exact comparison.
+     */
+    private boolean pinLightmapFlicker(Minecraft mc) {
+        if (!flickerFieldsResolved) {
+            flickerFieldsResolved = true;
+            flickerX = findField(mc.entityRenderer.getClass(), FLICKER_X_NAMES);
+            flickerDX = findField(mc.entityRenderer.getClass(), FLICKER_DX_NAMES);
+        }
+        if (flickerX == null || flickerDX == null) return false;
+        try {
+            flickerX.setFloat(mc.entityRenderer, 0.0F);
+            flickerDX.setFloat(mc.entityRenderer, 0.0F);
+            return true;
+        } catch (IllegalAccessException | RuntimeException inaccessible) {
+            return false;
+        }
+    }
+
+    private static Field findField(Class<?> owner, String[] names) {
+        for (String name : names) {
+            try {
+                Field field = owner.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (NoSuchFieldException | RuntimeException absent) {
+                // Try the next name.
+            }
+        }
+        return null;
+    }
+
+    /** Removes every non-player entity and returns how many were removed; the player and its vehicle stay. */
+    private static int removeNonPlayerEntities(Minecraft mc) {
+        if (mc.world == null || mc.player == null) return 0;
+        List<net.minecraft.entity.Entity> loaded = new ArrayList<net.minecraft.entity.Entity>(mc.world.loadedEntityList);
+        int removed = 0;
+        for (net.minecraft.entity.Entity entity : loaded) {
+            if (entity == mc.player || entity.isRidingOrBeingRiddenBy(mc.player)) continue;
+            mc.world.removeEntity(entity);
+            removed++;
+        }
+        if (removed > 0) {
+            mc.effectRenderer.clearEffects(mc.world);
+        }
+        return removed;
+    }
+
+    private static int countNonPlayerEntities(Minecraft mc) {
+        if (mc.world == null || mc.player == null) return 0;
+        int count = 0;
+        for (net.minecraft.entity.Entity entity : new ArrayList<net.minecraft.entity.Entity>(mc.world.loadedEntityList)) {
+            if (entity != mc.player && !entity.isRidingOrBeingRiddenBy(mc.player)) count++;
+        }
+        return count;
     }
 
     private static JsonObject framebuffer(Framebuffer target) {
@@ -138,8 +226,24 @@ public final class ValidationClient {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
         previousFrame = now;
+        if (worldTicks == 190 && !Boolean.getBoolean("celtium.validation.interop")) {
+            // Hide the HUD a few ticks before the capture so the saved PNG is the rendered scene only. A stock
+            // Celeritas run and a Celtium run of the same seed can then be compared pixel by pixel, without
+            // chat lines, the hotbar or overlay text contributing differences that are not renderer differences.
+            mc.gameSettings.hideGUI = true;
+        }
         if (worldTicks < 200) return;
         try {
+            if (!Boolean.getBoolean("celtium.validation.interop")) {
+                // The frame that was just drawn may still contain an entity the client tick did not see. Drop it and
+                // capture on the next frame, so the saved scene contains terrain and the sky only.
+                if (removeNonPlayerEntities(mc) > 0) return;
+                report.addProperty("nonPlayerEntitiesRemoved", entitiesRemoved);
+                report.addProperty("nonPlayerEntitiesAtCapture", countNonPlayerEntities(mc));
+                report.addProperty("lightmapFlickerPinned", flickerPinned);
+                report.addProperty("pinnedWorldTime", PINNED_WORLD_TIME);
+                report.addProperty("worldTimeAtCapture", mc.world.getWorldTime());
+            }
             if (Boolean.getBoolean("celtium.validation.interop")) {
                 if (!interopRun) {
                     ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
@@ -191,6 +295,13 @@ public final class ValidationClient {
             if (renderer == null) throw new IllegalStateException("Celeritas world renderer was not active");
             report.addProperty("worldRendererClass", renderer.getClass().getName());
             report.add("rendererDebug", new GsonBuilder().create().toJsonTree(rendererClass.getMethod("getDebugStrings").invoke(renderer)));
+            try {
+                Object terrainBackend = rendererClass.getMethod("getTerrainBackendDescription").invoke(renderer);
+                report.addProperty("terrainBackendDescription", String.valueOf(terrainBackend));
+            } catch (NoSuchMethodException absent) {
+                // The pinned upstream renderer has no backend selection to report.
+                report.addProperty("terrainBackendDescription", "unavailable: renderer has no terrain backend selection");
+            }
             JsonObject camera = new JsonObject();
             camera.addProperty("x", mc.player.posX);
             camera.addProperty("y", mc.player.posY);

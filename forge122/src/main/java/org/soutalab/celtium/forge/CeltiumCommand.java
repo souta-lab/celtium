@@ -21,7 +21,8 @@ public final class CeltiumCommand extends CommandBase {
     @Override
     public void execute(MinecraftServer server, ICommandSender sender, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage(new TextComponentString("Celtium: OpenGL terrain backend. /celtium probe writes a capability report; native Vulkan terrain is under development."));
+            sender.sendMessage(new TextComponentString("Celtium terrain backend: " + TerrainBackendStatus.describe()
+                    + ". /celtium probe writes a capability report; native Vulkan terrain is under development."));
             return;
         }
         if (args.length != 1 || !"probe".equals(args[0])) {

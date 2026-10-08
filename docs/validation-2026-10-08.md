@@ -164,6 +164,26 @@ Local evidence:
 
 Reproduce with [the interop guide](interop-validation.md). `celtium-probe` reports remain capability-only, and the shipping Forge jar does not contain the proof or enable native terrain.
 
+## P2 follow-up: terrain GPU boundary and GL parity
+
+The terrain draw/upload/lifetime path now goes through `impl/render/chunk/backend/TerrainGpuBackend`, implemented
+by the retained `GlTerrainGpuBackend`. Meshing, graph updates, visibility, sorting, scheduling and the existing mod
+hooks are unchanged. `/celtium`, the F3 overlay and the startup log report the backend that is actually active and
+the reason for the selection; the selection is fail-closed and currently always returns `opengl`.
+
+The validation fixture now hides the HUD before the capture, removes non-player entities and particles, pins
+vanilla's random lightmap flicker and pins the world time, and records the live backend description. With those
+controls, a stock Celeritas run and a Celtium run of the same flat world produced **byte-identical** 1280 × 720
+captures (0 differing pixels) on RX 6400 and on UHD 630, with identical framebuffer contract, camera, `solid: 62`
+visible sections, used geometry memory and buffer count. Without the flicker pin, two runs of the *same* jar
+differed as much as the two jars did (72 % of pixels, max channel delta 11 on RX 6400), which is why the pin
+exists.
+
+Full method, artifacts and limitations: [the P2 record](p2-backend-boundary.md). Evidence:
+`.celtium-work/p2-parity-final-{amd,intel}.json`, `.celtium-work/runtime/p2f-*/`, `.celtium-work/p2f-*.log`,
+`.celtium-work/p2-forge-jar-verification.json`. The probe suite still passes 15/15 tests with
+`--rerun-tasks`. This stage adds no Vulkan device, allocation, draw or performance result.
+
 ## GitHub Actions status
 
 Push `0e6fcc69b` triggered [run 37780359487](https://github.com/souta-lab/celtium/actions/runs/37780359487). GitHub rejected both jobs before any step because of the account's recent payment/spending-limit state. No CI build log exists. Local builds, packaging verification and hardware tests above are the evidence; CI is not reported as passing.

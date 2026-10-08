@@ -7,7 +7,7 @@ The first increment establishes the fork and a capability-query tool. All terrai
 | P0 | Pin upstream, build baseline, record an installed Cleanroom/modpack configuration | Forge jar and contents verified; supplied Cleanroom runtime locked; stock/fork flat-world startup and FBO observations recorded; representative performance/scene coverage still pending |
 | P1a | Isolated GL/Vulkan capability query and fail-closed eligibility tests | CLI built; 15 tests passed; RX 6400 and UHD 630 queries recorded |
 | P1b | External image import, color/depth in both directions, binary semaphores, resize and cost measurement | RGBA8 / D32 sharing and D24 conversion verified on RX 6400 and UHD 630; standalone recreation/retirement/cost and real Cleanroom FBO tested; contract restricted to no stencil, one sample |
-| P2 | Extract the narrow terrain GPU boundary; verify the GL backend against stock Celeritas | Pending |
+| P2 | Extract the narrow terrain GPU boundary; verify the GL backend against stock Celeritas | Boundary extracted behind `TerrainGpuBackend`, selection is fail-closed and reported; stock and Celtium captures are pixel-identical on RX 6400 and UHD 630 for the fixed flat world |
 | P3 | Vulkan mesh upload, arena, atlas/lightmap and SOLID rendering | Pending |
 | P4 | Cutout/translucency, index updates, resource reload and deferred destruction | Pending |
 | P5 | Batching, performance work and declared modpack regression | Pending |
@@ -32,11 +32,14 @@ The in-game command uses the existing context, issues capability queries, and ne
 
 Capability-based selection and multiple GPU support are core completion requirements, at the user's explicit request. An RX 6400-only implementation is not a finished backend. Selection must use the current GL device/driver UUIDs and the exact image/semaphore/queue/feature contract. The agreed physical validation targets are RX 6400 and UHD 630; the user has no NVIDIA hardware, so NVIDIA remains unverified and is not a required physical test environment. Retain GL with a stated reason on unsupported configurations. Additional operating systems remain P6 scope.
 
-1. Identify the actual stable Cleanroom, Celeritas, Java, LWJGL, GPU driver and modpack versions.
-2. Verify GL-written depth affects Vulkan drawing and Vulkan-written depth affects subsequent GL drawing.
-3. Verify color/depth/stencil format and sample compatibility against the active Minecraft FBO.
-4. Exercise resize, recreation and delayed resource retirement.
-5. Measure full-frame synchronization and copy cost with the expected terrain pass sequence.
+1. Identify the actual stable Cleanroom, Celeritas, Java, LWJGL, GPU driver and modpack versions. **Recorded.**
+2. Verify GL-written depth affects Vulkan drawing and Vulkan-written depth affects subsequent GL drawing. **Verified by the interop experiment on both GPUs.**
+3. Verify color/depth/stencil format and sample compatibility against the active Minecraft FBO. **Verified for RGBA8 colour and a D24 depth renderbuffer, no stencil, one sample; other contracts are not covered.**
+4. Exercise resize, recreation and delayed resource retirement. **Verified by the interop experiment; retirement is fence-based.**
+5. Measure full-frame synchronization and copy cost with the expected terrain pass sequence. **Only limited copy/sync costs are measured; the full terrain pass sequence does not exist yet.**
+
+P2 is complete as the boundary and GL-parity stage; the partial item 5 stays open and is re-estimated with P3.
+See [the P2 record](p2-backend-boundary.md).
 
 The design's effort ranges are provisional. Re-estimate P2 onward after this evidence is available.
 

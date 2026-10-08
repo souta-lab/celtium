@@ -63,7 +63,7 @@ def verify(path):
             "FMLCorePlugin": "org.taumc.celeritas.core.CeleritasLoadingPlugin",
             "FMLCorePluginContainsFMLMod": "true",
             "ForceLoadAsMod": "true",
-            "Celtium-Stage": "capability-probe",
+            "Celtium-Stage": "backend-boundary",
             "Celtium-Upstream-Commit": "989ebf2e52ceed052ec112a569e0c1d172095756",
         }
         for key, expected in expected_manifest.items():

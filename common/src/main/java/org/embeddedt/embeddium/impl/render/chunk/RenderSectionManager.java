@@ -7,7 +7,9 @@ import lombok.Getter;
 import org.embeddedt.embeddium.impl.common.util.TimeUtil;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
 import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
-import org.embeddedt.embeddium.impl.gl.profiling.TimerQueryManager;
+import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainBackendSelection;
+import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
+import org.embeddedt.embeddium.impl.render.chunk.backend.GlTerrainGpuBackend;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkBuildContext;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkBuildOutput;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkTaskOutput;
@@ -81,6 +83,8 @@ public abstract class RenderSectionManager {
     private final ConcurrentLinkedDeque<Runnable> asyncSubmittedTasks = new ConcurrentLinkedDeque<>();
 
     private final ChunkRenderer chunkRenderer;
+    private final TerrainBackendSelection terrainBackendSelection;
+    private final TerrainGpuBackend terrainBackend;
 
     private final int renderDistance;
 
@@ -125,8 +129,6 @@ public abstract class RenderSectionManager {
 
     protected final ReferenceSet<RenderSection> sectionsWithGlobalEntities = new ReferenceOpenHashSet<>();
 
-    private final Object2ObjectOpenHashMap<TerrainRenderPass, TimerQueryManager> renderPassDrawTimers = new Object2ObjectOpenHashMap<>();
-
     protected final ReferenceSet<RenderSection> sectionsRequestingUpdate = new ReferenceOpenHashSet<>();
 
     @Getter
@@ -156,6 +158,8 @@ public abstract class RenderSectionManager {
         this.renderDistance = renderDistance;
 
         this.regions = new RenderRegionManager(commandList, this.renderPassConfiguration);
+        this.terrainBackendSelection = TerrainBackendSelection.select();
+        this.terrainBackend = new GlTerrainGpuBackend(RenderDevice.INSTANCE, this.chunkRenderer, this.regions);
 
         this.minSection = minSection;
         this.maxSection = maxSection;
@@ -195,7 +199,7 @@ public abstract class RenderSectionManager {
             task.run();
         }
 
-        this.renderPassDrawTimers.values().forEach(TimerQueryManager::updateTime);
+        this.terrainBackend.updateTimings();
     }
 
     /**
@@ -515,27 +519,8 @@ public abstract class RenderSectionManager {
             return;
         }
 
-        RenderDevice device = RenderDevice.INSTANCE;
-        CommandList commandList = device.createCommandList();
-
-        boolean shouldProfile = isDebugInfoShown();
-
-        TimerQueryManager timer = null;
-
-        if (shouldProfile) {
-            timer = renderPassDrawTimers.computeIfAbsent(pass, $ -> new TimerQueryManager());
-            timer.startProfiling();
-        }
-
-        try {
-            this.chunkRenderer.render(matrices, commandList, this.getCurrentRenderListManager().getRenderLists(), pass, occlusionCamera, camera);
-        } finally {
-            if (shouldProfile) {
-                timer.finishProfiling();
-            }
-        }
-
-        commandList.flush();
+        this.terrainBackend.render(matrices, this.getCurrentRenderListManager().getRenderLists(), pass,
+                occlusionCamera, camera, isDebugInfoShown());
     }
 
     public boolean isSectionVisible(int x, int y, int z) {
@@ -577,7 +562,7 @@ public abstract class RenderSectionManager {
     }
 
     public void updateChunks(boolean updateImmediately) {
-        this.regions.update();
+        this.terrainBackend.updateRegions();
         this.jobMetricsTracker.tick();
 
         // Advance the scheduling controller once per frame, before any dispatch reads the budget. This runs only
@@ -656,7 +641,7 @@ public abstract class RenderSectionManager {
     private void processChunkBuildResults(ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> results) {
         var filtered = filterChunkBuildResults(results);
 
-        this.regions.uploadMeshes(RenderDevice.INSTANCE.createCommandList(), filtered, this::markGraphDirty);
+        this.terrainBackend.uploadMeshes(filtered, this::markGraphDirty);
 
         for (var holder : filtered) {
             var result = holder.output();
@@ -928,13 +913,7 @@ public abstract class RenderSectionManager {
         }
         this.sectionGraph.destroy();
 
-        try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
-            this.regions.delete(commandList);
-            this.chunkRenderer.delete(commandList);
-        }
-
-        this.renderPassDrawTimers.values().forEach(TimerQueryManager::close);
-        this.renderPassDrawTimers.clear();
+        this.terrainBackend.delete();
 
         this.sectionsWithGlobalEntities.clear();
     }
@@ -1113,11 +1092,12 @@ public abstract class RenderSectionManager {
     }
 
     private Object2LongMap<TerrainRenderPass> computeRenderPassTimingsMap() {
-        Object2LongOpenHashMap<TerrainRenderPass> map = new Object2LongOpenHashMap<>();
-        for (var entry : renderPassDrawTimers.entrySet()) {
-            map.put(entry.getKey(), entry.getValue().getLastTime());
-        }
-        return map;
+        return this.terrainBackend.snapshotTimings();
+    }
+
+    /** The active backend and the reason it was selected, e.g. {@code opengl (native Vulkan terrain ...)}. */
+    public String getTerrainBackendDescription() {
+        return this.terrainBackend.getName() + " (" + this.terrainBackendSelection.getReason() + ")";
     }
 
     protected final Supplier<Object2LongMap<TerrainRenderPass>> renderPassTimingsDebounced = new ExpiringSupplier<>(this::computeRenderPassTimingsMap, 1, TimeUnit.SECONDS);
@@ -1138,27 +1118,7 @@ public abstract class RenderSectionManager {
         stats.indexAllocated = 0;
         stats.bufferCount = 0;
 
-        for (var region : this.regions.getLoadedRegions()) {
-            var resources = region.getResources();
-
-            if (resources == null) {
-                continue;
-            }
-
-            var buffer = resources.getGeometryArena();
-
-            stats.deviceUsed += buffer.getDeviceUsedMemoryL();
-            stats.deviceAllocated += buffer.getDeviceAllocatedMemoryL();
-
-            var indexBuffer = resources.getIndexArena();
-
-            if (indexBuffer != null) {
-                stats.indexUsed += indexBuffer.getDeviceUsedMemoryL();
-                stats.indexAllocated += indexBuffer.getDeviceAllocatedMemoryL();
-            }
-
-            stats.bufferCount++;
-        }
+        this.terrainBackend.collectMemoryStats(stats);
 
         return stats;
     }
@@ -1166,10 +1126,12 @@ public abstract class RenderSectionManager {
     public Collection<String> getDebugStrings() {
         List<String> list = new ArrayList<>();
 
+        list.add(String.format("Terrain Backend: %s", this.getTerrainBackendDescription()));
+
         var mem = this.getDeviceMemoryStats();
 
         list.add(String.format("G: %d/%d, I: %d/%d MiB (%d buffers)", MathUtil.toMib(mem.deviceUsed), MathUtil.toMib(mem.deviceAllocated), MathUtil.toMib(mem.indexUsed), MathUtil.toMib(mem.indexAllocated), mem.bufferCount));
-        list.add(String.format("Transfer Queue: %s", this.regions.getStagingBuffer().toString()));
+        list.add(String.format("Transfer Queue: %s", this.terrainBackend.getTransferQueueDebugString()));
 
         var rebuildLists = this.getCurrentRenderListManager().getRebuildLists();
 

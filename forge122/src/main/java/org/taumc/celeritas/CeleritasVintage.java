@@ -42,7 +42,8 @@ public class CeleritasVintage {
     @EventHandler
     public void onInit(FMLInitializationEvent event) {
         ClientCommandHandler.instance.registerCommand(new CeltiumCommand());
-        LOGGER.info("Celtium terrain backend: OpenGL. Optional Vulkan capability query: /celtium probe");
+        LOGGER.info("Celtium terrain backend: {}. Optional Vulkan capability query: /celtium probe",
+                org.soutalab.celtium.forge.TerrainBackendStatus.describe());
         if ((Boolean) Launch.blackboard.get("fml.deobfuscatedEnvironment")) {
             ClientCommandHandler.instance.registerCommand(new TogglePassCommand());
         }
@@ -58,7 +59,7 @@ public class CeleritasVintage {
         var strings = event.getRight();
         strings.add("");
         strings.add(String.format("%s%s Renderer (%s)", ChatFormatting.AQUA, "Celtium", VERSION));
-        strings.add("Terrain backend: OpenGL");
+        strings.add("Terrain backend: " + org.soutalab.celtium.forge.TerrainBackendStatus.describe());
 
         // Embeddium: Show a lot less with reduced debug info
         if (Minecraft.getMinecraft().isReducedDebug()) {
