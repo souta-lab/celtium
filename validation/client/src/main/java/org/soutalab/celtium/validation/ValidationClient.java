@@ -78,7 +78,8 @@ public final class ValidationClient {
                 report.addProperty("scope", "fixed flat world startup, commands and GL framebuffer observation");
                 report.addProperty("nativeTerrainVerified", false);
                 mc.gameSettings.renderDistanceChunks = 8;
-                mc.gameSettings.limitFramerate = 120;
+                // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
+                mc.gameSettings.limitFramerate = 260;
                 mc.gameSettings.enableVsync = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.

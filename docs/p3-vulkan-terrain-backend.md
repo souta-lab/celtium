@@ -437,6 +437,16 @@ defects remain and are the next work items:
    `backend: vulkan (Vulkan device matched the OpenGL device UUID ...)`, draws all three passes and produces a clean
    validation log, so both agreed physical targets now default to the native Vulkan terrain backend.
 
+   **Throughput comparison.** With the fixture's frame limiter raised from 120 to 260 so the two backends can be
+   compared on throughput rather than on the limiter, the same scene on the RX 6400 gives
+   `p50 = 16.08 ms` for the Vulkan backend against `p50 = 16.15 ms` for the OpenGL reference (248 samples each,
+   both `PASSED`), but a worse tail: `p95 = 17.10` against `16.86` and `p99 = 21.24` against `17.00`. The median is
+   a wash and the tail regresses, which matches the current frame structure: the backend hands the shared images
+   back to OpenGL once per terrain pass (three full 1280x720 colour copies plus a D24/D32 depth conversion per
+   frame) and every texture upload currently drains the queue. The obvious next performance work is therefore to
+   make the round trip per frame instead of per pass, and to give the one-shot command buffers a small fence-based
+   pool instead of a queue drain - both are structural changes that need the parity fixture to stay green.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
