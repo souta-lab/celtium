@@ -467,7 +467,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * only way to tell an attribute-layout problem from a transform problem, and the upload path already has the
      * bytes in hand.
      */
+    private final java.util.HashMap<Integer, Integer> colourCounts = new java.util.HashMap<>();
+    private int colourBatches;
+
     private void logFirstVertex(java.util.List<PendingMesh> pending) {
+        for (PendingMesh mesh : pending) {
+            if (mesh.parts != null && mesh.sectionFirstColor != null) {
+                int colour = mesh.sectionFirstColor[mesh.sectionIndex];
+                Integer previous = colourCounts.get(colour);
+                colourCounts.put(colour, previous == null ? 1 : previous + 1);
+            }
+        }
+        this.colourBatches++;
+        if (this.colourBatches == 1 || this.colourBatches % 20 == 0) {
+            java.util.List<java.util.Map.Entry<Integer, Integer>> entries =
+                    new java.util.ArrayList<>(colourCounts.entrySet());
+            java.util.Collections.sort(entries, (a, b) -> b.getValue() - a.getValue());
+            StringBuilder line = new StringBuilder("mesh colour census (batches=" + this.colourBatches + "):");
+            for (int i = 0; i < Math.min(5, entries.size()); i++) {
+                line.append(" 0x").append(Integer.toHexString(entries.get(i).getKey()))
+                        .append(" x").append(entries.get(i).getValue());
+            }
+            record(line.toString());
+        }
+        if (verticesLogged >= 8) {
+            return;
+        }
+        for (PendingMesh mesh : pending) {
+            if (mesh.parts != null && mesh.sectionFirstColor != null) {
+                // Counted for every mesh, not just the first few, so a colour that only some sections carry shows up.
+            }
+        }
         if (verticesLogged >= 8) {
             return;
         }

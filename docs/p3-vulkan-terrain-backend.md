@@ -240,6 +240,16 @@ defects remain and are the next work items:
    meshes rather than the first few, how many carry `0x707070` and how many carry the green tint, and to log which
    pass and section the visible draws belong to.
 
+   A census over every uploaded mesh (72 meshes across 40 upload batches) finds **only** the green `0xff59bd91`:
+   no mesh in the run carries the grey `0x707070`, so the grey the shader reads is not in the data at all. Every
+   link is now verified individually - buffer contents, draw offsets, attribute description, shader module
+   interface, attribute fetch (magenta) and, now, the complete set of uploaded colours - and the fragment stage
+   still computes a uniform grey for a surface whose vertices are green. With the software chain exhausted, the
+   remaining suspects are on the driver side: a validation layer run (`-Dceltium.vulkan.validation=true`, the layer
+   is not installed on this machine and would have to be downloaded) to catch an invalid binding or pipeline state
+   that the application never observes, and a minimal reproduction (one section, one quad, a fixed camera) that
+   removes the fixture from the picture.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
