@@ -1,5 +1,8 @@
 # Initial validation — 2026-10-08
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 The initial checkpoint below contains capability diagnostics and fork scaffolding. The later handoff follow-up records the successful mod build and runtime checks. Terrain rendering remains OpenGL throughout.
 
 ## Isolated probe

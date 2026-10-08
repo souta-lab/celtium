@@ -1,5 +1,8 @@
 # P3 step 1 — Vulkan device bootstrap
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 The first P3 increment creates a Vulkan logical device for exactly the GPU the game's OpenGL context runs on, on an
 explicit command, and then destroys it again. **It is a bootstrap and a contract check, not a renderer**: no
 terrain is uploaded, no draw is issued, and the terrain backend keeps using OpenGL.

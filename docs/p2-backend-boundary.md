@@ -1,5 +1,8 @@
 # P2 — terrain GPU boundary and GL parity
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 This stage extracts the narrow GPU boundary that a Vulkan terrain backend will implement, and proves that routing
 the existing OpenGL backend through it does not change what is rendered. **Terrain still draws with OpenGL**; no
 Vulkan device, allocation or draw exists in the mod.

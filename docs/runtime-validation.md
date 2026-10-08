@@ -1,5 +1,8 @@
 # Reproduce the Linux Cleanroom validation
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 Use the supplied, locally patched Prism profile with its existing library and asset caches. The validation launcher currently supports Linux x86_64. It reads that source instance, verifies cached library hashes and creates a fresh game directory for each experiment. Existing test directories are rejected. Authentication data and existing worlds are not copied.
 
 Run Gradle on JDK 25 with JDK 21 and JDK 8 available as toolchains:

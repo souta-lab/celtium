@@ -1,5 +1,8 @@
 # Reproduce the GL/Vulkan roundtrip experiment
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 `celtium-interop/` is a separate Linux experiment, not the terrain renderer and not part of the shipped Forge jar. It uses the current GL GPU's valid device/driver UUIDs, hardware device type, graphics queue, FD extensions and binary-semaphore properties. It queries each external image using its exact flags and usages; it does not select by a GPU model name.
 
 The verified contract is single-sample RGBA8 color and an existing D24 depth renderbuffer with no stencil. The experiment allocates dedicated, mutable, optimal Vulkan RGBA8 and D32 images with all supported ordinary usages. GL imports their opaque FDs. Color uses GPU blits. Depth uses a same-format D24 blit to an ordinary depth texture, a shader conversion to shared D32 and a shader conversion back to the original D24 renderbuffer. The original FBO and attachment IDs remain intact. This does not assume a cross-format depth blit is legal. Other source formats, stencil and MSAA are not verified by this path and must not be enabled by the terrain backend on this evidence.

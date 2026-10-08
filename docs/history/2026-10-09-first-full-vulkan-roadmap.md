@@ -1,5 +1,9 @@
 # Celtium: full-screen native Vulkan roadmap
 
+> **Superseded on 2026-10-09 by [`docs/plan.md`](../plan.md).** The GL-dependency inventory it contained lives on
+> in [`docs/forge-api-vulkan-inventory.md`](../forge-api-vulkan-inventory.md); the stage plan here was replaced
+> by the current plan's stage table.
+
 The goal is no longer "terrain on Vulkan". The completion condition is that Minecraft's own rendering, the final
 composition and the present are native Vulkan, with no GL context and no GL/Vulkan shared-image bridge left in the
 startup path.

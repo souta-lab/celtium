@@ -1,5 +1,8 @@
 # P3 — native Vulkan terrain backend
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 This stage gives terrain a real Vulkan path: the same build output, the same per-section metadata and the same
 culling/sorting results are uploaded into Vulkan arenas and drawn with `vkCmdDrawIndexed` into the game's own
 framebuffer, which OpenGL and Vulkan share through opaque-FD external memory. **The OpenGL backend is still the

@@ -1,5 +1,8 @@
 # Celeritas fork：Cleanroom 1.12.2 ネイティブVulkan地形バックエンド開発計画
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 改訂：2026-10-08。既存のCleanroom＋Celeritas環境で大多数のModが安定して動くことを開発の前提にする。実装を開始したが、以下の全工程が完了しているわけではない。性能改善と対応範囲は実測で確定する。
 
 ## 0. 現在の状態

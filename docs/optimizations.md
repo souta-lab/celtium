@@ -1,5 +1,8 @@
 # Celtium Vulkan backend: optimisations
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 Every change here keeps the rendered frame identical to the OpenGL reference, which the validation fixture checks
 on both target GPUs (RX 6400 and UHD 630). Measurements come from the same fixture scene with the frame limiter
 raised to 260, so the numbers are throughput, not the limiter.

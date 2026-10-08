@@ -4,7 +4,7 @@
 
 A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2 on CleanroomMC, with existing mod compatibility as a primary goal.
 
-**Current stage: hybrid - terrain is native Vulkan, the rest of the frame is still OpenGL.** The target is a full-screen native Vulkan renderer (rendering, composition and present) documented in docs/full-vulkan-roadmap.md, with the current inventory of GL dependencies and the stage plan. Today only terrain geometry is drawn by Celtium's Vulkan pipelines; entities, GUI, particles, sky and the final composition still run through Minecraft's OpenGL renderer and are combined through the shared-image bridge, so this is explicitly not a full-Vulkan build yet.
+**Current stage: hybrid - terrain is native Vulkan, the rest of the frame is still OpenGL.** The single current plan, including the completion condition (full-screen native Vulkan with no GL context and no shared-image bridge), the stage table with dependencies, per-stage acceptance criteria and effort estimates, is [docs/plan.md](docs/plan.md). Stage records written earlier are in [docs/history/](docs/history/). Today only terrain geometry is drawn by Celtium's Vulkan pipelines; entities, GUI, particles, sky and the final composition still run through Minecraft's OpenGL renderer and are combined through the shared-image bridge, so this is explicitly not a full-Vulkan build yet.
 
 ## Approach
 

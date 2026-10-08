@@ -1,5 +1,8 @@
 # Celtium — Codex handoff prompt
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 以下を開発引き継ぎの指示として読んで作業を続けてください。初期実装のチェックポイントであり、完成したVulkan modではありません。
 
 更新：2026-10-08のCodex引き継ぎ後。ユーザーの追加指示で「Celtium（Celeritas fork）の完成」をactive goalへ設定済み。以下の合意済み方針は継続する。

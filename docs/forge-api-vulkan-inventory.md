@@ -1,5 +1,8 @@
 # Forge/Minecraft drawing APIs and their Vulkan translation
 
+> **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
+> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+
 Policy: existing mods should not have to be changed. Where a mod draws through Minecraft's or Forge's own API, the
 implementation behind that API is replaced with a Vulkan one (Mixin first, fork only with a recorded reason).
 This document is grounded in the real 1.12.2 sources extracted from

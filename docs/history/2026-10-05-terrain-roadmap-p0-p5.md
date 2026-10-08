@@ -1,5 +1,8 @@
 # Implementation roadmap
 
+> **Superseded on 2026-10-09 by [`docs/plan.md`](../plan.md).** This was the P0-P5 terrain-only roadmap; the
+> goal is now full-screen native Vulkan with the Forge/Minecraft API swap.
+
 The first increment establishes the fork and a capability-query tool. All terrain still uses OpenGL.
 
 | Stage | Scope | State |
