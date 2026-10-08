@@ -453,6 +453,14 @@ defects remain and are the next work items:
    `p99 = 21.24 ms` to `18.33 ms` with the median unchanged (`16.12` against the OpenGL reference's `16.15`) and the
    frame still matches (same 6.86 mean difference as before the change).
 
+   **The F3 debug overlay is complete under Vulkan.** The backend creates a timestamp query pool (two queries per
+   render pass), writes them around each pass, resets the pool with the command buffer and reads the results once
+   the frame fence has signalled - the only moment they are guaranteed complete. The overlay now reports real GPU
+   times per pass instead of `?? ms`, for example `solid - 62 sections, 268.7 us`, `cutout_mipped - 62 sections,
+   1.476 ms`, `translucent - 62 sections, 490.7 us`, with a clean validation log. Together with the existing
+   `Celtium Renderer (version)` and `Terrain backend: vulkan (...)` lines, the overlay carries the same information
+   it does on the OpenGL backend.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

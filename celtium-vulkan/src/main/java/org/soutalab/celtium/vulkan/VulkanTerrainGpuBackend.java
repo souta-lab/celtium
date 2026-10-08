@@ -122,10 +122,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackMemory;
     private long readbackMapped;
     private boolean submissionPending;
+
+    /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
+    private static final int TIMESTAMP_SLOTS = 16;
+    private long timestampPool;
+    private float timestampPeriod = 1.0f;
+    private final Reference2ReferenceMap<TerrainRenderPass, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
     private boolean uploadVerified;
     private int beforeAfterLogged;
     private int readbackSlots;
     private long readbackOffset;
+    private int timestampSlots;
+    private final Reference2ReferenceMap<Integer, TerrainRenderPass> timestampPasses = new Reference2ReferenceOpenHashMap<>();
     private RegionResources readbackRegion;
     private boolean readbackPending;
     private boolean readbackDone;
@@ -302,13 +310,39 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void updateTimings() {
-        // Vulkan GPU timestamps are not collected yet; the debug overlay falls back to "?? ms" like an
-        // unsupported timer query does on the OpenGL side.
+        if (this.timestampPool == 0 || this.timestampSlots == 0) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            int queries = this.timestampSlots * 2;
+            LongBuffer data = stack.mallocLong(queries * 2);
+            int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, 0, queries, data,
+                    Long.BYTES * 2, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            if (result != VK_SUCCESS && result != VK_NOT_READY) {
+                return;
+            }
+            for (int slot = 0; slot < this.timestampSlots; slot++) {
+                long startAvailable = data.get((slot * 2 * 2) + 1);
+                long endAvailable = data.get((slot * 2 * 2) + 3);
+                if (startAvailable == 0 || endAvailable == 0) {
+                    // Keep whatever was measured for this pass last time instead of reporting "?? ms".
+                    continue;
+                }
+                long start = data.get(slot * 2 * 2);
+                long end = data.get((slot * 2 * 2) + 2);
+                if (end >= start) {
+                    this.passTimings.put(this.timestampPasses.get(slot),
+                            (long) ((end - start) * this.timestampPeriod));
+                }
+            }
+        }
+        this.timestampPasses.clear();
+        this.timestampSlots = 0;
     }
 
     @Override
     public Object2LongMap<TerrainRenderPass> snapshotTimings() {
-        return new Object2LongOpenHashMap<>();
+        return new Object2LongOpenHashMap<>(this.passTimings);
     }
 
     @Override
@@ -651,6 +685,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 .framebuffer(ensureFramebuffer(renderPass));
         begin.renderArea().offset().set(0, 0);
         begin.renderArea().extent().set(this.targetWidth, this.targetHeight);
+        int timestampSlot = this.timestampSlots < (TIMESTAMP_SLOTS / 2) ? this.timestampSlots : -1;
+        if (timestampSlot >= 0) {
+            vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
+                    timestampSlot * 2);
+        }
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
 
         setViewportAndScissor(stack);
@@ -744,6 +783,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         vkCmdEndRenderPass(this.commandBuffer);
+        if (timestampSlot >= 0) {
+            vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
+                    (timestampSlot * 2) + 1);
+            this.timestampPasses.put(timestampSlot, pass);
+            this.timestampSlots++;
+        }
         // The debug readback copies a buffer, which is only legal outside a render pass instance.
         if (!this.readbackDone && this.readbackSlots < 8 && this.readbackRegion != null) {
             recordReadback(this.readbackRegion, this.readbackOffset, this.readbackSlots);
@@ -1061,10 +1106,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             VkFenceCreateInfo fenceInfo = VkFenceCreateInfo.calloc(stack).sType$Default();
             check(vkCreateFence(this.context.device(), fenceInfo, null, handle), "vkCreateFence");
             this.fence = handle.get(0);
+
+            org.lwjgl.vulkan.VkPhysicalDeviceProperties properties =
+                    org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
+            vkGetPhysicalDeviceProperties(this.context.physicalDevice(), properties);
+            this.timestampPeriod = properties.limits().timestampPeriod();
+            org.lwjgl.vulkan.VkQueryPoolCreateInfo queryPool = org.lwjgl.vulkan.VkQueryPoolCreateInfo.calloc(stack)
+                    .sType$Default().queryType(VK_QUERY_TYPE_TIMESTAMP).queryCount(TIMESTAMP_SLOTS);
+            check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
+            this.timestampPool = handle.get(0);
         }
     }
 
     private void destroyCommandResources() {
+        if (this.timestampPool != 0) {
+            vkDestroyQueryPool(this.context.device(), this.timestampPool, null);
+            this.timestampPool = 0;
+        }
         if (this.fence != 0) {
             vkDestroyFence(this.context.device(), this.fence, null);
             this.fence = 0;
@@ -1083,12 +1141,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.submissionPending) {
             waitForIdle();
             this.submissionPending = false;
+            // The previous frame's timestamps are complete now, which is the only moment they can be read reliably.
+            updateTimings();
         }
         vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()
                     .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
             check(vkBeginCommandBuffer(this.commandBuffer, begin), "vkBeginCommandBuffer");
+            // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
+            // belongs; without it validation reports every timestamp write as using an unavailable query.
+            if (this.timestampPool != 0) {
+                vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0, TIMESTAMP_SLOTS);
+            }
         }
         this.uniformWriteCursor = 0;
     }
