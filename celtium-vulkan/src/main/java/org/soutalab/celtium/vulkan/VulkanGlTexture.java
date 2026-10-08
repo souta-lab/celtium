@@ -475,16 +475,19 @@ public final class VulkanGlTexture {
         VkCommandBuffer commandBuffer = context.beginCommands();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            // The whole chain is re-uploaded from scratch, so the old layout may be anything - including the
+            // VK_IMAGE_LAYOUT_UNDEFINED an image starts in, which validation rejects as an oldLayout for a
+            // first transition. Every mip level is covered because the levels are regenerated below.
             barrier.get(0).sType$Default()
-                    .srcAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .srcAccessMask(0)
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                    .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED)
                     .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-            vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, barrier);
 
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
@@ -500,10 +503,12 @@ public final class VulkanGlTexture {
 
             // Reuse the same barrier struct for the way back: the image and subresource range are unchanged, only
             // the access masks and layouts differ.
+            // Every level ends in a different transfer layout (the blit chain leaves levels in TRANSFER_SRC or
+            // TRANSFER_DST), so the range covers them all and the source accesses include both transfer roles.
             barrier.get(0)
-                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES,
                     0, null, null, barrier);

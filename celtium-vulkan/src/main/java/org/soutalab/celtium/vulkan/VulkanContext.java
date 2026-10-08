@@ -203,6 +203,11 @@ public final class VulkanContext {
      */
     public VkCommandBuffer beginCommands() {
         requireUsable();
+        // The driver may hand back a command buffer whose memory a previous submission is still reading, so the
+        // queue is drained before a new one is allocated. Validation flags the alternative as a pending-state
+        // reuse, and a half-rewritten command stream is exactly the kind of fault that makes a shader read the
+        // wrong data. This is deliberately bootstrap quality; a real frame uses a small pool of buffers and fences.
+        check(vkQueueWaitIdle(this.queue), "vkQueueWaitIdle(beginCommands)");
         VkCommandBuffer commandBuffer;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandBufferAllocateInfo allocate = VkCommandBufferAllocateInfo.calloc(stack).sType$Default()

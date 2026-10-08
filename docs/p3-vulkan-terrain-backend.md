@@ -250,6 +250,22 @@ defects remain and are the next work items:
    that the application never observes, and a minimal reproduction (one section, one quad, a fixed camera) that
    removes the fixture from the picture.
 
+   The validation layer (the Debian `vulkan-validationlayers` package extracted under
+   `.celtium-work/gpu-tools/extracted`, run with `VK_LAYER_PATH=.../explicit_layer.d`,
+   `LD_LIBRARY_PATH=.../lib/x86_64-linux-gnu` and `-Dceltium.vulkan.validation=true`) reports real misuse that the
+   application could not see, and it is now the working tool for this defect:
+   - `VUID-vkCmdDraw-None-09600`: descriptors written for `SHADER_READ_ONLY_OPTIMAL` were sampled while the image
+     was in another layout. **Fixed**: the upload path now transitions the *whole* mip chain from
+     `VK_IMAGE_LAYOUT_UNDEFINED` and leaves every level in `SHADER_READ_ONLY_OPTIMAL` (before the fix only level 0
+     was covered, and the mip blits left the other levels in transfer layouts).
+   - `VUID-vkResetCommandBuffer-00045`, `vkBeginCommandBuffer-00049`, `vkQueueSubmit-00071` and
+     `vkResetFences-01123`, ten of each: a command buffer is reset, re-begun and re-submitted while a previous
+     submission still reads it, and the fence is reset while still in use. The frame path and the context's
+     one-shot path now both drain the queue before reusing anything, which did not clear these ten, so they come
+     from a path not yet covered (the frame target's initial handoff or one of the two one-shot sites). A
+     half-rewritten command stream is a plausible cause for a shader reading the wrong vertices, so this is the
+     first thing to close.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

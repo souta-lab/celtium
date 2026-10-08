@@ -1001,6 +1001,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void beginCommands() {
+        // The frame uses one command buffer, so the previous submission has to finish before it is reset: resetting
+        // or re-recording a pending buffer is invalid and, on some drivers, makes the GPU execute a half-rewritten
+        // command stream - which shows up as the wrong vertex data reaching the shader.
+        if (this.submissionPending) {
+            waitForIdle();
+            this.submissionPending = false;
+        }
         vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()
@@ -1028,10 +1035,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     .pCommandBuffers(commandBuffers)
                     .pSignalSemaphores(signalSemaphores);
             check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
+            this.submissionPending = true;
         }
     }
 
     private void waitForIdle() {
+        this.submissionPending = false;
         if (this.fence != 0) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 LongBuffer fences = stack.mallocLong(1);
