@@ -130,6 +130,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * and a depth conversion each time.
      */
     private boolean frameOpen;
+
+    /** CPU time spent inside the GL/Vulkan handoff, so the debug overlay can show what the round trip costs. */
+    private long handoffNanos;
+    private long handoffSamples;
+    private long handoffWorstNanos;
     private boolean frameSubmittedSomething;
     private final ReferenceOpenHashSet<TerrainRenderPass> framePasses = new ReferenceOpenHashSet<>();
 
@@ -238,7 +243,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         boolean acquire = false;
         try {
             if (!this.frameOpen) {
+                long handoffStart = System.nanoTime();
                 this.frameTarget.beginFrame();
+                recordHandoff(System.nanoTime() - handoffStart);
                 this.frameOpen = true;
                 this.frameSubmittedSomething = false;
                 this.framePasses.clear();
@@ -247,7 +254,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Seeing the same pass twice means the previous frame never closed (for example because its last
                 // pass had no geometry): close it and start a fresh one so the terrain is never left in Vulkan.
                 closeFrame(true);
+                long handoffStart = System.nanoTime();
                 this.frameTarget.beginFrame();
+                recordHandoff(System.nanoTime() - handoffStart);
                 this.frameOpen = true;
                 this.frameSubmittedSomething = false;
                 this.framePasses.clear();
@@ -309,7 +318,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         try {
+            long handoffStart = System.nanoTime();
             this.frameTarget.endFrame();
+            recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
             record("frame end failed: " + describe(error));
         }
@@ -405,11 +416,44 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    private String depthSharingSummary;
+
+    private void recordHandoff(long nanos) {
+        this.handoffNanos += nanos;
+        this.handoffSamples++;
+        if (nanos > this.handoffWorstNanos) {
+            this.handoffWorstNanos = nanos;
+        }
+    }
+
+    /** {@return the average and worst CPU time of the GL/Vulkan handoff since the last call, or null} */
+    private String takeHandoffSummary() {
+        if (this.handoffSamples == 0) {
+            return null;
+        }
+        String summary = "handoff: avg " + (this.handoffNanos / this.handoffSamples / 1000L) + " us over "
+                + this.handoffSamples + " calls, worst " + (this.handoffWorstNanos / 1000L) + " us";
+        this.handoffNanos = 0L;
+        this.handoffSamples = 0L;
+        this.handoffWorstNanos = 0L;
+        return summary;
+    }
+
     @Override
     public String getTransferQueueDebugString() {
         // The debug overlay shows this line, so it carries the backend's own state: without it a terrain pass that
         // silently skips (missing textures, no frame target, a failed pipeline) would look like a rendering bug.
-        return describe();
+        if (this.depthSharingSummary == null) {
+            try {
+                this.depthSharingSummary = VulkanFrameTarget.describeDepthFormatSharing(this.context);
+            } catch (RuntimeException | LinkageError error) {
+                this.depthSharingSummary = "shared depth formats: probe failed";
+            }
+        }
+        String handoff = takeHandoffSummary();
+        String base = describe();
+        String withHandoff = handoff == null ? base : base + " | " + handoff;
+        return withHandoff + " | " + this.depthSharingSummary;
     }
 
     @Override

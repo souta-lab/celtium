@@ -350,6 +350,51 @@ public final class VulkanFrameTarget {
         return color.image;
     }
 
+    /**
+     * Probes whether one shared depth image could serve both APIs directly.
+     * <p>
+     * The shared depth image is {@code VK_FORMAT_D32_SFLOAT} because that is what the bridge was able to share, and
+     * the game's depth attachment is a D24 renderbuffer, so every handoff converts between the two with two
+     * full-screen shader passes. If the device can also import and export a {@code D24_UNORM_S8_UINT} image as a
+     * depth attachment, the conversion could be replaced by a plain same-format blit, so the answer is reported in
+     * the debug overlay rather than guessed at.
+     *
+     * @return a one-line report of what each depth format can do as a shared image
+     */
+    public static String describeDepthFormatSharing(VulkanContext context) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            StringBuilder line = new StringBuilder("shared depth formats:");
+            int[] formats = {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT};
+            for (int format : formats) {
+                line.append(' ').append(format == VK_FORMAT_D24_UNORM_S8_UINT ? "D24S8" : "D32F").append('=');
+                VkPhysicalDeviceExternalImageFormatInfo externalInfo =
+                        VkPhysicalDeviceExternalImageFormatInfo.calloc(stack).sType$Default()
+                                .handleType(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT);
+                VkPhysicalDeviceImageFormatInfo2 query = VkPhysicalDeviceImageFormatInfo2.calloc(stack)
+                        .sType$Default()
+                        .pNext(externalInfo.address())
+                        .format(format)
+                        .type(VK_IMAGE_TYPE_2D)
+                        .tiling(VK_IMAGE_TILING_OPTIMAL)
+                        .usage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+                VkExternalImageFormatProperties externalProperties =
+                        VkExternalImageFormatProperties.calloc(stack).sType$Default();
+                VkImageFormatProperties2 properties = VkImageFormatProperties2.calloc(stack).sType$Default()
+                        .pNext(externalProperties.address());
+                int result = vkGetPhysicalDeviceImageFormatProperties2(context.physicalDevice(), query, properties);
+                if (result != VK_SUCCESS) {
+                    line.append("query failed (").append(result).append(')');
+                    continue;
+                }
+                int features = externalProperties.externalMemoryProperties().externalMemoryFeatures();
+                int required = VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT | VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT;
+                line.append((features & required) == required ? "shareable" : "not-shareable");
+            }
+            return line.toString();
+        }
+    }
+
     /** The shared {@code VK_FORMAT_D32_SFLOAT} depth image; see {@link #colorImage()} for the handle type. */
     public long depthImage() {
         checkAlive();

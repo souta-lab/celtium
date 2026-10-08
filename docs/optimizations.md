@@ -42,7 +42,32 @@ and leave every level in `SHADER_READ_ONLY_OPTIMAL`.
 *Commit:* `adf7a9d7d` - timestamp queries per pass, read once the frame fence has signalled, so the debug overlay
 reports real terrain times under Vulkan instead of `?? ms`.
 
-### 6. Buffer growth drains the queue before destroying the old buffer
+### 6. The GL/Vulkan handoff is measured, and the shared depth format is settled by evidence
+
+*Commit:* this one - the debug line now carries both numbers every second.
+
+The handoff is the one cost that is specific to this design, so it is measured instead of estimated: the backend
+times every `beginFrame()` and `endFrame()` call and reports
+`handoff: avg 165 us over 1102 calls, worst 1223 us` on the RX 6400 - about 4.4 calls per frame, so roughly 0.7 ms
+of every 16 ms frame. The worst case is the tail the frame-time percentiles show.
+
+The obvious way to remove that cost is to stop converting depth on every handoff, which only exists because the
+shared depth image is `VK_FORMAT_D32_SFLOAT` while the game's depth attachment is a D24 renderbuffer. A probe now
+asks the device directly whether a shared `D24_UNORM_S8_UINT` depth image is possible:
+`shared depth formats: D24S8=query failed (-11) D32F=shareable`. `VK_ERROR_FORMAT_NOT_SUPPORTED` is the answer on the
+RX 6400, so the conversion cannot be replaced by a same-format blit on this driver and the two full-screen
+conversion passes per handoff stay.
+
+An attempt to halve the number of handoff pairs per frame was made and reverted: the frame logic closed and
+reopened the images when the same pass object was rendered twice in one frame (which happens under render pass
+consolidation, where the CUTOUT and CUTOUT_MIPPED layers share a pass), and removing that reopening left the frame
+open across frames. Closing it instead from the renderer's once-per-frame hook submitted a command buffer while the
+previous submission was still pending - validation reported `vkResetCommandBuffer-00045`,
+`vkBeginCommandBuffer-00049`, `vkQueueSubmit-00071` and `vkResetFences-01123` and the game crashed. The verified
+logic is restored; a correct version of that change needs the frame to be closed where the renderer knows the
+terrain passes are finished, not from an asynchronous task hook.
+
+### 6b. Buffer growth drains the queue before destroying the old buffer
 
 *Commit:* this one - *Measured:* validation went from two
 `VUID-vkDestroyBuffer-buffer-00922` messages per run to zero, frame unchanged.
