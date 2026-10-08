@@ -82,7 +82,7 @@ public final class ValidationClient {
                 mc.gameSettings.enableVsync = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
-                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:leaves,minecraft:glass;1;");
+                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:leaves,minecraft:stained_glass;1;");
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
             }
             if (mc.world == null || mc.player == null) return;

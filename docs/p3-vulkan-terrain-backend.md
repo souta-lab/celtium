@@ -405,6 +405,14 @@ defects remain and are the next work items:
    is built and mapped to `BlockRenderLayer.TRANSLUCENT`, so the next check is on the world side (for example a
    water or stained-glass layer, or a block placed on a raised column) rather than in the backend.
 
+   The translucent pass needed a genuinely translucent block: plain glass renders in the cutout layer in 1.12.2, so
+   the fixture now uses stained glass and the run draws all three passes (`solid`, `cutout_mipped`, `translucent`)
+   with a clean validation log. The multi-pass frame is close but not equal to the OpenGL reference (mean colour
+   `(124.0,128.5,117.7)` against `(128.8,137.2,117.1)`, mean absolute difference 6.13, 42% of pixels above 8).
+   Disabling depth writes for the translucent pass, as Minecraft does for that layer, made the difference slightly
+   worse (6.86) and was reverted, so the remaining causes are elsewhere: the blend state, the per-section sorting
+   of the translucent pass, or the stained-glass texture path.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
