@@ -3,7 +3,6 @@ package org.soutalab.celtium.vulkan;
 import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
-import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
@@ -127,10 +126,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /**
      * Whether the shared images are currently handed to Vulkan. The round trip is per *frame*, not per pass: the
      * terrain is drawn by three passes in a row and handing the images back between them costs a full colour copy
-     * and a depth conversion each time.
      */
-    private boolean frameOpen;
-
     /** CPU time spent inside the GL/Vulkan handoff, so the debug overlay can show what the round trip costs. */
     private long handoffNanos;
     private long handoffSamples;
@@ -138,10 +134,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int frameOpens;
     private int frameCloses;
     private int renderCalls;
-    private boolean frameSubmittedSomething;
-    private final ReferenceOpenHashSet<TerrainRenderPass> framePasses = new ReferenceOpenHashSet<>();
+    private int passSubmissions;
+    private int passSkips;
+    private int passErrors;
+    private String lastSkipReason;
 
     /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
+    /** Passes a single frame can have; used to reserve uniform blocks before recording. */
+    private static final int MAX_UNIFORM_PASSES = 6;
+
     private static final int TIMESTAMP_SLOTS = 16;
     private long timestampPool;
     private float timestampPeriod = 1.0f;
@@ -218,22 +219,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                        CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
         if (!renderLists.hasPass(pass)) {
+            // No geometry for this pass; nothing is opened, nothing has to be closed.
             return;
         }
         if (!ensureFrameTarget()) {
+            this.passSkips++;
+            this.lastSkipReason = pass.name() + ": no frame target";
             return;
         }
         VulkanTerrainPipeline pipeline = pipelineFor(pass);
         if (pipeline == null) {
+            this.passSkips++;
+            this.lastSkipReason = pass.name() + ": no pipeline";
             return;
         }
         ChunkPrimitiveType primitiveType = this.configuration.getPrimitiveTypeForPass(pass);
         ensureSharedIndexBuffer(primitiveType);
+        // Reserve every uniform block this pass can possibly need *before* anything is recorded. VulkanUniformBuffer
+        // growth allocates a new buffer and destroys the old one immediately, so a growth after the first region's
+        // descriptors were bound would leave the already recorded draws of this pass pointing at freed memory - the
+        // queue wait cannot help, because those draws have not been submitted yet. One block per region draw, times
+        // the number of passes a frame can have, is a cheap upper bound (a few kilobytes).
+        ensureUniformCapacity((this.regionResources.size() * MAX_UNIFORM_PASSES) + 1);
 
         refreshTextures();
         if (this.atlasTexture == null || this.lightmapTexture == null) {
             // Without both textures the descriptor set cannot be filled; the pass is skipped and the reason is
             // recorded instead of drawing with an unbound atlas.
+            this.passSkips++;
+            this.lastSkipReason = pass.name() + ": atlas or lightmap not mirrored";
             record("pass " + pass.name() + " skipped: the block atlas or the lightmap is not mirrored yet");
             return;
         }
@@ -243,33 +257,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.lastSectionsDrawn = 0;
         this.frameIndex++;
 
-        boolean acquire = false;
         this.renderCalls++;
+
+        // One complete handoff per pass. GL signals its GL->Vulkan semaphore exactly once in beginFrame() and waits
+        // for the Vulkan->GL semaphore exactly once in endFrame(), so exactly one submission must consume the first
+        // and signal the second. Aggregating several passes into one handoff (the previous design) made the Vulkan
+        // side wait that semaphore once per pass while GL signalled it once per frame, which left the second and
+        // third pass of every frame waiting for the next frame's signal - and a frame whose sorted pass had no
+        // geometry never returned the images to GL at all, so the entities, hand and GUI that GL draws afterwards
+        // were composed over a stale terrain. The aggregation is gone until a boundary signal exists that the
+        // renderer itself provides.
         try {
-            if (!this.frameOpen) {
-                long handoffStart = System.nanoTime();
-                this.frameTarget.beginFrame();
-                this.frameOpens++;
-                recordHandoff(System.nanoTime() - handoffStart);
-                this.frameOpen = true;
-                this.frameSubmittedSomething = false;
-                this.framePasses.clear();
-                acquire = true;
-            } else if (this.framePasses.contains(pass)) {
-                // Seeing the same pass twice means the previous frame never closed (for example because its last
-                // pass had no geometry): close it and start a fresh one so the terrain is never left in Vulkan.
-                closeFrame(true);
-                long handoffStart = System.nanoTime();
-                this.frameTarget.beginFrame();
-                this.frameOpens++;
-                recordHandoff(System.nanoTime() - handoffStart);
-                this.frameOpen = true;
-                this.frameSubmittedSomething = false;
-                this.framePasses.clear();
-                acquire = true;
-            }
-            this.framePasses.add(pass);
+            long handoffStart = System.nanoTime();
+            this.frameTarget.beginFrame();
+            this.frameOpens++;
+            recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
+            this.passErrors++;
             record("frame begin failed: " + describe(error));
             return;
         }
@@ -279,40 +283,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             beginCommands();
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 recordRenderPass(stack, pipeline, matrices, renderLists, pass, occlusionCamera, camera,
-                        useBlockFaceCulling, primitiveType, acquire, pass.isSorted());
+                        useBlockFaceCulling, primitiveType);
             }
             submitCommands();
             submitted = true;
-            this.frameSubmittedSomething = true;
+            this.passSubmissions++;
             if (this.readbackPending) {
                 readBackAndLog();
             }
         } catch (RuntimeException | LinkageError error) {
+            this.passErrors++;
             record("render failed: " + describe(error));
         }
 
-        // The sorted (translucent) layer is the last terrain pass of a frame in this renderer, so that is where the
-        // images go back to OpenGL - once per frame instead of once per pass.
-        if (pass.isSorted()) {
-            closeFrame(submitted);
-        } else if (!submitted) {
-            record("pass " + pass.name() + " was not submitted");
-        }
-    }
-
-    /**
-     * Hands the shared images back to OpenGL and closes the frame.
-     *
-     * @param submitted whether the last recorded pass reached the queue
-     */
-    private void closeFrame(boolean submitted) {
-        if (!this.frameOpen) {
-            return;
-        }
-        if (!submitted || !this.frameSubmittedSomething) {
+        if (!submitted) {
             // endFrame() makes GL wait on the Vulkan->GL semaphore, and GL has no timeout. A submission must
-            // therefore consume and signal it even when nothing was recorded: an empty acquire/release round trip
-            // hands the untouched images straight back, which is exactly what the game expects.
+            // therefore consume the GL->Vulkan semaphore and signal the Vulkan->GL one even when nothing was
+            // recorded: an empty acquire/release round trip hands the untouched images straight back, which is what
+            // the game expects. Only the first attempt is repeated - a failing recovery is reported and endFrame()
+            // still runs so the frame cannot be left open.
             try {
                 waitForIdle();
                 beginCommands();
@@ -323,15 +312,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("frame recovery failed: " + describe(error));
             }
         }
+
         try {
             long handoffStart = System.nanoTime();
             this.frameTarget.endFrame();
             this.frameCloses++;
             recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
+            this.passErrors++;
             record("frame end failed: " + describe(error));
         }
-        this.frameOpen = false;
+    }
+
+    /**
+     * {@return a machine-readable summary of what this backend actually drew}. The fixture reads it to decide
+     * whether a run really rendered terrain: selecting the backend by name is not evidence that any pass reached the
+     * queue, so submissions, skips and errors are counted instead.
+     */
+    public String verificationSummary() {
+        return "celtium/vulkan-check passes=" + this.passSubmissions + " skipped=" + this.passSkips + " errors="
+                + this.passErrors + " lastDraw=" + this.lastDrawCommands + " lastSections=" + this.lastSectionsDrawn
+                + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'));
     }
 
     @Override
@@ -466,7 +467,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         String base = describe();
         String withHandoff = handoff == null ? base : base + " | " + handoff;
         String withDetail = detail == null ? withHandoff : withHandoff + " | " + detail;
-        return withDetail + " | " + this.depthSharingSummary;
+        return withDetail + " | " + this.depthSharingSummary + " | " + verificationSummary();
     }
 
     @Override
@@ -775,8 +776,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                   CameraTransform occlusionCamera,
                                   CameraTransform camera,
                                   boolean useBlockFaceCulling,
-                                  ChunkPrimitiveType primitiveType,
-                                  boolean acquire, boolean release) {
+                                  ChunkPrimitiveType primitiveType) {
         ensureUniformCapacity(this.regionResources.size());
         // The descriptor set points at the atlas, the lightmap and the uniform buffer for this pass. It is rewritten
         // once per pass per frame, which is a few descriptor writes and removes any staleness after a re-upload.
@@ -989,9 +989,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long offset = this.uniformWriteCursor;
         this.uniformWriteCursor += this.uniformStride;
         if (this.uniformWriteCursor > this.uniforms.size()) {
-            // A frame with more region draws than the buffer has blocks needs a bigger buffer: wrapping would let a
-            // later draw overwrite a block that an earlier recorded draw still reads. Grow against the cursor, not
-            // against the region count, or the buffer stops growing while the cursor keeps advancing.
+            // This must not happen: render() reserves an upper bound before recording, and growth replaces the
+            // buffer that descriptors recorded earlier in this pass already point at. Reported loudly rather than
+            // growing silently, so a missed reservation shows up as a defect instead of as wrong terrain.
+            record("uniform buffer grew during recording: " + this.uniformWriteCursor + " > " + this.uniforms.size()
+                    + " (descriptors bound earlier in this pass may be stale)");
             this.uniforms.ensureCapacity(this.uniformWriteCursor);
             this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
         }

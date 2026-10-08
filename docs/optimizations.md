@@ -89,10 +89,17 @@ handoff detail (avg/frame): wait 326 us, colour-in 1 us, depth-in 0 us,
 on the RX 6400, alongside `handoff: avg 172 us over 1092 calls (546 opens, 546 closes, 1638 pass calls), worst
 1018 us`.
 
-This changes what the next optimisation should be. The copies are free (1 us each - `glBlitNamedFramebuffer` just
-queues them), the two depth conversions cost 12 us each, and **326 us of the frame is spent blocked on the
-semaphores**, i.e. GL waiting for the Vulkan terrain submission before it can composite. Cheaper copies cannot help;
-the cost is the serialisation of the two APIs on one set of shared images.
+**Correction (external audit).** These numbers are CPU time inside the GL calls, not GPU time: `glBlitNamedFramebuffer`
+only enqueues work, so 1 us for a copy says nothing about what the copy costs on the GPU, and the conversion passes
+were measured the same way. Only the semaphore waits are meaningful as a duration, because `glWaitSemaphoreEXT`
+blocks the calling thread until the Vulkan submission signals. The original text also divided by half the number of
+handoffs and called the result "per frame"; the denominator is now the real one and the label says `avg/handoff`.
+
+What the measurement does support: the GL thread blocks on the handoff for about 126 us per handoff on average
+(about 2 ms per second of wall clock), and the blit/conversion *call* overhead is small. What it does not support:
+"copies are free", "326 us of the frame is GPU work", and the claim that double buffering would remove a proven
+stall - a real decision there needs GPU timestamps or GL timer queries and a latency comparison, and double
+buffering changes what the GL entities, hand and GUI of a frame are composited over.
 
 The structural fix is double buffering - two shared image sets, so Vulkan rasterises frame N while GL composites
 frame N-1 - which removes the stall at the price of one frame of latency and twice the shared image memory. It is

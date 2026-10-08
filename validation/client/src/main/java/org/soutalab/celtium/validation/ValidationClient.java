@@ -89,7 +89,7 @@ public final class ValidationClient {
             if (!launched && mc.currentScreen instanceof GuiMainMenu) {
                 launched = true;
                 report.addProperty("scope", "fixed flat world startup, commands and GL framebuffer observation");
-                report.addProperty("nativeTerrainVerified", false);
+                
                 mc.gameSettings.renderDistanceChunks = 8;
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
                 mc.gameSettings.limitFramerate = 260;
@@ -393,6 +393,27 @@ public final class ValidationClient {
                 String live = report.get("terrainBackendDescription").getAsString();
                 if (!live.startsWith("vulkan")) {
                     throw new IllegalStateException("Vulkan terrain was expected but the live backend is: " + live);
+                }
+                // The backend can be selected and still draw nothing: a missing frame target, a failed pipeline, an
+                // unmirrored texture or a failed submission each make render() return early. The counters that the
+                // backend publishes are therefore what decides, not its name.
+                java.util.regex.Matcher counters = java.util.regex.Pattern
+                        .compile("celtium/vulkan-check passes=(\\d+) skipped=(\\d+) errors=(\\d+) lastDraw=(\\d+) lastSections=(\\d+) skipReason=(\\S+)")
+                        .matcher(report.get("rendererDebug").toString());
+                if (!counters.find()) {
+                    throw new IllegalStateException("the Vulkan backend published no draw counters");
+                }
+                int passes = Integer.parseInt(counters.group(1));
+                int skipped = Integer.parseInt(counters.group(2));
+                int errors = Integer.parseInt(counters.group(3));
+                int lastDraw = Integer.parseInt(counters.group(4));
+                report.addProperty("nativeTerrainVerified", passes > 0 && skipped == 0 && errors == 0 && lastDraw > 0);
+                report.addProperty("vulkanPasses", passes);
+                report.addProperty("vulkanSkippedPasses", skipped);
+                report.addProperty("vulkanErrors", errors);
+                if (passes == 0 || skipped > 0 || errors > 0 || lastDraw == 0) {
+                    throw new IllegalStateException("the Vulkan terrain backend did not render cleanly: passes="
+                            + passes + " skipped=" + skipped + " errors=" + errors + " lastDraw=" + lastDraw);
                 }
             }
             JsonObject camera = new JsonObject();

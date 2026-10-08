@@ -487,6 +487,50 @@ defects remain and are the next work items:
    uses the Xwayland display instead: runs complete normally again, and the verification that follows was taken
    with it. Any future "the fixture cannot even start" report should try that flag first.
 
+   **External audit responses (HEAD `18d157d63`, worked on `0d3de94e1`).** Each item lists the problem, the fix and
+   the evidence; anything not verified is named as such.
+
+   - **P0-1 frame aggregation vs synchronization (fixed).** Confirmed: `recordRenderPass` took `acquire`/`release`
+     flags but ignored them, both barrier calls ran on every pass, and `submitCommands` waited the GL->Vulkan
+     semaphore and signalled the Vulkan->GL one on every pass while GL does that once per frame. A frame whose
+     sorted pass had no geometry also never returned the images to GL inside that frame. Fix: the aggregation is
+     gone - one complete handoff per pass (beginFrame, acquire, one submission that waits and signals, release,
+     endFrame), and the early return for a pass without geometry happens before anything is opened. Evidence:
+     `handoff: avg 127 us over 3312 calls (1656 opens, 1656 closes, 1656 pass calls)` - opens equal closes equal
+     pass calls - with synchronization validation enabled (`VK_LAYER_ENABLES=...SYNCHRONIZATION_VALIDATION_EXT`)
+     and **no VUID or SYNC message** in the run, no hang under a 300 s watchdog, and the frame unchanged at 6.86.
+     Not yet exercised: solid-only, cutout-only, all-passes-empty and error-recovery scenes under the same
+     synchronization validation.
+   - **P1-2 uniform buffer growth during recording (fixed).** Confirmed: `writeUniforms` could call
+     `ensureCapacity` after the first region's descriptors were bound, and `VulkanUniformBuffer.ensureCapacity`
+     destroys the old buffer immediately, so already recorded draws of that pass pointed at freed memory; the queue
+     wait cannot help before submission. Fix: `render()` reserves `regions * MAX_UNIFORM_PASSES + 1` blocks before
+     anything is recorded, and the growth path is kept only as a loud defect report instead of a silent
+     reallocation. Evidence: no such report appears in the run, and the frame is unchanged. Still to check: the
+     same lifetime question for the shared index buffer, region deletion, the host buffer and resize/world unload.
+   - **P1-3 measurement denominator and interpretation (fixed).** Confirmed: `tTimedFrames` counts `beginFrame()`
+     calls but the summary divided by `tTimedFrames / 2`, doubling every average, and the numbers were presented as
+     GPU cost when they are CPU API time. Fix: the real denominator, an `avg/handoff` label, and the correction in
+     `docs/optimizations.md` section 7 quoted above. Evidence: `handoff detail (CPU API time, avg/handoff): wait
+     126 us ...` in the run's debug line.
+   - **P1-4 success verdict (fixed for the terrain backend, partly for the harness).** Confirmed: the fixture only
+     checked that the backend *description* starts with `vulkan`, and `nativeTerrainVerified` was hard-coded
+     false. Fix: the backend publishes `celtium/vulkan-check passes=... skipped=... errors=... lastDraw=...
+     lastSections=... skipReason=...`, and the fixture now fails the run unless passes > 0, skipped == 0,
+     errors == 0 and lastDraw > 0, recording `nativeTerrainVerified`, `vulkanPasses`, `vulkanSkippedPasses` and
+     `vulkanErrors`. Evidence: `status PASSED | nativeTerrainVerified True | passes 1656 skipped 0 errors 0`.
+     Still to do: count validation errors/warnings in the harness itself and fail on them, and stop treating the
+     6.86 mean / 43.7% pixel difference against the *upstream* build as a correctness criterion - it is a known
+     difference between two builds measured on a fixed scene, while same-build repeatability and the documented
+     threshold are what gate a change.
+   - **P2-5 unsigned device limits (open).** `maxUniformBufferRange` is read as a Java `int` and a `-1` is treated
+     as an unreliable query. `0xFFFFFFFF` is the plausible unsigned reading, so the value must be interpreted with
+     `Integer.toUnsignedLong` and validated against the real requirement instead of being trusted unconditionally.
+   - **P2-6 compatibility wording (open).** The earlier "OpenGL default/fallback" and "timestamps and mips not
+     implemented" statements are stale; Vulkan-only applies to terrain while entities, GUI and the rest stay on
+     OpenGL through the interop bridge, and the verified scope is AMD RX 6400 plus Intel UHD 630 on Linux with
+     opaque-FD/GL external objects - NVIDIA, other operating systems and major mods are unverified.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered

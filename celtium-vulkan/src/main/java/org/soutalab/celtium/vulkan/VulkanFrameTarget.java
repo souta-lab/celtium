@@ -520,8 +520,12 @@ public final class VulkanFrameTarget {
         if (this.tTimedFrames == 0L) {
             return null;
         }
-        long frames = Math.max(1L, this.tTimedFrames / 2L);
-        String summary = "handoff detail (avg/frame): wait " + (this.tWait / frames / 1000L) + " us, colour-in "
+        // tTimedFrames counts beginFrame() calls, i.e. one per handoff, so this is an average per handoff. The
+        // numbers are CPU time inside the GL calls - for the semaphore waits that equals the time the GL thread was
+        // blocked, but for the blits and the conversion pass it is only the time spent enqueueing the work, not the
+        // time the GPU spends executing it.
+        long frames = Math.max(1L, this.tTimedFrames);
+        String summary = "handoff detail (CPU API time, avg/handoff): wait " + (this.tWait / frames / 1000L) + " us, colour-in "
                 + (this.tColorIn / frames / 1000L) + " us, depth-in " + (this.tDepthIn / frames / 1000L)
                 + " us, convert-in " + (this.tConvertIn / frames / 1000L) + " us, colour-out "
                 + (this.tColorOut / frames / 1000L) + " us, convert-out " + (this.tConvertOut / frames / 1000L)
