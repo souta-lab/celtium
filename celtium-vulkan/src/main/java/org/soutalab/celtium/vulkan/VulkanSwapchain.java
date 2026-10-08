@@ -139,7 +139,18 @@ public final class VulkanSwapchain {
         }
 
         VulkanSwapchain swapchain = new VulkanSwapchain(context, surface, platform);
-        if (!swapchain.createSwapchain(width, height, reasons)) {
+        try {
+            if (!swapchain.createSwapchain(width, height, reasons)) {
+                swapchain.delete();
+                return null;
+            }
+        } catch (RuntimeException | LinkageError error) {
+            // Fail closed with the reasons intact: an exception that escaped here would take the argument summary
+            // with it, and the summary is the only thing that makes the next attempt diagnosable.
+            reasons.add("swapchain creation threw " + error.getClass().getSimpleName() + ": " + error.getMessage());
+            if (swapchain.argumentSummary != null && !"not attempted".equals(swapchain.argumentSummary)) {
+                reasons.add("arguments: " + swapchain.argumentSummary);
+            }
             swapchain.delete();
             return null;
         }
@@ -337,6 +348,7 @@ public final class VulkanSwapchain {
                     // required by the spec and non-null for LWJGL's generated argument checks, and no ownership
                     // transfer between families is needed because there is only one.
                     .imageSharingMode(VK_SHARING_MODE_CONCURRENT)
+                    .queueFamilyIndexCount(1)
                     .pQueueFamilyIndices(stack.ints(this.context.queueFamilyIndex()))
                     .preTransform(capabilities.currentTransform())
                     .compositeAlpha(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
@@ -352,12 +364,19 @@ public final class VulkanSwapchain {
                     + " extent=" + create.imageExtent().width() + "x" + create.imageExtent().height()
                     + " layers=" + create.imageArrayLayers() + " usage=" + create.imageUsage()
                     + " sharing=" + create.imageSharingMode() + " queueFamilies=" + create.queueFamilyIndexCount()
-                    + " queueFamilyPtr=" + (create.queueFamilyIndexCount() == 0 ? "unused" : "set")
+                    + " queueFamilyPtr=" + (create.pQueueFamilyIndices() == null ? "null" : "set")
                     + " transform=" + create.preTransform() + " compositeAlpha=" + create.compositeAlpha()
                     + " presentMode=" + create.presentMode() + " clipped=" + create.clipped()
                     + " oldSwapchain=" + create.oldSwapchain() + " next=" + (create.pNext() == 0L ? "null" : "set")
                     + " swapchainOut=" + handle.remaining();
-            result = vkCreateSwapchainKHR(this.context.device(), create, null, handle);
+            // The summary goes into the reason list before the call: if the call throws (or fails), the swapchain
+            // object is discarded and nothing else would carry the arguments the next attempt needs.
+            reasons.add("arguments: " + this.argumentSummary);
+            // An explicit (zeroed) allocation callbacks struct rather than a null pointer: LWJGL's native wrapper
+            // checks the pointer arguments it forwards, and a null allocator is one of them.
+            org.lwjgl.vulkan.VkAllocationCallbacks allocator =
+                    org.lwjgl.vulkan.VkAllocationCallbacks.calloc(stack);
+            result = vkCreateSwapchainKHR(this.context.device(), create, allocator, handle);
             if (result != VK_SUCCESS) {
                 reasons.add("vkCreateSwapchainKHR returned " + result + " (formats " + availableFormats + ") ["
                         + this.argumentSummary + "]");

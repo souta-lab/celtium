@@ -44,9 +44,15 @@ Kept separate on purpose - terrain success and present success are different thi
   `VulkanImmediateDrawer`.
 
 **Blockers / open defects:**
-- `vkCreateSwapchainKHR` path: an argument check inside LWJGL throws `NullPointerException` after surface creation,
-  the present-support check and swapchain creation succeed. Two suspects ruled out by measurement (queue-family index
-  list; image-count query reusing a buffer). Next: record the argument values at the failing call.
+- `vkCreateSwapchainKHR` path: an argument check inside LWJGL throws `NullPointerException` after surface creation
+  and the present-support check succeed. The create-info's values are now captured and all of them are spec-valid
+  (`format=44` BGRA8, `usage=18` colour-attachment|transfer-dst, `sharing=1` concurrent with one family and a
+  non-null list, `extent=1280x720`, `minImages=4`, `transform=1`, `compositeAlpha=1`, `presentMode=1` mailbox,
+  `oldSwapchain=0`, `pNext=0`), and decompiling the LWJGL wrapper shows the failure is its
+  `Checks.check(long)` on one of the pointers it forwards to the native call, not the `(Buffer,int)` check that the
+  queue-family list and the output buffer satisfy. An explicit allocation-callbacks struct instead of a null
+  allocator did not change it. Next: find which forwarded pointer is zero, for example by calling the native
+  function directly with the same values or by reproducing the creation outside the mod.
 - Cutout/translucent frame difference against the OpenGL reference (mean 6.86/255, 43.7% of pixels above 8) is
   unresolved and is not evidence of correctness.
 - Compact (24-byte) vertex format renders incorrectly on Vulkan (76.8 mean difference); default is off, so users who
