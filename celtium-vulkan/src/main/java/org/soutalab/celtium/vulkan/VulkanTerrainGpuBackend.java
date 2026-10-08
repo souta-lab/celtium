@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
+import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
@@ -123,6 +124,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackMapped;
     private boolean submissionPending;
 
+    /**
+     * Whether the shared images are currently handed to Vulkan. The round trip is per *frame*, not per pass: the
+     * terrain is drawn by three passes in a row and handing the images back between them costs a full colour copy
+     * and a depth conversion each time.
+     */
+    private boolean frameOpen;
+    private boolean frameSubmittedSomething;
+    private final ReferenceOpenHashSet<TerrainRenderPass> framePasses = new ReferenceOpenHashSet<>();
+
     /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
     private static final int TIMESTAMP_SLOTS = 16;
     private long timestampPool;
@@ -225,8 +235,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.lastSectionsDrawn = 0;
         this.frameIndex++;
 
+        boolean acquire = false;
         try {
-            this.frameTarget.beginFrame();
+            if (!this.frameOpen) {
+                this.frameTarget.beginFrame();
+                this.frameOpen = true;
+                this.frameSubmittedSomething = false;
+                this.framePasses.clear();
+                acquire = true;
+            } else if (this.framePasses.contains(pass)) {
+                // Seeing the same pass twice means the previous frame never closed (for example because its last
+                // pass had no geometry): close it and start a fresh one so the terrain is never left in Vulkan.
+                closeFrame(true);
+                this.frameTarget.beginFrame();
+                this.frameOpen = true;
+                this.frameSubmittedSomething = false;
+                this.framePasses.clear();
+                acquire = true;
+            }
+            this.framePasses.add(pass);
         } catch (RuntimeException | LinkageError error) {
             record("frame begin failed: " + describe(error));
             return;
@@ -237,36 +264,56 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             beginCommands();
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 recordRenderPass(stack, pipeline, matrices, renderLists, pass, occlusionCamera, camera,
-                        useBlockFaceCulling, primitiveType);
+                        useBlockFaceCulling, primitiveType, acquire, pass.isSorted());
             }
             submitCommands();
             submitted = true;
+            this.frameSubmittedSomething = true;
             if (this.readbackPending) {
                 readBackAndLog();
             }
         } catch (RuntimeException | LinkageError error) {
             record("render failed: " + describe(error));
-        } finally {
-            if (!submitted) {
-                // endFrame() makes GL wait on the Vulkan->GL semaphore, and GL has no timeout. A submission must
-                // therefore consume and signal it even when recording failed: an empty acquire/release round trip
-                // hands the untouched images straight back, which is exactly what the game expects.
-                try {
-                    waitForIdle();
-                    beginCommands();
-                    this.frameTarget.recordAcquireBarriers(this.commandBuffer);
-                    this.frameTarget.recordReleaseBarriers(this.commandBuffer);
-                    submitCommands();
-                } catch (RuntimeException | LinkageError error) {
-                    record("frame recovery failed: " + describe(error));
-                }
-            }
+        }
+
+        // The sorted (translucent) layer is the last terrain pass of a frame in this renderer, so that is where the
+        // images go back to OpenGL - once per frame instead of once per pass.
+        if (pass.isSorted()) {
+            closeFrame(submitted);
+        } else if (!submitted) {
+            record("pass " + pass.name() + " was not submitted");
+        }
+    }
+
+    /**
+     * Hands the shared images back to OpenGL and closes the frame.
+     *
+     * @param submitted whether the last recorded pass reached the queue
+     */
+    private void closeFrame(boolean submitted) {
+        if (!this.frameOpen) {
+            return;
+        }
+        if (!submitted || !this.frameSubmittedSomething) {
+            // endFrame() makes GL wait on the Vulkan->GL semaphore, and GL has no timeout. A submission must
+            // therefore consume and signal it even when nothing was recorded: an empty acquire/release round trip
+            // hands the untouched images straight back, which is exactly what the game expects.
             try {
-                this.frameTarget.endFrame();
+                waitForIdle();
+                beginCommands();
+                this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                submitCommands();
             } catch (RuntimeException | LinkageError error) {
-                record("frame end failed: " + describe(error));
+                record("frame recovery failed: " + describe(error));
             }
         }
+        try {
+            this.frameTarget.endFrame();
+        } catch (RuntimeException | LinkageError error) {
+            record("frame end failed: " + describe(error));
+        }
+        this.frameOpen = false;
     }
 
     @Override
@@ -671,7 +718,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                   CameraTransform occlusionCamera,
                                   CameraTransform camera,
                                   boolean useBlockFaceCulling,
-                                  ChunkPrimitiveType primitiveType) {
+                                  ChunkPrimitiveType primitiveType,
+                                  boolean acquire, boolean release) {
         ensureUniformCapacity(this.regionResources.size());
         // The descriptor set points at the atlas, the lightmap and the uniform buffer for this pass. It is rewritten
         // once per pass per frame, which is a few descriptor writes and removes any staleness after a re-upload.

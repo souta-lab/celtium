@@ -470,6 +470,14 @@ defects remain and are the next work items:
    `requires a Vulkan terrain backend, but none could be created: ...` in `logs/debug.log` instead of rendering the
    terrain with OpenGL.
 
+   Second optimisation applied, and the structural one the earlier note called for: the GL/Vulkan round trip is now
+   per *frame* instead of per *pass*. The first pass of a frame acquires the shared images, the last (the sorted
+   translucent pass, which this renderer draws last) releases them, and the acquire/release barriers are recorded
+   only on those two passes; a pass that repeats closes the previous frame first, so a frame whose last pass has no
+   geometry can never leave the images on the Vulkan side. On the RX 6400 the tail improves again - `p99 = 17.90 ms`
+   against the OpenGL reference's `17.00` and the earlier `21.24` - while the frame stays identical to the reference
+   (same 6.86 mean difference), the validation log stays clean and the F3 per-pass timings keep working.
+
    Older measurements: the mirrored light map has alpha 255 everywhere (so the light map's alpha
    is not the darkener, and `m_color.a` after `v_Color = _vert_color * lightColor` stays 1.0), its bright end is at
    memory row 15 and the dump's row 0 is `[14,14,14]`, and the mirrored atlas averages `(82,76,64)`. The rendered
