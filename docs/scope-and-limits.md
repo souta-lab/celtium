@@ -147,6 +147,10 @@ command buffer の所有権修正と format 2（POSITION_TEX_COLOR）の既定�
 証拠: `.celtium-work/sol-command-buffer/acceptance-summary.json`（各runのexit/clean/messages/fixture/passed/delta/worldFramesと
 3枚のPNGハッシュ）。再現: `sol-cb-base-amd`（70メッセージ）。純ロジック: `VulkanCommandBufferStateTest` 4件。
 
+**shader実験の前提確認（2026-10-10）**: `compileTerrainShaders` は `src/main/shaders` を `@InputFiles` として追跡しており、
+jar内の `terrain_solid.frag.spv` の SHA-256 は現在のソースを手動で `glslangValidator -V --target-env vulkan1.0` にかけた結果と
+**バイト一致**する（`bc1e741db9983d32…`）。shaderを変更した実験は、この一致を確認してから結論に使うこと。
+
 **測定手順の注意**: 2つのGPU runを同時に走らせると、headless sway と Minecraft 本体がCPUを奪い合い、
 Intel側が480秒上限に達して `MISSING_REPORT` になる。これは環境の競合であって実装の退行ではない。
 **単独で実行する**こと。

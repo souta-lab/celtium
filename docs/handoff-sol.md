@@ -153,6 +153,10 @@ light short は `light×16`（0xE0=sky14×16）で `/16` と `/256` は同じテ
 つまり**テクスチャ内容が違う**。atlas level0 は GL の実atlasと平均一致するが、比較したのは registry 側の mirror で、
 terrain が bind する `this.atlasTexture` が別オブジェクトである可能性は未検証。
 
+**このターンで追加確認した2点**: (1) 参照がlightmapを適用していること（`CELERITAS_NO_LIGHTMAP` は `pass.hasNoLightmap()`
+の時だけ定義されるのでSOLID passでは未定義）。(2) ビルド健全性 — jar内 `terrain_solid.frag.spv` のSHA-256が現在のソースの
+手動コンパイルとバイト一致するので、shader変更は正しく反映される（診断実験の結論は有効）。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
