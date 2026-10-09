@@ -265,9 +265,25 @@ regression. **Unexercised:** the ordinary fixture never leaves the world, so `de
 not appear - the code path is correct by construction and will be exercised on a world-leave or resource reload, which the
 suite does not currently perform. The registry's create-then-fail-upload leak from the same audit item is still open.
 
-### S16 [P1] animation invalidation never reaches the terrain atlas
-`invalidateTexture` updates only the registry; the terrain atlas keeps its own copy and its 400-pass refresh, so five
-sprite-hook firings are not evidence that terrain animation is current.
+### S16 [P1] animation invalidation never reaches the terrain atlas - **closed**
+**Fixed and measured.** The terrain atlas and the light map are held **directly** by the backend (`atlasTexture`,
+`lightmapTexture`) rather than through the texture registry, so `invalidateTexture` - which the sprite-upload hook calls -
+marked only the registry's copy stale and left the ones the terrain actually samples untouched. The audit's wording was
+exact: five sprite-hook firings are not evidence that terrain animation is current. `invalidateTexture` now compares the
+incoming GL texture id against the ids the two direct mirrors were built from and **re-uploads them in place**, which leaves
+their image, view and generation alone and therefore every descriptor key valid.
+
+Measured on a normal run:
+
+```
+CELTIUM_ANIM directMirrorRefreshes=89 invalidations=115 atlasGlId=9 lightmapGlId=12
+exit 0 | clean | messages 0 | fixture PASSED | passes=2189 | descriptorSets=1
+```
+
+**89 refreshes of the terrain atlas** (GL texture 9) reached the mirror that the terrain pass samples - 89 uploads by the
+game's animation path that previously never arrived - and `descriptorSets` stays at **1**, so the in-place design from S13
+carries the animation path as well. The count is reported on stdout whenever it changes, because the capped debug list would
+drop it.
 
 ### S17 [P1] `POSITION_TEX_COLOR` is wrongly identified as the final composite - **conditions added, unexercised**
 **Fixed in code.** The branch now checks the two things that distinguish the screen-only composite before it does anything:

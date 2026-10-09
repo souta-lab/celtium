@@ -6204,3 +6204,32 @@ Worth stating plainly, because it is the third time in this audit that the answe
 composite present, the clear boundary, the second target and the teardown are all paths this fixture **never walks**. Each fix
 is correct by construction; none of them is exercised. The next useful work is not another guard but a scene that reaches
 them - which is why the fixture extension keeps being named as the follow-up.
+
+---
+
+## S16 closed: 89 animated atlas uploads now reach the terrain, and the descriptor count stays at one
+
+The audit's S16 was precise and correct: `invalidateTexture` - the hook that fires when something re-uploads a GL texture -
+marked only the texture **registry** stale, while the terrain atlas and the light map are held **directly** by the backend.
+So the game could re-upload the block atlas all day for its animated sprites and the terrain would keep sampling the copy it
+took at startup. The audit's phrasing was the tell: "five sprite-hook firings are not evidence that terrain animation is
+current".
+
+The fix compares the incoming GL texture id against the ids the two direct mirrors were built from and refreshes the matching
+one **in place** - the same operation the mirror refresh uses, which keeps the image, the view and the generation unchanged
+and therefore every descriptor key built from them still valid.
+
+Measured on a normal run:
+
+```
+CELTIUM_ANIM directMirrorRefreshes=89 invalidations=115 atlasGlId=9 lightmapGlId=12
+exit 0 | clean | messages 0 | fixture PASSED | passes=2189 | descriptorSets=1
+```
+
+**89 uploads of the terrain atlas reached the mirror the terrain samples.** That is one completion-condition item - texture
+animation - moved from "the hook fires" to "the renderer draws the animated content", with the count on stdout because the
+capped diagnostics list would have dropped it.
+
+The number beside it matters as much: `descriptorSets` stays at **1**. The in-place refresh introduced for S13 is what makes
+this fix free - a recreated mirror would have invalidated every descriptor key on every animation frame, which is the 545-set
+path this project was on two rounds ago.

@@ -609,6 +609,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long retiredFlushes;
     private int lastReportedOutOfDate = -1;
     private int lastReportedAcquireOutOfDate = -1;
+    private int lastReportedDirectRefreshes = -1;
     private int orderPreservingFlushes;
     private int clearOrderFlushes;
     private int compositePresentRefusals;
@@ -621,6 +622,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateRefusedDefaultFbo;
     private int immediatePresentedFrames;
     private int immediateTextureInvalidations;
+    private int directMirrorRefreshes;
+    private int atlasSourceGlId = -1;
+    private int lightmapSourceGlId = -1;
     private int immediatePresentFailures;
     /**
      * How often a batch was left to GL because the frame's window budget was already spent.
@@ -724,7 +728,36 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.textureRegistry != null) {
             this.textureRegistry.invalidate(glTextureId);
         }
+        // The terrain atlas and the light map are held directly rather than through the registry, so an animation that
+        // re-uploads one of them would leave this renderer drawing the old content forever (audit S16). They are refreshed
+        // here, in place, which keeps their view and generation - and therefore every descriptor key - unchanged.
+        if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
+            try {
+                this.atlasTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.directMirrorRefreshes++;
+            } catch (RuntimeException | LinkageError error) {
+                record("atlas re-upload failed: " + describe(error));
+            }
+        }
+        if (this.lightmapTexture != null && glTextureId == this.lightmapSourceGlId) {
+            try {
+                this.lightmapTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.directMirrorRefreshes++;
+            } catch (RuntimeException | LinkageError error) {
+                record("light map re-upload failed: " + describe(error));
+            }
+        }
         this.immediateTextureInvalidations++;
+    }
+
+    /** Reports the animation-driven mirror refreshes on stdout: the debug list is capped and would drop them. */
+    private void reportDirectMirrorRefreshes() {
+        if (this.directMirrorRefreshes != this.lastReportedDirectRefreshes) {
+            this.lastReportedDirectRefreshes = this.directMirrorRefreshes;
+            System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
+                    + " invalidations=" + this.immediateTextureInvalidations + " atlasGlId=" + this.atlasSourceGlId
+                    + " lightmapGlId=" + this.lightmapSourceGlId);
+        }
     }
 
     @Override
@@ -1069,6 +1102,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.frameAccepted = 0;
         this.frameDrawn = 0;
         reportOutOfDateState();
+        reportDirectMirrorRefreshes();
         this.immediateWindowsThisFrame = 0;
         if (!this.worldPassActive) {
             return;
@@ -3131,6 +3165,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.atlasTexture = VulkanGlTexture.create(this.context, size[0], size[1], true);
                 }
                 this.atlasTexture.uploadFromGlTexture(atlasId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.atlasSourceGlId = atlasId;
                 int[] atlasSize = textureSize(atlasId);
                 record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);
                 this.atlasGlId = atlasId;
@@ -3149,6 +3184,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.lightmapTexture = VulkanGlTexture.create(this.context, size[0], size[1], false);
                 }
                 this.lightmapTexture.uploadFromGlTexture(lightmapId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.lightmapSourceGlId = lightmapId;
                 int[] lightmapSize = textureSize(lightmapId);
                 record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
                 this.lightmapGlId = lightmapId;
