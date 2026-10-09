@@ -3326,3 +3326,39 @@ possible; the attempts so far end with `exit 1` and `fixture MISSING_REPORT`, an
 those attempts were my own script edits breaking the invocation - a stray continuation put `--output` on its own line, and
 one launcher line ended up as `\ \` - which is worth recording because the failure looked like a runtime problem and was
 not one. Until a 21 run passes, the plan says INCOMPLETE and no Java 21 claim is made anywhere else.
+
+---
+
+## Java 21 cannot start this Cleanroom, and the reason is Cleanroom's own class version
+
+The 21 run was attempted with the launcher's `--java` argument pointing at `.celtium-work/jdks/21/jdk-21.0.12.1+1`. It ends
+in 0.3 s with no game log at all - and the harness's own report says exactly that, because the gate hardened under audit S20
+now treats a missing log as a failure instead of as cleanliness:
+
+```
+fixtureStatus: MISSING_REPORT
+validationFirstMessages: ['the game log is missing, so the validation result is unknown']
+```
+
+The console the game would have written holds one error, and it is not about Celtium:
+
+```
+Error: LinkageError occurred while loading main class top.outlands.foundation.boot.Foundation
+    java.lang.UnsupportedClassVersionError: top/outlands/foundation/boot/Foundation has been compiled by a more recent
+    version of the Java Runtime (class file version 69.0), this version of the Java Runtime only recognizes class file ...
+```
+
+**Cleanroom 0.6.13-alpha's launcher is class file 69 - Java 25 - so JDK 21 cannot start it.** The Java 21 target on
+Celtium's side is therefore correct as a property of these classes (major 65, verified in the shipped jar) and
+**unverifiable as a runtime on this host**: the running environment itself imposes 25 before any Celtium class is loaded.
+That is a cleaner answer than "not verified yet", and it should have been the first thing checked when the target was set:
+reading the launcher's class version costs one command.
+
+What this means for the decision, stated without softening: **Celtium's own bytecode targets 21, and the supported
+execution environment - Cleanroom 0.6.13-alpha - requires 25.** A Java 21 runtime check is possible only outside Cleanroom
+(for example a standalone harness that loads the renderer classes), and that is a different test from "Celtium runs on
+Java 21 inside the game". Until such a test exists, the honest sentence is the one above, not "21 verified".
+
+Two smaller things were also cleared on the way: the harness's `--java` argument does reach the launch command (line 152
+into line 193), and the two earlier failures in this attempt were my own script edits breaking the invocation rather than
+anything about Java versions.
