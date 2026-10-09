@@ -258,6 +258,23 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
   描画そのものは既に Vulkan 側にある**。したがって (b) の作業は「読む元を Minecraft のデータに替える」ことに集約される。
 - 既に Vulkan 側にあるもの: 地形パイプライン、immediate pipeline、descriptor/allocator、swapchain/present。
 
+**§7.7 の棚卸しを取り直し（このターン・既定変更後）**: 実行時のカウンタで確かめると、**毎フレームの GL 読み戻しは
+消えている**（現行既定: `regStaleCalls=0`、`inPlaceRefreshes=0`、`regAnnouncedSkips=16.2/フレーム`）。残る GL 依存は
+**ブリッジ本体**に集約された。
+
+| 分類 | 現状（ソースの出現数） |
+|---|---|
+| ブリッジの FBO/blit/semaphore | `glBindFramebuffer`(5) / `glNamedFramebufferTexture`(3) / `glBlitNamedFramebuffer`(色・深度) / `glFlush`(4) / `glDeleteSemaphoresEXT` / `glWaitSemaphoreEXT` |
+| ブリッジの状態クエリ | `glGetInteger`(15) / `glGetNamedFramebufferAttachmentParameteri`(6) / `glGetNamedRenderbufferParameteri`(5) / `glActiveTexture`(5) / `glIsTexture`(3) / `glTextureParameteri`(9) |
+| 計器・検証 | `glCheck`(13) ほか |
+| **テクスチャ読み戻し** | `glGetTexImage` 4箇所・`glReadPixels` 2箇所が**コードには残る**が、**実行時は 0 回/フレーム**（更新時のみ、announce が届かない経路で使われる） |
+| フレーム経路の状態クエリ総数 | `VulkanFrameTarget` 48箇所 / `VulkanTerrainGpuBackend` 48箇所 |
+
+- つまり (b) の残りは「**フレームの受け渡し（ブリッジ）そのもの**」であり、テクスチャ側の GL 依存は片付いた
+  （atlas/lightmap は announce で供給され、読み戻しは更新時のみ）。
+- 次の標的は `VulkanFrameTarget` の per-frame な GL 操作（色・深度の blit、FBO の付け替え、semaphore の待ち）を
+  Vulkan 側の同一デバイス操作に置き換えること。これは完成条件(b)（GL context なしの起動）への直接の道である。
+
 ## 7.8 完成条件(b) の実装第1歩: 即値パスの行列GL読み戻しを廃止（既定化・画素一致で検証）
 
 棚卸し（§7.7）の「状態ミラー」のうち **行列** を実際に置き換えた。
