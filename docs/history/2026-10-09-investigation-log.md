@@ -953,3 +953,23 @@ The immediate path still defaults to off. The reason is not doubt about these me
 one scene on two GPUs, and the plan's own rule is that a class is ported (or left on GL and named) once it has been seen
 to work across the content it applies to. Enabling it by default belongs with the content verification stage, where the
 same measurements run over GUI, HUD, weather and entities rather than over a single world.
+
+---
+
+## Identifying the composite's caller: instrumentation in place, run still to make
+
+The next question for the full-screen quad is *who draws it*, because that decides where it belongs. The draw entry now
+carries the instrumentation for it: for the first offered `POSITION_TEX_COLOR` batch it dumps the element list, the first
+two vertices and a stack trace naming the caller.
+
+Two attempts have not produced the output yet, and both reasons are recorded rather than worked around blindly:
+
+- With the acceptance mask restricted to format 2 the run ended after 24 seconds instead of the usual ~150, so no dump
+  was captured. Why that configuration exits early is itself unrecorded and worth knowing.
+- The second attempt tried to move the dump ahead of the acceptance decision so a normal run would print it; the text
+  patch did not apply (the anchor had moved), so the dump stayed where it was and the normal run - whose mask excludes
+  format 2 - never reached it. The build stayed green throughout.
+
+The instrumentation is committed in that state. The next attempt is small and specific: move the dump so it runs for
+every offered composite regardless of the mask - the mixin sees the batch before the backend decides anything, which is
+exactly where an unconditional dump belongs - and then run the normal configuration and read the caller.
