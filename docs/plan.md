@@ -1942,7 +1942,29 @@ CELTIUM_ACCEPTED total=1500 byFormat=[0:0 1:7 2:0 3:0 4:0 5:137 6:856 7:0 8:0 9:
 - **したがって display list の作業対象は `ModelRenderer` 系（entity/player/item/TESR）に絞られる**。
   空・星は現状で問題が出ていないので後回しにする（順序の判断であり、省略ではない）。
 
+**空は pixel-perfect で、native でも GL でも同一（このターン・A/Bで確定）**:
+
+- **実験**: 既定（format 6 = `POSITION_TEX` を受理＝空を native が描く）と、受理 mask から 6 を外した場合
+  （空を GL が描く）を比べた。設定が効いたことはカウンタで確認: **`acceptedByFormat 6:3708` 対 `6:0`**。
+
+| 比較 | 空（上200行） | 中間帯（地形・水・雲） |
+|---|---|---|
+| native vs GL（同一ビルド・別設定） | **0.0000 / 0 画素 / max 0** | 0.0292 / 1018 画素 / max 5 |
+| native vs 参照（pinned Celeritas） | **0.0000 / 0 画素** | — |
+| GL vs 参照 | **0.0000 / 0 画素** | — |
+
+- **結論**: **空はどちらの経路でも参照と完全一致（差 0.0000、最大差 0）**。native が描いても GL が描いても
+  同じ画素になる。したがって「空は native で正しい」と言える（**このターンのビルドで測り直した**）。
+- **併せて分かったこと**: format 6 の受理を止めると**中間帯が 0.0292 / 1018 画素（最大5）変わる**。
+  format 6 は空だけでなく**雲と水面**も含むためで、**空以外では native と GL が同一ではない**。
+  これは「format 6 を native にすること」自体が中間帯に小さな差を持つという意味で、**記録しておく**。
+- 受入: 両 run とも exit 0 / validationClean=true / PASSED。
+
 **次の一手**: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
+（4頂点・UV・法線・現在の行列・テクスチャ）を決める、(2) プレイヤーモデル1体を native 化し、画像と `format 9` の
+受理で確認する、(3) 中間帯の 1018 画素（format 6 の雲・水面）を詰めるかは、entity の後で判断する。
+
+**（旧メモ）** 次の一手: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
 （4頂点・UV・法線・現在の行列・テクスチャ）を決める、(2) **プレイヤーモデル1体**を native 化して画像と
 `format 9` の受理で確認する、(3) 空の残差 0.0000 を**現在のビルドで**測り直して「空は native」を確定させる。
 
