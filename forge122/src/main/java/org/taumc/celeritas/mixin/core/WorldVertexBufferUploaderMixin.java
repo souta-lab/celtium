@@ -51,6 +51,10 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$glUploads;
     /** How often this injector was entered at all, whatever it then decided. */
     private static int celtium$offers;
+    /** How often the backend returned true, i.e. claimed the batch. */
+    private static int celtium$acceptedByBackend;
+    /** How many swallowed failures have been reported, so a recurring one is visible without flooding the log. */
+    private static int celtium$swallowed;
 
     /**
      * Counts the vanilla body finishing.
@@ -74,6 +78,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             return;
         }
         celtium$offers++;
+        if (celtium$offers % 1000 == 0) {
+            // The decision, from the side that makes it: offers, how many the backend accepted, and how often the
+            // vanilla body still completed. The audit asked for exactly this pair, because the image comparisons could
+            // never distinguish replacement from GL drawing everything.
+            System.out.println("celtium offer decisions: offers=" + celtium$offers + " accepted="
+                    + celtium$acceptedByBackend + " glBodyCompleted=" + celtium$glUploads);
+        }
         boolean accepted = false;
         try {
             VertexFormat format = celtium$vertexFormat(buffer);
@@ -89,6 +100,10 @@ public abstract class WorldVertexBufferUploaderMixin {
             }
             int formatId = celtium$formatId(format);
             int mode = celtium$drawMode(buffer);
+            // The call that decides everything. It was lost when a dead branch was cleaned out of this method, and
+            // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
+            // backend was never called, GL drew every batch, and the counters reported zeros while the images matched.
+            accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
             if (formatId == 2 && celtium$compositeDumps < 1) {
                 // Unconditional: this runs for every offered batch, before the backend's acceptance mask decides
                 // anything, which is where a dump that must survive a mask has to live. It answers who draws the
@@ -113,13 +128,20 @@ public abstract class WorldVertexBufferUploaderMixin {
                 }
                 System.out.println("celtium composite caller: " + trace);
             }
-        } catch (Throwable ignored) {
-            // Never let the offer break the draw: the original body stays in charge when anything goes wrong. The
-            // cancellation itself is outside this catch on purpose - swallowing it was the defect this comment used to
-            // hide.
+        } catch (Throwable error) {
+            // Never let the offer break the draw: the original body stays in charge when anything goes wrong. But say
+            // what happened, once per distinct kind of failure - this catch hid the reason acceptance was zero for
+            // several rounds while the counters said "refused" and nothing said why.
+            if (celtium$swallowed < 3) {
+                celtium$swallowed++;
+                StackTraceElement[] trace = error.getStackTrace();
+                String where = trace.length > 0 ? trace[0].toString() : "?";
+                System.out.println("celtium offer threw: " + error + " at " + where);
+            }
             return;
         }
         if (accepted) {
+            celtium$acceptedByBackend++;
             // The original body resets the builder after uploading. Cancelling skips that, so it is done here; without
             // it Minecraft would re-upload the same vertices on the next draw.
             try {

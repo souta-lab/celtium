@@ -2649,3 +2649,36 @@ The next step is the one the audit asked for and this round could not finish: pr
 channel that reaches the log, and read the counters from the fields the code increments. Until replacement demonstrably
 happens - GL uploads falling to zero for accepted batches - no image comparison in this project means anything about
 Vulkan.
+
+---
+
+## Replacement is real now, and the false account has two causes stacked one on the other
+
+Counting the decision inside the mixin printed `offers=10000 accepted=0 glBodyCompleted=10029`, and the swallowed-failure
+report - added for exactly this - never fired. So no exception was hiding the zero: the backend was never asked. The call
+site confirmed it: **the `submitImmediateBatch` call was gone from the mixin**, removed when a dead branch was cleaned out
+of that method one round earlier. With it went the only path a batch could take to acceptance, which is why the backend's
+counters read zero, why GL's upload body completed for every batch, and why every image comparison agreed.
+
+Restoring the call produces the measurement the audit asked for:
+
+```
+celtium offer decisions: offers=10000 accepted=562 glBodyCompleted=9465
+backend counters: immediateOffered=8935 immediateTaken=577 immediateFlushes=57
+fixture PASSED | nativeTerrainVerified True | 2208 passes
+```
+
+The backend is called, accepts 562 batches, and the vanilla upload body completes **535 fewer times than it is offered** -
+GL is skipped for exactly the batches Vulkan takes. The remaining refusals are the mask and the format rules working, and
+for the first time the backend's counters and the mixin's counters agree.
+
+The order of causes is worth keeping, because each alone was sufficient to make the account wrong:
+
+| # | Defect | Effect |
+|---|---|---|
+| 1 | the injector was not `cancellable` | `info.cancel()` threw, the broad catch swallowed it, GL drew every accepted batch |
+| 2 | **the submit call was deleted** while cleaning a dead branch | nothing was ever accepted, so GL drew everything and the counters read zero |
+| 3 | counters and images | both said nothing was wrong, which is why neither defect was noticed for many rounds |
+
+What follows is what the audit said follows: **the comparisons start again from the beginning**, now that replacement
+happens, and the first of them will be the first measurement this project has taken of the Vulkan path drawing alone.
