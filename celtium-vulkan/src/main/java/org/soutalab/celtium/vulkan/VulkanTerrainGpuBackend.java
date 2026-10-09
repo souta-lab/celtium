@@ -503,6 +503,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * which keeps ordering and latency right at the cost of GL doing that draw. Named so the configuration is honest.
      */
     private int immediateRefusedWindowBudget;
+    private int immediateGroupsClosed;
+    private int immediateMaxGroupVertices;
     /** Frames between bulk mirror refreshes; 0 disables. See {@link #updateTimings()}. */
     private static final int MIRROR_REFRESH_FRAMES =
             Integer.getInteger("celtium.vulkan.mirrorRefreshFrames", 1).intValue();
@@ -1343,6 +1345,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
             remapClipDepth(this.currentGroupProjection, projection);
             System.arraycopy(this.currentGroupModelView, 0, modelView, 0, 16);
+            // The largest group the immediate path closed, in vertices. It is the number that says whether separate
+            // batches merged into one draw: the S05 acceptance fixture draws two quads into a single batch and expects to
+            // see eight vertices here, where the base-vertex defect would still have shown eight vertices but drawn the
+            // second quad with the first quad's four.
+            this.immediateGroupsClosed++;
+            int groupVertices = this.currentImmediateMesh.vertexCount();
+            if (groupVertices > this.immediateMaxGroupVertices) {
+                this.immediateMaxGroupVertices = groupVertices;
+            }
             this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
                     Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
                     Long.valueOf(this.currentGroupStateKey), this.currentGroupState});

@@ -48,9 +48,12 @@ doing so deleted the `submitImmediateBatch` call itself and was restored by `dee
 `vertexOffset = 0`, so a second quad in the same group references the first quad's vertices.
 **Fixed:** `copyVertices` captures the group's base vertex before appending and writes `index + baseVertex`, so indices stay
 relative to the group. **Measured:** the weather and particle scene is unchanged at **0.40% of pixels over 8 (3,714)** -
-which says this scene's groups are mostly single-batch, not that the defect was harmless. **Open:** the acceptance fixture
-(two quads with different positions and colours in one group, eight vertices, twelve indices, the second referring to
-4..7).
+which says this scene's groups are mostly single-batch, not that the defect was harmless. **Open:** the acceptance fixture now exists - two quads in one `Tessellator` batch inside a Forge render event, switched on
+by `-Dceltium.validation.drawTest=true`, reporting `drawTestQuads 2` - but its picture is **not** there yet: the captured
+frame contains no saturated red and no saturated blue, so the merged group is not demonstrably on screen. Winding against
+culling, the world-space depth of the quads, and which pass the capture covers are the candidates. The group counters added
+beside it (`immediateGroupsClosed`, `immediateMaxGroupVertices`) are also not in the debug line, because the replacement
+meant to append them did not match its anchor.
 
 ### S06 [P1, certain in code] growing a dynamic buffer loses its contents
 `VulkanHostBuffer.ensureCapacity` deletes and recreates the buffer without preserving data, while the mesh keeps appending.

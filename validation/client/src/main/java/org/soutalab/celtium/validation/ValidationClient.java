@@ -72,6 +72,44 @@ public final class ValidationClient {
     private final boolean drawBlockQuad = Boolean.getBoolean("celtium.validation.drawBlockQuad");
     private int blockQuadFrames;
 
+    /**
+     * The acceptance fixture for the merged-group defect (the second audit's S05), drawn inside a Forge render event
+     * because that is the context the objective cares about: one {@code begin}/{@code draw} pair, two quads, four distinct
+     * vertices each, in the same format, texture and state, so they land in a single group.
+     * <p>
+     * With the base-vertex defect the second quad's indices would still be 0..3 and the first quad's vertices would be
+     * drawn twice: the frame would show one colour at one place, not two colours at two places. The check is therefore an
+     * image check, and the report carries the vertex count of the largest group the backend closed.
+     */
+    @net.minecraftforge.fml.common.eventhandler.SubscribeEvent
+    public void onRenderWorldLast(net.minecraftforge.client.event.RenderWorldLastEvent event) {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
+        if (!Boolean.getBoolean("celtium.validation.drawTest") || client.player == null || client.world == null) {
+            return;
+        }
+        net.minecraft.util.math.Vec3d look = client.player.getLookVec();
+        net.minecraft.util.math.Vec3d base = client.player.getPositionEyes(1.0F).add(look.scale(2.5D));
+        net.minecraft.util.math.Vec3d right = new net.minecraft.util.math.Vec3d(-look.z, 0.0D, look.x).normalize();
+        net.minecraft.client.renderer.Tessellator tessellator = net.minecraft.client.renderer.Tessellator.getInstance();
+        net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
+        buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
+        celtium$quad(buffer, base, right, 1.0F, 0.0F, 0.0F);
+        celtium$quad(buffer, base.add(0.0D, -0.6D, 0.0D), right, 0.0F, 0.0F, 1.0F);
+        tessellator.draw();
+        report.addProperty("drawTestQuads", 2);
+        report.addProperty("drawTestAtTick", client.player.ticksExisted);
+    }
+
+    private static void celtium$quad(net.minecraft.client.renderer.BufferBuilder buffer,
+            net.minecraft.util.math.Vec3d centre, net.minecraft.util.math.Vec3d right, float red, float green, float blue) {
+        double half = 0.4D;
+        double[][] corners = {{-half, -half}, {half, -half}, {half, half}, {-half, half}};
+        for (double[] corner : corners) {
+            buffer.pos(centre.x + right.x * corner[0], centre.y + corner[1], centre.z + right.z * corner[0])
+                    .color(red, green, blue, 1.0F).endVertex();
+        }
+    }
+
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         enabled = Boolean.getBoolean("celtium.validation");

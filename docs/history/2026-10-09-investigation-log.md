@@ -3082,3 +3082,32 @@ are verified by reading and by the code no longer doing what it did - not by an 
 
 The residual stays where it has been for several rounds: 0.40% of pixels against a 0.23% floor, with S08, S09, S05 and S06
 all excluded as its cause by measurement rather than by argument.
+
+---
+
+## The S05 acceptance fixture now exists and runs, and its picture is not there yet
+
+The fixture draws two quads in one `Tessellator` begin/draw pair inside a Forge render event
+(`RenderWorldLastEvent`), with different colours and different positions, so that the base-vertex defect would put one
+colour in one place where two belong. It is switched on by `-Dceltium.validation.drawTest=true` and it runs:
+
+```
+fixture PASSED | drawTestQuads 2 | at tick 198
+immediateTaken=1133 immediateFlushes=649
+```
+
+Two things are open, and neither is dressed up:
+
+- **the quads are not in the captured image.** Searching the frame for saturated red and saturated blue finds zero pixels of
+  either. The candidates are the quad's winding against the culling state, the depth of a world-space quad two and a half
+  blocks along the view vector, or the pass the capture covers - and the next step is to read which of those it is rather
+  than to guess, starting with a screenshot taken with the same flags but with culling disabled for the test.
+- **the group counters are in the backend but not in the log.** `immediateGroupsClosed` and `immediateMaxGroupVertices` were
+  added when a group closes, and the debug line does not carry them: the replacement that was supposed to append them did
+  not match the anchor, which is the same unasserted-replacement failure this log has recorded before. Reading the
+  debug-line construction and patching it with an assertion is the fix.
+
+What is established is narrower and still worth having: the fixture compiles, registers on Forge's bus, draws inside a
+render event, and reports itself, so the acceptance test for S05 exists. What is not established is that the merged group
+reaches the screen, and until the picture shows two colours in two places, S05's fix rests on the code and on reading, not
+on an image.
