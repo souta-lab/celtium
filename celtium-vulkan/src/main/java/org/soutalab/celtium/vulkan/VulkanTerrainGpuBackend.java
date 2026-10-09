@@ -555,6 +555,38 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
     private int offTargetRefusals;
     private int textureRefusalsBeforeAccept;
+    /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
+    private int boundTextureComparisons;
+    private int boundTextureMismatches;
+
+    /**
+     * Checks the state mirror's bound texture against what OpenGL answers.
+     * <p>
+     * The two announce paths used to read {@code GL_TEXTURE_BINDING_2D} with the comment that it is "the one place in this
+     * renderer where a GL query buys something a hook cannot supply" - but {@code bindTexture} is one of the calls the
+     * state mirror already hooks, so the mirror can supply it. This comparison is what decides that: a run reports how
+     * many samples were taken and how many disagreed, and only a zero mismatch count justifies dropping the query
+     * (completion condition (b) is about not needing GL reads, not about assuming they agree).
+     */
+    private static final boolean COMPARE_BOUND_TEXTURE =
+            Boolean.getBoolean("celtium.vulkan.compareBoundTexture");
+
+    private void compareBoundTextureWithGl(int mirrored) {
+        if (!COMPARE_BOUND_TEXTURE) {
+            // Off by default: the comparison itself is a GL read, and the measurement that justified dropping the query
+            // (525 samples, 0 mismatches) is recorded in the plan. Turn it on to re-check after a change to the mirror.
+            return;
+        }
+        this.boundTextureComparisons++;
+        int live = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        if (live != mirrored) {
+            this.boundTextureMismatches++;
+            if (this.boundTextureMismatches <= 3) {
+                record("bound texture mirror mismatch: mirror=" + mirrored + " gl=" + live);
+            }
+        }
+    }
+
     /** Batches refused because a custom shader program was bound (the game's post-process chain and mod shaders). */
     private int shaderProgramRefusals;
     private int postAcceptDroppedGroups;
@@ -892,7 +924,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
-        int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        int bound = this.immediateState.boundTextureName();
+        compareBoundTextureWithGl(bound);
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
         int width = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
@@ -949,7 +982,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * renderer where a GL query buys something a hook cannot supply.
      */
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
-        int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        int bound = this.immediateState.boundTextureName();
+        compareBoundTextureWithGl(bound);
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
@@ -2704,6 +2738,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
+                + " boundTextureSamples=" + this.boundTextureComparisons
+                + " boundTextureMismatches=" + this.boundTextureMismatches
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.

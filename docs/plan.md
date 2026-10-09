@@ -321,7 +321,27 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 => **fog の GL クエリ（`glIsEnabled(GL_FOG)` / `glGetInteger(GL_FOG_MODE)`）を廃止**し、画像が変わらないことを
 確認した。これで (b) の「GL から読む」依存は **行列 → fog** の2項目が完了。
 
-**次の一手**: (1) 残る `glIsEnabled`/`glGetInteger`（診断以外）を同方式で潰す、(2) テクスチャ寸法の level クエリを
+**bound texture の GL 読みを廃止（このターン・(b) の3項目目）**: `announceDynamicTexture` /
+`announceAnimatedUpload` は `glGetInteger(GL_TEXTURE_BINDING_2D)` を読んでおり、コメントには
+「このrendererで GL クエリがフックで供給できない唯一の場所」と書かれていた。しかし `bindTexture` は
+**既にミラーがフックしている**呼び出しなので、ミラーで供給できる。まず**一致を実測**した:
+
+| 指標 | 実測 |
+|---|---|
+| `boundTextureSamples` | **525** |
+| `boundTextureMismatches` | **0**（525サンプルすべて一致） |
+| verdict | exit 0 / validationClean / PASSED、`fogModeSource=mirror` |
+
+- 525/525 の一致を受けて、比較を **`-Dceltium.vulkan.compareBoundTexture=true` の opt-in** にし、
+  **announce 経路はミラーだけを読む**ようにした（既定で GL クエリを取らない）。
+- 変更後の検証: **標準runは前回との meanAbsDiff 0.000**、weather は 1.548（同一ビルドのノイズ床 1.2〜1.5 の範囲）、
+  両run exit 0 / validationClean / PASSED、target受入 exit 0。
+
+**(b) の進捗**: 行列 → fog → bound texture の3項目が完了。残りは (1) テクスチャ**寸法**の
+`glGetTexLevelParameteri`、(2) 相互運用グルー（blit/semaphore/深度変換/FBO クエリ）、(3) `GL_CURRENT_COLOR` /
+`GL_DRAW_FRAMEBUFFER_BINDING` の残り。
+
+**（旧メモ）** 次の一手: (1) 残る `glIsEnabled`/`glGetInteger`（診断以外）を同方式で潰す、(2) テクスチャ寸法の level クエリを
 MC の sprite/frame データへ、(3) 相互運用グルー（blit/semaphore/深度変換）の一本化。
 `fogMode()` を mirror 読みに、(2) forge 側の per-frame 経路から push、(3) 既定 run と旧実装の画素一致を確認して
 既定化、(4) `glIsEnabled`/`glGetInteger` の残り（診断以外）を同じ方式で潰す。（`GlStateManagerMixin` に fog の注入を足し、
