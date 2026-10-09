@@ -607,6 +607,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long countersFrameId = -1;
     private long flushCount;
     private long retiredFlushes;
+    private int lastReportedOutOfDate = -1;
+    private int lastReportedAcquireOutOfDate = -1;
     private int orderPreservingFlushes;
     private int clearOrderFlushes;
     private int compositePresentRefusals;
@@ -1042,6 +1044,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * {@code glGetFloatv} pairs that used to be read at every matrix change, and it is the read the plan records as still
      * present - one per frame, at a boundary, rather than two per batch anywhere.
      */
+    /** Reports the swapchain's out-of-date state on stdout whenever it changes: the debug list is capped. */
+    private void reportOutOfDateState() {
+        int outOfDate = this.swapchain != null && this.swapchain.outOfDate() ? 1 : 0;
+        int acquireOutOfDate = this.swapchain != null ? this.swapchain.acquireOutOfDate() : -1;
+        if (outOfDate != this.lastReportedOutOfDate || acquireOutOfDate != this.lastReportedAcquireOutOfDate) {
+            this.lastReportedOutOfDate = outOfDate;
+            this.lastReportedAcquireOutOfDate = acquireOutOfDate;
+            System.out.println("[Celtium] CELTIUM_OOD outOfDate=" + outOfDate + " acquireOutOfDate=" + acquireOutOfDate
+                    + " presentFailures=" + this.immediatePresentFailures);
+        }
+    }
+
     public void captureWorldSnapshot() {
         // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
         // that is per frame - the window budget, these counters - is reset here and nowhere else.
@@ -1053,6 +1067,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.countersFrameId = this.frameId;
         this.frameAccepted = 0;
         this.frameDrawn = 0;
+        reportOutOfDateState();
         this.immediateWindowsThisFrame = 0;
         if (!this.worldPassActive) {
             return;

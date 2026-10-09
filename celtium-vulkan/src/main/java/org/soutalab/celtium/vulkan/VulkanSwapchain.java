@@ -84,6 +84,11 @@ public final class VulkanSwapchain {
     private int acquireOutOfDate;
     /** Test-only ({@code -Dceltium.vulkan.forceOutOfDate=true}): report out-of-date once so the rebuild runs. */
     private static final boolean FORCE_OUT_OF_DATE = Boolean.getBoolean("celtium.vulkan.forceOutOfDate");
+    /**
+     * Injects the failure at the acquire itself (audit S18). The other flag forces the verdict after a successful acquire,
+     * which never reaches the branch that matters - the one that must not submit or present an image the acquire refused.
+     */
+    private static final boolean FORCE_ACQUIRE_OUT_OF_DATE = Boolean.getBoolean("celtium.vulkan.forceAcquireOutOfDate");
     private boolean forcedOutOfDate;
 
     private void recordOutOfDateInjection() {
@@ -372,6 +377,9 @@ public final class VulkanSwapchain {
             {
                 int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                         VK_NULL_HANDLE, index);
+                if (FORCE_ACQUIRE_OUT_OF_DATE && result == VK_SUCCESS) {
+                    result = VK_ERROR_OUT_OF_DATE_KHR;
+                }
                 if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                     return "present probe: vkAcquireNextImageKHR returned " + result;
                 }

@@ -296,10 +296,19 @@ top of the method, so it cannot report an unsubmitted present as successful.
 validation clean, **0 messages**, fixture PASSED, `passes=2185`/`2189`, `postAcceptDroppedGroups=0` - so the changed paths do
 not break the frame.
 
-**Not verified:** the two new counters (`swapchainOutOfDate`, `acquireOutOfDate`) were added to a debug string that the report
-does not carry - the backend has several, and the patch landed in a different one - so the quantitative confirmation is
-pending. The real acquire failure also cannot be produced by the existing injection, which forces the flag **after** a
-successful acquire; exercising that branch needs an injection at the acquire itself.
+**Then it was exercised, and it hangs.** Two more things were built for this: an injection at the **acquire** itself
+(`celtium.vulkan.forceAcquireOutOfDate`, since the existing flag forces the verdict only *after* a successful acquire), and a
+stdout report of the state whenever it changes (the `rendererDebug` list is capped, so counters added to it were never read).
+With the injection **off**, both a normal run and a composite-present run are clean and report `outOfDate=0
+acquireOutOfDate=0`. With `presentFromComposite=true` **and** `forceAcquireOutOfDate=true` together, the client **hangs**:
+the run ends at the 300-second timeout with no validation report and the fixture reports `MISSING_REPORT`.
+
+That is a real finding rather than a tooling artefact: the composite present path alone completes, so the hang belongs to the
+**out-of-date acquire branch**, which means S18's failure path was never survivable - it is only unreachable in the default
+configuration, where `presentImage` is never called at all. The likely cause is visible in the code: the composite branch calls
+`frameTarget.beginFrameForPresent()` **before** presenting, and ends the frame only when the submission actually happened, so
+a present that returns early leaves the frame begun and unended, and the next frame waits on a fence that will never be
+signalled. **Next:** end the frame (or do not begin it) on the out-of-date path, then re-run the injection.
 
 ### S19 [P1] immediate push constants exceed the guaranteed minimum - **closed**
 **Fixed and verified.** The immediate push block is now **116 bytes** - projection 64, the model view's three affine

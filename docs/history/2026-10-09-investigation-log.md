@@ -6129,3 +6129,32 @@ And **not** verified, which is recorded rather than glossed: the counters added 
 reported debug line - the backend builds that line in more than one place and the patch landed in another - so the
 quantitative confirmation is still pending, and the acquire branch cannot be reached by the existing injection at all, which
 forces the flag after a successful acquire. Two small follow-ups, both named.
+
+---
+
+## S18's failure path, finally reachable, hangs the client
+
+Two pieces of instrumentation were needed before the audit's S18 could be tested at all, and both are worth recording because
+each one exposed a way this project had been measuring nothing.
+
+The first: the counters added for the out-of-date state never appeared in the report, even though they are in the debug string
+- the `rendererDebug` list is **capped**, and the entry carrying them was not among those kept. The fix is the one this log
+has now applied three times: **print to stdout**. The state is reported whenever it changes, which is quiet and complete.
+
+The second: the injection that existed forced the out-of-date verdict **after** a successful acquire, so the branch that
+matters - an acquire that refuses the image it just handed out - was unreachable. A second flag,
+`celtium.vulkan.forceAcquireOutOfDate`, now synthesises exactly that.
+
+With the injection off, a normal run and a composite-present run are both clean and report `outOfDate=0
+acquireOutOfDate=0 presentFailures=0`. With `presentFromComposite=true` **and** `forceAcquireOutOfDate=true`, the **client
+hangs**: the run ends at the 300-second timeout, no validation report is written, and the fixture reports `MISSING_REPORT`.
+
+This is a real defect, not a tooling artefact. The composite path on its own completes, and the normal path never calls
+`presentImage` at all - which is itself worth stating plainly, because it means S18's code has been **inert** in every
+measurement this project has taken. The hang belongs to the branch that was just made reachable, and the cause is visible in
+the composite caller: it calls `frameTarget.beginFrameForPresent()` **before** presenting and ends the frame only when the
+submission actually happened, so a present that returns early leaves a frame begun and never ended, and the next frame waits
+on a fence that will never be signalled.
+
+So the honest state of S18 is: two of the four points fixed, two shown to be already sound, the failure path now **reachable**
+for the first time - and **hanging**, which is the next thing to fix rather than something to have claimed success about.
