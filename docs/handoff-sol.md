@@ -375,6 +375,13 @@ thirdPerson/emptyHand は **`-Dceltium.validation.keepGui=true` が必須**（�
 **両GPU成立**（weatherServer=server raining=true、AMD rainStrength 0.480 / Intel 0.470）。
 thirdPerson / emptyHand は **AMD・Intel 両方**で発火（`thirdPersonView=1` / `heldItemEmpty=True`）。
 
+**6場面×両GPUのcoverage行列（完成）**: postprocess / particles / compositeBlit / thirdPerson / emptyHand / weather の
+6場面を AMD・Intel で実行し、**12 runすべて exit 0 / validationClean / PASSED かつ発火の証拠あり**
+（postprocess=`called switchUseShader directly`、particles=`24`、compositeBlit=`185`、thirdPerson=`1`、
+emptyHand=`True`、weather=`raining=true` 0.480(AMD)/0.470(Intel)）。
+**未coverage**: registry駆動の全block・item/model、全entity/TESR、GUI/font/HUD各画面、水/溶岩/火、
+破壊/selection overlay、dimension切替、spectator効果（`loadEntityShader`）、sky/cloud。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
