@@ -260,7 +260,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
-                    + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
+                    + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " modelMeshQuads=" + this.modelMeshQuads
+                + " modelMeshFailure=" + this.modelMeshFailure
+                + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
                 + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
@@ -271,6 +274,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
+                + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " modelMeshQuads=" + this.modelMeshQuads
+                + " modelMeshFailure=" + this.modelMeshFailure
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -3112,6 +3118,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
+                + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " modelMeshQuads=" + this.modelMeshQuads
+                + " modelMeshFailure=" + this.modelMeshFailure
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -3845,6 +3854,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
         this.terrainPasses++;
+        // Before anything this pass records: the model meshes are built once, from geometry captured while Minecraft
+        // compiled its display lists. Guarded by a lab switch, so the default path is untouched until the draw lands.
+        celtium$buildModelMeshes();
         if (this.gpuStalled) {
             // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
@@ -4349,6 +4361,78 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
         return attached != 0 && attached == texture;
     }
+
+    /**
+     * Builds a vertex mesh for every captured display list that has one, once each.
+     * <p>
+     * This is the model path's first step: the quads were captured while {@code ModelRenderer} compiled its parts into
+     * display lists, and a GL display list is replayed under the current matrix (measured: the same list shows a
+     * different translation at compile and replay time and still draws correctly), so the geometry only needs the
+     * replay-time matrix. Building the mesh here, on the render thread at a safe point, keeps the {@code callList} hook
+     * itself free of allocation. Nothing is drawn yet - the counter says how many lists have a mesh ready.
+     */
+    private void celtium$buildModelMeshes() {
+        if (!MODEL_MESH_BUILD) {
+            return;
+        }
+        int[] ids = org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listIds();
+        if (ids.length == 0) {
+            return;
+        }
+        // Built once per new list rather than once in total: the capture grows as Minecraft compiles the model, and the
+        // first run built the two lists that existed at that moment and never came back for the other ten (measured
+        // modelMeshLists=2, modelMeshQuads=12 of 72 captured quads).
+        if (this.modelMeshes != null && this.modelMeshes.size() >= ids.length) {
+            return;
+        }
+        java.util.LinkedHashMap<Integer, VulkanDynamicMesh> built =
+                new java.util.LinkedHashMap<Integer, VulkanDynamicMesh>();
+        int quads = 0;
+        try {
+            for (int id : ids) {
+                org.soutalab.celtium.vulkan.VulkanModelQuadCapture.Snapshot snapshot =
+                        org.soutalab.celtium.vulkan.VulkanModelQuadCapture.snapshot(id);
+                if (snapshot == null) {
+                    continue;
+                }
+                VulkanDynamicMesh mesh = new VulkanDynamicMesh(this.context);
+                // The capture holds position and texture coordinates, which is the twenty-byte POSITION_TEX layout the
+                // sky and clouds already use. The normal the quad carried is not in the mesh: for the vanilla entity
+                // path the lighting comes from the light map, and the pipeline for this layout ignores a trailing
+                // element anyway - whether that is enough for entities is the next question, not this one.
+                mesh.begin(new VulkanDynamicMesh.Layout(20, 0, 12, -1, -1, -1));
+                for (int quad = 0; quad < snapshot.quads; quad++) {
+                    int base = mesh.nextVertex();
+                    for (int vertex = 0; vertex < 4; vertex++) {
+                        int source = (quad * 4 + vertex) * 3;
+                        mesh.putPosition(snapshot.positions[source], snapshot.positions[source + 1],
+                                snapshot.positions[source + 2]);
+                        mesh.putUv(snapshot.uvs[(quad * 4 + vertex) * 2], snapshot.uvs[(quad * 4 + vertex) * 2 + 1]);
+                    }
+                    mesh.index(base);
+                    mesh.index(base + 1);
+                    mesh.index(base + 2);
+                    mesh.index(base);
+                    mesh.index(base + 2);
+                    mesh.index(base + 3);
+                    quads++;
+                }
+                built.put(Integer.valueOf(id), mesh);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            this.modelMeshFailure = String.valueOf(error);
+            return;
+        }
+        this.modelMeshes = built;
+        this.modelMeshQuads = quads;
+    }
+
+    /** Whether the model meshes are built from the captured display lists (lab switch: off leaves GL drawing them). */
+    private static final boolean MODEL_MESH_BUILD = Boolean.getBoolean("celtium.vulkan.modelMeshBuild");
+    /** The built meshes, keyed by display-list id, or null when they have not been built. */
+    private java.util.LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
+    private int modelMeshQuads;
+    private String modelMeshFailure = "none";
 
     private boolean ensureFrameTarget() {
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);

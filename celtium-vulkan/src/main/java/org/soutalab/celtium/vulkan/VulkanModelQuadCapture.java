@@ -125,6 +125,56 @@ public final class VulkanModelQuadCapture {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
     }
 
+    /** One list's geometry, copied out so the renderer can build a mesh without holding the capture's lock. */
+    public static final class Snapshot {
+        public final int listId;
+        public final int quads;
+        public final float[] positions;
+        public final float[] uvs;
+
+        Snapshot(int listId, int quads, float[] positions, float[] uvs) {
+            this.listId = listId;
+            this.quads = quads;
+            this.positions = positions;
+            this.uvs = uvs;
+        }
+    }
+
+    /** {@return whether this list's geometry has been captured}. */
+    public static synchronized boolean hasList(int listId) {
+        return LISTS.containsKey(Integer.valueOf(listId));
+    }
+
+    /**
+     * {@return the geometry of one captured list, or null}.
+     * <p>
+     * The positions come back in model space, exactly as {@code TexturedQuad.draw} submitted them, and the caller
+     * applies the matrix that is current at replay - measured, not assumed: the same list shows a different translation
+     * at compile and replay time while still drawing correctly, so a display list is replayed under the current matrix.
+     */
+    public static synchronized Snapshot snapshot(int listId) {
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        if (geometry == null || geometry.quads == 0) {
+            return null;
+        }
+        int floats = geometry.quads * 4;
+        float[] positions = new float[floats * 3];
+        float[] uvs = new float[floats * 2];
+        System.arraycopy(geometry.positions, 0, positions, 0, positions.length);
+        System.arraycopy(geometry.uvs, 0, uvs, 0, uvs.length);
+        return new Snapshot(geometry.listId, geometry.quads, positions, uvs);
+    }
+
+    /** {@return every captured list id, for the renderer to walk}. */
+    public static synchronized int[] listIds() {
+        int[] ids = new int[LISTS.size()];
+        int i = 0;
+        for (Integer id : LISTS.keySet()) {
+            ids[i++] = id.intValue();
+        }
+        return ids;
+    }
+
     /** {@return the total number of stored vertex floats, for the native path's buffer sizing}. */
     public static synchronized long storedFloats() {
         long total = 0;
