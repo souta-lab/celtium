@@ -129,6 +129,11 @@ PNGは `screenshots/celtium-command-buffer-secondary-depth.png`。
 正午固定後に全chunkを再構築しても地形帯は 79.6/85.5/75.4 で完全不変）。回帰fitは `y ≈ 0.42x + 20`・残差sd≈19で
 単純な乗算ではなく、高周波エネルギーは参照7.1に対し候補5.5（約22%滑らか＝mip/補間の差）。
 
+**このラウンドで反証した候補**: lightmap mirrorのstale（mirrorの最終=GLの実測=(250,250,250)）、頂点色への焼き込み
+（reloadAtTick=120で全chunk再構築しても不変）、生成mip鎖（mirrorGlMips=trueでも不変）、AO表（上流とdiff無し）、
+fog（色は明るい青灰で近傍帯に無関係）、void（暗部は778色のテクスチャ）。残る手がかりは
+**同一座標の比が0.42〜0.65と面ごとに変動**することで、面シェーディングの適用差を示す。
+
 診断用に追加したもの: `-Dceltium.vulkan.dumpTexturesEvery=true`（mirrorのdumpを毎回上書き＝最後のアップロードが見える）、
 fixtureの `gl-lightmap-live.png`（GLの実lightmapをcapture時に読む）、`scripts/run-gl-comparison.sh`。
 

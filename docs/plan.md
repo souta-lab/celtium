@@ -181,10 +181,23 @@
 | 回帰 fit（地形帯, 緑） | `y ≈ 0.42x + 20`、残差 sd ≈ 19-20（単純な乗算ではない） |
 | 高周波エネルギー（地形帯, 緑） | 参照 7.1 / 候補 **5.5**（候補が約22%滑らか＝mip/補間の差） |
 
-**次の一手（具体・更新）**: shaderコメント（round 267）が示すとおり「mesh builderが頂点色に何を詰めるか」を
-上流checkoutと**直接**比べる。両buildで同一section・同一faceの地形頂点を数点dumpし、`a_Color` と `a_LightCoord` の
-実値をdiffする（推測をやめる）。同時に `v_MaterialMipBias` の値を確認する（候補が22%滑らかなため）。
-残っている候補は (a) 頂点色の合成（tint × shade × AO）、(b) `a_LightCoord` のpacking、(c) mip bias。
+**このラウンドで反証した候補**（すべて実測つき）:
+
+| 候補 | 反証 |
+|---|---|
+| lightmap mirrorがstale | mirrorの最終アップロード = GLの実lightmap = (250,250,250)（`-Dceltium.vulkan.dumpTexturesEvery=true`） |
+| 頂点色へのlightmap焼き込み | `reloadAtTick=120` で全chunk再構築しても帯は 79.6/85.5/75.4 で不変 |
+| 生成mip鎖が暗い | `-Dceltium.vulkan.mirrorGlMips=true` でも近傍帯は同一・全画面diffも不変 |
+| AO/面シェーディング表 | `AoNeighborInfo.java` は pinned checkout と diff なし |
+| fogが暗い | fog色は明るい青灰 (0.552,0.640,0.789)、range 96-128ブロックで近傍帯に効かない |
+| 地形が未描画(void) | 暗部は778色のテクスチャ（同一座標で参照と内容が対応） |
+
+**残る手がかり**: 同一座標での比が **0.42〜0.65 と面ごとに変動**する（単純な乗算ではない）。
+面シェーディング係数の適用が参照と異なることを示す。
+
+**次の一手（具体）**: Vulkan側の地形頂点バッファから数点をdecodeして `a_Color` / `a_LightCoord` の実値を出し、
+解析的な期待値（tint、面のshade、light 15/0）と比べる。`a_Color` が tint の約0.6になっていれば、
+mesh builderの頂点色合成か頂点formatのdecodeが原因と確定する。
 
 ## 8. 第3回監査の最終追補
 
