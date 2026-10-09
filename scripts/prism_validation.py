@@ -249,6 +249,10 @@ def main():
         # shutdown still counts.
         console = game / "logs/latest.log"
         messages = []
+        # Allowed messages are recorded too, not silently dropped: the point of this counter is that a skipped line must be
+        # visible as skipped. Two rounds running, a message read through a truncated preview looked like something it was
+        # not, and a gate that says nothing about what it allowed invites exactly that mistake.
+        allowed = []
         if console.exists():
             for line in console.read_text(errors="ignore").splitlines():
                 marker = "Celtium Vulkan validation: "
@@ -263,19 +267,25 @@ def main():
                         _, _, rest = rest.partition(" ")
                     text = rest
                     if severity in ("INFO", "VERBOSE"):
+                        allowed.append("%s %s" % (severity, text))
                         continue
                     if severity == "WARNING" and "deprecated" in text:
+                        allowed.append("WARNING(deprecated) %s" % text)
                         continue
                 else:
                     # Unstructured text, which is what older logs and driver messages look like. Only clearly
                     # informational lines are skipped: everything else counts, so an error phrased in any style - the
                     # "Validation Error: [ VUID-... ]" form the audit used - cannot pass as clean.
                     if "Information" in text and "Error" not in text:
+                        allowed.append("Information %s" % text)
                         continue
                 messages.append(("severity=%s " % severity if severity else "") + text)
         else:
             # No log at all is not a clean run: the old check treated a missing file as no messages.
             messages.append("the game log is missing, so the validation result is unknown")
+        outcome["validationAllowedCount"] = len(allowed)
+        if allowed:
+            outcome["validationAllowedFirst"] = allowed[:3]
         outcome["validationMessageCount"] = len(messages)
         outcome["validationClean"] = not messages
         if messages:

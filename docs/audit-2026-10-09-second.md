@@ -145,12 +145,17 @@ against seven inputs, including the audit's two forms:
 | `VUID-vkCmdDrawIndexed-None-08600: ...` | **1** (was 0) |
 | log file absent | **1** (was 0) |
 
-**Open, and honestly unexplained:** a real run with the new callback wrote exactly one structured line -
+**Resolved, and the error was in this record rather than in the gate.** The real run wrote one structured line -
 `severity=WARNING id=VALIDATION-SETTINGS vkCreateInstance(): Information with the layer settings provided ...` - and the
-harness reported `validationMessageCount 0` with `validationClean True`. By the rules above that line should count, so
-either the harness reads a different file or a different parse path than the one edited, or the line is written after its
-read. **Until that is resolved the gate is not claimed as fixed**, because the whole point of this item is that a clean
-result must be trustworthy.
+harness reported zero messages. It should not have counted: the full message is 439 characters and **contains
+`deprecated`**, so it is the allowed deprecation warning the rules describe. The conclusion that it "should count" came from
+reading the first 130 characters of the line and stopping - the same truncation that produced a false lead one round
+earlier, and the second time in two rounds that a partial read was turned into a finding.
+
+The countermeasure is in the tool rather than in a resolution to be careful: the harness now records **allowed** messages
+with the reason they were allowed (`validationAllowedCount`, `validationAllowedFirst`), so a line the gate skips is visible
+as skipped instead of invisible. On the real run the report reads `validationMessageCount 0`, `validationAllowedCount 1`,
+`allowed[0] = WARNING(deprecated) vkCreateInstance(): ...`.
 
 ### S21 [P1] the image comparison is not max-channel
 `compare_validation` converts the RGBA difference to luminance; the auditor's one-pixel cases (red 1 / tolerance 0, blue 40

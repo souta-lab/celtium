@@ -3030,3 +3030,22 @@ By the new rules that line should have counted: it is structured, its severity i
 parse block edited is not the one that ran, or that the line is written after the read - and the point of this audit item is
 precisely that a clean verdict has to be trustworthy, so **the gate is not called fixed until that is explained**. It is the
 first thing to settle next, before any measurement is quoted as validation-clean again.
+
+---
+
+## S20's mismatch was my own truncated read; the gate was right, and now it shows what it allows
+
+The parse block was run verbatim from the file against the real run's log and returned zero messages with the marker line
+present, which is what made it look like a defect. Printing the line in full settles it: 439 characters, and it **contains
+`deprecated`**, so the harness had skipped it exactly as the rules say an allowed deprecation warning should be skipped. The
+claim in the previous round that it "should have counted" came from reading the first 130 characters and stopping.
+
+That is the second time in two rounds that a truncated read became a finding - the earlier one invented a mechanism for the
+particle difference out of `immediateFlushes=58` when the line said 586. The rule written then was to print the whole line
+or read the field by name before concluding, and it was broken again one round later, so the fix belongs in the tool: the
+harness now records the messages it **allows**, with the reason, beside the messages it counts. A skipped line can no
+longer be invisible, and the report on a real run reads `validationMessageCount 0` with
+`validationAllowedCount 1` and `allowed[0] = WARNING(deprecated) vkCreateInstance(): ...`.
+
+So S20 stands as fixed: the callback emits severity and id on one line, the parser counts an error in any phrasing, an
+absent log is a failure, and what is allowed is now stated rather than implied.
