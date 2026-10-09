@@ -1791,7 +1791,37 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   明示している。つまり **entity outline を native で成立させることが本筋**で、それができれば深度返却も外れる
   （Intel で 3.3 ms/frame が戻る）。
 
-**次の一手**: (1) spectator の entity outline が何をするか（アウトラインのマスク描画・ぼかし・合成の順序と、
+**前ターンの帰属を訂正し、正体を確定（このターン・呼び出し元まで取れた）**:
+
+- 計器に **program ごとの頂点 format** と **初回拒否時のスタックトレース**を足して spider 場面を走らせた。
+- **測定結果（AMD、spider、562 frames、`shaderProgramRefusals=1520`）**:
+  - 拒否されたバッチは**すべて `format=1`（POSITION_COLOR）**。**entity の format 8 ではない**。
+  - program id は **13, 14, 15, 16, 19, 20, 21, 22, 23, 24, …** と**多数の連番**。
+  - **呼び出し元（スタック）**:
+    `submitImmediateBatch` ← `WorldVertexBufferUploader.offerBatch` ← `func_181679_a` ←
+    `Tessellator.func_78381_a` ← **`net.minecraft.client.shader.Shader.func_148042_a`**
+- **したがって正体は「バニラ `ShaderGroup` の各パスの描画」**である。`entity_outline.json` は
+  **4パス**（`entity_outline`: final→swap、`blur`（横・半径2）、`blur`（縦・半径2）、合成）で、
+  **パスは full-screen の `POSITION_COLOR` クワッドを program 付きで描く**。この「program付き」が我々の
+  カスタムシェーダ遮断に当たる。
+- **前ターンの記述の訂正**: 「entity モデルが拒否されている」と書いたが、**拒否されているのは ShaderGroup の
+  full-screen パス**である（format 1、呼び出し元が `Shader`）。**entity モデル（format 8）は受理されている**。
+  帰属を id の連番だけで決めたのが誤りで、format と呼び出し元を足して初めて確定した。
+- **27画素の説明（改訂）**: アウトラインの **合成（blit）パスは GL が描き**、その深度テストは **GL の深度バッファ**
+  （＝我々が書き戻した地形の深度）に対して行われる。だから spider のシルエットで 27 画素だけ差が出る。
+  **深度の書き戻しが要るのは、この「GL が描く ShaderGroup パス」のため**である。
+- **設計（確定）**: バニラ `ShaderGroup` のパスを **native に実装する**。各パスは
+  **full-screen クワッド＋既知のバニラ program**（`entity_outline` / `blur` / `blit`）なので範囲は限定的で、
+  入力はグループの FBO ターゲット、出力も同様。これができれば **合成パスが GL で深度テストしなくなり**、
+  **深度の書き戻しを外せる**（Intel で 3.3 ms/frame が戻る）。これは goal が名指しする本体機能
+  （`ShaderGroup`・spectator 効果・entity outline）そのものである。
+
+**次の一手**: (1) `ShaderGroup`/`Shader`/`Framebuffer` を読み、パスごとに必要な状態（テクスチャ・uniform・
+ブレンド・深度テストの有無）を表にする、(2) native パスとして `entity_outline`→`blur`×2→合成を実装し、
+spider 場面で **`shaderProgramRefusals=0`** かつ **`skipDepthReturn` の差が床（0画素）以下**を両GPUで受入する、
+(3) それが成立したら深度返却を既定で外し、Intel 25.6 ms / AMD 16.1 ms を受入にする。
+
+**（旧メモ）** 次の一手: (1) spectator の entity outline が何をするか（アウトラインのマスク描画・ぼかし・合成の順序と、
 使うテクスチャ・深度・ブレンド）をコード（バニラ `ShaderGroup` と `EntityRenderer`）から読み、native で再現する範囲を
 決める、(2) 再現できたら `skipDepthReturn` を既定にし、spider 場面で差が床（0画素）以下であることを両GPUで受入する。
 

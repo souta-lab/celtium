@@ -262,6 +262,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
                     + " shaderProgramRefusals=" + this.shaderProgramRefusals
                 + " shaderProgramRefusedIds=" + this.shaderProgramRefusedIds
+                + " shaderProgramRefusedPrograms=" + this.shaderProgramRefusedPrograms
                     + " textureRefusals=" + this.textureRefusalsBeforeAccept
                     + " accepted=" + this.frameAccepted);
         }
@@ -635,7 +636,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Batches refused because a custom shader program was bound (the game's post-process chain and mod shaders). */
     private int shaderProgramRefusals;
     /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
-    private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
+    private final java.util.LinkedHashMap<String, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
+    /** The same refusals grouped by program alone. */
+    private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedPrograms = new java.util.LinkedHashMap<>();
     private int postAcceptDroppedGroups;
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
@@ -2112,12 +2115,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Named once per program: the spider scene refuses 1470 batches here, and which program they belong to
                 // decides whether the entity path can be supported natively at all (which is what would let the depth
                 // write-back go). The id is the only handle GL offers; the count says how dominant it is.
-                Integer seenCount = this.shaderProgramRefusedIds.get(Integer.valueOf(boundProgram));
-                this.shaderProgramRefusedIds.put(Integer.valueOf(boundProgram),
+                // The vertex layout matters as much as the program: the vanilla outline group's mask pass draws entity
+                // models while the blur and composite passes are full-screen quads, so which format each refused program
+                // uses says which of them a native pass has to reproduce.
+                String programKey = boundProgram + "/fmt" + formatId;
+                Integer seenCount = this.shaderProgramRefusedIds.get(programKey);
+                this.shaderProgramRefusedIds.put(programKey,
                         Integer.valueOf(seenCount == null ? 1 : seenCount.intValue() + 1));
+                Integer seenProgram = this.shaderProgramRefusedPrograms.get(Integer.valueOf(boundProgram));
+                this.shaderProgramRefusedPrograms.put(Integer.valueOf(boundProgram),
+                        Integer.valueOf(seenProgram == null ? 1 : seenProgram.intValue() + 1));
                 if (seenCount == null) {
                     System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
+                            + " format=" + formatId
                             + " (first batch refused with this program bound)");
+                    // The call site, once per program: the id and the format say a custom program drew coloured quads,
+                    // which is not enough to know what to support. The stack names it.
+                    StackTraceElement[] stack = new Throwable().getStackTrace();
+                    StringBuilder frames = new StringBuilder();
+                    for (int i = 1; i < Math.min(stack.length, 9); i++) {
+                        frames.append(" <- ").append(stack[i].getClassName()).append('.')
+                                .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+                    }
+                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED_SITE" + frames);
                 }
                 this.shaderProgramRefusals++;
                 this.refusedBeforeAppend++;
