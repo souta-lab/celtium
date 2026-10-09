@@ -9261,3 +9261,37 @@ validation messages = 70   （同じ vkCmdBindPipeline / vkCmdBindDescriptorSets
 状態で記録されている。記録中かどうかを知っているのは `VulkanContext` の `beginCommands`/`endCommands` であり、
 backendはその状態を持っていない。次段は `VulkanContext` に「記録中か」を持たせ（`beginCommands` で true、`endCommands` で
 false）、backendのflushをその状態で守ること。maskは再び閉じ、ツリーは green（exit 0 / clean / messages 0 / PASSED）。
+
+---
+
+## A11のmask修正が入った: format 2 を受理し、validation は clean のまま
+
+`VulkanContext` に記録中フラグ（`beginCommands` で true、`endCommands` の queue wait 後に false、`isRecording()`）を足し、
+backendのflushをその状態で守ったうえで、既定maskに format 2 を加えた。
+
+**通常fixture（AMD RX6400）**:
+
+```
+exit 0 | validationClean true | messages 0 | fixture PASSED
+acceptedByFormat = 1:7,2:401,3:0,4:0,5:191,6:1308,7:1004,8:128,9:12
+drawsWithoutCommandBuffer = 3894    compositePresentRefusals = 0
+nativeTerrainVerified true | terrainPasses 555 | glDrawsCancelled 3051
+```
+
+**second-target再現run**:
+
+```
+exit 0 | validationClean true | messages 0 | fixture PASSED
+acceptedByFormat = 1:10,2:409,3:0,4:0,5:196,6:1330,7:992,8:0,9:12
+drawsWithoutCommandBuffer = 4375    offTargetPerTarget = [1649043b:offered=205,atPass=0,drawnPasses=0]
+```
+
+**format 2（POSITION_TEX_COLOR）が両方のrunで受理されるようになり、validation は70件のエラーから0件になった。**
+以前の70件は「command bufferを開始せずに `vkCmdBindPipeline`/`vkCmdBindDescriptorSets` を記録した」もので、
+記録中フラグでflushを守ることで**非法な記録は拒否され、数えられる**ようになった（`drawsWithoutCommandBuffer`）。
+
+残る欠陥は計器に出ている: **3,894〜4,375件のflushが「記録中でない」ため拒否されている**。これは
+`flushPendingBeforeGlDraw` などが**フレームの記録窓の外**で呼ばれていることを意味し、拒否された分のgeometryは
+Vulkanでは描かれない（GLが描く側に回る）。次段は「そのflushをフレームの記録窓の中で行う」か「GLに確実に渡す」かを
+決めて実装すること。`atPass=0` がまだ0なのは、off-targetのgroupがその拒否経路に入っているためと考えられる
+（受理は409件あるので、次は「受理された後どこで止まるか」を同じ計器で追う）。

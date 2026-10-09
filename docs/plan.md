@@ -28,9 +28,9 @@
 | **A07** | metadata・転送成功の扱い | **修正済** | hashを転送**後**に確定、`imageUploads` は成功時のみ、`Entry.width/height` が画像に追随（寸法を可変に）、skipは `imageUploadsSkipped` として別計数。GL ID再使用の検証は残る |
 | **A08** | 受理前失敗でpending meshに頂点が残る | **修正済・受入済** | 監査の第1案（preflightをappend前に置く）を採用: texture mirror確認とparticle descriptor preflightを `copyVertices` の**前**へ移動。拒否時は何もappendされないのでrollback不要・二重描画不能。runで `refusedBeforeAppend=1` を実測（拒否されたバッチはGLが描き、pending queueには残らない） |
 | **A09** | 受理後の消失を全形式で数えていない | **修正済** | 描画ループ内の**7つのskip地点すべて**が `postAcceptDroppedGroups` を増やす（以前はformat 5のdescriptor失敗のみ）。実測0は、実装したdrop計器が数えた消失がなかったという事実。全formatのGPU完了・見た目を証明しない。branch別の内訳とbatch ID対応付けは残る |
-| **A10** | `offTargetDrawn` は実描画ではない | **受理0の原因はA11と確定（format 2 の既定mask）** | 実測 `offTargetRefusals={format 2 not in celtium.vulkan.immediateFormats=256}` — off-targetの内容が届かない原因は経路ではなく **A11そのもの**。maskに2を加えると `acceptedByFormat=2:248` と受理は進むが、**70件のvalidationエラー**（`vkBeginCommandBuffer` の外で `vkCmdBindPipeline` を記録）が露出したため**巻き戻した**。**次段**: その記録経路を直す → maskを開ける → `atPass`/`drawnPasses` 非0を確認。**「copy-backが証拠」は撤回済** |
+| **A10** | `offTargetDrawn` は実描画ではない | **原因はA11と確定・受理は進んだ・pass到達は未達** | off-targetの拒否256件はすべて `format 2 not in celtium.vulkan.immediateFormats` だった（A11）。mask修正後は `2:409` が受理される。**未達**: `offTargetPerTarget=[1649043b:offered=205,atPass=0,drawnPasses=0]` — 受理後にどこで止まるかを追う。**「copy-backが証拠」は撤回済** |
 
-| **A11** | format 2（POSITION_TEX_COLOR）は既定でGL | **原因特定済・mask修正は別の欠陥を露出** | 実測で off-targetの拒否256件がすべてこのmask由来と判明。maskに2を加えると `2:248` が受理されるが、**70件のvalidationエラー**（command buffer未開始での記録）が出るため巻き戻し中。**次段**: 記録経路の修正後にmaskを開ける |
+| **A11** | format 2（POSITION_TEX_COLOR）は既定でGL | **修正済・受入済（maskに2を追加）** | 既定maskを `1,2,3,4,5,6,7,8,9` に。前提として `VulkanContext` に記録中フラグ（`beginCommands`/`endCommands`/`isRecording()`）を足し、backendのflushをそれで守った（これが無いと `vkBeginCommandBuffer` の外で記録する70件のvalidationエラーが出ていた）。実測: 通常run `2:401`、再現run `2:409`、どちらも **exit 0 / validationClean true / messages 0 / PASSED**。**残る欠陥**: `drawsWithoutCommandBuffer=3894/4375`（記録窓の外のflushを拒否・計数） |
 | **A12** | state modelとpipelineの不一致 | **未解決** | alpha enable/func、depth func、separate alpha blend、color mask、scissor、texture matrix。pipelineはLEQUAL/ADD等を固定 |
 | **A13** | current color/alphaの欠落（group keyにも無い） | **未解決** | POSITIONはRGBのみでalpha=1、POSITION_TEXは白固定。tint/alphaの再現証拠なし |
 | **A14** | normal無視のITEM対応は照明対応ではない | **未解決** | 固定lighting・normal変換・shade・fog |

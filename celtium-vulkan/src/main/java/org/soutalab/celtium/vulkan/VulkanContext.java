@@ -272,6 +272,7 @@ public final class VulkanContext {
      */
     public VkCommandBuffer beginCommands() {
         requireUsable();
+        this.recording = true;
         // The driver may hand back a command buffer whose memory a previous submission is still reading, so the
         // queue is drained before a new one is allocated. Validation flags the alternative as a pending-state
         // reuse, and a half-rewritten command stream is exactly the kind of fault that makes a shader read the
@@ -296,6 +297,18 @@ public final class VulkanContext {
             }
         }
         return commandBuffer;
+    }
+
+    /** Whether a buffer from this context is recording: set here, cleared when it is ended.
+     * <p>
+     * The backend needs this: with format 2 accepted it reached a path that recorded {@code vkCmdBindPipeline} into a
+     * buffer that had been allocated but never begun, and the buffer being non-null was not enough to tell (audit A11).
+     */
+    private boolean recording;
+
+    /** {@return whether a buffer from this context is currently recording}. */
+    public boolean isRecording() {
+        return this.recording;
     }
 
     /**
@@ -406,6 +419,7 @@ public final class VulkanContext {
                         .pCommandBuffers(stack.pointers(commandBuffer));
                 check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), "vkQueueSubmit");
                 check(vkQueueWaitIdle(this.queue), "vkQueueWaitIdle");
+                this.recording = false;
             }
         } finally {
             vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);

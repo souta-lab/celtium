@@ -37,7 +37,7 @@ public final class VulkanImmediateFormats {
     public static final int COUNT = POSITION_TEX_NORMAL + 1;
 
     /** Ids the acceptance mask admits by default: everything mapped except the composite, which the present path keys on. */
-    public static final String DEFAULT_ACCEPTED = "1,3,4,5,6,7,8,9";
+    public static final String DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9";
 
     private VulkanImmediateFormats() {
     }

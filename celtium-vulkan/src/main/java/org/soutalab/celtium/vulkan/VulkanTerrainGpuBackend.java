@@ -4020,7 +4020,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.immediateGroups.isEmpty()) {
             return;
         }
-        if (this.commandBuffer == null) {
+        if (this.commandBuffer == null || !this.context.isRecording()) {
             // Recording into a command buffer that was never begun is a validation error, and with format 2 accepted this
             // path is reached: `vkCmdBindPipeline` was recorded with no `vkBeginCommandBuffer` before it. Refusing here and
             // counting it names the path instead of hiding the defect.
