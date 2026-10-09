@@ -439,7 +439,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int outsideWorldPassRefusals;
     private int outsideWorldPassAccepted;
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
-    private final int[] acceptedByFormat = new int[9];
+    private final int[] acceptedByFormat = new int[11];
     private boolean currentRenderTargetIsMain = true;
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
@@ -549,6 +549,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Map<Long, VulkanImmediatePipeline> immediatePipelineCache =
             new java.util.HashMap<Long, VulkanImmediatePipeline>();
     /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
+    /** One pipeline per state for the entity/TESR layout, whose stride the textured pipeline cannot serve. */
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexColorNormalPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    /** One pipeline per state for the composite batch's layout, likewise wider than the colourless pipeline's. */
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexNormalPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
@@ -582,7 +588,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final float MIP_BIAS_ADD =
             Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
-    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5,6,7");
+    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5,6,7,8,9");
 
     private static boolean celtium$formatAccepted(int formatId) {
         String accepted = ACCEPTED_FORMATS;
@@ -1330,7 +1336,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        int expectedStride = formatId == 7 ? VulkanImmediateTexturePipeline.POSITION_BYTES
+        int expectedStride = formatId == 9 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES
+                : formatId == 8 ? VulkanImmediateTexturePipeline.POSITION_TEX_COLOR_NORMAL_BYTES
+                : formatId == 7 ? VulkanImmediateTexturePipeline.POSITION_BYTES
                 : formatId == 6 ? VulkanImmediateTexturePipeline.POSITION_TEX_BYTES
                 : formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
                 : formatId == 3 ? VulkanImmediateBlockPipeline.VERTEX_BYTES
@@ -1447,7 +1455,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        if (formatId < 1 || formatId > 7) {
+        if (formatId < 1 || formatId > 9) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
             // bound was 5, written before id 6 existed: position-plus-texture - the sky, the clouds, the water surface -
@@ -2256,7 +2264,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " acceptedByFormat=1:" + this.acceptedByFormat[1] + ",2:" + this.acceptedByFormat[2]
                 + ",3:" + this.acceptedByFormat[3] + ",4:" + this.acceptedByFormat[4] + ",5:" + this.acceptedByFormat[5]
-                + ",6:" + this.acceptedByFormat[6] + ",7:" + this.acceptedByFormat[7]
+                + ",6:" + this.acceptedByFormat[6] + ",7:" + this.acceptedByFormat[7] + ",8:" + this.acceptedByFormat[8] + ",9:" + this.acceptedByFormat[9]
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
                 + ",5:" + this.postAcceptDroppedByFormat[5] + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
@@ -3769,19 +3777,30 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             continue;
                         }
                         block.draw(this.commandBuffer, mesh, push, descriptorSet);
-                    } else if (formatId == 2 || formatId == 6 || formatId == 7) {
+                    } else if (formatId == 2 || formatId == 6 || formatId == 7 || formatId == 8 || formatId == 9) {
                         // Format 6 is the colourless POSITION_TEX shape RenderGlobal uses for the sky, the clouds and the
                         // water surface. It shares this draw path but not the pipeline: a colourless vertex cannot be fed
                         // to a pipeline that reads a colour at offset 20, so it has its own cache as well as its own
                         // pipeline.
-                        boolean colourless = formatId == 6;
-                        java.util.Map<Long, VulkanImmediateTexturePipeline> cache = formatId == 7
-                                ? this.positionOnlyPipelineCache
+                        boolean colourless = formatId == 6 || formatId == 9;
+                        // A pipeline bakes its vertex stride, so each wider layout needs its own cache: sharing one with the
+                        // narrower layout would hand a 24-byte pipeline a 28-byte mesh.
+                        java.util.Map<Long, VulkanImmediateTexturePipeline> cache = formatId == 9
+                                ? this.positionTexNormalPipelineCache
+                                : formatId == 8 ? this.positionTexColorNormalPipelineCache
+                                : formatId == 7 ? this.positionOnlyPipelineCache
                                 : colourless ? this.positionTexPipelineCache : this.texturedPipelineCache;
                         VulkanImmediateTexturePipeline textured =
                                 cache.get(Long.valueOf(((Long) group[5]).longValue()));
                         if (textured == null) {
-                            textured = formatId == 7
+                            textured = formatId == 9
+                                    ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, terrain.renderPass(),
+                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                                    : formatId == 8
+                                    ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context,
+                                            terrain.renderPass(), state[0] != 0, state[1], state[2], state[3] != 0,
+                                            state[4] != 0, state[5] != 0)
+                                    : formatId == 7
                                     ? VulkanImmediateTexturePipeline.createForPosition(this.context, terrain.renderPass(),
                                             state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
                                     : colourless

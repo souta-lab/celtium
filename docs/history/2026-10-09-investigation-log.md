@@ -7595,3 +7595,34 @@ One thing the earlier Intel attempt recorded stays true and is worth keeping: a 
 readable and still useful - 4864 position-only arrivals, twelve unmapped - even though the run itself timed out. An instrument
 that reports before the run ends is worth more than one that reports at the end, which is why the census prints every five
 hundred arrivals rather than on shutdown.
+
+---
+
+## Nothing arrives unmapped any more
+
+The residual census named two shapes, and branches for both were added with their strides, their caches and their own
+pipelines - sharing a cache across two strides would hand a 24-byte pipeline a 28-byte mesh, which is exactly the class of
+mistake this project has made twice:
+
+```
+arrivals: byFormat=[0:0 1:18 2:641 3:0 4:0 5:315 6:2066 7:1448 8:0 9:12 10:0]
+acceptedByFormat = 1:6, 2:0, 3:0, 4:0, 5:310, 6:1768, 7:1086, 8:0, 9:0
+exit 0 | clean | messages 0 | fixture PASSED   immediateTaken=3170   glDrawsCancelled=3170
+```
+
+**Format 0 is zero.** Every upload the game made in this run was recognised by the mapping; the largest category that was
+unmapped at the start of this investigation - two thousand arrivals per run - is now none. The census table itself also had to
+grow: it stopped at id 8, so the new ids were invisible until it was widened, which is the second time a counter's own range
+hid the thing it was counting.
+
+Two things are measured rather than assumed about the new branches:
+
+- **Id 9**, the composite's layout, **arrives twelve times and is accepted zero**. So a guard downstream refuses it, and the
+  counters for that family already exist - `immediateTextureRefusals` is the first place to look, since a colourless textured
+  layout with no texture bound is refused there.
+- **Id 8**, the entity/TESR layout, **does not appear in this run at all**. It appeared 128 times in the census run, which means
+  it depends on what is on screen - a TESR or an entity - and a run without one cannot confirm or deny the branch. Recorded as
+  a scene dependency rather than as a failure.
+
+That is the shape of the remaining work on the immediate path: not "what is unmapped" - that question is answered - but "which
+of the mapped layouts are still refused downstream, and why".

@@ -48,6 +48,10 @@ public final class VulkanImmediateTexturePipeline {
     public static final int POSITION_TEX_BYTES = 20;
     /** Position only: three floats and nothing else. */
     public static final int POSITION_BYTES = 12;
+    /** Position, texture, colour and a normal the shaders do not read: the entity/TESR layout. */
+    public static final int POSITION_TEX_COLOR_NORMAL_BYTES = 28;
+    /** Position, texture and a normal: the composite batch's layout. */
+    public static final int POSITION_TEX_NORMAL_BYTES = 24;
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
     // inside the 128 bytes Vulkan guarantees (audit S19).
     private static final int PUSH_CONSTANT_BYTES = 128;
@@ -58,6 +62,8 @@ public final class VulkanImmediateTexturePipeline {
     private boolean positionOnly;
     /** Position-and-nothing-else: twelve bytes, one attribute, and no texture coordinate to sample. */
     private boolean positionNoTexture;
+    /** Non-zero when the layout is one of the wider standard formats whose extra element the shaders ignore. */
+    private int extraTrailingElementBytes;
 
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -112,6 +118,29 @@ public final class VulkanImmediateTexturePipeline {
                 depthWrite, cull);
         pipeline.positionOnly = true;
         pipeline.positionNoTexture = true;
+        return pipeline;
+    }
+
+    /**
+     * Creates the {@code POSITION_TEX_COLOR_NORMAL} variant: the same shaders and attribute offsets as the textured pipeline,
+     * with the stride the extra normal element needs. The normal is not read - none of these shaders light anything - but the
+     * layout has to be declared honestly or the pipeline reads the next vertex's bytes as this one's colour.
+     */
+    public static VulkanImmediateTexturePipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
+            boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull) {
+        VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+                depthWrite, cull);
+        pipeline.extraTrailingElementBytes = POSITION_TEX_COLOR_NORMAL_BYTES;
+        return pipeline;
+    }
+
+    /** Creates the {@code POSITION_TEX_NORMAL} variant for the composite batch: colourless shaders, wider stride. */
+    public static VulkanImmediateTexturePipeline createForPositionTexNormal(VulkanContext context, long renderPass,
+            boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull) {
+        VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+                depthWrite, cull);
+        pipeline.positionOnly = true;
+        pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_BYTES;
         return pipeline;
     }
 
@@ -294,7 +323,8 @@ public final class VulkanImmediateTexturePipeline {
                         .pName(stack.UTF8("main"));
 
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(this.positionNoTexture ? POSITION_BYTES : this.positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES)
+                binding.get(0).binding(0).stride(this.extraTrailingElementBytes != 0 ? this.extraTrailingElementBytes
+                        : this.positionNoTexture ? POSITION_BYTES : this.positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES)
                         .inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
                 VkVertexInputAttributeDescription.Buffer attributes =
                         VkVertexInputAttributeDescription.calloc(this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
