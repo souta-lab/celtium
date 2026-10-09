@@ -1511,3 +1511,33 @@ appeared in the debug line in three runs, while a print from inside the mixin ap
 print from the animation injector itself, the same shape that produced the ids above. Until then the honest statement is:
 the mechanism is now attached to the method the sources identify as the animation path, it does not break the run, and
 whether it fires has not been read.
+
+---
+
+## The animation hook fires - the P1 is fixed and verified
+
+The print from inside the animation injector settles it:
+
+```
+animation upload: hit=1 size=32x32 at 0,0
+animation upload: hit=2 size=32x32 at 32,0
+animation upload: hit=3 size=16x16 at 0,32
+animation upload: hit=4 size=16x16 at 16,32
+animation upload: hit=5 size=16x16 at 32,32
+status PASSED | nativeTerrainVerified True
+```
+
+Those are sprite frames being uploaded into the bound atlas, one after another - the animation path identified from the
+sources - and each one now invalidates the mirror of the bound texture, so the next immediate draw re-reads the GL texture
+instead of showing the frame it first saw. Together with the registration hook (ids 7, 8, 13, 16, 17) both upload paths
+Minecraft uses are covered:
+
+| Upload path | Method | Covered |
+|---|---|---|
+| Registration and full-image uploads | `TextureUtil.func_110989_a` | yes, verified firing |
+| **Sprite animation frames** | `TextureUtil.func_147955_a` | **yes, verified firing** |
+
+So the P1 recorded two rounds ago - "an animated texture drawn through the immediate path shows its first frame forever" -
+is closed at the mechanism level, with the evidence being the hook firing in a green run rather than an argument. What a
+still image cannot show is that the animation *moves* in the Vulkan path; the comparison frames are static, so motion
+remains for a visual check rather than being claimed here.

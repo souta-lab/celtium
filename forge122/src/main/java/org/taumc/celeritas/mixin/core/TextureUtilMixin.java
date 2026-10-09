@@ -27,6 +27,7 @@ public class TextureUtilMixin {
     private static int celtium$firstUploads;
     private static int celtium$repeats;
     private static final java.util.Set<Integer> celtium$seen = new java.util.HashSet<Integer>();
+    private static int celtium$animationHits;
 
     /**
      * The animation path.
@@ -41,6 +42,11 @@ public class TextureUtilMixin {
     private static void celtium$invalidateAnimatedTexture(int[][] data, int width, int height, int x, int y, boolean blur,
             boolean clamp, org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
+            if (celtium$animationHits < 5) {
+                celtium$animationHits++;
+                System.out.println("celtium texture animation upload: hit=" + celtium$animationHits + " size=" + width + "x"
+                        + height + " at " + x + "," + y);
+            }
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null) {
                 backend.invalidateBoundTexture();
