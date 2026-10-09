@@ -970,6 +970,8 @@ Two attempts have not produced the output yet, and both reasons are recorded rat
   patch did not apply (the anchor had moved), so the dump stayed where it was and the normal run - whose mask excludes
   format 2 - never reached it. The build stayed green throughout.
 
-The instrumentation is committed in that state. The next attempt is small and specific: move the dump so it runs for
+The instrumentation is **not** in the tree: checking before committing showed no dump in the mixin, so it was lost in
+one of the reverts this round (the pattern has been to roll back with `git checkout -- .` when a build breaks). That is
+corrected here rather than left implied by a commit message. The next attempt is small and specific: move the dump so it runs for
 every offered composite regardless of the mask - the mixin sees the batch before the backend decides anything, which is
 exactly where an unconditional dump belongs - and then run the normal configuration and read the caller.
