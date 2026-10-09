@@ -76,6 +76,8 @@ public final class ValidationClient {
     private int celtium$sweepPlaced;
     private int celtium$sweepFailed;
     private int celtium$sweepTotal;
+    /** Registry index this run starts at, so several runs cover the whole registry. */
+    private int celtium$sweepFrom;
 
     private void celtium$blockSweep(Minecraft mc) {
         int wanted = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
@@ -89,7 +91,13 @@ public final class ValidationClient {
                     celtium$sweepBlocks.add(block);
                 }
             }
-            celtium$sweepTotal = Math.min(wanted, celtium$sweepBlocks.size());
+            // Coverage is split across runs by design: one run places a bounded number of blocks, so the rest of the
+            // registry is reached by starting later (-Dceltium.validation.blockSweepFrom=<registry index>). Together the
+            // counters say which slice a run covered.
+            celtium$sweepFrom = Math.min(Math.max(0, Integer.getInteger("celtium.validation.blockSweepFrom", 0).intValue()),
+                    celtium$sweepBlocks.size());
+            celtium$sweepTotal = Math.min(wanted, celtium$sweepBlocks.size() - celtium$sweepFrom);
+            report.addProperty("blockSweepFrom", Integer.valueOf(celtium$sweepFrom));
             report.addProperty("blockRegistrySize", Integer.valueOf(celtium$sweepBlocks.size()));
             report.addProperty("blockSweepTotal", Integer.valueOf(celtium$sweepTotal));
         }
@@ -103,7 +111,7 @@ public final class ValidationClient {
             return;
         }
         for (int n = 0; n < 1 && celtium$sweepIndex < celtium$sweepTotal; n++, celtium$sweepIndex++) {
-            net.minecraft.block.Block block = celtium$sweepBlocks.get(celtium$sweepIndex);
+            net.minecraft.block.Block block = celtium$sweepBlocks.get(celtium$sweepFrom + celtium$sweepIndex);
             int gx = celtium$sweepIndex % 16;
             int gz = celtium$sweepIndex / 16;
             net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(gx - 8, 4, gz - 8);

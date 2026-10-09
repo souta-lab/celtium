@@ -458,6 +458,18 @@ MC の sprite/frame データへ、(3) 相互運用グルー（blit/semaphore/�
 
 - 1ブロック/4tick×200tick＝50個になる（ペーシングどおり）。**失敗0**＝`getDefaultState()` と `setBlockState` が
   254種のうち50種で問題を起こさず、メッシュ・native地形パスがそれらを扱えた。
+- **全254種へ広げる（このターン）**: `-Dceltium.validation.blockSweepFrom=<registry index>` を追加し、
+  スライスで覆う方式にした。**ペーシングの上限も実測**した: `blockSweepEvery=1`（1個/tick・254個）は
+  **exit 124 / MISSING_REPORT**（AMDでもタイムアウト）なので、測定済みの安全域 `every=4` を維持する。
+
+| run（AMD） | from | placed | failed | verdict |
+|---|---|---|---|---|
+| `p92-sweep-amd` | 0 | 50 | 0 | PASSED |
+| `p94-sweep50-amd` | 50 | 50 | 0 | PASSED |
+| `p94-sweep100-amd` | 100 | 50 | 0 | PASSED |
+| **累計** | — | **150 / 254** | **0** | — |
+
+- **AMDで150種（59%）を失敗0で掃引**。残りは from=150 / 200 の2run、Intel側は5run。
 - **残り**: 1runあたり50種なので、254種を覆うには `blockSweep` の開始位置をずらして数run回すか、
   tick数を増やす。次は **item/model と entity/TESR** も同じ方式で registry から掃引する。
 
