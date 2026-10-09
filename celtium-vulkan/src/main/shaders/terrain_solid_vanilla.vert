@@ -182,10 +182,10 @@ float getFragDistance(int fogShape, vec3 position) {
 // is deliberately not ported: the SOLID pass always has a light map).
 // --------------------------------------------------------------------------------------------
 vec4 _sample_lightmap(sampler2D lightMap, ivec2 uv) {
-    // Divided by 16 for Minecraft 1.12.2's 16x16 light map, which is the same number the clamp is written in (half a texel
-    // in, half a texel out). Sodium's modern light map is 256x256 with many maps packed into it and this port kept that
-    // divisor; the two disagreed by a factor of sixteen.
-    return texture(lightMap, clamp(vec2(uv) / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+    // Exactly the reference's expression, divisor included: the pinned lineage samples
+    // `clamp(uv / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0))` and this project ported it verbatim. Changing the divisor to
+    // 16 moved the frame by 0.4 of a mean luminance unit, which is not where the difference lives either.
+    return texture(lightMap, clamp(vec2(uv) / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
 }
 
 void main() {
@@ -215,11 +215,12 @@ void main() {
     gl_Position = pc.u_ProjectionMatrix * pc.u_ModelViewMatrix * vec4(worldPosition, 1.0);
 
     // Add the light color to the vertex color, and pass the texture coordinates to the fragment shader
-    // ONE VARIABLE EXPERIMENT (round 266): the light coordinate is (block 0, sky 15) for this scene, and the texel that
-    // address lands on measures 0.65 in the light map dump - which is the uniform ~40% darkness the reference comparison
-    // found, so the axes are suspected of being swapped. Swap them here and nothing else.
+    // Faithful to the pinned lineage: the reference shader
+    // (upstream-baseline .../sodium/shaders/blocks/block_layer_opaque.vsh) samples this exact coordinate without swapping
+    // the axes, so the swap tried here - which moved the mean from 34.08 to 27.09 - was a deviation from the reference,
+    // not a fix. It is reverted so that the remaining difference is measured against the reference's own behaviour.
     v_RdhFactor = _vert_rdh_factor * 2.0;
-    vec4 lightColor = _sample_lightmap(u_LightTex, _vert_tex_light_coord.yx);
+    vec4 lightColor = _sample_lightmap(u_LightTex, _vert_tex_light_coord);
     v_Color = _vert_color * lightColor;
     v_RdhFactor.rgb *= lightColor.rgb;
 

@@ -65,6 +65,7 @@ public final class VulkanGlTexture {
     private static final boolean MIRROR_GL_MIPS = false;
     /** Levels the GL texture reported on the last upload, or 0 to compute them from the size. */
     private int mirroredLevels;
+    private boolean levelZeroCompared;
     /** GL's row order is bottom-up and Vulkan's is top-down, so the mirror has to flip. */
     private static final boolean FLIP_ROWS = false;
     private static final boolean SAMPLER_DIAGNOSTICS =
@@ -219,6 +220,14 @@ public final class VulkanGlTexture {
                     + " view=" + Long.toHexString(this.view) + " image=" + Long.toHexString(this.image)
                     + " recreated=" + recreated);
             copyToImage(level.pixels, level.width, level.height, 0);
+            if (SAMPLER_DIAGNOSTICS && level.width >= 128 && level.height >= 128 && !levelZeroCompared) {
+                levelZeroCompared = true;
+                try {
+                    compareLevelZeroWithGl(glTextureId);
+                } catch (RuntimeException | LinkageError error) {
+                    System.out.println("[Celtium] CELTIUM_LEVEL0 comparison failed: " + error);
+                }
+            }
             if (MIRROR_GL_MIPS) {
                 for (int l = 1; l < Math.min(this.mipLevels, glLevels); l++) {
                     GlLevel sub = readGlLevel(glTextureId, glTextureTarget, l);
@@ -686,6 +695,77 @@ public final class VulkanGlTexture {
             // Always close the one-shot command buffer, also when recording threw half way through, so the
             // context's helper never keeps an open command buffer around.
             context.endCommands(commandBuffer);
+        }
+    }
+
+    /**
+     * Diagnostic: read this mirror's level 0 back from the device and compare it, byte for byte, with the level 0 the
+     * OpenGL texture currently holds. Every other instrument in this area has compared frames or reasoned about
+     * coordinates; this compares the two images themselves.
+     */
+    public void compareLevelZeroWithGl(int glTextureId) {
+        int w = this.width;
+        int h = this.height;
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        long bytes = (long) w * h * BYTES_PER_PIXEL;
+        ensureStaging(bytes);
+        VkCommandBuffer commands = context.beginCommands();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(this.image);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                    null, null, barrier);
+            VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+            region.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0);
+            region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                    .layerCount(1);
+            region.get(0).imageOffset().set(0, 0, 0);
+            region.get(0).imageExtent().set(w, h, 1);
+            vkCmdCopyImageToBuffer(commands, this.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, this.stagingBuffer,
+                    region);
+            barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
+        }
+        context.endCommands(commands);
+
+        GlLevel gl = readGlLevel0(glTextureId, GL_TEXTURE_2D);
+        try {
+            long differing = 0;
+            long total = 0;
+            int maxDiff = 0;
+            long sumDiff = 0;
+            for (int i = 0; i < w * h * BYTES_PER_PIXEL; i++) {
+                int ours = MemoryUtil.memGetByte(this.stagingAddress + i) & 0xFF;
+                int theirs = gl.pixels.get(i) & 0xFF;
+                int d = Math.abs(ours - theirs);
+                total++;
+                sumDiff += d;
+                if (d != 0) {
+                    differing++;
+                }
+                if (d > maxDiff) {
+                    maxDiff = d;
+                }
+            }
+            System.out.println("[Celtium] CELTIUM_LEVEL0 size=" + w + "x" + h
+                    + " bytes=" + total + " differing=" + differing
+                    + " fraction=" + String.format("%.4f", (double) differing / Math.max(1L, total))
+                    + " meanAbsDiff=" + String.format("%.2f", (double) sumDiff / Math.max(1L, total))
+                    + " maxAbsDiff=" + maxDiff);
+        } finally {
+            MemoryUtil.memFree(gl.pixels);
         }
     }
 

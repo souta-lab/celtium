@@ -105,7 +105,14 @@ vertex formats (the last two only by diagnostics). **Measured since:** the diffe
 0.703). And the light map the terrain samples is confirmed to be GL texture 12, 16x16 - the very texture analysed - whose
 texel at this scene's light coordinate is the bright corner, 252, i.e. a factor of 0.99. So the light map is excluded too,
 leaving the **atlas** as the remaining multiply; consistent with the row-flip experiment turning the terrain almost black
-rather than merely reorienting it. **Next:** inspect the atlas's upload and level 0 content.
+rather than merely reorienting it. **The atlas is byte-identical to OpenGL's** - a readback comparison reports `differing=0`, `maxAbsDiff=0` for both the
+512x512 atlas and the 128x128 textures - so the texture is eliminated and the row-flip experiment is confirmed wrong by
+content. **The pinned lineage's own shaders were then located and read**
+(`upstream-baseline/.../sodium/shaders/blocks/block_layer_opaque.{fsh,vsh}`), and they show that two of this project's
+changes - swapping the light axes and dividing by 16 instead of 256 - are **deviations from the reference** that happened to
+move the frame its way (34.08 to 26.68 mean together). Both are reverted; the faithful configuration measures **34.08 /
+68.81%**, recorded alongside the deviating numbers. **Next:** a line-by-line comparison of our shaders against those located
+sources, and the inputs the mesh builder is handed.
 
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for

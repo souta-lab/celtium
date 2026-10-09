@@ -5528,3 +5528,48 @@ bright texel. It is also consistent with what happened two rounds ago when the u
 **almost black** (band luminance 3.2), which is not what a mere orientation change does to a correctly mirrored atlas - it is
 what happens when the content itself is wrong in both orientations. The next thing to inspect is therefore the atlas's own
 upload and its level 0 content, not anything on the light path.
+
+---
+
+## The atlas is byte-identical to OpenGL's, and two of this project's "improvements" were deviations
+
+Two results this round, one of them a definitive elimination and the other a correction of this project's own work.
+
+**The images are the same.** An instrument that reads this mirror's level 0 back from the device and compares it byte for
+byte with the level 0 OpenGL currently holds - the comparison the plan has pointed at for several rounds - reports:
+
+```
+CELTIUM_LEVEL0 size=512x512 bytes=1048576 differing=0 fraction=0.0000 meanAbsDiff=0.00 maxAbsDiff=0
+CELTIUM_LEVEL0 size=128x128 bytes=65536   differing=0 fraction=0.0000 meanAbsDiff=0.00 maxAbsDiff=0
+```
+
+Every byte of the 512x512 atlas and of the 128x128 textures is identical to what the game holds. So the block texture is
+**not** the missing 0.69, the upload is correct in every respect - pitch, row order, format, level 0 - and the row-flip
+experiment two rounds ago is confirmed as wrong by content rather than by frame.
+
+**The pinned lineage was read at last.** The upstream checkout carries the very shaders this port claims to be faithful to,
+`common/build/resources/main/assets/sodium/shaders/blocks/block_layer_opaque.{fsh,vsh}`, and they show two things this
+project changed while believing it was fixing something:
+
+| | pinned lineage | this project (until now) |
+|---|---|---|
+| light coordinate | sampled as-is | **axes swapped** (round 266) |
+| divisor in `_sample_lightmap` | **`uv / 256.0`** with a 16-texel clamp | `/ 16.0` (round 267) |
+
+Both changes moved the frame in the direction of the reference - together worth 7.4 of mean luminance (34.08 to 26.68) - and
+neither is what the reference does. They are **deviations that happened to help**, which is not the same as a fix, and they
+are reverted so that the remaining difference is measured against the reference's own behaviour rather than against a
+compensating error of our own:
+
+```
+reference-faithful shader: mean 34.08 | >8 68.81%      (with the two deviations: 26.68 | 70.49%)
+```
+
+Both numbers are recorded. The faithful configuration is the one kept, and it is verified in the jar by the SPIR-V's size
+(`7748`) rather than assumed.
+
+What that leaves is narrow and stated plainly: the texture is identical, the light map samples a bright texel, the vertex
+colour comes from code byte-identical to upstream and the light is full daylight - yet our product is 0.69 of the reference's
+with the same contrast. The remaining candidates are the **inputs** the mesh builder is handed and anything in the shader that
+the located reference sources disagree with, and those sources are now in hand for a line-by-line comparison rather than
+another experiment.
