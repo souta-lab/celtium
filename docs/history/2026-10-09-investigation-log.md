@@ -1613,3 +1613,32 @@ the previous rounds exist for - and the frame afterwards is clean.
 Reload moves off the plan's unported list; what stays there for the same area is resize, which this harness cannot exercise
 (the window accepts the size request and Minecraft's framebuffer never changes), and world switch, which needs a second
 world rather than a second call.
+
+---
+
+## The world-switch attempt crashed vanilla, and that is not evidence about the renderer
+
+The fixture was told to switch worlds the way the plan lists it - leave the world, join the same save again - by calling
+`mc.world.sendQuittingDisconnectingPacket()` and `mc.loadWorld(null)` from the tick handler at tick 100. The client
+crashed:
+
+```
+java.lang.NullPointerException: Cannot invoke "EntityPlayerSP.func_70082_c(float, float)" because
+  "this.field_78531_r.field_71439_g" is null
+  at net.minecraft.client.renderer.EntityRenderer.func_181560_a(EntityRenderer.java:1088)
+  at net.minecraft.client.Minecraft.func_71411_J(Minecraft.java:1109)
+```
+
+Read carefully, that stack is **vanilla**: the game loop runs one more frame with no player after `loadWorld(null)` was
+called from inside the tick, and `EntityRenderer` dereferences the player it expects to exist. Minecraft's own disconnect
+path tears the world down through the GUI and its scheduled tasks, not from the middle of a tick, which is why the button
+works and this does not.
+
+So the crash says nothing about Celtium - it is a fixture calling an internal teardown API from a place the game does not
+call it from - and the test is reverted with the tree green. The recording matters more than the attempt for the next
+round:
+
+- a world switch has to be driven the way the game drives it (the disconnect path through the GUI, or a scheduled task),
+  not by calling `loadWorld` from a tick handler;
+- and a fixture-induced crash in vanilla code is not evidence about the renderer, so a test that crashes this way has to be
+  fixed or discarded rather than reported as a renderer failure.
