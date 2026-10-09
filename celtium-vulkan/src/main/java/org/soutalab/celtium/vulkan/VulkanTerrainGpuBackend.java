@@ -1388,6 +1388,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
+                + " immediateGroupsClosed=" + this.immediateGroupsClosed
+                + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0

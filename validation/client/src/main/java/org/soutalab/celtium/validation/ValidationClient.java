@@ -88,21 +88,28 @@ public final class ValidationClient {
             return;
         }
         net.minecraft.util.math.Vec3d look = client.player.getLookVec();
-        net.minecraft.util.math.Vec3d base = client.player.getPositionEyes(1.0F).add(look.scale(2.5D));
+        net.minecraft.util.math.Vec3d base = client.player.getPositionEyes(1.0F).add(look.scale(1.5D));
         net.minecraft.util.math.Vec3d right = new net.minecraft.util.math.Vec3d(-look.z, 0.0D, look.x).normalize();
         net.minecraft.client.renderer.Tessellator tessellator = net.minecraft.client.renderer.Tessellator.getInstance();
         net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
+        // Culling and depth off for the test, because its subject is whether both quads of one merged group reach the
+        // screen: a back-facing winding or a quad that depth-tests against the terrain would hide the second quad for
+        // reasons that have nothing to do with the base vertex being right or wrong.
+        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
+        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
         buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
         celtium$quad(buffer, base, right, 1.0F, 0.0F, 0.0F);
-        celtium$quad(buffer, base.add(0.0D, -0.6D, 0.0D), right, 0.0F, 0.0F, 1.0F);
+        celtium$quad(buffer, base.add(0.0D, -0.9D, 0.0D), right, 0.0F, 0.0F, 1.0F);
         tessellator.draw();
+        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
         report.addProperty("drawTestQuads", 2);
         report.addProperty("drawTestAtTick", client.player.ticksExisted);
     }
 
     private static void celtium$quad(net.minecraft.client.renderer.BufferBuilder buffer,
             net.minecraft.util.math.Vec3d centre, net.minecraft.util.math.Vec3d right, float red, float green, float blue) {
-        double half = 0.4D;
+        double half = 0.6D;
         double[][] corners = {{-half, -half}, {half, -half}, {half, half}, {-half, half}};
         for (double[] corner : corners) {
             buffer.pos(centre.x + right.x * corner[0], centre.y + corner[1], centre.z + right.z * corner[0])

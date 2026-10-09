@@ -48,12 +48,20 @@ doing so deleted the `submitImmediateBatch` call itself and was restored by `dee
 `vertexOffset = 0`, so a second quad in the same group references the first quad's vertices.
 **Fixed:** `copyVertices` captures the group's base vertex before appending and writes `index + baseVertex`, so indices stay
 relative to the group. **Measured:** the weather and particle scene is unchanged at **0.40% of pixels over 8 (3,714)** -
-which says this scene's groups are mostly single-batch, not that the defect was harmless. **Open:** the acceptance fixture now exists - two quads in one `Tessellator` batch inside a Forge render event, switched on
-by `-Dceltium.validation.drawTest=true`, reporting `drawTestQuads 2` - but its picture is **not** there yet: the captured
-frame contains no saturated red and no saturated blue, so the merged group is not demonstrably on screen. Winding against
-culling, the world-space depth of the quads, and which pass the capture covers are the candidates. The group counters added
-beside it (`immediateGroupsClosed`, `immediateMaxGroupVertices`) are also not in the debug line, because the replacement
-meant to append them did not match its anchor.
+which says this scene's groups are mostly single-batch, not that the defect was harmless. **Measured, and it points at S14 as much as at S05.** The fixture exists - two quads in one `Tessellator` batch inside a
+Forge render event, `-Dceltium.validation.drawTest=true`, reporting `drawTestQuads 2` - and running it with the immediate
+path off and on gives:
+
+| Configuration | saturated red | saturated blue |
+|---|---|---|
+| immediate path off (GL draws) | **81 px** | 0 |
+| immediate path on | **0** | **0** |
+
+The immediate path shows nothing where GL shows 81 pixels of the fixture's own quad: geometry accepted (`immediateTaken`
+1137, `immediateGroupsClosed` 1137) and absent from the frame, which is S14's description measured rather than argued. The
+fixture's own baseline is still incomplete - GL should show both quads and shows one - so S05's acceptance is not satisfied
+either. The counters also give the first hard number about merging: groups of up to **880 vertices** exist in this frame,
+so the base-vertex defect was the normal shape of a merged group here, not a corner case.
 
 ### S06 [P1, certain in code] growing a dynamic buffer loses its contents
 `VulkanHostBuffer.ensureCapacity` deletes and recreates the buffer without preserving data, while the mesh keeps appending.

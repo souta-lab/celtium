@@ -3111,3 +3111,35 @@ What is established is narrower and still worth having: the fixture compiles, re
 render event, and reports itself, so the acceptance test for S05 exists. What is not established is that the merged group
 reaches the screen, and until the picture shows two colours in two places, S05's fix rests on the code and on reading, not
 on an image.
+
+---
+
+## The draw test finds geometry the immediate path loses, and its own baseline is incomplete
+
+The two-quad fixture was run twice, once with the immediate path on and once with it off so that GL draws the same
+batches:
+
+| Configuration | saturated red pixels | saturated blue pixels |
+|---|---|---|
+| immediate path **off** (GL draws) | **81** | 0 |
+| immediate path **on** | **0** | **0** |
+
+Two conclusions, and the second one is why the first cannot be read as a pass or a fail of S05 yet.
+
+**The immediate path shows nothing where GL shows 81 pixels of the fixture's own quad.** That is the shape of the audit's
+S14 - geometry accepted and then dropped - and it is measured here rather than argued: the same batch, the same frame, the
+same capture gate, one flag apart. The counters beside it say the batches are being taken (`immediateTaken=1137`,
+`immediateGroupsClosed=1137`), which is exactly the state S14 describes: accepted, and absent from the frame.
+
+**The fixture's own baseline is incomplete**, because with GL drawing it should show both quads and shows only the red one:
+81 red pixels and zero blue. So the blue quad never reaches the frame even when nothing of Celtium's is involved, which
+means the fixture has not yet established the two-colours-in-two-places baseline that S05's acceptance needs. Until it
+does, the fixture can say "the immediate path lost this" but not "the merged group drew the right geometry".
+
+The group counters added this round also produced the first hard number about merging: `immediateGroupsClosed=1137` with
+`immediateMaxGroupVertices=880` - groups of up to 880 vertices exist in the captured frame, so the base-vertex defect fixed
+last round was not a corner case in this scene; it was the normal shape of a merged group.
+
+The next steps are therefore two, in this order: make the fixture's baseline show both quads (the blue one's position is the
+first thing to check, since culling and depth are already off for the test), and then re-measure the on/off pair to see
+whether the immediate path reproduces that baseline.
