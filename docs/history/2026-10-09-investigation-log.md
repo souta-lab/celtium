@@ -8061,3 +8061,42 @@ That closes condition two's postprocess item in the only honest way available:
 
 Driving that keybinding is possible and is named rather than done: it would be a fixture that presses F4, and it would measure a
 path that no player's rendering takes.
+
+---
+
+## Condition three, measured first: where the Vulkan module still touches OpenGL
+
+Condition three is "start and draw without a GL context and without the GL/VK bridge", and it is the only one of the three
+with no work behind it. The first step is the same as for every other item: measure what is actually there.
+
+```
+GL touch points in the Vulkan module: 7 files, 99 call sites
+  GL11    79   fixed-function: texture binds, state, readback
+  GL11C   53   core-profile equivalents
+  GL30C   12   framebuffer objects
+  GL13C    5   texture units
+  GL45C    3   the modern entry points
+  GL/GLCapabilities  4   context creation and probing
+```
+
+The seven files fall into five roles, and the roles are what matters rather than the count:
+
+1. **Context creation and device identity** - `GL`, `GLCapabilities` and `GlDeviceIdentity`. This is the **startup dependency**,
+   and it is what condition three names first: the renderer cannot begin without a GL context because it creates one and reads
+   the device's identity through it.
+2. **Texture mirroring and sharing** - `VulkanGlTexture`, `VulkanTextureRegistry`. The bridge's core: GL textures mirrored into
+   Vulkan images, and the shared image the two APIs hand each other.
+3. **The frame target and present** - `VulkanFrameTarget`. Where the swapchain image and GL's framebuffer meet.
+4. **State capture in the draw path** - `VulkanTerrainGpuBackend`'s GL reads (`glGetFloatv`, `glIsEnabled`, the mirrors). These
+   are avoidable in principle: every one reads something a hook could have recorded at the call that changed it, which is how
+   the blend, depth and matrix mirrors already work.
+5. **Writing back into the game's textures** - `VulkanOffscreenTarget`'s `glTexSubImage2D`. This direction is **necessary** until
+   the game's own textures are Vulkan-owned, and it is the one role that cannot be removed by hooking.
+
+So condition three decomposes into an ordered list rather than a single leap: **role 1 first** (the renderer must be able to
+create its device without asking GL), then role 4 (replace the remaining state reads with recorded state), with roles 2, 3 and 5
+being the bridge itself - the thing the condition says must eventually not be needed, and the thing whose removal has to come
+after the game's textures and framebuffers are Vulkan-owned rather than before.
+
+That is the measurement. Nothing has been changed for it yet, and the plan row for condition three now carries this list instead
+of an adjective.

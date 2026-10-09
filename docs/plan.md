@@ -110,6 +110,14 @@ census reports ~2000 unmapped uploads per run and censusing them by shape gives 
 position-only vertices with no colour and no texture coordinates, matching none of the six pipelines that exist. The immediate path
 refuses such batches by name rather than dropping them quietly.
 
+**Condition three is inventoried rather than started.** The Vulkan module still touches OpenGL in **7 files and 99 call sites**,
+in five roles: context creation and device identity (`GL`, `GLCapabilities`, `GlDeviceIdentity`) - the startup dependency the
+condition names first; texture mirroring and sharing (`VulkanGlTexture`, `VulkanTextureRegistry`); the frame target and present
+(`VulkanFrameTarget`); state capture in the draw path (the backend's `glGetFloatv`/`glIsEnabled` reads, every one of which a hook
+could record instead); and writing back into the game's textures (`VulkanOffscreenTarget`'s `glTexSubImage2D`), which is
+necessary until the game's textures are Vulkan-owned. The order that follows is **role 1, then role 4**, with the bridge itself
+last.
+
 **The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
 drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and
 why, the Java versions, and the licensing lineage.
