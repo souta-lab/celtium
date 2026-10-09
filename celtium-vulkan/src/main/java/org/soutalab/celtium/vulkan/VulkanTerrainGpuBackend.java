@@ -1424,6 +1424,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         if (!this.currentRenderTargetIsMain) {
+            // Every batch offered for another framebuffer, not only the first for that target: the flag is what attributes a
+            // refusal to it, and setting it inside the once-per-target diagnostic block covered one batch in three hundred.
+            this.offTargetBatchInFlight = true;
             // The hybrid draws into the shared image, which stands in for the main framebuffer only. A batch issued for
             // another render target cannot be honoured, so it is refused here, before acceptance, and GL draws it - which
             // is the behaviour the audit's S10 acceptance asks for instead of viewing it in the wrong place.
@@ -1470,7 +1473,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.offTargetBatchesByTarget.put(this.currentRenderTarget, seen);
                 int[] viewport = new int[4];
                 org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
-                this.offTargetBatchInFlight = true;
                 System.out.println("[Celtium] CELTIUM_OFFTARGET target=" + this.currentRenderTarget + " viewport="
                         + viewport[2] + "x" + viewport[3] + " firstBatchFormat=" + formatId);
                 if (this.offTargetOfferDiagnostics < 4) {
@@ -1492,8 +1494,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         long submitStart = System.nanoTime();
         try {
-            return submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
-                    drawMode);
+            boolean taken = submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress,
+                    vertexCount, drawMode);
+            if (!taken && this.offTargetBatchInFlight) {
+                // Refused in this very call: attribute the reason now, because the offers arrive in one burst at the end of a
+                // run and there is no later call to sample from.
+                this.offTargetBatchInFlight = false;
+                this.offTargetRefusalsByReason.merge(this.immediateLastRefusal == null ? "unset" : this.immediateLastRefusal,
+                        Integer.valueOf(1), Integer::sum);
+            }
+            return taken;
         } finally {
             this.immediateSubmitNanos += System.nanoTime() - submitStart;
         }
@@ -1502,13 +1512,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                               int vertexCount, int drawMode) {
-    if (this.offTargetBatchInFlight) {
-        // The previous off-target batch never reached acceptance, so the reason it left behind belongs to it. This
-        // attributes a refusal to a target without touching each of the paths that can refuse.
-        this.offTargetBatchInFlight = false;
-        String reason = this.immediateLastRefusal == null ? "unset" : this.immediateLastRefusal;
-        this.offTargetRefusalsByReason.merge(reason, Integer.valueOf(1), Integer::sum);
-    }
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer

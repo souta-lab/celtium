@@ -28,9 +28,9 @@
 | **A07** | metadata・転送成功の扱い | **修正済** | hashを転送**後**に確定、`imageUploads` は成功時のみ、`Entry.width/height` が画像に追随（寸法を可変に）、skipは `imageUploadsSkipped` として別計数。GL ID再使用の検証は残る |
 | **A08** | 受理前失敗でpending meshに頂点が残る | **修正済・受入済** | 監査の第1案（preflightをappend前に置く）を採用: texture mirror確認とparticle descriptor preflightを `copyVertices` の**前**へ移動。拒否時は何もappendされないのでrollback不要・二重描画不能。runで `refusedBeforeAppend=1` を実測（拒否されたバッチはGLが描き、pending queueには残らない） |
 | **A09** | 受理後の消失を全形式で数えていない | **修正済** | 描画ループ内の**7つのskip地点すべて**が `postAcceptDroppedGroups` を増やす（以前はformat 5のdescriptor失敗のみ）。実測0は、実装したdrop計器が数えた消失がなかったという事実。全formatのGPU完了・見た目を証明しない。branch別の内訳とbatch ID対応付けは残る |
-| **A10** | `offTargetDrawn` は実描画ではない | **帰属計器を実装・採取点が悪い（提示がrun末尾に集中）** | 実測 `offTargetPerTarget=[2647651d:offered=248,atPass=0,drawnPasses=0]`、`otherTargetGroups=[…enqueuedForOtherTargets=0,acceptedForOtherTargets=0]`、`offTargetRefusals={none=1}`。帰属は**1回しか発火せず**、off-targetの提示が**runの最後のフレーム**に集中しているため。**次段**: 外側 `submitImmediateBatch` の入口（`immediateBatchesOffered++` の直前）で採取する。**「copy-backが証拠」は撤回済** |
+| **A10** | `offTargetDrawn` は実描画ではない | **受理0の原因はA11と確定（format 2 の既定mask）** | 実測 `offTargetRefusals={format 2 not in celtium.vulkan.immediateFormats=256}` — off-targetの内容が届かない原因は経路ではなく **A11そのもの**。maskに2を加えると `acceptedByFormat=2:248` と受理は進むが、**70件のvalidationエラー**（`vkBeginCommandBuffer` の外で `vkCmdBindPipeline` を記録）が露出したため**巻き戻した**。**次段**: その記録経路を直す → maskを開ける → `atPass`/`drawnPasses` 非0を確認。**「copy-backが証拠」は撤回済** |
 
-| **A11** | format 2（POSITION_TEX_COLOR）は既定でGL | **既知・未対応** | `DEFAULT_ACCEPTED="1,3,4,5,6,7,8,9"`、実測 `2:0`。screen compositeとGUIをformatだけで同一視しない |
+| **A11** | format 2（POSITION_TEX_COLOR）は既定でGL | **原因特定済・mask修正は別の欠陥を露出** | 実測で off-targetの拒否256件がすべてこのmask由来と判明。maskに2を加えると `2:248` が受理されるが、**70件のvalidationエラー**（command buffer未開始での記録）が出るため巻き戻し中。**次段**: 記録経路の修正後にmaskを開ける |
 | **A12** | state modelとpipelineの不一致 | **未解決** | alpha enable/func、depth func、separate alpha blend、color mask、scissor、texture matrix。pipelineはLEQUAL/ADD等を固定 |
 | **A13** | current color/alphaの欠落（group keyにも無い） | **未解決** | POSITIONはRGBのみでalpha=1、POSITION_TEXは白固定。tint/alphaの再現証拠なし |
 | **A14** | normal無視のITEM対応は照明対応ではない | **未解決** | 固定lighting・normal変換・shade・fog |

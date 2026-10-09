@@ -9212,3 +9212,35 @@ exit 0 | validationClean true | messages 0 | fixture PASSED | terrainPasses 693
 ためで、フラグを立てた後に `submitImmediateBatchTimed` が呼ばれる機会が1回しか無かったことを意味する。したがって
 理由の採取点が悪い。**次段**: 外側の `submitImmediateBatch` の入口（`immediateBatchesOffered++` の直前）で
 「前回の呼び出しが拒否を残したか」を採取する。外側は全ての提出を通るので、提示の後に必ずもう一度呼ばれる。
+
+---
+
+## 受理0の理由が確定: format 2 が既定maskに無い（A11そのもの）。maskを開くと別の欠陥が露出した
+
+フラグを「targetごとの最初の1件」ではなく**off-targetの全提示**で立てるよう直したところ、理由が採れた。
+
+```
+offTargetRefusals = {format 2 not in celtium.vulkan.immediateFormats=256}
+offTargetPerTarget = [38241c54:offered=258,atPass=0,drawnPasses=0]
+```
+
+**256件すべてが「format 2 が既定maskに無い」で拒否されていた**。つまり off-targetの内容が自分のpassへ届かない原因は
+A10の経路ではなく、**A11（`DEFAULT_ACCEPTED="1,3,4,5,6,7,8,9"`）そのもの**である。fixtureの第二targetへ描くクワッドは
+POSITION_TEX_COLOR（format 2）で、既定では GL に残る。これは監査が名指ししたとおりで、私が長く別の場所を測っていた。
+
+そこで既定maskに 2 を加えて測った（`1,2,3,4,5,6,7,8,9`）。
+
+```
+acceptedByFormat = 1:8,2:248,3:0,4:0,5:154,6:926,7:600,8:0,9:12
+validation messages = 70    exit 1 | clean False
+severity=ERROR vkCmdBindPipeline(): was recorded, but vkBeginCommandBuffer() was not called prior to this command
+```
+
+**format 2 は248件受理されるようになった**（maskの修正は効く）。しかし同時に**70件のvalidationエラー**が出た。
+内容は「command buffer を開始していないのに `vkCmdBindPipeline`/`vkCmdBindDescriptorSets` を記録した」であり、
+**format 2 を受理すると、コマンドバッファの外で記録する経路がある**ことが露出した。これはA11を開けるために先に直すべき
+欠陥である。
+
+赤を残さないため mask は**巻き戻した**（`1,3,4,5,6,7,8,9`）。次段は「format 2 を受理したときにどの経路が
+`vkBeginCommandBuffer` の外で記録するか」を特定して直し、そのうえで mask を開け直す。順序は「記録経路を直す →
+maskを開ける → `atPass`/`drawnPasses` が非0になることを確認する」である。
