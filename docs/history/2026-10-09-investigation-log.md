@@ -1429,3 +1429,28 @@ GPUs. It is deliberately not a claim about the whole renderer, and the plan's st
 composite and the presentation of the frame are still GL's, the Vulkan present exists but is off because it emits
 validation messages, and the content that has not been exercised yet - entities with models, particles in motion, GUI over
 more than one world, resource reload, resize, world switch - is what stages 4 and 5 are for.
+
+---
+
+## Two findings: the present messages are not driver-specific, and the texture mirror is one-shot
+
+**The present's 36 messages reproduce identically on both drivers.** The same configuration run on the Intel UHD 630
+(ANV) as on the RX 6400 (RADV) gives the same count and, notably, the *same handle values* in the messages
+(`0xd700000000d7`, `0xdf00000000df`) - which is explained by both runs creating the same objects in the same order, not by
+anything shared between the drivers. So this is not a RADV quirk and not a driver bug: with the submission demonstrably
+carrying the wait (counted), a fresh semaphore per present (measured), and a stage mask covering all commands, the two
+remaining explanations stay the ones recorded - the layer's view of semaphores on a device created for external
+semaphore/memory, or its conservative reporting of the presentation engine's release of the image.
+
+**The texture mirror uploads once, and the default configuration now depends on it.** `VulkanTextureRegistry` says so in
+its own comment and offers `invalidate(int)`, described as "drops one mirror so the next use re-uploads it; used when a
+texture's contents are known to have changed". Nothing calls it for animated textures, and Minecraft animates water, lava,
+fire and every other animated sprite by re-uploading through
+`TextureUtil.func_110989_a(int glTextureId, BufferedImage image, boolean blur, boolean clamp)` - a method that carries the
+GL texture id, which is exactly what an invalidation hook needs.
+
+That is a real gap in what is now the shipped default: any animated texture drawn through the immediate path would show
+its first frame forever. It is recorded as P1 with the hook point identified rather than fixed in this round, because
+registering a new mixin needs the config path this project uses confirmed first (the plugin loads
+`/mixins.celeritas.json`, whose `client` array is empty, so the core mixins are applied by some other mechanism that has
+to be read before adding one more).
