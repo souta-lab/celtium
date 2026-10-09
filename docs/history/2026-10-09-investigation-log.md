@@ -8183,3 +8183,35 @@ sites (the same hook pattern that already mirrors matrices and blend) or the tex
 So the bridge decomposes the way the framebuffer work did: eleven textures is the resource half, and the write stream is the
 interception half - and the second is where the work is. The refresh path already exists and already works (4,523 times in this
 run without a descriptor rebuild, `descriptorSets=1`), so what is missing is not the mechanism but the ownership.
+
+---
+
+## Correction: the interception half of the bridge already exists
+
+Last round sized the bridge as "eleven textures is the resource half and the write stream is the interception half - and the
+second is where the work is". Reading the hook that produces those four and a half thousand refreshes corrects that:
+
+```java
+@Inject(method = "func_110989_a", at = @At("HEAD"), require = 0)
+private static void celtium$invalidateUploadedTexture(int glTextureId, BufferedImage image, ...) {
+    if (celtium$seen.add(glTextureId)) { celtium$firstUploads++; }
+    else { ... "texture re-upload (animated)" ... }
+    TerrainGpuBackend backend = TerrainGpuBackends.current();
+    if (backend != null) { backend.invalidateTexture(glTextureId); }
+}
+```
+
+**Every `TextureUtil` upload already reaches the renderer**, and the hook already distinguishes a first upload (registration)
+from a repeat (the animation), which is exactly the distinction ownership needs. There is a second hook on the same class in
+`features/mipmaps`, and the atlas's own animation path is hooked through `TextureAtlasMixin`. So the interruption of the GL write
+stream is not future work: it is in place, it is what makes the mirrors correct today, and it is why `inPlaceRefreshes` reads four
+and a half thousand rather than zero.
+
+That changes what remains for the bridge, and the corrected statement is smaller and more precise than the one it replaces:
+**eleven resources, an existing and working interception of their writes, and a working refresh path that keeps descriptor sets
+stable** (`descriptorSets=1` across 4,523 refreshes). What is actually missing is the **ownership decision** - whether the Vulkan
+image becomes the source of truth for those eleven, and if so which of the remaining GL-facing call sites have to change with it -
+rather than any new mechanism.
+
+Recorded as the second correction of framing in two rounds, and the same class as the first: the previous round described where
+the work *sounded* like it was, and the next round read the code.

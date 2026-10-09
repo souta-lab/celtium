@@ -124,9 +124,12 @@ That timeout is the bridge being absent by construction, which is why it is last
 the diagnostic sampler is behind a flag and off by default, and what remains is **texture and bridge queries** - roles two and
 five, which are last by design because they cannot go before the game's textures are Vulkan-owned. **Next: the bridge itself**, and it is now **sized**: the renderer
 mirrors **eleven** distinct GL textures across a run - the atlas, the lightmap, the item and entity sheets, the GUI sheets - with
-**4,523 in-place refreshes** of them. So the resource half is bounded (eleven images) and the real work is the **write stream**:
-the game writes into those textures with GL thousands of times a run, and ownership has to intercept those writes at their call
-sites, the same way the matrix and blend mirrors already do. The refresh mechanism exists and works (`descriptorSets=1`).
+**4,523 in-place refreshes** of them. **And the interception already exists**: `TextureUtil`'s upload
+(`func_110989_a`) is hooked at HEAD, it distinguishes a first upload from an animation repeat, and it calls
+`backend.invalidateTexture(id)` every time - plus a mipmap-side hook and the atlas animation through `TextureAtlasMixin`. So what
+remains for the bridge is not a mechanism but the **ownership decision**: whether the Vulkan image becomes the source of truth
+for those eleven textures, and which GL-facing call sites change with it. The refresh path keeps descriptor sets stable across
+4,523 refreshes (`descriptorSets=1`).
 
 **The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
 drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and
