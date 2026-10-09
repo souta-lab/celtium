@@ -359,6 +359,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final float[] currentGroupModelView = new float[16];
     private boolean currentGroupUsed;
     private int immediateDiagnostics;
+    private VulkanDynamicMesh isolationMesh;
+    private int immediateIsolationDraws;
     /**
      * Groups whose draws are already recorded but whose command buffer may still be in flight.
      * <p>
@@ -1263,6 +1265,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         if (this.uiTestEnabled && pass.isSorted()) {
             drawUiTestQuad(primitiveType);
+            // The isolation test runs with the UI quad so the frame carries both a known-good draw and the pipeline
+            // under test, which is what makes the pixel result conclusive.
+            drawImmediateIsolationQuad();
         }
 
         vkCmdEndRenderPass(this.commandBuffer);
@@ -1715,6 +1720,57 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * fix is a frame the renderer owns outright (stage 7 of the docs/plan.md stages). It is documented rather than
      * hidden.
      */
+    /**
+     * Draws one synthetic {@code POSITION_COLOR} group with known NDC vertices through the immediate pipeline.
+     * <p>
+     * This is the isolation test the group-bounds measurement called for: the fixture's real batch is captured,
+     * projects on-screen and is still invisible, and disabling the depth test changed nothing. Drawing a quad whose
+     * vertices are already in normalised device coordinates, next to the UI test quad that is known to appear,
+     * separates the two remaining possibilities with pixels: if this appears, the immediate pipeline rasterises and
+     * the fault lies in the batch geometry or its transform; if it does not, the pipeline, its vertex layout or its
+     * buffer binding is at fault. The quad is green so it cannot be confused with the red test batch or the textured
+     * UI quad.
+     */
+    private void drawImmediateIsolationQuad() {
+        VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        if (terrain == null) {
+            return;
+        }
+        if (this.immediatePipeline == null) {
+            this.immediatePipeline = VulkanImmediatePipeline.create(this.context, terrain.renderPass());
+        }
+        if (this.isolationMesh == null) {
+            this.isolationMesh = new VulkanDynamicMesh(this.context);
+            java.nio.ByteBuffer vertices = MemoryUtil.memAlloc(4 * VulkanImmediatePipeline.VERTEX_BYTES);
+            try {
+                float[][] positions = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.5f, 0.5f}, {-0.5f, 0.5f}};
+                for (float[] position : positions) {
+                    vertices.putFloat(position[0]).putFloat(position[1]).putFloat(0.0f);
+                    // R=0, G=255, B=0, A=255 in the R8G8B8A8_UNORM layout the pipeline declares.
+                    vertices.putInt(0xFF00FF00);
+                }
+                vertices.flip();
+                int[] indices = VulkanImmediateDrawer.expandIndices(7, 4);
+                this.isolationMesh.copyVertices(MemoryUtil.memAddress(vertices), VulkanImmediatePipeline.VERTEX_BYTES,
+                        4, indices);
+            } finally {
+                MemoryUtil.memFree(vertices);
+            }
+        }
+        ByteBuffer push = MemoryUtil.memAlloc(128);
+        try {
+            // Identity matrices: with z = 0 the vertex is already inside Vulkan's 0..1 depth range, so no clip-depth
+            // remap is wanted here.
+            for (int i = 0; i < 16; i++) {
+                push.putFloat(i * 4, (i % 5 == 0) ? 1.0f : 0.0f);
+            }
+            this.immediatePipeline.draw(this.commandBuffer, this.isolationMesh, push);
+            this.immediateIsolationDraws++;
+        } finally {
+            MemoryUtil.memFree(push);
+        }
+    }
+
     private void drawPendingImmediate() {
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) {

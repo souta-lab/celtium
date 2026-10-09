@@ -81,6 +81,20 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **The immediate pipeline rasterises and a real mod batch is now visible.** The isolation test draws a synthetic
+  `POSITION_COLOR` quad whose vertices are already in NDC (green, so it cannot be confused with anything else) through
+  the immediate pipeline, next to the UI test quad that is known to appear. Measured: **230400 green pixels**, which is
+  exactly the 480x480 area of a quad spanning NDC -0.5..0.5 at the run's resolution, so the pipeline, its vertex layout
+  and its buffer binding are all correct - and **25344 red pixels** from the fixture's own `RenderWorldLastEvent` batch,
+  which is the "(b) drawn by Vulkan" half of the stage-5 evidence: the batch is accepted (GL's upload and draw are
+  cancelled) and the pixels are there. Run PASSED, `nativeTerrainVerified True`.
+  One variable is still open and is stated rather than hidden: the depth test in the immediate pipeline is currently
+  **disabled** (it was switched off as an experiment in the previous round, and this run is the first with both the
+  isolation test and the real batch actually drawing). Re-enabling it and re-measuring is the first task of the next
+  round, because the earlier "zero pixels with depth disabled" observation came from a run whose isolation draw never
+  executed at all - the `-Dceltium.vulkan.uiTest` property was missing, so the branch never ran and the conclusion
+  drawn from it was wrong. That mistake is recorded here on purpose.
+
 - **The test quad is captured, projects on-screen, and is still invisible - so the next test isolates the pipeline.**
   The group-bounds diagnostic identified the fixture's own geometry by its packed colour and transformed every vertex:
   `group 4: vertices=4 indices=6 colour0=0xc84040ff proj=[m00=0.80535626 m11=1.4317445] ndc x[-0.85..0.85] y[0.57..0.57]
