@@ -610,6 +610,30 @@ Vulkan資源の生成は種別数に比例していない。ただしこれら�
 `handoff detail` 行。色blit-in・深度変換・色blit-out の3〜4回の全画面操作がある）、(2) 地形のセクション描画の
 提出回数とバッチング、(3) frame composite と present の経路。
 
+## 7.12 性能ギャップの所在を同一jarのA/Bで確定（このターン）
+
+§7.11 の「通常場面で2.6倍」を、**同じjarの `-Dceltium.vulkan.referenceRender=true`** と比べることで
+経路そのものに帰属させた（fixture・mod・world・camera・GUI がすべて同一で、切り替わるのは地形の描画経路だけ）。
+
+| run | worldFrames | **p50** | p95 | p99 |
+|---|---|---|---|---|
+| celtium native（Vulkan地形） | 240〜255 | **41.4〜43.3 ms** | 47.3 | 48.5 |
+| **celtium + referenceRender=true**（同一jar・GL経路） | **580** | **16.15 ms** | 17.2 | 17.3 |
+| celeritas 参照jar | 580 | 16.2 ms | — | — |
+
+- `referenceRender` の run は `draws=0 sections=0 | reference render` を報告しており、native地形パスが
+  実際に何もしない状態での比較になっている（**A/Bとして成立**）。
+- さらに、**native地形パスの計時は1フレーム合計で約2.2 ms**（`translucent 62 sections 596.9 µs` ＋
+  `solid 62 sections 284.2 µs` ＋ `cutout_mipped 62 sections 1.317 ms`）。
+- **したがって 43 ms のうち約25 ms は、記録されたパス計時の外側**にある。候補は (a) ブリッジの全画面操作
+  （色blit-in・深度変換・色blit-out）と待ち合わせ、(b) ハンドオフの同期、(c) フレーム合成と present。
+- 計器の現状: `handoff detail` は**CPU API時間**のみ（≈128 µs/handoff）で、この25 msを説明しない。
+  **ブリッジのGPU時間を計時する計器が無い**ことが次の不足。
+
+**次の一手**: (1) ブリッジの色blit-in／深度変換／色blit-out にそれぞれ timestamp を打ち、1フレームあたりの
+GPU時間と待ち時間を出す（既存の timestamp 機構が使える）、(2) `referencRender` と native の中間
+（例: 深度変換だけ止める）で、どの段が25 msを占めるかを切り分ける。
+
 ## 8. 第3回監査の最終追補
 
 32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
