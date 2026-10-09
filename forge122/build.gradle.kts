@@ -123,6 +123,10 @@ dependencies {
     modEmbedDependencies("org.joml:joml:1.10.5")
     implementation("org.joml:joml:1.10.5")
     implementation("zone.rong:mixinbooter:10.5")
+    // LWJGL is a direct dependency now: the immediate path reads a ByteBuffer address with MemoryUtil instead of
+    // calling it reflectively, which matches the pinned runtime (LWJGL 3.4.1) and removes the last reflective call
+    // from the per-batch path (docs/plan.md section 0).
+    compileOnly("org.lwjgl:lwjgl:3.4.1")
     compileOnly("com.gtnewhorizons.retrofuturabootstrap:RetroFuturaBootstrap:1.0.11") {
         exclude(group = "org.apache.logging.log4j")
     }

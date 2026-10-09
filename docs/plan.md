@@ -34,6 +34,35 @@ Upstream `main` moves; nothing from a newer Cleanroom foundation is applied to t
 built and driven through the acceptance checks below. "Newer" is not a reason, and **stopping Java 8 output is not by
 itself treated as a speed-up** - only a measurement makes that claim.
 
+### Using the target's modern APIs
+
+The policy is to use what the pinned Cleanroom actually provides instead of carrying old-Forge workarounds, and to
+check that against the target's real artifacts rather than against upstream `main` or an in-development component. What
+that means concretely, and what it does **not** mean:
+
+- **Verified first, adopted second.** An API is adopted when it exists in the pinned environment (Cleanroom
+  0.6.13-alpha, JDK 25, LWJGL 3.4.1) and is exercised by a hardware run. Features that exist only in upstream `main` or
+  in a work-in-progress component such as Kirino are **not** a foundation for Celtium's completion: they are evaluated
+  for stability, availability in the target and necessity, and the migration never depends on unfinished external work.
+- **Public over internal.** Where the target offers a public entry point it is used; if something internal has to be
+  touched, the plan records which, why, and the version it was pinned to.
+- **No inertia.** Compatibility code kept for runtimes we no longer support is removed (stage S2), and reflective
+  calls are replaced where the target's own mechanism is available.
+
+| Foundation / API | Target version | Replaces | Expected effect | How it is verified |
+|---|---|---|---|---|
+| Cleanroom's Mixin setup and its `Accessor` mechanism (`@Mixin`/`@Accessor`, refmap-remapped names) | Cleanroom 0.6.13-alpha, Mixed mapping of 1.12.2 | Per-batch reflection (`getDeclaredField`/`setAccessible`, `Class.forName`/`getMethod`/`invoke`) in the draw entry | Maintainability: no reflective lookup at all in the hot path, names checked at build time | Built and run: PASSED, `nativeTerrainVerified True`, VUID 0, batches still accepted (`immediateTaken=2772`). Measured cost unchanged (28506 ns vs 27439 ns per batch), which is recorded as the maintenance win it is - not as a speed-up |
+| LWJGL 3.4.1 as a **direct** build dependency (`MemoryUtil`, the Vulkan bindings) | LWJGL 3.4.1 (pinned) | Reflective `MemoryUtil.memAddress` lookup and an indirect dependency | Maintainability and correctness: the address is read through the documented API | Compiled against the pinned LWJGL; the run's counters confirm the same batches are submitted |
+| Minecraft's own public API where it exists (`BufferBuilder.getVertexCount()`) | 1.12.2 as mapped | Reflective field read of the vertex count | Removes a mistake waiting to happen: a public accessor already existed | Same run: vertex counts unchanged, `immediateTaken`/`immediateFlushes` consistent |
+| The renderer's own lifecycle and the mod's `modEmbed` wiring | current build-1122 setup | - | - | Stage S3 evaluates moving the build to Cleanroom-oriented tooling in steps that each leave a working build |
+
+Deliberately **not** adopted, with reasons recorded: the GLU projection helper (the class is not on the runtime
+classpath at all - the client logs `@Mixin target org/lwjgl/util/glu/Project was not found`), and RetroFuturaBootstrap's
+transformer internals (reaching into another component's `SharedConfig` was removed in S2; it was never a public API).
+Java language level: the build runs on JDK 25, but the mod's output level stays where the runtime target requires it,
+and - as the standing rule says - **stopping Java 8 output is not treated as a speed-up**; only a measurement makes
+that claim.
+
 ### Migration stages for the specialization
 
 | Stage | Work | Acceptance |
