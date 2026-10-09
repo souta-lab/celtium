@@ -87,7 +87,18 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **BLOCK family is accepted, drawn and validation-clean.** Both defects the validation layer reported are fixed:
+- **Every vertex layout vanilla's immediate path actually uses now has a working Vulkan pipeline.** Added the other
+  two 28-byte families: `ITEM` (position, colour, texture, normal, padding - the normal is part of the stride but not
+  of the vertex input description, because the shader does not read it) and the particle layout (the same fields as
+  `BLOCK` in a different order, hence its own vertex shader). The Mixin identifies both structurally by element list,
+  and the fixture now draws all three 28-byte layouts so acceptance is measured instead of assumed:
+  `immediateOffered=10010`, **`immediateTaken=2844`** (from 1719 with only the block quad), `immediateFlushes=2840`,
+  `immediateRefusal=none`, **VUID 0**, PASSED, `nativeTerrainVerified True`.
+  Coverage today: `POSITION_COLOR` (16), `POSITION_TEX_COLOR` (24), `BLOCK`, `ITEM` and the particle format (28) -
+  which is what vanilla's `Tessellator` path uses for entities, items, the hand, particles, the sky and the GUI.
+  Still not visible in the frame for the architectural reason recorded earlier, and still not claimed as correct.
+
+- **Original note on the BLOCK family (the other layouts followed).** Both defects the validation layer reported are fixed:
   the lightmap attribute is declared `uvec2` in the shaders to match `VK_FORMAT_R16G16_UINT`
   (`VUID-VkGraphicsPipelineCreateInfo-Input-08733`), and the integer varying is `flat` on both sides
   (`VUID-RuntimeSpirv-OpEntryPoint-07754`). Measured with the fixture drawing a `BLOCK` batch each frame:

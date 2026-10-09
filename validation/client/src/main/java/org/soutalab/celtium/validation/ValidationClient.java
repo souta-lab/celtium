@@ -135,7 +135,7 @@ public final class ValidationClient {
      * refused". Drawing one here makes that distinguishable.
      */
     @SubscribeEvent
-    public void drawBlockQuad(RenderWorldLastEvent event) {
+    public void drawFormatQuads(RenderWorldLastEvent event) {
         if (!enabled || !drawBlockQuad) return;
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.player == null || mc.world == null) return;
@@ -157,6 +157,20 @@ public final class ValidationClient {
         builder.pos(x + 1.0, y + 3.0, z - 1.0).color(64, 64, 255, 255).tex(u, v).lightmap(240, 240).endVertex();
         builder.pos(x + 1.0, y + 3.0, z + 1.0).color(64, 64, 255, 255).tex(u, v).lightmap(240, 240).endVertex();
         builder.pos(x - 1.0, y + 3.0, z + 1.0).color(64, 64, 255, 255).tex(u, v).lightmap(240, 240).endVertex();
+        tessellator.draw();
+        // The ITEM layout (position, colour, texture, normal, padding): what item and entity rendering uses.
+        builder.begin(org.lwjgl.opengl.GL11.GL_QUADS, DefaultVertexFormats.ITEM);
+        builder.pos(x - 1.0, y + 4.0, z - 1.0).color(64, 255, 64, 255).tex(u, v).normal(0.0f, 1.0f, 0.0f).endVertex();
+        builder.pos(x + 1.0, y + 4.0, z - 1.0).color(64, 255, 64, 255).tex(u, v).normal(0.0f, 1.0f, 0.0f).endVertex();
+        builder.pos(x + 1.0, y + 4.0, z + 1.0).color(64, 255, 64, 255).tex(u, v).normal(0.0f, 1.0f, 0.0f).endVertex();
+        builder.pos(x - 1.0, y + 4.0, z + 1.0).color(64, 255, 64, 255).tex(u, v).normal(0.0f, 1.0f, 0.0f).endVertex();
+        tessellator.draw();
+        // The particle layout: position, texture, colour, lightmap - the same fields as BLOCK in another order.
+        builder.begin(org.lwjgl.opengl.GL11.GL_QUADS, DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP);
+        builder.pos(x - 1.0, y + 5.0, z - 1.0).tex(u, v).color(255, 255, 64, 255).lightmap(240, 240).endVertex();
+        builder.pos(x + 1.0, y + 5.0, z - 1.0).tex(u, v).color(255, 255, 64, 255).lightmap(240, 240).endVertex();
+        builder.pos(x + 1.0, y + 5.0, z + 1.0).tex(u, v).color(255, 255, 64, 255).lightmap(240, 240).endVertex();
+        builder.pos(x - 1.0, y + 5.0, z + 1.0).tex(u, v).color(255, 255, 64, 255).lightmap(240, 240).endVertex();
         tessellator.draw();
         GlStateManager.depthMask(true);
         GlStateManager.popMatrix();

@@ -86,6 +86,12 @@ public abstract class WorldVertexBufferUploaderMixin {
             id = 1;
         } else if (celtium$sameElements(vertexFormat, DefaultVertexFormats.POSITION_TEX_COLOR)) {
             id = 2;
+        } else if (celtium$sameElements(vertexFormat, DefaultVertexFormats.ITEM)) {
+            // Position, colour, texture, normal and a padding byte: the layout item and entity rendering uses.
+            id = 4;
+        } else if (celtium$sameElements(vertexFormat, DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP)) {
+            // The particle layout: the same fields as BLOCK in a different order, hence its own vertex layout.
+            id = 5;
         } else if (celtium$sameElements(vertexFormat, DefaultVertexFormats.BLOCK)) {
             // The dominant immediate layout in vanilla: blocks in the hand, items, and anything drawn through the
             // block atlas. Identifying it by its element list is what keeps this structural rather than a guess.

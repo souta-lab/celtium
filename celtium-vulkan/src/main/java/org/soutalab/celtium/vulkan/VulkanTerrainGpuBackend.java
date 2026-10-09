@@ -387,6 +387,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateBlockPipeline>();
+    private final java.util.Map<Long, VulkanImmediateParticlePipeline> particlePipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateParticlePipeline>();
+    private final java.util.Map<Long, VulkanImmediateItemPipeline> itemPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateItemPipeline>();
     private int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
     private int immediateIsolationDraws;
@@ -582,8 +586,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         int expectedStride = formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
                 : formatId == 3 ? VulkanImmediateBlockPipeline.VERTEX_BYTES
+                : formatId == 4 ? VulkanImmediateItemPipeline.VERTEX_BYTES
+                : formatId == 5 ? VulkanImmediateParticlePipeline.VERTEX_BYTES
                 : VulkanImmediatePipeline.VERTEX_BYTES;
-        if (formatId != 1 && formatId != 2 && formatId != 3) {
+        if (formatId < 1 || formatId > 5) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices.
             this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ")";
@@ -592,6 +598,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (vertexStride != expectedStride) {
             this.immediateLastRefusal = "layout id " + formatId + " has stride " + vertexStride + ", expected "
                     + expectedStride;
+            return false;
+        }
+        if ((formatId == 3 || formatId == 5) && this.lightmapTexture == null) {
+            this.immediateLastRefusal = "lightmapped batch with no lightmap texture mirrored";
             return false;
         }
         if (formatId >= 2 && this.immediateState.boundTextureName() == 0) {
@@ -1953,7 +1963,38 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     pushMatrixInto((float[]) group[1], push, 0);
                     pushMatrixInto((float[]) group[2], push, 64);
                     push.putFloat(128, Float.intBitsToFloat(state[6]));
-                    if (formatId == 3) {
+                    if (formatId == 5) {
+                        VulkanImmediateParticlePipeline particle =
+                                particlePipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
+                        if (particle == null) {
+                            particle = VulkanImmediateParticlePipeline.create(this.context, terrain.renderPass(),
+                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                            particlePipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), particle);
+                        }
+                        VulkanGlTexture texture = this.textureRegistry.get(((Integer) group[4]).intValue());
+                        long descriptorSet = texture == null ? 0L
+                                : particle.descriptorSetFor(texture, this.lightmapTexture);
+                        if (descriptorSet == 0L) {
+                            this.immediateTextureRefusals++;
+                            continue;
+                        }
+                        particle.draw(this.commandBuffer, mesh, push, descriptorSet);
+                    } else if (formatId == 4) {
+                        VulkanImmediateItemPipeline item =
+                                itemPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
+                        if (item == null) {
+                            item = VulkanImmediateItemPipeline.create(this.context, terrain.renderPass(),
+                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                            itemPipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), item);
+                        }
+                        VulkanGlTexture texture = this.textureRegistry.get(((Integer) group[4]).intValue());
+                        long descriptorSet = texture == null ? 0L : item.descriptorSetFor(texture);
+                        if (descriptorSet == 0L) {
+                            this.immediateTextureRefusals++;
+                            continue;
+                        }
+                        item.draw(this.commandBuffer, mesh, push, descriptorSet);
+                    } else if (formatId == 3) {
                         VulkanImmediateBlockPipeline block =
                                 blockPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
                         if (block == null) {

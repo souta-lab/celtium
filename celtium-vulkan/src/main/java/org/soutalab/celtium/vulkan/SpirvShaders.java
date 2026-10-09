@@ -49,6 +49,12 @@ public final class SpirvShaders {
     /** Vertex module for the BLOCK-family immediate geometry (position, colour, texture, lightmap). */
     public static final String IMMEDIATE_BLOCK_VERTEX = "immediate_block.vert";
 
+    /** Vertex module for the particle layout (position, texture, colour, lightmap - a different order from BLOCK). */
+    public static final String IMMEDIATE_PARTICLE_VERTEX = "immediate_particle.vert";
+
+    /** Fragment module for the particle layout, sampling both the texture and the lightmap. */
+    public static final String IMMEDIATE_PARTICLE_FRAGMENT = "immediate_particle.frag";
+
     /** Fragment module for the BLOCK-family immediate geometry, sampling both the texture and the lightmap. */
     public static final String IMMEDIATE_BLOCK_FRAGMENT = "immediate_block.frag";
 
