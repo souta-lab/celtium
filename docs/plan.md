@@ -81,7 +81,22 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Alpha test: the call site is identified, and the first attempt is recorded as failed.** Minecraft's alpha test
+- **Alpha test: implemented, measured, reverted because it introduced validation messages.** The corrected order
+  worked this time - the boundary method was added first, the shared artifact rebuilt, and the method **verified present
+  in the jar** (`setAlphaFunc` found in `TerrainGpuBackend.class`) before the Mixin was added. The reference value
+  travelled as a fourth push-constant slot at offset 128 (range grown to 132) and both fragment shaders gained the
+  `discard`, with the value captured per group like the matrices and the other state.
+  Measured with the path enabled: all 500 accepted batches drawn, run PASSED, `nativeTerrainVerified True`, but **4
+  validation messages appeared** and the image difference was **13.79 / 34.5% / 27.2%**, i.e. no better than the 11.87
+  measured without it. Leaving validation messages behind is against the project's own rule, so the change is
+  **reverted** and the tree is green again.
+  What the next attempt needs: read those four messages first (they were not captured before reverting - the run log is
+  gone with the configuration) and fix the cause, which is most likely the push-constant block declaration: the
+  fragment shader declares a separate block starting at offset 128 while the vertex shader declares 128 bytes, and the
+  two must describe one contiguous range consistently. The alpha test is worth finishing because cutout content is a
+  real part of the difference, but not at the price of a validation error.
+
+- **Original note on the alpha test call site (superseded by the attempt above).** Minecraft's alpha test
   is `GlStateManager.func_179092_a(int, float)`, which ends in `GL11.glAlphaFunc(func, reference)`; the state model
   already records the function, but not the reference value, and neither immediate pipeline implements the test, so
   cutout content (leaves, plants, particles with sharp edges) draws as opaque quads - one of the listed reasons the
