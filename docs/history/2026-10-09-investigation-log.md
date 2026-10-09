@@ -3143,3 +3143,22 @@ last round was not a corner case in this scene; it was the normal shape of a mer
 The next steps are therefore two, in this order: make the fixture's baseline show both quads (the blue one's position is the
 first thing to check, since culling and depth are already off for the test), and then re-measure the on/off pair to see
 whether the immediate path reproduces that baseline.
+
+---
+
+## The draw test's first result was scene noise, and it is withdrawn
+
+Last round's measurement - 81 saturated-red pixels with GL drawing and none with the immediate path - was read as geometry
+that the immediate path loses. Two things say it was not: the red pixels sit scattered across a 765 by 226 region rather
+than forming a quad, and a repeat run with the fixture unchanged moved the count from 81 to 107. Both are the signature of
+scene content passing the threshold, not of a quad.
+
+So the conclusion is **withdrawn**: nothing in that comparison has been shown to be the fixture's own geometry, and the
+statement that the immediate path lost it is not supported. The counters from that round are unaffected and remain useful -
+`immediateGroupsClosed=1137` with `immediateMaxGroupVertices=880` is a fact about the real scene, not about the fixture.
+
+The fixture itself has since been rebuilt twice for reasons that were real: its quads were first placed one above the other
+and then found to be edge-on, because they were built in a world-Y plane while the capture camera looks down at the world,
+and they now use a camera-facing basis. The measurement that follows enlarges them to six blocks across so that "not visible"
+cannot be a question of thresholds, and checks whether the mask forms a dense block rather than scattered pixels - the check
+that would have caught this last round.

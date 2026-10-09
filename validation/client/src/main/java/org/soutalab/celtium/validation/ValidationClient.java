@@ -89,7 +89,15 @@ public final class ValidationClient {
         }
         net.minecraft.util.math.Vec3d look = client.player.getLookVec();
         net.minecraft.util.math.Vec3d base = client.player.getPositionEyes(1.0F).add(look.scale(1.5D));
+        // Large enough that missing them cannot be a question of thresholds or edges: the red quad covers a
+        // large block of the frame when the fixture works at all.
+
         net.minecraft.util.math.Vec3d right = new net.minecraft.util.math.Vec3d(-look.z, 0.0D, look.x).normalize();
+        // The quads are built in the plane perpendicular to the view direction. The first version used world Y as the
+        // second axis, which is edge-on whenever the capture camera looks downwards - the validation fixture flies over
+        // the world looking at it, so the quad came out as an eleven-pixel band and the second quad was invisible
+        // altogether. A camera-facing basis makes the fixture's own geometry independent of where the player is looking.
+        net.minecraft.util.math.Vec3d up = look.crossProduct(right).normalize();
         net.minecraft.client.renderer.Tessellator tessellator = net.minecraft.client.renderer.Tessellator.getInstance();
         net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
         // Culling and depth off for the test, because its subject is whether both quads of one merged group reach the
@@ -98,8 +106,8 @@ public final class ValidationClient {
         org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
         org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
         buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
-        celtium$quad(buffer, base, right, 1.0F, 0.0F, 0.0F);
-        celtium$quad(buffer, base.add(0.0D, -0.9D, 0.0D), right, 0.0F, 0.0F, 1.0F);
+        celtium$quad(buffer, base, right, up, 1.0F, 0.0F, 0.0F);
+        celtium$quad(buffer, base.add(right.x * 1.6D, 0.0D, right.z * 1.6D), right, up, 0.0F, 0.0F, 1.0F);
         tessellator.draw();
         org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
         org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
@@ -108,11 +116,14 @@ public final class ValidationClient {
     }
 
     private static void celtium$quad(net.minecraft.client.renderer.BufferBuilder buffer,
-            net.minecraft.util.math.Vec3d centre, net.minecraft.util.math.Vec3d right, float red, float green, float blue) {
-        double half = 0.6D;
+            net.minecraft.util.math.Vec3d centre, net.minecraft.util.math.Vec3d right,
+            net.minecraft.util.math.Vec3d up, float red, float green, float blue) {
+        double half = 3.0D;
         double[][] corners = {{-half, -half}, {half, -half}, {half, half}, {-half, half}};
         for (double[] corner : corners) {
-            buffer.pos(centre.x + right.x * corner[0], centre.y + corner[1], centre.z + right.z * corner[0])
+            buffer.pos(centre.x + right.x * corner[0] + up.x * corner[1],
+                            centre.y + right.y * corner[0] + up.y * corner[1],
+                            centre.z + right.z * corner[0] + up.z * corner[1])
                     .color(red, green, blue, 1.0F).endVertex();
         }
     }
