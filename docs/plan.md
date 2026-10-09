@@ -241,6 +241,23 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 (2) `presentReadback` の平均値がマーカー色と一致することを記録して「提示画像にフレームが入った」証拠を取る、
 (3) window/compositor capture の可否を調べる（取れない場合は不足条件を明記）。
 
+## 7.7 完成条件(b)（GL contextなし）の作業内訳 — フレーム経路のGL依存の実測
+
+`VulkanFrameTarget` と `VulkanTerrainGpuBackend` のフレーム経路に出てくる GL 呼び出しを数えた（grep による
+出典付きの棚卸し。**未実装の主張ではなく、いま残っている依存の一覧**）。
+
+| 分類 | 実測された呼び出し（回数） | 除去の方針 |
+|---|---|---|
+| **相互運用グルー**（bridge 本体） | `glBindFramebuffer`(5) / `glNamedFramebufferTexture`(3) / `glBlitNamedFramebuffer`(2, 色と深度) / `glWaitSemaphoreEXT` / `glDeleteSemaphoresEXT`(3) / `glFlush`(4) / `glGetNamedFramebufferAttachmentParameteri`(6) / `glGetNamedRenderbufferParameteri`(5) | Vulkan-owned の color/depth に描き、**同一デバイスの present**へ直接出す（`presentFromComposite` の経路が既に存在し、提示画像の中身はマーカー平均で確認済み）。GL の blit/semaphore は移行用 |
+| **深度変換プログラム** | `glGetUniformLocation`(3) / `glDeleteShader`(3) / `glGenerateMipmap` 系 / `glTextureParameteri`(9) | D32→D24 変換自体が不要になる（GL へ返さないため） |
+| **状態ミラー** | backend: `glGetInteger`(15) / `glGetFloatv`(8, 行列) / `glIsEnabled`(5) / `glGetIntegerv`(3) / `glGetTexParameteri`(3) / `glGetTexParameterf`(2) / `glBindTexture`(2) / `glActiveTexture`(2)。frame target: `glGetInteger`(15) | Minecraft 側から state を供給する（goal の「camera/state は Minecraft 側から供給」）。行列は `captureGlMatrices()` の置き換え |
+| **テクスチャミラー** | `glGetTexLevelParameteri`(5) / `glGetTextureLevelParameteri`(4) | MC の sprite/frame データから供給し、readback を不要にする（atlas stitch / dynamic texture / sprite mip） |
+| **計器・検証** | `glCheck`(10) / `glGetError` 系 | 計器なので最終形には不要（開発時のみ） |
+
+- 状態クエリの総数: `VulkanFrameTarget` 24箇所 / `VulkanTerrainGpuBackend` 26箇所。**どれも「GL から読む」もので、
+  描画そのものは既に Vulkan 側にある**。したがって (b) の作業は「読む元を Minecraft のデータに替える」ことに集約される。
+- 既に Vulkan 側にあるもの: 地形パイプライン、immediate pipeline、descriptor/allocator、swapchain/present。
+
 ## 8. 第3回監査の最終追補
 
 32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
