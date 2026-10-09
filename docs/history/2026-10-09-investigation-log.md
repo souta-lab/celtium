@@ -1717,3 +1717,45 @@ That leaves the frame path exactly where it should be: it keeps the correct shap
 image waits for the acquire), the presentation waits the render-finished signal, and one validation message per present
 remains that this code cannot remove by changing what it passes. The switch stays in the tree as the evidence for that
 statement, off by default, and the frame present stays off by default too - one message is still a message.
+
+---
+
+## The external audit was right: waitSemaphoreCount was never set, and that was the whole explanation
+
+The audit pointed at primary generated code rather than at behaviour, and checking it here from the LWJGL 3.4.1 bytecode
+confirms it exactly:
+
+| Setter | What it does |
+|---|---|
+| `VkSubmitInfo.npWaitSemaphores(long, LongBuffer)` | `memPutAddress` - **the pointer only, no count** |
+| `VkSubmitInfo.npSignalSemaphores(long, LongBuffer)` | pointer **and** `nsignalSemaphoreCount(remaining())` |
+| `VkSubmitInfo.npCommandBuffers(long, PointerBuffer)` | pointer **and** `ncommandBufferCount(remaining())` |
+| `VkPresentInfoKHR.npWaitSemaphores(long, LongBuffer)` | pointer **and** `nwaitSemaphoreCount(remaining())` |
+
+So `VkSubmitInfo` is the one that needs an explicit count, and both submission sites in this project built theirs with
+`calloc` and never set one: `VulkanTerrainGpuBackend.submitCommands` and `VulkanContext.submitWithSemaphores`. Every
+submission therefore ran with `waitSemaphoreCount = 0` - **nothing was ever waited on**: not the GL-to-Vulkan bridge
+semaphores, not the window-system acquire semaphore. The presents were fine, because that struct's setter does set its
+count.
+
+With `submit.waitSemaphoreCount(...)` set before `pWaitSemaphores` in both places, the frame present measures:
+
+```
+status PASSED | nativeTerrainVerified True | passes 2148
+presented the frame from the composite: present image: blitted 1280x720 onto image 1 (0)
+PRESENT + WAIT FIX validation messages: 0
+```
+
+**Zero** validation messages, against 36 before. This is the correction the audit asked for, and it retires several of this
+log's own conclusions:
+
+- "the submission demonstrably carries the wait (counted)" - the counter counted the *argument*, not the struct; the struct
+  said zero. A handle log and a call counter are not evidence that a wait happened, and this log treated them as if they
+  were.
+- "the messages are not driver-specific, therefore the layer's view of external semaphores" - wrong. They were
+  driver-independent because the defect was in the code, identical on both drivers. A hypothesis that explains
+  driver-independence by blaming the layer was available and was wrong.
+- "a fresh semaphore pair per present changes nothing" - true, and consistent: no semaphore was waited on at all, fresh or
+  reused.
+- The multi-window black frame now has a second, sufficient explanation: handoffs that were never waited on. The one-window
+  limit is still a real observation, but it was not established as the cause.

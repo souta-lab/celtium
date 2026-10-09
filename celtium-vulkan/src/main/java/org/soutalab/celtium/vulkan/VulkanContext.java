@@ -331,6 +331,9 @@ public final class VulkanContext {
                 VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                         .pCommandBuffers(stack.pointers(commandBuffer));
                 if (waitSemaphore != VK_NULL_HANDLE) {
+                    // Explicit count: LWJGL's pWaitSemaphores(LongBuffer) sets only the pointer, not the count, so
+                    // a calloc'd VkSubmitInfo waits on nothing.
+                    submit.waitSemaphoreCount(1);
                     submit.pWaitSemaphores(stack.longs(waitSemaphore));
                     // ALL_COMMANDS rather than just the transfer and colour-attachment stages: the command buffer
                     // begins with a layout transition, and a wait whose stage mask does not cover the barrier does not

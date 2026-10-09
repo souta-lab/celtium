@@ -353,6 +353,8 @@ public final class VulkanSwapchain {
                     }
                 }
                 VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
+                        // No explicit waitSemaphoreCount here: unlike VkSubmitInfo, LWJGL's
+                        // VkPresentInfoKHR.pWaitSemaphores does set the count (verified in the 3.4.1 bytecode).
                         .pWaitSemaphores(stack.longs(PROBE_OLD_SHAPE ? acquire : renderFinished))
                         .swapchainCount(1)
                         .pSwapchains(stack.longs(this.swapchain))

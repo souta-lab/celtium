@@ -2637,6 +2637,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             org.lwjgl.PointerBuffer commandBuffers = stack.mallocPointer(1);
             commandBuffers.put(0, this.commandBuffer.address());
             // LWJGL derives the semaphore counts from the buffers, so only the pointers are set here.
+            // waitSemaphoreCount must be set explicitly: LWJGL's pWaitSemaphores(LongBuffer) writes only the
+            // pointer, unlike pSignalSemaphores which also sets its count. Leaving it to calloc's zero meant this
+            // submission waited on nothing at all - which is what the validation layer was reporting all along.
+            submit.waitSemaphoreCount(waitSemaphores.remaining());
             submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
                     .pCommandBuffers(commandBuffers)
                     .pSignalSemaphores(signalSemaphores);
