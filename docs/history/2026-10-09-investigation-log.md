@@ -6565,3 +6565,26 @@ format instance, so the next step is to print the **identity** of the format obj
 The six mapping edits are reverted, the colourless pipeline, the format-6 wiring, the per-format counters and the diagnostics
 stay, and the tree is green: build successful, exit 0, validation clean, 0 messages, fixture PASSED, acceptance intact at 1617
 terrain passes and 556 cancelled draws.
+
+---
+
+## The sky mapping: stopped, with the contradiction written down
+
+One more attempt was made this round, and it is the last one for now. The shape decision was moved to the **call site** -
+where the uploader's stride and the format are both in hand, past the cache that had been suspected of answering first - and
+guarded with its own print. The print **never fired**, while the null-format dump in the same method, a few lines below it,
+keeps reporting uploads with `stride=20, formatSize=24, elementCount=4`.
+
+Those two observations cannot both be true of the same method call, and three rounds of rules and cache theories have not
+resolved it. So the experiment is reverted, the tree is green, and the contradiction is recorded as what it is - an open
+question with its two halves stated - rather than pursued further. This log has said before that a number improving is not
+evidence of correctness; the same applies to a hypothesis surviving: six mapping rules and a call-site decision were tried,
+none of them demonstrably took effect, and the honest conclusion is that **the instrument is not yet trustworthy**, not that
+the seventh rule will work.
+
+What stays: the colourless `POSITION_TEX` pipeline (stride 20, two attributes, no colour attribute), format 6 wired and
+accepted, the per-format acceptance counter that made the gap measurable in the first place, and the diagnostics.
+
+What is written down for whoever picks this up: a **call-site** decision with `stride == 20` did not fire, and a **call-site
+dump** on the same line reports `stride=20`. Establishing which of the two is describing the uploads that reach the hook
+comes before any further rule.
