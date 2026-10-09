@@ -4958,3 +4958,29 @@ the state being kept is a **valid** one, which is the distinction the previous r
 
 The code for mirroring stays, one flag away, with the two layout bugs it exposed fixed for both modes and the shader question
 recorded where the clamp is decided.
+
+---
+
+## The clamp is irrelevant and so is the LOD: it is the recreate that changes the frame
+
+Two things were done at once by accident and then separated by measurement. The mirror loop was using a shift of level 0's
+size for each level's extent instead of the size the read actually returned, which is now fixed - a latent error, not the
+cause. And then one variable was moved: GL's own levels with the clamp left at the value the reference matches.
+
+| configuration | clamp | difference from the reference |
+|---|---|---|
+| generated chain | 1.0 | 0.16-0.28% |
+| GL's own levels | 4.0 | 5.60% |
+| **GL's own levels** | **1.0** | **5.60%** |
+| GL's own levels, sizes from the read | 1.0 | **5.60%** |
+
+Sampling **the same levels** - 0 and 1 - gives 5.60% when those levels come from OpenGL and 0.16-0.28% when they are generated
+here, with validation silent in both cases. So the clamp is not the difference, and neither is the LOD the shader asks for:
+if the LOD were the problem, clamping to 1.0 would have brought the frame back. Something other than the sampled texels
+changes when mirroring is on, and the only other thing it does is **recreate the image resources when the level count
+differs** - a new image, a new view, and a descriptor that may still name the old one. That is a specific, checkable
+suspicion about ownership rather than a sampler question, and it is where this thread goes next.
+
+Mirroring is off again and the restored configuration is the one that measured **0.16%** with validation clean. That
+configuration is byte-for-byte the one verified two runs ago except for a fix inside the disabled path, so it was not
+re-measured this round - and the entry says so rather than implying a fresh run.

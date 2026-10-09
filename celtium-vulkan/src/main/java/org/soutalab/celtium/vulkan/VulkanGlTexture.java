@@ -214,11 +214,12 @@ public final class VulkanGlTexture {
             copyToImage(level.pixels, level.width, level.height, 0);
             if (MIRROR_GL_MIPS) {
                 for (int l = 1; l < Math.min(this.mipLevels, glLevels); l++) {
-                    int lw = Math.max(1, level.width >> l);
-                    int lh = Math.max(1, level.height >> l);
                     GlLevel sub = readGlLevel(glTextureId, glTextureTarget, l);
                     try {
-                        copyToImage(sub.pixels, lw, lh, l);
+                        // The level's own dimensions, not a shift of level 0's: the size a level actually has is the only
+                        // thing the copy region can be built from, and reading it is free because the read already
+                        // queried it.
+                        copyToImage(sub.pixels, sub.width, sub.height, l);
                     } finally {
                         MemoryUtil.memFree(sub.pixels);
                     }
@@ -411,11 +412,12 @@ public final class VulkanGlTexture {
                     // the clamp is not the variable that explains the difference. The value stays at the measured best and
                     // the next instrument is to log the sampler that is actually created rather than infer it from this
                     // configuration (audit S23).
-                    // Measured best, and now known to be a statement about the shader rather than about the chain:
-                    // mirroring OpenGL's own five levels is implemented, validation-clean and correct, and sampling them
-                    // measures 5.60% where this shallow clamp measures 0.21-0.28%. The chain's content is therefore not
-                    // what differs - the levels are GL's own - so the LOD this renderer's shader asks for is, and that is
-                    // the next thing to compare against Minecraft's own shader (audit S23).
+                    // Measured best. Mirroring OpenGL's own levels is implemented and validation-clean, and it measures
+                    // 5.60% **whatever this clamp is**: 5.60% with a clamp of 1.0 and 5.60% with a clamp of 4.0, against
+                    // 0.16-0.28% for the generated chain at this clamp. Clamping to the same levels therefore changes
+                    // nothing, which rules out both the clamp and the shader's LOD as the difference and points at the
+                    // recreate that mirroring performs when the level count differs - a new image and view while the
+                    // descriptor may still name the old one. That is the next thing to check (audit S23).
                     .maxLod(1.0f)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false);
