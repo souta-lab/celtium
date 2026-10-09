@@ -237,8 +237,9 @@ public final class VulkanSwapchain {
             // must not be destroyed while that present is pending, and reusing it means the next acquire also orders
             // against the previous present.
             long acquire = acquireSemaphore(stack);
-            if (acquire == VK_NULL_HANDLE) {
-                return "present probe: could not create an acquire semaphore";
+            long renderFinished = renderFinishedSemaphore(stack);
+            if (acquire == VK_NULL_HANDLE || renderFinished == VK_NULL_HANDLE) {
+                return "present probe: could not create the semaphores";
             }
             {
                 int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
@@ -261,10 +262,14 @@ public final class VulkanSwapchain {
                     vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
                     transitionToPresent(stack, commands, image);
                 } finally {
-                    this.context.endCommands(commands);
+                    // The same wait/signal pair as the frame present: the submission modifies the acquired image, so
+                    // it waits on the acquire semaphore and the presentation waits on its signal. Submitting with no
+                    // semaphores at all is what the validation layer reports as "performs a layout transition on
+                    // presentable VkImage ... but VkSemaphore ... was not waited on".
+                    this.context.submitWithSemaphores(commands, acquire, renderFinished);
                 }
                 VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
-                        .pWaitSemaphores(stack.longs(acquire))
+                        .pWaitSemaphores(stack.longs(renderFinished))
                         .swapchainCount(1)
                         .pSwapchains(stack.longs(this.swapchain))
                         .pImageIndices(index);

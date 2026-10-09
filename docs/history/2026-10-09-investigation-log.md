@@ -1130,3 +1130,32 @@ is that present ownership is ported - it runs, and it is not clean yet, and both
 The next step is to read the ten current messages (not the previous run's) and decide whether the remaining problem is the
 layout the shared colour image is actually in, the fence-wait inside the submit removing the ordering the presentation
 needs, or the reuse distance of the render-finished pool.
+
+---
+
+## Both present paths now share the correct submit and the messages are unchanged at 36
+
+The probe's `clearAndPresent` was the remaining path submitting with no semaphores at all, so it was unified onto
+`submitWithSemaphores` (wait the acquire, signal a render-finished one, present waiting on that). The result is unchanged:
+
+```
+real validation messages: 36
+  vkQueueSubmit(): pSubmits[0] performs a layout transition on presentable VkImage 0x80000000008,
+                   but VkSemaphore 0x100000000010 signaled by image acquire operation was not waited on
+  vkQueuePresentKHR(): pPresentInfo->pImageIndices[0] was acquired with a semaphore
+                   VkSemaphore 0x100000000010 that has not since been waited on
+```
+
+The same two messages, naming the *acquire* semaphore in both - the first says the submission that transitions the image did
+not wait it, the second says the presentation's image was acquired with it and it has not been waited since. Both describe
+the same semaphore, and the code demonstrably passes it as `pWaitSemaphores` on the submission and waits a *different*
+semaphore at the presentation. So the mismatch is in the pairing, not in the absence of a wait, and no amount of reading
+the same two lines again will say which pairing is wrong.
+
+That is the point to stop reasoning and instrument: log, for the first few presents, the acquired image index, the acquire
+semaphore handle, the render-finished handle, the semaphore the submit waited and the one the presentation waited - one
+line per present - and read the sequence. With handles in hand the error is arithmetic instead of inference.
+
+The state is unchanged and stated plainly: the frame is presented by Vulkan (`present image: blitted 1280x720 onto image
+1 (0)`), the run is PASSED with `nativeTerrainVerified True`, and the validation output is **not** clean, so
+`presentFromComposite` stays off by default and present ownership is not ported yet.
