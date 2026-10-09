@@ -1837,3 +1837,33 @@ The likely explanation, to be instrumented rather than guessed next time: gating
 does not happen on that path, and whichever present takes it leaves the frame half-handled; the failure count would say
 whether `lastPresentSucceeded` was false (the caller bailing out) or `lastPresentSubmitDone` was (the bridge left
 uncopied). Printing which branch was taken is the next step, not another mutation of the same three lines.
+
+---
+
+## Fail-closed present, second attempt: measured first, and it works
+
+The previous round's failure was left as a question - which flag was false - and this round answered it with a print
+instead of another mutation:
+
+```
+composite present: submitDone=false succeeded=true frameTargetWidth=1280 result=present image: blitted 1280x720 onto image 0 (0)
+```
+
+A present that succeeded while its submission was reported as never made can only mean the flag was set somewhere else, and
+it was: `lastPresentSubmitDone = true` had been inserted at the first textual match, which is inside `clearAndPresent` (the
+probe), not inside `presentImage`. So the gating worked exactly as written and skipped `endFrame` on every frame, which is
+why the bridge's copy-back never happened and the run dropped to four terrain passes.
+
+With the flag set inside `presentImage` - and the gating re-applied unchanged - the same run measures:
+
+```
+composite present: submitDone=true succeeded=true
+exitCode 0 | validationMessageCount 0 | validationClean True
+fixture PASSED | nativeTerrainVerified True | passes 2159
+```
+
+So the caller is fail-closed now: it ends the frame only when the submission that signals the bridge's done semaphore was
+made, and it leaves GL's composite in place when the present did not reach the screen - the audit's B3 and the
+`endFrame`-on-failure half of E. The lesson is the one this log keeps relearning: an edit that silently fails to apply is
+worse than one that fails loudly, because the code then behaves as if the change were made, and only the measurement
+notices.

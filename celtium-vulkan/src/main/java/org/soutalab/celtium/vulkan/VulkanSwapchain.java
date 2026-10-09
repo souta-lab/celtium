@@ -489,6 +489,8 @@ public final class VulkanSwapchain {
                 // acquired image, so it has to wait for the presentation engine to release it, and the presentation has
                 // to wait for this submission rather than for the acquire.
                 this.context.submitWithSemaphores(commands, acquire, renderFinished);
+                this.lastPresentSubmitDone = true;
+                this.lastPresentSucceeded = false;
             }
             VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
                     .pWaitSemaphores(stack.longs(renderFinished))

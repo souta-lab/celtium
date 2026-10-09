@@ -467,6 +467,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateRefusedDefaultFbo;
     private int immediatePresentedFrames;
     private int immediateTextureInvalidations;
+    private int immediatePresentFailures;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -720,7 +721,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     String result = this.swapchain.presentImage(this.frameTarget.colorImage(),
                             org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
                             this.targetHeight, bridgeWait, bridgeDone);
-                    this.frameTarget.endFrame();
+                    // Report both facts before anything acts on them: the previous attempt to fail closed on them
+                    // broke the run (four terrain passes instead of two thousand), and which flag was false is the
+                    // question to answer with a measurement rather than another guess.
+                    if (this.immediatePresentedFrames < 3) {
+                        record("composite present: submitDone=" + this.swapchain.lastPresentSubmitDone()
+                                + " succeeded=" + this.swapchain.lastPresentSucceeded() + " frameTargetWidth="
+                                + this.targetWidth + " result=" + result);
+                    }
+                    // End the frame only when the submission that signals the bridge's done semaphore was made; and
+                    // leave GL's composite in place unless the frame actually reached the screen. Both flags are now
+                    // set inside presentImage itself - the first attempt set them in the probe by mistake, which is why
+                    // submitDone read false here and skipping endFrame broke the bridge's copy-back.
+                    if (this.swapchain.lastPresentSubmitDone()) {
+                        this.frameTarget.endFrame();
+                    }
+                    if (!this.swapchain.lastPresentSucceeded()) {
+                        this.immediatePresentFailures++;
+                        record("composite present did not reach the screen, GL's composite stays: " + result);
+                        return false;
+                    }
                     this.immediatePresentedFrames++;
                     if (this.immediatePresentedFrames == 1) {
                         record("presented the frame from the composite: " + result);
