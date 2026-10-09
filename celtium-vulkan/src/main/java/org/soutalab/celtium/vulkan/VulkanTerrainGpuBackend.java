@@ -460,6 +460,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateTaken;
     /** Total time spent inside submitImmediateBatch, so the hot path's cost is measured rather than asserted. */
     private long immediateSubmitNanos;
+    /** Split of the per-batch cost: time inside prepareImmediate (pipeline and descriptor preparation). */
+    private long prepareImmediateNanos;
+    private int prepareImmediateCalls;
     /**
      * Set whenever a mirrored matrix call changes the matrix state, so the next batch re-reads the live
      * matrices instead of every batch doing it: two glGetFloatv calls per batch measured 28 us of the
@@ -1839,7 +1842,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             int[] state = celtium$captureState();
             long stateKey = celtium$stateKey(formatId, state);
+            // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
+            // of the body (which the existing immediateSubmitNanos already times as a whole).
+            long preflightStart = System.nanoTime();
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
+            this.prepareImmediateNanos += System.nanoTime() - preflightStart;
+            this.prepareImmediateCalls++;
             if (prepared == null) {
                 this.immediateLastRefusal = "pipeline or descriptor preflight failed";
                 this.refusedBeforeAppend++;
@@ -2777,7 +2785,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " actualFlushMillis=" + (this.actualFlushNanos / 1000000L)
                 + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L)
                 + " batchCallCount=" + batchCallCount
-                + " batchCallMillis=" + (batchCallNanos / 1000000L) + " clearOrderFlushes=" + this.clearOrderFlushes
+                + " batchCallMillis=" + (batchCallNanos / 1000000L)
+                + " prepareImmediateCalls=" + this.prepareImmediateCalls
+                + " prepareImmediateMillis=" + (this.prepareImmediateNanos / 1000000L)
+                + " descriptorHits=" + VulkanImmediateTexturePipeline.DESCRIPTOR_HITS
+                + " descriptorMisses=" + VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
                 + " refusedBeforeAppend=" + this.refusedBeforeAppend
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals

@@ -187,14 +187,23 @@ public final class VulkanImmediateTexturePipeline {
      * command in that buffer failed with "commandBuffer must be in the recording state". Returns 0 when the pool is
      * exhausted, so the caller refuses the batch instead of drawing with a stale binding.
      */
+    /** Cache hits and misses of {@link #descriptorSetFor}, so "the cache is not hitting" is measured, not assumed. */
+    public static long DESCRIPTOR_HITS;
+    public static long DESCRIPTOR_MISSES;
+
     public long descriptorSetFor(VulkanGlTexture texture) {
         if (this.descriptorPool == VK_NULL_HANDLE || texture == null) {
             return 0L;
         }
         Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
         if (existing != null) {
+            DESCRIPTOR_HITS++;
             return existing.longValue();
         }
+        // A miss allocates and writes a descriptor set. If this fires on almost every batch, the key (the texture's view)
+        // is changing under us and the "cache" is really an allocation per call - which is what the 1.13 ms per
+        // prepareImmediate call would be.
+        DESCRIPTOR_MISSES++;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
                     org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
