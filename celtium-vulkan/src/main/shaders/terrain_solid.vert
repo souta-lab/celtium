@@ -190,7 +190,12 @@ vec4 _sample_lightmap(sampler2D lightMap, ivec2 uv) {
     // written in. Sodium's modern light map is 256x256 with many maps packed into it, and the divisor came across from
     // there; with real coordinates the difference it makes is invisible anyway (measured in round 265, with the SPIR-V
     // verified in the jar: forcing this sample to 1.0 changes no pixel of the frame).
-    return texture(lightMap, clamp(vec2(uv) / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+    // The half-texel offset is what makes this sample a texel *centre*. Minecraft 1.12.2's light map is 16x16 and the
+    // coordinate packed into the vertex is the light level scaled by 16, so the centre of the (block, sky) texel is
+    // (uv + 8) / 256 - the expression the immediate shaders in this project already use. Without it the sample lands on
+    // the boundary between two rows and the linear filter averages them: measured against the light map's own pixels
+    // (row 13 = 160, row 14 = 197, row 15 = 250), sky 15 returned 223 and sky 14 returned 178 instead of 250 and 197.
+    return texture(lightMap, clamp((vec2(uv) + 8.0) / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
 }
 
 void main() {

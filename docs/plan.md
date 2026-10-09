@@ -347,7 +347,29 @@ UV (0.875,0.28125) のatlas spriteを確認したところ **alpha 197 の青い
   一様（0.57〜0.62）である事実とも合う。**全faceに一様な≈0.6の余分な係数（AO/brightness項）が
   mesher側で掛かっている**可能性が高い。
 
-**次の一手（具体）**: light pipeline の `br`（brightness）と AO の値を少数のquadについてdumpし、
+**lightmap サンプルの欠陥を発見・修正（このターン）**: vertex shader で `v_Color = lightColor` を出力して
+**shaderが実際にサンプルしている値**を測ったところ、地形帯で **(178,178,178)=0.698**（95%）と (223,223,223)=0.875（5%）
+だった。lightmapの実データは row13=160 / row14=197 / row15=250 なので、**178.5 = row13,14 の平均**、
+**223.5 = row14,15 の平均** ＝ **UVがテクセル境界に落ちている**（中心ではなく）ことが判明。
+
+- terrain shader は Soduim 上流の式 `clamp(uv / 256.0, …)` をそのまま使っていた（256×256 lightmap 用）。
+  Minecraft 1.12.2 の lightmap は 16×16 で、頂点の値は「レベル×16」なので正しい中心は `(uv + 8) / 256`。
+- **同じプロジェクトの immediate shader は既に正しい式**（`(vec2(a_LightCoord) + 8.0) / 256.0`）を使っており、
+  terrain 側だけが半テクセルを欠いていた。
+- 修正: `terrain_solid.vert` と `terrain_solid_vanilla.vert` の両方を `(uv + 8) / 256` に統一。
+
+| レンダラ | mid帯 | near帯 |
+|---|---|---|
+| vanilla Minecraft GL | (146.6, 157.1, 132.3) | (139.8, 151.4, 131.4) |
+| upstream Celeritas GL | (136.8, 146.5, 117.2) | (125.0, 135.4, 117.6) |
+| celtium 修正前 | (81.0, 84.5, 74.2) | (79.6, 85.5, 75.4) |
+| **celtium 修正後** | **(88.9, 93.3, 82.7)** | **(88.9, 95.6, 84.1)** |
+
+効果は **+10〜12%**（vanilla比 0.553 → 0.606）で、**実在する修正だが残差はまだ大きい**。
+run verdict は exit 0 / validationClean / fixture PASSED。
+
+**次の一手（具体）**: 修正後の「色乗算無効run」を取り直して**現在の適用色**を再測定し、packed な色（solid平均0.635）
+と比べる（差が残れば shader 側、一致すれば packed 側）。
 上面で brightness×AO が 1.0×1.0 になっているか（余分な0.6が無いか）を確かめる。
 （旧メモ:
 上面の色が「tint × shade(1.0)」になっているか（＝余分な係数が掛かっていないか）を確かめる。

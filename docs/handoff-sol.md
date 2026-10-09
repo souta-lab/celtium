@@ -228,6 +228,16 @@ upstream Celeritas GL = (136.8,146.5,117.2)/(125.0,135.4,117.6)、Celtium Vulkan
 => 全faceに一様な≈0.6の余分な係数（AO/brightness項）がmesher側で掛かっている可能性が高い。
 次の一手は light pipeline の br と AO を少数quadでdumpし、上面が 1.0×1.0 になっているか確認すること。
 
+**lightmapサンプルの欠陥を発見・修正（このターン）**: vertex shader で `v_Color = lightColor` を出力して実測すると、
+地形帯の lightmap サンプルは **(178,178,178)=0.698**（95%）と (223,223,223)=0.875（5%）だった。lightmap の実データは
+row13=160 / row14=197 / row15=250 なので、178.5=row13,14の平均、223.5=row14,15の平均＝**UVがテクセル境界**に落ちている。
+原因は terrain shader が Sodium 上流の `clamp(uv / 256.0, …)`（256×256 lightmap 用）をそのまま使っていたこと。
+MC 1.12.2 の lightmap は 16×16 で頂点値は「レベル×16」なので中心は `(uv + 8) / 256`。**同じプロジェクトの immediate shader は
+既に正しい式**（`(vec2(a_LightCoord) + 8.0) / 256.0`）を使っており、terrain 側だけが半テクセルを欠いていた。
+両terrain shaderを `(uv + 8) / 256` に統一した。実測効果は **+10〜12%**（mid 81.0 → 88.9、vanilla比 0.553 → 0.606）で、
+run verdict は exit 0 / clean / fixture PASSED。**実在する修正だが残差はまだ大きい**。
+次の一手は修正後の「色乗算無効run」を取り直して現在の適用色を再測定し、packed な色（solid平均0.635）と比べること。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
