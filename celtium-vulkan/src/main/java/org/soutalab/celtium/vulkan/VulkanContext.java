@@ -665,7 +665,7 @@ public final class VulkanContext {
                         .pNext(ids.address());
                 vkGetPhysicalDeviceProperties2(candidate, properties);
                 String uuid = GlDeviceIdentity.hex(ids.deviceUUID());
-                if (!openGl.deviceUuids.contains(uuid)) {
+                if (openGl != null && !openGl.deviceUuids.contains(uuid)) {
                     continue;
                 }
                 if (properties.properties().deviceType() == VK_PHYSICAL_DEVICE_TYPE_CPU) {
@@ -683,9 +683,16 @@ public final class VulkanContext {
                 break;
             }
             if (this.physicalDevice == null) {
-                throw new IllegalStateException("No Vulkan physical device matches the OpenGL device UUID "
-                        + String.join(", ", openGl.deviceUuids)
-                        + ". A different driver or a software Vulkan device is not used instead.");
+                throw new IllegalStateException(openGl == null
+                        ? "No Vulkan physical device satisfies the requirements (no OpenGL identity to match against, which"
+                                + " is the no-bridge case)."
+                        : "No Vulkan physical device matches the OpenGL device UUID "
+                                + String.join(", ", openGl.deviceUuids)
+                                + ". A different driver or a software Vulkan device is not used instead.");
+            }
+            if (openGl == null) {
+                System.out.println("[Celtium] device chosen without matching an OpenGL device: " + this.deviceName
+                        + " (" + this.deviceUuid + ")");
             }
             Set<String> extensions = deviceExtensionNames(stack, this.physicalDevice);
             List<String> missing = new ArrayList<String>();
@@ -971,12 +978,26 @@ public final class VulkanContext {
         }
     }
 
+    /**
+     * Reads the OpenGL device's identity, or reports that there is none.
+     * <p>
+     * Condition three is to start and draw without a GL context, and this is the first thing that has to change for it: the
+     * identity exists for one reason - to pick the Vulkan device that is the <em>same</em> device, so that textures can be
+     * shared between the two APIs - and with no bridge there is nothing to match. Failing the whole start-up because the
+     * identity cannot be read makes the renderer depend on GL for a decision that only the bridge needs. The property exists so
+     * the no-identity path can be exercised on a machine that does have a context.
+     */
     private static GlDeviceIdentity inspectOpenGl() {
+        if (Boolean.getBoolean("celtium.vulkan.withoutGlIdentity")) {
+            System.out.println("[Celtium] starting without an OpenGL device identity: no device matching, no interop");
+            return null;
+        }
         try {
             return GlDeviceIdentity.inspect();
         } catch (RuntimeException | LinkageError error) {
-            throw new IllegalStateException("The OpenGL device identity could not be read; the GL context must be"
-                    + " current on the render thread: " + describe(error), error);
+            System.out.println("[Celtium] no OpenGL device identity available (" + describe(error)
+                    + "); continuing without device matching or interop");
+            return null;
         }
     }
 

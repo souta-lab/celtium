@@ -116,7 +116,11 @@ condition names first; texture mirroring and sharing (`VulkanGlTexture`, `Vulkan
 (`VulkanFrameTarget`); state capture in the draw path (the backend's `glGetFloatv`/`glIsEnabled` reads, every one of which a hook
 could record instead); and writing back into the game's textures (`VulkanOffscreenTarget`'s `glTexSubImage2D`), which is
 necessary until the game's textures are Vulkan-owned. The order that follows is **role 1, then role 4**, with the bridge itself
-last.
+last. **Role 1 is done and measured**: with `celtium.vulkan.withoutGlIdentity` the renderer creates its device without asking GL
+and the run reports `starting without an OpenGL device identity: no device matching, no interop` with validation clean
+throughout - and then **cannot finish**, because without matching there is no interop for the bridge to share textures through.
+That timeout is the bridge being absent by construction, which is why it is last in the order. **Next: role 4**, the remaining
+state reads in the draw path.
 
 **The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
 drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and

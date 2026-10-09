@@ -8100,3 +8100,31 @@ after the game's textures and framebuffers are Vulkan-owned rather than before.
 
 That is the measurement. Nothing has been changed for it yet, and the plan row for condition three now carries this list instead
 of an adjective.
+
+---
+
+## Role one done and measured: the device is created without GL, and then the bridge stops it
+
+The first role in condition three's inventory was the startup dependency - the renderer created its Vulkan device by first
+asking GL for the device's identity, and threw if it could not. That dependency is gone: the identity exists only so the two
+APIs can be given the *same* device, so with no bridge there is nothing to match, and the context now says so and carries on.
+
+```
+[Celtium] starting without an OpenGL device identity: no device matching, no interop
+exit 124 | clean | messages 0
+```
+
+Two things are true in that output, and both are the point:
+
+- **The renderer started without a GL identity.** The message is the new path, the device was enumerated and chosen on its
+  capabilities alone, and validation reported nothing across the whole run. The startup dependency named in the inventory is
+  broken.
+- **It then could not finish.** The run timed out with no report, which is what the inventory predicted for this ordering: with
+  no matching there is no interop, so the bridge - roles two, three and five - has nothing to share textures through, and the
+  fixture never completes. That is not a regression; it is the bridge being absent **by construction** in this configuration,
+  which is exactly why the bridge is last in the order rather than first.
+
+So condition three now has one of its five roles done and measured, a property (`celtium.vulkan.withoutGlIdentity`) that
+exercises the path on a machine that does have a context, and a measured statement of what remains: **role four, the state reads
+in the draw path**, then the bridge. The next step is role four, and it is the one the inventory called avoidable in principle,
+because every read there is something a hook could have recorded.
