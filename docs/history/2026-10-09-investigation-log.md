@@ -8830,3 +8830,27 @@ rest of that level has to survive.
 The change is **reverted a second time** rather than left with twenty validation errors, and the tree is green again: exit 0,
 validation clean, 0 messages, fixture PASSED. The finding stands as **confirmed and not yet fixed**, now with three attempts
 recorded and the smallest sufficient change identified: **per-level layout tracking**.
+
+---
+
+## Audit finding three, attempt four: per-level tracking was implemented and the last piece is the mip chain
+
+The smallest sufficient change identified by three attempts - per-level layout tracking - was implemented in full: an
+`int[] levelLayouts` with `setLevelLayout`/`levelLayout`, recorded after the copy's first barrier (the levels it covers become
+`TRANSFER_DST`), after the copy's tail transition (the image becomes sampled), and read by the preserving patch as its own
+level's layout and its own level's range.
+
+```
+exit 1 | clean False | messages 20 | fixture PASSED
+cannot transition the layout of aspect=VK_IMAGE_ASPECT_COLOR_BIT, level=0, ...
+```
+
+**The same twenty errors.** So the tracking exists and the numbers it holds are still not the real ones, and the reason is the
+one site the implementation skipped: **the mip chain's own internal transitions**. `recordMipChain` blits level by level, and its
+barriers leave intermediate levels in `TRANSFER_SRC`/`TRANSFER_DST` - my tail then recorded **every** level as sampled, which is
+wrong for exactly those. The next attempt needs one thing more than this one had: record what the chain actually leaves behind,
+level by level, at each of its three transition sites.
+
+That is now a four-attempt record on a single audit finding, and the pattern is worth naming: each attempt was **correct about
+the mechanism it addressed** and each stopped one site short of the whole. The change is **reverted a third time** rather than
+left with twenty validation errors, and the tree is green again - exit 0, validation clean, 0 messages, fixture PASSED.
