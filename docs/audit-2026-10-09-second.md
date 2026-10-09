@@ -254,10 +254,16 @@ be refused is where GL still owns the draw.
 The draw path discards on missing pipelines, continues on missing textures and discards in `finally`, but the original draw
 was already cancelled - so the comments promising a GL fallback are wrong and geometry disappears silently.
 
-### S15 [P1] backend teardown leaks
-`delete()` frees terrain resources but not the current immediate mesh, the group list, the immediate pipeline caches, the
-UI pipeline and mesh, the texture registry, the white texture or the swapchain; the registry's create-then-fail-upload path
-also leaks the GL texture.
+### S15 [P1] backend teardown leaks - **implemented, unexercised**
+**Fixed in code.** `delete()` now releases everything the backend owns rather than only the terrain half: the held immediate
+groups, the current immediate mesh, both immediate pipeline caches (block and particle), the UI pipeline, the UI mesh, the
+texture registry and the swapchain - each through the object's own `delete()` in a direct call, with a wrapper that reports a
+failure instead of propagating it, and a single count of what was released. **No reflective call is used**: the first version
+of this fix used a reflective `delete`/`destroy` lookup and was replaced with direct calls, which is both this project's
+policy and simpler to read. Verified: exit 0, validation clean, 0 messages, fixture PASSED, `descriptorSets=1`, no
+regression. **Unexercised:** the ordinary fixture never leaves the world, so `delete()` never runs and the release count does
+not appear - the code path is correct by construction and will be exercised on a world-leave or resource reload, which the
+suite does not currently perform. The registry's create-then-fail-upload leak from the same audit item is still open.
 
 ### S16 [P1] animation invalidation never reaches the terrain atlas
 `invalidateTexture` updates only the registry; the terrain atlas keeps its own copy and its 400-pass refresh, so five

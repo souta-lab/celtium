@@ -1692,6 +1692,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return total;
     }
 
+    /** Releases a mesh if it exists; returns 1 when something was released, so the teardown can count. */
+    private int releaseImmediateMesh(VulkanDynamicMesh mesh) {
+        if (mesh == null) {
+            return 0;
+        }
+        try {
+            mesh.delete();
+            return 1;
+        } catch (RuntimeException | LinkageError error) {
+            record("teardown: mesh could not be released: " + describe(error));
+            return 0;
+        }
+    }
+
+    /** Runs a teardown step and counts it; a failure is reported rather than fatal (audit S15). */
+    private int releaseDirect(Runnable teardown) {
+        if (teardown == null) {
+            return 0;
+        }
+        try {
+            teardown.run();
+            return 1;
+        } catch (RuntimeException | LinkageError error) {
+            record("teardown step failed: " + describe(error));
+            return 0;
+        }
+    }
+
     private void flushPendingBeforeGlDraw() {
         if (this.immediateGroups.isEmpty()) {
             return;
@@ -2254,6 +2282,43 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameTarget = null;
         }
         destroyCommandResources();
+        // Everything the backend owns is released here, not just the terrain half (audit S15): the immediate mesh, the
+        // held groups, the immediate pipeline caches, the UI pipeline and mesh, the texture registry and the swapchain.
+        int released = 0;
+        try {
+            discardImmediateGroups();
+            released++;
+        } catch (RuntimeException | LinkageError error) {
+            record("teardown: held groups could not be released: " + describe(error));
+        }
+        released += releaseImmediateMesh(this.currentImmediateMesh);
+        this.currentImmediateMesh = null;
+        for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
+            released += releaseDirect(block == null ? null : () -> block.delete());
+        }
+        this.blockPipelineCache.clear();
+        for (VulkanImmediateParticlePipeline particle : this.particlePipelineCache.values()) {
+            released += releaseDirect(particle == null ? null : () -> particle.delete());
+        }
+        this.particlePipelineCache.clear();
+        if (this.uiPipeline != null) {
+            released += releaseDirect(() -> this.uiPipeline.delete());
+        }
+        this.uiPipeline = null;
+        released += releaseImmediateMesh(this.uiMesh);
+        this.uiMesh = null;
+        if (this.textureRegistry != null) {
+            this.textureRegistry.delete();
+            this.textureRegistry = null;
+            released++;
+        }
+        if (this.swapchain != null) {
+            this.swapchain.delete();
+            this.swapchain = null;
+            released++;
+        }
+        System.out.println("[Celtium] CELTIUM_TEARDOWN released " + released
+                + " backend resources (immediate mesh, groups, pipeline caches, UI, registry, swapchain)");
     }
 
     // ------------------------------------------------------------------ upload path

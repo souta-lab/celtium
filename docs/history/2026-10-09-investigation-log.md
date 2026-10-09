@@ -5938,3 +5938,23 @@ This is the first change in several rounds that is a **measured improvement rath
 from following a number the previous round produced rather than from a new hypothesis. The acceptance was named before the
 change (descriptor sets should fall to roughly the number of distinct textures) and the result is better than that: one set,
 because the scene's immediate path uses one texture-and-lightmap pair.
+
+---
+
+## S15: the teardown releases everything now, and the fixture never runs it
+
+The audit's S15 is a leak list, and the fix is to work through it: `delete()` released the terrain resources and left the
+immediate mesh, the held groups, both immediate pipeline caches, the UI pipeline and mesh, the texture registry and the
+swapchain to the process exit. All of them are now released through their own `delete()` - direct calls, no reflection - with
+a small wrapper that reports a failure instead of propagating it, and one count of what was released.
+
+The first version of this fix used a reflective `delete`/`destroy` lookup, which is exactly what this project's own policy
+says not to keep. It was replaced with direct calls before the commit; the file now contains no `java.lang.reflect` at all.
+
+Verified as far as the fixture goes: exit 0, validation clean, 0 messages, fixture PASSED, `descriptorSets=1`, no regression.
+And **not verified beyond that**: the ordinary fixture never leaves the world, so `delete()` is never called and the release
+count never appears. The teardown is therefore correct by construction and **unexercised** - the third fix in this series to
+carry that label, which is itself a statement about the fixture: it exercises one scene and one lifecycle, and the reload and
+world-leave paths the audit keeps naming are outside it.
+
+Recorded as still open from the same item: the registry's create-then-fail-upload path can still leak the GL texture.
