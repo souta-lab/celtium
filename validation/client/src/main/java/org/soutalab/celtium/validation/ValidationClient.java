@@ -70,6 +70,7 @@ public final class ValidationClient {
     private boolean celtium$interopChecked;
     private boolean celtium$jeiScreen;
     private boolean celtium$jeiRecipe;
+    private boolean celtium$compositeBlit;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -142,6 +143,16 @@ public final class ValidationClient {
 
     @net.minecraftforge.fml.common.eventhandler.SubscribeEvent
     public void onRenderOverlay(net.minecraftforge.client.event.RenderGameOverlayEvent.Post event) {
+        // The game's own composite call - Framebuffer.framebufferRender - is the POSITION_TEX_COLOR batch the present path
+        // keys on, and this scene never issues one, which is why that path has been inert in every measurement so far. Called
+        // once, behind its own flag, so the present can be exercised rather than described.
+        if (!celtium$compositeBlit && worldTicks >= 185
+                && Boolean.getBoolean("celtium.validation.compositeBlit")) {
+            celtium$compositeBlit = true;
+            net.minecraft.client.shader.Framebuffer framebuffer = Minecraft.getMinecraft().getFramebuffer();
+            framebuffer.framebufferRender(framebuffer.framebufferWidth, framebuffer.framebufferHeight);
+            report.addProperty("compositeBlitAtTick", worldTicks);
+        }
         if (!Boolean.getBoolean("celtium.validation.drawTest")
                 || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
             return;

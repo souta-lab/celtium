@@ -6796,3 +6796,31 @@ the numbers, not "the test failed".
 
 Worth noting how the harness behaves here, because it is exactly right: `--duration` is documented as "maximum runtime in
 seconds; **a timeout is not success**", and it reports `validationExitCode 124` rather than a pass.
+
+---
+
+## The present path reached for the first time, and the mask is what had been hiding it
+
+The plan's entry on the final composite said the Vulkan present path "exists but is off by default and unreached", because
+this scene issues no format-2 batch for it to key on. Both halves are now addressed.
+
+The fixture issues the batch: a hook calls the game's own composite, `Framebuffer.framebufferRender`, once at a chosen tick
+behind its own flag. That alone was not enough, and the reason is worth recording: the **acceptance mask** checked the format
+**before** the present branch, so format 2 was refused by the mask and the branch below it - the one whose own comment says it
+"runs before the acceptance mask" - was never reached. Admitting 2 to the mask for that run fixed it without touching the code.
+
+The evidence that the path ran is the swapchain's own report line, which is printed when the out-of-date state changes:
+
+```
+CELTIUM_OOD outOfDate=0 acquireOutOfDate=0 presentFailures=0
+exit 0 | clean | messages 0 | fixture PASSED
+immediateTaken=565   terrainPasses=1605   glDrawsCancelled=565   descriptorSets=1
+```
+
+That line only prints when `presentImage` has been called, so the present executed - for the first time in this project - with
+no failure reported, no out-of-date state, validation silent and the acceptance intact.
+
+Recorded as not established, because it is the next question rather than a claim: that the **screen** shows the Vulkan present
+rather than GL's blit. That needs a readback of the screen itself, and it is named here rather than implied. The branch's
+placement is also worth a follow-up in the code rather than in a run flag: a comment that says a branch runs before the mask is
+not the same as a branch that does.
