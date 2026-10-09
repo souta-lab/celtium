@@ -9038,3 +9038,27 @@ pass時に `offTargetPassGroupsByTarget`、copy-back時に `offTargetDrawnByTarg
 `offTargetPerTarget=[id:offered=..,atPass=..,drawnPasses=..]` を報告に出す。アンカーは
 `/** {@return whether the target has no pending geometry}, asked before a pass is begun. */` ではなく
 実際のメソッド宣言行を確認してから当てる（2回続けてアンカー相違で未適用になっている）。
+
+---
+
+## per-target計器を復元し、実測が成立: 228提示・pass時0件
+
+計器を実アンカーで入れ直した（`countGroupsForTarget`、`offTargetPerTarget()`、`offTargetPassGroupsByTarget`、
+`offTargetDrawnByTarget`）。以後の測定は「計器が無い」状態ではなくなる。
+
+```
+offTargetPerTarget = [1fbcbf97:offered=228,atPass=0,drawnPasses=0]
+offTargetPassesSkippedEmpty = 2115    offTargetCopiedBack = 0
+exit 0 | validationClean true | messages 0 | fixture PASSED | nativeTerrainVerified true
+terrainPasses 627 | glDrawsCancelled 2209 | postAcceptDroppedGroups 0
+```
+
+**228件がoff-targetへ提示され、off-target passが見る時点でqueueに0件**である。今度は計器が実在する状態での測定なので、
+前ラウンドの結論（提示後のどこかで消費されている）は確定した。main passのフィルタ（`wantedTarget`）はラウンド396で
+コミット済みでツリーに入っているため、消費はmain pass以外の経路である。候補は window flush（`flushImmediateWindow`）、
+pass境界のflush（`framebuffer(...)` の `passBoundaryFlushes`）、切り詰められた `immediateGroupsDiscarded`、
+あるいはgroupが**閉じられる時点**のtarget記録（`currentGroupTarget` はgroupが最初に使われた時に決まる）である。
+
+**次回の具体作業**: その4つの経路それぞれにカウンタを付け、off-target宛groupがどこで消えるかを1回のrunで切り分ける
+（`flushCount`、`orderPreservingFlushes`、`passBoundaryFlushes`、`immediateGroupsDiscarded` は既に報告にあるので、
+各flushの直前に「off-target宛group数」を数えて出せばよい）。同じ仮説を反復せず、経路ごとの数で決める。

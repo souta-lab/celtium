@@ -748,6 +748,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateGroupsOffTargetRetired;
     /** Off-target passes not begun because their target had no pending geometry. */
     private int offTargetPassesSkippedEmpty;
+    /** Groups seen at pass time and drawing passes, per target; the offers come from offTargetBatchesByTarget. */
+    private final java.util.Map<Long, Integer> offTargetPassGroupsByTarget = new java.util.HashMap<Long, Integer>();
+    private final java.util.Map<Long, Integer> offTargetDrawnByTarget = new java.util.HashMap<Long, Integer>();
     private int immediateFlushNoPipeline;
     private String immediateLastFlushError = "none";
     /**
@@ -2351,6 +2354,38 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
+    /** {@return how many non-empty pending groups belong to a target}, counted when a pass is about to run. */
+    private int countGroupsForTarget(long targetIdentity) {
+        int count = 0;
+        for (Object[] group : this.immediateGroups) {
+            if (((Long) group[7]).longValue() == targetIdentity && !((VulkanDynamicMesh) group[0]).isEmpty()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** {@return a per-target line}: offers (the map the offer branch keeps), groups at pass time, drawing passes. */
+    private String offTargetPerTarget() {
+        if (this.offTargetBatchesByTarget.isEmpty() && this.offTargetPassGroupsByTarget.isEmpty()) {
+            return "none";
+        }
+        java.util.TreeSet<Long> ids = new java.util.TreeSet<Long>();
+        ids.addAll(this.offTargetBatchesByTarget.keySet());
+        ids.addAll(this.offTargetPassGroupsByTarget.keySet());
+        ids.addAll(this.offTargetDrawnByTarget.keySet());
+        StringBuilder summary = new StringBuilder();
+        for (Long idBoxed : ids) {
+            java.util.concurrent.atomic.AtomicInteger offered = this.offTargetBatchesByTarget.get(idBoxed);
+            summary.append(Long.toHexString(idBoxed.longValue()))
+                    .append(":offered=").append(offered == null ? 0 : offered.get())
+                    .append(",atPass=").append(this.offTargetPassGroupsByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
+                    .append(",drawnPasses=").append(this.offTargetDrawnByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
+                    .append(' ');
+        }
+        return summary.toString().trim();
+    }
+
     private boolean hasGroupsForTarget(long targetIdentity) {
         for (Object[] group : this.immediateGroups) {
             if (((Long) group[7]).longValue() == targetIdentity
@@ -2367,7 +2402,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (target == null || pipeline == null || this.gpuStalled) {
             return;
         }
-        if (!hasGroupsForTarget(targetIdentity)) {
+        int matching = countGroupsForTarget(targetIdentity);
+        this.offTargetPassGroupsByTarget.merge(Long.valueOf(targetIdentity), Integer.valueOf(matching),
+                Integer::sum);
+        if (matching == 0) {
             // Nothing to draw for this target. Beginning the pass would clear it and the copy-back would then write that empty
             // clear into the game's own GL texture - which is what made the copy-back counter look like proof of drawing when
             // it was counting empty passes (audit A32).
@@ -2395,6 +2433,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // geometry was written into the game's texture", not "a copy was recorded" (audit A32).
             target.copyBackToGlTexture(this.commandBuffer, target.glTextureId());
             this.offTargetCopiedBack++;
+            this.offTargetDrawnByTarget.merge(Long.valueOf(targetIdentity), Integer.valueOf(1), Integer::sum);
         }
     }
 
@@ -2479,6 +2518,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " refusedBeforeAppend=" + this.refusedBeforeAppend
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
                 + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
+                + " offTargetPerTarget=[" + offTargetPerTarget() + "]"
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
