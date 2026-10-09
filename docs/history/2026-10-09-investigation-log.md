@@ -8689,3 +8689,33 @@ each origin**, since the counters say most of them are already served from annou
 
 Recorded because it is the third time a named suspicion has been wrong and the first time the enumeration was done **before**
 naming the fourth: three hooks were written for the light map, and the light map was never the problem.
+
+---
+
+## The origin measured, and the hypothesis about it refuted in the same round
+
+Counting the readbacks by the origin that asked for them gives one answer, and it is not the animation:
+
+```
+readbackByOrigin = {invalidateTexture=980}   imageFilledMirrors = 3593   inPlaceRefreshes = 980
+```
+
+**Every refresh comes from the explicit invalidation**, which is the *announced* path - the hook that fires on
+`func_110989_a` hands the image over and then invalidates. So the readbacks are happening for textures whose pixels were just
+announced, and the natural explanation was an ordering defect: the image path applies the pixels but leaves the texture marked
+stale, so the next lookup refreshes it from the readback and throws the announcement's work away. A one-line fix was made and
+measured:
+
+```
+before: inPlaceRefreshes = 980    after: 971
+```
+
+**No change.** The hypothesis is refuted, the fix is harmless and stays, and the conclusion is that these invalidations arrive
+with **no announcement pending at all** - despite the origin being the hook that announces. What the counters say and what the
+origin tag says agree with each other and disagree with the assumption that the hook always has an image to hand; the next
+instrument is the obvious one and is cheap: print, once, when an explicit invalidation arrives for a texture with nothing
+announced, with the id and the size.
+
+This is the fifth hypothesis on this stream and the third to be withdrawn, and the pattern is exactly the one this project has
+recorded before: the instruments describe the state precisely, and the explanations built on top of them keep being one step
+ahead of the measurement.

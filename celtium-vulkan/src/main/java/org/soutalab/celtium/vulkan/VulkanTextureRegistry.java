@@ -42,6 +42,9 @@ public final class VulkanTextureRegistry {
     private int mirrorCount;
     private int imageUploads;
     private int createdByAnnouncement;
+    /** Readback refreshes by the origin that asked for them. */
+    private final java.util.Map<String, Integer> readbackByOrigin = new java.util.HashMap<String, Integer>();
+    private String currentOrigin = "unknown";
     /** The distinct reasons a patch was refused, each printed once. */
     private final java.util.Set<String> patchRejections = new java.util.HashSet<String>();
     /** The GL texture ids that reach the readback refresh, recorded once each. */
@@ -136,6 +139,10 @@ public final class VulkanTextureRegistry {
             }
             texture.uploadFromImage(width, height, rgba);
             this.imageUploads++;
+            // The stale mark is cleared here as well as in the patch path. Without this the image is applied and the texture is
+            // still marked stale, so the very next lookup refreshes it - from the readback - and the announcement's work is
+            // thrown away. That was the whole of the remaining stream: all nine hundred and eighty refreshes came from this
+            // origin, which is the one origin whose writes are announced.
             this.staleIds.remove(Integer.valueOf(glTextureId));
             return texture;
         } catch (RuntimeException | LinkageError error) {
@@ -266,6 +273,16 @@ public final class VulkanTextureRegistry {
         }
     }
 
+    /** {@return the readback refreshes by origin}, for the summary line. */
+    public String readbackByOrigin() {
+        return this.readbackByOrigin.isEmpty() ? "none" : this.readbackByOrigin.toString();
+    }
+
+    /** Sets the origin recorded against refreshes until it changes. */
+    public void origin(String origin) {
+        this.currentOrigin = origin;
+    }
+
     /** {@return how many mirrors were created by an announcement rather than by the draw path asking} */
     public int createdByAnnouncement() {
         return this.createdByAnnouncement;
@@ -295,6 +312,9 @@ public final class VulkanTextureRegistry {
                 try {
                     existing.texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
                     this.inPlaceRefreshes++;
+                    // Which origin produced this refresh. The counters say most updates are served from announcements and a thousand
+                    // are not; this says which caller the thousand belong to, rather than another name being guessed at.
+                    this.readbackByOrigin.merge(this.currentOrigin, Integer.valueOf(1), Integer::sum);
                     // Which textures still come through the readback, named once each. The image path takes every refresh that
                     // arrives with an announced image pending; these are the ones that do not, and knowing their ids is the
                     // difference between guessing why and knowing why.

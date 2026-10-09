@@ -463,6 +463,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int animatedAnnounceDiagnostics;
     private int dynamicTextureFills;
     private int dynamicAnnounceDiagnostics;
+    private String lastInvalidationOrigin = "unknown";
     /** The texture ids whose invalidation origin has been printed. */
     private final java.util.Set<Integer> invalidationOrigins = new java.util.HashSet<Integer>();
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
@@ -844,6 +845,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void invalidateTexture(int glTextureId) {
+        this.lastInvalidationOrigin = "invalidateTexture";
         // Who invalidates what, named once per texture. Three hooks have failed to catch the light map's writes, and the
         // alternative to naming a fourth is asking the code that performs the invalidation to say where it came from.
         if (this.invalidationOrigins.size() < 12 && this.invalidationOrigins.add(Integer.valueOf(glTextureId))) {
@@ -896,6 +898,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("light map re-upload failed: " + describe(error));
             }
         }
+        if (this.textureRegistry != null) {
+            this.textureRegistry.origin(this.lastInvalidationOrigin);
+        }
         this.immediateTextureInvalidations++;
     }
 
@@ -911,6 +916,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void invalidateBoundTexture() {
+        this.lastInvalidationOrigin = "invalidateBoundTexture";
         int bound = this.immediateState.boundTextureName();
         if (bound != 0) {
             invalidateTexture(bound);
@@ -2402,6 +2408,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
                 + " dynamicTextureFills=" + this.dynamicTextureFills
+                + " readbackByOrigin=" + (this.textureRegistry != null ? this.textureRegistry.readbackByOrigin() : "none")
                 + " mirrorsCreatedByAnnouncement="
                 + (this.textureRegistry != null ? this.textureRegistry.createdByAnnouncement() : 0)
                 + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
