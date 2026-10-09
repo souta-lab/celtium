@@ -1417,8 +1417,25 @@ public final class ValidationClient {
             // displayWidth/Height, recreates the framebuffer, resizes the shader group and notifies the screen. The
             // earlier attempt asked GLFW to resize the window, which this harness's window does not act on - reported as
             // windowResizable=true while the framebuffer stayed 1280x720 - so the request never reached Minecraft at all.
-            mc.resize(1024, 640);
+            // The size is settable so that the two extremes can be asked for: 1x1 stands in for a minimised window
+            // (Minecraft's own resize clamps a zero request to one, which is what a real minimise ends up as on this
+            // harness), and a very large size stresses the framebuffer and swapchain rebuild. The default keeps the
+            // behaviour every earlier resize run recorded.
+            int resizeWidth = 1024;
+            int resizeHeight = 640;
+            String resizeTo = System.getProperty("celtium.validation.resizeTo", "");
+            if (resizeTo.indexOf('x') > 0) {
+                String[] parts = resizeTo.split("x");
+                try {
+                    resizeWidth = Integer.parseInt(parts[0].trim());
+                    resizeHeight = Integer.parseInt(parts[1].trim());
+                } catch (NumberFormatException error) {
+                    report.addProperty("resizeToError", String.valueOf(error));
+                }
+            }
+            mc.resize(Math.max(0, resizeWidth), Math.max(0, resizeHeight));
             report.addProperty("resizedAtTick", worldTicks);
+            report.addProperty("resizedTo", resizeWidth + "x" + resizeHeight);
         }
         if (worldTicks >= 150 && !celtium$weatherShown && Boolean.getBoolean("celtium.validation.weather")) {
             celtium$weatherShown = true;

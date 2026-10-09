@@ -1572,7 +1572,28 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   `VulkanFrameTarget:927`、`VulkanHostBuffer:126`、`VulkanBuffer:189`、`VulkanUniformBuffer:110`、
   `VulkanContext:883`。うち**クラッシュしていた3種はすべて有界化**した（前ターン）。
 
-**次の一手**: (1) minimize 相当（サイズ0や present 失敗）を確認する、(2) 完成条件(b) のブリッジ置き換え設計に入る、
+**minimize 相当と大きなリサイズの受入（このターン）**:
+
+- `celtium.validation.resize` は**サイズ固定**（1024x640）だったので、`celtium.validation.resizeTo=WxH` を追加した
+  （**既定は従来どおり 1024x640** なので既存runの意味は変わらない）。Minecraft の公開 `resize(w,h)` を使う経路は
+  そのままで、**保存スクリーンショットの実寸がリサイズがレンダラまで届いた証拠**になる。
+
+| run | exit | validationClean | fixture | frames | `resizedTo` | **画像の実寸** | VUID | クラッシュ |
+|---|---|---|---|---|---|---|---|---|
+| AMD `1x1`（minimize 相当） | **0** | **true** | **PASSED** | 567 | 1x1 | **1x1** | **0** | 無し |
+| Intel `1x1` | **0** | **true** | **PASSED** | 452 | 1x1 | **1x1** | **0** | 無し |
+| AMD `1920x1080`（大きい側） | **0** | **true** | **PASSED** | 564 | 1920x1080 | **1920x1080** | **0** | 無し |
+
+- **両極端とも通り、frame target / swapchain が実寸で作り直されている**（画像の実寸がその証拠）。VUID もクラッシュも無い。
+- **正直な限界**: **真の 0x0** は再現できない。Minecraft 自身の resize が 0 を 1 に丸めるためで（バニラの挙動）、
+  この環境では **1x1 が minimize の等価物**である。0x0 を直接レンダラへ渡す試験はしていない。
+- これで優先順位6の「minimize/out-of-date」は、**out-of-date（458回の再作成）＋minimize相当（1x1）＋大きいリサイズ**の
+  3点で受入できた。ただし**真の 0x0** と**実際の最小化イベント**（ウィンドウマネージャ経由）は未検証である。
+
+**次の一手**: (1) 完成条件(b) のブリッジ置き換え設計に入る（今ターンの受入で残る唯一の大きな構造課題）、
+(2) 到達しないデバッグ経路のサイトは「未検証」として残す、(3) 画像の系統差（HF 0.81）を詰める。
+
+**（旧メモ）** 次の一手: (1) minimize 相当（サイズ0や present 失敗）を確認する、(2) 完成条件(b) のブリッジ置き換え設計に入る、
 (3) 到達しないデバッグ経路のサイトは「未検証」として docs に残す（到達させる作業は優先しない）。
 
 **（旧メモ）** 次の一手: (1) `presentReadback=true` の run で readback サイト（`VulkanTerrainGpuBackend:5047`）も叩く、
