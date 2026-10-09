@@ -1406,7 +1406,35 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - これで **out-of-date を受けた acquire の後始末（semaphore の差し替え）が両GPUで通り**、
   `forceAcquireOutOfDate` の注入も**確定的に発火する**ようになった。
 
-**次の一手**: (1) `presentImage` 側の out-of-date 復旧を別途受入する（`acquireOutOfDate>0` を証拠として要求）、
+**容量整理と presentImage 側の受入（このターン）**:
+
+- **整理**: `runtime/` は 403 run で **7.0 GB** あり、内訳は 1 run あたり `mods/` 22 MB ＋ `test-libraries/` 8.0 MB ＋
+  `saves/` 5.5 MB の**重複コピー**（証拠である `logs/`＋`screenshots/`＋`validation-process.json` は 1.7 MB）。
+  jar のパスは各 run の `validation-command.json` に**完全なコマンドラインとして記録**されているので再現性は保たれる。
+  パスを 1 つずつ検証して `mods` / `test-libraries` / `saves` を削除: **532 ディレクトリ・6.1 GB 解放**、
+  `runtime/` は **1020 MB** に。主要 run（p106/p142/p146/p157/sol-cb）の report・image・command が残っていることを確認。
+  **空き 13 GB → 19 GB**（88% → 81%）。
+- **自分のミスと復旧（記録）**: 削除パターンが `.celtium-work/runtime/celtium-headless-interop/test-libraries` にも
+  一致し、**テスト用の `lwjgl-vulkan-3.4.1.jar` を消してしまった**（翌runが report を出さずに失敗して気づいた）。
+  Gradle キャッシュの同一 jar を **sha256 一致（`7f39be7c…`）を確認して復元**した。以後の受入は復元後に取得している。
+- **presentImage 側の受入（`swapchainProbe=true` ＋ `forceOutOfDate=true`）**:
+
+| run | exit | validationClean | fixture | p50 | present trace | VUID |
+|---|---|---|---|---|---|---|
+| AMD | **0** | **true** | PASSED | 16.49 ms | **458回** | **0** |
+| Intel | **0** | **true** | PASSED | 39.44 ms | **210回** | **0** |
+
+  present trace が 458/210 回出ているので、**present 経路は毎フレーム実際に走っている**。VUID は 0。
+- **未了**: `forceOutOfDate`（present 後の verdict を注入する側）は**発火していない**（report に `injecting` の行が無く、
+  probe は `cleared and presented image 0 (0)` で成功している）。acquire 側の注入は「結果に関わらず発火」に直して
+  確定させたので、**verdict 側も同じ扱いにする**必要がある。したがって out-of-date の**復旧**はまだ受入できていない
+  （受入できたのは「通常の present 経路が綺麗に回る」ところまで）。
+
+**次の一手**: (1) `forceOutOfDate` を確定的に発火させる（acquire 側と同じ直し方）、(2) その状態で
+`presentImage` の out-of-date 復旧（verdict が OUT_OF_DATE のときの再作成）を受入する、(3) texture/descriptor/
+allocation 失敗を両GPUで確認する。
+
+**（旧メモ）** 次の一手: (1) `presentImage` 側の out-of-date 復旧を別途受入する（`acquireOutOfDate>0` を証拠として要求）、
 (2) minimize/out-of-date 以外の失敗経路（texture/descriptor/allocation 失敗）を両GPUで確認する、
 (3) 完成条件(b) のブリッジ置き換え設計に入る。
 
