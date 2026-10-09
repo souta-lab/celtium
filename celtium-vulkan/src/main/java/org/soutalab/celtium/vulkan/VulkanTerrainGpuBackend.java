@@ -1327,21 +1327,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // backend existed, whose state the mirror cannot have - and a maximum that is dominated by warm-up says nothing
         // about whether the mirror tracks GL once both are running. Steady state is the question the removal of the
         // glGetFloatv reads depends on.
-        // The worst modelview sample, with the pass identity attached. The earlier trace keyed on the projection delta and
-        // therefore never recorded the sample the fixture fails on; this one is where both deltas are in scope, and it says
-        // which render target and viewport the disagreeing comparison belongs to.
-        if (modelViewDelta > this.worstModelViewDelta) {
-            this.worstModelViewDelta = modelViewDelta;
-            float[] mirrorView = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
-            this.worstModelViewSample = "frame=" + this.framesSeen + " target=" + this.currentRenderTarget
-                    + " viewport=" + this.currentViewportKey + " projDelta=" + projectionDelta
-                    + " mirror[m0=" + fmt3(mirrorView[0]) + ",m5=" + fmt3(mirrorView[5]) + ",t=" + fmt3(mirrorView[12])
-                    + "," + fmt3(mirrorView[13]) + "," + fmt3(mirrorView[14]) + "]";
-        }
         if (this.framesSeen > 10) {
             this.steadyProjectionDelta = Math.max(this.steadyProjectionDelta, projectionDelta);
             this.steadyModelViewDelta = Math.max(this.steadyModelViewDelta, modelViewDelta);
             this.steadyComparisons++;
+                // The worst modelview sample, with the pass identity attached. The earlier trace keyed on the projection delta and
+            // therefore never recorded the sample the fixture fails on; this one is where both deltas are in scope, and it says
+            // which render target and viewport the disagreeing comparison belongs to.
+            if (modelViewDelta > this.worstModelViewDelta) {
+                this.worstModelViewDelta = modelViewDelta;
+                float[] mirrorView = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+                this.worstModelViewSample = "frame=" + this.framesSeen + " target=" + this.currentRenderTarget
+                        + " viewport=" + this.currentViewportKey + " projDelta=" + projectionDelta
+                        + " mirror[m0=" + fmt3(mirrorView[0]) + ",m5=" + fmt3(mirrorView[5]) + ",t=" + fmt3(mirrorView[12])
+                        + "," + fmt3(mirrorView[13]) + "," + fmt3(mirrorView[14]) + "]";
+            }
         }
         // How many comparisons matched exactly. A maximum on its own cannot tell "1130 samples, one of them wrong
         // somewhere" from "every sample wrong", and those two need different work: the first is one uncaptured

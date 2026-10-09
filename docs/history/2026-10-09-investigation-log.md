@@ -4066,3 +4066,44 @@ now-scoped counter can answer, and for the first time the answer will be about t
 
 This also closes the loop on the direction: the pass identity that made this possible came from the two hooks added for
 S10's group key, and it fixed a measurement before it fixed a draw. Pass ownership is load-bearing in both places.
+
+---
+
+## The residual 1.62 is a frame-boundary sample, and the evidence is the zeroed mirror
+
+With the worst-sample recorder moved inside the steady-state block - the reachable fix for a maximum that kept reporting a
+frame from before the backend existed - the sample is now the first steady frame rather than the second frame of the run:
+
+```
+worstView[frame=12 target=1301583606 viewport=1311440 projDelta=1.6200542E-4
+          mirror[m0=0.00, m5=-0.00, t=0.00, 0.00, 0.00]]
+crossPassSkipped: 1134, matrixMirrorDelta=proj:1.6200542E-4, view:1.62, comparisons:1146, exact:0
+fixture PASSED | nativeTerrainVerified True | 2737 passes
+```
+
+The mirror's modelview is **all zeros** - not the identity, and not the camera rotation - which is what a stack looks like
+between its `loadIdentity` and the operations that fill it. GL, at the same instant, holds something 1.62 away in the
+translation. So the comparison is being taken **before GL has reset for the new frame and after the mirror has**: the first
+batch of a frame is compared against the state the previous frame left in GL.
+
+That is a frame-boundary artefact, not a rendering defect, and it is the fourth distinct sampling problem this counter has
+turned out to have had:
+
+| # | What the counter was measuring | Fixed by |
+|---|---|---|
+| 1 | a copy of the matrix that nobody read | `setMatrix` |
+| 2 | the overlay's `translate(0, 0, -2000)` in a world comparison | scoping to the world pass |
+| 3 | the first frame, before the backend existed | the steady-state block |
+| 4 | **the first batch of a frame against the previous frame's GL state** | not yet |
+
+The four are worth reading together, because the number they produced - 1.62, quoted for several rounds as a mirror defect -
+was never any of them individually: it was whichever of these dominated the maximum at the time, and each fix moved the
+maximum to the next one. The mirror has been adequate since the copy bug was found; what kept being wrong was the
+measurement.
+
+The next condition is the same shape as the last three: skip a comparison taken while the mirror is mid-setup, which one
+check - whether the modelview's trace is still the value left by the reset - expresses directly.
+
+Nothing in the renderer changed this round, and the direction's own work is where it was: the pass identity is in the group
+key and the comparison is scoped to its pass. The mirror reads can be removed once the metric stops reporting artefacts
+rather than the state it is supposed to describe.
