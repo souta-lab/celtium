@@ -5460,3 +5460,33 @@ well under one (0.40 / 0.49 / 0.29), which is the right *shape* for a grass surf
 reference implies. The Java path that produces it is byte-identical to the pinned upstream checkout, so the difference is in
 what the builder is handed - the ambient occlusion and face-shade inputs - rather than in what it does with them. That is the
 next thing to measure, and the aggregate instrument is in place to measure it.
+
+---
+
+## The darkness has a shape: far terrain matches, near terrain is dark, and the AO code is upstream-identical
+
+The two frames were analysed by row and column before anything else was changed, and the difference is not uniform:
+
+| rows | ratio (Celtium / reference) |
+|---|---|
+| 200-240 (the far plain) | **1.03** |
+| 240-320 | 0.83-0.89 |
+| 320-720 (near terrain) | **0.65-0.75** |
+
+Columns are flat at 0.83-0.86 across the whole width, so there is no left-right structure: not a texture edge, not an
+occlusion pattern that follows geometry. The correlation between the two frames is 0.904 and the terrain-band ratio has mean
+0.703 with a standard deviation of 0.143. What that describes is a **distance-dependent** difference - the far ground, seen
+at a grazing angle where every surface is a top face, matches the reference almost exactly, while the near ground, where
+side faces fill the screen, is a third darker.
+
+That points at the shading of those faces rather than at textures, light maps or the light path, all of which have now been
+measured or eliminated. The AO computation itself was then diffed against the pinned upstream checkout and is **byte-
+identical** (`AoFaceData`), so the occlusion arithmetic is not what differs. The port's own changes under
+`impl/render/chunk` are `SectionRenderDataStorage`, `ShaderChunkRenderer`, `RenderSectionManager`, `SectionGraph`, the
+`backend` package and the two vertex formats (the last two only by this round's instruments), so the place to look next is
+how the port's storage path applies the colour and the occlusion it is handed - the arithmetic matches vanilla, the wiring
+around it does not.
+
+Two process notes stand from this round as well. The row/column analysis cost nothing and produced more than the last three
+experiments; and the AO being upstream-identical is exactly the kind of fact that should be established before theorising
+about AO, which it was not.
