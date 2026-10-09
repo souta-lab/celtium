@@ -3676,3 +3676,36 @@ through `setMatrix` rather than into a copy.
 
 The lesson, in the form this session keeps needing: a value that does not arrive is not evidence that the code that computes
 it is wrong. Here it was computed correctly, sixty times a frame, into an array nobody read.
+
+---
+
+## The float-translate hypothesis is refuted by the source, and it corrects an audit item
+
+The modelview was missing exactly the camera translation, and the vanilla source showed `GlStateManager.translate((float) x,
+(float) y, 0.0F)` - float literals - while the mirror's hook takes `double`. So the hypothesis was that Minecraft calls a
+`(FFF)` overload the hook never matched, and a descriptor-qualified hook was added for it: `func_179137_b(FFF)V`,
+`require = 0`.
+
+The SRG source refutes it in one line:
+
+```java
+public static void func_179137_b(double p_179137_0_, double p_179137_2_, double p_179137_4_)
+```
+
+**There is one overload and it takes doubles.** The float literals in the decompiled Minecraft source are widened by the
+compiler, so the call does reach the hook that already existed; the new hook matched nothing, the counters were unchanged,
+and the modelview delta stayed at 1.62 exactly as before. The hook has been removed rather than left in place, because a
+hook that cannot fire is worse than no hook: it reads as coverage.
+
+That corrects a reading in this project's own record. The second audit's S07 lists "float `translate`" among the state
+Minecraft uses that the mirror does not catch; for 1.12.2 the call is written with float literals but the **method signature
+is double**, so that particular item is not a missing hook. S07's other items - alpha enable, cull enable, `depthFunc`, the
+integer blend functions, `activeTexture`, the alpha-function override - are unaffected and still open.
+
+And it sharpens the actual cause of the missing translation. The translate **is** hooked. The mirror misses it because it
+was applied before the hooks existed, and the seed meant to repair that copies GL at the **first comparison**, which the
+earlier dump shows is a moment when GL itself holds the identity - because the first batch of a frame is offered during a
+pass like the GUI's, after that pass has reset both stacks. So the seed copies the wrong moment, not the wrong matrix. The
+next attempt derives the translation the way the projection is now derived: from `RenderManager.viewerPos` at the camera
+setup, with the bobbing question - whether vanilla applies the camera translation before or after `setupViewBobbing` -
+answered by reading `orientCamera`'s tail rather than by guessing.

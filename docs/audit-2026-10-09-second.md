@@ -77,6 +77,11 @@ before creation so an allocation failure leaves the existing data valid. **Measu
 **Open:** the acceptance fixture that crosses both boundaries.
 
 ### S07 [P1, certain in code] the state mirror and pipelines do not carry the state that matters
+**Correction (2026-10-09, from the SRG source):** the "float `translate`" item in this list is **not** a missing hook in
+1.12.2 - `GlStateManager.func_179137_b` has a single `(DDD)` overload and the float literals in the decompiled source are
+widened by the compiler, so the existing hook is the right one. Verified by adding a `(FFF)`-qualified hook that matched
+nothing and changed no counter, then removing it. The rest of the list stands.
+
 No hooks for alpha enable/disable, cull enable/disable, `depthFunc`, integer `blendFunc`/`tryBlendFuncSeparate`,
 `activeTexture`, float `translate`; `setAlphaFunc`'s hook has no backend override; the pipeline hardcodes alpha blend
 factors, `LEQUAL` and `ADD`, and substitutes standard factors for unknown ones; the shader's `ref > 0 && alpha < ref` does
