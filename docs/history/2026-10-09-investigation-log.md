@@ -2133,3 +2133,34 @@ The difference between the immediate path and the reference is **smaller than th
 The cause of the variation is worth stating because it is not a defect: the held item is animated, so two runs of the same
 configuration are legitimately different images. Freezing it - an empty hand, or a fixed frame index - would make the
 GUI-visible comparison usable; until then it is a measurement of the scene, not of the renderer.
+
+---
+
+## With the animation frozen, the GUI-visible comparison has a floor of 0.07 and the difference is real
+
+The retraction one round ago was right about the measurement it retracted - there was no noise floor beside it - but it
+left the question open, so the next thing was to make the floor small. The floor comes from the first-person item
+animating between runs, so the fixture now freezes the swing and arm angles whenever the GUI is kept
+(`-Dceltium.validation.keepGui=true`); the equipped-progress fields are not public in 1.12.2 and are left alone.
+
+Three runs of the frozen scene:
+
+| Run | Result |
+|---|---|
+| immediate on (default) | PASSED, `nativeTerrainVerified True`, 1668 passes |
+| reference, immediate off, first | PASSED, 1654 passes |
+| reference, immediate off, second | PASSED, 1660 passes |
+
+| Comparison | mean | over 8 | over 32 |
+|---|---|---|---|
+| **reference against reference (noise floor)** | **0.07** | 0.05% | 0.03% |
+| immediate on against reference | **1.63** | 1.29% | 0.82% |
+
+The floor collapses from 3.72 to 0.07, and the difference is then **twenty-three times the floor** - so with the GUI visible
+the immediate path genuinely differs from GL, which the previous round could neither claim nor deny. The earlier number is
+still retracted as quoted (it was a phase measurement, not a renderer one); what changed is that the question now has a
+measurement that can be repeated, and the answer is that there *is* a difference to explain.
+
+Where it sits, from the same comparison: the differences are not in the HUD regions - hotbar, crosshair and the top strip
+measure at or near zero - and they concentrate in the band the first-person item occupies, which is the next thing to
+identify rather than guess at.

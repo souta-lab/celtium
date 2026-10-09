@@ -450,6 +450,18 @@ public final class ValidationClient {
             // same comparison cover the GUI, the font and the HUD, which are Tessellator content like everything else
             // the immediate path serves - and which the hidden-GUI frames therefore said nothing about.
             mc.gameSettings.hideGUI = !Boolean.getBoolean("celtium.validation.keepGui");
+            if (Boolean.getBoolean("celtium.validation.keepGui")) {
+                // The GUI-visible comparison has a run-to-run noise floor because the first-person item animates: the
+                // frame a run captures sits at a different partial tick each time, so the arm and the equipped progress
+                // differ between otherwise identical runs. Freezing the animation phases makes the comparison measure
+                // the renderer rather than the phase, which is what a like-for-like image comparison needs.
+                mc.player.prevSwingProgress = 0.0f;
+                mc.player.swingProgress = 0.0f;
+                mc.player.prevRenderArmPitch = mc.player.renderArmPitch = 0.0f;
+                mc.player.prevRenderArmYaw = mc.player.renderArmYaw = 0.0f;
+                // The equipped-progress fields are not public in 1.12.2, so the item-swap animation is left to the
+                // phase the run happens to capture; the swing and arm angles are the ones that move every frame.
+            }
         }
         if (worldTicks < 200) return;
         try {
