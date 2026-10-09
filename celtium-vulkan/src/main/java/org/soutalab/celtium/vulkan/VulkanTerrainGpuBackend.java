@@ -2663,7 +2663,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
         if (!uniformsLogged) {
             uniformsLogged = true;
-            record("uniforms: fogColor=" + java.util.Arrays.toString(fogColor)
+            // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
+            System.out.println("[Celtium] CELTIUM_FOG fogColor=" + java.util.Arrays.toString(fogColor)
                     + " start=" + (this.fogService != null ? this.fogService.getFogStart() : 0.0f)
                     + " end=" + (this.fogService != null ? this.fogService.getFogEnd() : 0.0f)
                     + " density=" + (this.fogService != null ? this.fogService.getFogDensity() : 0.0f)

@@ -5656,3 +5656,37 @@ With the shaders then equivalent for this scene, the texture byte-identical and 
 **not the vertex path at all**: it is the per-draw state - the fog uniforms first among them, whose `mix` toward a fog colour
 would scale a band's level while preserving its contrast, which is precisely the signature the 0.69 has. Printing those
 uniforms at the terrain draw is the next step, and it is one line.
+
+---
+
+## The light map is excluded by measurement too: removing it leaves the terrain at 0.70
+
+Last round's reading suggested the light map might be the whole difference - its texel is 0.65 and the frame ratio fits
+0.69 - and the only way to settle a reading that tidy is to remove the multiply and look. With the SPIR-V recompiled and
+verified in the jar by size:
+
+| configuration | mean | near-terrain ratio |
+|---|---|---|
+| light map applied (reference form) | 34.08 | 0.75-0.84 |
+| **light map multiply removed** | **26.12** | **0.70-0.76** |
+
+The light map moves the frame - 8 mean points - but the near terrain stays a quarter dark, so it is **not** the 0.69. That is
+the fifth candidate this thread has eliminated, and the second to die by measurement rather than by reading.
+
+The fog was checked in the same round and is not a candidate either. Printed to stdout rather than through the capped
+diagnostics list, the values the terrain draws with are
+
+```
+CELTIUM_FOG fogColor=[0.514, 0.596, 0.735, 1.0] start=96.0 end=128.0 density=1.0 shape=0 glFogMode=3 cutoff=128.0
+```
+
+a smooth fog from 96 to 128 blocks toward the sky colour, with the near terrain well inside the unfogged range - which also
+explains why the far band matches the reference and the near band does not.
+
+So the list of verified-identical things is now: the atlas (byte for byte), the shaders (against the reference sources), the
+vertex colour producer (against upstream), the light coordinates (measured), the light map's effect (removed and measured),
+and the fog (read). What is left cannot be found by comparing frames; it needs the shader's own arithmetic checked against
+numbers computed by hand from the dumped texture, the packed colour and the light coordinate - a numeric comparison rather
+than a sixth image ratio.
+
+The light map multiply is restored to the reference's form and the SPIR-V verified again.

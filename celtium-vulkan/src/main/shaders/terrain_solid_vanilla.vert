@@ -220,6 +220,9 @@ void main() {
     // the axes, so the swap tried here - which moved the mean from 34.08 to 27.09 - was a deviation from the reference,
     // not a fix. It is reverted so that the remaining difference is measured against the reference's own behaviour.
     v_RdhFactor = _vert_rdh_factor * 2.0;
+    // Measured (round 275, SPIR-V verified in the jar): removing this multiply leaves the near terrain at 0.70-0.76 of the
+    // reference instead of 0.75-0.84 - it moves the frame, but nowhere near enough to be the 0.69 the ratio reports. So the
+    // light map is excluded by measurement, not by argument, and the multiply is restored to the reference's form.
     vec4 lightColor = _sample_lightmap(u_LightTex, _vert_tex_light_coord);
     v_Color = _vert_color * lightColor;
     v_RdhFactor.rgb *= lightColor.rgb;
