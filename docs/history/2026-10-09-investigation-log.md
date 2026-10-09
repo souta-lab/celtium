@@ -2340,3 +2340,40 @@ So the position after this round, with two corrections layered on each other and
   every reference captured before it. Three comparisons in this area were made against stale references, and all three
   produced numbers that looked like findings;
 - **open:** what in the Vulkan path differs in that frame, now measurable with an instrument that has a floor.
+
+---
+
+## The control settles it: the GUI-visible difference is an uncontrolled term, and the hand is in every run
+
+The one control that decides the question is to let the immediate path draw **as little as possible** and see whether the
+difference goes away. With the mask set so that no content format is accepted:
+
+```
+noise floor (reference against reference):  0.11
+empty mask (Vulkan draws almost nothing):   3.75 | 2.94% over 8
+counter line: immediateOffered=9068 immediateTaken=29 immediateRefusals=format...
+```
+
+Twenty-nine batches were still taken, and the difference is **3.75** - larger than the 0.97 measured when Vulkan drew
+essentially the whole frame. That is the third non-monotonic result in a row, and together they identify the term:
+
+- drawing **more** by Vulkan: 0.97
+- drawing **almost nothing**: 3.75
+- drawing **one format only**: 3.6 for every format, independently of which
+
+A difference that does not depend on what the renderer draws is not a renderer difference. What all these runs share is the
+**first-person hand**, drawn by GL in every one of them, whose position depends on the frame's partial tick - and the
+freeze does not remove that, because the freeze pins the swing and the arm angles while the interpolation between ticks
+still moves with whichever frame happens to be captured. The reference runs differ by 0.11 only because two runs of the
+same configuration can land on a similar partial tick; when they do not, the term is about 3.6.
+
+So the position, after two reversals in this area, is the one the control supports:
+
+- **the GUI-visible comparison cannot support renderer claims in this harness**, and the round before last was right about
+  that while the last round's retraction of it was wrong. Its floor is small only by luck;
+- **the term that dominates it is the first-person hand**, not any pipeline;
+- **the instrument that is sound** is the hidden-GUI comparison, whose two runs produce identical images (0.00), plus the
+  format bisection performed there;
+- **and there is a way to make the GUI-visible comparison sound**: render in third person, which removes the first-person
+  hand entirely. That is one setting in the fixture and it is the next measurement rather than another argument about the
+  floor.
