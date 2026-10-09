@@ -1314,6 +1314,20 @@ public final class ValidationClient {
             mc.world.rainingStrength = 1.0F;
             mc.world.prevThunderingStrength = 1.0F;
             mc.world.thunderingStrength = 1.0F;
+            // The client world alone is not enough on every run: the integrated server keeps sending its own weather
+            // state, and on the Intel run the capture found raining=false again - the server's clear weather had
+            // overwritten the client's. Setting the server's world info as well is what makes the rain stick.
+            String serverWeather = "no integrated server";
+            if (mc.getIntegratedServer() != null) {
+                net.minecraft.world.WorldServer overworld = mc.getIntegratedServer().worlds[0];
+                if (overworld != null) {
+                    overworld.getWorldInfo().setRaining(true);
+                    overworld.getWorldInfo().setRainTime(6000);
+                    overworld.getWorldInfo().setThunderTime(6000);
+                    serverWeather = "server raining=" + overworld.getWorldInfo().isRaining();
+                }
+            }
+            report.addProperty("weatherServer", serverWeather);
             // Recorded, because a PASSED run on its own does not show that the scene changed: the postprocess experiment
             // failed exactly this way (the shader was never activated and the run still passed).
             report.addProperty("weatherSet", "raining=" + mc.world.getWorldInfo().isRaining()

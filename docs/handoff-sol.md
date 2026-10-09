@@ -370,7 +370,9 @@ thirdPerson/emptyHand は **`-Dceltium.validation.keepGui=true` が必須**（�
 **weather を修正**: `WorldInfo.setRaining(true)` だけでは client の `rainingStrength` が 0.000 のままで雨が描画されない。
 `World.rainingStrength`/`prevRainingStrength`/`thunderingStrength`/`prevThunderingStrength` が 1.12.2 では **public
 フィールド**なので fixture から直接 1.0 を設定 → **AMD で `weatherAtCapture=raining=true rainStrength=1.000`** を確認。
-ただし **Intel では `raining=false` のまま**で場面が効いていない（AMD との差、原因未特定＝次の課題）。
+**Intel で効かなかった原因**: クライアント側だけに設定していたため、統合サーバーの晴天パケットがクライアントの
+`worldInfo` を上書きしていた。`mc.getIntegratedServer().worlds[0]` の WorldInfo にも設定する修正で
+**両GPU成立**（weatherServer=server raining=true、AMD rainStrength 0.480 / Intel 0.470）。
 thirdPerson / emptyHand は **AMD・Intel 両方**で発火（`thirdPersonView=1` / `heldItemEmpty=True`）。
 
 ## 3. 残る問題と、次に実装する具体的な一手
