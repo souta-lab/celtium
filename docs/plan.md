@@ -256,6 +256,21 @@
   手動コンパイルとバイト一致**することを確認済み。
 - つまり損失は **頂点バッファと varying の間**（入力アセンブリ／属性記述／drawのvertexOffset）にある。
 
+**このターンの追加実測（矛盾の掘り下げ）**:
+
+| 計器 | 結果 |
+|---|---|
+| fragmentで**定数色**を出力 | 地形帯の**100%**がその定数＝terrain shaderが帯全体を描いている（診断の前提が正しい） |
+| `v_Color = vec4(a_TexCoord, 0, 1)` | **81色の滑らかな変化**＝**varying経路自体は正常** |
+| pipelineへ**提出済み**の入力状態（実行時print） | `stride=32 bindingStride=32 binding=0 attr1(location=1,binding=0,format=0x25=R8G8B8A8_UNORM,offset=12)`、blendは solid/cutout=false・translucent=true |
+| 可視sectionの**先頭頂点32バイト**（upload時に採取） | `0000803f 0000c040 0000803f 2b3e11ff 0c02083f 1904d03e 03fc00e8 00000000` → pos(1,6,1)、**色=(43,62,17,255)の暗い緑**、uv(0.53,0.41)、light、rdh=0 |
+| GPU保持値（readback） | `colour=0xff59bd91 light=0xe000fc01 pos=(0.0,4.0,0.0)`＝正しい |
+
+つまり **バッファのバイト・layout・提出済み入力状態・varying経路のすべてが正しい**のに、
+`a_Color` だけが帯全体で2値（26,26,26)/(255,255,255) になる。次は
+**属性を `VK_FORMAT_R8G8B8A8_UINT` として読み、生の整数をそのまま出力**して、
+shaderが実際に受け取るバイトを正規化の曖昧さなしに確定させる。
+
 **次の一手（具体・更新）**: 順に切り分ける。
 1. pipeline作成時に**5属性すべての (location, format, offset)** と stride をprintして、宣言と実データの対応を確認。
 2. draw時の `vertexOffset` / `firstIndex` / 使用pipeline をprintし、読んでいる頂点が想定のものかを確認

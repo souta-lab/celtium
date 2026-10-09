@@ -185,6 +185,13 @@ colorFormat=0x25`）のに、**fragmentが受ける `v_Color` は地形帯でち
 次の一手は (1) 5属性すべての (location,format,offset) をprint、(2) draw時の vertexOffset/firstIndex/pipeline をprint、
 (3) `v_Color = vec4(a_Color.r, a_Color.g, 0.0, 1.0)` で成分ごとの生死を見る、の順。
 
+**追加実測（このターン）**: (1) fragmentで定数色を出すと地形帯の100%がその色＝terrain shaderが帯全体を描く。
+(2) `v_Color = vec4(a_TexCoord,0,1)` は81色の滑らかな変化＝**varying経路は正常**。
+(3) pipelineへ提出済みの入力状態は `stride=32 / attr1(location=1,binding=0,R8G8B8A8_UNORM,offset=12)` で正しい。
+(4) 可視sectionの先頭頂点32バイトは `...2b3e11ff...`＝色(43,62,17,255)の暗い緑で、これも正しい。
+(5) GPU保持値も `colour=0xff59bd91` で正しい。それでも `a_Color` だけが2値になる。
+次の一手は**属性を `R8G8B8A8_UINT` として読み生の整数を出力**し、shaderが受けるバイトを正規化の曖昧さなしに確定させること。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

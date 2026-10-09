@@ -2997,6 +2997,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 int vertexBytes = mesh.parts.vertexBuffer().getLength();
                 if (mesh.sectionFirstColor != null) {
                     mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
+                    RegionResources owner = resourcesFor(region);
+                    byte[] head = new byte[32];
+                    java.nio.ByteOrder headOrder = vertices.order();
+                    try {
+                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                        for (int b = 0; b < 32 && b < vertices.capacity(); b++) head[b] = vertices.get(b);
+                    } finally {
+                        vertices.order(headOrder);
+                    }
+                    owner.sectionFirstVertex[mesh.sectionIndex] = head;
                 }
                 if (TERRAIN_VERTEX_COLOUR_SAMPLES > 0 && colourSamples < TERRAIN_VERTEX_COLOUR_SAMPLES) {
                     colourSamples++;
@@ -3176,6 +3186,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Colour word of the first vertex of a mesh, in the little-endian byte order the GPU reads. */
     /** How many section uploads print their packed vertex colours; a property so a normal run stays quiet. */
+    /** The vertex-level diagnostics (layout, drawn sections, GPU readback): one switch, quiet by default. */
+    private static final boolean VERTEX_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.vertexDiagnostics");
+
     private static final int TERRAIN_VERTEX_COLOUR_SAMPLES =
             Integer.getInteger("celtium.vulkan.vertexColourSamples", 0).intValue();
     private int colourSamples;
@@ -3352,7 +3366,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 indexBound = true;
             }
 
-            if (this.lastDrawCommands == 0 && command0Logged < 2) {
+            if (this.lastDrawCommands == 0 && command0Logged < 6) {
                 command0Logged++;
                 StringBuilder colors = new StringBuilder("drawn section colours:");
                 byte[] sections = renderList.getSectionsWithGeometry();
@@ -3362,6 +3376,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             .append(Integer.toHexString(resources.sectionFirstColor[local]));
                 }
                 record(colors.toString());
+                // stdout: the CPU-side counterpart of the GPU readback, for the sections actually being drawn.
+                byte[] firstHead = resources.sectionFirstVertex[sections.length > 0 ? (sections[0] & 0xFF) : 0];
+                StringBuilder head = new StringBuilder();
+                if (firstHead != null) {
+                    for (byte b : firstHead) head.append(String.format("%02x", b));
+                }
+                if (VERTEX_DIAGNOSTICS) {
+                    System.out.println("[Celtium] CELTIUM_DRAWN_SECTIONS pass=" + nameOf(pass) + " " + colors
+                            + " firstVertexBytes=" + head);
+                }
                 command0Logged++;
                 record("firstDraw region=" + region.getId() + " pass=" + nameOf(pass)
                         + " stride=" + this.commonVertexStride
@@ -4585,7 +4609,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         record(line.toString());
         // stdout as well as the list: this is the only place that shows what the GPU holds rather than what the CPU
         // wrote, and the diagnostics list is not printed by every run.
-        System.out.println("[Celtium] CELTIUM_GPU_VERTEX " + line);
+        if (VERTEX_DIAGNOSTICS) {
+            System.out.println("[Celtium] CELTIUM_GPU_VERTEX " + line);
+        }
     }
 
     private void record(String diagnostic) {
@@ -4616,6 +4642,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final class RegionResources {
         final VulkanArena vertexArena;
         final int[] sectionFirstColor = new int[RenderRegion.REGION_SIZE];
+        /** The first 32 bytes of the first vertex of each section, as the upload saw them. */
+        final byte[][] sectionFirstVertex = new byte[RenderRegion.REGION_SIZE][];
         VulkanArena indexArena;
 
         RegionResources(VulkanContext context, int vertexStride) {
