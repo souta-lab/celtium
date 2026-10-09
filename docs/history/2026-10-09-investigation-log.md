@@ -6748,3 +6748,24 @@ PASSED.
 The tree keeps mirroring **off** behind a property, because that is the configuration every measurement in this log was taken
 with, and because this scene has no sharply angled or distant tiled surface where a mip chain earns its keep - so the choice
 between on and off is a fidelity question the scene cannot settle, and it is now recorded as one rather than as a regression.
+
+---
+
+## S24: three plan rows said "pixel-identical to GL" when they meant "immediate off versus on"
+
+The audit's S24 lists the record's remaining over-claims, and the sharpest of them is a phrase that appears three times in the
+plan's claim table: immediate rendering **pixel-identical to GL**, with "0.00" beside it. The number is real - it is a **local**
+comparison, immediate off versus immediate on with the terrain on Vulkan in both - but the phrase is not, and this project
+established why several rounds ago: **this tree has no GL terrain path**, so any comparison that includes terrain is against
+the pinned upstream build, never against GL. The "each GPU's own GL reference" those rows describe was the self-comparison that
+the round-257 correction identified.
+
+All three rows now say what was compared. The local comparison is kept and named as the strongest this tree can make for the
+immediate path; the phrase "pixel-identical to GL" is replaced by "equal to the GL path on a local comparison"; and the row
+that carried the stale wording carries the correction with it, so a reader who remembers the old claim finds the reason it was
+wrong rather than a silent edit.
+
+Against the pinned upstream - the only reference with terrain - the current frame reads mean ~34 with ~69% of pixels over 8,
+dominated by terrain shading. That number is recorded in the same row, because a local 0.00 and a reference 34 belong next to
+each other: one says the immediate path agrees with the GL path it replaces, the other says the terrain still does not match
+the upstream renderer, and conflating them is exactly how a project talks itself into claiming more than it has.
