@@ -7626,3 +7626,27 @@ Two things are measured rather than assumed about the new branches:
 
 That is the shape of the remaining work on the immediate path: not "what is unmapped" - that question is answered - but "which
 of the mapped layouts are still refused downstream, and why".
+
+---
+
+## The composite layout: a null registry, fixed, and the next reason behind it
+
+The instrument that named the previous three guards named this one, and it was a real defect rather than a missing branch:
+
+```
+CELTIUM_COMPOSITE_LAYOUT_REFUSED reason=copy failed: NullPointerException:
+    Cannot invoke "VulkanTextureRegistry.get(int)" because "this.textureRegistry" is null
+```
+
+`canBuildDescriptor` runs as part of the **acceptance decision**, and the texture registry was created only in the **flush** -
+so on the first frames the acceptance dereferenced a null registry, threw, was caught by the batch-submission handler, and
+refused the batch with "copy failed". That is precisely how twelve batches per run came to be mapped, in range, in the mask,
+with the right stride, and still declined.
+
+The registry is now created **on demand** where the acceptance needs it. The null pointer is gone, the reason changed, and the
+layout is still declined - by whatever comes next, which is what the instrument will report next round rather than what this
+one guesses.
+
+Worth noting as the fifth guard on this one path, and the first of them that was a **defect** rather than a stale constant: the
+id chain had no branch, the range check stopped at 6, the mask excluded the id, the stride table predated the layout, and now
+an initialisation order that assumed the flush always ran first. None of the five was visible from reading the mapping.

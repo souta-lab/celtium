@@ -44,6 +44,7 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$compositeRefusals;
     private static int celtium$positionTexRefusals;
     private static int celtium$positionRefusals;
+    private static int celtium$compositeLayoutRefusals;
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
     private static final int[] celtium$arrivalsByFormat = new int[11];
     private static int celtium$arrivalTotal;
@@ -195,6 +196,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
             // backend was never called, GL drew every batch, and the counters reported zeros while the images matched.
             accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+            if (!accepted && formatId == 9 && celtium$compositeLayoutRefusals < 3) {
+                // The composite's own layout: mapped, in the mask, in range, with the right stride - so what refuses it is
+                // further down again, and the backend will say what.
+                celtium$compositeLayoutRefusals++;
+                System.out.println("[Celtium] CELTIUM_COMPOSITE_LAYOUT_REFUSED reason=" + backend.lastRefusal()
+                        + " stride=" + stride + " vertices=" + vertices);
+            }
             if (!accepted && formatId == 7 && celtium$positionRefusals < 3) {
                 // Position-only is mapped and in the acceptance mask, so a refusal is a guard further down. The same
                 // instrument that named the previous two guards answers this one.

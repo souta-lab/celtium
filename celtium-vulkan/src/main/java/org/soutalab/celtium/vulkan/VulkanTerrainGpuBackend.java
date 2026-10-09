@@ -1181,6 +1181,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * pipeline's state key, so any particle pipeline answers the same question about them.
      */
     private boolean canBuildDescriptor(int boundTexture) {
+        if (this.textureRegistry == null) {
+            // Created on demand rather than only in the flush. This method runs as part of the acceptance decision, which
+            // happens before any flush on the first frames - and dereferencing a null registry there threw, was caught, and
+            // refused the batch with "copy failed: NullPointerException". The composite's layout arrives exactly then, which
+            // is how twelve batches per run came to be mapped, in range, in the mask, with the right stride, and still
+            // declined.
+            this.textureRegistry = new VulkanTextureRegistry(this.context);
+        }
         VulkanGlTexture texture = this.textureRegistry.get(boundTexture);
         if (texture == null || this.lightmapTexture == null) {
             return false;
