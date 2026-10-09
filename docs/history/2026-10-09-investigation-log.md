@@ -8504,3 +8504,31 @@ question on this path - print the reason a patch was **refused**, as the refusal
 That is the named next step, and it is a small one: the registry already returns false on three conditions (no entry, out of
 bounds, conversion failure) and prints nothing about which. The counters and the acceptance are otherwise unchanged, validation
 is silent and the fixture passes.
+
+---
+
+## The patch instrument printed nothing, which is itself the answer
+
+The refusal instrument was added and the run produced **no refusal lines at all**:
+
+```
+imageFilledMirrors = 112   animatedImageFills = 105   inPlaceRefreshes = 4908
+(no CELTIUM_PATCH_REJECTED)
+```
+
+So the four thousand nine hundred refreshes are **not refused patches** - they never attempt the patch path. That leaves the
+three ways a refresh reaches the readback without an announcement, and reading the two call sites names them:
+
+1. **`invalidateBoundTexture()`** - what the animation hook calls *after* announcing. The announcement names the texture the
+   `int[][]` data belongs to; the invalidation names **whatever is bound**. When those differ, the stale mark lands on a texture
+   with no pending image and its refresh reads GL back.
+2. **The atlas and light map mirrors are held directly** rather than through the registry, and they refresh with
+   `uploadFromGlTexture` on every animation - `directMirrorRefreshes`, about eleven hundred of them in earlier runs. Those never
+   look at an announcement at all.
+
+So the largest two streams that still read back are **inside this renderer**, not in the game's write path: one is a stale mark
+applied to the wrong texture, and the other is a direct mirror that predates the announcement plumbing and does not consult it.
+
+Both have the same fix and it is small: **route them through the announced pixels the same way the registry does**. The light map
+is a whole-texture write, so the patch path already handles it; the atlas's per-sprite frames are patches, and that path works
+now too, as the hundred and five applications show.

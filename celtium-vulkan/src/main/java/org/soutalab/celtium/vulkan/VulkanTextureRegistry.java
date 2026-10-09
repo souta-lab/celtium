@@ -42,6 +42,8 @@ public final class VulkanTextureRegistry {
     private int mirrorCount;
     private int imageUploads;
     private int createdByAnnouncement;
+    /** The distinct reasons a patch was refused, each printed once. */
+    private final java.util.Set<String> patchRejections = new java.util.HashSet<String>();
     /** The GL texture ids that reach the readback refresh, recorded once each. */
     private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
     /** The images announced by the upload hook, waiting for the mirror that will use them. */
@@ -149,6 +151,7 @@ public final class VulkanTextureRegistry {
      */
     public boolean announceFullPixels(int glTextureId, int[][] data, int width, int height, int x, int y) {
         if (glTextureId == 0 || data == null) {
+            this.rejectPatch("no texture id or no data (id=" + glTextureId + ", data=" + (data == null ? "null" : "present") + ")");
             return false;
         }
         Entry entry = this.entries.get(glTextureId);
@@ -179,6 +182,8 @@ public final class VulkanTextureRegistry {
         }
         boolean wholeTexture = x == 0 && y == 0 && entry.width == width && entry.height == height;
         if (!wholeTexture && (x < 0 || y < 0 || x + width > entry.width || y + height > entry.height)) {
+            this.rejectPatch("region " + width + "x" + height + " at " + x + "," + y + " outside the mirror "
+                    + entry.width + "x" + entry.height);
             return false;
         }
         java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
@@ -205,9 +210,23 @@ public final class VulkanTextureRegistry {
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
             this.lastFailure = "announced pixels for GL texture " + glTextureId + ": " + error;
+            this.rejectPatch("conversion or upload failed: " + error);
             return false;
         } finally {
             org.lwjgl.system.MemoryUtil.memFree(rgba);
+        }
+    }
+
+    /**
+     * Reports a refused patch once per reason.
+     * <p>
+     * The counter said a hundred and six patches were applied against nearly five thousand refreshes that still read back, and
+     * the three refusal conditions said nothing about which one was responsible. This is the instrument that has answered every
+     * question on this path for ten rounds.
+     */
+    private void rejectPatch(String reason) {
+        if (this.patchRejections.size() < 8 && this.patchRejections.add(reason)) {
+            System.out.println("[Celtium] CELTIUM_PATCH_REJECTED " + reason);
         }
     }
 

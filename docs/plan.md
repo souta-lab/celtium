@@ -134,8 +134,11 @@ after the atlas's first frame. **The ordering fix is in and it moved two numbers
 `imageFilledMirrors` 7 to **113**, `animatedImageFills` 0 to **106** - the mirror is now created when the announcement arrives
 (querying the size, never the pixels) instead of when the draw path asks. **The prediction attached to it was wrong**: the patch
 count is 106, not the thousands expected, against 4,787 refreshes that still read back. So the ordering was necessary and not
-sufficient. **Next: print why a patch was refused** - the registry returns false on three conditions and says nothing about
-which - as the refusal hook does for batches.
+sufficient. **The refusal instrument printed nothing**, and that is the answer: the remaining refreshes never
+attempt the patch path. Reading the two call sites names them - `invalidateBoundTexture()` marks **whatever is bound** stale
+after the announcement named a possibly different texture, and the atlas and light map mirrors refresh through
+`uploadFromGlTexture` directly without consulting an announcement at all. **Both are inside this renderer**, and both have the
+same small fix: route them through the announced pixels as the registry does.
 
 **Next: the bridge itself**, and it is now **sized**: the renderer
 mirrors **eleven** distinct GL textures across a run - the atlas, the lightmap, the item and entity sheets, the GUI sheets - with
