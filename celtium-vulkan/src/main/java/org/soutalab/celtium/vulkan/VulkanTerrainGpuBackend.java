@@ -524,6 +524,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     @Override
+    public void invalidateBoundTexture() {
+        int bound = this.immediateState.boundTextureName();
+        if (bound != 0) {
+            invalidateTexture(bound);
+        }
+    }
+
+    @Override
     public void setTexture2dEnabled(boolean enabled) {
         this.immediateState.texture2dEnabled(enabled);
         this.immediateStateCalls++;

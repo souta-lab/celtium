@@ -58,6 +58,15 @@ public interface TerrainGpuBackend {
     default void invalidateTexture(int glTextureId) {
     }
 
+    /**
+     * Invalidates whichever texture the game has bound.
+     * <p>
+     * Minecraft's animation upload - {@code TextureUtil.func_147955_a} - carries no texture id because it writes into
+     * the bound texture, so the bound name is the only thing that identifies it.
+     */
+    default void invalidateBoundTexture() {
+    }
+
     /** Mirrors {@code GlStateManager.func_179144_i(int)}, the GL name of the texture the state has bound. */
     default void bindTexture(int glTextureId) {
     }

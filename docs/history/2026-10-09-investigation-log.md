@@ -1483,3 +1483,31 @@ What is **not** proven is that the hook fires during play: the counter meant to 
 not appear in the run's debug line, so either it was never incremented or it is not being printed - the two have not been
 separated. Until that is read, the honest statement is that the mechanism is in place, guarded, and does not break
 anything, not that animated textures now update.
+
+---
+
+## The hook fires, but it was hooked to the wrong method - the animation path is `func_147955_a`
+
+Reading the sources answered what the counter could not. The registration hook demonstrably fires (ids 7, 8, 13, 16, 17,
+one line per upload, from inside the mixin where the log definitely sees it), and yet **no texture was ever uploaded
+twice** - because `func_110989_a` is not the animation path:
+
+```
+TextureMap.func_94248_c()                    // the animation tick
+  -> TextureUtil.func_94277_a(glTextureId)   // binds the atlas
+  -> TextureSprite.func_94219_l()            // per sprite
+       -> TextureUtil.func_147955_a(int[][] data, w, h, x, y, blur, clamp)   // uploads the frame
+```
+
+`func_147955_a` carries **no texture id**, because it writes into whatever texture is bound - which is exactly why the
+first hook looked plausible and was wrong, and why the counter never moved on a repeat.
+
+So the animation injector is now on `func_147955_a`, with `TerrainGpuBackend.invalidateBoundTexture()` as its boundary
+method and the bound name coming from the state mirror that already follows `GlStateManager.func_179144_i`. The run is
+green: BUILD OK, PASSED, `nativeTerrainVerified True`.
+
+What is still not proven is that invalidations now happen - the backend counter's reporting path is unreliable (it has not
+appeared in the debug line in three runs, while a print from inside the mixin appears immediately), so the next check is a
+print from the animation injector itself, the same shape that produced the ids above. Until then the honest statement is:
+the mechanism is now attached to the method the sources identify as the animation path, it does not break the run, and
+whether it fires has not been read.

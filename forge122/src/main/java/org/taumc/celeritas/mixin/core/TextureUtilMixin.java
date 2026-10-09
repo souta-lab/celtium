@@ -23,10 +23,52 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(TextureUtil.class)
 public class TextureUtilMixin {
 
+    private static int celtium$hooked;
+    private static int celtium$firstUploads;
+    private static int celtium$repeats;
+    private static final java.util.Set<Integer> celtium$seen = new java.util.HashSet<Integer>();
+
+    /**
+     * The animation path.
+     * <p>
+     * Reading the sources settled which method actually animates a sprite: {@code TextureMap.func_94248_c} binds the
+     * atlas through {@code TextureUtil.func_94277_a} and then calls each sprite's {@code func_94219_l}, which uploads
+     * its frame through {@code TextureUtil.func_147955_a} - a method that takes no texture id because it writes into
+     * whatever is bound. That is why hooking {@code func_110989_a} saw uploads but never a repeat: it is the
+     * registration path, not the animation one.
+     */
+    @Inject(method = "func_147955_a", at = @At("HEAD"), require = 0)
+    private static void celtium$invalidateAnimatedTexture(int[][] data, int width, int height, int x, int y, boolean blur,
+            boolean clamp, org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.invalidateBoundTexture();
+            }
+        } catch (Throwable ignored) {
+            // Same rule as the registration hook: a bookkeeping hint must never break a texture upload.
+        }
+    }
+
     @Inject(method = "func_110989_a", at = @At("HEAD"), require = 0)
     private static void celtium$invalidateUploadedTexture(int glTextureId, java.awt.image.BufferedImage image, boolean blur,
             boolean clamp, CallbackInfoReturnable<Integer> info) {
         try {
+            // Counted here as well as in the backend, and reported for the first few uploads only: whether the hook
+            // fires at all is what was unproven, and a counter that never reaches the log cannot answer it.
+            // A first upload is registration; the animation is a *second* upload of the same texture id, so the
+            // interesting event is the repeat, not the hit.
+            if (celtium$seen.add(Integer.valueOf(glTextureId))) {
+                celtium$firstUploads++;
+            } else if (celtium$repeats < 5) {
+                celtium$repeats++;
+                System.out.println("celtium texture re-upload (animated): id=" + glTextureId + " firstUploads="
+                        + celtium$firstUploads + " repeat=" + celtium$repeats);
+            }
+            if (celtium$hooked < 3) {
+                celtium$hooked++;
+                System.out.println("celtium texture-upload hook: id=" + glTextureId + " hit=" + celtium$hooked);
+            }
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null) {
                 backend.invalidateTexture(glTextureId);
