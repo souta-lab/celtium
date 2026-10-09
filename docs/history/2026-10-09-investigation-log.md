@@ -8215,3 +8215,35 @@ rather than any new mechanism.
 
 Recorded as the second correction of framing in two rounds, and the same class as the first: the previous round described where
 the work *sounded* like it was, and the next round read the code.
+
+---
+
+## The ownership decision, and the fact that makes it small
+
+The remaining texture-facing GL calls classify cleanly by direction, and the classification is the plan:
+
+- **GL to Vulkan, the readback**: `VulkanGlTexture.readGlLevel0` and `readGlLevel`, called from three places. This is how a
+  mirror is filled today - the game uploads with GL, and the renderer reads the pixels back out of GL to build its image.
+  **This is the direction that disappears when Vulkan owns the texture.**
+- **Vulkan to GL, the uploads**: two in `VulkanOffscreenTarget` (the framebuffer copy-back, which is required) and one 1x1
+  scratch in the backend. This direction stays.
+- **The bridge's own GL objects**: `VulkanFrameTarget`'s scratch and depth textures, the frame target's staging - created and
+  deleted by the bridge itself rather than by the game.
+
+And the fact that makes the ownership decision small is in the hook's own signature:
+
+```java
+private static void celtium$invalidateUploadedTexture(int glTextureId, BufferedImage image, boolean blur, ...)
+```
+
+**The hook already receives the image.** An upload through the game's utility arrives with its pixels in hand, so the Vulkan
+image can be built from the `BufferedImage` directly - the same data GL is about to be given - and the GL readback becomes
+unnecessary for exactly the eleven textures this renderer mirrors. That is a change at one hook and one code path, not a new
+subsystem: the hook announces an upload, and instead of only invalidating the mirror it can hand over the pixels.
+
+That is what remains for the bridge: **eleven resources whose writes are already announced, whose data is already in the
+announcement, and whose refresh path already keeps descriptor sets stable.** The ownership decision is therefore about **when**
+to stop reading GL rather than about whether it can be done, and the first candidate is the mirror's initial fill.
+
+Recorded with its evidence, because the previous two rounds described the work from the outside and this one read the
+signature that answers it.
