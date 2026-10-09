@@ -1307,6 +1307,13 @@ public final class ValidationClient {
             mc.world.getWorldInfo().setRaining(true);
             mc.world.getWorldInfo().setRainTime(6000);
             mc.world.getWorldInfo().setThunderTime(6000);
+            // The world info alone did not put rain on screen: the client's own rain strength stayed 0.000 through the
+            // capture (measured), so nothing was actually being rendered. Both strength fields are public in 1.12.2, so
+            // the scene can be set directly - which is what this switch is for.
+            mc.world.prevRainingStrength = 1.0F;
+            mc.world.rainingStrength = 1.0F;
+            mc.world.prevThunderingStrength = 1.0F;
+            mc.world.thunderingStrength = 1.0F;
             // Recorded, because a PASSED run on its own does not show that the scene changed: the postprocess experiment
             // failed exactly this way (the shader was never activated and the run still passed).
             report.addProperty("weatherSet", "raining=" + mc.world.getWorldInfo().isRaining()
@@ -1317,7 +1324,8 @@ public final class ValidationClient {
             // Read at capture time, not when the rain was requested: the client's rain strength ramps in over ticks, so
             // the value recorded at tick 150 was still 0.000 and said nothing about whether rain was on screen.
             report.addProperty("weatherAtCapture", "raining=" + mc.world.getWorldInfo().isRaining()
-                    + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f))));
+                    + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f)))
+                    + " rainingStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.rainingStrength)));
         }
         if (worldTicks == 199 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
             celtium$particlesSpawned = true;

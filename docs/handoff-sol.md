@@ -367,8 +367,11 @@ fixture の postprocess 起動は名前ベース反射で本番SRG名と一致�
 postprocess（`switchUseShader` 直接呼び出し）・particles（24個）・compositeBlit（tick=185）・
 **thirdPerson（`thirdPersonView=1`）**・**emptyHand（`heldItemEmpty=True`）** の5場面は発火を確認。
 thirdPerson/emptyHand は **`-Dceltium.validation.keepGui=true` が必須**（内側の分岐にあるため）。
-**weather は `rainStrength=0.000` のまま**（`WorldInfo.setRaining(true)` を設定しても client の rainStrength が
-上がらず、雨が画面に出ていない）＝**場面として未成立**。次の課題は client 側の雷雨強度を上げる正しい入口の特定。
+**weather を修正**: `WorldInfo.setRaining(true)` だけでは client の `rainingStrength` が 0.000 のままで雨が描画されない。
+`World.rainingStrength`/`prevRainingStrength`/`thunderingStrength`/`prevThunderingStrength` が 1.12.2 では **public
+フィールド**なので fixture から直接 1.0 を設定 → **AMD で `weatherAtCapture=raining=true rainStrength=1.000`** を確認。
+ただし **Intel では `raining=false` のまま**で場面が効いていない（AMD との差、原因未特定＝次の課題）。
+thirdPerson / emptyHand は **AMD・Intel 両方**で発火（`thirdPersonView=1` / `heldItemEmpty=True`）。
 
 ## 3. 残る問題と、次に実装する具体的な一手
 
