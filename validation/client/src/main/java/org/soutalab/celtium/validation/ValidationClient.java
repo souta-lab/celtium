@@ -442,6 +442,26 @@ public final class ValidationClient {
             mc.resize(1024, 640);
             report.addProperty("resizedAtTick", worldTicks);
         }
+        if (worldTicks == 150 && Boolean.getBoolean("celtium.validation.weather")) {
+            // Rain, saturated well before the capture so its strength has stopped changing: the renderer interpolates
+            // rain strength between ticks, and a value still ramping would make two runs differ for reasons that are not
+            // the renderer's.
+            mc.world.getWorldInfo().setRaining(true);
+            mc.world.getWorldInfo().setRainTime(6000);
+            mc.world.getWorldInfo().setThunderTime(6000);
+        }
+        if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.particles")) {
+            // Particles with no motion, one tick before the capture. A still particle has prev == current, so the
+            // partial-tick interpolation that made the hand and the player model unusable as comparison subjects gives
+            // the same answer whichever frame is captured.
+            for (int i = 0; i < 24; i++) {
+                double px = -4.0 + (i % 6) * 1.6;
+                double py = 6.0 + (i / 6) * 0.8;
+                double pz = -4.0 + ((i / 6) % 3) * 3.0;
+                mc.world.spawnParticle(net.minecraft.util.EnumParticleTypes.FLAME, px, py, pz, 0.0, 0.0, 0.0);
+            }
+            report.addProperty("particlesSpawned", 24);
+        }
         if (worldTicks == 190 && !Boolean.getBoolean("celtium.validation.interop")) {
             // Hide the HUD a few ticks before the capture so the saved PNG is the rendered scene only. A stock
             // Celeritas run and a Celtium run of the same seed can then be compared pixel by pixel, without

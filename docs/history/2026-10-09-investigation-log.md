@@ -2528,3 +2528,28 @@ Two notes on method, both this project's own rules applied late:
   against a same-revision reference the same run measures the 0.00 above;
 - the audit's warning is taken as written: the earlier GUI, translucency and water comparisons were made with this defect
   present and are treated as experiments containing it, not as evidence about anything else.
+
+---
+
+## Weather and particles: a difference fourteen times its own floor, measured after the state fix
+
+With the group-state defect fixed, the scene was extended to the two content classes that were still absent from it: rain
+and particles. Both are built to be comparable rather than merely present - the rain is set going fifty ticks before the
+capture so its strength has saturated, and the twenty-four particles are spawned one tick before it with **zero motion**, so
+`prev == current` and the partial-tick interpolation that made the hand and the player model unusable gives the same answer
+whichever frame is captured.
+
+| Comparison (hidden GUI, same revision) | mean | over 8 | over 32 |
+|---|---|---|---|
+| **reference against reference (noise floor)** | **0.06** | **0.23%** | 0.11% |
+| immediate path against a reference | **0.85** | **1.33%** | 1.29% |
+
+Two things to read carefully. The floor is **not** zero here as it was for the water scene - 0.23% of pixels differ
+between two identical reference runs - so something in this scene still varies, and the rain is the obvious candidate
+since Minecraft spawns its own rain effects and advances a world random each tick. And the difference is **fourteen times
+that floor**, with nearly all of it (1.29% of 1.33%) being pixels that differ by **more than 32**, which is a substantial
+difference rather than an edge effect.
+
+The next step is to separate the two candidates rather than attribute the number to both: a particles-only configuration
+(rain off) with its own floor, then a rain-only configuration, each with the same three runs. That is the pattern this
+project has used all session, and it is the only way to say which of the two classes the difference belongs to.
