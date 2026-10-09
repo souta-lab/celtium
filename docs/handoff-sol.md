@@ -169,6 +169,12 @@ GL地形パスは製品構成ではなく（`Celtium requires a Vulkan terrain b
 同一buildでのGL/Vulkan A/Bは取れない。`CeleritasWorldRenderer` の VANILLA_LIKE/COMPACT 選択は
 上流checkoutに無いCeltium側の変更であることも確認した。
 
+**pass別集計（このターンの計器追加）**: `lightDiagnostics` を pass別に集計し、ラベルの誤り（intは `0xAABBGGRR` で
+little-endianのバイト順は R,G,B,A）も直した。実測: **solid=(162,171,150,255)**、**cutout_mipped=(63,90,25,254)**。
+solidの色(0.635)なら `212×0.635≈137` で参照(125-137)と一致するが、実際の描画は79.6（有効乗算0.369）。
+shader内の他項（alpha乗算・Rdh項）は無効化しても不変と確認済み。帯平均は可視geometryの混在に強く依存するため、
+**同じpipeline/formatで既知の1枚のquadを描いて厳密な画素を読み戻す**制御実験が必要（次の一手）。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

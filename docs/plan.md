@@ -233,7 +233,20 @@
   （旧run scriptコメントの「GLへフォールバックしてそう言う」は古い）。以降のplayer null NPEはこの停止の二次症状。
   したがって同一buildでのGL/Vulkan A/Bは**この構成では取れない**。
 
-**次の一手（具体）**: `lightDiagnostics` の集計を **pass別（solid/cutout_mipped）**に分け、
+**pass別集計（実装・実測済み）**: `-Dceltium.vulkan.lightDiagnostics=true` を**pass別**に集計するよう拡張し、
+同時に**ラベルの誤りを修正**（intは `0xAABBGGRR` なので little-endian のバイト順は R,G,B,A＝`VK_FORMAT_R8G8B8A8_UNORM` と一致）。
+実測: **pass1（solid）= (162,171,150,255)**、pass3（cutout_mipped）= (63,90,25,254)。
+- solid の色は明るく、`212 × 0.635 ≈ 137` で**参照(125-137)とほぼ一致**する。
+- 一方、現行の描画は 79.6（有効な乗算は0.369）。つまり**詰めた色(0.635)が描画に反映されていない**。
+- shader内の他項はすべて無効化して確認済み: `rgb *= m_color.a`（alpha=255で不変）、
+  `m_color += v_RdhFactor * correctionWeight`（無効化しても 81.1 vs 81.0 で不変）。
+- **注意**: 帯平均は可視geometry（solid/cutout/translucentの混在、面の向き）に強く依存するため、
+  「詰めた色」と「描画値」を帯平均で直接比べるのは不適切。**制御された単一quad実験が必要**。
+
+**次の一手（具体）**: fixtureに、terrain経路と**同じpipeline/同じformat**で
+「既知の1枚のquad（既知のテクスチャ・既知の頂点色）」を描いて**厳密な画素値を読み戻す**小実験を足す。
+期待値は `texel × colour × lightmap` で計算できるので、どこで0.635→0.369の損失が出るかを1回で確定できる。
+（`lightDiagnostics` の pass別集計は恒久的な計器として残す）
 mesh builderが実際に詰めた色の平均を出す。それを「無効化runの212 × 詰めた色」と突き合わせ、
 描画結果（79.6/85.5/75.4）と一致するかを確認する。一致しなければ損失はshader内、一致すれば
 詰めた色自体が参照の0.62倍である（＝mesherの色合成か、VANILLA_LIKE と COMPACT の選択差）。

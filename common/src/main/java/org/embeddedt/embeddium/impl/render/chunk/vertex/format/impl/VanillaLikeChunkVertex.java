@@ -17,6 +17,8 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
     private static int lightSamplesPrinted;
     private static long colorCount, colorR, colorG, colorB, colorA;
     private static int colorPrints;
+    /** Per material-pass totals: [count, r, g, b, a]. */
+    private static final java.util.Map<Integer, long[]> COLOR_TOTALS = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static final int STRIDE = 32;
 
@@ -55,20 +57,27 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
             LWJGL.memPutFloat(ptr + 4, vertex.y);
             LWJGL.memPutFloat(ptr + 8, vertex.z);
             if (LIGHT_DIAGNOSTICS) {
-                // Aggregate rather than the first few: the first eight writes belong to the fixture's own test quads, which
-                // is what the earlier sample printed eight times. A mean over a large window cannot be filled by them.
+                // The int is Minecraft's 0xAABBGGRR packing, so in little-endian memory the bytes are R,G,B,A - which is
+                // exactly what VK_FORMAT_R8G8B8A8_UNORM reads. Decoding it the other way round labels A as "r" and R as "a",
+                // which is how this diagnostic used to print and why the numbers looked wrong.
+                // Aggregated per pass as well: the whole-scene mean is dominated by sky and water, so it cannot say what
+                // the terrain's colour is - and the terrain is what the reference comparison disagrees about.
                 int c = vertex.color;
+                int r = c & 0xFF, g = (c >> 8) & 0xFF, b = (c >> 16) & 0xFF, a = (c >> 24) & 0xFF;
+                long[] total = COLOR_TOTALS.computeIfAbsent(material.bits() & 0xFF, k -> new long[5]);
+                total[0]++; total[1] += r; total[2] += g; total[3] += b; total[4] += a;
                 colorCount++;
-                colorR += (c >> 24) & 0xFF;
-                colorG += (c >> 16) & 0xFF;
-                colorB += (c >> 8) & 0xFF;
-                colorA += c & 0xFF;
-                // Every ten thousand writes, up to five times: a scene with only a few thousand vertices still reports.
-                if (colorCount % 10000 == 0 && colorPrints < 5) {
+                if (colorCount % 20000 == 0 && colorPrints < 6) {
                     colorPrints++;
-                    System.out.println("[Celtium] CELTIUM_VERTEX_COLOR_MEAN n=" + colorCount
-                            + " r=" + (colorR / colorCount) + " g=" + (colorG / colorCount)
-                            + " b=" + (colorB / colorCount) + " a=" + (colorA / colorCount));
+                    StringBuilder text = new StringBuilder("[Celtium] CELTIUM_VERTEX_COLOR_BY_PASS n=" + colorCount);
+                    for (var entry : COLOR_TOTALS.entrySet()) {
+                        long[] t = entry.getValue();
+                        if (t[0] == 0) continue;
+                        text.append(" pass").append(entry.getKey()).append("=").append(t[0]).append(":")
+                                .append(t[1] / t[0]).append(",").append(t[2] / t[0]).append(",")
+                                .append(t[3] / t[0]).append(",").append(t[4] / t[0]);
+                    }
+                    System.out.println(text);
                 }
             }
             LWJGL.memPutInt(ptr + 12, vertex.color);
