@@ -407,6 +407,7 @@ public final class VulkanTextureRegistry {
                     // difference between guessing why and knowing why.
                     if (this.readbackIds.size() < 8 && this.readbackIds.add(Integer.valueOf(glTextureId))) {
                         System.out.println("[Celtium] CELTIUM_READBACK_REFRESH glTexture=" + glTextureId
+                                + " view=" + Long.toHexString(existing.texture.view())
                                 + " (announced images pending: " + this.announcedImages.size() + ")");
                     }
                 } catch (RuntimeException | LinkageError error) {
