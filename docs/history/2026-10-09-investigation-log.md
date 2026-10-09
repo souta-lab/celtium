@@ -3959,3 +3959,39 @@ open questions at once: what the 2000 is, and which pass produces it.
 The fixture itself is doing its job. It fails, it fails only when a second render target is present, and it produces a
 number large enough to be a pass leaking into another pass's comparison rather than a subtle numerical difference. Three
 rounds ago the corresponding statement would have been a hypothesis; now it is a failing test with a counter next to it.
+
+---
+
+## The worst sample is named, and it belongs to the fixture's own target switch
+
+The instrument was moved to where both deltas are in scope and the pass identity is attached, and it answers immediately:
+
+```
+worstView[frame=2 target=44569671 viewport=1311440 projDelta=0.0
+          mirror[m0=1.00, m5=1.00, t=0.00, 0.00, 0.00]]
+passSplits: 16, target: 44569671
+fixture FAILED | nativeTerrainVerified false
+```
+
+Read carefully:
+
+- **frame 2.** The thirty-two-thousand-pixel difference is not a steady-state property of the run; it happens at the
+  moment the fixture's second render target appears. The steady-state counters report it because they keep a maximum from
+  frame 11 onwards of a value that was set at frame 2 - a maximum, not a per-frame reading, which is the third time this
+  session that a max-over-time counter has been read as if it described the present.
+- **the projection matches** (`projDelta=0.0`) and the **mirror's modelview is the identity** while GL's is something two
+  thousand away. So it is not the derived projection, and it is not a missing translate: it is GL having a modelview the
+  mirror never had at all.
+- **the pass is named**: the sample carries the render target identity the backend tracked (`44569671`), and the only second
+  target in this run is the fixture's own 256x256 one. The viewport key is there too.
+
+So the finding is specific and it is the audit's S10 in miniature: **binding a second render target mid-pass leaves the
+mirrored modelview at the identity while GL has the pass's own matrix**, and the fixture - which exists precisely to cross
+that boundary - turns it into a failure. Before the fixture, the same mechanism produced a 1.62 that could be argued about;
+now it produces a named target, a named frame and a run that fails.
+
+What the fix has to do is what S10's acceptance says: preserve order and target across the switch, so that the batches drawn
+into the second target are compared, grouped and drawn against the matrices and target they were issued with, and the main
+target's batches are not disturbed by them. The 2000 itself is a symptom of GL's state being read at a moment that belongs
+to a different target, which is exactly what reading live GL matrices for a batch cannot tell apart - and the reason the
+audit's direction and the removal of those reads point the same way.
