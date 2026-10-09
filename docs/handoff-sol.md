@@ -77,13 +77,13 @@ fixture が確かめていること（`celtium.validation.commandBufferTargets=t
 
 ### 限界（未実施・未検証）
 
-- **Intel UHD 630**: 最終artifactで **target受入は `passed=true`**（ログの `CELTIUM_COMMAND_BUFFER_TARGETS` 行、カウンタ4/4/4/4・
-  off-target 2/2/2・ピクセル不一致0）。しかし **run verdict は2回とも得られていない**:
-  1回目は `worldFrames < 100` の起動ゲートで FAILED（過去のIntelは114・129と余裕が小さい）、
-  2回目は480秒の duration cap に当たり report 未到達（`fixtureStatus MISSING_REPORT`）。
-  どちらも **Intelでフレーム数が足りない**ことを示す。最有力の原因は、同期windowが1回につき
-  ブリッジ往復（color blit in・depth変換・fence待ち・color blit back・depth変換）を伴うことで、
-  format 2（GUI/overlay）が既定受理になってwindow数が増えたため。**次段の最優先は window 数の削減**。
+- **Intel UHD 630**: **受入完了**。`sol-cb-clean-intel` が exit 0 / clean / msgs 0 / fixture PASSED /
+  `passed=true` / 4/4/4/4 / off-target 2/2/2 / 全ピクセル不一致0 / worldFrames 155、注入run
+  `sol-cb-clean-intel-retry` が `retries=1` で同じ受入。通常fixture `p31d-intel-clean` は worldFrames **154**
+  （変更前は114・129）で PASSED、即時2155件が記録=submit=完了、invalid 0。
+- **重要な訂正**: 途中のIntel 480秒タイムアウト2件（`sol-cb-final-intel2`・`p31b-intel-normal`）は
+  **同時にAMD runを走らせていた競合が原因**で、Intelの退行ではなかった。単独runは24〜27秒で完走する。
+  **測定は必ず単独で行う**（この誤診を記録として残す）。
 - このfixtureは **depth occlusion を確かめない**（depth test を切っている）。別FBOの depth 依存・順序は未検証。
 - 画面（window/compositor）への present 到達は相変わらず未確認（環境の X が 0x0）。
 - 失敗経路で確認したのは **submit前の失敗**のみ。submit成功後の `endFrame` 失敗、fence timeout、

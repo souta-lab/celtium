@@ -133,9 +133,12 @@
 | 受入（AMD・初回修正版） | `sol-cb-fixed2-amd` | 同上（pendingImmediateIndices修正後） |
 | 純ロジック | `vulkan:test` | `VulkanCommandBufferStateTest` 4件 pass |
 | 通常fixture回帰（format 2 既定受理） | `p31a-format2-default-amd` | exit 0 / clean / msgs 0 / fixture PASSED / worldFrames 228 / `acceptedByFormat=1:0,2:217,3:0,4:0,5:214,6:1394,7:1136,8:0,9:0` / **recorded=submitted=completed=2961** / invalidImmediateRecords 0 / retries 0 |
-| Intel（target受入） | `sol-cb-final-intel` / `sol-cb-final-intel2` | `CELTIUM_COMMAND_BUFFER_TARGETS passed=true`（4/4/4/4・off 2/2/2・不一致0）。**run verdictは未取得**（起動フレーム数ゲート→ duration cap） |
+| 受入（Intel通常） | `sol-cb-clean-intel` | exit 0 / clean / msgs 0 / fixture PASSED / `passed=true` / 4/4/4/4 / off 2/2/2 / 不一致0 / worldFrames 155 |
+| 受入（Intel・submit前失敗注入） | `sol-cb-clean-intel-retry` | 同上＋`retries=1`（fixture内で再試行） |
+| 通常fixture（Intel・format 2既定受理） | `p31d-intel-clean` | exit 0 / clean / msgs 0 / PASSED / **worldFrames 154**（変更前は114・129）、即時2155件が記録=submit=完了、invalid 0 |
 | window数削減（1回目） | `sol-cb-windowcut-amd` / `p31c-windowcut-amd` | viewport変更のflushを削除し、テクスチャ告知は**キュー内groupが参照する場合のみ**flush。`orderPreservingFlushes` **633→388**（228→218フレームで約2.8→1.8/フレーム）、target受入 exit 0・通常fixture PASSED・記録=submit=完了=2829・invalid 0 |
-| 未解決 | Intel のフレーム数 | 過去114・129に対し閾値100。`sol-cb-final-intel2` は480秒上限、`p31b-intel-normal`（通常fixture・window削減前）は測定中。window以外（format 2受理でGUIがVulkan描画に移った影響）も切り分ける |
+| 訂正（Intelの480秒上限） | `sol-cb-final-intel2` / `p31b-intel-normal` | どちらも480秒上限で report 未到達だったが、**同時にAMD runを走らせていた競合が原因**だった。他を止めた単独runは 24〜27秒で完走し PASSED。**Intelは退行しておらず、むしろ 114/129→154 と改善**。測定は常に単独で行う |
+| 証拠 | `.celtium-work/sol-command-buffer/acceptance-summary.json` | 9 runのexit/clean/msgs/fixture/passed/delta/worldFramesとPNGハッシュを固定 |
 | 証拠 | `.celtium-work/sol-command-buffer/acceptance-summary.json` | 各runのexit/clean/msgs/fixture/passed/deltaとPNGハッシュ |
 
 実行コマンド: `bash scripts/run-command-buffer-targets.sh amd|intel <new-run-name> [failImmediateSubmits]`

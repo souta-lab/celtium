@@ -130,3 +130,21 @@ pixel-identity.
   解放を行わない。**submit成功後失敗と device lost は分岐のみで実機注入は未実施**。
 - 受入の実行: `bash scripts/run-command-buffer-targets.sh amd|intel <new-run-name> [failImmediateSubmits]`。
   非0終了は Python/fixture/verdict のいずれかの失敗を意味する。
+
+## 追補（両GPU受入・2026-10-10）
+
+command buffer の所有権修正と format 2（POSITION_TEX_COLOR）の既定受理について、**AMD RX 6400 と Intel UHD 630 の両方**で
+次を受入済みとする。
+
+| 検証 | AMD | Intel |
+|---|---|---|
+| target受入（main＋別FBOの実geometry・カウンタ4段一致・画像不一致0） | `sol-cb-windowcut-amd` / `sol-cb-final-amd` | `sol-cb-clean-intel` |
+| submit前失敗の注入（記録=受理=submit=完了=4・`retries=1`・資源保持） | `sol-cb-final-retry-amd` | `sol-cb-clean-intel-retry` |
+| 通常fixture回帰（format 2既定受理） | `p31c-windowcut-amd`（worldFrames 218、即時2829件一致） | `p31d-intel-clean`（worldFrames 154、即時2155件一致） |
+
+証拠: `.celtium-work/sol-command-buffer/acceptance-summary.json`（各runのexit/clean/messages/fixture/passed/delta/worldFramesと
+3枚のPNGハッシュ）。再現: `sol-cb-base-amd`（70メッセージ）。純ロジック: `VulkanCommandBufferStateTest` 4件。
+
+**測定手順の注意**: 2つのGPU runを同時に走らせると、headless sway と Minecraft 本体がCPUを奪い合い、
+Intel側が480秒上限に達して `MISSING_REPORT` になる。これは環境の競合であって実装の退行ではない。
+**単独で実行する**こと。
