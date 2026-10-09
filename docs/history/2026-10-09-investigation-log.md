@@ -7198,3 +7198,32 @@ without hiding any GL that remains.
 Recorded for the next round: Intel needs the same run with this fix (the 306/0 figures predate it), and the 13-batch
 difference between drawn and copied back is explained by the last frames' copies arriving after the final fence wait rather
 than by a defect - worth confirming rather than assuming.
+
+---
+
+## Both GPUs, and the drawn/copied difference measured rather than assumed
+
+The off-target path now runs on **both** GPUs with the copy-back fixed:
+
+| | drawn | copied back | refusals | validation |
+|---|---|---|---|---|
+| AMD RX 6400 | 567 | 554 | 0 | clean |
+| Intel UHD 630 | 298 | 287 | 0 | clean |
+
+Both runs: exit 0, fixture PASSED, acceptance intact, and the self-test proving the clear-readback-upload chain on every run.
+
+The difference between drawn and copied back was recorded last round as "assumed to be the last frames' copies landing after
+the final fence wait". This round measured it by reporting the pending copies at teardown, and the assumption is **wrong**:
+
+```
+CELTIUM_OFFTARGET_PENDING pendingCopies=0 drawn=273 copiedBack=267 difference=6
+```
+
+**Nothing is pending.** So the difference is not un-uploaded copies: it is copies that are **never recorded**, because the
+recorder runs on the frame path and the last frames' off-target work does not reach it before the client exits. A small,
+consistent boundary effect at shutdown - six here, eleven and thirteen in the longer runs - and now a measured one rather than
+an assumed one.
+
+That is the fifth assumption in this project to be corrected by measuring it - the mask, the mapping, the element comparison,
+the pass nesting and now this - and the pattern is stable enough to be worth stating as a rule: a difference of a few units
+between two counters is exactly the kind of thing that sounds obvious and is usually not.

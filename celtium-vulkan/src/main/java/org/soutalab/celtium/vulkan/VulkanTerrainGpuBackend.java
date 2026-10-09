@@ -2503,9 +2503,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } catch (RuntimeException | LinkageError error) {
             record("teardown: held groups could not be released: " + describe(error));
         }
+        int pendingCopies = 0;
         for (VulkanOffscreenTarget target : this.offTargetTargets.values()) {
+            if (target.copyBackPending()) {
+                pendingCopies++;
+            }
             released += releaseDirect(target::delete);
         }
+        // The drawn/copied difference is expected to be exactly this: copies recorded in the last frames that the final fence
+        // wait never saw. Reported rather than assumed.
+        System.out.println("[Celtium] CELTIUM_OFFTARGET_PENDING pendingCopies=" + pendingCopies
+                + " drawn=" + this.offTargetDrawn + " copiedBack=" + this.offTargetCopiedBack
+                + " difference=" + (this.offTargetDrawn - this.offTargetCopiedBack));
         this.offTargetTargets.clear();
         released += releaseImmediateMesh(this.currentImmediateMesh);
         this.currentImmediateMesh = null;
