@@ -6641,3 +6641,27 @@ provenance field records it.
 Recorded honestly as well: this establishes that a major mod **loads** and that its GUI content reaches the Vulkan path. It
 does not establish JEI's recipe screens, because the fixture never opens one; that needs a fixture that interacts with the mod,
 and it is named rather than implied.
+
+---
+
+## JEI's own overlay drawn through the renderer: 1,839 more batches, no messages
+
+The plan's own note said what was missing: JEI loading proves the mod, not that its rendering goes through the renderer under
+test. So the fixture now opens the player's inventory at tick 170, where JEI draws its overlay, and closes it at tick 190 so
+the captured frame stays the normal scene.
+
+```
+jeiScreenOpenedAtTick=170 | exit 0 | clean | messages 0 | fixture PASSED
+outsideWorldPassAccepted = 8972    (7133 without the screen: +1839)
+immediateTaken           = 772     (558 without: +214)
+descriptorSets           = 1
+nativeTerrainVerified    = True    terrainPasses=1482   glDrawsCancelled=772   passes=2254
+```
+
+**1,839 additional batches outside the world pass** and 214 more inside it while the screen is open: JEI's overlay and the
+inventory around it are drawn by the Vulkan immediate path, with no validation messages on the AMD driver and the descriptor
+cache still at a single set. The terrain acceptance is unaffected, which is what the run's own numbers show rather than what
+the fixture assumes.
+
+Recorded for the next step, precisely: this covers JEI's **overlay in the inventory**. A **recipe screen** - the mod's own
+heavier draw, opened by right-clicking a recipe - is still not exercised, and it needs the fixture to interact further.

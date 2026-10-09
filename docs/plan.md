@@ -28,10 +28,20 @@ third-party mods loaded** - `+Fugue-0.24.4`, a Cleanroom coremod that transforms
 renderer has therefore coexisted with class-transforming third-party code throughout, and the lock's `testMods` list is where
 that is now visible rather than assumed.
 
-**What this does and does not establish.** It establishes that a major mod loads, its GUI content reaches the Vulkan
-immediate path (7,133 batches outside the world pass in this run), and the acceptance and validation stay clean with it. It
-does **not** establish JEI's recipe screens, which the fixture never opens - that needs a fixture that interacts with the mod,
-and it is named here rather than implied.
+**And a fixture now interacts with the mod.** The plan named "JEI loads" as weaker than "JEI's own rendering goes through the
+renderer", so the fixture opens the player's inventory at tick 170 - where JEI draws its overlay - and closes it again before
+the capture so the saved frame stays the normal scene:
+
+```
+jeiScreenOpenedAtTick=170 | exit 0 | clean | messages 0 | fixture PASSED
+outsideWorldPassAccepted=8972   (7133 without the screen: +1839 batches)
+immediateTaken=772              (558 without: +214)
+nativeTerrainVerified=True  terrainPasses=1482  glDrawsCancelled=772  passes=2254
+```
+
+So the mod's own overlay is drawn by the Vulkan immediate path, with no validation messages and the descriptor cache still at
+a single set. **Still not established:** a **recipe screen** - right-clicking a recipe, which is a different and heavier draw -
+needs the fixture to interact further, and is named rather than implied.
 
 ## Completion condition (2), item by item, with the evidence for each state
 

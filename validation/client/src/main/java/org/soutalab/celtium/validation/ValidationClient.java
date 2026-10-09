@@ -68,6 +68,7 @@ public final class ValidationClient {
     private boolean celtium$weatherShown;
     private boolean celtium$particlesSpawned;
     private boolean celtium$interopChecked;
+    private boolean celtium$jeiScreen;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -588,6 +589,17 @@ public final class ValidationClient {
             mc.renderGlobal.loadRenderers();
             mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
             report.addProperty("reloadedAtTick", worldTicks);
+        }
+        if (worldTicks == 170 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
+            // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
+            // plan named as unestablished: JEI loading proves the mod, opening a screen proves that its own rendering goes
+            // through the renderer under test. Closed again before the capture so the saved frame stays the normal scene.
+            celtium$jeiScreen = true;
+            mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.player));
+            report.addProperty("jeiScreenOpenedAtTick", worldTicks);
+        }
+        if (worldTicks == 190 && celtium$jeiScreen && mc.currentScreen != null) {
+            mc.displayGuiScreen(null);
         }
         if (worldTicks == 100 && !celtium$resized && Boolean.getBoolean("celtium.validation.resize")) {
             celtium$resized = true;
