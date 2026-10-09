@@ -286,11 +286,13 @@ project already uses - so the form of the original expression was right. Measure
 gives 0.21-0.28%**, 4.0 (Minecraft's count) 7.37%, 8.0 (full chain) 8.77%, 0.0 13.51%. Deeper sampling diverges and the
 shallow clamp matches, which the mip story does not explain. `maxLod` is therefore pinned at the measured-best value with the
 law in the comment, the level count is computed once and shared, and the chain is capped at vanilla's four levels.
-**Instrument in, placement pending:** a diagnostic that asks the driver for the atlas's level count,
-`GL_TEXTURE_MAX_LEVEL`, `MIN_LOD`, `MAX_LOD`, filters and bias is implemented and off by default. It does not fire, and the
-always-on debug line proves the flag reached the JVM (`textureDiagnostics=true`), so the finding is that
-**`refreshTextures()` does not run in this scene** - a fact about the renderer, not the instrument. **Next:** place the probe
-where it is certain to run (the first atlas-textured offer, or the pass entry before its early returns) and read the value.
+**The driver answered, and the question moved.** The probe now runs on the offer path, reading the current binding: six
+textures, all of them `levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0` (9728 =
+`GL_NEAREST`). So OpenGL samples one level, nearest, with no chain - and the **terrain atlas is never probed**, because the
+terrain path does not run in this scene, which means the earlier mip measurements were about six small sprites and not the
+atlas. Copying the reported parameters (one level, clamp 0) measures **13.51%** where the clamp of 1.0 measures **0.21%**, so
+the clamp is not what explains the difference. **Next:** log the sampler actually created (the fields passed to
+`vkCreateSampler`) rather than inferring it from a configuration name.
 
 ### S24 [P2] the record and the acceptance criteria need reworking
 Plan rows claim pixel-identical immediate rendering, removed deferral and verified cull/alpha capture, and the blockers

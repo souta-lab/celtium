@@ -4767,3 +4767,46 @@ copies deliberately.
 
 Nothing else changed: the frame is at the measured-best configuration, validation clean on the previous runs, fixture passing
 in every run of this round.
+
+---
+
+## The driver answered, and the answer moved the question somewhere else entirely
+
+The mip question had been argued from frames for three rounds. This round asked the driver, from the offer path - which runs
+hundreds of times per frame and where Minecraft has its texture bound - and reading the binding rather than setting it, so the
+probe cannot disturb what the game is drawing. Six textures were seen, and every one of them reports the same thing:
+
+```
+CELTIUM_TEXTURE_DIAG id=12 levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0
+CELTIUM_TEXTURE_DIAG id=16 levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0
+CELTIUM_TEXTURE_DIAG id=19 levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0
+CELTIUM_TEXTURE_DIAG id=20 levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0
+CELTIUM_TEXTURE_DIAG id=21 levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0
+CELTIUM_TEXTURE_DIAG id=26 levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0
+```
+
+9728 is `GL_NEAREST`. So for every texture this scene actually draws with, OpenGL is sampling **one level, nearest, with no
+mip chain and no LOD bias** - and the renderer's own sampler was already `NEAREST` with a linear mipmap mode, which is the
+same thing only while the clamp keeps the chain out of reach.
+
+Two consequences, and the second one matters more than the mip question did:
+
+- **the terrain atlas was never probed**, because only six textures were ever bound at an offer. The terrain path's
+  `refreshTextures()` does not run in this scene - which is what the previous round's silent diagnostic already said - so the
+  last three rounds' mip measurements were **not about the atlas** but about these six small sprites;
+- copying exactly what the driver reports - one level, clamp zero - measures **13.51%** against the reference, while leaving
+  the clamp at 1.0 measures **0.21%**. Matching the reference's own parameters makes the frame fifty times worse, so **the
+  clamp is not the variable that explains the difference**, and the next instrument is to log the sampler that is actually
+  created (the fields as they are passed to `vkCreateSampler`) instead of inferring it from the name of a configuration.
+
+Also corrected in the instrument itself: the probe's first version wrote through `record()`, whose list is capped, so its line
+was being dropped and the diagnostic looked silent when it was merely truncated. It now prints to stdout, and the flag reports
+its own state in the always-on debug line, so no future diagnostic here can fail without saying that it did.
+
+One process note, because it nearly produced a false finding: a patch of mine mangled the file (statements left at class level),
+the build failed, and the run I had launched reported **13.54%** from the **previous jar**. The number was only rejected because
+the build result was read before the measurement was trusted - the same discipline that has caught several of this project's
+bad readings, and worth keeping in view when a measurement is surprising.
+
+The tree is back at the measured-best configuration: **0.21%** against the reference, validation clean, fixture passing, with
+the five measurements and the driver's report recorded in the code where the decision is made.

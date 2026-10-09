@@ -1085,6 +1085,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.outsideWorldPassRefusals++;
             return false;
         }
+        // CELTIUM_TEXTURE_DIAG: off by default. Asks OpenGL, once per texture id, what it is actually clamping this
+// (printed to stdout, not through record(): the diagnostics list is capped and this line was being dropped from it)
+        // texture to - the fact four frame measurements could not supply. It reads the current binding instead of setting
+        // one, so it cannot change what the game is drawing, and the offer path is used because the terrain path's
+        // refreshTextures() does not run in the measured scene (recorded in the history).
+        if (TEXTURE_DIAGNOSTICS) {
+            int bound = org.lwjgl.opengl.GL11.glGetInteger(0x8069);
+            if (bound != 0 && this.diagnosedTextures.add(Integer.valueOf(bound))) {
+                int levels = 0;
+                while (levels < 16 && org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
+                        org.lwjgl.opengl.GL11.GL_TEXTURE_2D, levels, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0) {
+                    levels++;
+                }
+                System.out.println("[Celtium] CELTIUM_TEXTURE_DIAG id=" + bound + " levels=" + levels
+                        + " maxLevel=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813D)
+                        + " minLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813A)
+                        + " maxLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813B)
+                        + " minFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2801)
+                        + " magFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2800)
+                        + " bias=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x8501));
+            }
+        }
+
         if (this.gpuStalled) {
             this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
             return false;
@@ -2849,24 +2872,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private void refreshTextures() {
         int atlasId = boundTextureId(0);
         int lightmapId = boundTextureId(1);
-                // CELTIUM_TEXTURE_DIAG: diagnostic, off by default. The sampler parameters OpenGL is actually using are
-                // the one fact four frame measurements could not supply - deeper mip clamps diverge from the GL reference and a
-                // shallow one matches, which no reading of the mip story explains - so the reference is asked directly.
-                if (TEXTURE_DIAGNOSTICS && this.diagnosedTextures.add(Integer.valueOf(atlasId))) {
-                    int levels = 0;
-                    while (levels < 16 && org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
-                            org.lwjgl.opengl.GL11.GL_TEXTURE_2D, levels, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0) {
-                        levels++;
-                    }
-                    record("CELTIUM_TEXTURE_DIAG id=" + atlasId + " levels=" + levels
-                            + " maxLevel=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813D)
-                            + " minLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813A)
-                            + " maxLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813B)
-                            + " minFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2801)
-                            + " magFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2800)
-                            + " lodBias=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x8501));
-                }
-
 
         if (atlasId != 0 && (this.atlasTexture == null || atlasId != this.atlasGlId || this.atlasRefreshCountdown <= 0)) {
             try {
