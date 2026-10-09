@@ -6588,3 +6588,27 @@ accepted, the per-format acceptance counter that made the gap measurable in the 
 What is written down for whoever picks this up: a **call-site** decision with `stride == 20` did not fire, and a **call-site
 dump** on the same line reports `stride=20`. Establishing which of the two is describing the uploads that reach the hook
 comes before any further rule.
+
+---
+
+## Resize verified: the last completion-condition item that had never been run
+
+The inventory listed resize as the one item with a fixture, a once-guard and no execution behind it. It has now been run, and
+it is the cleanest result of the recent rounds:
+
+```
+resizedAtTick=100 | exit 0 | clean | messages 0 | fixture PASSED | passes=2166
+acceptance: nativeTerrainVerified=True  terrainPasses=1614  glDrawsCancelled=552
+retire=retired=3        descriptorSets=1        immediateTaken=552
+```
+
+The window changes size mid-run, the renderer survives it and the frame is still accepted as Vulkan terrain - **with zero
+validation messages**, which is the part that matters: a resize replaces the swapchain, the frame target and every texture
+the bridge imports, and it was exactly this kind of event that S12 (resources destroyed while in use) and S18 (out-of-date
+handling) were written about. Both hold here. The retirement queue drained all three of its retirements, so the replaced
+resources were destroyed after the GPU was idle rather than during, and the descriptor cache still answers with a single set.
+
+Every item of completion condition (2) has now been **exercised on hardware** at least once: terrain, world-pass content in a
+covered format, the GUI, the font, the HUD, the hand, particles, texture animation, resource reload, resize and world switch.
+The one that is identified but unresolved is sky, clouds and the water surface, whose mapping contradiction is recorded with
+its two halves.

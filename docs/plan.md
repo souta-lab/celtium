@@ -26,7 +26,7 @@ implemented, unimplemented or verified on hardware, rather than judged by the te
 | **Texture animation** | **Vulkan mirror, verified** | `CELTIUM_ANIM directMirrorRefreshes=89` with `atlasGlId=9` - the animated atlas re-uploads reach the mirror the terrain samples |
 | **Resource reload** | **Verified** | `reloadedAtTick=100`, exit 0, validation clean, fixture PASSED |
 | **World switch (leave and rejoin)** | **Verified** | `leftWorldAtTick=100 rejoinedAtTick=100`, teardown releases 4 then 2 resources, validation clean |
-| **Resize** | **Fixture exists, once-guarded, not yet run in this series** | `-Dceltium.validation.resize=true` |
+| **Resize** | **Verified** | `resizedAtTick=100`; the run completes (`passes=2166`) with exit 0, **0 validation messages**, fixture PASSED and the acceptance intact (`terrainPasses=1614`, `glDrawsCancelled=552`). The retirement queue drained all three of its retirements, so the resources the resize replaced were destroyed after the GPU was idle rather than during |
 | **Final composite and present** | **OpenGL blit; the Vulkan present path exists but is off by default and unreached** | `presentFromComposite` is off, and with it on this scene presents no format-2 batch at all, so the present code is inert |
 
 This table is the honest boundary of the project: **terrain is Vulkan and verified on both GPUs; everything outside the world
