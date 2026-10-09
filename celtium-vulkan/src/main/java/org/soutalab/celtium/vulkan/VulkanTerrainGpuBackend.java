@@ -455,6 +455,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int currentGroupBlendSrc = -1;
     private int currentGroupBlendDst = -1;
     private int blendFuncIgnored;
+    private static final boolean LIGHT_BIND_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.lightDiagnostics");
+    private int lightBindPrints;
     /** Set for reference captures: load the mod, run the fixture, install nothing, let OpenGL draw. */
     private static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
     private int terrainPasses;
@@ -2410,6 +2413,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         ensureUniformCapacity(this.regionResources.size());
         // The descriptor set points at the atlas, the lightmap and the uniform buffer for this pass. It is rewritten
         // once per pass per frame, which is a few descriptor writes and removes any staleness after a re-upload.
+        if (LIGHT_BIND_DIAGNOSTICS && this.lightBindPrints < 3) {
+            this.lightBindPrints++;
+            // Which texture the terrain shader actually samples as the light map, and how big it is. The 16x16 dump has
+            // been analysed twice on the assumption that it is this one; this prints the identity instead.
+            System.out.println("[Celtium] CELTIUM_LIGHT_BIND glId=" + this.lightmapGlId
+                    + " view=" + Long.toHexString(this.lightmapTexture.view())
+                    + " size=" + this.lightmapTexture.width() + "x" + this.lightmapTexture.height()
+                    + " atlas=" + this.atlasTexture.width() + "x" + this.atlasTexture.height());
+        }
         pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.uniforms.buffer(), this.uniforms.size());
 
         this.frameTarget.recordAcquireBarriers(this.commandBuffer);

@@ -5490,3 +5490,41 @@ around it does not.
 Two process notes stand from this round as well. The row/column analysis cost nothing and produced more than the last three
 experiments; and the AO being upstream-identical is exactly the kind of fact that should be established before theorising
 about AO, which it was not.
+
+---
+
+## The missing factor is exactly 0.69, it is not the light map, and that leaves the atlas mirror
+
+Two measurements this round, both cheap, and together they remove the last two candidates but one.
+
+First, **what the factor is**. Fitting the near-terrain band of the two frames against each other:
+
+| fit | result |
+|---|---|
+| pure scale | k = **0.689**, residual 13.81 |
+| affine | k = 0.577, c = +14.9, residual 13.56 |
+
+The affine fit is better by **0.25** of a luminance unit, so the difference is **multiplicative to within noise** - not a
+fog-like additive term, which would also have compressed the contrast. The standard deviations agree almost exactly (22.8
+against 23.4), which is what a pure scale does and an additive term does not. And the scale is the same in all three
+channels: 0.691 red, 0.685 green, 0.703 blue. So one uniform factor of about **0.69** is missing, with no tint change and no
+contrast change.
+
+Second, **what the sampled light map is**. An instrument at the terrain bind, placed and verified inside `recordRenderPass`
+before it was trusted:
+
+```
+CELTIUM_LIGHT_BIND glId=12 view=... size=16x16 atlas=512x512
+```
+
+GL texture 12 is exactly the `gl-texture-12-16x16.png` that has been analysed twice, so the texture that was reasoned about
+**is** the texture that is sampled. And that analysis says the texel addressed by this scene's light coordinate (block 0, sky
+15, axes swapped as of the previous round) is the **bright corner at 252** - a factor of 0.99, not 0.69. So the light map is
+excluded, by its own measured content at the address the shader actually uses.
+
+That leaves the **atlas** - the block texture - as the only remaining multiply in `texture x colour x light`, since the vertex
+colour comes from a builder that is byte-identical to upstream, the light is full daylight, and the light map samples a
+bright texel. It is also consistent with what happened two rounds ago when the upload's rows were flipped: the terrain went
+**almost black** (band luminance 3.2), which is not what a mere orientation change does to a correctly mirrored atlas - it is
+what happens when the content itself is wrong in both orientations. The next thing to inspect is therefore the atlas's own
+upload and its level 0 content, not anything on the light path.

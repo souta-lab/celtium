@@ -100,8 +100,12 @@ almost exactly (row ratio **1.03**), the near terrain is **0.65-0.75**, and colu
 so no left-right structure, and the difference is the shading of the **side faces** that dominate near the camera. The AO
 computation (`AoFaceData`) is **byte-identical to upstream**; the port's own changes under `impl/render/chunk` are
 `SectionRenderDataStorage`, `ShaderChunkRenderer`, `RenderSectionManager`, `SectionGraph`, the `backend` package and the two
-vertex formats (the last two only by diagnostics). **Next:** how the storage path applies the colour and occlusion it is
-handed - the arithmetic matches vanilla, the wiring around it does not.
+vertex formats (the last two only by diagnostics). **Measured since:** the difference is a **single multiplicative factor of 0.69** - the affine fit beats the pure scale by
+0.25 of a luminance unit, the standard deviations agree (22.8 vs 23.4), and all three channels scale alike (0.691 / 0.685 /
+0.703). And the light map the terrain samples is confirmed to be GL texture 12, 16x16 - the very texture analysed - whose
+texel at this scene's light coordinate is the bright corner, 252, i.e. a factor of 0.99. So the light map is excluded too,
+leaving the **atlas** as the remaining multiply; consistent with the row-flip experiment turning the terrain almost black
+rather than merely reorienting it. **Next:** inspect the atlas's upload and level 0 content.
 
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for
