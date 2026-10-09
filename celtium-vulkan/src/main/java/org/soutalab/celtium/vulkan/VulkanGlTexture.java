@@ -273,6 +273,16 @@ public final class VulkanGlTexture {
      *
      * @return whether the image was written, false when the content was already there
      */
+    /** {@return whether a patch was written into a sub-region}, for the animated writes that cover part of a texture. */
+    public boolean uploadPatchFromPixels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer rgba) {
+        requireAlive();
+        if (x < 0 || y < 0 || x + pixelWidth > width || y + pixelHeight > height) {
+            return false;
+        }
+        copyToImage(rgba, pixelWidth, pixelHeight, 0, x, y);
+        return true;
+    }
+
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
         requireAlive();
         requireAlive();
@@ -676,6 +686,18 @@ public final class VulkanGlTexture {
     }
 
     private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level) {
+        copyToImage(pixels, pixelWidth, pixelHeight, level, 0, 0);
+    }
+
+    /**
+     * Copies pixels into a sub-region of a level, which is what the atlas's per-sprite animation needs.
+     * <p>
+     * Vulkan's buffer-to-image copy takes a destination offset natively, so a sprite's frame - thirty-two by thirty-two at
+     * some position inside a two-hundred-and-fifty-six atlas - can be written straight into the image. That is the whole
+     * reason the animated writes do not have to be read back out of GL.
+     */
+    private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX,
+            int offsetY) {
         long bytes = (long) pixelWidth * (long) pixelHeight * BYTES_PER_PIXEL;
         ensureStaging(bytes);
         // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
@@ -725,7 +747,7 @@ public final class VulkanGlTexture {
             region.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0);
             region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
                     .mipLevel(level).baseArrayLayer(0).layerCount(1);
-            region.get(0).imageOffset().set(0, 0, 0);
+            region.get(0).imageOffset().set(offsetX, offsetY, 0);
             region.get(0).imageExtent().set(pixelWidth, pixelHeight, 1);
             vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
             this.currentLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;

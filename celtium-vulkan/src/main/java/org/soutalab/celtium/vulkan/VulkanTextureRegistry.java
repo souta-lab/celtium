@@ -147,11 +147,15 @@ public final class VulkanTextureRegistry {
      * @return whether the mirror was updated from these pixels
      */
     public boolean announceFullPixels(int glTextureId, int[][] data, int width, int height, int x, int y) {
-        if (glTextureId == 0 || data == null || x != 0 || y != 0) {
+        if (glTextureId == 0 || data == null) {
             return false;
         }
         Entry entry = this.entries.get(glTextureId);
-        if (entry == null || entry.width != width || entry.height != height) {
+        if (entry == null) {
+            return false;
+        }
+        boolean wholeTexture = x == 0 && y == 0 && entry.width == width && entry.height == height;
+        if (!wholeTexture && (x < 0 || y < 0 || x + width > entry.width || y + height > entry.height)) {
             return false;
         }
         java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
@@ -167,7 +171,11 @@ public final class VulkanTextureRegistry {
                 }
             }
             rgba.flip();
-            entry.texture.uploadFromImage(width, height, rgba);
+            if (wholeTexture) {
+                entry.texture.uploadFromImage(width, height, rgba);
+            } else {
+                entry.texture.uploadPatchFromPixels(width, height, x, y, rgba);
+            }
             this.imageUploads++;
             this.staleIds.remove(Integer.valueOf(glTextureId));
             return true;

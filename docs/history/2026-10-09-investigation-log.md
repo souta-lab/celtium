@@ -8457,3 +8457,24 @@ refusing partial regions and start applying them.
 
 So: **the plumbing added this round is correct and never applicable, which is a better state than incorrect and applied** - and
 the numbers say what the next change has to be rather than leaving it to be discovered.
+
+---
+
+## Patches on the Vulkan side: the machinery is in, and the mirror is not there yet
+
+The image copy now takes a destination offset (`vkCmdCopyBufferToImage` accepts one natively), the texture class has
+`uploadPatchFromPixels`, and the registry applies a partial region instead of refusing it - with the whole-texture case still
+taking the replacement path, since a patch would need the previous content and a replacement does not. The build is green and the
+run is clean, fixture passing, acceptance intact.
+
+`animatedImageFills` is still **zero**, and the reason is the one thing the change did not address: **the animated write arrives
+before the mirror exists**. The registry refuses a patch for a texture it has never mirrored (`entry == null`), and the mirror is
+created lazily when the draw path first asks for it - which happens after the atlas's first animation frame. So the announcement
+has the pixels, the size and the offset, and nowhere to put them.
+
+That is a small and well-defined next step: **create the mirror when the announcement arrives**, using the size the announcement
+already carries, rather than waiting for the draw path to ask. The machinery on both sides is written and compiles; what is
+missing is the order of two events.
+
+Recorded with the numbers that make it checkable: eight mirrors, seven image-filled, **zero** patch fills, 4,865 refreshes still
+read back. The next run's `animatedImageFills` should be in the thousands if the ordering fix is right.

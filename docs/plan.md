@@ -126,11 +126,13 @@ five, which are last by design because they cannot go before the game's textures
 exit 0, validation clean, fixture PASSED. **Open:** the per-frame refresh stream still reads back - 4,821 in-place
 refreshes on AMD and 1,941 on Intel - and the ids are now named: eight textures refresh through it, four of them while a
 **different** texture's image is pending. The announcement covers `TextureUtil` uploads only, so the per-frame writes (the light
-map above all, and the dynamic textures) go through direct subimage calls that nothing announces. **Next: apply the patches on the Vulkan side.** The animated
-writes were announced and are **patches** - one sprite's frame inside the atlas, `32x32 at 0,0`, `16x16 at 0,32` - so the
-whole-texture rule refuses them, correctly and with `animatedImageFills=0`. Vulkan takes a destination offset in
-`vkCmdCopyBufferToImage`, so the mirror's upload path needs an `(x, y)` and the registry needs to apply partial regions rather
-than refuse them. The light map is not in this stream at all.
+map above all, and the dynamic textures) go through direct subimage calls that nothing announces. **Patches on the Vulkan side are written and compile**: the image copy takes a
+destination offset, the texture has `uploadPatchFromPixels`, and the registry applies partial regions (keeping the replacement
+path for whole textures). `animatedImageFills` is still zero for one reason: **the animated write arrives before the mirror
+exists** - the registry refuses a patch for a texture it has never mirrored, and the mirror is created lazily by the draw path
+after the atlas's first frame. **Next: create the mirror when the announcement arrives**, using the size it already carries.
+The next run's `animatedImageFills` should be in the thousands if that ordering is right, against 4,865 refreshes that still
+read back.
 
 **Next: the bridge itself**, and it is now **sized**: the renderer
 mirrors **eleven** distinct GL textures across a run - the atlas, the lightmap, the item and entity sheets, the GUI sheets - with
