@@ -419,6 +419,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int outsideWorldPassRefusals;
     private boolean currentRenderTargetIsMain = true;
     private int offTargetRefusals;
+    private int textureRefusalsBeforeAccept;
+    private int postAcceptDroppedGroups;
     private int passBoundaryFlushes;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
@@ -1209,6 +1211,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.currentGroupUsed = true;
             this.pendingImmediateIndices += indices.length;
+            // Everything the draw will need is prepared before the batch is accepted: the audit's S14 is the
+            // failure mode where geometry is taken and then dropped, and the fix is to refuse here instead, where GL
+            // can still draw the batch itself. The texture is the one requirement the pipeline check does not cover.
+            if (this.textureRegistry.get(boundTexture) == null) {
+                this.immediateLastRefusal = "the bound texture could not be mirrored";
+                this.textureRefusalsBeforeAccept++;
+                return false;
+            }
+
             this.immediateTaken++;
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
                 flushImmediateWindow();
@@ -1710,7 +1721,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
                 + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals
-                + " offTargetRefusals=" + this.offTargetRefusals + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
+                + " offTargetRefusals=" + this.offTargetRefusals
+                + " textureRefusalsBeforeAccept=" + this.textureRefusalsBeforeAccept
+                + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
@@ -2966,7 +2979,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         long descriptorSet = texture == null ? 0L
                                 : particle.descriptorSetFor(texture, this.lightmapTexture);
                         if (descriptorSet == 0L) {
+                            // This path should be unreachable now that the texture is prepared before acceptance; if it ever
+                            // runs, the geometry has already been taken and the original draw cancelled, so it is counted
+                            // separately and loudly rather than folded into the ordinary refusal count.
                             this.immediateTextureRefusals++;
+                            this.postAcceptDroppedGroups++;
                             continue;
                         }
                         particle.draw(this.commandBuffer, mesh, push, descriptorSet);

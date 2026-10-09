@@ -4215,3 +4215,41 @@ What is still not right and is recorded as such: the two-target fixture's frame 
 42.92%, which is expected rather than alarming - the draw-test runs deliberately leave the HUD visible, so the comparison is
 between two different configurations and not a regression measure. A draw-test reference with the same configuration is what
 that fixture needs before its image can be used as evidence.
+
+---
+
+## S14 is not hypothetical: 487 accepted groups were dropped, silently, until now
+
+Two changes to the offer and draw paths, both about the audit's S14 - geometry taken and then never drawn:
+
+| Change | Effect |
+|---|---|
+| The bound texture is **resolved before acceptance** | A batch whose texture cannot be mirrored is refused with a reason, where GL can still draw it |
+| The draw path's texture failure is counted as **`postAcceptDroppedGroups`** | If it ever runs, the geometry is already taken and the original draw cancelled, so it is loud rather than folded into the ordinary refusals |
+
+Measured on the normal world run:
+
+```
+status=PASSED  taken=552  textureRefusalsBeforeAccept=9  postAcceptDroppedGroups=487  passes=2178
+image against the same-fixture reference: mean 0.13 | 0.40% over 8   (unchanged)
+```
+
+**487 groups were accepted and never drawn** - roughly one per frame - and until this round nothing in the project said so.
+The audit's S14 describes exactly this, and it had been happening in every run, hidden behind a counter name
+(`immediateTextureRefusals`) that read like an ordinary refusal rather than like lost geometry.
+
+Two things follow, and they pull in opposite directions until the next change is made:
+
+- the **image is unchanged** at 0.40%, so on the scene that is measured these groups were not visible - the likely
+  candidates are the composite quad, which is deliberately left to GL, and groups whose descriptor needs the lightmap;
+- **that is not a defence.** A silent drop that happens to be invisible on one scene is exactly what the audit warned
+  about: it will be visible on another, and nothing in the run would have pointed at it.
+
+The next change is the rest of the same rule: the descriptor set has to be built **before** acceptance, so that the only
+place a batch can be refused is the one where GL still owns the draw. Everything it needs - the pipeline for the state key,
+the mirrored texture and the lightmap - is available at offer time, which is why this is a completion of the current
+structure rather than a new one.
+
+One inconsistency is recorded rather than smoothed: `snapshotServed` (573) exceeds `immediateTaken` (552) because the two
+count different events - the snapshot serves a matrix capture, not a batch - so the equality that held in the previous
+round's numbers should not be read as "every batch" without that caveat.

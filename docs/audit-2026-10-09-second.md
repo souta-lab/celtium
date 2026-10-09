@@ -146,6 +146,11 @@ keep sets built on stale views. No generation-carrying handles, no fence-based r
 and the block/particle keys use only the main texture view, so a rebuilt lightmap reuses a stale binding.
 
 ### S14 [P1] geometry that fails after acceptance is dropped and called a GL fallback
+**Measured:** with the texture now prepared before acceptance and post-accept drops counted separately, a normal run reports
+`textureRefusalsBeforeAccept=9` and **`postAcceptDroppedGroups=487`** - roughly one group per frame accepted and never
+drawn - while the image stays at 0.40% against its reference. So the defect is real, it happens every run, and it was
+invisible until it was counted. **Next:** build the descriptor set before acceptance too, so that the only place a batch can
+be refused is where GL still owns the draw.
 The draw path discards on missing pipelines, continues on missing textures and discards in `finally`, but the original draw
 was already cancelled - so the comments promising a GL fallback are wrong and geometry disappears silently.
 
