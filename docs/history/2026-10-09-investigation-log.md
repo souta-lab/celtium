@@ -4354,3 +4354,41 @@ The next work is therefore a named defect with a number attached rather than a f
 pipeline's output differs from GL by 1.33% of pixels while every other family's does not, and the candidates are the ones
 this project already has on file - the lightmap it samples (S09's fix is in, and the descriptor now binds it), the blend and
 depth state it runs with (S07), and the particle atlas it reads.
+
+---
+
+## The particles were being drawn unblended; asserting the family's semantics takes 1.33% to 0.42%
+
+With the particles finally drawn rather than dropped, their difference from GL was 1.33%. The frame was localised first,
+using the two images that already existed - the run that refused the particles and the run that drew them:
+
+```
+particles refused vs GL:   2,225 px (0.24%)
+particles drawn   vs GL:  12,303 px (1.33%)
+of those 12,303 pixels, 12,225 are exactly where the two runs differ
+```
+
+**99.4% of the error is the particles' own pixels**, so it is their rendering and not a scene-wide ordering or blending
+interaction. Then the character of the error, from the same two images: a one-pixel shift of the reference makes the
+mismatch *worse* (145k pixels against 12k), so the geometry is right; and the Vulkan particles are **brighter and warmer**
+than GL's (R +20, G +27, B −10, luminance +58), which is what an unblended overlay looks like.
+
+That pointed at the state mirror, whose known gap the audit lists as S07 - the integer blend overloads and alpha enable are
+not hooked - and at the family's own meaning. Minecraft draws particles with source-alpha blending, depth testing on and
+depth writes off; the pipeline was being created from whichever flags the mirror happened to have captured. It now asserts
+the family's semantics instead:
+
+```java
+particle = VulkanImmediateParticlePipeline.create(this.context, terrain.renderPass(),
+        true, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        true, false, false);
+```
+
+| | before | after |
+|---|---|---|
+| image against the GL reference | 1.33% (12,303 px) | **0.42% (3,839 px)** |
+| post-accept dropped groups | 0 | 0 |
+
+So the diagnosis was right and most of it is fixed: **the particles were being drawn with blending off**, and the residual
+0.18% over the "particles refused" baseline is a smaller particle-specific error - the lightmap tint and the depth-write
+flag are the two candidates, and the same localisation method can separate them without a new measurement of the whole scene.

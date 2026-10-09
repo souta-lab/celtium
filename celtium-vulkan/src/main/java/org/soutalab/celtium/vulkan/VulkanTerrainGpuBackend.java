@@ -3017,8 +3017,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         VulkanImmediateParticlePipeline particle =
                                 particlePipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
                         if (particle == null) {
+                            // The particle family is translucent by definition: Minecraft draws its particles with source-alpha
+                            // blending, depth testing on and depth writes off, whichever of those the state mirror happened to
+                            // capture - and the mirror is known not to capture the integer blend overloads or alpha enable
+                            // (audit S07). Measured, that gap showed up as particles that were brighter and warmer than GL's,
+                            // which is what an unblended overlay looks like. The family's meaning is asserted here rather than
+                            // read from a state the project cannot yet observe.
                             particle = VulkanImmediateParticlePipeline.create(this.context, terrain.renderPass(),
-                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                                    true, org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
+                                    org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                    true, false, false);
                             particlePipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), particle);
                         }
                         VulkanGlTexture texture = this.textureRegistry.get(((Integer) group[4]).intValue());
