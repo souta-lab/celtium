@@ -691,3 +691,23 @@ Two conclusions follow, and both correct earlier statements in this log:
 
 The window is reverted again so the tree stays green and the immediate path stays off by default; the measurements above
 are from the runs that had it enabled.
+
+---
+
+## The window is behind a switch, the default path is verified unchanged, and the black frame is still unexplained
+
+The window implementation now stays in the tree behind `-Dceltium.vulkan.immediateWindows` (default off), so it can be
+iterated on without re-applying it every round and without changing shipped behaviour. Two runs close this round:
+
+| Configuration | Final frame | Local difference vs the known-good reference |
+|---|---|---|
+| Default (window off, immediate path on) | mean [123.3, 136.6, 148.3] - the scene | mean 14.61, 34.5% of pixels over 8 - the known immediate-path difference |
+| Window on (`-Dceltium.vulkan.immediateWindows=true`) | mean [0, 0, 0] - entirely black | mean 147.59, 100% differing |
+
+So the default path is **unchanged and correct**, the window is what blacks the frame out, and the fixture-side capture
+sample that was meant to localise it did not fire: `recordFrameContentSample` was inserted at the wrong one of the three
+`ScreenShotHelper.saveScreenshot` call sites, so nothing was recorded. The next attempt inserts it at the call site the
+validation run actually uses (the `if (!interopRun)` one), and samples there and one frame earlier.
+
+Known state of the immediate path, unchanged by this round: off by default, every accepted batch drawn when enabled,
+validation clean, image not correct.

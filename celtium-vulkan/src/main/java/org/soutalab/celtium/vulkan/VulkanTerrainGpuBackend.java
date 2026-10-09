@@ -132,6 +132,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long handoffSamples;
     private long handoffWorstNanos;
     private int frameOpens;
+    private boolean windowOpen;
     private int frameCloses;
     private int renderCalls;
     private TerrainRenderPass lastUiPass;
@@ -275,6 +276,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             long handoffStart = System.nanoTime();
             this.frameTarget.beginFrame();
+            this.windowOpen = true;
             this.frameOpens++;
             recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
@@ -320,6 +322,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         try {
             long handoffStart = System.nanoTime();
+            this.windowOpen = false;
             this.frameTarget.endFrame();
             this.frameCloses++;
             recordHandoff(System.nanoTime() - handoffStart);
@@ -418,6 +421,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateIsolationDraws;
     private VulkanImmediateTexturePipeline texturedImmediatePipeline;
     private int immediateTextureRefusals;
+    /** Off by default: the window works mechanically, but the frame is black at capture time while it is used. */
+    private static final boolean IMMEDIATE_WINDOWS_ENABLED = Boolean.getBoolean("celtium.vulkan.immediateWindows");
+    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 4096);
+
+    private boolean immediateWindowBusy;
+    private int immediateWindows;
+    private int immediateFlushDeferredDefaultFbo;
+    private int immediateContentSamples;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -702,6 +713,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.currentGroupUsed = true;
             this.pendingImmediateIndices += indices.length;
             this.immediateTaken++;
+            if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
+                flushImmediateWindow();
+            }
             if (this.immediateTaken == 500) {
                 // One-shot snapshot of what happens to accepted batches: a batch counts as accepted only when GL's own
                 // draw was cancelled, so anything accepted and not drawn is lost geometry.
@@ -854,6 +868,135 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             worst = Math.max(worst, Math.abs(left[i] - right[i]));
         }
         return worst;
+    }
+
+    /**
+     * Opens a window for the pending immediate groups at the point that produced them.
+     * <p>
+     * Off by default ({@code -Dceltium.vulkan.immediateWindows=true} enables it) so the shipped behaviour is
+     * unchanged while this is being finished. Measurements so far: the copies are sound - the game framebuffer's mean
+     * is 150.47656 both before and after a window - and the frame is nonetheless black at capture time in every run
+     * that uses it, which is what the fixture-side sampling below is for.
+     */
+    private void flushImmediateWindow() {
+        if (this.windowOpen || this.immediateWindowBusy) {
+            return;
+        }
+        closeCurrentImmediateGroup();
+        if (this.immediateGroups.isEmpty()) {
+            return;
+        }
+        int previousDrawFramebuffer;
+        try {
+            previousDrawFramebuffer =
+                    org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        } catch (RuntimeException | LinkageError error) {
+            this.immediateFlushNoPipeline++;
+            return;
+        }
+        if (previousDrawFramebuffer == 0) {
+            this.immediateFlushDeferredDefaultFbo++;
+            return;
+        }
+        VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        if (terrain == null || !ensureFrameTarget()) {
+            this.immediateFlushNoPipeline++;
+            return;
+        }
+        this.immediateWindowBusy = true;
+        boolean opened = false;
+        float before = -1.0f;
+        try {
+            before = sampleBoundFramebufferMean();
+            this.frameTarget.beginFrame();
+            this.windowOpen = true;
+            opened = true;
+            beginCommands();
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                recordImmediateOnlyPass(stack, terrain);
+            }
+            submitCommands();
+            this.passSubmissions++;
+            this.immediateWindows++;
+        } catch (RuntimeException | LinkageError error) {
+            this.passErrors++;
+            record("immediate window failed: " + describeWithStack(error));
+            this.immediateGroupsDiscarded += this.immediateGroups.size();
+            discardImmediateGroups();
+        } finally {
+            if (opened) {
+                this.windowOpen = false;
+                try {
+                    this.frameTarget.endFrame();
+                } catch (RuntimeException | LinkageError error) {
+                    record("immediate window close failed: " + describeWithStack(error));
+                }
+                float after = sampleBoundFramebufferMean();
+                if (this.immediateContentSamples < 4) {
+                    this.immediateContentSamples++;
+                    record("immediate window content sample: mean before=" + before + " after=" + after);
+                }
+            }
+            try {
+                org.lwjgl.opengl.GL30C.glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER,
+                        previousDrawFramebuffer);
+            } catch (RuntimeException | LinkageError error) {
+                record("immediate window could not restore the framebuffer binding: " + error);
+            }
+            this.immediateWindowBusy = false;
+        }
+    }
+
+    /** {@return the mean of a small centre sample of the bound framebuffer}, or -1 when it cannot be read. */
+    public static float sampleBoundFramebufferMean(int width, int height) {
+        try {
+            int size = 8;
+            int x = Math.max(0, (width / 2) - (size / 2));
+            int y = Math.max(0, (height / 2) - (size / 2));
+            java.nio.ByteBuffer pixels = MemoryUtil.memAlloc(size * size * 4);
+            try {
+                org.lwjgl.opengl.GL11.glReadPixels(x, y, size, size, org.lwjgl.opengl.GL11.GL_RGBA,
+                        org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE, pixels);
+                long total = 0;
+                for (int i = 0; i < size * size * 4; i++) {
+                    total += pixels.get(i) & 0xFF;
+                }
+                return (float) ((double) total / (size * size * 4));
+            } finally {
+                MemoryUtil.memFree(pixels);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            return -1.0f;
+        }
+    }
+
+    private float sampleBoundFramebufferMean() {
+        return sampleBoundFramebufferMean(this.targetWidth, this.targetHeight);
+    }
+
+    /** Records the exception with its stack, so a failure identifies its own origin instead of being guessed at. */
+    private static String describeWithStack(Throwable error) {
+        java.io.StringWriter writer = new java.io.StringWriter();
+        error.printStackTrace(new java.io.PrintWriter(writer));
+        String trace = writer.toString().replace('\n', ' ').replace('\r', ' ');
+        return trace.length() > 600 ? trace.substring(0, 600) : trace;
+    }
+
+    /** Records a render pass containing nothing but the pending immediate groups. */
+    private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
+        long renderPass = terrain.renderPass();
+        org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
+                org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack).sType$Default();
+        begin.renderPass(renderPass);
+        begin.framebuffer(ensureFramebuffer(renderPass));
+        org.lwjgl.vulkan.VkRect2D.Buffer area = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
+        area.get(0).offset().set(0, 0);
+        area.get(0).extent().set(this.targetWidth, this.targetHeight);
+        begin.renderArea(area.get(0));
+        vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        setViewportAndScissor(stack);
+        drawPendingImmediate();
+        vkCmdEndRenderPass(this.commandBuffer);
     }
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
