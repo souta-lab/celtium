@@ -104,8 +104,10 @@ fixture が確かめていること（`celtium.validation.commandBufferTargets=t
    「二重signalingしない・資源を壊さない・stallして可視に失敗する」ことを1 run で示す。
 3. **別FBOの depth/clear 依存**を小さな場面で確認する（depth test 有効・clear 後の上書き）。
 4. 監査 A04/A05 の残り（atlas stitch 時の全面データ供給、sprite単位mip）と A12/A13（state model、current RGBA）。
-5. 通常fixture（`/tmp/run-wp-on.sh` の系列）でも format 2 が既定受理になったことによる回帰がないか、
-   画像比較と `acceptedByFormat` を1回確認する。
+5. ~~通常fixture回帰の確認~~ **実施済み**: `p31a-format2-default-amd` が exit 0 / clean / msgs 0 / fixture PASSED、
+   `worldFrames=228`、`acceptedByFormat=1:0,2:217,3:0,4:0,5:214,6:1394,7:1136,8:0,9:0`、
+   **recorded=submitted=completed=2961**、invalidImmediateRecords 0、retries 0。
+   → AMDでは format 2 を既定受理しても回帰せず、受理した即時バッチが記録・submit・完了まで完全に一致する。
 
 ## 4. 未コミット変更
 

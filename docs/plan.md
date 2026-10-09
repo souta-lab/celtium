@@ -132,6 +132,7 @@
 | 受入（AMD・submit前失敗注入） | `sol-cb-final-retry-amd` | 同上＋`retries=1`（fixture内で実際に再試行） |
 | 受入（AMD・初回修正版） | `sol-cb-fixed2-amd` | 同上（pendingImmediateIndices修正後） |
 | 純ロジック | `vulkan:test` | `VulkanCommandBufferStateTest` 4件 pass |
+| 通常fixture回帰（format 2 既定受理） | `p31a-format2-default-amd` | exit 0 / clean / msgs 0 / fixture PASSED / worldFrames 228 / `acceptedByFormat=1:0,2:217,3:0,4:0,5:214,6:1394,7:1136,8:0,9:0` / **recorded=submitted=completed=2961** / invalidImmediateRecords 0 / retries 0 |
 | Intel（target受入） | `sol-cb-final-intel` / `sol-cb-final-intel2` | `CELTIUM_COMMAND_BUFFER_TARGETS passed=true`（4/4/4/4・off 2/2/2・不一致0）。**run verdictは未取得**（起動フレーム数ゲート→ duration cap） |
 | 未解決 | Intel のフレーム数 | 過去114・129に対し閾値100。同期windowのブリッジ往復（往復4 blit＋depth変換2＋fence待ち）が最有力。次段で window 数を削減 |
 | 証拠 | `.celtium-work/sol-command-buffer/acceptance-summary.json` | 各runのexit/clean/msgs/fixture/passed/deltaとPNGハッシュ |
