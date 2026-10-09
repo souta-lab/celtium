@@ -1492,7 +1492,33 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   `VulkanTerrainGpuBackend:5047`（readback）は**まだ叩けていない**（大きい n でも別のサイトに当たった）。
   「全サイトの失敗を確認した」とは言わない。
 
-**次の一手**: (1) 残り4サイトを狙って n をさらに振る（または サイト名で狙い撃ちできるようにする）、
+**サイト名で狙い撃ちできるようにし、残りサイトを叩いた結果＝実欠陥を検出（このターン）**:
+
+- `-Dceltium.vulkan.failAllocationSite=<部分文字列>` を追加（**最初に一致した確保だけ**を失敗させる）。`failAllocationAt` の
+  数え上げでは後半のサイトに当たらなかった（n=2000 でも host buffer に当たった）ため、名前で狙えるようにした。
+- **結果**:
+
+| サイト | GPU | exit | fixture | 注入 |
+|---|---|---|---|---|
+| `VulkanBuffer:189`（descriptor 用の一様バッファ） | AMD | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#12) |
+| `VulkanUniformBuffer:110` | AMD | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#17) |
+| `VulkanContext:883`（context staging） | AMD | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#13) |
+| `VulkanBuffer:189` | **Intel** | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#12) |
+| `VulkanTerrainGpuBackend:5047`（readback） | AMD | 0 | PASSED | **未命中**（通常runでは readback を確保しない＝`presentReadback` が既定OFF） |
+
+- **原因（ログから）**: `java.lang.IllegalStateException: injected allocation failure: VulkanBuffer:189` →
+  `#@!@# Game crashed!`。**バッファ系の確保失敗はゲームループの上まで抜けてゲームを落とす**。
+  クラッシュレポートは `.celtium-work/runtime/p163-buffer/crash-reports/` に残っている（証拠）。
+- **対比**: テクスチャ／フレームターゲット／staging／host buffer の失敗（13 run）は**すべて生存**して
+  exit 0 / clean / PASSED だった。つまり**失敗の扱いはサイトごとに違い、buffer 系だけが有界でない**。
+- **これは「検出した欠陥」であって「修正済み」ではない**。次のラウンドで直す。
+
+**次の一手**: (1) `VulkanBuffer` / `VulkanUniformBuffer` / `VulkanContext` の確保失敗を**有界に処理**する
+（テクスチャ経路と同じ扱いにする。何を描かずに済ませるか、どのリソースを退役させるかを決める）、
+(2) 直したら同じサイト名で両GPUを受入し、**exit 0/1 かつ report あり**を確認する、(3) readback は
+`presentReadback=true` の run で叩く。
+
+**（旧メモ）** 次の一手: (1) 残り4サイトを狙って n をさらに振る（または サイト名で狙い撃ちできるようにする）、
 (2) minimize 相当（サイズ0や present 失敗）を確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
 
 **（旧メモ）** 次の一手: (1) `VulkanBuffer` と staging の確保にも同じ注入を入れ、**buffer/descriptor 側の失敗**を受入する、

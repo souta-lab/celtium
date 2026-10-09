@@ -13,6 +13,16 @@ public final class VulkanAllocationFault {
     /** The allocation number to fail, or 0 for none. */
     private static final int FAIL_AT = Integer.getInteger("celtium.vulkan.failAllocationAt", 0).intValue();
 
+    /**
+     * A site name to fail at, or null for none.
+     * <p>
+     * Counting up with {@code failAllocationAt} reached the sites that happen early and never the ones that happen
+     * later - two thousand allocations still landed on the host buffer, and the uniform buffer, the context staging
+     * buffer and the readback buffer were never reached at all. Naming the site fails the first allocation whose
+     * description contains the name, which is how a specific one gets exercised.
+     */
+    private static final String FAIL_SITE = System.getProperty("celtium.vulkan.failAllocationSite");
+
     private static int seen;
     private static int injected;
     private static String lastInjection = "none";
@@ -26,6 +36,18 @@ public final class VulkanAllocationFault {
      * @param what a short description of the allocation, for the record
      */
     public static boolean shouldFail(String what) {
+        if (FAIL_SITE != null && !FAIL_SITE.isEmpty()) {
+            seen++;
+            // Once only: the run has to survive the failure to be worth measuring, and failing every matching
+            // allocation would stop it at the first frame instead of exercising the recovery.
+            if (injected == 0 && what.contains(FAIL_SITE)) {
+                injected++;
+                lastInjection = what + " (#" + seen + ", matched \"" + FAIL_SITE + "\")";
+                System.out.println("[Celtium] CELTIUM_ALLOCATION_FAULT injected for " + lastInjection);
+                return true;
+            }
+            return false;
+        }
         if (FAIL_AT <= 0) {
             return false;
         }
