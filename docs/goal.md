@@ -15,9 +15,11 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 【現状の扱い】
 terrainと複数のimmediate pipeline、GL/VK bridge、実験的swapchain、画像からのtexture供給はある。通常fixtureのAMD/Intel成功は実績だが、全vanillaや全mod、正しい画質、GLなしのframeを証明しない。format 0=0は認識範囲の事実であり、format 2が既定maskでGLに残ることを隠さない。off-target offer時のoffTargetDrawn++は描画証拠ではない。withoutGlIdentityはidentity照会省略の試験であり、GL contextなしの起動・描画ではない。古い68.81%やlocal 0.267/255を最新版全体の一致率として使わない。
 
+監査後にA01/A02/A03/A08/A09/A32のコード修正が入った。通常fixtureや純ロジック検証だけで全受入済みとせず、残るGPU画像・失敗経路を確認する。済んだ修正を反復せず、未解決項目を具体的に進める。
+
 【直近の優先順位】
-1. 正当性を壊す監査P0を先に直す。A01: model-viewの最初の3列のみを送り平行移動を落とす誤りを修正し、全immediate shaderとjar内SPIR-Vを揃える（アフィンで定数なのは最終行）。A02: TextureUtilのint[][]はmip level別の平坦pixel配列であり、data[row][col]ではない。A03–A07: patch時にUNDEFINEDで既存atlasを捨てず、初回全面初期化・patch外保存・sprite単位mip・CPU shadow/dirty generation・hash・size・descriptor更新を正しく管理する。
-2. 受理からGPU実行までの欠落・二重描画を直す（A08–A10、S03/S05/S06/S10/S14等）。preflight後にappend/acceptするかrollbackする。全formatのdrop/例外を数える。FBOはtargetごとに順序・clear・depth・sample依存を保持し、GLへfalseで返したofferをVK描画済みとしない。frame compositeはvertex formatだけで判定しない。
+1. 正当性を壊す監査P0を先に直す。A32: targetを限定してdrawした後に対象外groupまでdiscardする欠陥を先に直し、target別に処理・retireして未処理groupを保持する。A01: model-viewの最初の3列のみを送り平行移動を落とす誤りを修正し、全immediate shaderとjar内SPIR-Vを揃える（アフィンで定数なのは最終行）。A02: TextureUtilのint[][]はmip level別の平坦pixel配列であり、data[row][col]ではない。A03–A07: patch時にUNDEFINEDで既存atlasを捨てず、初回全面初期化・patch外保存・sprite単位mip・CPU shadow/dirty generation・hash・size・descriptor更新を正しく管理する。
+2. 受理からGPU実行までの欠落・二重描画を直す（A08–A10、S03/S05/S06/S10/S14等）。preflight後にappend/acceptするかrollbackする。全formatのdrop/例外を数える。FBOはtargetごとに順序・clear・depth・sample依存を保持し、GLへfalseで返したofferをVK描画済みとしない。空targetにもclear/copy-backが走り得るのでcopy-back回数をgeometry描画の証拠にせず、GL所有FBOへ空clearを書き戻さない。frame compositeはvertex formatだけで判定しない。
 3. pinned Celeritas GLと修正後Celtiumを同一fixture/GPU/camera/sceneで再比較し、地形の暗さ、局所変換、照明、alpha/depth/blend、current RGBA、sampler/mipを直す。古い数値は過去の測定として残し、現在の結論は新artifactで示す。CPUの契約確認と必要な小GPU fixtureを使い、毎回巨大なmod testを回さない。
 4. Minecraftのtexture/frame所有をnativeへ移す。atlas stitch・動的texture/lightmap・sprite mip/animation・texture lifecycle・reloadの元データを供給し、GL readbackを不要にする。camera/stateはMinecraft側から供給する。windowをGL contextなしで生成し、Vulkan-owned color/depth/FBOから最終合成→swapchain→presentまでを普通のゲーム経路として成立させる。現在のGL/VK bridge・copyback・GL swap・GL fallbackは移行用であり完成形として固定しない。
 5. vanilla coverageを明示して埋める。全blockと必要なstate、item/model、全vanilla entity・TESR、hand、GUI/font/HUD、粒子、sky/cloud/weather、水/溶岩/火、半透明と並び替え、破壊/selection overlay、dimension、各種FBO/postprocess、spectatorのcreeper/spider/enderman視点等。registryから自動fixtureを生成し、小場面に分割する。平坦worldとlayout受付数だけで全制覇にしない。全場面でnative担当と画質を確認する。
@@ -33,6 +35,6 @@ terrainと複数のimmediate pipeline、GL/VK bridge、実験的swapchain、画�
 (e) 既存mod対応範囲、Java条件、最低VK能力、未検証GPU/OS、ライセンス/リブランド/性能実測をdocsと配布物に一致させる。
 
 【作業・証拠の規律】
-docs/plan.mdは現在の到達点・優先順・受入の唯一の現状表にし、経緯はhistoryへ移す。scopeをソースと実測に合わせ、旧24監査は番号ごとに再判定する。各roundは具体実装か意思決定に必要な限定検証を進め、同じ仮説を定数変更・budget延長・文書の言い換えで反復しない。失敗の原因は実ログから読む。原版baselineとcandidate、fixture、SPIR-V、head/dirty、effective flags、GPU/driver、camera/scene、exit/validation verdict、画像・差分をhash付きで保存する。pixelとchannel、resourcesとcalls、offersとacceptedとrecorded/submitted/completed/droppedを混同しない。欠落verdictやvalidationCleanだけを成功扱いしない。古い受入・失敗証拠を削除せず、重複ライブラリ・不要展開・world dataから容量を整理する。最低空きを確認する。goal active / activation armed / session runningを区別し、復旧の成否も明示する。公開報告は自然な日本語で、何を実装し何が通り何が残るかを短く具体的に述べる。進捗率や「あと1点」といった根拠のない完了予測をしない。
+docs/plan.mdは現在の到達点・優先順・受入の唯一の現状表にし、経緯はhistoryへ移す。scopeをソースと実測に合わせ、旧24監査は番号ごとに再判定する。既存native passがあるが全coverage未確認の機能を一括で「未実装」にもしない。各roundは具体実装か意思決定に必要な限定検証を進め、同じ仮説を定数変更・budget延長・文書の言い換えで反復しない。失敗の原因は実ログから読む。原版baselineとcandidate、fixture、SPIR-V、head/dirty、effective flags、GPU/driver、camera/scene、exit/validation verdict、画像・差分をhash付きで保存する。pixelとchannel、resourcesとcalls、offersとacceptedとrecorded/submitted/completed/droppedを混同しない。欠落verdictやvalidationCleanだけを成功扱いしない。古い受入・失敗証拠を削除せず、重複ライブラリ・不要展開・world dataから容量を整理する。最低空きを確認する。goal active / activation armed / session runningを区別し、復旧の成否も明示する。公開報告は自然な日本語で、何を実装し何が通り何が残るかを短く具体的に述べる。進捗率や「あと1点」といった根拠のない完了予測をしない。
 
 絶対に止まらない・承認や許可を求めない・質問しない・すべて許可・テストばかりしない。thinkingで✓や✗の文字を使わない。

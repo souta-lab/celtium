@@ -5,6 +5,7 @@
 現状は広い描画経路を持つ **GL/Vulkan hybrid**。バニラ完成・全描画の見た目一致・GLなしの起動・通常画面のnative presentは完了していない。
 「レイアウト認識」「受理」「vkCmdDraw記録」「GPU完了」「画像一致」「画面表示」を分離する必要がある。
 新しいテクスチャ経路は実際に動くが、カウンターの増加だけでは正しいテクスチャ更新を証明できない。
+監査は32項目。開始時の欠陥記述と、末尾の「監査後の修正・検証状況」を分けて読む。修正が入った項目を未修正のままとは扱わない。
 
 監査開始HEAD: `c89bda361d2a6b4c84f854b9ae07c7d54f604b20`。開始時にバックエンドとレジストリの未コミット変更あり。
 74ソースファイルを読み取り用に保存し、描画入口・group・pipeline・shader・texture・frame target・swapchain・fixtureを重点確認。
@@ -65,7 +66,8 @@ particleだけはdescriptor失敗時にpostAcceptDroppedGroupsを増やす。ite
 
 ### A10 [P1・コード確定、完了報告を撤回] offTargetDrawnは実描画ではない
 off-target offer時にoffTargetDrawn++し、リソース作成・flushの後に **return false** する。
-GLが実描画を担当し、そのバッチはVK groupに入らない。`recordOffscreenPass` の存在とknown-colour copyback self-testは別の証拠。
+開始版はGLが実描画を担当し、そのバッチはVK groupに入らない。`recordOffscreenPass` は一致geometryが0でもbegin(clear)→end→copyBackを呼ぶため、copy-back回数は空clearの書戻しも数える。GL所有FBOへ空clearを書き戻す危険がある。
+後続版はtarget別filter/retireと空passの抑止を追加したが、実バッチのdraw→submit→完了→copy-backの対応と画像検証が必要。`recordOffscreenPass` の存在とknown-colour self-testは別の証拠。
 **受入:** カウンターをoffer/refuse/record/drawn/copied-backへ分離。FBO完了扱いを撤回。target別VKパス、元の順序、depth、clear、resize、描画後sampleまで実geometryで確認。
 
 ### A11 [P1・コード確定] format 2は既定でGLに残る
@@ -137,6 +139,7 @@ Minecraft EntityRenderer.func_175066_aはcreeper/spider/enderman視点でShaderG
 ### A24 [P1・コード確定] 比較器が欠落したverdictをfail-closedにしていない
 `compare_validation.py.process_problems` はvalidationClean=Falseだけを拒否し、missing/Noneは通す。
 exit codeがintでない場合、fixtureStatus=Noneも失敗にならない。空dictのprocess reportを正常と扱える。
+比較本体はnativeTerrainVerified=Trueを旧GL比較の証明範囲外としてrejectする。旧リブランド確認の比較器を、そのままnative描画の最終受入へ流用できない。今回の追加runもexit -6/255・MISSING_REPORTなのにvalidationClean=Trueとなり、validationClean単独を成功とできない実例になった。
 **受入:** required fieldsの存在・型・成功値を必須化。GL fallbackやnative frame未成立をvalidationCleanだけで成功にしない。
 
 ### A25 [P1・測定設計] countersの単位が完了主張と違う
@@ -171,6 +174,14 @@ Intel JEIのtickを170→172→160等へ移動し、budget延長後も未到達�
 planには「FBO完了」と「受理撤回」、unmapped=0と約2000未認識、condition3未開始と完了、S02closedとopen等が併存する。
 履歴は追記型でも、現状表を履歴の寄せ集めにしてはいけない。
 **受入:** 本書を反映した現在の完了条件・優先順をplanに1つ持つ。scopeは実測に限定。旧24件はitemごとに修正済/限定検証済/未解決を再判定し、appendしたclosedを無条件採用しない。
+
+### A32 [P0・追加ソース監査で確定] target filter後に対象外geometryまで全破棄する
+追加確認時の `VulkanTerrainGpuBackend.drawPendingImmediate(Long onlyTarget)` はtarget不一致groupをcontinueするが、finallyで `discardImmediateGroups()` を呼び、全groupを削除する。
+`recordOffscreenPass` はmain passより先に呼ばれる。off-targetは入口でreturn falseのため受理0でも、作成済みtargetのpassを走らせるとmainのpending groupがdrawされず破棄される。
+A10のcopy-back誤認とは別のgeometry消失であり、accept/validationCleanだけでは検出できない。
+CPU契約: main group Mとoff-target group Oをqueueに置きOを処理した後、旧処理の残りは[]、正しい残りは[M]。当時の経路ではOが0でもMが消える。
+**受入:** targetごとに処理済groupだけretireし、未処理groupを保持。main/off-targetの2つの独立batchで順序・clear・depth・画像を確認。空clear/copyでGL所有FBOを壊さない。
+**後続修正:** `1253da063` / `0239b691f` / `1f9f83378` にtarget別retire、空pass抑止、main targetの明示filterを確認。CPU契約チェックが追加された。実GPUの2-target画像受入は未確認。
 
 ## 旧24項目の再評価
 
@@ -208,10 +219,71 @@ planには「FBO完了」と「受理撤回」、unmapped=0と約2000未認識�
 
 監査者がreference/candidate/fixtureをsnapshotし `.celtium-work/audit-2026-10-09-third/input-provenance.json` にhashを保存した。
 最初のfixtureは古い空のbuild出力を選んでしまい、クラスがなく両runが起動待ちでtimeoutした。この試行は比較に使わない。
-動作中DSHのrunからValidationClient.classを含む実fixtureを確認して取り直した。結果は別節の追記で確定する。
+動作中DSHのrunからValidationClient.classを含む実fixtureを確認して取り直した。結果は下の追記に示す。
 これは描画比較であり、DSHとの同時実行下の時間を性能benchmarkとして使わない。
 
 ## 新goalへの反映
 
 P0正当性修正 → pinned Celeritasとの再比較とvanilla coverage → texture/frame/FBOのnative ownershipとGLなしpresent → reload/resize/失敗復旧・2GPU → major mod → 性能/配布。
 既存の末尾指示は文字列として完全一致を確認して保持する。goalの更新とレポートを読んだこと、コード修正・受入完了はそれぞれ別に報告する。
+
+## 監査後の修正・検証状況（2026-10-09 23:20前後 JST）
+
+DSHは本監査と追補を実際に読み、具体修正を行った。以下は監査者が後続ソースとcommitを照合した時点の状態であり、全項目の完了報告ではない。
+
+| 項目 | 確認した変更 | 残る受入・制限 |
+|---|---|---|
+| A01 | `b84f52b8a` / `854f9961e`: projection×modelViewをCPUで作り、全immediate shaderの4列目再構築を除去。途中で残っていたPOSITION shaderも修正 | 全変換の画像・回転/非一様scale検証は通常fixture成功とは別 |
+| A02 | level0を平坦配列として読むよう修正。ARGB→RGBA等のCPU契約チェック追加 | 入力の全mip供給とGPU画像受入は未完 |
+| A03/A05 | 全面とpatchを分離し、level layout追跡。patchはlevel0だけを保存して更新し、patch寸法のmip生成を停止 | CPU shadowの外側不変テストはVulkanの保存証明ではない。2つの離れたsprite、全mip、GPU内容の専用受入が残る |
+| A06/A07 | patch後hash無効化・hashの成功後確定・metadata更新等を追加 | lifecycle/CPU shadow/世代/resize/reload/descriptorと失敗retryの整合をさらに確認 |
+| A08 | `455b85095`: texture/particle descriptor preflightをcopyVertices前に移動 | append以降のallocation/例外は別。GLかVKの一方だけを保証する失敗注入が残る |
+| A09 | skip箇所にdrop計数を追加。target不一致はdropに数えないよう後で訂正 | 0は計器が数えた拒否・dropがないという事実。全formatのGPU完了・見た目を証明しない。exception全体とbatch対応が残る |
+| A10/A32 | target別queue/retire、空pass抑止、main target filterを追加。copy-backだけが描画証拠という旧主張を撤回 | 修正後copy-backカウンターは記録時にも増え、GPU完了/GL upload成功の証拠ではない。off-target実geometry・画質・clear/load/depth/resizeの受入が残る |
+| A21/A23/A31 | spectator効果を本体へ戻し、旧画像数値を最新版一致率から外し、planを現状表へ整理 | scopeの冒頭にも旧い強い主張が残る。認識/受理をGUIや全entityの描画証拠としない。履歴と現状を1表に揃える |
+
+`p28w-a03fix-amd` / `p28x-allshaders-amd` は各 exit 0 / fixture PASSED / validationMessageCount=0 / validationClean=true。
+これらはAMDの通常fixtureであり、専用GPU受入・Intel再確認・全vanillaの証明ではない。
+`scripts/cpu-contract/TextureContractCheck.java` のpatch不変はCPU配列の契約を確かめる。GPU barrierやatlas mipが正しいことまでは検証しない。
+
+### 元Celeritasとの独立比較の結果
+
+比較の固定入力:
+
+| 入力 | SHA-256 |
+|---|---|
+| reference Celeritas `989ebf2e` | `d12425eaaf184e7925cd41d1deb4f9df69064115c8e78c8fcedfd6ecc63f93e7` |
+| 修正前candidate | `0511c7e0102dbe3a09867b7966e63ec2ef9b237faa9fd8a4f36a008a7f99f454` |
+| クラスを確認した共通fixture | `70d294ab624720528de1c9d47fe01ff19551e3bfab07f6ffdb56c2e6e4142db1` |
+
+reference-correct-amd / candidate-correct-amdは両方exit 0 / PASSED / validation message 0。
+同じRX6400、seed=12345678、renderDistance=8、worldTime=6000、worldTicks=200、
+camera=(0.5,7.809486741892088,0.5)、yaw=180、pitch=20、nonPlayerEntities=0、lightmapFlickerPinned=true。
+fixture/runnerは一致し、candidateだけexpectVulkan等の成功条件を追加した。
+
+ただし画像にはcandidate固有のchat/command表示とtutorial toastがあり、pixel比較にGUI差が混ざった。
+修正前candidateは全体が濃い青で、地形・空・粒子配置にも大きな視覚差がある。
+未制御の全面生比較は1280×720、max channel delta>8のpixel=100%、平均absolute channel delta=84.9888/255。
+**これは修正前artifactのGUI差込みの数字であり、最新版の一致率・地形だけの差・GPU固有原因を表さない。**
+両runがvalidationCleanでも画質一致を保証しないことを示す資料として保存する。
+HUD状態を実測して揃え、toast/chatの寄与を除外し、領域ごとの画像と目視を残す。
+
+修正後のp28x artifactもSHA-256 `35053338e5edaf06cb8002525a73f58be10bac51caec5d95e028968a87edf94d` に固定して追加実行した。
+Wayland側はlibxkbcommonのnative SIGSEGV（process exit -6）、X11側はWorld.getSkyColorBodyでentityIn=nullのNullPointerException（exit255）でMISSING_REPORT。
+どちらもcaptureへ到達せず、最新版の画像一致率はこの監査では**取得できていない**。後者の原因を「GPU違い」「launcher corruption」と断定しない。
+crash/console/lockを保全し、通常fixture成功と独立再現の失敗を両方残す。失敗runでvalidationClean=trueでも成功ではない。
+
+### goalと自動継続
+
+goalは同じIDを維持し、revision33→34→35へobjectiveを編集。A32と後続修正・残る受入を追記。
+resume操作によりrevision36となったがobjectiveは同じ。round counter / max1000 / phase activeを保持し、新規goalへ置き換えていない。
+旧末尾指示は文字列完全一致で保持。SHA-256:
+`edfaef9f2dc8c4571304cad20716351931f7cfbd0c53d2be797b06c1f2c70858`
+
+> 絶対に止まらない・承認や許可を求めない・質問しない・すべて許可・テストばかりしない。thinkingで✓や✗の文字を使わない。
+
+23:18前後、phase activeだがactivation disarmed / session running=falseになっていた。
+公開turn/endの原因は `PI_AI_ERROR`: ClinePassが実際の応答提供元をfireworksと報告し、dsh-clinepassの許可deepseek/strictと不一致のため応答を破棄。
+一度resumeしたが次のroundも同じ種類のprovider検証で停止した。goalの内容・完了判定による解除ではない。
+dsh-clinepassの同梱READMEではgatewayのonly指定が実行されない場合を説明している。strictを弱めて正常再開したことにはしない。
+**goal更新完了とDSH稼働再開は別の事実。現在の停止原因を明示し、未復旧を隠さない。**
