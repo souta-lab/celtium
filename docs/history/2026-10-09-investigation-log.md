@@ -8854,3 +8854,31 @@ level by level, at each of its three transition sites.
 That is now a four-attempt record on a single audit finding, and the pattern is worth naming: each attempt was **correct about
 the mechanism it addressed** and each stopped one site short of the whole. The change is **reverted a third time** rather than
 left with twenty validation errors, and the tree is green again - exit 0, validation clean, 0 messages, fixture PASSED.
+
+---
+
+## 第3回監査 A06/A07 の修正と、A25（計器の単位）の定量的確定
+
+A06（保持画像とpatchの競合）と A07（metadata・転送成功の扱い）を最小修正した。
+
+- **A06**: patch は `lastPixelHash` を無効化していなかった。patch の後で同じピクセルの全面uploadが来ると「重複」として
+  skipされ、patchが残ったまま本来の全面データが入らない。patch成功時にhashを0へ戻す。
+- **A07**: `lastPixelHash` は転送**前**に記録されていた（失敗しても「届いた」と主張し、次のretryがskipされる）。
+  転送後に記録するよう変更。registryは成功時のみ `imageUploads` を増やし、**`Entry.width/height` を画像に追随**させる
+  （`Entry` の寸法を可変にした）。失敗・skipは `imageUploadsSkipped` として別に数える。
+- **A05** は A03 の修正で解消（patchはmip chainを記録しない）。sprite単位mipの供給（`MIRROR_GL_MIPS` 経路）は既存。
+
+**計器の訂正がそのまま実測になった**:
+
+```
+imageFilledMirrors = 113      imageUploadsSkipped = 3448
+animatedImageFills = 106      inPlaceRefreshes = 974     mirroredTextures = 10     descriptorSets = 1
+exit 0 | validationClean true | messages 0 | fixture PASSED | nativeTerrainVerified true | terrainPasses 696
+```
+
+以前の `imageFilledMirrors=3629` は **実転送113 + 同一内容のskip 3448** だった。つまりこの計器は「更新」を**約30倍**
+過大に報告しており、監査A25の「hash skipでも増える」「呼出し回数であってresource数ではない」がそのまま確定した。
+現在は `imageFilledMirrors` = 実際にピクセルが動いた回数、`imageUploadsSkipped` = 内容が同一で転送しなかった回数である。
+
+A04（初回patchだけで全面未初期化のmirrorを作る）は未解決: stitch時の全面データを保持・供給し、初期化が揃うまで
+patch-only mirrorを描画可能扱いにしないことが必要。A05のsprite単位mipも、全atlasのblitを正解としない方針で残る。

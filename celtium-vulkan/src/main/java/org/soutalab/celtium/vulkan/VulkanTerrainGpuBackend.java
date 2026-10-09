@@ -2418,6 +2418,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
                 + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
+                + " imageUploadsSkipped="
+                + (this.textureRegistry != null ? this.textureRegistry.imageUploadsSkipped() : 0)
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
                 + " dynamicTextureFills=" + this.dynamicTextureFills

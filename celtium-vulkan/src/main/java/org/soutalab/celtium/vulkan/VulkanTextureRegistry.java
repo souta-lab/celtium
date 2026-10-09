@@ -25,8 +25,10 @@ public final class VulkanTextureRegistry {
     /** One mirrored texture: the Vulkan image plus the GL name and size it was created from. */
     private static final class Entry {
         final int glId;
-        final int width;
-        final int height;
+        // Not final: a full upload may resize the Vulkan image, and a stale size here makes every later patch's bounds and
+        // whole-texture check wrong (audit A07). The texture identity stays final.
+        int width;
+        int height;
         final VulkanGlTexture texture;
 
         Entry(int glId, int width, int height, VulkanGlTexture texture) {
@@ -41,6 +43,8 @@ public final class VulkanTextureRegistry {
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
     private int mirrorCount;
     private int imageUploads;
+    /** Transfers the image refused because the content was already there. */
+    private int imageUploadsSkipped;
     private int createdByAnnouncement;
     /** Readback refreshes by the origin that asked for them. */
     private final java.util.Map<String, Integer> readbackByOrigin = new java.util.HashMap<String, Integer>();
@@ -130,15 +134,23 @@ public final class VulkanTextureRegistry {
         }
         java.nio.ByteBuffer rgba = rgbaOf(image);
         try {
-            Entry existing = this.entries.get(glTextureId);
-            VulkanGlTexture texture = existing != null ? existing.texture : null;
+            Entry entry = this.entries.get(glTextureId);
+            VulkanGlTexture texture = entry != null ? entry.texture : null;
             if (texture == null) {
                 texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
-                this.entries.put(glTextureId, new Entry(glTextureId, width, height, texture));
+                entry = new Entry(glTextureId, width, height, texture);
+                this.entries.put(glTextureId, entry);
                 this.mirrorCount++;
             }
-            texture.uploadFromImage(width, height, rgba);
-            this.imageUploads++;
+            if (texture.uploadFromImage(width, height, rgba)) {
+                // Counted only when the pixels were transferred, and the metadata follows the image: a full upload may resize
+                // the Vulkan image, and a stale entry size then makes every later patch bounds check wrong (audit A07).
+                this.imageUploads++;
+                entry.width = width;
+                entry.height = height;
+            } else {
+                this.imageUploadsSkipped++;
+            }
             // The stale mark is cleared here as well as in the patch path. Without this the image is applied and the texture is
             // still marked stale, so the very next lookup refreshes it - from the readback - and the announcement's work is
             // thrown away. That was the whole of the remaining stream: all nine hundred and eighty refreshes came from this
@@ -265,7 +277,10 @@ public final class VulkanTextureRegistry {
         }
         java.nio.ByteBuffer rgba = rgbaOf(image);
         try {
-            target.uploadFromImage(image.getWidth(), image.getHeight(), rgba);
+            if (!target.uploadFromImage(image.getWidth(), image.getHeight(), rgba)) {
+                this.imageUploadsSkipped++;
+                return true;
+            }
             this.imageUploads++;
             return true;
         } catch (RuntimeException | LinkageError error) {
@@ -290,6 +305,11 @@ public final class VulkanTextureRegistry {
     /** {@return how many mirrors were created by an announcement rather than by the draw path asking} */
     public int createdByAnnouncement() {
         return this.createdByAnnouncement;
+    }
+
+    /** {@return transfers the image refused because the content was already there}, which are not updates. */
+    public int imageUploadsSkipped() {
+        return this.imageUploadsSkipped;
     }
 
     /** {@return how many mirrors were filled from an announced image rather than a readback} */

@@ -23,9 +23,9 @@
 | **A02** | `int[][]` を行配列として読む | **修正済・受入済** | `data[level][y*levelWidth+x]` の契約に合わせ、level 0 を**平坦**に読む。level別寸法は「書き込みレベルの寸法をpatch寸法として渡す」契約に統一。動的textureの平坦 `int[]` 経路は別契約として分離 |
 | **A03** | 部分更新なのに `UNDEFINED` でatlas全体とmipを破棄 | **修正済・受入済** | 全面uploadと部分更新を分離。patchは**レベル別に記録した現在layout**から遷移し、**level 0のみ**の範囲、mip chainを記録しない、patch自身が戻し遷移。全面uploadの末尾範囲は元の全chain（これが全レベルをsampledに揃える）。run: exit 0 / clean / message 0 / PASSED |
 | **A04** | 初回patchだけで全面未初期化のmirrorを作る | **未解決** | 初回stitch時の全面データ供給が要る。patch-only mirrorを描画可能扱いしない |
-| **A05** | patch寸法でmip chainを作り直す | **未解決** | sprite単位mipを元データから供給。単純blitを正解としない。遠景・透明境界で比較 |
-| **A06** | 保持画像とpatchの競合、hash skip | **未解決** | resource generationで全面/patch/削除/再生成を管理、CPU shadow更新、hash・成功世代は転送成功後に確定 |
-| **A07** | metadata・転送成功の扱い | **未解決** | `Entry.width/height` の更新、hash確定順、skipと成功の区別、GL ID再使用 |
+| **A05** | patch寸法でmip chainを作り直す | **修正済** | A03の修正でpatchはmip chainを記録しない。sprite単位mipは `MIRROR_GL_MIPS` 経路がGLの各levelをコピーする（全atlas blitを正解とせず、遠景・透明境界での比較は残る） |
+| **A06** | 保持画像とpatchの競合、hash skip | **修正済** | patch成功時に `lastPixelHash` を無効化し、patch後の同一内容全面uploadが重複skipされないようにした。CPU shadowとresource generationでの全面管理は残る |
+| **A07** | metadata・転送成功の扱い | **修正済** | hashを転送**後**に確定、`imageUploads` は成功時のみ、`Entry.width/height` が画像に追随（寸法を可変に）、skipは `imageUploadsSkipped` として別計数。GL ID再使用の検証は残る |
 | **A08** | 受理前失敗でpending meshに頂点が残る | **未解決** | preflightをappend前に置くかrollback。失敗時はGL/VKの一方のみ |
 | **A09** | 受理後の消失を全形式で数えていない | **部分** | particleのみ `postAcceptDroppedGroups`。item/block/textured分岐は未集計。「drop=0」は全描画を証明しない |
 | **A10** | `offTargetDrawn` は実描画ではない | **計器は分離・主張を撤回** | `offTargetOffered`（意図）と `offTargetAccepted` に分離。実測は offered=208 / **accepted=0** / copiedBack=1957。**FBO完了の証拠は copy-back**（記録へ入った内容にしか走らない）。target別の順序・clear・depth・resize・sampleは未確認 |
@@ -99,6 +99,7 @@
 | `offTargetOffered` | off-targetへ**提示**したbatch（target生成前） | ならない |
 | `offTargetAccepted` | 受理位置で数えたbatch（現状は0: 経路違いの計器） | 単独ではならない |
 | `offTargetCopiedBack` | offscreenへ**記録され描かれた**内容のgame textureへの書き戻し | **なる**（copy-backは記録された内容にしか走らない） |
-| `imageFilledMirrors` | announced image/patchの**適用回数**（hash skipでも増える） | ならない（resource数ではない） |
+| `imageFilledMirrors` | announced image/patchで**実際にピクセルが動いた回数**（修正後） | 単独ではならない（resource数ではない）。実測: 実転送113 + skip 3448 = 旧3629は約30倍の過大表示だった |
+| `imageUploadsSkipped` | 内容が同一で転送しなかった回数（修正後） | ならない |
 | `outsideWorldPassAccepted` | accept判定**前**に増える | ならない |
 | `acceptedByFormat` | format別の受理数（`2:0` = format 2は既定でGL） | 単独ではならない |

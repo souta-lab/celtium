@@ -288,6 +288,10 @@ public final class VulkanGlTexture {
             return false;
         }
         copyToImage(rgba, pixelWidth, pixelHeight, 0, x, y, true);
+        // The image no longer holds what the last full upload put there, so the hash identifying that content is stale. Without
+        // this a later full upload of the same pixels is skipped as a duplicate and the patch survives in a texture that should
+        // have been replaced wholesale (audit A06).
+        this.lastPixelHash = 0L;
         return true;
     }
 
@@ -303,12 +307,14 @@ public final class VulkanGlTexture {
             this.imageUploadsSkipped++;
             return false;
         }
-        lastPixelHash = hash;
         this.mirroredLevels = 0;
         if (pixelWidth != width || pixelHeight != height) {
             recreateImageResources(pixelWidth, pixelHeight);
         }
         copyToImage(rgba, pixelWidth, pixelHeight, 0);
+        // Recorded only once the pixels are actually in the image: a hash written before the transfer would claim content that
+        // a failed transfer never delivered, and the next retry would then be skipped as a duplicate (audit A07).
+        lastPixelHash = hash;
         return true;
     }
 
