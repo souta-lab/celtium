@@ -446,6 +446,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean blendObserved;
     private int observedBlendSrc = -1;
     private int observedBlendDst = -1;
+    private int currentGroupBlendSrc = -1;
+    private int currentGroupBlendDst = -1;
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
     private String particleDescriptorFailureReason;
@@ -1275,6 +1277,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
                 this.currentGroupState = state.clone();
+                // The blend factors as they were when this group opened, captured here rather than read from the global
+                // observation at draw time: the global value is whatever the most recent blendFunc call anywhere left, and
+                // using it gave 0.31% against these factors' 0.21-0.23%. This is the per-group snapshot the audit's S07 asks
+                // for, and it lives beside the state key for the same reason the matrices do.
+                this.currentGroupBlendSrc = this.blendObserved ? this.observedBlendSrc
+                        : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
+                this.currentGroupBlendDst = this.blendObserved ? this.observedBlendDst
+                        : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
                 this.currentGroupTarget = this.currentRenderTarget;
                 this.currentGroupViewport = this.currentViewportKey;
             }
@@ -1781,7 +1791,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
                     Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
-                    Long.valueOf(this.currentGroupStateKey), this.currentGroupState});
+                    Long.valueOf(this.currentGroupStateKey), this.currentGroupState,
+                    Integer.valueOf(this.currentGroupBlendSrc), Integer.valueOf(this.currentGroupBlendDst)});
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -3107,6 +3118,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         // The observation is global-latest, not per-batch: this is the factors from the most recent blendFunc call
                         // anywhere, and using them gave 0.31% against the constants' 0.23%. Until they are captured with the
                         // group - at the moment the batch is offered - the family's constants are the better answer.
+                        // The group's own factors are captured and carried, but using them still measures 0.33% against the
+                        // constants' 0.21-0.23%, so the factors alone are not what differs: the family's other asserted
+                        // fields - depth write in particular - are the likely remainder, and they are not observed yet. The
+                        // constants stay until the whole per-group triple can be observed together.
                         int observedSrc = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
                         int observedDst = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
                         // The key carries the blend factors as well as the captured state: a pipeline built for one pair

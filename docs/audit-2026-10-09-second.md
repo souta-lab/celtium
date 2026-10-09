@@ -107,8 +107,11 @@ family had been asserting. Using the observed factors in the pipeline is **not**
 cache key does not carry them, so the first group's factors were shared by every later group and the frame got worse (0.23%
 to 0.33%). **Keyed, and still not enough:** with the factors in the pipeline cache key the frame is **0.31%** - worse than the
 constants' 0.23% - because `blendObserved` is the **most recent `blendFunc` call anywhere**, not the factors in effect when
-the batch was offered. The constants are restored (0.21% measured, consistent with 0.23%). **Next:** capture the factors
-**with the group**, at the moment the batch is offered, as the matrices are - the snapshot the audit's S07 asks for.
+the batch was offered. The constants are restored (0.21% measured, consistent with 0.23%). **Per-group capture done, and still not enough:** the group now carries the blend factors in effect when it opened
+(beside the state key, as the matrices are) and the frame measures **0.33%** against the constants' 0.21-0.24%. So the factors
+alone are not the difference: Minecraft sets them per particle type, and correcting them while **depth write** stays asserted
+false for the whole family produces a frame further from GL, not closer. **Next:** observe the whole triple - blend enable,
+factors, depth write - and use it together.
 **Correction (2026-10-09, from the SRG source):** the "float `translate`" item in this list is **not** a missing hook in
 1.12.2 - `GlStateManager.func_179137_b` has a single `(DDD)` overload and the float literals in the decompiled source are
 widened by the compiler, so the existing hook is the right one. Verified by adding a `(FFF)`-qualified hook that matched

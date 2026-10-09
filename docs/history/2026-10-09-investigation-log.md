@@ -4609,3 +4609,29 @@ difference being run-to-run variation rather than an improvement worth claiming.
 The hook and the key stay: the observation is correct, the key is now the right shape, and what is missing is the per-group
 capture that the audit's S07 asks for in its own words - connect every call and overload into a single snapshot - rather than
 one global field read at the wrong moment.
+
+---
+
+## Per-group capture of the blend factors still measures 0.33%, so the factors are not the whole difference
+
+The previous round's conclusion was that the observation had to be captured with the group rather than read globally. That
+is now implemented - the group tuple carries the factors in effect when it opened, beside the state key, exactly as the
+matrices are - and the frame **still** measures 0.33% against the constants' 0.21-0.23%:
+
+| Configuration | Difference from the GL reference |
+|---|---|
+| family constants | 0.21-0.24% |
+| observed factors, global-latest, keyed | 0.31% |
+| **observed factors, captured per group, keyed** | **0.33%** |
+
+So the per-group capture was necessary and is still not sufficient, and it narrows the question usefully: **the blend factors
+alone are not what differs**. Minecraft sets the blend factors per particle type - additive for some, alpha for others - and
+the group now carries the right ones, yet drawing with them is further from GL than drawing with one constant pair. The
+remaining asserted field in the same creation call is **depth write**, which is set to false for the whole family; if some
+particle types write depth, then using the correct factors for those groups and the wrong depth state for all of them would
+produce exactly this: a frame that gets worse when the blend is corrected in isolation.
+
+The constants are back and the frame measures 0.24%, consistent with the 0.21-0.23% of the same configuration. The hook, the
+key and the per-group capture all stay - each is correct and each is a piece of the observable snapshot - and the next attempt
+takes the **triple** together (blend enable, factors, depth write) rather than one field of it, because a family-level
+assertion is only safe while every field in it is right.
