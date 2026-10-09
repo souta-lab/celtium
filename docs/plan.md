@@ -146,6 +146,36 @@
 実行コマンド: `bash scripts/run-command-buffer-targets.sh amd|intel <new-run-name> [failImmediateSubmits]`
 （Python/fixture/verdict のどれかが落ちれば非0で終了し、`commandBufferTargets.passed` と3枚のPNGを必須にする）。
 
+## 7.5 画質比較（優先順位3・2026-10-10 現行artifact）
+
+`scripts/run-gl-comparison.sh amd r418` で pinned upstream Celeritas (GL) と現行Celtiumを**同一flag・同一fixture・GPU**で
+順に実行し、`scripts/compare_validation.py` で比較した（p32-glref-r418 / p32-celtium-r418）。
+
+| 項目 | 結果 |
+|---|---|
+| run verdict | 両方 exit 0 / validationClean true / messages 0 / fixture PASSED |
+| framebuffer・camera・pass数 | 一致（solid/cutout_mipped/translucent 各62） |
+| 画像 | **645,651ピクセル差（70.06%）・最大チャンネル差209** |
+| 領域別 | **空 ratio 1.000（完全一致）**、地平線 ~1.0、**地形 0.595 / 0.580 / 0.636**（赤/緑/青） |
+
+症状は「地形が一様に約0.6倍暗い」。切り分けの結果:
+
+- **lightmap mirrorは正しい**: 同一run内で GLの実lightmap（`gl-lightmap-live.png`）と mirror（`gl-texture-12-16x16.png`）を比較。
+  capture時点のGLは sky15/block0 = (250,250,250)（正午）、mirrorの**最後のアップロード**も (250,250,250) で一致。
+  最初のアップロードは (155,155,187) で、これは**実行初期（朝）の値**だった（mirrorのdumpは最初の1回だけ書く仕様のため、
+  以前の「mirrorがstale」という読みは誤りだった。`-Dceltium.vulkan.dumpTexturesEvery=true` を追加して確定させた）。
+- **面シェーディング表は上流と完全一致**: `common/.../model/light/smooth/AoNeighborInfo.java` は pinned checkout と diff なし
+  （0.6/0.8/0.5/1.0）。
+- **shaderは `v_Color = a_Color * lightColor` のみ**（`terrain_solid.vert` 227行）。追加の係数は無い。
+- したがって **0.6 ≈ 朝のlightmap 0.61 × 正午の0.98** となり、**メッシュ構築時にlightmap値が頂点色 `a_Color` へ
+  焼き込まれ、以後chunkが再構築されないため朝の明るさのまま固定されている**という説明が測定値と一致する。
+
+**次の一手（具体）**: fixture に「正午に固定した後で `mc.renderGlobal.loadRenderers()` を1回呼ぶ」実験を足し、
+地形が明るくなるかを測る。明るくなれば焼き込みが確定するので、mesh builder（頂点色の合成箇所）から
+lightmap/light値の乗算を取り除き、lightmapはshaderの `u_LightTex` だけで適用する。明るくならない場合は
+頂点属性 `a_LightCoord` のpackingを上流の `block_layer_opaque.vsh` と突き合わせる。この実験は
+priority 6 の reload 経路の確認も兼ねる。
+
 ## 8. 第3回監査の最終追補
 
 32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。

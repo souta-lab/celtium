@@ -618,6 +618,44 @@ public final class ValidationClient {
         return result;
     }
 
+    /**
+     * Writes the lightmap texture the game itself has in OpenGL to {@code <dumpDir>/gl-lightmap-live.png}.
+     * <p>
+     * The backend's own dump shows what the mirror handed the shader. Reading the same texture from GL in the same run is
+     * what separates a stale mirror from a sampling difference, and neither number can be obtained from the other: the
+     * terrain comparison showed a dark ground whose tint matches the daylight lightmap texel exactly.
+     */
+    private static void dumpLiveLightmap(Minecraft mc, String directory) {
+        try {
+            java.lang.reflect.Field field = findField(mc.entityRenderer.getClass(),
+                    new String[] {"lightmapTexture", "field_78513_d"});
+            if (field == null) return;
+            field.setAccessible(true);
+            Object value = field.get(mc.entityRenderer);
+            if (!(value instanceof net.minecraft.client.renderer.texture.DynamicTexture)) return;
+            int id = ((net.minecraft.client.renderer.texture.DynamicTexture) value).getGlTextureId();
+            java.nio.ByteBuffer pixels = org.lwjgl.BufferUtils.createByteBuffer(16 * 16 * 4);
+            int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, id);
+            GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, pixels);
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, previous);
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(16, 16,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    int offset = (y * 16 + x) * 4;
+                    image.setRGB(x, y, (0xFF << 24) | ((pixels.get(offset) & 0xFF) << 16)
+                            | ((pixels.get(offset + 1) & 0xFF) << 8) | (pixels.get(offset + 2) & 0xFF));
+                }
+            }
+            java.io.File target = new java.io.File(directory, "gl-lightmap-live.png");
+            target.getParentFile().mkdirs();
+            javax.imageio.ImageIO.write(image, "png", target);
+        } catch (Throwable ignored) {
+            // Diagnostic only: the render path must not be affected by a dump failure.
+        }
+    }
+
     private static boolean commandBufferInside(int x, int y, int left, int top, int right, int bottom) {
         return x >= left && x < right && y >= top && y < bottom;
     }
@@ -1342,6 +1380,8 @@ public final class ValidationClient {
                 report.addProperty("normalWorldFramesAfterInterop", worldFrames - framesAtInterop);
                 ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation-post-interop.png", mc.displayWidth, mc.displayHeight, target);
             }
+            String dumpDirectory = System.getProperty("celtium.vulkan.dumpTextures");
+            if (dumpDirectory != null && !dumpDirectory.isEmpty()) dumpLiveLightmap(mc, dumpDirectory);
             if (worldFrames < 100 || !report.has("framebuffer")) {
                 // The count is in the message on purpose: the threshold is the acceptance, and a run that misses it must say
                 // by how much rather than leaving the next attempt to guess whether it was close or nowhere near.

@@ -115,6 +115,19 @@ PNGは `screenshots/celtium-command-buffer-secondary-depth.png`。
 - `recordImmediateOnlyPass` は acquire/release を呼出し側（window）で記録する形に変わった。terrain の通常 pass は
   従来どおり `render()` 内で acquire/beginPass/…/endPass/release を行う。
 
+## 2.5 画質比較の現行測定（このターンで追加）
+
+`scripts/run-gl-comparison.sh amd r418` → 参照(pinned upstream GL)と候補(Celtium)を同一条件で実行し
+`compare_validation.py` で比較。両run clean/PASSED、framebuffer・camera・pass数一致、しかし
+**画像は70.06%のピクセルが違い、最大チャンネル差209**。領域別では**空は完全一致**、**地形だけ約0.6倍暗い**。
+
+切り分けで **lightmap mirrorは正常**（GLの実lightmapとmirrorの最終アップロードが一致 (250,250,250)）、
+**AO表は上流と完全一致**、shaderは `a_Color * lightColor` のみ。測定値 0.6 ≈ 朝のlightmap 0.61 × 正午0.98 から、
+**メッシュ構築時にlightmapが頂点色へ焼き込まれている**可能性が高い（chunkは再構築されないので朝の明るさで固定）。
+
+診断用に追加したもの: `-Dceltium.vulkan.dumpTexturesEvery=true`（mirrorのdumpを毎回上書き＝最後のアップロードが見える）、
+fixtureの `gl-lightmap-live.png`（GLの実lightmapをcapture時に読む）、`scripts/run-gl-comparison.sh`。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
@@ -128,7 +141,10 @@ PNGは `screenshots/celtium-command-buffer-secondary-depth.png`。
    「次のwindow内で適用するイベント」として保持する、(c) main targetの受理済みgroupはフレーム自身の
    terrain pass で描く（`recordRenderPass` は既に描いている）。いずれも順序の正しさを保つ条件を
    docsへ明記してから実装する）。
-3. **submit後失敗の実機注入**を足す: `submitCommands()` 成功後・`endFrame()` 前に例外を注入する property を作り、
+3. **地形の暗さ（優先順位3の本命）**: fixtureに「正午固定後に `renderGlobal.loadRenderers()` を1回呼ぶ」実験を足し、
+   明るくなるかで「頂点色へのlightmap焼き込み」を確定させる。確定したらmesh builderの色合成からlight乗算を外す。
+   明るくならない場合は `a_LightCoord` のpackingを上流 `block_layer_opaque.vsh` と突き合わせる。
+4. **submit後失敗の実機注入**を足す: `submitCommands()` 成功後・`endFrame()` 前に例外を注入する property を作り、
    「二重signalingしない・資源を壊さない・stallして可視に失敗する」ことを1 run で示す。
 3. **別FBOの depth/clear 依存**を小さな場面で確認する（depth test 有効・clear 後の上書き）。
 4. 監査 A04/A05 の残り（atlas stitch 時の全面データ供給、sprite単位mip）と A12/A13（state model、current RGBA）。

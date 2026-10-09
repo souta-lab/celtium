@@ -621,7 +621,9 @@ public final class VulkanGlTexture {
         try {
             java.io.File target = new java.io.File(directory,
                     "gl-texture-" + glTextureId + "-" + level.width + "x" + level.height + ".png");
-            if (target.isFile()) {
+            // One file per texture is enough when the question is "what shape does the mirror have". When the question is
+            // "is the mirror stale right now", the last upload is the one that matters, so the overwrite mode keeps it.
+            if (target.isFile() && !Boolean.getBoolean("celtium.vulkan.dumpTexturesEvery")) {
                 return;
             }
             target.getParentFile().mkdirs();
