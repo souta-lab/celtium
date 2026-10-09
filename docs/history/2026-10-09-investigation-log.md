@@ -4659,3 +4659,36 @@ The frame is back at 0.28%, inside the 0.21-0.28% band this configuration has sh
 key and the per-group capture all in place and unused by the pipeline. Three rounds of this thread have each ended with a
 withdrawn explanation and a narrower question, which is worth stating as the pattern it is: the blend state is observable, the
 values are the expected ones, and the reason using them is worse is still unexplained.
+
+---
+
+## The mip chain, measured three ways, says something the mip story does not explain
+
+S23's remainder is the sampler and the mip chain. The defect was visible in the code: `create()` built the sampler
+**before** `createImageResources`, which is where the level count is computed, so `maxLod` was baked from the default of one
+level while `uploadFromGlTexture` went on to generate a real chain. Making the chain reachable looked like the obvious fix.
+Three configurations were measured against the same GL reference:
+
+| Sampler | Difference from GL |
+|---|---|
+| as written - `maxLod = (float) mipLevels` evaluated **before** the image exists, so 1.0 | **0.21-0.28%** |
+| real level count minus one, 4.0 | **8.82%** |
+| explicit 0.0, level 0 only | **13.51%** |
+
+Nothing about that ordering is what mipmapping predicts. If the chain were a faithful copy of Minecraft's, sampling more of
+it should move the frame **toward** GL, and if the chain were garbage, clamping to level 0 should move it toward GL. The
+measurements say the opposite in both directions, so the honest conclusion is not "mips are wrong" but **the mip path is not
+understood yet**: either the generated chain is destructive - the sequence of barriers and blits has a level-0 hazard the
+image comparison cannot see - or the LOD clamp is not doing what the code reads as.
+
+The change was therefore reverted exactly, and the restored configuration measures **0.25%** with validation clean and the
+fixture passing. The next step is to stop inferring the chain from frame differences and inspect it: check whether level 0
+still equals the uploaded image after generation, then whether each level is the average of its parent. That is one run with a
+readback, and it decides whether the defect is generation or sampling.
+
+**Also parked, deliberately:** the blend-observation thread. Three rounds produced the hook, the cache key and the per-group
+capture - all correct, all retained, all unused by the pipeline - and three explanations that had to be withdrawn. It is
+parked with a single question recorded rather than continued by measurement: 573 of 574 groups capture exactly the constants
+the family asserts, one group does not, and nothing so far has said which or why. Both threads come back when there is an
+instrument that can see the thing itself - a mip level's contents, a group's identity - instead of a frame difference that
+several causes can produce.

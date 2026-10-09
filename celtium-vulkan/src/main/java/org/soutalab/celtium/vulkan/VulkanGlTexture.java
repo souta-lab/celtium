@@ -355,8 +355,11 @@ public final class VulkanGlTexture {
                     .compareEnable(false)
                     .compareOp(VK_COMPARE_OP_NEVER)
                     .minLod(0.0f)
-                    // The image has exactly one level, so clamping the LOD to 0 is what keeps implicit-derivative
-                    // sampling inside the image. The GL mip chain is deliberately not mirrored.
+                    // Measured, three ways, in this order: this expression as written (which evaluates before the image
+                    // exists, so it is 1.0) gives 0.21-0.28% against the GL reference; the real level count minus one,
+                    // 4.0, gives 8.82%; and an explicit 0.0 gives 13.51%. Nothing here is touched again until the chain
+                    // itself has been inspected - a clamped-to-level-1 sampler matching GL better than level 0 is not a
+                    // result the mip story explains (audit S23).
                     .maxLod((float) this.mipLevels)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false);

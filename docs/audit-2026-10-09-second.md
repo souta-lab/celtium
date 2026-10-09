@@ -279,8 +279,11 @@ reload/resize hooks at tick 100 have no once-guard.
 documentation of the very method it called - `true` for the pixel-art atlas, `false` for the lightmap. The terrain path was
 right; the immediate path's textures were not. With nearest filtering the frame's difference from the GL reference falls
 from 0.42% to **0.23% (2,158 px)**, which is **better than the 0.24% measured with the particles refused** (2,225 px) - so
-the particles now match GL at least as closely as leaving them out. **Open:** mip levels still bake `maxLod` from a
-dimension computed after sampler creation, and the remaining S23 items stand.
+the particles now match GL at least as closely as leaving them out. **Mip half: measured, reverted, and not understood.** The sampler was built before the level count existed, so `maxLod`
+was baked as 1.0. Making the chain reachable measures **8.82%** against GL (real level count) and **13.51%** (level 0 only)
+where the as-written configuration measures **0.21-0.28%** - an ordering no mip story explains, so the change was reverted and
+the restored configuration re-measured at **0.25%** with validation clean. **Next:** inspect the chain itself (is level 0
+unchanged after generation; is each level the average of its parent) instead of inferring it from frame differences.
 Samplers are created before the image and bake `maxLod` from an initial `mipLevels = 1`; the registry creates every texture
 with linear filtering, ignoring the GL sampler state and the original mipmaps; the first size query uses the currently
 bound texture rather than the given ID; the pixel hash is updated before the upload succeeds. The `FRESH_SEMAPHORES` pool
