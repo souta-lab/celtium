@@ -1841,7 +1841,33 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   entity 用に絞る）必要がある。ShaderGroup のパス（full-screen クワッド）は**深度テストしない**ので、
   深度返却とは切り離して考えてよい。
 
-**次の一手**: (1) entity（format 8）のバッチが**どの理由で拒否されているか**を計器で確かめる
+**entity は「拒否されている」のではなく「一度も来ていない」（このターン・到着計器で確定）**:
+
+- format 8（entity の `POSITION_TEX_COLOR_NORMAL`）の**拒否**を記録する計器を足して spider 場面を走らせたが、
+  **その行は一度も出なかった**（＝program 遮断の分岐に format 8 は到達しない）。
+- 既存の**到着計器**（uploader mixin が 500 件ごとに出す）を読むと決定的だった:
+
+```
+CELTIUM_ARRIVALS total=1500 byFormat=[0:0 1:19 2:327 3:0 4:0 5:157 6:985 7:0 8:0 9:12]
+CELTIUM_ACCEPTED total=1500 byFormat=[0:0 1:7 2:0 3:0 4:0 5:137 6:856 7:0 8:0 9:0]
+```
+
+  **format 8 は到着 0、format 4（ITEM）も到着 0**。つまり **entity も item も `WorldVertexBufferUploader` を通っていない**。
+  `acceptedByFormat 8:0` は「拒否された」ではなく「**そもそも来ていない**」だった。
+- **理由**: `spectator=spider` は**蜘蛛の視点**なので、蜘蛛自身は描かれない。entity outline も**他の** entity に対して
+  描かれるものなので、この場面では出ない。したがって **この場面の 27 画素は entity 由来ではない**。
+- **併せて読めたこと**: format 2 は**到着 327・受理 0**（round 524 の判定で present 経路側に振られている）、
+  format 1 は到着 19・受理 7、format 6 は到着 985・受理 856。
+- **前ターンの説明の再訂正**: 「深度の消費者は entity（format 8）」も**誤り**だった。正しくは
+  **「この場面の 27 画素は、我々のファネルを通らない GL 描画（display list など）と地形深度の関係から出ている」**。
+  ファネル外の GL 描画を数える計器が無いので、**そこはまだ測っていない**（推測で埋めない）。
+
+**次の一手**: (1) **ファネル外の GL 描画**を数える/特定する（例: `GlStateManager.callList` による display list 描画、
+`RenderGlobal` の sky/cloud/star 経路）— これが 27 画素の出所の候補、(2) 実際に entity が出る場面
+（蜘蛛を**外から**見る三人称など）を用意して format 8 の到着を確認する、(3) それでも 27 画素が説明できない場合は、
+深度返却を残したまま「未説明」として記録する。
+
+**（旧メモ）** 次の一手: (1) entity（format 8）のバッチが**どの理由で拒否されているか**を計器で確かめる
 （program 遮断ならその program id と format 8 の組が出るはず）、(2) entity を native にする最小の道を選ぶ、
 (3) それが通ったら `skipDepthReturn` を既定にして spider 場面の差が床（0画素）以下であることを両GPUで受入する。
 

@@ -635,6 +635,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Batches refused because a custom shader program was bound (the game's post-process chain and mod shaders). */
     private int shaderProgramRefusals;
+    /** Whether the entity layout's first refusal has been reported. */
+    private boolean entityProgramLogged;
     /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
     private final java.util.LinkedHashMap<String, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
     /** The same refusals grouped by program alone. */
@@ -2111,6 +2113,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.programQueryNanos += System.nanoTime() - programQueryStart;
             this.programQueryCount++;
             if (boundProgram != 0) {
+                // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
+                if (formatId == 8 && !this.entityProgramLogged) {
+                    // The entity layout is refused in every scene (acceptedByFormat 8:0). Which program is bound when it
+                    // is offered decides whether the custom-program shutter is what keeps entities on GL - and that is
+                    // what the depth write-back depends on.
+                    this.entityProgramLogged = true;
+                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED program=" + boundProgram
+                            + " texture=" + boundTexture);
+                    StackTraceElement[] entityStack = new Throwable().getStackTrace();
+                    StringBuilder entityFrames = new StringBuilder();
+                    for (int i = 1; i < Math.min(entityStack.length, 10); i++) {
+                        entityFrames.append(" <- ").append(entityStack[i].getClassName()).append('.')
+                                .append(entityStack[i].getMethodName()).append(':').append(entityStack[i].getLineNumber());
+                    }
+                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED_SITE" + entityFrames);
+                }
                 this.immediateLastRefusal = "a custom shader program is bound";
                 // Named once per program: the spider scene refuses 1470 batches here, and which program they belong to
                 // decides whether the entity path can be supported natively at all (which is what would let the depth
