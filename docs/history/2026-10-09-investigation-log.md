@@ -1867,3 +1867,26 @@ made, and it leaves GL's composite in place when the present did not reach the s
 `endFrame`-on-failure half of E. The lesson is the one this log keeps relearning: an edit that silently fails to apply is
 worse than one that fails loudly, because the code then behaves as if the change were made, and only the measurement
 notices.
+
+---
+
+## The fail-closed endFrame guard: correct intention, wrong flag, measured and reverted
+
+The audit's E ends at the same place B did - what the caller does when a submission did not happen - and the attempt used
+`submissionPending`, the backend's own record of an outstanding submission, as the test:
+
+```
+default (terrain + immediate): fixture FAILED, passes 1, fail-closed path taken
+present enabled:               fixture FAILED, passes 1, fail-closed path taken
+```
+
+Both configurations dropped to a single terrain pass with the guard refusing to end every frame, which says the flag is not
+what it looks like from the outside: `submissionPending` is cleared by the idle wait before `endFrame` runs, so at that
+point it reports "nothing is outstanding" for a frame that submitted perfectly well. The guard was therefore refusing a
+frame that had already been handed over, on every frame, and the run died the way the earlier attempt did.
+
+So the intention stays and the mechanism changes: "did this frame's submission reach the queue" has to be recorded **per
+frame** by the submission itself and read immediately before `endFrame`, not inferred from the GPU-idle bookkeeping whose
+lifecycle belongs to something else. The change is reverted, the state is green again (fixture PASSED, `nativeTerrainVerified
+True`, and the pass count back in the thousands), and the audit's E keeps its open half with a precise statement of what the
+next attempt must not do.
