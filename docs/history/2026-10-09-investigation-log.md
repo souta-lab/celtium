@@ -9062,3 +9062,25 @@ pass境界のflush（`framebuffer(...)` の `passBoundaryFlushes`）、切り詰
 **次回の具体作業**: その4つの経路それぞれにカウンタを付け、off-target宛groupがどこで消えるかを1回のrunで切り分ける
 （`flushCount`、`orderPreservingFlushes`、`passBoundaryFlushes`、`immediateGroupsDiscarded` は既に報告にあるので、
 各flushの直前に「off-target宛group数」を数えて出せばよい）。同じ仮説を反復せず、経路ごとの数で決める。
+
+---
+
+## 消費経路の計器はすべて0: off-target宛groupは「非main targetのgroupとして」一度もqueueに存在しない
+
+3つの経路（main flush、discard、window flush）に計器を付け、再現runで測った。
+
+```
+offTargetPerTarget = [5554d6f:offered=251,atPass=0,drawnPasses=0]
+otherTargetGroups = [atMainFlush=0, discarded=0, windowFlush=0]
+flushCount = 3615 | orderPreservingFlushes = 18 | passBoundaryFlushes = 1
+exit 0 | validationClean true | messages 0 | fixture PASSED
+```
+
+**251件がoff-targetへ提示されているのに、非main targetのgroupとして保留queueに入ったものが1件も観測されない**。
+main flush時0、discard時0、window flush時0である。つまり「groupが別targetとしてqueueに入り、後で消費される」という
+前ラウンドの描像は**成り立たない**。提示の時点でtargetが記録されていないか、groupが別targetとして作られていない。
+
+`samePass`（target一致＋viewport一致）は既にgroup境界の条件に入っており、境界を越えると `closeCurrentImmediateGroup()`
+と新しい `VulkanDynamicMesh` が作られる。`currentGroupTarget` も境界ブロックで更新される。したがって次に測るべきは
+**offer時に作られたgroupの `group[7]` の実際の値**である。1行（offer直後に `currentRenderTarget` と `currentGroupTarget`
+を並べて印字）で決まる。推測を重ねず、その1行を次に行う。

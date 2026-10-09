@@ -748,6 +748,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateGroupsOffTargetRetired;
     /** Off-target passes not begun because their target had no pending geometry. */
     private int offTargetPassesSkippedEmpty;
+    /** Pending groups destined for a target that is not the main one, and where they were seen to disappear. */
+    private int otherTargetGroupsAtMainFlush;
+    private int otherTargetGroupsDiscarded;
+    private int otherTargetGroupsFlushedByWindow;
     /** Groups seen at pass time and drawing passes, per target; the offers come from offTargetBatchesByTarget. */
     private final java.util.Map<Long, Integer> offTargetPassGroupsByTarget = new java.util.HashMap<Long, Integer>();
     private final java.util.Map<Long, Integer> offTargetDrawnByTarget = new java.util.HashMap<Long, Integer>();
@@ -2211,6 +2215,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.passErrors++;
             record("immediate window failed: " + describeWithStack(error));
             this.immediateGroupsDiscarded += this.immediateGroups.size();
+            this.otherTargetGroupsDiscarded += pendingGroupsForOtherTargets();
             discardImmediateGroups();
         } finally {
             if (opened) {
@@ -2355,6 +2360,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
     /** {@return how many non-empty pending groups belong to a target}, counted when a pass is about to run. */
+    /** {@return how many pending non-empty groups belong to a target other than the main one}. */
+    private int pendingGroupsForOtherTargets() {
+        int count = 0;
+        for (Object[] group : this.immediateGroups) {
+            if (((Long) group[7]).longValue() != this.mainTargetIdentity
+                    && !((VulkanDynamicMesh) group[0]).isEmpty()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private int countGroupsForTarget(long targetIdentity) {
         int count = 0;
         for (Object[] group : this.immediateGroups) {
@@ -2423,6 +2440,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         vkCmdSetScissor(this.commandBuffer, 0, scissor);
         this.offscreenPipelineOverride = pipeline;
         try {
+            this.otherTargetGroupsFlushedByWindow += pendingGroupsForOtherTargets();
             drawPendingImmediate(Long.valueOf(targetIdentity));
         } finally {
             this.offscreenPipelineOverride = null;
@@ -2519,6 +2537,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
                 + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
                 + " offTargetPerTarget=[" + offTargetPerTarget() + "]"
+                + " otherTargetGroups=[atMainFlush=" + this.otherTargetGroupsAtMainFlush
+                + ",discarded=" + this.otherTargetGroupsDiscarded
+                + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow + "]"
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
@@ -2823,6 +2844,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // Everything the backend owns is released here, not just the terrain half (audit S15): the immediate mesh, the
         // held groups, the immediate pipeline caches, the UI pipeline and mesh, the texture registry and the swapchain.
         int released = 0;
+            this.otherTargetGroupsDiscarded += pendingGroupsForOtherTargets();
         try {
             discardImmediateGroups();
             released++;
@@ -3950,6 +3972,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // No named target means the main pass: it draws what was offered while the main framebuffer was bound and leaves the
         // rest for their own pass. Drawing everything here consumed the off-target batches into the main image instead.
         long wantedTarget = onlyTarget != null ? onlyTarget.longValue() : this.mainTargetIdentity;
+        if (onlyTarget == null) {
+            this.otherTargetGroupsAtMainFlush += pendingGroupsForOtherTargets();
+        }
         try {
             VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
             if (terrain == null) {
