@@ -306,7 +306,12 @@ AMD/Intel の target受入も exit 0。pinned Celeritas との再比較（p32-gl
 **全体平均 8.00/255** と**画面全体に一様**（局所欠陥ではない）。**HF は参照の 0.80〜0.88 倍**＝我々のテクスチャが15〜20%滑らか。
 `mirrorGlMips=true` は数値不変（7.98 / HF 6.41）で、しかも **exit 1 / validationClean=false**（fixtureStatusはPASSED）＝
 検証として不成立のため新しい失敗証拠として保存（p48-mips-r435）。atlas用サンプラは既にNEARESTなのでフィルタは原因でない。
-次の一手は我々の生成mip鎖とGLのmip鎖を**レベル単位で数値比較**し、HF差がmip内容由来か別要因かを確定すること。特に**松明の炎（アニメーションテクスチャ）が未描画**なのは独立の欠陥で、
+ノイズ床を測定: 参照同士 0.22 / 候補同士 0.13（HF比 1.000）で、参照vs候補の 8.00 / HF 0.840 は**再現性のある実差**。
+mip仮説は否定（HF: 参照7.63 / 候補6.41 / mipBias-2 6.90 / **LOD 0固定 6.90** / mirrorGlMips 6.41）。
+atlas HF の差（vanilla run 34.77 vs mod導入run 32.01）は `TextureAtlasSpriteMixin.embeddium$processTransparentImages`
+の透明画素置換（alpha 0 のまま）によるもので**描画には効かない**。残差は平均8.00/255（約3%）・HF 0.84・
+幾何エッジ幅は参照と同一。画像忠実度は「構造・明るさとも一致、細部の微差のみ」の状態なので、
+次の優先は監査バックログ（失敗経路・coverage・texture所有）へ移す。特に**松明の炎（アニメーションテクスチャ）が未描画**なのは独立の欠陥で、
 sprite animation の移植を進める。
 
 ## 3. 残る問題と、次に実装する具体的な一手
