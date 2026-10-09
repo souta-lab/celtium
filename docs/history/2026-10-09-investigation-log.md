@@ -8801,3 +8801,32 @@ precise:
 **Reverted.** The change is withdrawn rather than left with ten validation errors, and the tree is green again - exit 0,
 validation clean, fixture PASSED. Audit finding three therefore stands as **confirmed and not yet fixed**, with the two things the
 next attempt needs written down: a per-level layout, and a level-0 range.
+
+---
+
+## Audit finding three, attempts two and three: the answer is per-level tracking, and nothing smaller
+
+The reverted preserve mode was retried twice, with the two things the first attempt said it needed.
+
+**Attempt two - the range scoped to level 0.** The barriers for a patch now cover `mipLevelCount = 1` at the level being written,
+instead of every level. Validation went from **nineteen errors to twenty**, on the level now named:
+
+```
+cannot transition the layout of aspect=VK_IMAGE_ASPECT_COLOR_BIT, level=0, ...
+```
+
+So the range is right and the **claimed source layout is wrong**: the patch says level 0 is `SHADER_READ_ONLY_OPTIMAL` and
+validation says it cannot be moved from there.
+
+**Attempt three - make level 0 always finish sampled.** The tail transition ran only for the last level of a multi-level upload,
+which is why the tracked layout said "sampled" for an image whose level 0 was still in `TRANSFER_DST` - a hazard the code's own
+comment had already described. The condition was widened to include `level == 0`. **Twenty errors again, the same ones.**
+
+That is the answer to this finding, and it is not a one-liner: **the layout has to be tracked per level, at every transition that
+performs one** - the first barrier, the mip chain's internal transitions, and the tail. A single field cannot describe a
+mipmapped atlas, and `UNDEFINED` cannot be used on level 0 to avoid the question, because a patch writes its own texels and the
+rest of that level has to survive.
+
+The change is **reverted a second time** rather than left with twenty validation errors, and the tree is green again: exit 0,
+validation clean, 0 messages, fixture PASSED. The finding stands as **confirmed and not yet fixed**, now with three attempts
+recorded and the smallest sufficient change identified: **per-level layout tracking**.
