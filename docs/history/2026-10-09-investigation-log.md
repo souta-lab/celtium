@@ -8608,3 +8608,28 @@ thousand refreshes remain on AMD and four hundred and seventy on Intel.
 
 Recorded as a measurement rather than a suspicion: the counter would have gone up if the light map's write had been announced by
 a hooked method, and it did not, on either GPU.
+
+---
+
+## The light map's write path named: it is not hooked at all
+
+The diagnostic prints the id the animation announces beside the ids the backend knows for the light map and the atlas:
+
+```
+CELTIUM_ANIM_ANNOUNCE bound=9 region=16x16 at 32,80 lightmapGlId=-1 atlasGlId=-1
+CELTIUM_ANIM_ANNOUNCE bound=9 region=16x16 at 48,80 ...
+```
+
+Two facts, and the second is the answer:
+
+1. **The animation announces the block atlas** (id 9, a 256x256 whose sprite frames are those 16x16 patches at increasing
+   offsets). The hook that fires is the atlas's per-sprite animation, and nothing else.
+2. **The light map's write does not go through either hooked `TextureUtil` method at all.** It is a `DynamicTexture`, updated by
+   `DynamicTexture.updateDynamicTexture()`, which is a Minecraft method - and therefore one this project can hook the same way as
+   the other two. That is the third path, and it is why a thousand refreshes remain on AMD and four hundred and seventy on Intel:
+   every light-map update invalidates the directly held mirror, which finds no announcement and reads GL back.
+
+So the named next step is exact: **hook `DynamicTexture.updateDynamicTexture`**, announce the pixels it is about to write, and the
+directly held light-map mirror can be filled from them like everything else. The ids being `-1` at that moment in the run is a
+separate observation worth keeping: the backend learns which GL textures the light map and atlas are later than the first
+animation frames, which is why the direct-mirror path matches sometimes and not others.

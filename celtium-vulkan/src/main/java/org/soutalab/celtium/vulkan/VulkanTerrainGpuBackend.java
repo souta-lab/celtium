@@ -460,6 +460,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int announcedUploads;
     private int animatedImageFills;
     private int directMirrorFromAnnouncement;
+    private int animatedAnnounceDiagnostics;
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
@@ -789,6 +790,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
         int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        // Which id the animation announces, and which id the light map has: if those differ, the light map's writes are being
+        // announced against something else and its refreshes will keep reading back.
+        if (this.animatedAnnounceDiagnostics < 5) {
+            this.animatedAnnounceDiagnostics++;
+            System.out.println("[Celtium] CELTIUM_ANIM_ANNOUNCE bound=" + bound + " region=" + width + "x" + height
+                    + " at " + x + "," + y + " lightmapGlId=" + this.lightmapSourceGlId
+                    + " atlasGlId=" + this.atlasSourceGlId);
+        }
         if (this.textureRegistry.announceFullPixels(bound, data, width, height, x, y)) {
             this.animatedImageFills++;
         }
