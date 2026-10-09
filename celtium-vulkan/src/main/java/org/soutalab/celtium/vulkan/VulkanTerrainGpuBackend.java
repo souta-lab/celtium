@@ -895,6 +895,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int actualFlushes;
     private long actualFlushNanos;
     private long actualFlushWorstNanos;
+    /** CPU time of the same handoffs, so wall minus CPU says how much of it is blocking in a native call. */
+    private long actualFlushCpuNanos;
     private int clearOrderFlushes;
     private int compositePresentRefusals;
     private int frameAccepted;
@@ -2479,6 +2481,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // say how many handoffs a frame really makes. The wall time is what says whether a handoff is a stall.
         this.actualFlushes++;
         long flushStartedNanos = System.nanoTime();
+        long flushCpuStartedNanos = threadCpuNanos();
         try {
             if (this.commandState != null && this.commandState.inRenderPass()) {
                 drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
@@ -2487,6 +2490,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.orderPreservingFlushes++;
             long tookNanos = System.nanoTime() - flushStartedNanos;
+            long flushCpuEndedNanos = threadCpuNanos();
+            if (flushCpuStartedNanos >= 0 && flushCpuEndedNanos >= 0) {
+                this.actualFlushCpuNanos += flushCpuEndedNanos - flushCpuStartedNanos;
+            }
             this.actualFlushNanos += tookNanos;
             if (tookNanos > this.actualFlushWorstNanos) {
                 this.actualFlushWorstNanos = tookNanos;
@@ -2929,6 +2936,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " actualFlushes=" + this.actualFlushes
                 + " actualFlushMillis=" + (this.actualFlushNanos / 1000000L)
                 + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L)
+                + " actualFlushCpuMillis=" + (this.actualFlushCpuNanos / 1000000L)
                 + " batchCallCount=" + batchCallCount
                 + " batchCallMillis=" + (batchCallNanos / 1000000L)
                 + " batchCallWorstMillis=" + (batchCallWorstNanos / 1000000L)
