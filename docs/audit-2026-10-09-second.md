@@ -172,9 +172,14 @@ fallback, clears and FBO switches - the fix - and reading what the 2000 is.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.
 
-### S11 [P1] "16 windows per frame" cannot be shown to finish within a frame
-`updateTimings` resets the per-frame counter, but `beginCommands` calls it on every fence wait, so multiple flushes reset
-the same frame's budget. No unique frame ID, no frame-end reconciliation of accepted/drawn/held/discarded.
+### S11 [P1] "16 windows per frame" cannot be shown to finish within a frame - **closed**
+**Fixed.** The frame now has an identity (`frameId`, incremented at the camera boundary, which fires exactly once per frame)
+and the per-frame state - the window budget and the accepted/drawn counters - is reset and reconciled **there**, not on every
+fence wait. `updateTimings` counts flushes and touches nothing that belongs to a frame, and each frame's accepted/drawn
+figures are carried into `lastFrameAccepted` / `lastFrameDrawn` at the next boundary. Measured on a normal run:
+**`frameId=570` against `flushCount=3327`** - 5.8 flushes per frame - so the old code reset a frame's budget **3327 times
+instead of 570**, and the reconciliation reports the last frame as accepting and drawing one group. That is the audit's
+complaint as a number rather than as a suspicion.
 
 ### S12 [P1] texture invalidation and resize destroy resources that may be in use
 `invalidate` deletes immediately, `resize` discards the old view/image/memory before any wait, and the descriptor caches

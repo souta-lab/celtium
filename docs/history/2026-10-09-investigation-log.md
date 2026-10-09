@@ -5718,3 +5718,30 @@ byte, the shaders against the reference sources, the vertex colour producer agai
 multiply and measuring, and the fog by reading its uniforms - and the remaining 0.69 needs a numeric comparison rather than a
 sixth image ratio. It is recorded with everything needed to resume: the reference jar, the fixture flags, the measured
 ratios by band, and the list of what is already excluded.
+
+---
+
+## S11 closed: 570 frames, 3327 flushes, and a budget that was reset on every one of them
+
+The audit's S11 is small and precise - `updateTimings` resets the per-frame window counter, but it is called on every fence
+wait, so a frame with several flushes has its budget reset several times and "sixteen windows per frame" cannot be
+demonstrated at all - and it is now fixed in the two places that make it true.
+
+The frame gets an identity: `frameId` is incremented at the camera boundary (`captureWorldSnapshot`), which fires exactly
+once per frame, and that is also where the previous frame is reconciled into `lastFrameAccepted` / `lastFrameDrawn` and where
+the new frame's counters are zeroed. `updateTimings` no longer resets anything that belongs to a frame; it counts flushes,
+which is what it can honestly count from a fence wait.
+
+Measured on a normal run:
+
+```
+frameId=570  flushCount=3327  |  lastFrameAccepted=1  lastFrameDrawn=1  |  immediateTaken=554  flushes=577
+```
+
+**570 frames against 3327 flushes** - 5.8 flushes per frame - so the old code reset the per-frame budget 3327 times where
+there were 570 frames, a factor of six. The reconciliation also reports its first numbers: the last frame accepted one
+group and drew it, with the run's totals beside it.
+
+Worth noting for the other diagnostics: `framesSeen`, which several trace lines use as "frame N", was incrementing on
+flushes, so those labels have been off by the same factor. It is left as it is - renaming it is a change to diagnostics
+rather than to drawing - but `frameId` is now the number that means a frame.

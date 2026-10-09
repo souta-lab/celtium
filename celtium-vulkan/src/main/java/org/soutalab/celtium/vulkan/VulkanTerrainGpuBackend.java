@@ -595,6 +595,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateFlushDeferredDefaultFbo;
     private int immediateContentSamples;
     private int immediateWindowsThisFrame;
+    /**
+     * A real frame identity (audit S11).
+     * <p>
+     * The per-frame window budget used to be reset by {@code updateTimings}, which is called on every fence wait - so a
+     * frame with three flushes had its budget reset three times and "sixteen windows per frame" could not be demonstrated
+     * at all. The identity is incremented at the camera boundary, which fires exactly once per frame, and the counters are
+     * reconciled there rather than on a flush.
+     */
+    private long frameId;
+    private long countersFrameId = -1;
+    private long flushCount;
+    private int frameAccepted;
+    private int frameDrawn;
+    private int lastFrameAccepted;
+    private int lastFrameDrawn;
     private int immediateDeferredNextFrame;
     private int whiteTextureGlId;
     private int immediateRefusedDefaultFbo;
@@ -1015,6 +1030,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * present - one per frame, at a boundary, rather than two per batch anywhere.
      */
     public void captureWorldSnapshot() {
+        // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
+        // that is per frame - the window budget, these counters - is reset here and nowhere else.
+        if (this.countersFrameId >= 0) {
+            this.lastFrameAccepted = this.frameAccepted;
+            this.lastFrameDrawn = this.frameDrawn;
+        }
+        this.frameId++;
+        this.countersFrameId = this.frameId;
+        this.frameAccepted = 0;
+        this.frameDrawn = 0;
+        this.immediateWindowsThisFrame = 0;
         if (!this.worldPassActive) {
             return;
         }
@@ -1359,6 +1385,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
 
             this.immediateTaken++;
+            this.frameAccepted++;
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
                 flushImmediateWindow();
             }
@@ -1870,6 +1897,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + this.passErrors + " lastDraw=" + this.lastDrawCommands + " lastSections=" + this.lastSectionsDrawn
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
+                + " frameId=" + this.frameId + " flushCount=" + this.flushCount
+                + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateGroupsClosed=" + this.immediateGroupsClosed
                 + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
@@ -1963,7 +1992,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // The immediate window count is per frame. The measurement that forced the limit: the first window of a frame
         // left the framebuffer at 150.46 before and after, and the second turned it to 0.0 with the GL state restored
         // unchanged, which is what blackened the captured frame.
-        this.immediateWindowsThisFrame = 0;
+        // A flush is not a frame: it increments the flush count and leaves the frame's budget and counters alone (S11).
+        this.flushCount++;
         this.framesSeen++;
         // The lightmap is refreshed by Minecraft every frame through DynamicTexture, whose upload path no hook of this
         // project has been able to reach without crashing the client. Dropping the mirrors here makes the next use of
@@ -3335,6 +3365,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                     this.immediateFlushes++;
                     this.immediateGroupsDrawn++;
+                    // One per flush that reached the draw stage: the per-frame counterpart of the run totals, used by the
+                    // frame reconciliation (S11). Groups per flush are already counted by immediateGroupsDrawn.
+                    this.frameDrawn++;
                 }
             } finally {
                 MemoryUtil.memFree(push);

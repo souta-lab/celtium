@@ -133,8 +133,10 @@ level while preserving its contrast, exactly the measured signature. **Parked, w
 from 96 to 128 blocks) and are not the cause; removing the light map multiply moved the mean from 34.08 to 26.12 but left the
 terrain at 0.70 of the reference, so the light map is excluded by measurement too. Five candidates have now been eliminated
 and the remaining 0.69 needs a **numeric** comparison - the shader's arithmetic against values computed by hand from the
-dumped texture, the packed colour and the light coordinate - rather than a sixth image ratio. Separately, the **shader trap is
-closed**: `celtium-vulkan/build.gradle` compiles `src/main/shaders` into the loaded resources as a tracked task and the
+dumped texture, the packed colour and the light coordinate - rather than a sixth image ratio. **S11 is closed** (round 277): the frame now has an identity incremented at the camera boundary, the per-frame window budget
+is reset and reconciled there rather than on every fence wait, and a normal run reports **570 frames against 3327 flushes** -
+a factor of six, which is exactly why the audit's "16 windows per frame" could not be demonstrated. Separately, the **shader
+trap is closed**: `celtium-vulkan/build.gradle` compiles `src/main/shaders` into the loaded resources as a tracked task and the
 committed `.spv` copies are deleted, verified by building and reading the jar (thirteen entries, terrain sizes 8864 / 8524 /
 7748).
 
