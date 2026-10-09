@@ -1016,7 +1016,11 @@ extent if they differ), barrier to `PRESENT_SRC_KHR`, submit through the context
 with the presentation waiting on the reusable acquire semaphore - the same synchronisation shape as the clear-and-present
 probe that the validation layer already accepts.
 
-It compiles and is committed. The attempt to call it from the swapchain probe did not apply - the anchor text had moved
-again, the same failure mode as the previous round's instrumentation - so it has not run yet and nothing about present
+It compiles and is committed. The first attempt to call it from the swapchain probe did not apply (the anchor text had
+moved, the same failure mode as the previous round's instrumentation); the second attempt found the right call but
+inserted the block into the middle of the surrounding `record(...)` expression and broke the build, so it was reverted
+and the tree is green again. Both failures are text-surgery failures, not design ones: the pattern to stop repeating is
+patching by anchor, and the next attempt should locate the statement, read the three lines around it, and only then edit.
+It has therefore not run yet and nothing about present
 ownership has been demonstrated beyond the probe's cleared image. The next step is to wire that one call where the probe
 already presents and read its result, with the string it prints recorded either way.
