@@ -697,6 +697,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (this.immediatePresentedFrames == 1) {
                         record("presented the frame from the composite: " + result);
                         record("presented image mean=" + this.swapchain.lastPresentedMean());
+                        record("submitWithSemaphores calls=" + VulkanContext.submitWithSemaphoresCalls
+                                + " withWait=" + VulkanContext.submitWithSemaphoresWaits);
                     }
                     return true;
                 }

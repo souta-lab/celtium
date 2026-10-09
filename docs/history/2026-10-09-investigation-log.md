@@ -1313,3 +1313,34 @@ actually caused by - the `submit` trace meant to answer the second never ran, an
 The next attempt at the trace should be smaller and independent of the frame path: the counts and handles can be logged
 from the presentation side alone (they are already known there), and the submission's own view can be inferred by
 comparing the handles in the same line rather than by adding prints inside the context.
+
+---
+
+## The call is observed, the wait is there, and the messages still say otherwise
+
+Two measurements close this round, both without printing from inside the context (which is what coincided with the
+failed run):
+
+- **Bisection.** With the recording skipped entirely - acquire, present, nothing written - the submit and semaphore
+  complaints disappear and only the layout complaint remains, which is expected because nothing transitions the image.
+  So the acquire/present usage on its own is not what the messages are about; the recording's submission is.
+- **Counters.** `VulkanContext.submitWithSemaphoresCalls` and `submitWithSemaphoresWaits` are incremented inside the
+  helper and reported by the backend: `calls=1 withWait=1` at the first frame present. The helper *is* the one running,
+  *is* called once per present, and *does* carry a wait - while the validation layer still reports that the acquire
+  semaphore "was not waited on" and that the presented image "was acquired with" it "and has not since been waited on".
+
+That eliminates the last code-shaped explanation: the call, the arguments and the wait are all in place, so the
+disagreement is about timing rather than about which function runs. The two candidates left are both about a semaphore
+being reused before what it orders against has retired:
+
+1. The acquire semaphore is reused **before its presentation has completed**. The fence waited inside the submit covers
+   the *submission*, not the presentation, which is asynchronous - so the next acquire can reuse the same semaphore while
+   the presentation engine is still waiting on it. That is precisely what "was acquired with a semaphore that has not
+   since been waited on" describes, and the standard fix is to track present completion per image (a fence or
+   `vkWaitForPresentKHR`) rather than assuming the submit's fence covers it.
+2. The image is re-acquired while its own previous presentation is still pending, which the same fix addresses by keying
+   the semaphore to the image rather than cycling a pool independently of it.
+
+The counters stay in the tree as the safe form of this diagnostic, and the present keeps its default: off, because the
+validation output is not empty, and `presentFromComposite` is one flag away from the verified-by-eye behaviour it already
+demonstrates (`present image: blitted 1280x720 onto image 0 (0)`, `presented image mean=118.25` in the readback run).

@@ -75,6 +75,8 @@ public final class VulkanSwapchain {
     private float lastPresentedMean = -1.0f;
     /** {@code -Dceltium.vulkan.presentReadback=true} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
+    /** Bisection switch: present without recording anything, to separate the recording from the semaphores. */
+    private static final boolean PRESENT_NO_RECORD = Boolean.getBoolean("celtium.vulkan.presentNoRecord");
 
     /** {@return the mean of a centre patch of a swapchain image}, or -1 when it cannot be read. */
     public float lastPresentedMean() {
@@ -386,6 +388,18 @@ public final class VulkanSwapchain {
                 return "present image: vkAcquireNextImageKHR returned " + result;
             }
             long image = this.images[index.get(0)];
+            if (PRESENT_NO_RECORD) {
+                // Bisection switch: present the acquired image without touching it or recording anything. If the
+                // validation messages disappear, they come from the command recording (the layout transitions and the
+                // blit); if they stay, they come from the acquire/present semaphore usage itself.
+                VkPresentInfoKHR bare = VkPresentInfoKHR.calloc(stack).sType$Default()
+                        .pWaitSemaphores(stack.longs(acquire))
+                        .swapchainCount(1)
+                        .pSwapchains(stack.longs(this.swapchain))
+                        .pImageIndices(index);
+                int bareResult = vkQueuePresentKHR(this.context.queue(), bare);
+                return "present image (no record): presented image " + index.get(0) + " (" + bareResult + ")";
+            }
             VkCommandBuffer commands = this.context.beginCommands();
             try {
                 transitionForBlitSource(stack, commands, sourceImage, sourceLayout);

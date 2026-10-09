@@ -102,6 +102,17 @@ public final class VulkanContext {
     private String deviceName;
     private String deviceUuid;
     private long commandPool = VK_NULL_HANDLE;
+
+    /**
+     * How many times {@link #submitWithSemaphores} ran, and how many of those actually carried a wait.
+     * <p>
+     * This exists because the validation messages name the acquire semaphore as "not waited on" while the calling code
+     * passes it, and the question is whether the call this code builds is the call the driver receives. A counter is
+     * used rather than a print: an earlier attempt at printing from here coincided with a run whose terrain passes all
+     * errored, and while that link is unproven, a counter costs nothing and cannot perturb anything.
+     */
+    public static int submitWithSemaphoresCalls;
+    public static int submitWithSemaphoresWaits;
     private VkPhysicalDeviceMemoryProperties memoryProperties;
     private long debugMessenger = VK_NULL_HANDLE;
     private VkDebugUtilsMessengerCallbackEXT validationCallback;
@@ -305,6 +316,10 @@ public final class VulkanContext {
             throw new IllegalArgumentException("commandBuffer must not be null");
         }
         requireUsable();
+        submitWithSemaphoresCalls++;
+        if (waitSemaphore != VK_NULL_HANDLE) {
+            submitWithSemaphoresWaits++;
+        }
         long fence = VK_NULL_HANDLE;
         try {
             check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
