@@ -2985,14 +2985,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
 
             if (REFERENCE_RENDER) {
-                // A reference render: the mod is loaded and the fixture runs, but nothing of this backend is installed, so
-                // the frame is drawn entirely by OpenGL. Measured, the run previously used as the reference had the
-                // immediate path disabled while the terrain backend was installed and drawing - 1647 passes, regions 4 -
-                // so every image percentage compared against it measured agreement with this project's own output.
+                // A reference render: the mod loads, the bootstrap completes and the fixture can query the device, but the
+                // backend never registers - so no pass, no capture and no mixin takes anything, and OpenGL draws the whole
+                // frame. Returning here instead of skipping only the registration also skipped the command registration
+                // and made the fixture fail with "Vulkan bootstrap was expected but the command is missing".
                 record("reference render: the Vulkan backend is not installed, so the frame is OpenGL");
-                return;
+            } else {
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(this);
             }
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(this);
 
             if (Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)) {
                 runSwapchainProbe();

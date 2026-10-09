@@ -5081,3 +5081,31 @@ taken with the backend installed - which is the same fact as the contaminated re
 
 Until the fixture change lands, the honest position on image numbers is unchanged from the previous entry: the functional
 evidence stands, and the percentages are not evidence of OpenGL agreement.
+
+---
+
+## The reference switch works, and skipping the registration is not enough: the mixins call the backend directly
+
+With the mod present, the Vulkan expectations removed and `-Dceltium.vulkan.referenceRender=true` set, the reference run is
+clean and finally **captures a screenshot**: `exit 0`, validation clean, 0 messages, fixture PASSED. The switch's own note
+appears in the report, so it executed. And the frame is **still not pure OpenGL**:
+
+```
+reference report: passes=1641  skipped=0  errors=0
+                  Transfer Queue: vulkan [AMD Radeon RX 6400] regions=4 draws=...
+```
+
+Skipping `TerrainGpuBackends.install(this)` therefore does not stop the renderer, and the reason is structural: the mixins
+drive the backend **instance** directly - the entity-renderer hook calls its pass entry, the uploader hook calls its offer -
+rather than looking it up through the registry. The registry is how the *game* would find a backend; it is not the only way
+in, and this project's own hooks are the other one.
+
+The image comparison run with that reference gives **0.21%**, which is the same value as the numbers quoted before, and it
+should be: the reference still contains the same Vulkan terrain it always did. So the measurement basis is unchanged and the
+honest position is unchanged with it - the functional evidence stands, and no percentage here is OpenGL agreement.
+
+The remaining step is one guard in each of the two entries the hooks call - the pass entry and the offer - for the same
+reference mode, exactly the shape the stalled-GPU guards already have. Then the reference is genuinely OpenGL, and every
+image number in this project can be re-baselined against it. Also noted for the audit: the terrain line and 1641 passes in a
+run whose registry lookup returns null is evidence that the backend's own hooks are the real entry points, which is worth
+knowing independently of this measurement question.
