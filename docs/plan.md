@@ -130,9 +130,12 @@ map above all, and the dynamic textures) go through direct subimage calls that n
 destination offset, the texture has `uploadPatchFromPixels`, and the registry applies partial regions (keeping the replacement
 path for whole textures). `animatedImageFills` is still zero for one reason: **the animated write arrives before the mirror
 exists** - the registry refuses a patch for a texture it has never mirrored, and the mirror is created lazily by the draw path
-after the atlas's first frame. **Next: create the mirror when the announcement arrives**, using the size it already carries.
-The next run's `animatedImageFills` should be in the thousands if that ordering is right, against 4,865 refreshes that still
-read back.
+after the atlas's first frame. **The ordering fix is in and it moved two numbers by an order of magnitude**:
+`imageFilledMirrors` 7 to **113**, `animatedImageFills` 0 to **106** - the mirror is now created when the announcement arrives
+(querying the size, never the pixels) instead of when the draw path asks. **The prediction attached to it was wrong**: the patch
+count is 106, not the thousands expected, against 4,787 refreshes that still read back. So the ordering was necessary and not
+sufficient. **Next: print why a patch was refused** - the registry returns false on three conditions and says nothing about
+which - as the refusal hook does for batches.
 
 **Next: the bridge itself**, and it is now **sized**: the renderer
 mirrors **eleven** distinct GL textures across a run - the atlas, the lightmap, the item and entity sheets, the GUI sheets - with

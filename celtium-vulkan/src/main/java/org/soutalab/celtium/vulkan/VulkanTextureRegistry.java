@@ -41,6 +41,7 @@ public final class VulkanTextureRegistry {
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
     private int mirrorCount;
     private int imageUploads;
+    private int createdByAnnouncement;
     /** The GL texture ids that reach the readback refresh, recorded once each. */
     private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
     /** The images announced by the upload hook, waiting for the mirror that will use them. */
@@ -152,7 +153,29 @@ public final class VulkanTextureRegistry {
         }
         Entry entry = this.entries.get(glTextureId);
         if (entry == null) {
-            return false;
+            // The announcement arrives before the draw path has ever asked for this texture, which is the normal order for an
+            // atlas animation. Creating the mirror here needs the texture's full size, and a patch does not carry it - so the
+            // size is queried and the pixels are not: the expensive half of the readback is the pixels, and those are already
+            // in the announcement. The wait for the draw path was the whole reason these writes were being read back.
+            int textureWidth = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+            int textureHeight = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
+            if (textureWidth <= 0 || textureHeight <= 0) {
+                this.failureCount++;
+                this.lastFailure = "announced pixels for GL texture " + glTextureId + " whose size is "
+                        + textureWidth + "x" + textureHeight;
+                return false;
+            }
+            try {
+                VulkanGlTexture created = VulkanGlTexture.create(this.context, textureWidth, textureHeight, true);
+                entry = new Entry(glTextureId, textureWidth, textureHeight, created);
+                this.entries.put(glTextureId, entry);
+                this.mirrorCount++;
+                this.createdByAnnouncement++;
+            } catch (RuntimeException | LinkageError error) {
+                this.failureCount++;
+                this.lastFailure = "mirror for GL texture " + glTextureId + " from an announcement: " + error;
+                return false;
+            }
         }
         boolean wholeTexture = x == 0 && y == 0 && entry.width == width && entry.height == height;
         if (!wholeTexture && (x < 0 || y < 0 || x + width > entry.width || y + height > entry.height)) {
@@ -186,6 +209,11 @@ public final class VulkanTextureRegistry {
         } finally {
             org.lwjgl.system.MemoryUtil.memFree(rgba);
         }
+    }
+
+    /** {@return how many mirrors were created by an announcement rather than by the draw path asking} */
+    public int createdByAnnouncement() {
+        return this.createdByAnnouncement;
     }
 
     /** {@return how many mirrors were filled from an announced image rather than a readback} */

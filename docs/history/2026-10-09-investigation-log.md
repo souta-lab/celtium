@@ -8478,3 +8478,29 @@ missing is the order of two events.
 
 Recorded with the numbers that make it checkable: eight mirrors, seven image-filled, **zero** patch fills, 4,865 refreshes still
 read back. The next run's `animatedImageFills` should be in the thousands if the ordering fix is right.
+
+---
+
+## The ordering fix works, and the prediction attached to it did not
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+mirroredTextures = 9     imageFilledMirrors = 113     mirrorsCreatedByAnnouncement = 1
+animatedImageFills = 106   inPlaceRefreshes = 4787    descriptorSets = 1
+```
+
+The change was to create the mirror when the announcement arrives instead of waiting for the draw path to ask - querying the
+size, never the pixels - and it moved two numbers by an order of magnitude:
+
+- **`imageFilledMirrors` from 7 to 113.** Once the mirror exists before the draw path asks, every later announcement for that
+  texture is applied from the pixels rather than read back.
+- **`animatedImageFills` from 0 to 106.** The patch path was written last round and never taken; it is taken now.
+
+**The prediction last round was that the patch count would be "in the thousands", and it is 106**, against 4,787 refreshes that
+still read back. So the ordering was necessary and is not sufficient, and the honest form of the record is the measurement rather
+than the expectation: most animated writes still take the readback, and the next instrument is the one that has answered every
+question on this path - print the reason a patch was **refused**, as the refusal hook does for batches.
+
+That is the named next step, and it is a small one: the registry already returns false on three conditions (no entry, out of
+bounds, conversion failure) and prints nothing about which. The counters and the acceptance are otherwise unchanged, validation
+is silent and the fixture passes.
