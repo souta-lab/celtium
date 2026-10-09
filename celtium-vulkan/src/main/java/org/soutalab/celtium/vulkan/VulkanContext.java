@@ -160,9 +160,15 @@ public final class VulkanContext {
         }
         requireLoader();
         GlDeviceIdentity openGl = inspectOpenGl();
-        if (openGl.deviceUuids.isEmpty()) {
+        if (openGl != null && openGl.deviceUuids.isEmpty()) {
             throw new IllegalStateException("The current OpenGL context does not expose device UUIDs"
                     + " (GL_EXT_memory_object is missing), so no Vulkan device can be matched to the GL GPU.");
+        }
+        if (openGl == null) {
+            // No identity at all: there is nothing to match and no interop to set up. This is the no-bridge configuration, and
+            // it must fail with a reason rather than with a NullPointerException - which is exactly what it did when the flag
+            // that exercises this path was left in the run script for two rounds.
+            System.out.println("[Celtium] proceeding with no OpenGL identity: no device matching and no interop bridge");
         }
         VulkanContext context = new VulkanContext();
         try {

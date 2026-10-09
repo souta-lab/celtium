@@ -8328,3 +8328,26 @@ Getting that measurement took three failures, and two of them were mine rather t
 The lesson is the one this project keeps re-learning in a new costume: a run that fails is **evidence about something**, and
 reading its log is cheaper than reasoning about what it must have been. Two of the three causes above were visible in one line of
 output that had not been read.
+
+---
+
+## The no-identity path fixed, both paths measured, and three NPEs left in it
+
+The defect found by accident is fixed: the interop-capability check dereferenced the identity without asking whether there was
+one, which is what crashed the game for two rounds of runs that had the diagnostic flag left in them. It now treats a missing
+identity as "no matching, no interop" and says so.
+
+Both paths were then measured, which is the point:
+
+| configuration | result |
+|---|---|
+| normal (flag absent) | `exit 0`, validation clean, 0 messages, fixture PASSED, `mirroredTextures=8`, `imageFilledMirrors=7`, acceptance intact |
+| no GL identity | `proceeding with no OpenGL identity: no device matching and no interop bridge` - and **no interop NPE** |
+
+The normal path is unchanged by the fix, which matters because that is the configuration everything else is measured in.
+
+The no-identity path still reports **three NPEs per run**, from `TerrainRenderPass.name()` - a **different** unguarded pass
+reference from the one fixed earlier, reached only when there is no bridge. They are visible because the refusal hook prints the
+backend's own reason, which is how every guard on this path has been found. Naming them is this round's remainder: the
+no-identity configuration is now a **usable** diagnostic (it starts, it states its configuration, it reports what it cannot do),
+and the next pass should clear its remaining exceptions with the same instrument.

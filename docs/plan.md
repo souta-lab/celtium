@@ -134,8 +134,11 @@ for those eleven textures, and which GL-facing call sites change with it. The re
 (`readGlLevel0`/`readGlLevel`, three call sites) becomes unnecessary for exactly those eleven textures. That made the ownership decision a change at **one hook and one code path**, and it is now
 **measured**: `mirroredTextures=8` with **`imageFilledMirrors=7`** - seven of the eight mirrors are built from the image the
 upload hook hands over rather than from a readback of GL - with `inPlaceRefreshes=4821`, `descriptorSets=1`, exit 0, validation
-clean, 0 messages, fixture PASSED. **Open:** the no-identity path (`celtium.vulkan.withoutGlIdentity`) dereferences the absent
-identity in the interop code and crashes; a real defect found by accident when the flag was left in the run script.
+clean, 0 messages, fixture PASSED. **The no-identity path is fixed and now usable**: the interop check treated a missing
+identity as a crash; it now treats it as "no matching, no interop" and says so, with the normal path verified unchanged
+(`exit 0`, clean, fixture PASSED, `imageFilledMirrors=7`). **Open:** that configuration still reports three NPEs per run from an
+unguarded `TerrainRenderPass.name()` - a different site from the one fixed earlier, found the same way, by the refusal reason the
+hook prints.
 
 **The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
 drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and
