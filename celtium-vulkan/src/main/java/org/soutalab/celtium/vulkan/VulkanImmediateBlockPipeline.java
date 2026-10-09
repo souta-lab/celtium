@@ -54,6 +54,8 @@ public final class VulkanImmediateBlockPipeline {
     private long descriptorPool = VK_NULL_HANDLE;
     private long descriptorSet = VK_NULL_HANDLE;
     private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
+    /** How many descriptor sets this pipeline has had to build; a rise means keys stopped matching. */
+    public long setsCreated;
 
     private final boolean blend;
     private final int srcFactor;
@@ -135,7 +137,11 @@ public final class VulkanImmediateBlockPipeline {
         if (this.descriptorPool == VK_NULL_HANDLE || texture == null) {
             return 0L;
         }
-        Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
+        // The light map is part of the key this time (audit S13). The mirror is refreshed every few frames, so its
+        // view and generation change while the atlas's do not - keyed on the texture alone, a set built for an old
+        // light map would be served for a new one.
+        long descriptorKey = (texture.key() * 31L) + (lightmap != null ? lightmap.key() : 0L);
+        Long existing = this.setsByTextureView.get(Long.valueOf(descriptorKey));
         if (existing != null) {
             return existing.longValue();
         }
@@ -172,7 +178,8 @@ public final class VulkanImmediateBlockPipeline {
                     .descriptorCount(1)
                     .pImageInfo(image);
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            this.setsByTextureView.put(Long.valueOf(texture.key()), Long.valueOf(set));
+            this.setsByTextureView.put(Long.valueOf(descriptorKey), Long.valueOf(set));
+            this.setsCreated++;
             return set;
         } catch (RuntimeException | LinkageError error) {
             return 0L;

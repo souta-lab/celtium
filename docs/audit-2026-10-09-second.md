@@ -226,11 +226,14 @@ reasoning rather than by reproduction, and that distinction is kept.
 **Partly acted on:** the three immediate pipelines' pools were raised from `maxSets(64)` to 8192, since one set is cached per
 distinct texture view and nothing evicts it - a real limit that ordinary play would reach. **It did not change the particle
 refusals** (`particleDescriptorRefusals=488` before and after), so exhaustion was not what the particle family was hitting;
-the change stays because the limit was real. **Open:** the lightmap is still not part of the descriptor key, and the two
-remaining candidates inside `descriptorSetFor` - a lightmap object with no valid view, or the allocation failing - are to be
-separated by one counter per return path in a single run.
-`setsByTextureView` grows without bound behind `pool.maxSets = 64`, every pipeline also allocates an unused initial set,
-and the block/particle keys use only the main texture view, so a rebuilt lightmap reuses a stale binding.
+the change stays because the limit was real. **The lightmap is in the key now - and the cost is measured.** The two lightmapped pipelines (block and particle) keyed
+their descriptor cache on the texture alone, so a set built for an old light map could be served for a new one. Both now
+combine `texture.key()` with `lightmap.key()`. The measured consequence is blunt: a normal run reports **`descriptorSets=545`
+against `immediateTaken=546`** - effectively one set per accepted batch, where the cache used to be shared. The reason is
+also clear: the lightmap mirror is **recreated** on every refresh, so its view and generation change while the atlas's do not,
+and every batch misses. The fix is correct and stays; the **next step is to upload the refresh into the same image and view**
+instead of recreating them, which should bring `descriptorSets` back down to the number of distinct textures and make the
+cache work again - a measurable acceptance rather than an argument.
 
 ### S14 [P1] geometry that fails after acceptance is dropped and called a GL fallback - **closed**
 **Fixed.** The failure was `vkAllocateDescriptorSets failed` for the particle family, and the cause was the descriptor pool's

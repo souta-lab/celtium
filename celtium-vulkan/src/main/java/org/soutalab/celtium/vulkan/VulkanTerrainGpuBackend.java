@@ -1680,6 +1680,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * frame. The audit describes exactly that: "small accepted batches wait for a threshold while the next unsupported
      * draw runs in GL immediately". Flushing here keeps the order; with nothing pending it does nothing.
      */
+    /** Every descriptor set the immediate pipelines have built, summed over their caches (audit S13). */
+    private long descriptorSetsCreated() {
+        long total = 0;
+        for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
+            total += block.setsCreated;
+        }
+        for (VulkanImmediateParticlePipeline particle : this.particlePipelineCache.values()) {
+            total += particle.setsCreated;
+        }
+        return total;
+    }
+
     private void flushPendingBeforeGlDraw() {
         if (this.immediateGroups.isEmpty()) {
             return;
@@ -1959,6 +1971,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
+                + " descriptorSets=" + this.descriptorSetsCreated()
                 + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes

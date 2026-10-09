@@ -5883,3 +5883,28 @@ So S10 now stands as: the refusal ordering implemented at all seventeen refusal 
 run; clears implemented and measured at zero; FBO switches implemented and measured on the gated fixture only. What is left
 is not more code but **scene coverage** - the ordinary suite presents neither a clear nor an FBO switch between accepted
 batches, and the gated fixture that does present the latter is the one whose capture the suite suppresses.
+
+---
+
+## The lightmap is in the descriptor key, and the measured cost is 545 sets for 546 batches
+
+S13's remaining half was that the descriptor caches ignored the light map: the block and particle pipelines keyed on the
+texture alone, so a set built for an old light map could be served for a new one - and the light map mirror is refreshed
+every few frames, which is exactly when that matters. Both pipelines now combine `texture.key()` with `lightmap.key()`.
+
+The consequence is measured rather than argued, and it is blunt:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED | passes=2154 | taken=546 | dropped=0
+descriptorSets=545
+```
+
+**545 sets for 546 accepted batches** - effectively one per batch. Before this change the cache was shared across batches
+that used the same texture; now every batch misses, because the light map's key changes on every refresh while the atlas's
+does not. The fix is correct and stays - serving a stale light map is worse than building a set - but it has turned the
+descriptor cache into a formality, which is a **performance regression** recorded as one.
+
+The cause also names the fix. The light map's **content** changes every frame, but its **identity** does not have to: the
+mirror is being **recreated** (new image, new view, new memory) on every refresh rather than being uploaded into the same
+one. Uploading in place would leave the view and generation stable, the key constant, and the cache working again - and it
+would be measurable: `descriptorSets` should fall from 545 to roughly the number of distinct textures in the scene.
