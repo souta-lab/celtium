@@ -466,6 +466,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int whiteTextureGlId;
     private int immediateRefusedDefaultFbo;
     private int immediatePresentedFrames;
+    private int immediateTextureInvalidations;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -508,6 +509,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void setDepthTest(boolean enabled) {
         this.immediateState.depthTestEnabled(enabled);
         this.immediateStateCalls++;
+    }
+
+    @Override
+    public void invalidateTexture(int glTextureId) {
+        // Animated sprites re-upload every frame; dropping the mirror makes the next draw re-read the GL texture.
+        // The registry is created lazily, and Minecraft uploads textures - it registers them - before any world draw:
+        // invalidating through a registry that does not exist yet is what made the first attempt crash during
+        // "Registering texture".
+        if (this.textureRegistry != null) {
+            this.textureRegistry.invalidate(glTextureId);
+        }
+        this.immediateTextureInvalidations++;
     }
 
     @Override

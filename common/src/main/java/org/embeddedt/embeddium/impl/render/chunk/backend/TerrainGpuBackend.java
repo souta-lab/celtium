@@ -50,6 +50,14 @@ public interface TerrainGpuBackend {
     default void setTexture2dEnabled(boolean enabled) {
     }
 
+    /**
+     * Tells the backend that the contents of a mirrored GL texture changed, so the next use re-reads it.
+     * Mirroring a texture once is right for a static one and wrong for an animated one: Minecraft re-uploads animated
+     * sprites through {@code TextureUtil.func_110989_a}.
+     */
+    default void invalidateTexture(int glTextureId) {
+    }
+
     /** Mirrors {@code GlStateManager.func_179144_i(int)}, the GL name of the texture the state has bound. */
     default void bindTexture(int glTextureId) {
     }

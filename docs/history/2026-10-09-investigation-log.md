@@ -1454,3 +1454,32 @@ its first frame forever. It is recorded as P1 with the hook point identified rat
 registering a new mixin needs the config path this project uses confirmed first (the plugin loads
 `/mixins.celeritas.json`, whose `client` array is empty, so the core mixins are applied by some other mechanism that has
 to be read before adding one more).
+
+---
+
+## Texture invalidation is hooked, the crash it caused is fixed, and whether it fires is still unproven
+
+The P1 recorded last round is implemented:
+
+- `TextureUtilMixin` injects at the head of `TextureUtil.func_110989_a(int glTextureId, BufferedImage, boolean, boolean)`
+  - Minecraft's own re-upload for animated sprites - and calls the backend. Registration needed no configuration work:
+  the mixin plugin scans `org.taumc.celeritas.mixin` for mixin-annotated classes, so a new class in that package is picked
+  up, which is why the whole `core` package is applied through the plugin while `mixins.celeritas.json`'s `client` array is
+  empty.
+- `TerrainGpuBackend.invalidateTexture(int)` is the boundary method, the Vulkan backend forwards it to
+  `VulkanTextureRegistry.invalidate(int)`, and the mixin body is wrapped so a bookkeeping hint can never break a texture
+  upload.
+
+The first attempt **crashed the client** during texture registration - the registry is created lazily, and Minecraft
+uploads textures before any world draw, so invalidating through a registry that does not exist yet threw. That is fixed
+with a null guard, and the run is green again:
+
+```
+BUILD OK
+status PASSED | nativeTerrainVerified True
+```
+
+What is **not** proven is that the hook fires during play: the counter meant to report how many invalidations happened did
+not appear in the run's debug line, so either it was never incremented or it is not being printed - the two have not been
+separated. Until that is read, the honest statement is that the mechanism is in place, guarded, and does not break
+anything, not that animated textures now update.
