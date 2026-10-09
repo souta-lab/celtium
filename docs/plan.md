@@ -81,7 +81,21 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Alpha test implemented and validation-clean; parity measurement needs repeats to be meaningful.** The four
+- **Measurement noise floor established, and it changes what the numbers mean.** Four runs, two per configuration:
+  `off vs off` differ by **0.00** (the GL reference is bit-identical between runs, so the scene is deterministic),
+  `on vs on` differ by **0.83 mean / 1.5% of pixels over 8 / 0.4% over 32** - that is the run-to-run variation of the
+  Vulkan path itself, most likely the one-frame lag interacting with the captured frame - and the cross comparison is
+  **14.59 and 14.04 mean with 34.5% of pixels over 8** in both pairs. So the immediate path's image differs from GL by
+  far more than the noise, consistently, and a change of one or two points *is* meaningful after all: the single runs
+  before the alpha test measured 11.87 and 13.99, the runs with it measure 14.04, 14.08 and 14.59, i.e. **the alpha
+  test as implemented made the difference larger, not smaller**. That is a defect in the implementation rather than a
+  reason to keep it: the likely cause is that the discard compares the alpha *after* the vertex colour has multiplied
+  the texture (which is what blending sees) while Minecraft's `glAlphaFunc` runs before blending and can be given a
+  reference whose comparison direction differs from the one assumed here. The next step is to check the comparison
+  direction and the stage at which the value is taken, or to disable the test until that is settled - it is inside the
+  default-off immediate path either way, so the shipped image is unaffected.
+
+- **Original note on the alpha test implementation (superseded by the noise-floor measurement).** The four
   validation messages of the first attempt were `VUID-vkCmdPushConstants-offset-01796`, and the cause was the push
   constant stage coverage: the range and the `vkCmdPushConstants` call both named the vertex stage only, while the
   fragment shader reads the alpha-test reference at offset 128. Declaring the range for
