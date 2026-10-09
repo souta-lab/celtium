@@ -1352,7 +1352,29 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - **`forceAcquireOutOfDate` 自体は発火していない**（`acquireOutOfDate=0`）。out-of-date の復旧を「受入した」と
   言えるのは、この注入が実際に発火してからの話である。
 
-**次の一手**: (1) 注入が発火しない理由を実装から確かめる（発火しなければ out-of-date 経路は永久に未検証）、
+**注入を発火させた（このターン・ただし経路はまだ綺麗にならない）**:
+
+- **原因**: 注入の条件が `result == VK_SUCCESS` だったが、**headless の swapchain は `VK_SUBOPTIMAL_KHR` を返す**
+  （コードは両方を成功扱いにしている）。したがって注入は一度も発火していなかった。両方を注入対象にして、
+  **`injecting an out-of-date result` がログに出ることを確認**（AMD/Intel 各1回）。
+- **注入は経路に届いている**: report に `present probe: vkAcquireNextImageKHR returned -1000001004`
+  （= `VK_ERROR_OUT_OF_DATE_KHR`）が出る。つまり out-of-date の**分岐自体は動くようになった**。
+- **ただし両GPUで `exit 1 / validationClean=false`、`VUID-vkAcquireNextImageKHR-semaphore-01286` が2件**残る。
+  これは「acquire に渡した semaphore がシグナル済みのまま次の acquire に渡された」という意味で、
+  **失敗した acquire が semaphore をシグナル済みで残す**という筋書きと一致する。
+- **試して効かなかったこと**: 失敗した acquire の後で acquire semaphore のカーソルを回す（ローテート）。
+  VUID は 2 件のままだったので**撤回**した（効果のない変更を積まない）。したがってシグナル済みなのは
+  **ローテートで避けられる semaphore ではない**（別の semaphore か、同じ呼び出しの中で再利用されている）。
+- **次の手がかり**: `celtium present trace` が acquire / renderFinished / submitWaits / presentWaits の**ハンドルを
+  出力している**ので、VUID の発生順と突き合わせれば**どの semaphore か**を特定できる（推測しない）。
+- **受入の基準を訂正**: `acquireOutOfDate` は `presentImage` 側のカウンタで、**probe 経路では増えない**。
+  probe の受入に `acquireOutOfDate>0` を要求するのは誤りだった（前ターンの自分の基準を訂正する）。
+
+**次の一手**: (1) present trace と VUID の発生順から**シグナル済みの semaphore を特定**する、(2) 特定できたら
+その semaphore の扱い（失敗経路での wait/再作成）を直す、(3) 直ったら probe を両GPUで受入し、そのうえで
+`presentImage` 側の out-of-date（`acquireOutOfDate>0`）も別途受入する。
+
+**（旧メモ）** 次の一手: (1) 注入が発火しない理由を実装から確かめる（発火しなければ out-of-date 経路は永久に未検証）、
 (2) 発火するようにした上で、present を飛ばした時に acquire semaphore を残さない処理を入れる、(3) 両GPUで
 out-of-date の復旧を受入する（`acquireOutOfDate>0` を証拠として要求する）。
 
