@@ -82,6 +82,14 @@ public final class VulkanGlTexture {
 
     /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
     /** The layout the image is actually in; barriers used to declare one the image was not in. */
+    /**
+     * The recorded layout of each mip level.
+     * <p>
+     * One field cannot describe a mipmapped atlas: the upload path leaves level 0 in a different layout from the levels a blit
+     * chain produced, and a partial update that believes the whole image is being sampled cannot move level 0 at all. The
+     * earlier attempts changed the tail barrier's range and broke exactly that agreement.
+     */
+    private int[] levelLayouts = new int[0];
     private int currentLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
     private boolean nearestFilter;
 
@@ -279,7 +287,7 @@ public final class VulkanGlTexture {
         if (x < 0 || y < 0 || x + pixelWidth > width || y + pixelHeight > height) {
             return false;
         }
-        copyToImage(rgba, pixelWidth, pixelHeight, 0, x, y);
+        copyToImage(rgba, pixelWidth, pixelHeight, 0, x, y, true);
         return true;
     }
 
@@ -645,6 +653,7 @@ public final class VulkanGlTexture {
             toSource.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                     null, null, toSource);
+            setLevelLayout(level - 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
             }
 
             VkImageBlit.Buffer blit = VkImageBlit.calloc(1, stack);
@@ -675,10 +684,27 @@ public final class VulkanGlTexture {
             toSrc.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                     null, null, toSrc);
+            setLevelLayout(level, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
             levelWidth = nextWidth;
             levelHeight = nextHeight;
         }
+    }
+
+    /** Records a level's layout, growing the array when a recreated image has more levels than the previous one had. */
+    private void setLevelLayout(int level, int layout) {
+        if (level < 0) {
+            return;
+        }
+        if (level >= this.levelLayouts.length) {
+            this.levelLayouts = java.util.Arrays.copyOf(this.levelLayouts, level + 1);
+        }
+        this.levelLayouts[level] = layout;
+    }
+
+    /** {@return the recorded layout of a level}, or {@code UNDEFINED} when nothing is known about it yet. */
+    private int levelLayout(int level) {
+        return level >= 0 && level < this.levelLayouts.length ? this.levelLayouts[level] : VK_IMAGE_LAYOUT_UNDEFINED;
     }
 
     private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight) {
@@ -698,6 +724,18 @@ public final class VulkanGlTexture {
      */
     private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX,
             int offsetY) {
+        copyToImage(pixels, pixelWidth, pixelHeight, level, offsetX, offsetY, false);
+    }
+
+    /**
+     * Copies pixels into the image, optionally preserving what is already there.
+     * <p>
+     * A full upload rewrites every level, so it may start from {@code UNDEFINED} and record a mip chain. A patch must not: it
+     * covers one sprite's frame inside the atlas, so it starts from the layout that level is actually in, writes only that
+     * level, skips the chain, and transitions back over that level alone.
+     */
+    private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX, int offsetY,
+            boolean preserve) {
         long bytes = (long) pixelWidth * (long) pixelHeight * BYTES_PER_PIXEL;
         ensureStaging(bytes);
         // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
@@ -733,12 +771,13 @@ public final class VulkanGlTexture {
             barrier.get(0).sType$Default()
                     .srcAccessMask(0)
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED)
+                    .oldLayout(preserve ? levelLayout(level) : VK_IMAGE_LAYOUT_UNDEFINED)
                     .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level,
+                    preserve ? 1 : this.mipLevels, 0, 1);
             if (level == 0) { vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, barrier); }
 
@@ -751,13 +790,21 @@ public final class VulkanGlTexture {
             region.get(0).imageExtent().set(pixelWidth, pixelHeight, 1);
             vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
             this.currentLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            for (int covered = level; covered < (preserve ? level + 1 : this.mipLevels); covered++) {
+                setLevelLayout(covered, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            }
 
-            recordMipChain(commandBuffer, pixelWidth, pixelHeight, stack);
+            if (!preserve) {
+                recordMipChain(commandBuffer, pixelWidth, pixelHeight, stack);
+            }
 
             // Reuse the same barrier struct for the way back: the image and subresource range are unchanged, only
             // the access masks and layouts differ.
             // Every level ends in a different transfer layout (the blit chain leaves levels in TRANSFER_SRC or
             // TRANSFER_DST), so the range covers them all and the source accesses include both transfer roles.
+            if (preserve) {
+                barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            }
             barrier.get(0)
                     .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
@@ -770,8 +817,19 @@ public final class VulkanGlTexture {
             // The tail transition belongs to whichever call finishes the chain: the last mirrored level, or level 0
                 // when the chain is generated by blitting below. Getting this wrong left images in a transfer layout -
                 // ten validation errors and no SHADER_READ_ONLY for the atlas (audit S23).
-                if (level == this.mipLevels - 1 || (level == 0 && !MIRROR_GL_MIPS)) { vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES,
-                    0, null, null, barrier); }
+                // A patch writes level 0 of a multi-level image, so it does its own transition; a full upload keeps the original
+                // condition, whose barrier covers the whole chain - which is what makes every level end up sampled.
+                if (preserve || level == this.mipLevels - 1 || (level == 0 && !MIRROR_GL_MIPS)) {
+                    if (preserve) {
+                        barrier.get(0).oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                    }
+                    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
+                            barrier);
+                    for (int covered = preserve ? level : 0; covered < (preserve ? level + 1 : this.mipLevels);
+                            covered++) {
+                        setLevelLayout(covered, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    }
+                }
         } finally {
             // Always close the one-shot command buffer, also when recording threw half way through, so the
             // context's helper never keeps an open command buffer around.

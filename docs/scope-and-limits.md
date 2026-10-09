@@ -87,3 +87,25 @@ pixel-identity.
   OpenGL, for the frame comparison above.
 - **Provenance**: each run's lock records the git head, subject, dirty state, effective JVM arguments, the fixture hash and, at
   the end, the driver.
+
+
+---
+
+# 第3回監査後の現状（実測に限定した再掲）
+
+本書の対応範囲は**ソースと実測**に限定する。数値は第3回監査（`docs/audit-2026-10-09-third.md`）と監査後の実測に対応する。
+現在の完了判定は `docs/plan.md` の現状表を唯一の根拠とする。以下は**上書き**であり、古い記述より優先する。
+
+| 項目 | 実測された現在 |
+|---|---|
+| 完了条件(a) 全vanilla描画＋合成・present | **未達成**。terrainと即時系のみnative。比較worldは固定flat |
+| 完了条件(b) GL contextなしの起動・描画 | **未達成**。`withoutGlIdentity` は**identity照会省略の診断**であり、GL contextなし描画ではない |
+| 完了条件(c) 実window出力への到達 | **未確認**。capture方法の調査を残す（x11grab一方式の失敗で断定しない） |
+| FBOのVulkan完了 | **copy-backのみが証拠**。`offTargetOffered=208` は意図、`offTargetAccepted=0`、`offTargetCopiedBack=1957` |
+| format認識 | format 2は認識されるが**既定maskではGLに残る**（`2:0`）。受理数は描画の証明ではない |
+| texture供給 | 全面upload・patch経路とも実装。`imageFilledMirrors` は**適用回数**でresource数ではない |
+| 画像一致 | 68.81%（旧baseline対地形）と 0.267/255・0.40%（同一Celtiumの切替）は**最新版全体の一致率ではない** |
+| Java | jar内 `org/soutalab/celtium`: major 65が49、major 52が12。**Java21より新しいclassは無い**。ゲーム実行はJava25 |
+| 監査P0 | A01（平行移動）・A02（平坦texel）・A03（patchの保存）は**修正済・受入済**（exit 0 / clean / message 0 / PASSED） |
+| 保留 | JEI大規模budget反復は**延期**。影mod/shader packは**本体完成後**（vanillaのShaderGroup・spectator効果は本体機能） |
+| 証拠保全 | `.celtium-work/audit-2026-10-09-third` は監査者のpinned再比較証拠であり**削除しない** |
