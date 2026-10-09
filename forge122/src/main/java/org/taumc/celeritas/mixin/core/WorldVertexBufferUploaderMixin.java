@@ -38,6 +38,8 @@ import java.util.WeakHashMap;
 @Mixin(WorldVertexBufferUploader.class)
 public abstract class WorldVertexBufferUploaderMixin {
     /** Layout ids, decided by comparing element lists rather than class names or strides. */
+    private static int celtium$compositeDumps;
+
     private static final Map<VertexFormat, Integer> celtium$formatIds =
             Collections.synchronizedMap(new WeakHashMap<VertexFormat, Integer>());
 
@@ -61,6 +63,30 @@ public abstract class WorldVertexBufferUploaderMixin {
             }
             int formatId = celtium$formatId(format);
             int mode = celtium$drawMode(buffer);
+            if (formatId == 2 && celtium$compositeDumps < 1) {
+                // Unconditional: this runs for every offered batch, before the backend's acceptance mask decides
+                // anything, which is where a dump that must survive a mask has to live. It answers who draws the
+                // full-screen composite quad, which decides where that quad belongs.
+                celtium$compositeDumps++;
+                StringBuilder elements = new StringBuilder();
+                for (VertexFormatElement element : format.getElements()) {
+                    elements.append(element.getSize()).append('b').append(element.getUsage()).append(' ');
+                }
+                System.out.println("celtium composite batch: elements=[" + elements.toString().trim() + "] vertices="
+                        + vertices + " mode=" + mode + " stride=" + stride + " v0=(pos "
+                        + org.lwjgl.system.MemoryUtil.memGetFloat(address) + ","
+                        + org.lwjgl.system.MemoryUtil.memGetFloat(address + 4) + " uv "
+                        + org.lwjgl.system.MemoryUtil.memGetFloat(address + 12) + ","
+                        + org.lwjgl.system.MemoryUtil.memGetFloat(address + 16) + " col 0x"
+                        + Integer.toHexString(org.lwjgl.system.MemoryUtil.memGetInt(address + 20)) + ")");
+                StackTraceElement[] stack = new Throwable().getStackTrace();
+                StringBuilder trace = new StringBuilder();
+                for (int i = 1; i < Math.min(stack.length, 14); i++) {
+                    trace.append(stack[i].getClassName()).append('.').append(stack[i].getMethodName()).append(':')
+                            .append(stack[i].getLineNumber()).append(" <- ");
+                }
+                System.out.println("celtium composite caller: " + trace);
+            }
             if (backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode)) {
                 info.cancel();
             }
