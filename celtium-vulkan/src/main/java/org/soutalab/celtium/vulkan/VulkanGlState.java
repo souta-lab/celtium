@@ -214,6 +214,17 @@ public final class VulkanGlState {
         return copy(top(mode));
     }
 
+    /**
+     * Writes sixteen values into the current top of a stack.
+     * <p>
+     * {@link #matrix(int)} returns a **copy**, so writing into what it returns - which two earlier changes did - silently
+     * discarded the values. The counters caught it: the array written to and the array read back had different identities
+     * while nothing reset either of them. Anything that means to change the mirrored state has to go through here.
+     */
+    public void setMatrix(int mode, float[] values) {
+        System.arraycopy(values, 0, top(mode), 0, 16);
+    }
+
     public int matrixMode() {
         return this.matrixMode;
     }
@@ -226,8 +237,8 @@ public final class VulkanGlState {
      * bootstrap, not a per-batch one, and it happens before any mirror comparison is recorded.
      */
     public void copyMatricesFrom(float[] projection, float[] modelView) {
-        System.arraycopy(projection, 0, matrix(MATRIX_MODE_PROJECTION), 0, 16);
-        System.arraycopy(modelView, 0, matrix(MATRIX_MODE_MODELVIEW), 0, 16);
+        setMatrix(MATRIX_MODE_PROJECTION, projection);
+        setMatrix(MATRIX_MODE_MODELVIEW, modelView);
     }
 
     public void matrixMode(int mode) {

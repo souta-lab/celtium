@@ -400,6 +400,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int derivedProjectionComparisons;
     private float derivedProjectionDelta = -1.0f;
     private String derivedProjectionWorst;
+    private int derivedWriteIdentity;
+    private int derivedCompareIdentity;
+    private int lastMatrixMode = -1;
+    private final int[] loadIdentityByMode = new int[3];
+    private final int[] matrixModeCallsByMode = new int[3];
+    private int loadIdentityWhilePending;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -638,6 +644,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void matrixMode(int glMode) {
+        this.lastMatrixMode = glMode;
+        this.matrixModeCallsByMode[glMode == 5889 ? 0 : glMode == 5888 ? 1 : 2]++;
         if (glMode == 5888 && this.derivedProjectionPending) {
             // 5888 is GL_MODELVIEW, which the world pass switches to immediately after its gluPerspective call - the
             // first point at which GL holds the frustum and the mirror should hold the same one.
@@ -651,6 +659,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     delta = Math.max(delta, Math.abs(mirrored[i] - live.get(i)));
                 }
                 this.derivedProjectionComparisons++;
+                this.derivedCompareIdentity = System.identityHashCode(mirrored);
                 if (delta > this.derivedProjectionDelta) {
                     this.derivedProjectionDelta = delta;
                     this.derivedProjectionWorst = "mirror=" + java.util.Arrays.toString(mirrored)
@@ -675,6 +684,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void loadIdentity() {
+        this.loadIdentityByMode[this.lastMatrixMode == 5889 ? 0 : this.lastMatrixMode == 5888 ? 1 : 2]++;
+        if (this.derivedProjectionPending) {
+            this.loadIdentityWhilePending++;
+        }
         this.matricesDirty = true;
         this.immediateState.loadIdentity();
         this.immediateStateCalls++;
@@ -792,19 +805,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * projection term should fall from 2.0006 to near zero.
      */
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
-        float[] projection = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
         if (fovDegrees <= 0.0F || aspect <= 0.0F || near <= 0.0F || far <= near) {
             this.derivedProjectionRefusals++;
             return;
         }
         float radians = (float) Math.toRadians(fovDegrees * 0.5F);
         float f = 1.0F / (float) Math.tan(radians);
-        java.util.Arrays.fill(projection, 0.0F);
-        projection[0] = f / aspect;
-        projection[5] = f;
-        projection[10] = (far + near) / (near - far);
-        projection[11] = -1.0F;
-        projection[14] = (2.0F * far * near) / (near - far);
+        float[] frustum = new float[16];
+        frustum[0] = f / aspect;
+        frustum[5] = f;
+        frustum[10] = (far + near) / (near - far);
+        frustum[11] = -1.0F;
+        frustum[14] = (2.0F * far * near) / (near - far);
+        this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, frustum);
         this.derivedProjections++;
         // The comparison cannot happen here: at this instant gluPerspective has not applied its result to GL yet, so GL
         // still holds the identity and any delta would measure the wrong thing. The flag defers it to the next hookable
@@ -1480,6 +1493,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
                 + ",derivedCompared:" + this.derivedProjectionComparisons
+                + ",writeId:" + this.derivedWriteIdentity + ",compareId:" + this.derivedCompareIdentity
+                + ",loadIdentityWhilePending:" + this.loadIdentityWhilePending
+                + ",loadIdentityByMode=proj:" + this.loadIdentityByMode[0] + ",view:" + this.loadIdentityByMode[1]
+                + ",matrixModeByMode=proj:" + this.matrixModeCallsByMode[0] + ",view:" + this.matrixModeCallsByMode[1]
                 + ",derivedDelta:" + this.derivedProjectionDelta
                 + " derivedWorst[" + (this.derivedProjectionWorst == null ? "none" : this.derivedProjectionWorst) + "]"
                 + " matrixDump[" + (this.matrixDump == null ? "none" : this.matrixDump) + "]"

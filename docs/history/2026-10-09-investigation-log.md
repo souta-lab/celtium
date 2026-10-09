@@ -3631,3 +3631,48 @@ Nothing about the rendering changed this round, and the honest summary is the sa
 still computed from Minecraft's state rather than mirrored, the check exists at the right moment, and it says the value is not
 arriving. The two previous rounds each ended with a counter that rose while the value was wrong; this round ends with a
 counter that rose and a delta that says so, which is the better position even though the number did not move.
+
+---
+
+## One root cause for two "ineffective" changes: the accessor returns a copy
+
+The identity counters answered the question they were added for:
+
+```
+derivedCompared:3409, writeId:1238104718, compareId:1761794437, loadIdentityWhilePending:0
+loadIdentityByMode=proj:6184, matrixModeByMode=proj:6184
+```
+
+The array written to and the array read back have **different identities**, and nothing reset either of them - no
+`loadIdentity` fired while a derived projection was pending. Two different arrays, written and read: and `VulkanGlState`'s
+accessor says why in one line:
+
+```java
+public float[] matrix(int mode) {
+    return copy(top(mode));
+}
+```
+
+It returns a **copy**. The derived projection was written into a temporary array and thrown away, and the same defect
+explains the seed two rounds earlier - which was recorded as "ineffective because it sampled the wrong moment" when the real
+reason was that it wrote into a copy as well. One root cause, two conclusions in this log, both of them wrong about why.
+
+With `setMatrix` writing into the stack itself, the acceptance instrument moves for the first time:
+
+| | projection delta |
+|---|---|
+| before the derivation existed | 2.0005527 |
+| after the derivation, writing into a copy | 2.0005527 |
+| **after `setMatrix`** | **1.6200542E-4** |
+
+**The derived projection matches GL to 1.6e-4** - floating-point agreement, with the residual most likely the field-of-view
+modifier's own rounding - and `exact` is 1 rather than 0 for the first time. The projection is no longer mirrored; it is
+computed from Minecraft's numbers and it checks out against what the game actually drew with.
+
+The modelview is untouched at 1.62, which is the camera translation and is the next item: vanilla applies it after the
+rotations, and the mirror is missing it because it is applied before the hooks are installed. Two earlier rounds already
+worked out where it happens; what is owed now is the same treatment - derive it from `RenderManager.viewerPos` and write it
+through `setMatrix` rather than into a copy.
+
+The lesson, in the form this session keeps needing: a value that does not arrive is not evidence that the code that computes
+it is wrong. Here it was computed correctly, sixty times a frame, into an array nobody read.

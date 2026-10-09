@@ -184,7 +184,10 @@ content work that does not touch frame structure can proceed in parallel.
    **value**: `fov`, `aspect`, `0.05F`, `renderDistanceChunks * 16 * SQRT_2`, three of which are readable from Minecraft
    state and the fourth a private method whose SRG name is now known (`func_78481_a`).
 
-   **Implemented, not yet verified:** `func_78481_a` is hooked at its return and the backend computes `gluPerspective`
+   **Verified:** the projection delta fell from **2.0005527 to 1.6200542E-4** once
+   `setMatrix` wrote into the stack instead of into the copy that `matrix(mode)` returns - the same defect that made an
+   earlier seed look "ineffective for the wrong reason". The modelview remains at 1.62 (the camera translation, still to be
+   derived from `RenderManager.viewerPos` and written the same way). Earlier notes: `func_78481_a` is hooked at its return and the backend computes `gluPerspective`
    from Minecraft's four numbers (`derivedProj:3409, refused:5`), but the worst-sample counter still reads the identity
    matrix, because it samples at a moment when another pass - the GUI or the hand - has reset the projection stack through
    the same hooked `matrixMode` + `loadIdentity` pair. The acceptance is now taken at the right instant - the `matrixMode(GL_MODELVIEW)` that follows the
