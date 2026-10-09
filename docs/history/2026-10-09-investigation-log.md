@@ -711,3 +711,19 @@ validation run actually uses (the `if (!interopRun)` one), and samples there and
 
 Known state of the immediate path, unchanged by this round: off by default, every accepted batch drawn when enabled,
 validation clean, image not correct.
+
+---
+
+## The capture-time sample could not be placed this round
+
+The plan for this round was to sample the framebuffer at the capture call site the validation run actually uses (the
+`if (!interopRun)` one) and one frame earlier. Reverting the earlier attempt and inserting the sample there compiled in
+isolation but the full packaging build then failed - once in the fixture module, with no error text the usual greps
+could surface, and `tail -3` reporting only `BUILD FAILED` with one task executed. Since a failing build is worse than a
+missing measurement, the fixture change is reverted and the tree is green again.
+
+What stands from this round: the window stays in the tree behind `-Dceltium.vulkan.immediateWindows` (default off), the
+default configuration is verified unchanged (frame mean [123.3, 136.6, 148.3], local difference 14.61 mean / 34.5% over
+8, the known immediate-path difference), and the black frame is confirmed to be caused by the window and is still
+unexplained. The sample has to be placed in a way the fixture's build accepts - most likely inside an existing helper the
+fixture already compiles, called from the capture path - rather than by editing the capture statement itself.
