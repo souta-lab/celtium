@@ -46,10 +46,19 @@ doing so deleted the `submitImmediateBatch` call itself and was restored by `dee
 ### S05 [P1, certain in code] mesh merging does not add a base vertex
 `VulkanDynamicMesh` appends vertices but never offsets the appended indices by the previous vertex count, and draws with
 `vertexOffset = 0`, so a second quad in the same group references the first quad's vertices.
+**Fixed:** `copyVertices` captures the group's base vertex before appending and writes `index + baseVertex`, so indices stay
+relative to the group. **Measured:** the weather and particle scene is unchanged at **0.40% of pixels over 8 (3,714)** -
+which says this scene's groups are mostly single-batch, not that the defect was harmless. **Open:** the acceptance fixture
+(two quads with different positions and colours in one group, eight vertices, twelve indices, the second referring to
+4..7).
 
 ### S06 [P1, certain in code] growing a dynamic buffer loses its contents
 `VulkanHostBuffer.ensureCapacity` deletes and recreates the buffer without preserving data, while the mesh keeps appending.
-Crossing 64 KiB of vertices or 32 KiB of indices drops everything written before.
+Crossing 64 KiB of vertices or 32 KiB of indices drops everything written before. Its own comment said "the contents are not
+preserved", next to callers that assume they are.
+**Fixed:** the replacement buffer is created first, the old contents are copied into it, and the old objects are detached
+before creation so an allocation failure leaves the existing data valid. **Measured:** unchanged at 0.40% (3,714).
+**Open:** the acceptance fixture that crosses both boundaries.
 
 ### S07 [P1, certain in code] the state mirror and pipelines do not carry the state that matters
 No hooks for alpha enable/disable, cull enable/disable, `depthFunc`, integer `blendFunc`/`tryBlendFuncSeparate`,

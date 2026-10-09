@@ -3049,3 +3049,36 @@ longer be invisible, and the report on a real run reads `validationMessageCount 
 
 So S20 stands as fixed: the callback emits severity and id on one line, the parser counts an error in any phrasing, an
 absent log is a failure, and what is allowed is now stated rather than implied.
+
+---
+
+## S05 and S06 fixed, and the scene says nothing about either
+
+Both were confirmed by reading before being touched, and both were wrong in the way the audit described.
+
+**S05** - `copyVertices` appended vertices and then wrote the incoming indices unchanged, while `draw` issues
+`vkCmdDrawIndexed(..., firstIndex 0, vertexOffset 0, ...)`. A group's second batch therefore indexed the first batch's
+vertices. It now captures the base vertex before the append and writes `index + baseVertex`.
+
+**S06** - `ensureCapacity` called `delete()` and `create()`, with a comment saying the contents are not preserved, while the
+mesh appends and keeps byte counters for what it wrote earlier. Crossing 64 KiB of vertices or 32 KiB of indices discarded
+the earlier bytes - and one large batch could lose its own beginning while its indices still pointed at it. The replacement
+is now created first, the old contents copied across, and the old objects detached before creation so an allocation failure
+cannot leave the instance pointing at freed handles.
+
+The measurement is unchanged, which is worth stating precisely rather than as reassurance:
+
+| Weather and particles, hidden GUI | mean | over 8 | pixels over 8 |
+|---|---|---|---|
+| floor | 0.06 | 0.23% | - |
+| before S05 and S06 | 0.14 | 0.40% | 3,714 |
+| **after S05 and S06** | **0.14** | **0.40%** | **3,714** |
+
+That says this scene's groups are mostly single-batch and its batches fit the initial capacities - not that the defects
+were harmless. A group with two quads in it would have drawn the second quad with the first quad's vertices, and a batch
+larger than the initial 64 KiB would have lost its own start; neither shape occurs in this fixture. The acceptance fixtures
+the audit asks for are the two-quad group and the boundary-crossing batch, and they are still not built, so these two fixes
+are verified by reading and by the code no longer doing what it did - not by an image.
+
+The residual stays where it has been for several rounds: 0.40% of pixels against a 0.23% floor, with S08, S09, S05 and S06
+all excluded as its cause by measurement rather than by argument.

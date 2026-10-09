@@ -64,14 +64,42 @@ public final class VulkanHostBuffer {
         return this.size;
     }
 
-    /** Grows the buffer when {@code requiredBytes} does not fit; the contents are not preserved. */
+    /**
+     * Grows the buffer when {@code requiredBytes} does not fit, **preserving what it already holds**.
+     * <p>
+     * The previous version deleted and recreated the buffer, which the mesh's own bookkeeping did not expect: it appends
+     * vertices and indices while keeping byte counters for what it wrote earlier, so crossing the capacity silently threw
+     * away everything before the growth - and a single large batch could lose its own first half while its indices still
+     * referred to it. The replacement is created first and the old contents copied into it, so a failure to allocate
+     * leaves the existing data untouched.
+     */
     public void ensureCapacity(long requiredBytes) {
         if (requiredBytes <= this.size) {
             return;
         }
-        delete();
+        long previousSize = this.size;
+        long previousMapped = this.mapped;
+        long previousHandle = this.handle;
+        long previousMemory = this.memory;
+        // Detach the old objects before creating the new ones, so a failure in create() cannot leave this instance
+        // pointing at freed handles.
+        this.mapped = 0L;
+        this.handle = VK_NULL_HANDLE;
+        this.memory = VK_NULL_HANDLE;
         this.size = VulkanContext.alignUp4(requiredBytes);
         create();
+        if (previousMapped != 0L && this.mapped != 0L && previousSize > 0L) {
+            org.lwjgl.system.MemoryUtil.memCopy(previousMapped, this.mapped, Math.min(previousSize, this.size));
+        }
+        if (previousMapped != 0L) {
+            vkUnmapMemory(this.context.device(), previousMemory);
+        }
+        if (previousHandle != VK_NULL_HANDLE) {
+            vkDestroyBuffer(this.context.device(), previousHandle, null);
+        }
+        if (previousMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(this.context.device(), previousMemory, null);
+        }
     }
 
     public void delete() {

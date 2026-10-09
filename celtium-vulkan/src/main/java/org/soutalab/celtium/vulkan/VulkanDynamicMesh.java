@@ -208,6 +208,10 @@ public final class VulkanDynamicMesh {
             return false;
         }
         this.layout = new Layout(stride, 0, -1, -1, -1, -1);
+        // The base vertex of this append. Indices arrive relative to the batch that produced them, and the draw issues
+        // vkCmdDrawIndexed with vertexOffset 0, so without this the second batch in a group indexes the first batch's
+        // vertices: a merged group drew the wrong geometry for everything after the first append.
+        int baseVertex = this.vertexCount;
         long required = this.vertexBytes + ((long) stride * count);
         if (required > this.vertices.size()) {
             this.vertices.ensureCapacity(Math.max(required, this.vertices.size() * 2L));
@@ -217,7 +221,7 @@ public final class VulkanDynamicMesh {
         this.vertexBytes += (long) stride * count;
         this.vertexCount += count;
         for (int index : indices) {
-            index(index);
+            index(index + baseVertex);
         }
         return true;
     }
