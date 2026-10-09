@@ -2707,3 +2707,30 @@ The sequence that got here is worth one line, because it is the difference betwe
 found the injector was not cancellable, then reading the mixin showed the submit call had been deleted while cleaning a
 dead branch, then the restored call made acceptance real, and only then did a comparison mean anything. Four rounds of
 image work before that were measuring GL against GL.
+
+---
+
+## With replacement active, the counter pair points at undrawn geometry
+
+The weather and particle scene, measured with the immediate path genuinely replacing GL:
+
+| Comparison (hidden GUI, same revision) | mean | over 8 | pixels over 8 |
+|---|---|---|---|
+| reference against reference (floor) | 0.06 | 0.23% | - |
+| weather and particles, Vulkan drawing alone | **0.75** | **1.32%** | **12,157** |
+
+and in the same run: `immediateOffered=9061 immediateTaken=586 immediateFlushes=58`.
+
+Those two numbers are the lead. The water scene, which measures clean, reported `taken=585 flushes=585` - every batch it
+accepted was flushed. This scene accepted 586 and flushed **58**: about nine tenths of what the backend took was never
+submitted, so the frame is missing geometry that GL would have drawn, which is exactly what a 1.32% difference with a
+0.23% floor looks like. The earlier reading of this scene - 0.85 against 0.06, taken when GL was drawing everything - was
+measuring the scene's own variation; this one has a mechanism attached to it.
+
+The Intel reference for the current fixture was also captured (PASSED, `nativeTerrainVerified True`, 1038 passes), so the
+two-GPU comparison can be made against references that match the scene rather than against ones from before the water layer
+existed.
+
+The next step is to explain the gap between taken and flushed: whether those groups are discarded, deferred past the
+capture, or dropped when a window cannot open. The counters for discards and deferrals already exist, and reading them
+against this run is cheaper than another image comparison.
