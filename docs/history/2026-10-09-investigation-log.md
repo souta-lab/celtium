@@ -722,6 +722,12 @@ isolation but the full packaging build then failed - once in the fixture module,
 could surface, and `tail -3` reporting only `BUILD FAILED` with one task executed. Since a failing build is worse than a
 missing measurement, the fixture change is reverted and the tree is green again.
 
+The failing task was `:forge122:validationRemapJar`, not the code module: the fixture half of the previous commit had
+been committed without its own build being checked, so the packaging build had been broken since then. The fixture is
+restored from the commit before it, which is the last revision that built, and `packageJar` together with
+`validationRemapJar` both succeed again. The lesson is recorded as a rule: the fixture module is built by the packaging
+task, not by the module compile, so a fixture edit is only verified once both have run.
+
 What stands from this round: the window stays in the tree behind `-Dceltium.vulkan.immediateWindows` (default off), the
 default configuration is verified unchanged (frame mean [123.3, 136.6, 148.3], local difference 14.61 mean / 34.5% over
 8, the known immediate-path difference), and the black frame is confirmed to be caused by the window and is still

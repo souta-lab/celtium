@@ -423,8 +423,7 @@ public final class ValidationClient {
             }
             if (Boolean.getBoolean("celtium.validation.interop")) {
                 if (!interopRun) {
-                    recordFrameContentSample(mc);
-                ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                    ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
                     Framebuffer target = mc.getFramebuffer();
                     fboAtInterop = target.framebufferObject;
                     colorAtInterop = target.framebufferTexture;
