@@ -81,6 +81,20 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **State-driven pipeline selection: what already exists, and the one thing to verify first.** `VulkanGlState`
+  already carries the whole selection inputs - blend enable plus all four factors, depth test/function/mask, culling
+  with face, alpha test with function, lighting and shade model - and `pipelineKey(vertexFormatHash)` already folds
+  exactly those into one key, deliberately excluding matrices, colour and texture bindings because those are push
+  constants and descriptors. What the immediate path does *not* yet do is use them: it draws every group through one
+  pipeline whose blend/depth/cull state is hardcoded, which is the first of the two measured reasons the image differs
+  from GL.
+  Wiring it up ran into one concrete unknown: the blend factors in the state are `GlStateManager` **enum ordinals**
+  (the Mixin reports `SourceFactor.ordinal()`), and mapping those onto `VkBlendFactor` needs the enum order read from
+  the sources rather than guessed. The attempt that skipped that check did not compile and was reverted to keep the
+  tree green, so the next step is: read `GlStateManager.SourceFactor`/`DestFactor` in order, write the mapping once
+  with the order recorded next to it, then give the immediate pipelines the state parameters and cache them by
+  `pipelineKey`. Until that lands, the immediate path stays off by default and GL keeps producing the correct image.
+
 - **Measured: the immediate path draws, but its image does not match GL yet, so it is off by default.**
   The textured (24-byte) path is validation-clean and accepts over a thousand batches per run
   (`immediateTaken=1178`, `immediateFlushes=1177`, `immediateRefusal=none`, VUID 0, PASSED). A pixel comparison
