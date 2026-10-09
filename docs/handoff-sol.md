@@ -382,7 +382,11 @@ emptyHand=`True`、weather=`raining=true` 0.480(AMD)/0.470(Intel)）。
 **spectator効果のcoverage（追加）**: `-Dceltium.validation.spectator=creeper|spider|enderman` を追加。tick 150 で該当entityを
 スポーンし `EntityRenderer.loadEntityShader(entity)` を呼び、**公開API `isShaderActive()`** を証拠に記録。
 AMD は creeper/spider/enderman の3種すべて PASSED / shaderActive=True。Intel は creeper/enderman が PASSED /
-shaderActive=True だが **spider は exit 124（ハング・report なし）**＝未解決の新しい失敗再現（`p68-spider-intel`）。
+shaderActive=True だが **spider は exit 124（ハング・report なし）**＝原因を特定: クラッシュではなく、**shader group の FBO テクスチャ
+（1280x720）を毎フレーム mirror し直すループ**（ログ末尾600行で 1280x720 の mirror が277回、atlas が144回。
+`invalidations=772`）。mirror は GPU→CPU→GPU の読み戻しなので、ポストプロセス有効時はフレームが進まない。
+AMD で PASSED なのは同経路でも回数が閾値未満のため（タイミング依存）。次の一手は shader group の framebuffer
+テクスチャの mirror をスキップ／間引きすること（`p68-spider-intel`）。
 **【訂正】**以前「6 runすべて shaderActive=True」と記録したのは誤り（Intel spider はプロパティごと欠落＝場面が
 実行されていなかった。厳密一致条件 `worldTicks == 150` を tick が飛び越えたため）。試行を呼び出しの前に記録し、
 例外を `spectatorResult` に残す形に変更。spectator/weather の条件は **`>= 150`** の範囲条件にした。
