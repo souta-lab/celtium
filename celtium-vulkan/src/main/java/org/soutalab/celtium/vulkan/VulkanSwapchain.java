@@ -349,7 +349,10 @@ public final class VulkanSwapchain {
                     if (PROBE_OLD_SHAPE) {
                         this.context.endCommands(commands);
                     } else {
-                        this.context.submitWithSemaphores(commands, acquire, renderFinished);
+                        // The probe has no bridge: it presents a cleared image, so only the window-system
+                        // acquire is waited and only its own render-finished semaphore is signalled.
+                        this.context.submitWithSemaphores(commands, new long[] {acquire},
+                                new long[] {renderFinished});
                     }
                 }
                 VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
@@ -383,6 +386,20 @@ public final class VulkanSwapchain {
      * with the frame.
      */
     public String presentImage(long sourceImage, int sourceLayout, int width, int height) {
+        return presentImage(sourceImage, sourceLayout, width, height, VK_NULL_HANDLE, VK_NULL_HANDLE);
+    }
+
+    /**
+     * Presents an image that the GL-to-Vulkan bridge wrote, honouring the bridge's contract as well as the swapchain's.
+     * <p>
+     * The frame target's contract is explicit: the caller's submission must wait {@code waitSemaphore()} - the shared
+     * image is only complete once GL has signalled it - and must signal {@code doneSemaphore()}, because {@code endFrame}
+     * makes GL wait on that one. Signalling only a render-finished semaphore leaves GL waiting for a submission that never
+     * signalled it, which is the deadlock the audit's item B describes. Both contracts are satisfied by the same
+     * submission here: it waits the acquire and the bridge, and signals its own semaphore and the bridge's.
+     */
+    public String presentImage(long sourceImage, int sourceLayout, int width, int height, long bridgeWaitSemaphore,
+            long bridgeDoneSemaphore) {
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
             return "present image: no swapchain or no source image";
         }

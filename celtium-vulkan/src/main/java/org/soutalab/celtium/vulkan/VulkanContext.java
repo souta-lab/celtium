@@ -312,14 +312,28 @@ public final class VulkanContext {
      * is handed to the caller's presentation, which waits on it.
      */
     public void submitWithSemaphores(VkCommandBuffer commandBuffer, long waitSemaphore, long signalSemaphore) {
+        submitWithSemaphores(commandBuffer, new long[] {waitSemaphore}, new long[] {signalSemaphore});
+    }
+
+    /**
+     * Ends and submits a command buffer waiting on several semaphores and signalling several.
+     * <p>
+     * The frame's presentation needs exactly this: it must wait both the window-system acquire and the GL-to-Vulkan
+     * bridge semaphore - the shared image is only complete once GL has signalled - and it must signal the bridge's done
+     * semaphore as well as its own, because GL waits on that one inside {@code endFrame}. Signalling only the
+     * render-finished semaphore leaves GL waiting for a submission that never signalled it, which is the deadlock
+     * {@code VulkanFrameTarget}'s contract warns about.
+     * <p>
+     * Counts are set explicitly: LWJGL's {@code pWaitSemaphores} writes only the pointer, so a calloc'd struct waits on
+     * nothing.
+     */
+    public void submitWithSemaphores(VkCommandBuffer commandBuffer, long[] waitSemaphores, long[] signalSemaphores) {
         if (commandBuffer == null) {
             throw new IllegalArgumentException("commandBuffer must not be null");
         }
         requireUsable();
         submitWithSemaphoresCalls++;
-        if (waitSemaphore != VK_NULL_HANDLE) {
-            submitWithSemaphoresWaits++;
-        }
+        submitWithSemaphoresWaits += waitSemaphores.length;
         long fence = VK_NULL_HANDLE;
         try {
             check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
@@ -330,19 +344,38 @@ public final class VulkanContext {
                 fence = fenceHandle.get(0);
                 VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                         .pCommandBuffers(stack.pointers(commandBuffer));
-                if (waitSemaphore != VK_NULL_HANDLE) {
-                    // Explicit count: LWJGL's pWaitSemaphores(LongBuffer) sets only the pointer, not the count, so
-                    // a calloc'd VkSubmitInfo waits on nothing.
-                    submit.waitSemaphoreCount(1);
-                    submit.pWaitSemaphores(stack.longs(waitSemaphore));
-                    // ALL_COMMANDS rather than just the transfer and colour-attachment stages: the command buffer
-                    // begins with a layout transition, and a wait whose stage mask does not cover the barrier does not
-                    // order against it - which is what the validation layer reported as "performs a layout transition
-                    // on presentable VkImage ... but VkSemaphore ... was not waited on".
-                    submit.pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
+                java.util.List<Long> waits = new java.util.ArrayList<Long>();
+                for (long semaphore : waitSemaphores) {
+                    if (semaphore != VK_NULL_HANDLE) {
+                        waits.add(Long.valueOf(semaphore));
+                    }
                 }
-                if (signalSemaphore != VK_NULL_HANDLE) {
-                    submit.pSignalSemaphores(stack.longs(signalSemaphore));
+                if (!waits.isEmpty()) {
+                    // Explicit count, and one destination stage for each semaphore: LWJGL's pWaitSemaphores writes only
+                    // the pointer. ALL_COMMANDS because the command buffer begins with a layout transition, which a wait
+                    // whose stage mask does not cover it does not order against.
+                    long[] waitHandles = new long[waits.size()];
+                    int[] stages = new int[waits.size()];
+                    for (int i = 0; i < waitHandles.length; i++) {
+                        waitHandles[i] = waits.get(i).longValue();
+                        stages[i] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                    }
+                    submit.waitSemaphoreCount(waitHandles.length);
+                    submit.pWaitSemaphores(stack.longs(waitHandles));
+                    submit.pWaitDstStageMask(stack.ints(stages));
+                }
+                java.util.List<Long> signals = new java.util.ArrayList<Long>();
+                for (long semaphore : signalSemaphores) {
+                    if (semaphore != VK_NULL_HANDLE) {
+                        signals.add(Long.valueOf(semaphore));
+                    }
+                }
+                if (!signals.isEmpty()) {
+                    long[] signalHandles = new long[signals.size()];
+                    for (int i = 0; i < signalHandles.length; i++) {
+                        signalHandles[i] = signals.get(i).longValue();
+                    }
+                    submit.pSignalSemaphores(stack.longs(signalHandles));
                 }
                 check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit(submitWithSemaphores)");
                 check(vkWaitForFences(this.device, fence, true, Long.MAX_VALUE), "vkWaitForFences(submitWithSemaphores)");

@@ -715,9 +715,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 if (this.frameTarget != null && ensureSwapchain()) {
                     this.frameTarget.beginFrameForPresent();
+                    long bridgeWait = this.frameTarget.waitSemaphore();
+                    long bridgeDone = this.frameTarget.doneSemaphore();
                     String result = this.swapchain.presentImage(this.frameTarget.colorImage(),
                             org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
-                            this.targetHeight);
+                            this.targetHeight, bridgeWait, bridgeDone);
                     this.frameTarget.endFrame();
                     this.immediatePresentedFrames++;
                     if (this.immediatePresentedFrames == 1) {

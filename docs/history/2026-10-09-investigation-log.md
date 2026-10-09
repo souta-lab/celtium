@@ -1783,3 +1783,28 @@ making progress - is called before `delete()` releases anything and before a reg
 
 With the P0 fix in place this ordering matters more than it did: submissions genuinely wait now, so a resource released
 while the GPU still reads it is a real hazard rather than a mostly-theoretical one.
+
+---
+
+## Audit B's core: the present now honours the bridge contract as well as the swapchain's
+
+The contract was not a matter of interpretation - `VulkanFrameTarget` documents it: the caller's submission must wait
+`waitSemaphore()` (the shared image is complete only once GL has signalled) and must signal `doneSemaphore()`, because
+`endFrame` makes GL wait on that one, and the class warns that "waiting for a submission that was never sent deadlocks the
+render thread". The present path did neither: it waited only the window-system acquire and signalled only its own
+semaphore, which is the failure the audit names.
+
+`VulkanContext.submitWithSemaphores` now accepts several semaphores on each side, with explicit counts, and `presentImage`
+satisfies both contracts in one submission:
+
+| Side | Before | After |
+|---|---|---|
+| waits | window-system acquire | acquire **and** the bridge's `waitSemaphore` |
+| signals | its own render-finished | its own **and** the bridge's `doneSemaphore` |
+
+Measured: **PASSED, `nativeTerrainVerified True`, 2152 passes, `validationMessageCount 0`, `validationClean True`** - the
+harness guard active, so this is a clean run and not a run whose log says otherwise.
+
+What remains inside B is written down rather than implied: the shared image's old layout is asserted instead of tracked,
+the source is left in `TRANSFER_SRC` rather than handed back in the layout GL expects, and the caller still treats a
+returned failure string as success instead of leaving GL's composite in place when the present did not happen.
