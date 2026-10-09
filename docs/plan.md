@@ -5,15 +5,15 @@
 **用語**: 実装済 = コードがあり動く / 局所検証済 = 特定fixtureで確認 / 未検証 = 動く証拠がない / 未実装 = コードがない。
 カウンターの増加は描画の証拠ではない。format認識・受理・記録・submit・完了・dropを混同しない。
 
-## 1. 厳密な完成条件の現状
+## 1. 厳密な完成条件の現状（この表は各ラウンドの実測で更新する）
 
-| 条件 | 状態 | 欠落・根拠 |
+| 条件 | 状態 | 欠落・根拠（現在の実測） |
 |---|---|---|
-| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分（native passは存在、coverageは未検証）** | **nativeで描いているもの**: terrain、即時系の各family（block/item/particle/position/position_tex/tex_color/composite=format 9）、GUI/font/HUD・hand（即時系経由）、particles、sky/cloud/water等のformat-6コンテンツ（`outsideWorldPassAccepted` 数千件）。**未検証のcoverage**: 全block/state、全entity/TESR、破壊/selection overlay、dimension、FBO/postprocess、spectator 3視点。**未実装**: vanilla ShaderGroup、entity outline |
-| (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成** | `-Dceltium.vulkan.withoutGlIdentity` は**identity照会を省略する診断**であり、GL contextなし起動・描画ではない。GLは実際にcontextを作り、bridgeのない描画はGL fallbackで完走し得る。通常frameのGL read（MODELVIEW/CURRENT_COLOR/fog/bound texture/FBO/viewport照会）が残る |
-| (c) native swapchain frameが実window/compositor出力へ到達 | **未確認** | markerがGL framebufferに無いことは画面到達の証明ではない。x11grab一方式の失敗から「環境上確認不能」とは断定しない。capture方法の調査を残す |
-| (d) AMD/Intelで必要場面と失敗復旧、監査P0/P1を明示受入で閉じる | **部分** | 通常hybrid fixtureはAMD/Intelで exit 0 / validation message 0 / PASSED。**今回追加**: format 2の実geometryをmainと別FBOへ描く受入（AMD 3 run、カウンタ4段一致・画像不一致0）、submit前失敗の注入run（再試行1回・geometry保持）、handle別ライフサイクルの純ロジック4件。**Intel最終artifactは実行中**、submit後失敗・depth依存・画面到達は未実施 |
-| (e) mod対応範囲・Java条件・最低VK能力・未検証GPU/OS・ライセンス/性能をdocsと配布物で一致 | **部分** | 本表と `docs/scope-and-limits.md`。jar内 `org/soutalab/celtium` は major 65 が49・major 52 が12で、Java21より新しいclassは無い。ゲーム実行はJava25 |
+| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分** | **nativeで動いているもの**: 地形パス（1フレーム計 約2.2 ms（AMD）/ 約6.1 ms（Intel）、`solid`/`cutout_mipped`/`translucent` の timestamp 計測）、即時系の各family（`immediateSubmittedBatches` 13.5/フレーム）、**フレーム最終合成**（`presentFromComposite` が既定ON、画面サイズの読み戻しは消えた）。**block registry は AMD で 254/254 を掃引済み・失敗0、Intel は 75/254 の抜き取り**（`blockSweep`）。**未検証**: entity/TESR、dimension、水/溶岩/火、破壊/selection overlay、item/model の掃引。 |
+| (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成（ただし欠落はブリッジに限定された）** | **前進**: 毎フレームの GL 読み戻しは **0 回/フレーム**（`regStaleCalls=0`、`inPlaceRefreshes=0`、announce 経由 16.2/フレーム）。**残る依存はブリッジ本体**（`VulkanFrameTarget`: FBO付け替え・色/深度blit・semaphore待ち・状態クエリ48箇所）で、CPUコストは **0.58 ms/フレーム（AMD）/ 0.83（Intel）**。GL context は依然として生成する。 |
+| (c) native swapchain frameが実window/compositor出力へ到達 | **前半は確認済み・後半は環境制約** | **確認済み**: `presentMarker` のマゼンタ (1,0,1,1) を提示画像から読み戻すと **mean 191.25** で、期待値 `(255+0+255+255)/4=191.25` と**完全一致**（＝提示された swapchain 画像にこの renderer の合成フレームが入っている）。**未確認**: 実画面への到達。この環境には capture 可能な表示出力が無い（X は screen 0×0、Wayland は `no wl_output`、`grim` は導入済みだが出力が無い）。不足条件は §7.6 に明記。 |
+| (d) AMD/Intelで必要場面と失敗復旧、監査P0/P1を明示受入で閉じる | **部分（受入は緑、監査項目の一部が未了）** | 既定（`presentFromComposite` ON / `mirrorRefreshFrames=0`）で **AMD exit 0・PASSED p50 16.02 ms / Intel exit 0・PASSED 28.54 ms**、postprocess / weather / spectator spider / command-buffer target 受入も PASSED、submit失敗・idle失敗は **exit 1・report あり・有界**（期待どおり）。監査項目の残りは §2 を参照。 |
+| (e) mod対応範囲・Java条件・最低VK能力・未検証GPU/OS・ライセンス/性能をdocsと配布物で一致 | **部分** | 性能は**同一fixtureで実測**（AMD 16.02 ms 対 参照 16.18 ms、Intel 28.54 ms、参照は Intel でも 16.17 ms で GPU 非依存）。画像は 参照比 **meanAbsDiff 7.78/255・HF 0.81**（統制: 参照同士 0.064 / HF 1.002）。mod 対応範囲・最低VK能力・未検証GPU/OS の記述は `docs/scope-and-limits.md` と要突き合わせ。 |
 
 ## 2. 第3回監査 項目別の現在状態
 
