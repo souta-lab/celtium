@@ -1024,3 +1024,30 @@ patching by anchor, and the next attempt should locate the statement, read the t
 It has therefore not run yet and nothing about present
 ownership has been demonstrated beyond the probe's cleared image. The next step is to wire that one call where the probe
 already presents and read its result, with the string it prints recorded either way.
+
+---
+
+## Presenting the frame content: the mechanism runs into the same binding rule as the window
+
+The wiring worked this time, and the run says exactly what happens:
+
+```
+swapchain: platform=x11 format=44 colourSpace=0 presentMode=1 images=4 size=1280x720
+present probe: cleared and presented image 0 (0)
+swapchain probe failed at present the frame content: IllegalStateException...
+```
+
+The clear-and-present probe still succeeds, and presenting the **frame's own content** fails inside `beginFrame()` - for the
+reason already measured for the mid-frame window: at that moment the **default framebuffer is bound**, so there is no game
+framebuffer for the bridge to read, and `beginFrame` refuses with "the bound draw framebuffer is the default framebuffer".
+
+That is not a defect in `presentImage`; it is the same rule the window already obeys, and the fix is the same gate: present
+at a moment when the game framebuffer is the source. The place that guarantees it is the one the stack trace identified -
+`Framebuffer.func_178038_a`, where Minecraft itself composites the game framebuffer onto the screen. The step is now gated
+and reports that it is skipped at the probe's moment, so the probe output stays clean and the failure is not mistaken for
+a broken mechanism.
+
+What remains for present ownership, in order: call `presentImage` from the composite's own moment (the draw entry already
+sees that batch, and the frame's content is bound there), cancel GL's blit for that batch, and then verify that the screen
+shows the frame while the frame buffer keeps its content - the screenshot path reads the game framebuffer, so both can be
+checked in one run.

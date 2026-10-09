@@ -1973,6 +1973,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record(this.swapchain.describe());
             step = "clear and present";
             record(this.swapchain.clearAndPresent(0.2f, 0.4f, 0.8f, 1.0f));
+            // Then present the frame's own content rather than a cleared image. Minecraft draws its final composite
+            // through Framebuffer.func_178038_a - a shader over a full-screen quad - and this is the step that replaces
+            // it: the shared colour image is where this frame's content lives. It runs after the clear probe so both
+            // are visible in one run and neither can hide the other.
+            step = "present the frame content";
+            // The frame content is only readable while the game's framebuffer is bound: at the probe's moment the
+            // default framebuffer is, which is exactly what beginFrame() refuses with
+            // "the bound draw framebuffer is the default framebuffer". So this step is skipped and said so, rather
+            // than reported as a failure of the mechanism.
+            if (org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING) == 0) {
+                record("presenting the frame skipped: the default framebuffer is bound, so there is no frame content"
+                        + " to present here");
+            } else if (ensureFrameTarget()) {
+                this.frameTarget.beginFrame();
+                record(this.swapchain.presentImage(this.frameTarget.colorImage(),
+                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
+                        this.targetHeight));
+                this.frameTarget.endFrame();
+            } else {
+                record("presenting the frame skipped: no frame target");
+            }
         } catch (RuntimeException | LinkageError error) {
             // The failing step and the deepest frame inside this module are what make an NPE diagnosable here: the
             // probe runs once, so a bare message would leave the next attempt guessing.
