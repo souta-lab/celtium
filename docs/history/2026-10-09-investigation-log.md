@@ -5146,3 +5146,36 @@ quirk, it is the only way the scene can be rendered at all.
 
 Recorded, not softened: the honest baseline for the current configuration is **unknown** until a proper reference exists;
 0.16-0.28% and the clamp table were self-comparisons; and 70.93% measures missing terrain rather than a rendering defect.
+
+---
+
+## The first valid terrain baseline: 68.8% of pixels differ from the pinned Celeritas lineage
+
+The plan has always named the pinned Celeritas lineage as the reference for terrain, and it turns out a build of it already
+exists in the work tree - `celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`, built from the `upstream-baseline` checkout.
+Running the **same fixture, the same scene flags and the same GPU** with that jar in place of Celtium gives a legitimate
+reference: it renders the whole scene in OpenGL, terrain included (the screenshot is a green plain with the fixture's grid
+and sky), and the run is clean - `exit 0`, validation clean, 0 messages, fixture PASSED, screenshot saved.
+
+Measured against it:
+
+```
+TERRAIN BASELINE (Celtium vs pinned Celeritas 989ebf2e, same scene)
+  mean 34.09 | >8 68.81% | 634,147 px
+  top third 10.38% | middle third 98.74% | bottom third 97.32%
+```
+
+Sky matches, terrain does not. **68.8%** is the first image number in this project that means what it appears to mean: two
+renderers, one scene, one of them the lineage the plan designated as the reference - no Vulkan terrain on both sides, no
+missing blocks, no self-comparison. It is also, of course, a much worse number than any the self-comparisons produced, which
+is the point: 0.16-0.28% measured how close the renderer was to its own previous frame, and this measures how close it is to
+the renderer it replaced.
+
+What the number does **not** yet say is *how* the terrain differs - a 98% difference in the terrain band is consistent with
+misalignment, with a wrong scale, with entirely different shading, or with the frame being captured at a different moment in
+the fixture's animation. The next step is therefore visual and local: put the two screenshots side by side, and if they are
+not obviously different in kind, compute a difference map whose structure says which of those it is. That is one comparison
+of images that already exist, not another run.
+
+The reference itself is now a documented artefact rather than an aspiration: its exact jar, scene flags and result are
+recorded here, and it can be re-run whenever the terrain path changes.

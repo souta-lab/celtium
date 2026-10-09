@@ -52,7 +52,15 @@ captures **has no terrain in it**: sky and torches only. This tree has **no Open
 this project's backend or not at all - so every earlier "reference" necessarily contained this project's own terrain, and the
 image percentages measured self-consistency because no other option existed. That is architectural, not a switched-on flag.
 
-Consequences: (a) the honest baseline for the current configuration is **unknown** until a proper reference exists; (b) for
+**The reference now exists and has been measured.** `celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`, built from the
+`upstream-baseline` checkout, runs the same fixture and scene flags with the pinned lineage in place of Celtium and produces a
+clean reference frame with terrain. Against it, the current Celtium terrain differs in **68.81% of pixels** (mean 34.09; sky
+third 10.38%, terrain bands 98.74% and 97.32%). That is the first number in this project that measures agreement with the
+renderer it replaced rather than with its own previous frame, and it is far larger than the self-comparisons suggested. What
+it does not yet say is *how* the terrain differs; the next step is a visual and structural comparison of the two frames.
+
+Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
+the OpenGL reference; (b) for
 terrain, accuracy must be compared against a renderer **outside this tree** - the pinned Celeritas/Embeddium lineage the plan
 already names, run as a separate build of the same fixture; (c) for the immediate path (sampler, particles) the OpenGL
 reference above is valid, because those draw through GL when the backend refuses them. Also worth stating plainly in the
