@@ -281,6 +281,11 @@ public abstract class WorldVertexBufferUploaderMixin {
             id = 4;
         } else if (celtium$sameElements(format, DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP)) {
             id = 5;
+        } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION)) {
+            // Position only: twelve bytes, one element, no colour and no texture coordinates. The arrival census found this to
+            // be the largest single category still going to OpenGL, and the reason it could not be taken is that its colour is
+            // not in the vertex data - it is whatever the game had current, which is now passed in the push block.
+            id = 7;
         } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX)
                 || format.equals(DefaultVertexFormats.POSITION_TEX)) {
             // The branch that was missing. Position+texture is the shape the sky, the clouds and the water surface upload, it is

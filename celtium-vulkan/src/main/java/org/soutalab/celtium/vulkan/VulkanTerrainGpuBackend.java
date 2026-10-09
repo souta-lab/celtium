@@ -538,6 +538,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean currentGroupUsed;
     private int currentGroupFormatId;
     private int[] currentGroupState = new int[7];
+    /** The colour GL had current when a position-only batch was offered; null for every other format. */
+    private float[] currentGroupColor;
     /** {@code -Dceltium.vulkan.alphaTest=false} turns the immediate path's alpha test off, for measurements. */
     private static final boolean ALPHA_TEST_ENABLED = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.alphaTest", "true"));
@@ -546,6 +548,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
     private final java.util.Map<Long, VulkanImmediatePipeline> immediatePipelineCache =
             new java.util.HashMap<Long, VulkanImmediatePipeline>();
+    /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
@@ -577,7 +582,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final float MIP_BIAS_ADD =
             Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
-    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5,6");
+    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5,6,7");
 
     private static boolean celtium$formatAccepted(int formatId) {
         String accepted = ACCEPTED_FORMATS;
@@ -1441,7 +1446,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        if (formatId < 1 || formatId > 6) {
+        if (formatId < 1 || formatId > 7) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
             // bound was 5, written before id 6 existed: position-plus-texture - the sky, the clouds, the water surface -
@@ -1537,6 +1542,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
                 this.currentGroupState = state.clone();
+                // Position-only content has no colour in its vertices: the game draws it with whatever colour it had current,
+                // so that is read here, at the moment the batch is offered, and carried with the group.
+                if (formatId == 7) {
+                    java.nio.FloatBuffer colour = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+                    try {
+                        org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, colour);
+                        this.currentGroupColor = new float[] {colour.get(0), colour.get(1), colour.get(2)};
+                    } catch (RuntimeException | LinkageError error) {
+                        this.currentGroupColor = new float[] {1.0f, 1.0f, 1.0f};
+                    } finally {
+                        org.lwjgl.system.MemoryUtil.memFree(colour);
+                    }
+                } else {
+                    this.currentGroupColor = null;
+                }
                 // The blend factors as they were when this group opened, captured here rather than read from the global
                 // observation at draw time: the global value is whatever the most recent blendFunc call anywhere left, and
                 // using it gave 0.31% against these factors' 0.21-0.23%. This is the per-group snapshot the audit's S07 asks
@@ -2172,7 +2192,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
                     Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
                     Long.valueOf(this.currentGroupStateKey), this.currentGroupState,
-                    Long.valueOf(this.currentGroupTarget),
+                    Long.valueOf(this.currentGroupTarget), this.currentGroupColor,
                     Integer.valueOf(this.currentGroupBlendSrc), Integer.valueOf(this.currentGroupBlendDst)});
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
@@ -3636,7 +3656,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             // 116 bytes: projection 64, the model view's three affine columns 48, alpha reference 4 - inside the 128
             // bytes the API guarantees, and the same block both stages declare (audit S19).
-            ByteBuffer push = MemoryUtil.memAlloc(116);
+            ByteBuffer push = MemoryUtil.memAlloc(128);
             try {
                 for (Object[] group : this.immediateGroups) {
                     if (onlyTarget != null && ((Long) group[7]).longValue() != onlyTarget.longValue()) {
@@ -3653,6 +3673,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // for a model view. This is what keeps the block inside the guaranteed 128 bytes.
                     pushMatrixColumnsInto((float[]) group[2], push, 64);
                     push.putFloat(112, Float.intBitsToFloat(state[6]));
+                    float[] groupColour = group.length > 8 ? (float[]) group[8] : null;
+                    push.putFloat(116, groupColour == null ? 1.0f : groupColour[0]);
+                    push.putFloat(120, groupColour == null ? 1.0f : groupColour[1]);
+                    push.putFloat(124, groupColour == null ? 1.0f : groupColour[2]);
                     if (formatId == 5) {
                         // The observation is global-latest, not per-batch: this is the factors from the most recent blendFunc call
                         // anywhere, and using them gave 0.31% against the constants' 0.23%. Until they are captured with the
@@ -3744,18 +3768,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             continue;
                         }
                         block.draw(this.commandBuffer, mesh, push, descriptorSet);
-                    } else if (formatId == 2 || formatId == 6) {
+                    } else if (formatId == 2 || formatId == 6 || formatId == 7) {
                         // Format 6 is the colourless POSITION_TEX shape RenderGlobal uses for the sky, the clouds and the
                         // water surface. It shares this draw path but not the pipeline: a colourless vertex cannot be fed
                         // to a pipeline that reads a colour at offset 20, so it has its own cache as well as its own
                         // pipeline.
                         boolean colourless = formatId == 6;
-                        java.util.Map<Long, VulkanImmediateTexturePipeline> cache = colourless
-                                ? this.positionTexPipelineCache : this.texturedPipelineCache;
+                        java.util.Map<Long, VulkanImmediateTexturePipeline> cache = formatId == 7
+                                ? this.positionOnlyPipelineCache
+                                : colourless ? this.positionTexPipelineCache : this.texturedPipelineCache;
                         VulkanImmediateTexturePipeline textured =
                                 cache.get(Long.valueOf(((Long) group[5]).longValue()));
                         if (textured == null) {
-                            textured = colourless
+                            textured = formatId == 7
+                                    ? VulkanImmediateTexturePipeline.createForPosition(this.context, terrain.renderPass(),
+                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                                    : colourless
                                     ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, terrain.renderPass(),
                                             state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
                                     : VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass(),
@@ -3843,7 +3871,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.uiMesh.index(2);
             this.uiMesh.index(3);
             this.uiPipeline.bindTexture(this.atlasTexture);
-            ByteBuffer push = MemoryUtil.memAlloc(116);
+            ByteBuffer push = MemoryUtil.memAlloc(128);
             try {
                 // Identity projection and model-view: the vertices above are already in clip space.
                 putIdentity(push, 0);

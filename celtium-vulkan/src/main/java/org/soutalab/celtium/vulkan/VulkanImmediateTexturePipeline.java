@@ -46,14 +46,18 @@ public final class VulkanImmediateTexturePipeline {
 
     /** {@code POSITION_TEX}: 3 floats position and 2 floats texture coordinates, the shape RenderGlobal uploads. */
     public static final int POSITION_TEX_BYTES = 20;
+    /** Position only: three floats and nothing else. */
+    public static final int POSITION_BYTES = 12;
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
     // inside the 128 bytes Vulkan guarantees (audit S19).
-    private static final int PUSH_CONSTANT_BYTES = 116;
+    private static final int PUSH_CONSTANT_BYTES = 128;
 
     private final VulkanContext context;
     private final long renderPass;
     /** Whether this instance takes the colourless POSITION_TEX layout rather than POSITION_TEX_COLOR. */
     private boolean positionOnly;
+    /** Position-and-nothing-else: twelve bytes, one attribute, and no texture coordinate to sample. */
+    private boolean positionNoTexture;
 
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -98,6 +102,16 @@ public final class VulkanImmediateTexturePipeline {
         VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
                 depthWrite, cull);
         pipeline.positionOnly = true;
+        return pipeline;
+    }
+
+    /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
+    public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass, boolean blend,
+            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull) {
+        VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+                depthWrite, cull);
+        pipeline.positionOnly = true;
+        pipeline.positionNoTexture = true;
         return pipeline;
     }
 
@@ -255,9 +269,10 @@ public final class VulkanImmediateTexturePipeline {
 
     private void createPipeline() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer vertexCode = SpirvShaders.load(this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
-            ByteBuffer fragmentCode = SpirvShaders.load(this.positionOnly
-                ? SpirvShaders.IMMEDIATE_POSITION_TEX_FRAGMENT : SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
+            ByteBuffer vertexCode = SpirvShaders.load(this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
+                    : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
+            ByteBuffer fragmentCode = SpirvShaders.load(this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT
+                : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_FRAGMENT : SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
             long vertexModule = VK_NULL_HANDLE;
             long fragmentModule = VK_NULL_HANDLE;
             try {
@@ -279,12 +294,13 @@ public final class VulkanImmediateTexturePipeline {
                         .pName(stack.UTF8("main"));
 
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(this.positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(this.positionNoTexture ? POSITION_BYTES : this.positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES)
+                        .inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
                 VkVertexInputAttributeDescription.Buffer attributes =
-                        VkVertexInputAttributeDescription.calloc(this.positionOnly ? 2 : 3, stack);
+                        VkVertexInputAttributeDescription.calloc(this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
                 attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
-                if (!this.positionOnly) {
+                if (!this.positionOnly && !this.positionNoTexture) {
                     // The colourless format has nothing at offset 20 - describing an attribute there would read past
                     // the end of every vertex.
                     attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(20);

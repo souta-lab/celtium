@@ -45,7 +45,7 @@ public final class VulkanImmediateBlockPipeline {
     public static final int VERTEX_BYTES = 28;
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
     // inside the 128 bytes Vulkan guarantees (audit S19).
-    private static final int PUSH_CONSTANT_BYTES = 116;
+    private static final int PUSH_CONSTANT_BYTES = 128;
 
     private final VulkanContext context;
     private final long renderPass;

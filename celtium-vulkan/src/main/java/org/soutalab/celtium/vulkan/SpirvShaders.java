@@ -65,6 +65,8 @@ public final class SpirvShaders {
     public static final String IMMEDIATE_TEX_COLOR_FRAGMENT = "immediate_tex_color.frag";
 
     /** Vertex module for textured geometry with no colour: {@code POSITION_TEX}, as {@code RenderGlobal} draws sky and clouds. */
+    public static final String IMMEDIATE_POSITION_VERTEX = "immediate_position.vert";
+    public static final String IMMEDIATE_POSITION_FRAGMENT = "immediate_position.frag";
     public static final String IMMEDIATE_POSITION_TEX_VERTEX = "immediate_position_tex.vert";
 
     /** Fragment module for textured geometry with no colour. */

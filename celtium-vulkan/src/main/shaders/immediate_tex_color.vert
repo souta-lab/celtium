@@ -13,6 +13,9 @@ layout(push_constant) uniform PushConstants {
     vec4 u_MvColumn1;
     vec4 u_MvColumn2;
     layout(offset = 112) float u_AlphaRef;
+    layout(offset = 116) float u_ColorR;
+    layout(offset = 120) float u_ColorG;
+    layout(offset = 124) float u_ColorB;
 } celtium;
 
 layout(location = 0) in vec3 a_Position;
