@@ -43,6 +43,7 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$nullFormatDumps;
     private static int celtium$compositeRefusals;
     private static int celtium$positionTexRefusals;
+    private static int celtium$positionRefusals;
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
     private static final int[] celtium$arrivalsByFormat = new int[9];
     private static int celtium$arrivalTotal;
@@ -194,6 +195,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
             // backend was never called, GL drew every batch, and the counters reported zeros while the images matched.
             accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+            if (!accepted && formatId == 7 && celtium$positionRefusals < 3) {
+                // Position-only is mapped and in the acceptance mask, so a refusal is a guard further down. The same
+                // instrument that named the previous two guards answers this one.
+                celtium$positionRefusals++;
+                System.out.println("[Celtium] CELTIUM_POSITION_REFUSED reason=" + backend.lastRefusal()
+                        + " stride=" + stride + " vertices=" + vertices);
+            }
             if (!accepted && formatId == 6 && celtium$positionTexRefusals < 3) {
                 // The sky, the clouds and the water surface are mapped now, so a refusal here is a guard downstream of the
                 // mapping. Printing the backend's own reason is what identified the composite's, and it is the same question.

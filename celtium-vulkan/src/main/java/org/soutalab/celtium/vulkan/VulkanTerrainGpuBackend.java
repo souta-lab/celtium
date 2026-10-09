@@ -439,7 +439,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int outsideWorldPassRefusals;
     private int outsideWorldPassAccepted;
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
-    private final int[] acceptedByFormat = new int[8];
+    private final int[] acceptedByFormat = new int[9];
     private boolean currentRenderTargetIsMain = true;
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
@@ -1330,7 +1330,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        int expectedStride = formatId == 6 ? VulkanImmediateTexturePipeline.POSITION_TEX_BYTES
+        int expectedStride = formatId == 7 ? VulkanImmediateTexturePipeline.POSITION_BYTES
+                : formatId == 6 ? VulkanImmediateTexturePipeline.POSITION_TEX_BYTES
                 : formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
                 : formatId == 3 ? VulkanImmediateBlockPipeline.VERTEX_BYTES
                 : formatId == 4 ? VulkanImmediateItemPipeline.VERTEX_BYTES
@@ -2255,7 +2256,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " acceptedByFormat=1:" + this.acceptedByFormat[1] + ",2:" + this.acceptedByFormat[2]
                 + ",3:" + this.acceptedByFormat[3] + ",4:" + this.acceptedByFormat[4] + ",5:" + this.acceptedByFormat[5]
-                + ",6:" + this.acceptedByFormat[6]
+                + ",6:" + this.acceptedByFormat[6] + ",7:" + this.acceptedByFormat[7]
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
                 + ",5:" + this.postAcceptDroppedByFormat[5] + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS

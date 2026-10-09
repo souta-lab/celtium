@@ -7538,3 +7538,35 @@ into the three floats the shaders read. That is what position-only content needs
 
 One cosmetic gap is recorded rather than hidden: the per-format acceptance report prints ids 0 to 6, so **id 7 is not shown in
 it** even though the arrivals and the cancelled draws both prove it is being taken. The next round's first line is that report.
+
+---
+
+## Correction: position-only was mapped, and only now is it taken
+
+The previous round reported that position-only content was "drawn by Vulkan" and that unmapped arrivals had fallen by
+ninety-three per cent. The **arrivals** were right - 1964 of them arrived with their own id - and the conclusion drawn from
+them was **premature**: the per-format **acceptance** for that id was zero, which the widened report then showed plainly
+(`7:0`) while the immediate path's total matched the other formats' sum exactly. The content was recognised and still drawn by
+OpenGL.
+
+The instrument that named the other two guards named this one too:
+
+```
+CELTIUM_POSITION_REFUSED reason=layout id 7 has stride 12, expected 16
+```
+
+A stride expectation table that predated the format wanted sixteen bytes for it. With the table corrected:
+
+```
+acceptedByFormat = 1:5, 2:0, 3:0, 4:0, 5:309, 6:1770, 7:1097
+immediateTaken = 3181   glDrawsCancelled = 3181   terrainPasses=915
+exit 0 | clean | messages 0 | fixture PASSED   position refusals: 3 (the first frames, before the pipeline exists)
+```
+
+**1097 position-only batches are accepted and drawn by Vulkan**, not merely mapped, and the immediate path rose from 2740 to
+3181 with the cancelled GL draws one for one.
+
+Worth recording as the sixth time in this project that a conclusion outran its evidence, and the second time the offending
+reading was a **counter read for the wrong question**: arrivals say what the frame offered, acceptance says what this renderer
+took, and only the second one is a claim about drawing. The widened report is why the difference was visible at all - a
+counter that had been printing ids 0 to 6 would have hidden it for another round.
