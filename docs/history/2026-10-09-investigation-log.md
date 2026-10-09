@@ -2734,3 +2734,29 @@ existed.
 The next step is to explain the gap between taken and flushed: whether those groups are discarded, deferred past the
 capture, or dropped when a window cannot open. The counters for discards and deferrals already exist, and reading them
 against this run is cheaper than another image comparison.
+
+---
+
+## The "undrawn geometry" lead was my own truncation, and it is withdrawn
+
+The lead recorded last round - 586 batches taken and only 58 flushed in the weather and particle scene, against 585 and
+585 in the clean water scene - does not survive reading the counter line in full:
+
+```
+weather+particles: immediateOffered=9061 immediateTaken=586 immediateFlushes=586
+water:             immediateOffered=9060 immediateTaken=585 immediateFlushes=585
+```
+
+`immediateFlushes=586`, not 58. The number was cut off by the sixty-character slice the reading script used, and the
+truncated value was written down as a finding before the full line was printed. So there is **no** evidence of accepted
+geometry going undrawn, and the mechanism that was attached to the weather scene's difference is withdrawn with it.
+
+What remains is the measurement itself, unchanged: the weather and particle scene differs from its same-revision reference
+by **1.32% of pixels over 8 (12,157)** against a floor of **0.23%** - about five times the floor, so a difference that is
+larger than the scene's own variation but whose cause is not identified. The floor is not zero because particles animate in
+time, as recorded when the scene was built.
+
+The lesson is the third of its kind in this session and is worth stating plainly: **a value read through a truncating
+slice is not a measurement**. Previous rounds lost a counter to a wrong path, a comparison to a stale reference, and a
+control to an unasserted replacement; this one lost a lead to a substring. The rule that covers all four is to print the
+whole line, or read the field by name, before anything is concluded from it.
