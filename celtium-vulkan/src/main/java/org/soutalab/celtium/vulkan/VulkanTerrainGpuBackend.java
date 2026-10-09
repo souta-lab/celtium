@@ -609,6 +609,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long retiredFlushes;
     private int orderPreservingFlushes;
     private int clearOrderFlushes;
+    private int compositePresentRefusals;
     private int frameAccepted;
     private int frameDrawn;
     private int lastFrameAccepted;
@@ -1201,6 +1202,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 : formatId == 5 ? VulkanImmediateParticlePipeline.VERTEX_BYTES
                 : VulkanImmediatePipeline.VERTEX_BYTES;
         if (formatId == 2 && PRESENT_FROM_COMPOSITE) {
+            // The audit's S17: this layout is not only the screen composite. `Framebuffer.func_178038_a` uses it to blend
+            // an overlay *into* a framebuffer as well, and GUI, outlines, offscreen passes and postprocessing share it -
+            // so presenting on the format alone cancels GL draws that were not composites. The two conditions that
+            // distinguish the screen-only case are checked here, before anything is taken: the main framebuffer must be
+            // the bound target, and the viewport must be the whole of it.
+            boolean mainTargetBound = this.currentRenderTargetIsMain;
+            boolean fullTargetViewport = this.currentViewportKey == fullTargetViewportKey();
+            if (!mainTargetBound || !fullTargetViewport) {
+                this.compositePresentRefusals++;
+                this.immediateLastRefusal = "format 2 for a target that is not the screen as a whole (S17)";
+                return false;
+            }
             // Present the frame's content at the moment Minecraft composites it. The stack trace identified this batch
             // as Framebuffer.func_178038_a - the game framebuffer blitted onto the screen - and taking it cancels GL's
             // blit, so the screen shows the Vulkan present instead. It runs before the acceptance mask, which keeps
@@ -1720,6 +1733,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /** The viewport key that means "the whole render target", packed the same way {@code viewport} packs it. */
+    private long fullTargetViewportKey() {
+        return ((long) 0 << 42) ^ ((long) 0 << 21) ^ ((long) this.targetWidth << 10) ^ (long) this.targetHeight;
+    }
+
     private void flushPendingBeforeGlDraw() {
         if (this.immediateGroups.isEmpty()) {
             return;
@@ -1998,7 +2016,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
-                + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
+                + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()

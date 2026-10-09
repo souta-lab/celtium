@@ -269,11 +269,17 @@ suite does not currently perform. The registry's create-then-fail-upload leak fr
 `invalidateTexture` updates only the registry; the terrain atlas keeps its own copy and its 400-pass refresh, so five
 sprite-hook firings are not evidence that terrain animation is current.
 
-### S17 [P1] `POSITION_TEX_COLOR` is wrongly identified as the final composite
-The backend branches to present for format 2 before any mask, without checking the FBO or the call's meaning. The captured
-stack was `RenderGlobal` -> `Framebuffer.func_178038_a`, which the cached source shows blending an overlay into the
-framebuffer with its third argument false - not a screen-only composite. GUI, outlines, offscreen passes and postprocessing
-share the same layout, so cancelling the GL draw removes overlays and can produce several presents.
+### S17 [P1] `POSITION_TEX_COLOR` is wrongly identified as the final composite - **conditions added, unexercised**
+**Fixed in code.** The branch now checks the two things that distinguish the screen-only composite before it does anything:
+the bound target must be the **main framebuffer** (`currentRenderTargetIsMain`) and the viewport must be the **whole of it**
+(the packed viewport key against `fullTargetViewportKey()`). Anything else - an overlay blended *into* a framebuffer, a GUI
+pass, outlines, offscreen work, postprocessing, all of which share this layout - is **refused before acceptance** with the
+reason recorded, so GL keeps the draw instead of having it cancelled by a present that was never a composite. A
+`compositePresentRefusals` counter makes the frequency visible. Verified: exit 0, validation clean, 0 messages, fixture
+PASSED, `immediateTaken=578`, `postAcceptDroppedGroups=0`, `passes=2225`. **Unexercised:** with
+`-Dceltium.vulkan.presentFromComposite=true` the counter reads **0** - in this scene every format-2 batch that reaches the
+branch really is a full-screen composite, so the stricter conditions never reject. The case the audit describes is not
+presented by this fixture, and the branch is off by default in any case.
 
 ### S18 [P1] `OUT_OF_DATE` failures are not handled
 The flags are not reset at the top of `presentImage`, so an early return leaves the previous verdict; a real

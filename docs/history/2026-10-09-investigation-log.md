@@ -5958,3 +5958,30 @@ carry that label, which is itself a statement about the fixture: it exercises on
 world-leave paths the audit keeps naming are outside it.
 
 Recorded as still open from the same item: the registry's create-then-fail-upload path can still leak the GL texture.
+
+---
+
+## S17: the composite present now proves it is a composite, and this scene never disagrees
+
+The audit's S17 is the most dangerous item in the list because it can **delete draws**: the branch that presents from the
+`POSITION_TEX_COLOR` batch assumed that layout means "the game framebuffer blitted onto the screen", while the captured stack
+showed the same call blending an overlay *into* a framebuffer. GUI, outlines, offscreen passes and postprocessing share the
+layout, so presenting on the format alone cancels GL draws that were not composites.
+
+The branch now checks the two conditions that actually distinguish the screen-only case, before it takes anything: the bound
+target must be the **main framebuffer**, and the viewport must be the **whole of it** (the packed viewport key compared
+against the key a full-target viewport produces). Everything else is refused before acceptance with its reason recorded, so
+GL keeps the draw. A counter makes the frequency visible.
+
+Verified with the branch enabled (`-Dceltium.vulkan.presentFromComposite=true`):
+
+```
+exit 0 | clean | messages 0 | fixture PASSED | passes=2225 | taken=578 | dropped=0
+compositePresentRefusals=0
+```
+
+**Zero refusals** - in this scene every format-2 batch that reaches the branch is a genuine full-screen composite, so the
+stricter conditions never fire, and the run is unchanged. So the fix is **correct by construction and unexercised**, the
+fourth in this series to carry that label (S10's clears, S12's generation keys, S15's teardown, and now S17). That is worth
+stating as a pattern rather than four coincidences: **the fixture exercises one scene and one lifecycle**, and the audit's
+remaining items live in the paths it does not walk - reloads, world-leaves, second targets, overlay blending and postprocessing.
