@@ -2682,3 +2682,28 @@ The order of causes is worth keeping, because each alone was sufficient to make 
 
 What follows is what the audit said follows: **the comparisons start again from the beginning**, now that replacement
 happens, and the first of them will be the first measurement this project has taken of the Vulkan path drawing alone.
+
+---
+
+## The first sound measurement: Vulkan draws 585 batches alone and matches GL to nine pixels
+
+Everything before this round measured frames in which GL drew the content. With the cancellation effective and the submit
+call restored, the water scene was measured against same-revision references - the first comparison in this project where
+the immediate path actually replaces GL:
+
+```
+floor (reference against reference):  0.00 mean | 0.00% of pixels over 8
+water scene, Vulkan drawing alone:    0.00 mean | 9 pixels of 921,600 over 8
+immediateOffered=9060 immediateTaken=585 immediateFlushes=585
+fixture PASSED | nativeTerrainVerified True | 2211 passes
+```
+
+585 batches drew through Vulkan, GL's upload body ran 535 fewer times than it was offered, and the resulting frame matches
+the GL reference to **nine pixels**. That is the first evidence in this log that the immediate path renders anything
+correctly, and it is deliberately not rounded to "zero": nine pixels is what the measurement says, and they sit in a small
+spot at x 226..227, y 504..506.
+
+The sequence that got here is worth one line, because it is the difference between a claim and a measurement: the audit
+found the injector was not cancellable, then reading the mixin showed the submit call had been deleted while cleaning a
+dead branch, then the restored call made acceptance real, and only then did a comparison mean anything. Four rounds of
+image work before that were measuring GL against GL.
