@@ -65,9 +65,14 @@ Kept separate on purpose - terrain success and present success are different thi
   `immediateOffered=0` is expected - the draw entry is not wired yet. The earlier failure was a wrong SRG name
   (`func_179146_i`, which does not exist; the real disable-blend is `func_179084_k`), and `require = 0` now makes that
   class of mistake degrade instead of stopping the client.
-- Next for stage 3: the `WorldVertexBufferUploader.func_181679_a` Mixin (with `@Accessor` for the private buffer
-  fields) plus the per-vertex-format pipelines, so `immediateOffered` becomes non-zero and batches are drawn by
-  Vulkan rather than refused.
+- **Mixin draw entry is live too.** A Mixin on `WorldVertexBufferUploader.func_181679_a` - the single draw entry of
+  Minecraft's immediate path, where `Tessellator.func_78381_a()` and every `BufferBuilder` renderer end - offers each
+  finished batch to the backend. Verified on hardware: `immediateOffered=8365` with
+  `immediateRefusal=no_pipeline_yet_for_VertexFormat`, i.e. the batches really arrive and are refused with a stated
+  reason while the original GL body stays in charge (PASSED, no validation message, frame unchanged). The buffer's
+  private fields are read reflectively so no Minecraft signature changes and the byte buffer object is untouched.
+- Next for stage 3: the per-vertex-format pipelines (and the frame ownership that lets a batch be recorded outside the
+  terrain passes), so `immediateRefusal` disappears and those 8365 batches are drawn by Vulkan.
 
 - **Original note (superseded).** The phantom
   classpath problem was worked around by extending the boundary interface the backend already implements
