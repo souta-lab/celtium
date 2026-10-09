@@ -1890,3 +1890,26 @@ frame** by the submission itself and read immediately before `endFrame`, not inf
 lifecycle belongs to something else. The change is reverted, the state is green again (fixture PASSED, `nativeTerrainVerified
 True`, and the pass count back in the thousands), and the audit's E keeps its open half with a precise statement of what the
 next attempt must not do.
+
+---
+
+## Layout tracking for the shared image: the design is written down, the edit was not landed
+
+The audit's B ends with the shared colour image's layout: the present path is told
+`COLOR_ATTACHMENT_OPTIMAL` rather than reading it, and the image is left in `TRANSFER_SRC_OPTIMAL` afterwards rather than
+returned to the layout the frame target keeps using.
+
+The design is small and is recorded here so the next attempt starts from it rather than rediscovering it:
+
+- `VulkanFrameTarget` should track the layout of its own shared colour image. Its commands are the only ones that move it
+  - the render pass leaves it as a colour attachment, GL's blits are not Vulkan commands and do not enter this bookkeeping -
+  so the tracker stays consistent across a frame. `colorImageLayout()` reads it and `noteColorImageLayout(int)` records
+  what a caller left behind.
+- `presentImage` should take the source layout **from that tracker** and be told the layout to hand the image back in,
+  recording a barrier from `TRANSFER_SRC_OPTIMAL` to it after the blit instead of leaving the transfer layout behind.
+
+The attempt did not land. Two text-surgery failures, the same pair this log has recorded before: the insertion into
+`VulkanFrameTarget` went into the middle of an expression rather than after a statement, and the script that followed
+raised before applying the swapchain and backend halves. Nothing about the change is therefore in the tree; it is reverted,
+the build is green, and the design above is what the next attempt implements - with a statement read before it is edited,
+and with every replacement asserted rather than assumed.
