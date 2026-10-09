@@ -46,7 +46,9 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class VulkanUiPipeline {
     /** Vertex layout offsets, mirroring {@code DefaultVertexFormats.POSITION_TEX_LIGHTMAP_COLOR}. */
     private static final int VERTEX_STRIDE = 24;
-    private static final int PUSH_CONSTANT_BYTES = 128;
+    // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
+    // inside the 128 bytes Vulkan guarantees (audit S19).
+    private static final int PUSH_CONSTANT_BYTES = 116;
 
     private final VulkanContext context;
     private final long renderPass;

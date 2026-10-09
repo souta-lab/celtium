@@ -287,35 +287,21 @@ The flags are not reset at the top of `presentImage`, so an early return leaves 
 present look successful; and after `swapchain = null` the next present can dereference a null image. The injection measured
 a successful acquire, not the failure path, and re-injects on every recreate.
 
-### S19 [P1] immediate push constants exceed the guaranteed minimum - **attempted, constraint found, reverted**
-**The violation, exactly.** Each immediate pipeline declares `PUSH_CONSTANT_BYTES` in six files, and the shaders' block is two
-`mat4` (128 bytes) plus `layout(offset = 128) float u_AlphaRef` (4). Vulkan guarantees **128**, so the last four are a promise
-the API does not make.
+### S19 [P1] immediate push constants exceed the guaranteed minimum - **closed**
+**Fixed and verified.** The immediate push block is now **116 bytes** - projection 64, the model view's three affine
+columns 48 (the fourth is (0, 0, 0, 1) by construction and the shaders rebuild it), alpha reference at 112 - and it is
+declared **identically in all nine shaders**, which is the constraint the first attempt missed: the driver refuses a pipeline
+whose stages describe the same block differently (`pStages[0] shader [VERTEX] has a push constant buffer Block with range
+...`). All six immediate and UI push ranges are 116; the terrain pipeline keeps its own separate 128-byte layout. The CPU side
+writes the new layout, including the isolation draw's identity columns and its zero alpha reference.
 
-**Attempted in full and reverted.** The migration to 116 bytes - the model view as its three affine columns, since the fourth
-is (0, 0, 0, 1) by construction: projection 64 + 48 + alpha reference 4 - compiled and built, and Vulkan **rejected the
-pipeline**: `pStages[0] shader [VK_SHADER_STAGE_VERTEX_BIT] has a push constant buffer Block with range ...`. **Both stages
-must declare the same push constant block**; the vertex stage described 112 bytes and the fragment stage 116. No reading of
-the Java would have shown that - it took building it and letting the validation gate answer. The correction then broke two of
-the five shaders (`immediate_block.vert` and `immediate_particle.vert` declare members of their own past the matrices), so the
-migration was reverted rather than half-carried and the tree verified green: build successful, exit 0, validation clean, 0
-messages, fixture PASSED, `immediateTaken=565`, `postAcceptDroppedGroups=0`, `descriptorSets=1`.
+The first attempt failed for a reason worth keeping: `immediate_block.vert` and `immediate_particle.vert` **already declared
+the alpha reference** (to match their fragment stages), so inserting it again produced duplicate members and broke the
+shaders. This time all nine blocks were replaced with one identical text.
 
-**The gap is closed.** A broken shader failed the build but the *reason* had to be recovered by hand, because the task ran
-the compiler through `providers.exec`. That API **forbids configuring the process's standard streams** - the attempt produced
-`InvalidUserCodeException: Standard streams cannot be configured for exec output provider` - so the task is now a proper task
-class with an injected `ExecOperations`, which is the supported modern way and does allow capture. Verified with a
-deliberately broken shader, which now reports:
-
-```
-glslangValidator failed on immediate_color.vert (exit 2):
-ERROR: .../immediate_color.vert:22: 'this' : Reserved word.
-ERROR: 1 compilation errors.  No code generated.
-```
-
-and the deliberate error was reverted, with the build green afterwards: `BUILD SUCCESSFUL`, exit 0, validation clean, 0
-messages, fixture PASSED, `passes=2206`, `immediateTaken=568`, `descriptorSets=1`. The S19 migration itself follows next,
-with the same-block constraint respected.
+Verified: `BUILD SUCCESSFUL`, exit 0, validation clean, **0 messages**, fixture PASSED, `immediateTaken=553`,
+`postAcceptDroppedGroups=0`, `descriptorSets=1`, `passes=2179` - and the frame is unchanged from before the migration
+(mean difference below one unit), so this is a capability fix with no behavioural effect.
 
 ### S20 [P1] the validation gate misses errors by their format
 `prism_validation` skips any message not starting with `vk`, and stores no severity or message ID, so

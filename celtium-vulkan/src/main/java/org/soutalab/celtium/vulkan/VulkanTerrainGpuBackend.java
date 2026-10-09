@@ -3360,6 +3360,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             for (int i = 0; i < 16; i++) {
                 push.putFloat(i * 4, (i % 5 == 0) ? 1.0f : 0.0f);
             }
+            // The model view's three affine columns, which is what the shader reads at 64/80/96, and a zero alpha
+            // reference at 112 so the isolation draw is unaffected by whatever the last state left there.
+            push.putFloat(64, 1.0f);
+            push.putFloat(80, 1.0f);
+            push.putFloat(96, 1.0f);
+            push.putFloat(112, 0.0f);
             this.immediatePipeline.draw(this.commandBuffer, this.isolationMesh, push);
             this.immediateIsolationDraws++;
         } finally {
@@ -3391,7 +3397,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.textureRegistry == null) {
                 this.textureRegistry = new VulkanTextureRegistry(this.context);
             }
-            ByteBuffer push = MemoryUtil.memAlloc(132);
+            // 116 bytes: projection 64, the model view's three affine columns 48, alpha reference 4 - inside the 128
+            // bytes the API guarantees, and the same block both stages declare (audit S19).
+            ByteBuffer push = MemoryUtil.memAlloc(116);
             try {
                 for (Object[] group : this.immediateGroups) {
                     VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
@@ -3401,8 +3409,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     int formatId = ((Integer) group[3]).intValue();
                     int[] state = (int[]) group[6];
                     pushMatrixInto((float[]) group[1], push, 0);
-                    pushMatrixInto((float[]) group[2], push, 64);
-                    push.putFloat(128, Float.intBitsToFloat(state[6]));
+                    // Three affine columns only; the shader rebuilds the fourth, which is (0, 0, 0, 1) by construction
+                    // for a model view. This is what keeps the block inside the guaranteed 128 bytes.
+                    pushMatrixColumnsInto((float[]) group[2], push, 64);
+                    push.putFloat(112, Float.intBitsToFloat(state[6]));
                     if (formatId == 5) {
                         // The observation is global-latest, not per-batch: this is the factors from the most recent blendFunc call
                         // anywhere, and using them gave 0.31% against the constants' 0.23%. Until they are captured with the
@@ -3583,7 +3593,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.uiMesh.index(2);
             this.uiMesh.index(3);
             this.uiPipeline.bindTexture(this.atlasTexture);
-            ByteBuffer push = MemoryUtil.memAlloc(128);
+            ByteBuffer push = MemoryUtil.memAlloc(116);
             try {
                 // Identity projection and model-view: the vertices above are already in clip space.
                 putIdentity(push, 0);
@@ -3661,6 +3671,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         } catch (RuntimeException | LinkageError error) {
             record("could not read the OpenGL matrices for an immediate batch: " + describe(error));
+        }
+    }
+
+    /**
+     * Writes the first three columns of an affine model-view matrix (48 bytes); the shader rebuilds the fourth, which is
+     * (0, 0, 0, 1) by construction. This is what keeps the immediate push block inside Vulkan's guaranteed 128 bytes
+     * (audit S19).
+     */
+    private static void pushMatrixColumnsInto(float[] matrix, ByteBuffer target, int offset) {
+        for (int column = 0; column < 3; column++) {
+            for (int row = 0; row < 4; row++) {
+                target.putFloat(offset + (column * 4 + row) * 4, matrix[column * 4 + row]);
+            }
         }
     }
 

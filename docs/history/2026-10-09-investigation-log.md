@@ -6065,3 +6065,30 @@ Worth recording as a pattern, because it is the same lesson as the shader trap i
 be able to say what went wrong**. Both times this project lost rounds to a silent build step - the committed SPIR-V that
 nothing regenerated, and now the compiler whose message was discarded - and both times the fix was to make the build report,
 not to be more careful.
+
+---
+
+## S19 closed: 116 bytes, one identical block in all nine shaders, and the driver accepts it
+
+The retry worked because the failure from last round named the constraint. The push block is now 116 bytes - projection 64,
+the model view's three affine columns 48, alpha reference at 112 - and, crucially, **all nine shaders carry the same block**,
+vertex and fragment alike. Vulkan refuses a pipeline whose stages describe the same push constant block differently, and that
+is exactly what the first attempt produced: 112 in the vertex stage, 116 in the fragment.
+
+The first attempt's other mistake is now understood too: `immediate_block.vert` and `immediate_particle.vert` **already
+declared the alpha reference**, because their fragment stages needed it, so inserting it again created duplicate members and
+broke those two shaders. This time the whole block was replaced with one identical text in all nine files, and the shader
+compilation confirmed all nine.
+
+Verified end to end:
+
+```
+BUILD SUCCESSFUL | exit 0 | clean | messages 0 | fixture PASSED
+immediateTaken=553  postAcceptDroppedGroups=0  descriptorSets=1  passes=2179
+```
+
+No validation error, so the driver accepts the pipeline; and the frame is unchanged from before the migration (sub-unit mean
+difference), which is what a pure capability fix should look like: **less asked of the API, same drawing**.
+
+Six push ranges moved to 116 and the terrain pipeline keeps its own separate 128-byte layout, which is legal because it is a
+different pipeline layout.

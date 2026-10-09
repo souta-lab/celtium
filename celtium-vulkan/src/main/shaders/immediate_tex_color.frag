@@ -10,7 +10,14 @@ layout(location = 0) out vec4 fragColor;
 // depends on the discard. A threshold of exactly 0 leaves every fragment in, which is what a batch drawn with the
 // test disabled gets.
 layout(push_constant) uniform PushConstants {
-    layout(offset = 128) float u_AlphaRef;
+    mat4 u_ProjectionMatrix;
+    // The model view is affine, so only its three rotation/translation columns are passed and the shader rebuilds the
+    // fourth. With the alpha reference at 112 the whole block is 116 bytes - inside the 128 Vulkan guarantees (S19) -
+    // and it is declared identically in both stages, which is what the driver requires.
+    vec4 u_MvColumn0;
+    vec4 u_MvColumn1;
+    vec4 u_MvColumn2;
+    layout(offset = 112) float u_AlphaRef;
 } celtium;
 
 void main() {

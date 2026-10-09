@@ -6,8 +6,13 @@
 
 layout(push_constant) uniform PushConstants {
     mat4 u_ProjectionMatrix;
-    mat4 u_ModelViewMatrix;
-    layout(offset = 128) float u_AlphaRef;
+    // The model view is affine, so only its three rotation/translation columns are passed and the shader rebuilds the
+    // fourth. With the alpha reference at 112 the whole block is 116 bytes - inside the 128 Vulkan guarantees (S19) -
+    // and it is declared identically in both stages, which is what the driver requires.
+    vec4 u_MvColumn0;
+    vec4 u_MvColumn1;
+    vec4 u_MvColumn2;
+    layout(offset = 112) float u_AlphaRef;
 } celtium;
 
 layout(location = 0) in vec3 a_Position;
@@ -27,5 +32,5 @@ void main() {
     v_TexCoord = a_TexCoord;
     v_Color = a_Color;
     v_Lightmap = (vec2(a_LightCoord) + 8.0) / 256.0;
-    gl_Position = celtium.u_ProjectionMatrix * celtium.u_ModelViewMatrix * vec4(a_Position, 1.0);
+    gl_Position = celtium.u_ProjectionMatrix * (celtium.u_MvColumn0 * (a_Position).x + celtium.u_MvColumn1 * (a_Position).y + celtium.u_MvColumn2 * (a_Position).z + vec4(0.0, 0.0, 0.0, 1.0));
 }

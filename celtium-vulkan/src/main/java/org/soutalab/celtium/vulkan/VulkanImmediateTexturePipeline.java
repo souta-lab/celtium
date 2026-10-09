@@ -43,7 +43,9 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class VulkanImmediateTexturePipeline {
     /** {@code POSITION_TEX_COLOR}: 3 floats position, 2 floats texture coordinates, 4 unsigned bytes colour. */
     public static final int VERTEX_BYTES = 24;
-    private static final int PUSH_CONSTANT_BYTES = 132;
+    // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
+    // inside the 128 bytes Vulkan guarantees (audit S19).
+    private static final int PUSH_CONSTANT_BYTES = 116;
 
     private final VulkanContext context;
     private final long renderPass;
