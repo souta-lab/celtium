@@ -177,7 +177,11 @@ content work that does not touch frame structure can proceed in parallel.
    before the hooks were installed - and the 2.0 maximum comes from a later sample. The worst-sample dump then named the cause: the mirror's projection is the **identity** where GL holds a real frustum,
    and its modelview is the right rotation **without the camera translation**. Both operations happen where no hook reaches -
    the world projection goes through `Project.gluPerspective`, outside the transforming loader, and the camera translation is
-   applied before the backend exists - so **hooking cannot fix this**. The anchors are now read from the vanilla source: the camera setup is
+   applied before the backend exists - so **hooking cannot fix this**. The mechanism is now exact: inside `func_78479_a` a **hooked** `matrixMode` + `loadIdentity` resets the mirror's projection
+   to identity, an **unreachable** `Project.gluPerspective` fills GL's and not the mirror's, and the camera translation is
+   applied where the mirror is not yet listening - so nothing in the hook coverage is broken, and what is missing is the
+   **value**: `fov`, `aspect`, `0.05F`, `renderDistanceChunks * 16 * SQRT_2`, three of which are readable from Minecraft
+   state and the fourth a private method whose SRG name is the next lookup. The anchors are read from the vanilla source: the camera setup is
    `EntityRenderer.func_78479_a(float, int)` - a Minecraft class method, so a plain `@Inject` reaches it, with no accessor
    machinery of the kind that crashed the client twice - and it holds the `gluPerspective` call with its `fov`, `aspect`,
    `near` and `renderDistanceChunks * 16 * SQRT_2` arguments, plus the translate/rotate that place the camera. The

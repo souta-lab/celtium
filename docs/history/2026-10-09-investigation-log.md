@@ -3533,3 +3533,35 @@ my own script edits), the standalone load and initialisation checks - and the us
 explicit table. The instruction that goes with the correction is the one to act on now: **stop splitting Java versions and
 go back to the rendering.** The next work is the derivation of the world projection and camera from Minecraft's own state,
 whose anchors are recorded above, and the audit items still open.
+
+---
+
+## The exact mechanism: a hooked reset and an unreachable setter
+
+Reading the vanilla sequence inside `func_78479_a` explains the dump precisely:
+
+```java
+GlStateManager.translate(0.0F, -f, 0.0F);          // view bobbing
+GlStateManager.matrixMode(GL_PROJECTION);          // hooked -> mirror switches stack
+GlStateManager.loadIdentity();                      // hooked -> mirror's projection becomes identity
+Project.gluPerspective(fov, aspect, 0.05F, far);   // NOT hooked -> GL gets the frustum, the mirror does not
+GlStateManager.matrixMode(GL_MODELVIEW);            // hooked
+GlStateManager.loadIdentity();                      // hooked -> modelview reset
+... camera rotation and translation ...
+```
+
+Everything the mirror *can* see puts it into a known state - identity projection, identity modelview - and the one call that
+would fill the projection is the one it cannot see. That is why `projMirror` was the identity matrix while `projGl` held a
+real frustum, and why the modelview matched in rotation and lacked only the camera translation: the rotations go through
+`GlStateManager`, the translation is applied where the mirror was not yet listening, and the projection never arrives at all.
+
+This also locates the fix precisely rather than generally. There is nothing to repair in the hook coverage for the
+projection - the hook does exactly what it should - and what is needed is the **value** the unreachable call computes:
+`getFOVModifier(partialTicks, true)`, `displayWidth / displayHeight`, `0.05F`, `renderDistanceChunks * 16 * SQRT_2`. Three
+of those four are readable from Minecraft state; the fourth is a private method whose result folds in sprinting, bow draw,
+water and flight. The two ways to get it are a hook on the method itself - the class is Minecraft's, so it is reachable, and
+its SRG name is the next lookup - or reproducing its rules from the player's state, which is also Minecraft state.
+
+For the modelview the relation to verify before writing any code is whether the mirrored translation equals
+`-RenderManager.viewerPosX/Y/Z`, which is what vanilla's camera transform amounts to. That is one report field and one run,
+and it is the same measure-then-change order that stopped the `glGetFloatv` removal when the mirror turned out to be empty.
