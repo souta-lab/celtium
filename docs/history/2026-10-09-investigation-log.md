@@ -573,3 +573,26 @@ frame and supplying the matrices itself.
 The switch (`-Dceltium.vulkan.mirroredMatrices=true`) and the comparison stay in the tree so the claim can be re-checked
 rather than remembered, and the numbers are printed in the verification line. The consequence for priority is
 unchanged: frame ownership is what makes both the image correct and the per-batch cost go away, and it is the same work.
+
+---
+
+## Third attempt at the per-batch cost: splitting the matrix reads (reverted)
+
+The ~27 us per accepted batch is dominated by the two `glGetFloatv` calls that read the live projection and model view.
+Since the projection changes only a couple of times per frame in principle, the read was split: a `projectionDirty` flag
+set only by the calls that actually replace or multiply the projection (`loadIdentity`, `ortho`, `multiplyMatrix`) and a
+`matricesDirty` flag for the model view, with counters (`matrixReads=proj:N,view:M`) to show whether the split worked.
+
+It did not, across two corrections:
+
+| Revision | projection reads | model view reads | `immediateSubmitAvgNs` |
+|---|---|---|---|
+| split, projection marked on any matrix call | 1736 | 1736 | 28167 |
+| split, matrix mode no longer marks it | 1741 | 1741 | 26962 |
+| split, only `loadIdentity`/`ortho`/`multiplyMatrix` mark it | 1728 | 1728 | 27507 |
+
+The counts stay equal, which means the projection genuinely changes as often as the model view in this content - one of
+those three calls happens once per group. So the reads cannot be reduced by splitting the signal, and the change was
+reverted rather than left in as complexity with no gain. Combined with the mirror measurement (proj 2.0, view 2000.0
+apart) this closes the question from both sides: the matrices have to come from somewhere other than a GL read, and the
+only such source is a renderer that supplies them itself.
