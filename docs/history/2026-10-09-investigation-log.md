@@ -6422,3 +6422,33 @@ resource reload and world switch verified; resize once-guarded but not yet run i
 blit, with the Vulkan present path off by default and unreached even when enabled.
 
 That is the honest boundary of the project as it stands, and it is now written where the objective asked for it.
+
+---
+
+## The GUI, the font, the HUD and the hand are drawn by Vulkan now: 7,721 batches
+
+The inventory written last round named the largest gap in plain terms: everything outside the world pass - the GUI, the font,
+the HUD, the hand - was **OpenGL**, refused by the immediate path with the reason `outside_the_world_pass_or_without_a_snapshot`.
+This round closed that gap, and the change was smaller than the gap suggested, for a reason worth recording.
+
+A group's matrices are taken from the **live `GlStateManager` mirror** (`glProjection`/`glModelView`), not from the world
+snapshot - the snapshot is used for the comparison diagnostics. That mirror holds the orthographic projection outside the world
+pass exactly as it holds the world projection inside it, so the batches the guard was refusing never needed the snapshot at all:
+the guard was refusing content the path was already equipped to draw. It now accepts them and counts them.
+
+```
+outsideWorldPassAccepted   = 7721     the GUI, font, HUD and hand content taken this run
+outsideWorldPassRefusals   = 0
+postAcceptDroppedGroups    = 0
+droppedByFormat            = 1:0, 2:0, 3:0, 4:0, 5:0
+descriptorSets             = 1
+nativeTerrainVerified      = True   terrainPasses=1620   glDrawsCancelled=554
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+**7,721 batches** - the HUD, the font, the hotbar, the hand - that OpenGL drew last round are now drawn by the Vulkan
+immediate path, with **no validation messages** on the AMD driver, no post-accept drops of any format, and the descriptor
+cache still at a single set. Terrain is unaffected and its real-path evidence is intact.
+
+So one row of the inventory moves from "OpenGL, explicitly refused" to "Vulkan, measured", and the honest statement of what
+remains on GL is now narrower: sky, clouds, weather, water, the FBO chains, postprocess and the final composite.

@@ -437,6 +437,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int snapshotCaptures;
     private int snapshotServedCaptures;
     private int outsideWorldPassRefusals;
+    private int outsideWorldPassAccepted;
     private boolean currentRenderTargetIsMain = true;
     private int offTargetRefusals;
     private int textureRefusalsBeforeAccept;
@@ -1187,13 +1188,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        // Content outside the world pass - the GUI, the font, the HUD, the hand - used to be refused here, which left it
+        // to OpenGL. It does not need the world snapshot: the matrices a group is built from come from the live
+        // GlStateManager mirror (glProjection/glModelView), which holds the orthographic projection outside the world pass
+        // exactly as it holds the world projection inside it. So it is taken, and the counter says how much of the frame
+        // arrives this way.
         if (!this.worldPassActive || !this.worldSnapshotValid) {
-            // Before acceptance, and for a stated reason: this batch is not drawn from the frame's world matrices, so the
-            // original GL draw stays in charge. Taking it and then failing later is the failure mode the audit lists as S14.
-            this.immediateLastRefusal = "outside the world pass or without a snapshot";
-            this.outsideWorldPassRefusals++;
-            this.flushPendingBeforeGlDraw();
-            return false;
+            this.outsideWorldPassAccepted++;
         }
         if (this.gpuStalled) {
             this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
@@ -2077,7 +2078,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
-                + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes + " compositePresentRefusals=" + this.compositePresentRefusals
+                + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
+                + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
