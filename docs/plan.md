@@ -56,7 +56,20 @@ Kept separate on purpose - terrain success and present success are different thi
   faults on the way: concurrent sharing with a single queue family
   (`VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278`) and a zeroed `VkAllocationCallbacks`
   (`VUID-VkAllocationCallbacks-pfn*`), the latter crashing the client.
-- **Mixin wiring: state capture attempted, blocked on the exact SRG names, no longer on the build.** The phantom
+- **Mixin state capture is live and verified on hardware.** The `GlStateManager` Mixin injects at the verified SRG
+  names (`func_179147_l`/`func_179084_k` blend, `func_179132_a` depth mask, `func_179097_i`/`func_179126_j` depth
+  test, `func_179131_c` colour, `func_179094_E`/`func_179121_F` matrix push/pop, `func_187428_a` blend factors) with
+  `require = 0` on every injector, and forwards into the backend's state model. A fixture run reports
+  `immediateState=103825`: vanilla's own drawing-state calls are captured and translated into Vulkan renderer state,
+  with no public Minecraft signature changed and no effect on the rendered frame (PASSED, no validation message).
+  `immediateOffered=0` is expected - the draw entry is not wired yet. The earlier failure was a wrong SRG name
+  (`func_179146_i`, which does not exist; the real disable-blend is `func_179084_k`), and `require = 0` now makes that
+  class of mistake degrade instead of stopping the client.
+- Next for stage 3: the `WorldVertexBufferUploader.func_181679_a` Mixin (with `@Accessor` for the private buffer
+  fields) plus the per-vertex-format pipelines, so `immediateOffered` becomes non-zero and batches are drawn by
+  Vulkan rather than refused.
+
+- **Original note (superseded).** The phantom
   classpath problem was worked around by extending the boundary interface the backend already implements
   (`TerrainGpuBackend` gained default immediate-draw methods) instead of introducing a new class the module could not
   resolve, and the backend now implements them (state into its `VulkanGlState`, batches counted and refused with a
