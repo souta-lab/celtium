@@ -7934,3 +7934,28 @@ The class of defect is "a counter dimensioned from the set of ids that existed w
 one that has not been made yet: one shared constant for the id range, referenced by every counter, the mask, the range check and
 the stride table. That is a small refactor with a clear justification, and it is the named next step rather than another
 individual widening.
+
+---
+
+## The id range lives in one place now, and the ids have names
+
+The defect class was "a counter dimensioned from the set of ids that existed when it was written", with three instances in a
+row. The fix is the one that was named last round and is now in:
+
+`VulkanImmediateFormats` defines every id the mapping assigns - `POSITION_COLOR`, `POSITION_TEX_COLOR`, `BLOCK`, `ITEM`,
+`PARTICLE`, `POSITION_TEX`, `POSITION`, `POSITION_TEX_COLOR_NORMAL`, `POSITION_TEX_NORMAL` - plus `COUNT`, one past the last,
+and `DEFAULT_ACCEPTED`, the mask's default. The three counters, the acceptance mask, the range check and the mapping's own
+branches all reference it, and the mapping now reads as nine named layouts rather than nine magic numbers:
+
+```
+run: exit 0 | clean | messages 0 | fixture PASSED
+acceptedByFormat = 1:75, 2:0, 3:0, 4:427, 5:219, 6:1353, 7:1008, 8:128, 9:12
+jei: screen=30 recipe=34
+```
+
+**Every mapped id is accepted in a single run** - the colour layout, the item layout the recipe screen produces, the particle
+layout, the sky's colourless position-texture, position-only, the entity/item layout and the composite's - with the two
+remaining zeros being layouts whose content the scene simply did not upload, and format 0 nowhere.
+
+That is the last of the counter-range defects: a fourth widening is no longer possible, because there is only one length to
+widen.

@@ -46,7 +46,8 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$positionRefusals;
     private static int celtium$compositeLayoutRefusals;
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
-    private static final int[] celtium$arrivalsByFormat = new int[11];
+    private static final int[] celtium$arrivalsByFormat =
+            new int[org.soutalab.celtium.vulkan.VulkanImmediateFormats.COUNT];
     private static int celtium$arrivalTotal;
     /** The distinct shapes arriving with no mapped id, counted by element signature. */
     private static final java.util.Map<String, Integer> celtium$unmappedShapes =
@@ -289,25 +290,25 @@ public abstract class WorldVertexBufferUploaderMixin {
         }
         int id;
         if (celtium$sameElements(format, DefaultVertexFormats.POSITION_COLOR)) {
-            id = 1;
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_COLOR;
         } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX_COLOR)) {
-            id = 2;        } else if (celtium$sameElements(format, DefaultVertexFormats.BLOCK)) {
-            id = 3;
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_TEX_COLOR;        } else if (celtium$sameElements(format, DefaultVertexFormats.BLOCK)) {
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.BLOCK;
         } else if (celtium$sameElements(format, DefaultVertexFormats.ITEM)) {
-            id = 4;
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.ITEM;
         } else if (celtium$sameElements(format, DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP)) {
-            id = 5;
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.PARTICLE;
         } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX_COLOR_NORMAL)) {
             // Position, texture, colour and a normal: the entity and TESR layout. Only the trailing normal is unread.
-            id = 8;
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_TEX_COLOR_NORMAL;
         } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX_NORMAL)) {
             // Position, texture and a normal: what the final composite batch carries.
-            id = 9;
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_TEX_NORMAL;
         } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION)) {
             // Position only: twelve bytes, one element, no colour and no texture coordinates. The arrival census found this to
             // be the largest single category still going to OpenGL, and the reason it could not be taken is that its colour is
             // not in the vertex data - it is whatever the game had current, which is now passed in the push block.
-            id = 7;
+            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION;
         } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX)
                 || format.equals(DefaultVertexFormats.POSITION_TEX)) {
             // The branch that was missing. Position+texture is the shape the sky, the clouds and the water surface upload, it is

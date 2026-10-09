@@ -447,7 +447,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int outsideWorldPassRefusals;
     private int outsideWorldPassAccepted;
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
-    private final int[] acceptedByFormat = new int[11];
+    private final int[] acceptedByFormat = new int[VulkanImmediateFormats.COUNT];
     private boolean currentRenderTargetIsMain = true;
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
@@ -598,7 +598,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final float MIP_BIAS_ADD =
             Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
-    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5,6,7,8,9");
+    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", VulkanImmediateFormats.DEFAULT_ACCEPTED);
 
     private static boolean celtium$formatAccepted(int formatId) {
         String accepted = ACCEPTED_FORMATS;
@@ -692,7 +692,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Reported once, at a count a run actually crosses.
      */
     private final int[] immediateOfferedByFormat = new int[8];
-    private final int[] immediateAcceptedByFormat = new int[11];
+    private final int[] immediateAcceptedByFormat = new int[VulkanImmediateFormats.COUNT];
     /**
      * Whether this frame's submission actually reached the queue.
      * <p>
@@ -1473,7 +1473,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        if (formatId < 1 || formatId > 9) {
+        if (formatId < 1 || formatId > VulkanImmediateFormats.POSITION_TEX_NORMAL) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
             // bound was 5, written before id 6 existed: position-plus-texture - the sky, the clouds, the water surface -
