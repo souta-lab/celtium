@@ -1563,3 +1563,31 @@ new dependency.
 The change is reverted, the tree is green (`packageJar` and `validationRemapJar` both pass), and nothing about resize is
 claimed either way - it stays on the unported list, now with the method and the obstacle written down so the next attempt
 starts from here rather than from scratch.
+
+---
+
+## The resize harness works and the resize does not reach Minecraft in it
+
+With `lwjgl-glfw` added as a compile-only dependency of the validation module, the fixture can drive a resize, and the
+run reports what happened:
+
+```
+status PASSED | nativeTerrainVerified True
+windowResizable True | resizedAtTick 100 | captureWidth 1280 | captureHeight 720
+screenshot size: (1280, 720)
+```
+
+So the call is made on a window that reports itself resizable, and Minecraft's framebuffer is **still 1280x720** a hundred
+ticks later, at capture time. The first attempt said the same thing and the extra attribute read rules out the obvious
+explanation: this is not a non-resizable window refusing the request, it is a size request that the client never turns
+into a framebuffer change in this harness.
+
+That is worth stating precisely, because it means **resize stays unverified** - not because the renderer failed, but
+because this setup cannot exercise it. The likely reasons are the ones a real client would not have: the harness runs the
+client without a window-manager resize, and Cleanroom's LWJGL shim may take its display size once at startup rather than
+from the window each frame.
+
+Two things are kept from the round: the compile-only dependency, which is what lets the fixture see the window at all, and
+the harness itself (the `celtium.validation.resize` switch with its `windowResizable` and `resizedAtTick` report fields),
+since it is fixture-only, harmless in a green run, and is the instrument any future resize attempt will start from. What is
+not claimed is that the renderer handles a resize; the plan keeps it on the unported list.

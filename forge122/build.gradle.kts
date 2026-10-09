@@ -228,6 +228,9 @@ dependencies {
     add(validation.compileOnlyConfigurationName, platform("org.lwjgl:lwjgl-bom:3.4.1"))
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl")
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-opengl")
+    // The fixture drives window resizes to prove the renderer survives a framebuffer size change, so it needs the GLFW
+    // binding at compile time. Compile-only, like the rest: nothing here is part of Celtium's distributable.
+    add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-glfw")
     add(validation.compileOnlyConfigurationName, "com.google.code.gson:gson:2.10.1")
 }
 tasks.named<JavaCompile>(validation.compileJavaTaskName) {

@@ -403,6 +403,20 @@ public final class ValidationClient {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
         previousFrame = now;
+        if (worldTicks == 100 && Boolean.getBoolean("celtium.validation.resize")) {
+            // Resize the window mid-run: the renderer has to survive the framebuffer changing size, which the plan lists
+            // as unported until it has been seen to work. The saved screenshot's own dimensions are the evidence that
+            // the resize reached Minecraft rather than only the window manager.
+            long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+            // First attempt changed nothing: the run reported resizedAtTick=100 while displayWidth/Height stayed
+            // 1280x720, which is what a non-resizable window does with a size request. Say so explicitly and then ask.
+            report.addProperty("windowResizable", org.lwjgl.glfw.GLFW.glfwGetWindowAttrib(window,
+                    org.lwjgl.glfw.GLFW.GLFW_RESIZABLE) == org.lwjgl.glfw.GLFW.GLFW_TRUE);
+            org.lwjgl.glfw.GLFW.glfwSetWindowAttrib(window, org.lwjgl.glfw.GLFW.GLFW_RESIZABLE,
+                    org.lwjgl.glfw.GLFW.GLFW_TRUE);
+            org.lwjgl.glfw.GLFW.glfwSetWindowSize(window, 1024, 640);
+            report.addProperty("resizedAtTick", worldTicks);
+        }
         if (worldTicks == 190 && !Boolean.getBoolean("celtium.validation.interop")) {
             // Hide the HUD a few ticks before the capture so the saved PNG is the rendered scene only. A stock
             // Celeritas run and a Celtium run of the same seed can then be compared pixel by pixel, without
@@ -416,6 +430,8 @@ public final class ValidationClient {
                 // capture on the next frame, so the saved scene contains terrain and the sky only.
                 if (removeNonPlayerEntities(mc) > 0) return;
                 report.addProperty("nonPlayerEntitiesRemoved", entitiesRemoved);
+                report.addProperty("captureWidth", mc.displayWidth);
+                report.addProperty("captureHeight", mc.displayHeight);
                 report.addProperty("nonPlayerEntitiesAtCapture", countNonPlayerEntities(mc));
                 report.addProperty("lightmapFlickerPinned", flickerPinned);
                 report.addProperty("pinnedWorldTime", PINNED_WORLD_TIME);
