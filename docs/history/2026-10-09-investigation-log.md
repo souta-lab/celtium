@@ -7442,3 +7442,29 @@ arrival-count is a census of what the frame actually offered.
 The table also documents two things nobody had measured before: **format 2 arrives 683 times and is accepted zero** - the
 acceptance mask excludes it by default, which is consistent - and **format 0 arrives 2092 times**, which is the unmapped shapes
 (the composite batch among them) and is the largest single category of content still going to OpenGL.
+
+---
+
+## What is left going to OpenGL is one shape: position-only vertices
+
+The arrival census said format 0 accounts for about two thousand uploads per run, more than any other single category. This
+round censused those arrivals **by shape** rather than by count, and the answer is unusually clean:
+
+```
+CELTIUM_UNMAPPED count=2000 shape=[3,Position,Float | size=12 count=1]
+```
+
+**One shape.** Position-only: twelve bytes, one element, no colour and no texture coordinates. It is not any of the six
+pipelines that exist - position-colour, position-texture-colour, block, item, particle, position-texture - and the composite
+batch that the earlier dump showed is a small part of the total rather than the bulk of it.
+
+That turns "the largest category still going to OpenGL" from a number into a piece of work with a size: a **position-only
+pipeline**, which needs a colourless, textureless shader pair (the position-texture pair is colourless but samples a texture,
+so it is not reusable as-is), an id for the mapping to assign, and the same acceptance path everything else uses. Nothing about
+it is unknown, and the two changes that unblocked the sky apply here too: a branch in the id chain and an id admitted by the
+range check.
+
+Worth noting as a pattern across the last four rounds: each one ended by **naming** the next thing rather than by guessing at
+it - a missing branch, a stale bound, an artifact of when a report runs, and now a shape. The names come from instruments that
+count what the code actually sees, which is what the runtime lock's provenance work was for and what the arrival census
+generalised.

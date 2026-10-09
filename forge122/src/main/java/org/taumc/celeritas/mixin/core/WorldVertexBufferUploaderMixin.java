@@ -46,6 +46,9 @@ public abstract class WorldVertexBufferUploaderMixin {
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
     private static final int[] celtium$arrivalsByFormat = new int[9];
     private static int celtium$arrivalTotal;
+    /** The distinct shapes arriving with no mapped id, counted by element signature. */
+    private static final java.util.Map<String, Integer> celtium$unmappedShapes =
+            new java.util.LinkedHashMap<String, Integer>();
 
     /** Describes a format the same way the dump does, so an unmatched shape can be put beside a known one. */
     private static String celtium$describe(VertexFormat format) {
@@ -141,6 +144,19 @@ public abstract class WorldVertexBufferUploaderMixin {
             if (formatId >= 0 && formatId < celtium$arrivalsByFormat.length) {
                 celtium$arrivalsByFormat[formatId]++;
                 celtium$arrivalTotal++;
+                if (formatId == 0) {
+                    // The largest category still going to OpenGL, identified rather than counted: the shapes that reach the
+                    // mapping and are not recognised, by their element signature. Format 0 means "no id", so the only way to
+                    // name what it is made of is to describe each arrival.
+                    StringBuilder signature = new StringBuilder();
+                    for (int i = 0; i < format.getElementCount(); i++) {
+                        signature.append(format.getElement(i)).append(' ');
+                    }
+                    String key = signature.toString().trim() + " | size=" + format.getSize()
+                            + " count=" + format.getElementCount();
+                    Integer seen = celtium$unmappedShapes.get(key);
+                    celtium$unmappedShapes.put(key, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+                }
                 if (celtium$arrivalTotal % 500 == 0) {
                     StringBuilder table = new StringBuilder();
                     for (int i = 0; i < celtium$arrivalsByFormat.length; i++) {
@@ -148,6 +164,10 @@ public abstract class WorldVertexBufferUploaderMixin {
                     }
                     System.out.println("[Celtium] CELTIUM_ARRIVALS total=" + celtium$arrivalTotal
                             + " byFormat=[" + table.toString().trim() + "]");
+                    for (java.util.Map.Entry<String, Integer> shape : celtium$unmappedShapes.entrySet()) {
+                        System.out.println("[Celtium] CELTIUM_UNMAPPED count=" + shape.getValue()
+                                + " shape=[" + shape.getKey() + "]");
+                    }
                 }
             }
             if (formatId == 0 && celtium$nullFormatDumps < 2) {
