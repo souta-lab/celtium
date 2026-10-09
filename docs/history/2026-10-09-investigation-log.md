@@ -4810,3 +4810,42 @@ bad readings, and worth keeping in view when a measurement is surprising.
 
 The tree is back at the measured-best configuration: **0.21%** against the reference, validation clean, fixture passing, with
 the five measurements and the driver's report recorded in the code where the decision is made.
+
+---
+
+## The sampler that is actually created, and a correction: the terrain pass does run
+
+The recorded next step was to log the sampler instead of inferring it from a configuration name, and to that was added a
+pair of counters for the two kinds of pass, because three rounds of inference had produced a claim about the terrain path
+that nothing had actually counted. Both answered immediately:
+
+```
+CELTIUM_SAMPLER size=0x0 levels=10 minFilter=0 magFilter=0 mipmapMode=1 minLod=0.0 maxLod=1.0 bias=0.0 nearest=true
+CELTIUM_SAMPLER size=0x0 levels=5  minFilter=0 magFilter=0 mipmapMode=1 minLod=0.0 maxLod=1.0 bias=0.0 nearest=true
+CELTIUM_SAMPLER size=0x0 levels=5  minFilter=1 magFilter=1 mipmapMode=1 minLod=0.0 maxLod=1.0 bias=0.0 nearest=false
+CELTIUM_SAMPLER size=0x0 levels=8  minFilter=0 magFilter=0 mipmapMode=1 minLod=0.0 maxLod=1.0 bias=0.0 nearest=true
+
+terrainPasses=1617   immediateOnlyPasses=546   vulkanPasses=2163
+```
+
+Two corrections, both to things this log asserted last round:
+
+- **the terrain pass does run.** 1617 of the 2163 passes are terrain passes, so the previous round's conclusion - drawn from
+  `refreshTextures()` never firing and no atlas being bound at an offer - was wrong about what it implied. What is true is
+  narrower: the method that mirrors the atlas is not reached on this path, while the terrain passes themselves are recorded
+  in bulk. The counters now exist precisely so that "is terrain exercised" is a number and not an inference;
+- **the off-by-one hypothesis for the mip chain is refuted by reading the blit**, not by another frame: `srcSubresource`
+  takes `mipLevel(level - 1)` and `dstSubresource` takes `mipLevel(level)`, so generation writes each level from its parent
+  and the base level is never overwritten.
+
+What survives is sharper than before. Our sampler genuinely differs from the one the driver reports for the same textures:
+ours is `NEAREST` with a **linear mipmap mode and a clamp of 1.0 over a five-to-ten level image**, while the reference is
+`NEAREST` over **one level with a clamp of zero**. So the renderer is averaging level 1 into every minified sample where the
+reference averages nothing - and yet sampling level 0 alone, which is what the reference does, measures 13.51% against 0.21%
+for the blend. The only reading that fits both numbers is that **our level 0 is not the reference's level 0** - in content or
+in alignment - and that blending in a 2x2 average of it happens to move the result closer to what the reference shows.
+
+That is a specific, checkable statement rather than another law, and the instrument for it is a comparison of the two level
+zeros themselves - a readback of the mirrored texture and of the GL texture it came from, off by default - rather than a
+sixth frame configuration. The frame itself is unchanged at the measured best: **0.21%** with validation clean and the
+fixture passing.

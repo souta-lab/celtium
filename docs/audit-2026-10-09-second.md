@@ -286,13 +286,15 @@ project already uses - so the form of the original expression was right. Measure
 gives 0.21-0.28%**, 4.0 (Minecraft's count) 7.37%, 8.0 (full chain) 8.77%, 0.0 13.51%. Deeper sampling diverges and the
 shallow clamp matches, which the mip story does not explain. `maxLod` is therefore pinned at the measured-best value with the
 law in the comment, the level count is computed once and shared, and the chain is capped at vanilla's four levels.
-**The driver answered, and the question moved.** The probe now runs on the offer path, reading the current binding: six
-textures, all of them `levels=1 maxLevel=0 minLod=0.0 maxLod=0.0 minFilter=9728 magFilter=9728 bias=0.0` (9728 =
-`GL_NEAREST`). So OpenGL samples one level, nearest, with no chain - and the **terrain atlas is never probed**, because the
-terrain path does not run in this scene, which means the earlier mip measurements were about six small sprites and not the
-atlas. Copying the reported parameters (one level, clamp 0) measures **13.51%** where the clamp of 1.0 measures **0.21%**, so
-the clamp is not what explains the difference. **Next:** log the sampler actually created (the fields passed to
-`vkCreateSampler`) rather than inferring it from a configuration name.
+**The driver answered, the sampler was logged, and a claim was corrected.** The sampler actually created is `minFilter` and
+`magFilter` NEAREST, `mipmapMode` LINEAR, `maxLod` 1.0 over a five-to-ten level image, where the texture the driver reports is
+NEAREST over **one level with a clamp of zero** - so the renderer averages level 1 in where the reference averages nothing,
+yet sampling level 0 alone measures 13.51% against 0.21% for the blend. The reading that fits both is that **our level 0 is
+not the reference's level 0**, in content or alignment. **Corrected:** the terrain pass **does** run - `terrainPasses=1617`,
+`immediateOnlyPasses=546` - so the previous round's inference from a silent diagnostic was wrong about what it implied; the
+pass counters now exist so that question is a number. The off-by-one mip hypothesis is **refuted** by reading the blit
+(`srcSubresource` is `level - 1`, `dstSubresource` is `level`). **Next:** compare the two level zeros (a readback of the
+mirror and of the GL texture), not a sixth frame configuration.
 
 ### S24 [P2] the record and the acceptance criteria need reworking
 Plan rows claim pixel-identical immediate rendering, removed deferral and verified cull/alpha capture, and the blockers

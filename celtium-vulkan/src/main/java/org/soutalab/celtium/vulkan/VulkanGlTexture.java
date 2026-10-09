@@ -62,6 +62,8 @@ public final class VulkanGlTexture {
 
     /** Number of mip levels of the current image; the OpenGL atlas is sampled with a mip chain. */
     private int mipLevels = 1;
+    private static final boolean SAMPLER_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
 
     /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
     /** The layout the image is actually in; barriers used to declare one the image was not in. */
@@ -386,6 +388,16 @@ public final class VulkanGlTexture {
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateSampler(device, create, null, handle), "vkCreateSampler(mirrored texture)");
             sampler = handle.get(0);
+            if (SAMPLER_DIAGNOSTICS) {
+                // What was actually handed to the driver, rather than what a configuration is called. The clamp's value is
+                // the variable every mip measurement has disagreed about, and this is the only place that knows it.
+                System.out.println("[Celtium] CELTIUM_SAMPLER size=" + this.width + "x" + this.height
+                        + " levels=" + this.mipLevels
+                        + " minFilter=" + create.minFilter() + " magFilter=" + create.magFilter()
+                        + " mipmapMode=" + create.mipmapMode()
+                        + " minLod=" + create.minLod() + " maxLod=" + create.maxLod()
+                        + " bias=" + create.mipLodBias() + " nearest=" + this.nearestFilter);
+            }
         }
     }
 

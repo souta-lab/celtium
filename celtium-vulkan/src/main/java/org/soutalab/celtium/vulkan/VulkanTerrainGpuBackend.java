@@ -449,6 +449,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int currentGroupBlendSrc = -1;
     private int currentGroupBlendDst = -1;
     private int blendFuncIgnored;
+    private int terrainPasses;
+    private int immediateOnlyPasses;
     private static final boolean TEXTURE_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
     private final java.util.Set<Integer> diagnosedTextures = new java.util.HashSet<Integer>();
@@ -1802,6 +1804,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Records a render pass containing nothing but the pending immediate groups. */
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
+        this.immediateOnlyPasses++;
         if (this.gpuStalled) {
             // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
@@ -1885,6 +1888,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
+                + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
                 + " textureDiagnostics=" + TEXTURE_DIAGNOSTICS + " diagnosed=" + this.diagnosedTextures.size()
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
@@ -2406,6 +2410,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                   CameraTransform camera,
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
+        this.terrainPasses++;
         if (this.gpuStalled) {
             // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
