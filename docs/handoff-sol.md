@@ -192,6 +192,14 @@ colorFormat=0x25`）のに、**fragmentが受ける `v_Color` は地形帯でち
 (5) GPU保持値も `colour=0xff59bd91` で正しい。それでも `a_Color` だけが2値になる。
 次の一手は**属性を `R8G8B8A8_UINT` として読み生の整数を出力**し、shaderが受けるバイトを正規化の曖昧さなしに確定させること。
 
+**属性offsetプローブ（このターンの決定的測定）**: `-Dceltium.vulkan.colourAttrOffset` で a_Color の読み出しoffsetを
+振ると、offset 0/16/24 は layout どおりのデータ（位置/UV/lightのバイト）を返し、**offsetは正しく効いている**。
+一方 **offset 12（宣言値）だけが可視頂点で2値 (26,26,26)/(255,255,255)**。私が採取した「section #252 の先頭頂点」
+(色(43,62,17,255)・material=3) は可視頂点（material=1）とは**別のsection**で、以前の「可視sectionの色」という
+読みは誤りだった（docsに訂正済み）。GPU readbackは最初のdrawについて colour=0xff59bd91 を返しており、
+arena上のその頂点は正しい色を持つ。readbackをdraw単位に拡張中（1フレームで複数slotを読む経路が未完、
+`-Dceltium.vulkan.vertexDiagnostics=true` にゲート済み・通常runでは走らない）。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

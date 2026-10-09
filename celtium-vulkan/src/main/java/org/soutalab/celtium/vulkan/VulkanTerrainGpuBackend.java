@@ -119,6 +119,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int verticesLogged;
     private boolean uniformsLogged;
     private long readbackBuffer;
+    private final long[] readbackOffsets = new long[8];
+    /** The region the remembered reads come from; a frame's first draws all belong to the same one in practice. */
+    private RegionResources readbackFrom;
+
     private long readbackMemory;
     private long readbackMapped;
     private boolean submissionPending;
@@ -363,7 +367,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             submitted = true;
             this.passSubmissions++;
             if (this.readbackPending) {
-                readBackAndLog();
+
             }
         } catch (RuntimeException | LinkageError error) {
             this.passErrors++;
@@ -2716,6 +2720,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void updateTimings() {
+        // The vertex readback is read once per run, after a frame that recorded its copies: this is the frame boundary.
+        if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots > 0) readBackAndLog();
         // The immediate window count is per frame. The measurement that forced the limit: the first window of a frame
         // left the framebuffer at 150.46 before and after, and the second turned it to 0.0 with the GL state restored
         // unchanged, which is what blackened the captured frame.
@@ -3352,7 +3358,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
             VulkanMultiDrawBatch batch = (VulkanMultiDrawBatch) cached.getBatch();
 
-            if (this.readbackSlots == 0) {
+            if (this.readbackSlots < 8) {
+                // One slot per pass, so the readback covers the batch each pass actually draws rather than only the
+                // first one: the visible terrain mixes passes, and a colour that is wrong in one of them has to be
+                // attributable to that pass.
                 this.readbackOffset = (long) batch.baseVertex(0) * this.commonVertexStride;
                 this.readbackRegion = resources;
             }
@@ -3408,6 +3417,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
                 vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(command), 1, firstIndex,
                         batch.baseVertex(command), 0);
+                if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < 8) {
+                    // Only the address is remembered here: a buffer copy is illegal inside a render pass, so the copies
+                    // are issued after vkCmdEndRenderPass for every remembered draw.
+                    this.readbackOffsets[this.readbackSlots] = (long) batch.baseVertex(command) * this.commonVertexStride;
+                    this.readbackFrom = resources;
+                    this.readbackSlots++;
+                }
                 this.lastDrawCommands++;
             }
 
@@ -3438,11 +3454,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.timestampPasses.put(timestampSlot, pass);
             this.timestampSlots++;
         }
-        // The debug readback copies a buffer, which is only legal outside a render pass instance.
-        if (!this.readbackDone && this.readbackSlots < 8 && this.readbackRegion != null) {
-            recordReadback(this.readbackRegion, this.readbackOffset, this.readbackSlots);
-            this.readbackSlots++;
-            this.readbackPending = true;
+        // A buffer copy is only legal outside a render pass instance, so every remembered draw is copied here.
+        if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackFrom != null) {
+            for (int slot = 0; slot < this.readbackSlots; slot++) {
+                recordReadback(this.readbackFrom, this.readbackOffsets[slot], slot);
+            }
         }
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
     }

@@ -271,7 +271,32 @@
 **属性を `VK_FORMAT_R8G8B8A8_UINT` として読み、生の整数をそのまま出力**して、
 shaderが実際に受け取るバイトを正規化の曖昧さなしに確定させる。
 
-**次の一手（具体・更新）**: 順に切り分ける。
+**属性offsetプローブ（このターンの決定的な測定）**: `a_Color` の読み出しoffsetをプロパティで振り、
+「offsetが効いているか」と「その場所のデータは何か」を分離した（地形帯の色数で判定）。
+
+| offset | 色数 | 上位の値 | 解釈 |
+|---|---|---|---|
+| 0（位置float） | 225 | (0,0,63/80/78) | 位置のバイト ✅ |
+| 8（compactの色offset） | 116 | (0,0,77/93/89) | 位置のバイト |
+| **12（宣言された色offset）** | **2** | **(26,26,26) / (255,255,255)** | **描画頂点の色バイトが2値** |
+| 16（UV float） | 457 | (50,34,162) 等 | UVのバイト ✅ |
+| 24（light uint） | 3 | (1,28,0) / (1,252,0) | lightのバイト ✅（material=1の頂点） |
+
+- **offsetは正しく効いている**（0/16/24は layout どおりのデータを返す）。
+- しかし **offset 12 のバイトは可視頂点で2値**しかない。一方 offset 24 の light バイトは正常に変化する。
+- 私が採取した「section #252 の先頭頂点」は material=3・色(43,62,17,255) だったが、可視頂点は material=1 で
+  **別のsection**だった（`sectionFirstColor` は section 索引で pass 非依存に上書きされるため、以前の
+  「可視sectionの色」という読みは**誤り**。ここに訂正する）。
+- 既存readback（`baseVertex×stride` の位置をGPUから読み戻す）は最初のdrawについて
+  `colour=0xff59bd91 light=0xe000fc01 pos=(0.0,4.0,0.0)` を返しており、**arena上のその頂点は正しい色**を持つ。
+- readbackをdraw単位（最大8）に拡張したが、1フレーム内で複数slotを読む経路がまだ揃わず1件のみ。
+  計器は `-Dceltium.vulkan.vertexDiagnostics=true` にゲートし、通常runでは一切走らない。
+
+**次の一手（具体・更新）**: readbackを**可視draw全て**で取り（1フレーム分をまとめて読む経路を完成させる）、
+色が2値になる頂点の**arena上の実バイト**を確定させる。そこで初めて
+「uploadが壊れている」か「shader側の読みが壊れている」かが決まる。
+
+（旧メモ・切り分け手順:
 1. pipeline作成時に**5属性すべての (location, format, offset)** と stride をprintして、宣言と実データの対応を確認。
 2. draw時の `vertexOffset` / `firstIndex` / 使用pipeline をprintし、読んでいる頂点が想定のものかを確認
    （誤ったvertexOffsetなら「別の頂点」を読み、色が2値に見え得る）。

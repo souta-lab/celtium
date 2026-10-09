@@ -169,7 +169,18 @@ public final class VulkanTerrainPipeline {
     };
 
     private static final int[] COMPACT_ATTRIBUTE_OFFSETS = { 0, 8, 12, 16, 20 };
-    private static final int[] VANILLA_ATTRIBUTE_OFFSETS = { 0, 12, 16, 24, 28 };
+    private static final int[] VANILLA_ATTRIBUTE_OFFSETS = { 0, colourAttributeOffset(), 16, 24, 28 };
+
+    /**
+     * Where the vanilla-like layout's {@code a_Color} is read from, normally byte 12.
+     * <p>
+     * Overridable so one run can answer whether the offset is honoured at all: reading the position bytes instead must
+     * change the frame, and if it does not, the attribute description is being ignored rather than reading data that
+     * happens to be wrong.
+     */
+    private static int colourAttributeOffset() {
+        return Integer.getInteger("celtium.vulkan.colourAttrOffset", 12).intValue();
+    }
 
     /**
      * The two vertex layouts this build can draw. The game picks one through the "compact vertex format" option,
