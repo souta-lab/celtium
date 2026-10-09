@@ -1662,3 +1662,31 @@ passes, no validation message, run PASSED.
 That closes the second of the three items the plan listed as unported around the frame's lifetime. The renderer now has
 evidence for resource reload and world switch on both GPUs; what remains in that group is resize, which this harness cannot
 exercise, and the present question, which is about validation-layer agreement rather than about the picture.
+
+---
+
+## The two messages reproduce with the probe alone, once - so they are about the semaphore shape
+
+Narrowing this round was cheap and decisive. Core-only validation still reports them (27 messages with the frame path, so
+they are core rather than synchronization-validation findings), and the **probe on its own** - one acquire, one clear, one
+present, no blit, no bridge, no frame, no repetition - reports **exactly the same two**:
+
+```
+present probe: cleared and presented image 0 (0)
+PROBE-ONLY validation messages: 2
+  vkQueueSubmit(): pSubmits[0] performs a layout transition on presentable VkImage ..., but VkSemaphore ...
+                   signaled by image acquire operation was not waited on
+  vkQueuePresentKHR(): pPresentInfo->pImageIndices[0] was acquired with a semaphore ... that has not since been waited on
+```
+
+That removes everything the frame path does from the explanation: not the blit, not the bridge, not the number of presents.
+What is left is the shape of the semaphore use, and this project already has a data point for a **different shape that was
+clean**: this same probe measured zero validation messages in earlier rounds, when it submitted through `endCommands` -
+that is, with **no semaphores at all** - and presented waiting the **acquire** semaphore directly. The current shape waits
+the acquire in the submission and signals a render-finished semaphore that the presentation waits instead.
+
+So the trigger is the shape introduced when the blit needed the acquire to be waited, and the next experiment is one change
+rather than a program: make `clearAndPresent` use the earlier shape again and confirm the count returns to zero. If it does,
+the two shapes differ in exactly one respect and the frame path needs the correct one - a submission that writes the
+acquired image genuinely must wait the acquire - with the layer's disagreement about that being the real question, rather
+than anything this code does wrong that has not already been ruled out.
