@@ -15,6 +15,7 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
     private static final boolean LIGHT_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.lightDiagnostics");
     private static int lightSamplesPrinted;
+    private static int colorSamplesPrinted;
 
     public static final int STRIDE = 32;
 
@@ -52,6 +53,13 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
             LWJGL.memPutFloat(ptr + 0, vertex.x);
             LWJGL.memPutFloat(ptr + 4, vertex.y);
             LWJGL.memPutFloat(ptr + 8, vertex.z);
+            if (LIGHT_DIAGNOSTICS && colorSamplesPrinted < 8) {
+                colorSamplesPrinted++;
+                int c = vertex.color;
+                System.out.println("[Celtium] CELTIUM_VERTEX_COLOR rgba=(" + ((c >> 24) & 0xFF) + ","
+                        + ((c >> 16) & 0xFF) + "," + ((c >> 8) & 0xFF) + "," + (c & 0xFF) + ")"
+                        + " hex=" + Integer.toHexString(c) + " rdh=" + Integer.toHexString(vertex.rdhFactor));
+            }
             LWJGL.memPutInt(ptr + 12, vertex.color);
             LWJGL.memPutFloat(ptr + 16, encodeTexture(vertex.u));
             LWJGL.memPutFloat(ptr + 20, encodeTexture(vertex.v));

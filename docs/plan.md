@@ -70,8 +70,13 @@ runs) moves the frame from 27.09 to **26.68** and the terrain band from 97.6/90.
 a change that only affects the extremes of the coordinate range. The **occlusion term** moves the frame by **0.02** when
 disabled, so `m_color.a` is 1.0 and there is no double application - eliminated. The **vertex colour** is the answer: disabled,
 the terrain band jumps to **215/222** against the reference's 131, so it carries a factor of about 0.46 where the reference
-implies 0.61, which is the ~25% residual exactly. **Next:** diff what the mesh builder packs into that colour against the
-pinned upstream checkout, which is vanilla-equivalent by construction.
+implies 0.61, which is the ~25% residual exactly. **Next:** the colour path was diffed against the pinned upstream checkout and is **identical** (differences: this round's
+diagnostic only), and the attribute interpretation matches the GL declaration (offset 12, four normalised unsigned bytes,
+`VK_FORMAT_R8G8B8A8_UNORM`). An instrument at the write reports the packed colour as **`0xFF808080`** - red full, green and
+blue half, alpha half - a concrete instance of the 0.46 the frame implied. Against that, disabling the fragment shader's
+alpha multiply measured **no change** (26.66 vs 26.68), and both cannot be true of one code path: the likely explanation is
+that **the fragment module the pass loads is not the file being edited**, which is a one-line check and comes first. Also
+open: why green and blue are half while red is full, which is a question about what feeds `ChunkVertexEncoder.Vertex.color`.
 Earlier note: **Process defect found and fixed in the work, not yet in the build:** the terrain shaders ship as **checked-in SPIR-V**
 (`celtium-vulkan/src/main/resources/.../spirv/*.spv`) and the GLSL in `src/main/shaders/` is **not** a build input, so shader
 edits do not reach the running game unless `glslangValidator` is re-run by hand. Two rounds of shader "fixes" and their

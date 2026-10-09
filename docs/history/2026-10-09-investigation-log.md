@@ -5393,3 +5393,35 @@ which is vanilla-equivalent by construction and is sitting in the work tree.
 
 The vertex colour multiply is restored, its SPIR-V recompiled and verified (`8592`), and the tree is back at the configuration
 that measured **26.68 / 70.49%** with validation clean.
+
+---
+
+## The packed vertex colour is 0xFF808080: half in green, blue and alpha
+
+The colour path was diffed against the pinned upstream checkout first, and it is **identical** - `ChunkColorWriter`,
+`ChunkVertexEncoder` and `VanillaLikeChunkVertex` differ only by this round's diagnostic. The attribute interpretation was
+checked against the GL declaration too and matches: `a_Color` is offset 12, four unsigned bytes, normalised, and the Vulkan
+side declares `VK_FORMAT_R8G8B8A8_UNORM` at the same offset; the light coordinate and the RDH factor match the same way. So
+the pipeline reads the bytes as the mesh builder wrote them, and the difference is in the values themselves. An instrument at
+the write says what those are:
+
+```
+CELTIUM_VERTEX_COLOR rgba=(255,128,128,128) hex=ff808080 rdh=0
+CELTIUM_VERTEX_LIGHT raw=15728640 block=0 sky=240 encoded=61440
+```
+
+Red is full, **green and blue are half, and alpha is half**. For an unoccluded face at noon the colour should be close to
+(255, 255, 255, 255), so this is a concrete, quantitative instance of the ~0.46 the frame comparison implied: a factor of one
+half is in these bytes.
+
+It also leaves a contradiction that is recorded rather than smoothed over. The fragment shader multiplies by the alpha channel
+as well - `diffuseColor.rgb *= m_color.a` - and with alpha 0.5, disabling that multiply should have brightened the frame by
+about a factor of two. It measured **26.66 against 26.68**: no change at all. Both observations cannot be true of the same
+code path, and the most likely explanation is the one that has cost this thread three rounds already - **the fragment module
+that the pass actually loads may not be the file that was edited**. That is a one-line check (`SpirvShaders` vs the pipeline's
+pass setup) and it comes before any further experiment.
+
+Also unresolved and recorded: why green and blue are half while red is full. A grey face at noon has no reason to differ
+between the three channels, so this looks less like a shade factor and more like a colour that was packed from a
+half-initialised or mis-scaled value - which is a question about what feeds `ChunkVertexEncoder.Vertex.color`, not about what
+the shader does with it.
