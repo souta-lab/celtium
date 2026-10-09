@@ -6278,3 +6278,23 @@ is narrower than it looked: the interop capture gate is **not in `ValidationClie
 without an early return - so it lives in the harness or another fixture class, and the interop branch's own tick equality
 (`worldTicks == 190`, a compound condition) still needs the same guard. Recorded with that pointer rather than as "the fixture
 defects are open".
+
+---
+
+## Every measurement now carries its provenance
+
+The audit's S24 lists what a record needs before a measurement can be trusted, and the largest part of it is now mechanical
+rather than a matter of care: the runtime lock records **which commit** produced the run, **whether the tree was dirty** and
+which files were, the **effective configuration** (the JVM arguments, tweakers, main class and main jar that actually reached
+the process, rather than the flags someone meant to pass) and the **fixture**, identified by name and SHA-256 rather than left
+among the mods.
+
+Before this, a run's lock said which libraries and mods were present and nothing about the code: the same lock would have been
+produced by a committed tree and by one with a half-applied edit, which is exactly the confusion that cost this project two
+rounds when shader edits were not in the running build. Now the lock answers it, and the answer is in the same file as the
+fixture hash the verdict belongs to.
+
+What S24 still lists and this round did not do: the plan rows that claim more than has been verified, `nativeTerrainVerified`
+being a counter condition rather than real-path evidence, the shader-source/SPIR-V sync check (the generated-artefact problem
+the build now solves from the other side), and the driver in the lock - which the capabilities file already records, and which
+should be referenced rather than duplicated.

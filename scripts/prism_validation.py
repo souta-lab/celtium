@@ -88,10 +88,27 @@ def inspect(instance, java):
         java = Path(config["General"]["JavaPath"])
     java = java.resolve()
     java_version = subprocess.run([str(java), "-version"], capture_output=True, text=True, check=True)
+    # Provenance (audit S24): which commit, whether the tree was clean, and which flags actually reached the JVM. Without
+    # these a measurement cannot be traced back to the code and configuration that produced it.
+    def git(*args):
+        try:
+            out = subprocess.run(["git", *args], capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+            return out.stdout.strip() if out.returncode == 0 else None
+        except OSError:
+            return None
+
+    dirty = git("status", "--porcelain")
     report = {
         "scope": "runtime-lock; no rendering, compatibility or performance claim",
         "sourceInstance": str(instance),
         "platform": platform.platform(),
+        "git": {
+            "head": git("rev-parse", "HEAD"),
+            "subject": git("log", "-1", "--pretty=%s"),
+            "dirty": bool(dirty),
+            "dirtyFiles": dirty.splitlines() if dirty else [],
+        },
+        "effectiveConfig": {"jvmArgs": jvm_args, "tweakers": tweakers, "mainClass": main_class, "mainJar": str(main_jar)},
         "java": {"executable": str(java), "version": (java_version.stderr + java_version.stdout).strip()},
         "components": patches,
         "libraries": [],
@@ -112,7 +129,12 @@ def inspect(instance, java):
         report["libraries"].append({"coordinate": lib["name"], "sha256": digest(path), "size": path.stat().st_size})
         classpath.append(str(path))
     for path in sorted((instance / "minecraft/mods").glob("*.jar")):
-        report["mods"].append({"file": path.name, "sha256": digest(path), "size": path.stat().st_size})
+        entry = {"file": path.name, "sha256": digest(path), "size": path.stat().st_size}
+        # The fixture is what produces the acceptance verdict, so it is identified rather than left among the mods (S24).
+        if "validation" in path.name:
+            entry["role"] = "validation-fixture"
+            report["fixture"] = {"file": path.name, "sha256": entry["sha256"]}
+        report["mods"].append(entry)
     return report, java, classpath, main_class, tweakers, jvm_args, prism / "assets", assets["id"]
 
 
