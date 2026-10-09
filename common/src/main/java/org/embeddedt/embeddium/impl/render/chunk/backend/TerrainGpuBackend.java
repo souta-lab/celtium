@@ -189,6 +189,10 @@ public interface TerrainGpuBackend {
     default void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
     }
 
+    /** Announces a dynamic texture's write, which arrives as a flat pixel array. */
+    default void announceDynamicTexture(int[] pixels) {
+    }
+
     /** Announces a whole-texture animated write with the pixels it is writing. */
     default void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
     }

@@ -8633,3 +8633,29 @@ So the named next step is exact: **hook `DynamicTexture.updateDynamicTexture`**,
 directly held light-map mirror can be filled from them like everything else. The ids being `-1` at that moment in the run is a
 separate observation worth keeping: the backend learns which GL textures the light map and atlas are later than the first
 animation frames, which is why the direct-mirror path matches sometimes and not others.
+
+---
+
+## The dynamic-texture hook is in and fires once, for a one-by-one texture
+
+The mixin on `DynamicTexture.updateDynamicTexture` is written, compiles, and is safe - it reads the pixel array reflectively
+(the accessor's name is not stable across the mapping, and a mixin that fails to compile cannot announce anything) and it keeps
+the contract every texture hook here keeps: a failure does nothing. The run is clean, the fixture passes and the acceptance is
+intact.
+
+It fired **once**, for a **1x1** texture:
+
+```
+CELTIUM_DYNAMIC_ANNOUNCE bound=21 size=1x1
+dynamicTextureFills = 1     inPlaceRefreshes = 1012 (unchanged)
+imageFilledMirrors = 3619   descriptorSets = 1
+```
+
+So the light map does not update through this method either. The hook is worth keeping - it is the right interception point for
+dynamic textures and it costs nothing when it does not apply - but the light map is now the third path to escape being hooked:
+not `func_110989_a`, not `func_147955_a`, and not `updateDynamicTexture`.
+
+What that leaves is an **enumeration** rather than another guess, and it is the tool that has answered this question every time:
+print, once, every texture the renderer mirrors together with where its invalidation came from. Three named hooks have failed to
+catch the light map; the fourth attempt should start by listing what actually calls `invalidateTexture` for the light map's id,
+rather than by naming a fourth method on the strength of what the code appears to do.

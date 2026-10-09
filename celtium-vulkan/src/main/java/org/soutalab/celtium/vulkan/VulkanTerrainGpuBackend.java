@@ -461,6 +461,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int animatedImageFills;
     private int directMirrorFromAnnouncement;
     private int animatedAnnounceDiagnostics;
+    private int dynamicTextureFills;
+    private int dynamicAnnounceDiagnostics;
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
@@ -768,6 +770,41 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void setDepthTest(boolean enabled) {
         this.immediateState.depthTestEnabled(enabled);
         this.immediateStateCalls++;
+    }
+
+    /**
+     * Announces a dynamic texture's write, which arrives as a flat pixel array.
+     * <p>
+     * The light map's write does not pass through either hooked texture utility method, so this is the only announcement it ever
+     * makes. The id and the size are asked of GL because the method that performs the write takes neither.
+     */
+    public void announceDynamicTexture(int[] pixels) {
+        if (pixels == null) {
+            return;
+        }
+        if (this.textureRegistry == null) {
+            this.textureRegistry = new VulkanTextureRegistry(this.context);
+        }
+        int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        int width = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+        int height = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
+        if (bound == 0 || width <= 0 || height <= 0 || pixels.length < width * height) {
+            return;
+        }
+        int[][] rows = new int[height][width];
+        for (int row = 0; row < height; row++) {
+            System.arraycopy(pixels, row * width, rows[row], 0, width);
+        }
+        if (this.textureRegistry.announceFullPixels(bound, rows, width, height, 0, 0)) {
+            this.animatedImageFills++;
+            this.dynamicTextureFills++;
+        }
+        if (this.dynamicAnnounceDiagnostics < 3) {
+            this.dynamicAnnounceDiagnostics++;
+            System.out.println("[Celtium] CELTIUM_DYNAMIC_ANNOUNCE bound=" + bound + " size=" + width + "x" + height);
+        }
     }
 
     /** Called by the upload hook with the image the game is uploading, so the mirror need not read GL back. */
@@ -2348,6 +2385,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
+                + " dynamicTextureFills=" + this.dynamicTextureFills
                 + " mirrorsCreatedByAnnouncement="
                 + (this.textureRegistry != null ? this.textureRegistry.createdByAnnouncement() : 0)
                 + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
