@@ -6475,3 +6475,28 @@ messages** on either driver and no drops of any format. The inventory row moves 
 
 What is left on OpenGL is unchanged and named: sky, clouds, weather, water, the framebuffer chains, postprocess and the final
 composite.
+
+---
+
+## Sky, clouds and the water surface found: RenderGlobal's stride-20 quads, unrecognised by the format mapping
+
+The inventory's remaining world-pass gap - sky, clouds, weather, the water surface - had no counter that named it: the
+refusal reason on a GUI run ends at `format_0_not_in_celtium.vulkan.immediateFormats`, and format 0 means the upload carried
+**no recognised VertexFormat**, because the id mapping's first branch is `format == null`. Turning that into a named call site
+took a one-shot stack dump on the first two such uploads:
+
+```
+CELTIUM_NULLFORMAT stride=20 vertices=4
+stack = WorldVertexBufferUploader.offerBatch <- WorldVertexBufferUploader.func_181679_a
+     <- Tessellator.func_78381_a <- RenderGlobal...
+```
+
+So the content is **stride 20** - five floats, `POSITION` (3) plus `TEX` (2) - drawn as **four-vertex quads** by
+**`RenderGlobal` through the Tessellator**: the sky, the clouds and the water surface, exactly the candidates the inventory
+named. It is not a guard refusing them, the way the GUI was; the format mapping simply does not recognise the shape, so the
+batches arrive with id 0 and are declined before acceptance.
+
+That names the work precisely, and it is more than a flag: the immediate path has pipelines for `POSITION_COLOR`,
+`POSITION_TEX_COLOR`, the block format, the particle format and the UI quad, but **none for a position-texture vertex without
+a colour**, so taking this content needs a new pipeline as well as a mapping entry. Recorded as the next step, with the
+evidence above rather than a hypothesis about which pass is missing.

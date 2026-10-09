@@ -40,6 +40,18 @@ public abstract class WorldVertexBufferUploaderMixin {
     /** Layout ids, decided by comparing element lists rather than class names or strides. */
     private static int celtium$compositeDumps;
 
+    private static int celtium$nullFormatDumps;
+
+    private static String celtium$stack() {
+        StackTraceElement[] trace = new Throwable().getStackTrace();
+        StringBuilder text = new StringBuilder();
+        for (int i = 1; i < Math.min(trace.length, 14); i++) {
+            text.append(trace[i].getClassName()).append('.').append(trace[i].getMethodName())
+                    .append(':').append(trace[i].getLineNumber()).append(" <- ");
+        }
+        return text.toString();
+    }
+
     private static final Map<VertexFormat, Integer> celtium$formatIds =
             Collections.synchronizedMap(new WeakHashMap<VertexFormat, Integer>());
 
@@ -99,6 +111,14 @@ public abstract class WorldVertexBufferUploaderMixin {
                 return;
             }
             int formatId = celtium$formatId(format);
+            if (formatId == 0 && celtium$nullFormatDumps < 2) {
+                // Something uploads vertices with no VertexFormat at all, and the immediate path cannot take it because a
+                // null format has neither a stride nor a pipeline. Printing where it comes from turns "format 0 is
+                // refused" into a named call site (sky, clouds, weather and the water surface are the candidates).
+                celtium$nullFormatDumps++;
+                System.out.println("[Celtium] CELTIUM_NULLFORMAT stride=" + stride + " vertices=" + vertices
+                        + " stack=" + celtium$stack());
+            }
             int mode = celtium$drawMode(buffer);
             // The call that decides everything. It was lost when a dead branch was cleaned out of this method, and
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
