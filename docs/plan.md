@@ -86,9 +86,10 @@ pixels agree (`glPixel=64,128,191`, `glError=0`, `passed=true`) - so the path a 
 content works end to end. It runs **on by default** and validation is **silent**: the `READ_AFTER_WRITE` hazard this check
 exposed was solved by the validation layer's own diagnosis - the pass now ends in `COLOR_ATTACHMENT_OPTIMAL` and the barrier
 performs the only transition to `TRANSFER_SRC_OPTIMAL`, because a transition made by `vkCmdEndRenderPass` is not something a
-later barrier can synchronize. What remains is mechanical: create a format-1 pipeline for
-this pass, bind it with the group's mesh and push constants, draw, copy back through the verified path, and stop refusing those
-batches |
+later barrier can synchronize. **The format-1 pipeline for that pass is now built and validated** - created with the target, before any batch is taken, which
+is how validation came to reject the first attempt for passing `GL_ONE_MINUS_SRC_ALPHA` (771) where Vulkan's enum belongs. What
+remains is mechanical: carry the render target in the group tuple, bind the pipeline with the group's mesh and push constants,
+draw, copy back through the verified path, and stop refusing those batches |
 | **Texture animation** | **Vulkan mirror, verified** | `CELTIUM_ANIM directMirrorRefreshes=89` with `atlasGlId=9` - the animated atlas re-uploads reach the mirror the terrain samples |
 | **Resource reload** | **Verified** | `reloadedAtTick=100`, exit 0, validation clean, fixture PASSED |
 | **World switch (leave and rejoin)** | **Verified** | `leftWorldAtTick=100 rejoinedAtTick=100`, teardown releases 4 then 2 resources, validation clean |

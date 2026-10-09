@@ -445,6 +445,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
     private final java.util.Map<Long, VulkanOffscreenTarget> offTargetTargets = new java.util.HashMap<Long, VulkanOffscreenTarget>();
     private int offTargetTargetsCreated;
+    /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
+    private final java.util.Map<Long, VulkanImmediatePipeline> offTargetPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediatePipeline>();
     private final java.util.Map<Long, java.util.concurrent.atomic.AtomicInteger> offTargetBatchesByTarget =
             new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
     private int offTargetRefusals;
@@ -1243,8 +1246,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
                 if (viewport[2] > 0 && viewport[3] > 0) {
                     try {
-                        this.offTargetTargets.put(this.currentRenderTarget,
-                                VulkanOffscreenTarget.create(this.context, viewport[2], viewport[3]));
+                        VulkanOffscreenTarget target =
+                                VulkanOffscreenTarget.create(this.context, viewport[2], viewport[3]);
+                        // A pipeline is bound to its render pass, and this pass is not the main one, so the immediate format-1
+                        // pipeline has to be built for it. Created here, with the target, so the pipeline - the part of the
+                        // drawing half that has caught this project out before - is proved clean before any batch is taken.
+                        // Vulkan's blend factors, not GL's: 771 is GL_ONE_MINUS_SRC_ALPHA, and validation rejected it here -
+                        // which is exactly what creating the pipeline before taking any batch is for.
+                        this.offTargetPipelineCache.put(this.currentRenderTarget,
+                                VulkanImmediatePipeline.create(this.context, target.renderPass(), true,
+                                        org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
+                                        org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false));
+                        this.offTargetTargets.put(this.currentRenderTarget, target);
                         this.offTargetTargetsCreated++;
                     } catch (RuntimeException | LinkageError error) {
                         record("off-target target could not be created: " + describe(error));

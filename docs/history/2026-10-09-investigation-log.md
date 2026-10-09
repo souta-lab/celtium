@@ -7042,3 +7042,30 @@ The tree is clean and the chain is still proven on the run, so what is left is m
 offscreen pass, bind it with the group's mesh and push constants, draw, copy back, and stop refusing those batches. Nothing in
 that list is unknown - which is the point of having spent the previous two rounds on the resources and the synchronization
 instead of on the drawing.
+
+---
+
+## The offscreen pipeline, and validation catching a GL constant in a Vulkan enum
+
+A pipeline belongs to the render pass it was built for, so taking the off-target content needs a second format-1 pipeline
+built against the offscreen pass. It is created with the target, before any batch is taken, and that order paid for itself
+immediately:
+
+```
+severity=ERROR vkCreateGraphicsPipelines(): pCreateInfos[0].pColorBlendState->pAttachments[0].dstColorBlendFactor (771)
+does not fall within the begin ...
+```
+
+**771 is `GL_ONE_MINUS_SRC_ALPHA`.** The blend factors were written from GL habit rather than from Vulkan's enums, and
+validation rejected the pipeline at creation. That is precisely the failure the last two rounds were arranged to produce: the
+resources and the pipeline are built and checked **before** any batch is taken, so the error surfaces as a pipeline that never
+existed rather than as a frame that looks wrong. The fix is one line - the Vulkan enums - and the run is clean again:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+offTargetTargets = 1   nativeTerrainVerified=True   terrainPasses=1623   glDrawsCancelled=561
+```
+
+The self-test still proves the chain on the same run, and the off-target batches are still GL's: what has been added is the
+pipeline those batches will be drawn with, verified, with the flush integration - which needs the group tuple to carry its
+render target - as the next step rather than this one.
