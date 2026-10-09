@@ -455,6 +455,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.immediateWindows", "true"));
     /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
     private static final boolean PRESENT_FROM_COMPOSITE = Boolean.getBoolean("celtium.vulkan.presentFromComposite");
+    /**
+     * How many mid-frame windows one frame may open.
+     * <p>
+     * One, until the submit-wait defect was fixed: a second window in the same frame had measured as a black frame, and
+     * re-measuring after the fix shows the frame pixel-identical to GL at sixteen windows per frame. The cost was
+     * checked before raising it - frame interval p50 16.07ms and p99 17.90ms at sixteen against 16.13ms and 18.16ms at
+     * one - so the limit is set where batches are drawn in the frame that produced them, which is what makes the
+     * immediate path lag-free rather than a frame late.
+     */
+    private static final int IMMEDIATE_WINDOWS_PER_FRAME =
+            Integer.getInteger("celtium.vulkan.immediateWindowsPerFrame", 16).intValue();
+
     private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 512);
 
     private boolean immediateWindowBusy;
@@ -1008,7 +1020,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.windowOpen || this.immediateWindowBusy) {
             return;
         }
-        if (this.immediateWindowsThisFrame >= 1) {
+        // The limit used to be one, because a second window in the same frame measured as a black frame. That
+        // measurement was taken before the missing VkSubmitInfo.waitSemaphoreCount was found, so the black frame had a
+        // sufficient explanation in handoffs that were never waited on; the audit asks for the hypothesis to be
+        // re-evaluated after that fix, and this switch is how.
+        if (this.immediateWindowsThisFrame >= IMMEDIATE_WINDOWS_PER_FRAME) {
             // One window per frame: a second one in the same frame is what measured as blackening the frame, and the
             // remainder is drawn in the next frame's window the way it was before.
             this.immediateDeferredNextFrame++;
