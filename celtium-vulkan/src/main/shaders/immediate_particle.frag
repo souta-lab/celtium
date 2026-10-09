@@ -13,8 +13,8 @@ layout(push_constant) uniform PushConstants {
 } celtium;
 
 void main() {
-    float u = (float(v_LightCoord.x >> 8) + 0.5) / 256.0;
-    float v = (float(v_LightCoord.y >> 8) + 0.5) / 256.0;
+    float u = (float(v_LightCoord.x >> 8) + 8.0) / 256.0;
+    float v = (float(v_LightCoord.y >> 8) + 8.0) / 256.0;
     vec4 textureColour = texture(u_Texture, v_TexCoord);
     vec4 colour = textureColour * v_Color * texture(u_Lightmap, vec2(u, v));
     colour.a = textureColour.a * v_Color.a;

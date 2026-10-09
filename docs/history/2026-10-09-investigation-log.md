@@ -2787,3 +2787,29 @@ uses it: the lightmap values, the flat integer varying, or the shader's sampling
 
 That narrows the next step to one pipeline and two candidates, and the audit's own list already names the area - lightmap
 handling - as one it is examining.
+
+---
+
+## The lightmap bias hypothesis is refuted, and this time the artifact was verified first
+
+The particle pipelines sample the lightmap with `(coordinate + 0.5) / 256`, where Minecraft's own fixed pipeline uses
+`(coordinate + 8) / 256` - a half-texel difference that would show up as subtle lighting shifts at light boundaries, which
+is what a 1.3% pixel difference in a lit scene looks like. Both the particle and block fragment shaders were changed to the
+vanilla bias and the scene re-measured:
+
+| Weather and particles (hidden GUI, same revision) | mean | over 8 | pixels over 8 |
+|---|---|---|---|
+| before the bias change | 0.75 | 1.32% | 12,157 |
+| **after the bias change** | **0.76** | **1.31%** | **12,086** |
+| noise floor | 0.06 | 0.23% | - |
+
+Unchanged, so the bias is **not** the cause and the hypothesis is refuted. Unlike several earlier rounds, that conclusion
+rests on a verified artifact rather than on an assumption: the SPIR-V inside the built mod jar was compared by hash with
+the file on disk, and the file on disk with a fresh compile of the edited source. All three are identical, so the run
+genuinely used the changed shader - which is the check this session has needed and skipped before, when an edit that never
+landed was read as a result.
+
+What remains for the particle difference is the same narrowed set, now with one candidate removed: the lightmap *texture*
+the pipeline binds (whether the mirror holds what GL's lightmap has, and whether it is current), the flat integer varying
+carrying the coordinate, and the sampling of the particle atlas. The verification habit is what should carry forward: hash
+the shipped artifact, then conclude.
