@@ -1862,7 +1862,33 @@ CELTIUM_ACCEPTED total=1500 byFormat=[0:0 1:7 2:0 3:0 4:0 5:137 6:856 7:0 8:0 9:
   **「この場面の 27 画素は、我々のファネルを通らない GL 描画（display list など）と地形深度の関係から出ている」**。
   ファネル外の GL 描画を数える計器が無いので、**そこはまだ測っていない**（推測で埋めない）。
 
-**次の一手**: (1) **ファネル外の GL 描画**を数える/特定する（例: `GlStateManager.callList` による display list 描画、
+**ファネル外の正体＝display list（ソースで確定）**:
+
+- 三人称（プレイヤーモデルが描かれる場面）と GUI ありの場面で**到着計器**を読んだが、どちらも
+  **format 8 は到着 0、format 4（ITEM）も 0**（format 9 は 12〜72 と極少）。
+- **ソースが答えを示している**:
+  - `net.minecraft.client.model.ModelRenderer` は
+    「*The GL display list rendered by the Tessellator for this model*」というコメントを持ち、
+    描画は **`GlStateManager.callList(this.displayList)`**（140/153/186 行）。つまり
+    **entity・player・item・TESR のモデルはすべて display list で描かれる**。
+  - `net.minecraft.client.renderer.RenderGlobal` は **`glSkyList2` / `glSkyList` / `starGLCallList`** を作り、
+    **`callList`** で描く（1351/1448 行）。**空と星も display list**。
+- **したがって**: これらの描画は **`WorldVertexBufferUploader` を通らない**ので、我々のファネルには
+  **原理的に到達しない**。GL が描き、その深度テストは GL の深度バッファ（＝書き戻した地形の深度）に対して行われる。
+  **深度の書き戻しが必要な理由はこれ**で、spider 場面の 27 画素もこの系統（GL が描くものと地形深度の関係）から出る。
+- **format 9 が 12〜72 だけ到着する理由**: display list は**記録時**（`glNewList` の中）には Tessellator を通るので
+  アップローダに見えるが、**再生時（`callList`）は見えない**。だから「モデル部品の数だけ」の少数が到着する。
+  この説明は到着数がモデル部品数と同程度であることと一致する。
+- **coverage への意味（優先順位5）**: entity・item・TESR・空・星は
+  「未検証」ではなく、**現在の介入点では到達不能**である。native に移すには
+  **display list の経路（`GlStateManager.callList` か、`ModelRenderer` の記録時）に介入する**必要がある。
+  これは作業量の見積もりが変わる発見である（「描画を1つずつ移す」のではなく「**モデル描画の入口を1つ足す**」）。
+
+**次の一手**: (1) `GlStateManager.callList` と `ModelRenderer` の記録経路を読み、**どちらに介入するのが最小か**を決める
+（記録時に頂点を捕まえられれば、再生時の display list を native のバッファに置き換えられる）、(2) 小さな対象
+（例: プレイヤーモデル1体）で native 化を試し、`format 9` の到着と画像で確認する、(3) 空・星も同じ入口で扱えるかを見る。
+
+**（旧メモ）** 次の一手: (1) **ファネル外の GL 描画**を数える/特定する（例: `GlStateManager.callList` による display list 描画、
 `RenderGlobal` の sky/cloud/star 経路）— これが 27 画素の出所の候補、(2) 実際に entity が出る場面
 （蜘蛛を**外から**見る三人称など）を用意して format 8 の到着を確認する、(3) それでも 27 画素が説明できない場合は、
 深度返却を残したまま「未説明」として記録する。
