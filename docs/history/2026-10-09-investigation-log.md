@@ -4895,3 +4895,36 @@ than kept as a measured accident.
 Two process notes stay with this, because both cost a round: a probe's placement must be verified by reading where it is, not
 by trusting the patch that was meant to put it there; and a diagnostic that reports through a capped list can look silent
 when it is merely truncated, which is why this one prints to stdout.
+
+---
+
+## Mirroring GL's own levels: written, measured, wrong in one specific way, and turned off behind a flag
+
+The fix the atlas answer pointed at was implemented: the level reader took a level parameter, the copy took a level, and
+`uploadFromGlTexture` was to copy each of OpenGL's levels instead of generating a chain by blitting the whole image. Measured
+on the reference scene:
+
+```
+validation: exit 1 | messages 10 | fixture PASSED
+image: 12.66%      (the configuration it replaces: 0.21-0.28%)
+```
+
+Both failures are mine and both are specific. The image still had the **size-derived chain** - ten levels for a 512x512 atlas
+- while OpenGL reported five, and the copy loop walked all ten, so it read levels that do not exist in GL. And the tail
+transition to `SHADER_READ_ONLY` had been made conditional on "the last level", which in the non-mirroring mode is level 0
+after the chain is generated, so it stopped running and left images in a transfer layout - which is what the ten validation
+messages were.
+
+The mirroring is now **off behind a flag**, the measured-best configuration is restored, and the one genuine bug the attempt
+exposed is fixed: the tail transition runs for the last mirrored level **or** for level 0 when the chain is generated, so both
+modes end in the layout they must. Verified: **exit 0, validation clean, 0 messages**, fixture passing, image **0.23%**.
+
+Two things are worth keeping from this, and the second is the more important:
+
+- turning the fix on needs the image created with **exactly the count GL reports** - recreating when the count differs and not
+  only when the size does - and the copy loop capped by that count. Both are named, small, and now written down where the flag
+  is;
+- the run with the **broken tail transition** measured **0.20%**, the best number this project has ever recorded, while
+  validation reported **ten errors** and the atlas was never transitioned to `SHADER_READ_ONLY`. An image comparison can
+  improve while the renderer is objectively invalid, and only the validation layer said so. That is the standing rule of this
+  work - a number improving is not evidence of correctness - with a concrete example attached to it.
