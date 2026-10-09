@@ -2615,3 +2615,37 @@ is what turns the next measurement into evidence.
 The audit's B and C are recorded in the audit file with the code facts they rest on: the present path ignores the bridge's
 semaphores (off by default, which is why it was not visible), and the comparison tool keys on luminance rather than the
 maximum channel, so it cannot see a single-channel difference at all.
+
+---
+
+## The audit's independent count says replacement is not happening
+
+After the `cancellable = true` fix, the counters in the debug line read zero while the scene stayed at 0.00, so the audit's
+own instrument was built rather than argued about: a second injector on the same method at `RETURN`, counting how often the
+vanilla upload body runs to completion, printed beside the number of times the head injector was entered.
+
+```
+celtium uploads: offers=10000 glUploads=10028
+```
+
+Read plainly: the injector runs ten thousand times, and **GL's upload body completes about as often**. Cancelling a batch is
+supposed to skip that body; it is not being skipped. So the account this log has carried - that accepted batches are drawn
+by Vulkan instead of GL - is **wrong**, and the agreement at 0.00 between the "immediate path on" and "immediate path off"
+runs is explained by GL drawing the same content in both.
+
+The same run's debug line reads `immediateOffered=0 immediateTaken=0`, which cannot both be true and ten thousand calls
+reaching the backend unless the line reports fields other than the ones the path increments. That is a reporting defect of
+the kind this session has hit at least four times, and it is the second half of what has to be fixed before any counter in
+this project is quoted again.
+
+What this does to the earlier record is what the audit said it would do, and the history now states it in its own voice:
+**every comparison in this log was an experiment in which GL drew the content**, so none of them is evidence that the
+Vulkan path renders anything correctly. The two things that remain sound are the audit's findings about the code itself -
+the missing `cancellable`, the unused bridge semaphores in the present path, the comparator's luminance mask - and the
+measurements taken from primary sources rather than from images, such as `ItemRenderer` using `POSITION_TEX` outside the
+acceptance mask.
+
+The next step is the one the audit asked for and this round could not finish: print what the injector decided, from the
+channel that reaches the log, and read the counters from the fields the code increments. Until replacement demonstrably
+happens - GL uploads falling to zero for accepted batches - no image comparison in this project means anything about
+Vulkan.

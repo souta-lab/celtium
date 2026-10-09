@@ -47,12 +47,33 @@ public abstract class WorldVertexBufferUploaderMixin {
     // this injector's broad catch swallowed that exception, so the original GL draw ran for every batch the backend had
     // already accepted. The Vulkan path and the GL path drew the same geometry, the images matched, and nothing in the
     // comparisons could tell the difference. Counts of "accepted" batches were counts of intent, not of replacement.
+    /** How often the vanilla upload body ran to completion, which is the independent GL count. */
+    private static int celtium$glUploads;
+    /** How often this injector was entered at all, whatever it then decided. */
+    private static int celtium$offers;
+
+    /**
+     * Counts the vanilla body finishing.
+     * <p>
+     * The audit's instrument: with the head injector cancelling accepted batches, this runs only for batches that went to
+     * GL. Reading it beside the offer count says whether replacement actually happens, which no image comparison could -
+     * the earlier comparisons had GL drawing everything because the cancellation was never effective.
+     */
+    @Inject(method = "func_181679_a", at = @At("RETURN"), require = 0)
+    private void celtium$countGlUpload(BufferBuilder buffer, CallbackInfo info) {
+        celtium$glUploads++;
+        if (celtium$offers % 500 == 0 && celtium$offers > 0) {
+            System.out.println("celtium uploads: offers=" + celtium$offers + " glUploads=" + celtium$glUploads);
+        }
+    }
+
     @Inject(method = "func_181679_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$offerBatch(BufferBuilder buffer, CallbackInfo info) {
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend == null || buffer == null) {
             return;
         }
+        celtium$offers++;
         boolean accepted = false;
         try {
             VertexFormat format = celtium$vertexFormat(buffer);
