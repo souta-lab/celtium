@@ -739,6 +739,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Boolean.getBoolean("celtium.vulkan.immediateWindowSamples");
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
+    /** Groups left in the queue because they belong to another render target (audit A32). */
+    private int immediateGroupsKeptForOtherTargets;
+    private int immediateGroupsOffTargetRetired;
+    /** Off-target passes not begun because their target had no pending geometry. */
+    private int offTargetPassesSkippedEmpty;
     private int immediateFlushNoPipeline;
     private String immediateLastFlushError = "none";
     /**
@@ -1801,6 +1806,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // draw was cancelled, so anything accepted and not drawn is lost geometry.
                 record("immediate flush snapshot at 500 accepted: flushes=" + this.immediateFlushes
                         + " drawn=" + this.immediateGroupsDrawn + " discarded=" + this.immediateGroupsDiscarded
+                        + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                         + " noPipeline=" + this.immediateFlushNoPipeline
                         + " deferredNextFrame=" + this.immediateDeferredNextFrame
                         + " refusedWindowBudget=" + this.immediateRefusedWindowBudget
@@ -2317,12 +2323,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * This is the interruption the structural finding called for. The body mirrors {@link #recordImmediateOnlyPass}, which
      * already does exactly this shape for the frame's pass: begin, set the viewport and scissor, draw the pending groups, end.
      */
+    /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
+    private boolean hasGroupsForTarget(long targetIdentity) {
+        for (Object[] group : this.immediateGroups) {
+            if (((Long) group[7]).longValue() == targetIdentity
+                    && !((VulkanDynamicMesh) group[0]).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void recordOffscreenPass(MemoryStack stack, long targetIdentity) {
         VulkanOffscreenTarget target = this.offTargetTargets.get(Long.valueOf(targetIdentity));
         VulkanImmediatePipeline pipeline = this.offTargetPipelineCache.get(Long.valueOf(targetIdentity));
         if (target == null || pipeline == null || this.gpuStalled) {
             return;
         }
+        if (!hasGroupsForTarget(targetIdentity)) {
+            // Nothing to draw for this target. Beginning the pass would clear it and the copy-back would then write that empty
+            // clear into the game's own GL texture - which is what made the copy-back counter look like proof of drawing when
+            // it was counting empty passes (audit A32).
+            this.offTargetPassesSkippedEmpty++;
+            return;
+        }
+        int drawnBefore = this.immediateGroupsDrawn;
         target.begin(this.commandBuffer, 0.0f, 0.0f, 0.0f, 1.0f);
         org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
         viewport.get(0).x(0.0f).y(0.0f).width(target.width()).height(target.height()).minDepth(0.0f).maxDepth(1.0f);
@@ -2338,8 +2363,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.offscreenPipelineOverride = null;
         }
         target.end(this.commandBuffer);
-        if (target.glTextureId() != 0) {
+        if (this.immediateGroupsDrawn > drawnBefore && target.glTextureId() != 0) {
+            // Only content that was actually drawn is copied back, and only that counts: the counter means "a target with
+            // geometry was written into the game's texture", not "a copy was recorded" (audit A32).
             target.copyBackToGlTexture(this.commandBuffer, target.glTextureId());
+            this.offTargetCopiedBack++;
         }
     }
 
@@ -2422,6 +2450,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
+                + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
@@ -3856,8 +3885,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Counted rather than silently returned: an accepted batch whose GL draw was cancelled must be drawn
                 // here, so a null pipeline means geometry is being lost, not deferred.
                 this.immediateFlushNoPipeline++;
-                this.immediateGroupsDiscarded += this.immediateGroups.size();
-                discardImmediateGroups();
+                if (onlyTarget == null) {
+                    this.immediateGroupsDiscarded += this.immediateGroups.size();
+                    discardImmediateGroups();
+                }
+                // With a target filter this pass must leave everything else alone: the off-target pass runs before the main
+                // one, and discarding here would take the main pass's accepted geometry with it (audit A32).
                 return;
             }
             if (this.immediatePipeline == null) {
@@ -4063,7 +4096,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateGroupsDiscarded += this.immediateGroups.size();
             record("immediate flush failed: " + describe(error));
         } finally {
-            discardImmediateGroups();
+            // Retire only what this pass actually handled. The off-target pass runs before the main pass and filters to one
+            // target; discarding every group there destroyed the main pass's accepted geometry - accepted, counted, and then
+            // thrown away before it could be drawn (audit A32). The main pass keeps the old behaviour.
+            if (onlyTarget == null) {
+                this.immediateGroupsDiscarded += this.immediateGroups.size();
+                discardImmediateGroups();
+            } else {
+                int kept = 0;
+                java.util.Iterator<Object[]> groups = this.immediateGroups.iterator();
+                while (groups.hasNext()) {
+                    Object[] group = groups.next();
+                    if (((Long) group[7]).longValue() == onlyTarget.longValue()) {
+                        groups.remove();
+                    } else {
+                        kept++;
+                    }
+                }
+                this.immediateGroupsOffTargetRetired += 1;
+                if (kept > 0) {
+                    this.immediateGroupsKeptForOtherTargets += kept;
+                }
+            }
         }
     }
 

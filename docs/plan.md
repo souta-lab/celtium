@@ -9,7 +9,7 @@
 
 | 条件 | 状態 | 欠落・根拠 |
 |---|---|---|
-| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **未達成** | terrainと即時系pipelineはnative。全block/state・全entity/TESR・GUI/font/HUD・粒子・sky/cloud/weather・水・overlay・dimension・FBO/postprocess・spectator効果は未実装。比較worldは固定flatのみ |
+| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分（native passは存在、coverageは未検証）** | **nativeで描いているもの**: terrain、即時系の各family（block/item/particle/position/position_tex/tex_color/composite=format 9）、GUI/font/HUD・hand（即時系経由）、particles、sky/cloud/water等のformat-6コンテンツ（`outsideWorldPassAccepted` 数千件）。**未検証のcoverage**: 全block/state、全entity/TESR、破壊/selection overlay、dimension、FBO/postprocess、spectator 3視点。**未実装**: vanilla ShaderGroup、entity outline |
 | (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成** | `-Dceltium.vulkan.withoutGlIdentity` は**identity照会を省略する診断**であり、GL contextなし起動・描画ではない。GLは実際にcontextを作り、bridgeのない描画はGL fallbackで完走し得る。通常frameのGL read（MODELVIEW/CURRENT_COLOR/fog/bound texture/FBO/viewport照会）が残る |
 | (c) native swapchain frameが実window/compositor出力へ到達 | **未確認** | markerがGL framebufferに無いことは画面到達の証明ではない。x11grab一方式の失敗から「環境上確認不能」とは断定しない。capture方法の調査を残す |
 | (d) AMD/Intelで必要場面と失敗復旧、監査P0/P1を明示受入で閉じる | **部分** | 通常hybrid fixtureはAMD/Intelで exit 0 / validation message 0 / PASSED（有効な局所受入）。P0 A01–A03は修正・受入済み。A04–A31は下表 |
@@ -21,14 +21,14 @@
 |---|---|---|---|
 | **A01** | model-viewの最初3列のみ送り平行移動が消える | **修正済・受入済** | writerが `projection*modelView` を1行列として送り、**全7即時/UIシェーダ**が `u_ProjectionMatrix * vec4(a_Position,1.0)`。列を再構築するシェーダは**0**。SPIR-Vはビルド時にGLSLから生成（committed .spvなし）のでjarと整合。`immediate_position.vert` の再構築残りも撤去（writerが列をゼロ化したため全頂点が平行移動点へ収束していた）。run: exit 0 / clean / message 0 / PASSED |
 | **A02** | `int[][]` を行配列として読む | **修正済・受入済** | `data[level][y*levelWidth+x]` の契約に合わせ、level 0 を**平坦**に読む。level別寸法は「書き込みレベルの寸法をpatch寸法として渡す」契約に統一。動的textureの平坦 `int[]` 経路は別契約として分離 |
-| **A03** | 部分更新なのに `UNDEFINED` でatlas全体とmipを破棄 | **修正済・受入済** | 全面uploadと部分更新を分離。patchは**レベル別に記録した現在layout**から遷移し、**level 0のみ**の範囲、mip chainを記録しない、patch自身が戻し遷移。全面uploadの末尾範囲は元の全chain（これが全レベルをsampledに揃える）。run: exit 0 / clean / message 0 / PASSED |
+| **A03** | 部分更新なのに `UNDEFINED` でatlas全体とmipを破棄 | **修正済・専用受入は未確認** | 全面uploadと部分更新を分離。patchは**レベル別に記録した現在layout**から遷移し、**level 0のみ**の範囲、mip chainを記録しない、patch自身が戻し遷移。**通常fixtureがcleanなだけでは patch外保存の証明にならない**ため、2つの独立target/groupのCPU契約確認と色pattern受入が必要（未実施） |
 | **A04** | 初回patchだけで全面未初期化のmirrorを作る | **是正側は修正済・全面供給は未解決** | `hasFullContent()` を持ち、全面内容の無いミラーは受理経路がdescriptorを作らず拒否（`partialMirrorRefusals`）。AMD実測では**0件＝このfixtureはpatch先行の順序を作らない**。atlas stitch時の全面データ保持・供給は残る |
 | **A05** | patch寸法でmip chainを作り直す | **修正済** | A03の修正でpatchはmip chainを記録しない。sprite単位mipは `MIRROR_GL_MIPS` 経路がGLの各levelをコピーする（全atlas blitを正解とせず、遠景・透明境界での比較は残る） |
 | **A06** | 保持画像とpatchの競合、hash skip | **修正済** | patch成功時に `lastPixelHash` を無効化し、patch後の同一内容全面uploadが重複skipされないようにした。CPU shadowとresource generationでの全面管理は残る |
 | **A07** | metadata・転送成功の扱い | **修正済** | hashを転送**後**に確定、`imageUploads` は成功時のみ、`Entry.width/height` が画像に追随（寸法を可変に）、skipは `imageUploadsSkipped` として別計数。GL ID再使用の検証は残る |
 | **A08** | 受理前失敗でpending meshに頂点が残る | **未解決** | preflightをappend前に置くかrollback。失敗時はGL/VKの一方のみ |
 | **A09** | 受理後の消失を全形式で数えていない | **部分** | particleのみ `postAcceptDroppedGroups`。item/block/textured分岐は未集計。「drop=0」は全描画を証明しない |
-| **A10** | `offTargetDrawn` は実描画ではない | **計器は分離・主張を撤回** | `offTargetOffered`（意図）と `offTargetAccepted` に分離。実測は offered=208 / **accepted=0** / copiedBack=1957。**FBO完了の証拠は copy-back**（記録へ入った内容にしか走らない）。target別の順序・clear・depth・resize・sampleは未確認 |
+| **A10** | `offTargetDrawn` は実描画ではない | **計器分離・主張撤回** | `offTargetOffered`（意図）/ `offTargetAccepted`（受理位置、現状0＝計器の位置が違う）/ `offTargetCopiedBack`（実描画の書き戻しのみ）に分離。**「copy-backが証拠」という前版の記述は撤回**（A32参照）。target別の順序・clear・depth・resize・sampleは未確認 |
 | **A11** | format 2（POSITION_TEX_COLOR）は既定でGL | **既知・未対応** | `DEFAULT_ACCEPTED="1,3,4,5,6,7,8,9"`、実測 `2:0`。screen compositeとGUIをformatだけで同一視しない |
 | **A12** | state modelとpipelineの不一致 | **未解決** | alpha enable/func、depth func、separate alpha blend、color mask、scissor、texture matrix。pipelineはLEQUAL/ADD等を固定 |
 | **A13** | current color/alphaの欠落（group keyにも無い） | **未解決** | POSITIONはRGBのみでalpha=1、POSITION_TEXは白固定。tint/alphaの再現証拠なし |
@@ -50,6 +50,7 @@
 | **A29** | 根拠なく診断し定数と文書を反復 | **規律として受領** | vanilla優先。各roundは具体実装か意思決定に必要な限定検証。同一仮説を定数変更・budget延長で反復しない |
 | **A30** | 容量と証拠保全 | **規律として受領** | pinned baseline・失敗再現・受入代表runをhash付きで保存。`.celtium-work/audit-2026-10-09-third` は監査者の再比較証拠として**削除しない** |
 | **A31** | plan/scope/旧監査の矛盾蓄積 | **本表で解消** | 現在の完了条件と優先順を本表1つに持つ。scopeは実測に限定。旧24項目は下の再判定による |
+| **A32** | off-target passが他targetのgroupまで破棄し、空targetのclearをGL FBOへ書戻す | **修正済・受入済** | `drawPendingImmediate(onlyTarget)` は**そのtargetのgroupのみretire**し、他は保持（`immediateGroupsKeptForOtherTargets`）。pipeline無しの早期経路も同様。`recordOffscreenPass` は**一致groupが0ならpassを開始しない**（`offTargetPassesSkippedEmpty`）ので空clearをGL所有FBOへ書かない。copy-backは**実描画があった時のみ**実行・計数 |
 
 ## 3. 旧24項目の再判定（第3回監査による）
 
@@ -98,8 +99,10 @@
 |---|---|---|
 | `offTargetOffered` | off-targetへ**提示**したbatch（target生成前） | ならない |
 | `offTargetAccepted` | 受理位置で数えたbatch（現状は0: 経路違いの計器） | 単独ではならない |
-| `offTargetCopiedBack` | offscreenへ**記録され描かれた**内容のgame textureへの書き戻し | **なる**（copy-backは記録された内容にしか走らない） |
+| `offTargetCopiedBack` | **実描画があった**targetの書き戻しのみ（A32修正後） | なる（`offTargetPassesSkippedEmpty` と対で読む。修正前の1957は空targetのclear/copyだった） |
 | `imageFilledMirrors` | announced image/patchで**実際にピクセルが動いた回数**（修正後） | 単独ではならない（resource数ではない）。実測: 実転送113 + skip 3448 = 旧3629は約30倍の過大表示だった |
 | `imageUploadsSkipped` | 内容が同一で転送しなかった回数（修正後） | ならない |
 | `outsideWorldPassAccepted` | accept判定**前**に増える | ならない |
+| `offTargetPassesSkippedEmpty` | 一致groupが0でpassを開始しなかった回数（A32修正後） | ならない（空clearを書かないことの証拠） |
+| `immediateGroupsKeptForOtherTargets` | 別targetのため保持したgroup数（A32修正後） | ならない（保持の証拠） |
 | `acceptedByFormat` | format別の受理数（`2:0` = format 2は既定でGL） | 単独ではならない |

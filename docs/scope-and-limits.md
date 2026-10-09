@@ -101,7 +101,7 @@ pixel-identity.
 | 完了条件(a) 全vanilla描画＋合成・present | **未達成**。terrainと即時系のみnative。比較worldは固定flat |
 | 完了条件(b) GL contextなしの起動・描画 | **未達成**。`withoutGlIdentity` は**identity照会省略の診断**であり、GL contextなし描画ではない |
 | 完了条件(c) 実window出力への到達 | **未確認**。capture方法の調査を残す（x11grab一方式の失敗で断定しない） |
-| FBOのVulkan完了 | **copy-backのみが証拠**。`offTargetOffered=208` は意図、`offTargetAccepted=0`、`offTargetCopiedBack=1957` |
+| FBOのVulkan完了 | **未達**。A32修正後は `offTargetPassesSkippedEmpty=2488` / `offTargetCopiedBack=0` で、**以前の1957は空targetのclear/copyだった**。off-targetの受理は0のままで、target別の順序・clear・depth・resize・sampleは未確認 |
 | format認識 | format 2は認識されるが**既定maskではGLに残る**（`2:0`）。受理数は描画の証明ではない |
 | texture供給 | 全面upload・patch経路とも実装。`imageFilledMirrors` は**適用回数**でresource数ではない |
 | 画像一致 | 68.81%（旧baseline対地形）と 0.267/255・0.40%（同一Celtiumの切替）は**最新版全体の一致率ではない** |
@@ -109,3 +109,9 @@ pixel-identity.
 | 監査P0 | A01（平行移動）・A02（平坦texel）・A03（patchの保存）は**修正済・受入済**（exit 0 / clean / message 0 / PASSED） |
 | 保留 | JEI大規模budget反復は**延期**。影mod/shader packは**本体完成後**（vanillaのShaderGroup・spectator効果は本体機能） |
 | 証拠保全 | `.celtium-work/audit-2026-10-09-third` は監査者のpinned再比較証拠であり**削除しない** |
+
+## 追補（A32・2026-10-09）
+
+- native passの**存在**と**coverageの検証**を分ける。nativeで描いているのは terrain、即時系family（block/item/particle/position/position_tex/tex_color/composite）、GUI/font/HUD・hand、particles、sky/cloud/water等のformat-6コンテンツ。**未検証**は全block/state・全entity/TESR・破壊/selection overlay・dimension・FBO/postprocess・spectator 3視点。**未実装**はvanilla ShaderGroupとentity outline。
+- off-target passは**一致groupのみretire**し、他targetのgroupは保持する（A32）。空targetでは passを開始しない。
+- A03は**通常fixture cleanのみでは閉じない**。2つの独立target/groupのCPU契約確認と色pattern受入が必要。
