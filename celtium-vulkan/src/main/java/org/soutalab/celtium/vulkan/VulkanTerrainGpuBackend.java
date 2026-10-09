@@ -2739,7 +2739,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (!live.contains(entry.getKey())) {
                 // Same rule as delete(): a region's buffers and pipeline are released only once the GPU has finished
                 // with them, because eviction happens while frames are being submitted.
-                settleGpu("region eviction");
+                if (!settleGpu("region eviction")) {
+                    // Stalled: the region stays for process exit rather than being released while the GPU may still
+                    // reference it. The loop's remaining entries are left alone for the same reason.
+                    break;
+                }
                 entry.getValue().delete();
                 iterator.remove();
             }
@@ -2889,7 +2893,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // vkDestroyBuffer/-Pipeline/-DescriptorPool/-RenderPass/-Framebuffer while a command buffer was in use, on the
         // reload and world-leave paths. Ending the queue's work first is the difference between freeing a resource and
         // pulling it out from under the GPU.
-        settleGpu("backend delete");
+        if (!settleGpu("backend delete")) {
+            // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
+            return;
+        }
         // Teardown: the device has been settled above, so anything still retired can be destroyed now.
         int drained = VulkanRetireQueue.flush();
         if (drained > 0) {
@@ -3817,7 +3824,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // framebuffer, and the validation layer caught the first attempt doing exactly this -
         // "vkDestroyFramebuffer(): can't be called on VkFramebuffer ... that is currently in use by VkCommandBuffer".
         // The same rule as delete() and region eviction, applied to the path a resize takes.
-        settleGpu("frame target recreation");
+        if (!settleGpu("frame target recreation")) {
+            // Fail closed: without a settled GPU the old target cannot be released, so no new one is built either.
+            return false;
+        }
         destroyFramebuffer();
         if (this.frameTarget != null) {
             this.frameTarget.delete();
@@ -4471,13 +4481,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * submissions from several command buffers and from the bridge's handoffs are all outstanding - and the timeout is
      * the same one the frame waits use.
      */
-    private void settleGpu(String reason) {
+    private boolean settleGpu(String reason) {
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
             // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
+            // It reports rather than throws: the exception reached Minecraft's render loop and killed the client on the
+            // crash screen, which the idle-failure injection measured as exit 255 with no report at all.
             this.stalledTeardownSkips++;
-            throw new IllegalStateException("cannot settle/retire a stalled GPU: " + reason);
+            record("not releasing resources after a stall: " + reason);
+            return false;
         }
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
@@ -4489,6 +4502,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (millis > 200L) {
             record("settleGpu(" + reason + ") waited " + millis + "ms for the device");
         }
+        return true;
     }
 
     private boolean waitForIdle() {

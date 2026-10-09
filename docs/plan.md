@@ -567,6 +567,16 @@ mid (136.5, 140.9, 130.4) / near (133.1, 140.0, 131.2)、verdict は exit 0 / va
 exit 0 / mid (136.5,140.9,130.4) / PASSED / target受入 exit 0 に復帰。**ホットパスへの前置ガードは早期returnと
 両立しない**という教訓として残す。待機タイムアウト経路は引き続き未解決（`settleGpu` の teardown 経路が次の候補）。
 
+**settleGpu の例外を撤去（このターン）**: `settleGpu(reason)` は停止中に例外を投げていた（呼び出し元が資源を
+壊さないための手段だった）が、その例外も render loop に到達してクラッシュしていた。**boolean を返す**形にして
+`false` のとき呼び出し側が破壊的操作を**スキップ**するようにした（region eviction は break、frame target recreation は
+`return false`、backend delete は `return`）。資源はプロセス終了まで残す＝元コメントの意図どおり。
+
+しかし待機タイムアウト注入は**依然 exit 255（16.7s でクラッシュ）**。現在の最後の障害は
+`beginCommands()` の `pending backend command buffer did not complete`（`submissionPending` の wait 失敗時に
+throw している）。正しい縮退点は**外側の GL intercept で false を返してGLに描かせる**ことで、
+`beginCommands` に boolean を返させる（5呼び出し元）か、intercept 側で捕捉して計数するのが次の一手。
+
 **修正（submit失敗・解決済み）**: frame を開く経路は4系統（terrain render / present bridge / composite / present）あり、
 失敗時に開いたまま残っていた。`VulkanFrameTarget` を**自己修復**にした:
 

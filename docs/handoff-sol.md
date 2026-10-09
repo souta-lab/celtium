@@ -321,7 +321,12 @@ geometry pending` が render loop へ到達してクラッシュ→**計数し�
 **この過程で通常経路を一度壊した**: 早期returnより前に beginCommands をガード付きで呼ぶと buffer が recording のまま
 残り、通常runが exit 255（`cannot settle/retire a stalled GPU: region eviction`）になった。パッチは撤回済みで
 通常runは exit 0 / mid (136.5,140.9,130.4) / PASSED / target受入 exit 0 に復帰。教訓: ホットパスへの前置ガードは
-早期returnと両立しない。未解決は `settleGpu` の teardown 経路が次の候補。
+早期returnと両立しない。`settleGpu` は boolean を返す形にし、false のとき呼び出し側が破壊的操作をスキップするようにした
+（region eviction は break / frame target recreation は return false / backend delete は return）。資源はプロセス
+終了まで残す。しかし待機タイムアウト注入は**依然 exit 255（16.7s）**で、最後の障害は `beginCommands()` の
+`pending backend command buffer did not complete`（`submissionPending` の wait 失敗時に throw）。正しい縮退点は
+**外側の GL intercept で false を返してGLに描かせる**こと。次は `beginCommands` に boolean を返させるか、
+intercept 側で捕捉して計数する。
 
 **失敗経路（submit失敗・解決済み）**: frame を開く4系統のうち失敗時に開いたまま残るものがあったため `VulkanFrameTarget` を
 自己修復にした（beginFrame は前frameを放棄して計数／endFrame は放棄済みなら no-op／abandonFrame はGPU作業なし）。
