@@ -81,8 +81,21 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Immediate batches are drawn by Vulkan and still invisible: the world projection is set through direct GL
-  calls.** The projection Minecraft draws the world with is built by `org.lwjgl.util.glu.Project.gluPerspective` and
+- **Direct-GL capture: what works and what does not (measured).** The `frustum` channel was added (the backend can
+  now mirror `GL11.glFrustum`'s matrix as well as the GLU helper's perspective), and the GLU `Project` Mixin stays.
+  The next attempt - a Mixin on **LWJGL's own `org.lwjgl.opengl.GL11`** to catch `glMatrixMode`, `glLoadIdentity`,
+  `glFrustum`, `glOrtho`, `glMultMatrixf`, `glTranslatef`, `glRotatef`, `glScalef`, `glPushMatrix` and
+  `glPopMatrix` where they happen - is **not viable here**: the client exits with code 255 about 5.7 s in, while the
+  mod list is still being searched, before any of the injectors can report. Mixing into the GL API class itself is
+  therefore ruled out for this runtime, and the compatibility layer has to capture *Minecraft's call sites* instead
+  (Mixins on the classes that call the GL matrix functions, the way the GLU helper is already captured) or use the
+  wrappers where they are used. The Mixin was reverted, the run is green again (PASSED, `immediateTaken=589`,
+  `immediateFlushes=543`, no validation message), and the immediate quad is still invisible - the projection reaches
+  the mirrored state only through the GLU path, while `EntityRenderer` still loads its identity through `GL11`.
+  Next step: capture those `EntityRenderer` call sites (targeted, `require = 0`), which is the same technique and the
+  concrete form stage 6 takes for mods that bypass the wrappers.
+
+- **Original note (superseded by the finding above).** The projection Minecraft draws the world with is built by `org.lwjgl.util.glu.Project.gluPerspective` and
   installed with `GL11.glFrustum` - it never passes through `GlStateManager`, so the state wrapper's Mixin cannot see
   it. A Mixin now targets that GLU class **by name** (`@Mixin(targets = "org.lwjgl.util.glu.Project")`, so no build
   dependency on LWJGL 2's utility jar is added) and multiplies the mirrored projection stack by the same frustum

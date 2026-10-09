@@ -87,6 +87,13 @@ public interface TerrainGpuBackend {
     default void perspective(float fovDegrees, float aspect, float near, float far) {
     }
 
+    /**
+     * Mirrors {@code GL11.glFrustum(left, right, bottom, top, near, far)}, the call the GLU perspective helper ends
+     * in and the one a mod reaches for directly when it builds its own projection.
+     */
+    default void frustum(double left, double right, double bottom, double top, double near, double far) {
+    }
+
     default void popMatrix() {
     }
 

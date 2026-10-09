@@ -449,6 +449,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     @Override
+    public void frustum(double left, double right, double bottom, double top, double near, double far) {
+        double width = right - left;
+        double height = top - bottom;
+        double depth = far - near;
+        if (width == 0.0 || height == 0.0 || depth == 0.0) {
+            return;
+        }
+        float[] matrix = new float[16];
+        matrix[0] = (float) ((2.0 * near) / width);
+        matrix[5] = (float) ((2.0 * near) / height);
+        matrix[8] = (float) ((right + left) / width);
+        matrix[9] = (float) ((top + bottom) / height);
+        matrix[10] = (float) (-(far + near) / depth);
+        matrix[11] = -1.0f;
+        matrix[14] = (float) (-(2.0 * far * near) / depth);
+        int mode = this.immediateState.matrixMode();
+        this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        this.immediateState.multiplyMatrix(matrix);
+        this.immediateState.matrixMode(mode);
+        this.immediateStateCalls++;
+    }
+
+    @Override
     public void multiplyMatrix(java.nio.FloatBuffer buffer) {
         this.immediateState.multiplyMatrixBuffer(buffer);
         this.immediateStateCalls++;
