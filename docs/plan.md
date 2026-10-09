@@ -161,6 +161,31 @@
 | handoff費用 | CPU時間は ~135µs/handoff（通常と postprocess で同一）＝律速ではない。GPU時間は未計測 | `p69-normal` / `p69-postprocess` |
 | 未解決 | GPU側handoff時間の計測、`switchUseShader` の他shaderでの受入、残差3%の要因、GL-free frame（条件b） | — |
 
+## 7.6 native present経路の現状（完成条件 b/c に直結）
+
+`VulkanSwapchain` には present の証拠機構が既にある（`-Dceltium.vulkan.presentMarker` でマーカー色を提示、
+`-Dceltium.vulkan.presentReadback` で提示画像を読み戻して平均を記録、`lastPresentSucceeded` /
+`lastPresentedMean` を保持）。今回 `presentFromComposite` + `presentMarker` + `presentReadback` を有効にして実測:
+
+| 指標 | 結果 |
+|---|---|
+| present 自体 | **`presentFailures=0`**（提示は成功している） |
+| swapchain | `swapchainOutOfDate=0`、`presentMode=1` |
+| fixture verdict | **PASSED**（地形は正常） |
+| **validation** | **exit 1 / validationClean=false／`VUID-vkCmdDraw-None-09600` ×6** |
+
+- **新しい欠陥**: present 経路で **記述子のイメージレイアウト不一致**（`VUID-vkCmdDraw-None-09600`）が出る。
+  提示のために frame image を `PRESENT_SRC_KHR` へ遷移させる一方、サンプリング用記述子が別レイアウトを
+  宣言している疑いが強い。通常run（present無効）は clean なので、この経路固有。
+- **fixture の verdict は PASSED のまま**で、この失敗は harness の `validationClean=false` 側で捕捉された
+  （fixture の判定が validation を代替しないことの実例）。
+- 未確認のまま残る部分: **window/compositor への到達**（提示画像の読み戻しは取れるが、実際の画面出力は
+  X11/Wayland の capture が必要。方法の調査は未了）。
+
+**次の一手**: (1) present 経路のレイアウト遷移と記述子の宣言を突き合わせて `VUID-vkCmdDraw-None-09600` を解消する、
+(2) `presentReadback` の平均値がマーカー色と一致することを記録して「提示画像にフレームが入った」証拠を取る、
+(3) window/compositor capture の可否を調べる（取れない場合は不足条件を明記）。
+
 ## 8. 第3回監査の最終追補
 
 32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
