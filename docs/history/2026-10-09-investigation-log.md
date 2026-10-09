@@ -8400,3 +8400,34 @@ question is why it does not, and the counters to answer it are already reported.
 
 One texture is announced but not filled from an image, on both GPUs - most likely the light map, whose first upload happens
 before the announcement path is wired for it. Named rather than assumed, and it is the same one-texture difference on both.
+
+---
+
+## The readback refreshes named: the initial fill is solved, the per-frame stream is not
+
+The instrument prints each texture id that reaches the readback refresh, once:
+
+```
+CELTIUM_READBACK_REFRESH glTexture=18 (announced images pending: 0)
+CELTIUM_READBACK_REFRESH glTexture=19 (announced images pending: 0)
+CELTIUM_READBACK_REFRESH glTexture=20 (announced images pending: 0)
+CELTIUM_READBACK_REFRESH glTexture=23 (announced images pending: 1)
+CELTIUM_READBACK_REFRESH glTexture=24 (announced images pending: 1)
+CELTIUM_READBACK_REFRESH glTexture=25 (announced images pending: 1)
+CELTIUM_READBACK_REFRESH glTexture=22 (announced images pending: 1)
+CELTIUM_READBACK_REFRESH glTexture=26 (announced images pending: 0)
+```
+
+Eight ids, which is the eight mirrors, and **four of them refresh while a different texture's image is pending** - so the
+announcement is arriving, just not for the texture being refreshed. That is the whole shape of what is left:
+
+- **The initial fill is solved.** Seven of the eight mirrors are created from an image, on both GPUs, and the one that is not is
+  the id whose first upload happens before the hook can announce it.
+- **The per-frame stream is not.** 4,869 in-place refreshes still read GL back, for the same eight textures that were just filled
+  from images. The reason is now measured rather than guessed: the announcement covers **`TextureUtil` uploads only**, and the
+  per-frame writes - the light map above all, and the dynamic textures - go through `glTexSubImage2D` on their own, which no hook
+  announces. A pending image from the atlas animation is simply a different texture's.
+
+So the next step has a name and a mechanism: **announce from the direct texture-subimage writes as well**, where the caller
+already holds the pixels, and the readback stream shrinks to whatever remains outside both paths. The assertion that this is
+where the writes go is in the ids above rather than in a reading of the code.

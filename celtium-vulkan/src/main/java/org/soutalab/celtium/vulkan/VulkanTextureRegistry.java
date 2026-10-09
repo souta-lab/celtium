@@ -41,6 +41,8 @@ public final class VulkanTextureRegistry {
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
     private int mirrorCount;
     private int imageUploads;
+    /** The GL texture ids that reach the readback refresh, recorded once each. */
+    private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
     /** The images announced by the upload hook, waiting for the mirror that will use them. */
     private final java.util.Map<Integer, java.awt.image.BufferedImage> announcedImages =
             new java.util.HashMap<Integer, java.awt.image.BufferedImage>();
@@ -158,6 +160,13 @@ public final class VulkanTextureRegistry {
                 try {
                     existing.texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
                     this.inPlaceRefreshes++;
+                    // Which textures still come through the readback, named once each. The image path takes every refresh that
+                    // arrives with an announced image pending; these are the ones that do not, and knowing their ids is the
+                    // difference between guessing why and knowing why.
+                    if (this.readbackIds.size() < 8 && this.readbackIds.add(Integer.valueOf(glTextureId))) {
+                        System.out.println("[Celtium] CELTIUM_READBACK_REFRESH glTexture=" + glTextureId
+                                + " (announced images pending: " + this.announcedImages.size() + ")");
+                    }
                 } catch (RuntimeException | LinkageError error) {
                     this.failureCount++;
                     this.lastFailure = "re-upload of GL texture " + glTextureId + ": " + error;

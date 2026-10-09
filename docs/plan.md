@@ -123,9 +123,11 @@ That timeout is the bridge being absent by construction, which is why it is last
 (the per-batch `glGetFloatv` matrix pair, measured at 28 microseconds a batch) were replaced by hook-written mirrors long ago,
 the diagnostic sampler is behind a flag and off by default, and what remains is **texture and bridge queries** - roles two and
 five, which are last by design because they cannot go before the game's textures are Vulkan-owned. **Verified on both GPUs**: `mirroredTextures=8` with **`imageFilledMirrors=7`** on AMD and Intel alike, `descriptorSets=1`,
-exit 0, validation clean, fixture PASSED. **Open:** the refresh stream still reads back - 4,821 in-place refreshes on AMD and
-1,941 on Intel - so the next step is routing those through the announced image too, and one texture (the light map, probably) is
-never image-filled on either GPU.
+exit 0, validation clean, fixture PASSED. **Open:** the per-frame refresh stream still reads back - 4,821 in-place
+refreshes on AMD and 1,941 on Intel - and the ids are now named: eight textures refresh through it, four of them while a
+**different** texture's image is pending. The announcement covers `TextureUtil` uploads only, so the per-frame writes (the light
+map above all, and the dynamic textures) go through direct subimage calls that nothing announces. **Next: announce from those
+writes too**, where the caller already holds the pixels.
 
 **Next: the bridge itself**, and it is now **sized**: the renderer
 mirrors **eleven** distinct GL textures across a run - the atlas, the lightmap, the item and entity sheets, the GUI sheets - with
