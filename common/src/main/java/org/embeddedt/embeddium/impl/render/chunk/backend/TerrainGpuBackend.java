@@ -18,6 +18,55 @@ public interface TerrainGpuBackend {
     void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                 CameraTransform occlusionCamera, CameraTransform camera, boolean profile);
 
+    // ---------------------------------------------------------------- immediate-mode drawing (Forge API swap)
+
+    /**
+     * Mirrors {@code GlStateManager.func_179147_l()} / {@code func_179146_i()}.
+     * <p>
+     * These methods exist so the Minecraft/Forge drawing API can be re-implemented on Vulkan without changing any
+     * public Minecraft signature: a Mixin on {@code GlStateManager} forwards the state calls it captures, and the
+     * backend decides lazily which pipeline that state selects. The defaults do nothing, so an implementation that
+     * does not draw immediate geometry is unaffected.
+     */
+    default void setBlendEnabled(boolean enabled) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_187428_a(...)}; factors are the enum ordinals. */
+    default void setBlendFunc(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179132_a(boolean)}. */
+    default void setDepthMask(boolean mask) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179097_i()} / {@code func_179126_j()}. */
+    default void setDepthTest(boolean enabled) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179131_c(float, float, float, float)}. */
+    default void setColor(float red, float green, float blue, float alpha) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179094_E()} / {@code func_179121_F()}. */
+    default void pushMatrix() {
+    }
+
+    default void popMatrix() {
+    }
+
+    /**
+     * Offers a finished immediate-mode batch to this backend.
+     *
+     * @param vertexFormat  Minecraft's {@code VertexFormat} instance for the batch
+     * @param vertexAddress native address of the first vertex
+     * @param vertexCount   number of vertices
+     * @param drawMode      Minecraft/OpenGL draw mode
+     * @return {@code true} when the batch was consumed; {@code false} means the caller must draw it itself
+     */
+    default boolean submitImmediateBatch(Object vertexFormat, long vertexAddress, int vertexCount, int drawMode) {
+        return false;
+    }
+
     /** Consume/copy native output data before the caller deletes those outputs. */
     void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results, Runnable graphUpdateTrigger);
 

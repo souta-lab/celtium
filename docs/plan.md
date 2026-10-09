@@ -56,7 +56,19 @@ Kept separate on purpose - terrain success and present success are different thi
   faults on the way: concurrent sharing with a single queue family
   (`VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278`) and a zeroed `VkAllocationCallbacks`
   (`VUID-VkAllocationCallbacks-pfn*`), the latter crashing the client.
-- **Build-infrastructure finding (blocks the Mixin wiring, refined).** The first diagnosis was the `downgraded`
+- **Mixin wiring: state capture attempted, blocked on the exact SRG names, no longer on the build.** The phantom
+  classpath problem was worked around by extending the boundary interface the backend already implements
+  (`TerrainGpuBackend` gained default immediate-draw methods) instead of introducing a new class the module could not
+  resolve, and the backend now implements them (state into its `VulkanGlState`, batches counted and refused with a
+  reason) with a `TerrainGpuBackends` holder for the Mixins. The `GlStateManager` Mixin then failed *at runtime* with
+  `Critical injection failure: @Inject annotation on celtium$disableBlend could not find any targets matching
+  'func_179146_i'`, which is the Mixin layer correctly refusing to load a wrong target: only some of the method names
+  I used exist in this build's `GlStateManager` (`func_179147_l`, `func_179132_a`, `func_179097_i`, `func_179131_c`,
+  `func_179094_E`, `func_179121_F`, `func_187428_a` are confirmed from the sources; `func_179146_i` and
+  `func_179126_j` are not). Next step: read the names for disable-blend and enable-depth from
+  `GlStateManager.java` and inject only what exists, with `require = 0` for anything optional.
+
+- **Original finding (superseded by the refinement above).** The first diagnosis was the `downgraded`
   artifact being stale; that was wrong - after `:common:shadeDowngradedApi` the jar does contain the new classes.
   Moving `ImmediateDrawTarget`/`ImmediateDrawTargets` from `common/` into `celtium-vulkan/` (which `forge122`
   already depends on through `modEmbed`, so the Mixin can import them) did **not** clear the error either: the module

@@ -329,6 +329,71 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    // ---------------------------------------------------------------- immediate-mode drawing (Forge API swap)
+
+    /** The state the GlStateManager Mixin mirrors into; the draw entry turns it into a pipeline key. */
+    private final VulkanGlState immediateState = new VulkanGlState();
+    private int immediateStateCalls;
+    private int immediateBatchesOffered;
+    private String immediateLastRefusal = "none";
+
+    @Override
+    public void setBlendEnabled(boolean enabled) {
+        this.immediateState.blendEnabled(enabled);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setBlendFunc(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha) {
+        this.immediateState.blendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setDepthMask(boolean mask) {
+        this.immediateState.depthMask(mask);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setDepthTest(boolean enabled) {
+        this.immediateState.depthTestEnabled(enabled);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setColor(float red, float green, float blue, float alpha) {
+        this.immediateState.color(red, green, blue, alpha);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void pushMatrix() {
+        this.immediateState.pushMatrix();
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void popMatrix() {
+        this.immediateState.popMatrix();
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public boolean submitImmediateBatch(Object vertexFormat, long vertexAddress, int vertexCount, int drawMode) {
+        this.immediateBatchesOffered++;
+        // Topology conversion is ready; a pipeline per Minecraft vertex format and frame ownership for a batch
+        // recorded outside the terrain passes are still missing, so the batch is refused with a reason and vanilla
+        // draws it rather than anything disappearing silently.
+        String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
+        if (reason == null) {
+            reason = "no pipeline yet for " + (vertexFormat == null ? "an unknown vertex format"
+                    : vertexFormat.getClass().getSimpleName());
+        }
+        this.immediateLastRefusal = reason;
+        return false;
+    }
+
     /**
      * {@return a machine-readable summary of what this backend actually drew}. The fixture reads it to decide
      * whether a run really rendered terrain: selecting the backend by name is not evidence that any pass reached the
@@ -337,7 +402,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public String verificationSummary() {
         return "celtium/vulkan-check passes=" + this.passSubmissions + " skipped=" + this.passSkips + " errors="
                 + this.passErrors + " lastDraw=" + this.lastDrawCommands + " lastSections=" + this.lastSectionsDrawn
-                + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'));
+                + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
+                + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
+                + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_');
     }
 
     @Override
@@ -487,6 +554,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void delete() {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
         uninstall();
         for (RegionResources resources : this.regionResources.values()) {
             resources.delete();
@@ -1297,6 +1365,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.timestampsUsable) {
                 check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
                 this.timestampPool = handle.get(0);
+
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(this);
 
             if (Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)) {
                 runSwapchainProbe();
