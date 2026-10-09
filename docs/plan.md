@@ -101,9 +101,14 @@ back with the pass, and `recordImmediateOnlyPass` is already the template the of
 | **Resize** | **Verified** | `resizedAtTick=100`; the run completes (`passes=2166`) with exit 0, **0 validation messages**, fixture PASSED and the acceptance intact (`terrainPasses=1614`, `glDrawsCancelled=552`). The retirement queue drained all three of its retirements, so the resources the resize replaced were destroyed after the GPU was idle rather than during |
 | **Final composite and present** | **The present runs and repeats; its result is provably not in GL's framebuffer, and the physical screen cannot be observed here** | The present trace cycles the swapchain images (`image=1,2,3,0`, matching acquire/render semaphores) with `presentFailures=0` and `outOfDate=0`. The marker test is decisive that the output is **not** in the framebuffer GL reads: a solid magenta present leaves the default framebuffer showing the ordinary scene. Deciding whether it reaches the **physical screen** needs a display with a real framebuffer or a compositor - this environment's X display reports a **0x0 screen** (`ffmpeg -f x11grab -i :0.0` -> `Invalid size 0x0`; no `xwd`, `xdotool`, `xwininfo`, `xrandr`, `xdpyinfo`, no `python-xlib`). **Environment limitation, not a code defect** |
 
-This table is the honest boundary of the project: **terrain is Vulkan and verified on both GPUs; everything outside the world
-pass - the GUI, the font, the HUD, the hand, sky, clouds, weather, water, the FBO chains, postprocess and the final present -
-is OpenGL**, and the immediate path refuses such batches by name rather than dropping them quietly.
+This table is the honest boundary of the project, and the boundary has moved: **terrain, the immediate content outside the world
+pass (the GUI, the font, the HUD, the hand - `outsideWorldPassAccepted` in the thousands per run), the sky, the clouds, the water
+surface (format 6 at 2374 batches on AMD and 870 on Intel), the game's other framebuffers and postprocess, texture animation,
+reload, resize and world switch are Vulkan and verified on both GPUs**, while the **final present runs natively and its result is
+provably not in the framebuffer GL reads**. What remains with OpenGL is **one shape, measured rather than described**: the arrival
+census reports ~2000 unmapped uploads per run and censusing them by shape gives a single one - `[3,Position,Float | size=12 count=1]`,
+position-only vertices with no colour and no texture coordinates, matching none of the six pipelines that exist. The immediate path
+refuses such batches by name rather than dropping them quietly.
 
 ## 0. Architecture stance (2026-10-09 policy)
 
