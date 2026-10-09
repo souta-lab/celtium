@@ -1300,7 +1300,7 @@ public final class ValidationClient {
             mc.resize(1024, 640);
             report.addProperty("resizedAtTick", worldTicks);
         }
-        if (worldTicks == 150 && !celtium$weatherShown && Boolean.getBoolean("celtium.validation.weather")) {
+        if (worldTicks >= 150 && !celtium$weatherShown && Boolean.getBoolean("celtium.validation.weather")) {
             celtium$weatherShown = true;
             // Rain, saturated well before the capture so its strength has stopped changing: the renderer interpolates
             // rain strength between ticks, and a value still ramping would make two runs differ for reasons that are not
@@ -1335,7 +1335,10 @@ public final class ValidationClient {
                     + " rainTime=" + mc.world.getWorldInfo().getRainTime()
                     + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f))));
         }
-        if (worldTicks == 150 && !celtium$spectator) {
+        // At or after the tick, not exactly on it: on one Intel run the exact-tick condition never matched (the tick
+        // counter stepped over 150) and the scene silently did not happen - the same fragility the injected idle test
+        // showed with its wait count. The flag keeps it to once.
+        if (worldTicks >= 150 && !celtium$spectator) {
             // The spectator effects the audit lists: creeper, spider and enderman each load their own post shader
             // (shaders/post/creeper.json, spider.json, invert.json) through EntityRenderer.loadEntityShader. The public
             // isShaderActive() is recorded beside it, because a run that passes says nothing about whether the shader
@@ -1353,11 +1356,20 @@ public final class ValidationClient {
                     effectEntity = new net.minecraft.entity.monster.EntityEnderman(mc.world);
                 }
                 if (effectEntity != null) {
-                    effectEntity.setLocationAndAngles(mc.player.posX + 2.0D, mc.player.posY, mc.player.posZ, 0.0F, 0.0F);
-                    mc.world.spawnEntity(effectEntity);
-                    mc.entityRenderer.loadEntityShader(effectEntity);
+                    // Recorded before the calls, and the call's own outcome beside it: on one Intel run the spider case
+                    // produced neither property, so the earlier ordering (record after the call) could not tell an
+                    // exception from a scene that never ran.
                     report.addProperty("spectatorEffect", which);
-                    report.addProperty("shaderActive", mc.entityRenderer.isShaderActive());
+                    try {
+                        effectEntity.setLocationAndAngles(mc.player.posX + 2.0D, mc.player.posY, mc.player.posZ, 0.0F, 0.0F);
+                        mc.world.spawnEntity(effectEntity);
+                        mc.entityRenderer.loadEntityShader(effectEntity);
+                        report.addProperty("spectatorResult", "loaded");
+                        report.addProperty("shaderActive", mc.entityRenderer.isShaderActive());
+                    } catch (Throwable error) {
+                        report.addProperty("spectatorResult", "failed: " + error);
+                        report.addProperty("shaderActive", mc.entityRenderer.isShaderActive());
+                    }
                 }
             }
         }
