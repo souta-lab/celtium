@@ -7292,3 +7292,33 @@ What this does not settle, and what would: whether the **physical screen** shows
 item rather than another in-game readback. Worth stating plainly for the record: the renderer **presents cleanly and the
 present's result is not observable through GL**, which is exactly the boundary this project exists to move, observed from the
 wrong side.
+
+---
+
+## The present presents; this environment has no screen to capture
+
+The named next step was a window-level capture from **outside** GL, because the marker test showed the present's output never
+appears in the framebuffer GL reads. The capture cannot be done here, and the reason is worth recording precisely:
+
+```
+ffmpeg -f x11grab -i :0.0 ... -> Invalid size 0x0
+which xwd xdotool xwininfo xrandr xdpyinfo  -> none installed
+python3 -c "import Xlib"                    -> not available
+```
+
+**The X display has a 0x0 screen.** There is a server on `:0` - the harness deliberately drops `WAYLAND_DISPLAY` so the game
+runs on X11 - but it has no framebuffer to grab, which also explains why every "the frame looks right" measurement in this
+project has been in-game: there has never been a screen to look at from outside.
+
+So the present item closes with three separate, honest statements:
+
+1. **The present runs and repeats.** The present trace cycles the swapchain images (`image=1,2,3,0` with matching acquire and
+   render-finished semaphores), with `presentFailures=0` and `outOfDate=0` across the run.
+2. **Its output is not in the framebuffer GL reads.** Decisive, from the marker test: a solid magenta present leaves the default
+   framebuffer's back buffer showing the ordinary scene.
+3. **Whether it reaches the physical screen cannot be observed in this environment.** It needs a display with a real
+   framebuffer, or a compositor, or a capture tool - none of which exist here.
+
+That third point is an **environment limitation, not a code defect**, and it is the first item in this project whose closure
+depends on something the machine cannot provide rather than on work not yet done. Recorded as such, with the command that
+proves it, so nobody spends a round rediscovering it.
