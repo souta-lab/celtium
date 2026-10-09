@@ -403,6 +403,14 @@ public final class ValidationClient {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
         previousFrame = now;
+        if (worldTicks == 100 && Boolean.getBoolean("celtium.validation.reload")) {
+            // Resource reload, the way F3+T does it: every chunk renderer is rebuilt and every texture is re-stitched.
+            // The plan lists reload as unported until it has been seen to work, and the texture half is what exercises
+            // the upload mirror - a reloaded atlas has to be re-read rather than drawn from the first upload.
+            mc.renderGlobal.loadRenderers();
+            mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
+            report.addProperty("reloadedAtTick", worldTicks);
+        }
         if (worldTicks == 100 && Boolean.getBoolean("celtium.validation.resize")) {
             // Resize the window mid-run: the renderer has to survive the framebuffer changing size, which the plan lists
             // as unported until it has been seen to work. The saved screenshot's own dimensions are the evidence that

@@ -1591,3 +1591,25 @@ Two things are kept from the round: the compile-only dependency, which is what l
 the harness itself (the `celtium.validation.resize` switch with its `windowResizable` and `resizedAtTick` report fields),
 since it is fixture-only, harmless in a green run, and is the instrument any future resize attempt will start from. What is
 not claimed is that the renderer handles a resize; the plan keeps it on the unported list.
+
+---
+
+## Resource reload works on both GPUs
+
+The fixture now performs the same reload F3+T does - `mc.renderGlobal.loadRenderers()` to rebuild every chunk renderer and
+`mc.getTextureManager().onResourceManagerReload(mc.getResourceManager())` to re-stitch every texture - in the middle of a
+run, and both GPUs come through it:
+
+| GPU | Result |
+|---|---|
+| AMD RX 6400 | **PASSED, `nativeTerrainVerified True`**, reloaded at tick 100, 901 passes |
+| Intel UHD 630 | **PASSED, `nativeTerrainVerified True`**, reloaded at tick 100, 591 passes |
+
+So the renderer survives the two things a reload does to it: every chunk mesh is thrown away and rebuilt, and every
+texture is uploaded again. The second half is the interesting one for the immediate path, because a re-stitched atlas
+produces new GL texture contents for ids the mirror has already seen - exactly the case the upload-invalidation hooks from
+the previous rounds exist for - and the frame afterwards is clean.
+
+Reload moves off the plan's unported list; what stays there for the same area is resize, which this harness cannot exercise
+(the window accepts the size request and Minecraft's framebuffer never changes), and world switch, which needs a second
+world rather than a second call.
