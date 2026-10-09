@@ -608,6 +608,13 @@ canonical な `celtium-headless-interop/test-libraries` だけ残して削除し
 - 引用中の受入 run（p32-glref-r434 / p32-celtium-r434 / p39-vanilla2-r426 / p71-spider / p71-spider-intel /
   p68-spider-intel / p49-failsubmit-r437 / p64-weather-intel / sol-cb-r454-amd）は report+PNG とも残存を確認。
 
+**計器の未接続を確認（このターン）**: 拒否カウンタを `VulkanTerrainGpuBackend.diagnostics()` の先頭に足したが、
+report の `rendererDebug` には**出ていない**。report 側は **10項目で上限**されており（実測: count = 10、内容は
+`solid - 62 sections, 284.2 us` などのパス統計）、backend の `diagnostics()` とは**別経路**の文字列が入っている。
+したがって次に必要なのは「`rendererDebug` を組み立てている箇所へカウンタを載せる」ことで、
+`diagnostics()` への追加だけでは足りない。これは「計器を足したが読めていない」状態なので、
+未完了として明示する（読めた `refusedBeforeAppend=97` は別の `vulkan-check` 系の行に含まれる値）。
+
 **次の一手**: (1) `shaderProgramRefusals` / `accepted` が report に出るかの確認、(2) `switchUseShader` の各 shader
 でも受入、(3) timestamp クエリで handoff の GPU 時間を測る。
 
