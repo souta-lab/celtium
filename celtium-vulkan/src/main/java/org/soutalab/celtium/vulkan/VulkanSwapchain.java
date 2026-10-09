@@ -56,6 +56,17 @@ public final class VulkanSwapchain {
     private String argumentSummary = "not attempted";
     private long acquireSemaphore = VK_NULL_HANDLE;
 
+    /**
+     * One acquire semaphore per swapchain image, used round-robin.
+     * <p>
+     * A single semaphore cannot be reused while a previous wait on it is still pending, which the validation layer
+     * reported as VUID-vkAcquireNextImageKHR-semaphore-01779 once this ran per frame instead of once in a probe. Cycling
+     * through as many semaphores as there are images keeps the reuse distance at least one full set of images, which is
+     * what the presentation engine guarantees.
+     */
+    private long[] acquireSemaphores;
+    private int acquireSemaphoreCursor;
+
     private VulkanSwapchain(VulkanContext context, long surface, String platform) {
         this.context = context;
         this.surface = surface;
@@ -222,15 +233,10 @@ public final class VulkanSwapchain {
             // One semaphore for the life of the swapchain, reused by every acquire: a semaphore waited by a present
             // must not be destroyed while that present is pending, and reusing it means the next acquire also orders
             // against the previous present.
-            if (this.acquireSemaphore == VK_NULL_HANDLE) {
-                LongBuffer semaphore = stack.mallocLong(1);
-                if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
-                        .sType$Default(), null, semaphore) != VK_SUCCESS) {
-                    return "present probe: could not create an acquire semaphore";
-                }
-                this.acquireSemaphore = semaphore.get(0);
+            long acquire = acquireSemaphore(stack);
+            if (acquire == VK_NULL_HANDLE) {
+                return "present probe: could not create an acquire semaphore";
             }
-            long acquire = this.acquireSemaphore;
             {
                 int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                         VK_NULL_HANDLE, index);
@@ -288,15 +294,10 @@ public final class VulkanSwapchain {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer index = stack.mallocInt(1);
-            if (this.acquireSemaphore == VK_NULL_HANDLE) {
-                LongBuffer semaphore = stack.mallocLong(1);
-                if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
-                        .sType$Default(), null, semaphore) != VK_SUCCESS) {
-                    return "present image: could not create an acquire semaphore";
-                }
-                this.acquireSemaphore = semaphore.get(0);
+            long acquire = acquireSemaphore(stack);
+            if (acquire == VK_NULL_HANDLE) {
+                return "present image: could not create an acquire semaphore";
             }
-            long acquire = this.acquireSemaphore;
             int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                     VK_NULL_HANDLE, index);
             if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
@@ -336,6 +337,26 @@ public final class VulkanSwapchain {
         }
     }
 
+    /** {@return the next acquire semaphore, creating the pool on first use}, or 0 when creation failed. */
+    private long acquireSemaphore(MemoryStack stack) {
+        int count = Math.max(2, this.images.length);
+        if (this.acquireSemaphores == null) {
+            long[] pool = new long[count];
+            LongBuffer semaphore = stack.mallocLong(1);
+            for (int i = 0; i < count; i++) {
+                if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
+                        .sType$Default(), null, semaphore) != VK_SUCCESS) {
+                    return VK_NULL_HANDLE;
+                }
+                pool[i] = semaphore.get(0);
+            }
+            this.acquireSemaphores = pool;
+        }
+        long result = this.acquireSemaphores[this.acquireSemaphoreCursor];
+        this.acquireSemaphoreCursor = (this.acquireSemaphoreCursor + 1) % this.acquireSemaphores.length;
+        return result;
+    }
+
     /** Moves the source image to the layout a blit reads from, from wherever the frame left it. */
     private void transitionForBlitSource(MemoryStack stack, VkCommandBuffer commands, long image, int currentLayout) {
         if (currentLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
@@ -356,6 +377,13 @@ public final class VulkanSwapchain {
     }
 
     public void delete() {
+        if (this.acquireSemaphores != null) {
+            vkQueueWaitIdle(this.context.queue());
+            for (long semaphore : this.acquireSemaphores) {
+                vkDestroySemaphore(this.context.device(), semaphore, null);
+            }
+            this.acquireSemaphores = null;
+        }
         if (this.acquireSemaphore != VK_NULL_HANDLE) {
             // The queue is drained first: the semaphore may still be referenced by a pending present.
             vkQueueWaitIdle(this.context.queue());

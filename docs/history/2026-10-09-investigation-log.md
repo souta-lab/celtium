@@ -1077,3 +1077,33 @@ itself to wait on the acquire semaphore and the presentation to wait on a render
 
 The switch is off by default, so the shipped path is unaffected and its validation output stays empty; the next step is
 to read those thirteen messages, fix the layout and the semaphore pair, and only then consider the present step ported.
+
+---
+
+## The present's remaining validation error is the semaphore pair, exactly as recorded
+
+Reading the messages rather than the repeat-warning lines gives the answer:
+
+```
+vkQueueSubmit(): pSubmits[0] performs a layout transition on presentable VkImage 0x80000000008,
+but VkSemaphore 0x100000000010 signaled by image acquire operation was not waited on
+The Vulkan spec states: After acquiring a presentable image and before modifying it, the application must use a
+synchronization primitive to ensure that the presentation engine has finished reading from the image
+```
+
+So the second of the two candidates was right: the submission that blits into the acquired image must **wait** on the
+acquire semaphore, because the layout transition modifies that image - and the presentation must then wait on a
+*signal* from that submission rather than on the acquire semaphore itself. The clear-and-present probe never had to face
+this because it presented straight after the acquire, which happened to be ordered; writing to the image is not.
+
+Two fixes landed this round and one is now precisely specified:
+
+- **Landed:** the acquire semaphore is now a pool, one per swapchain image used round-robin. That removed the
+  `VUID-vkAcquireNextImageKHR-semaphore-01779` repeats - a single semaphore cannot be re-acquired while a previous wait
+  on it is pending, which is what happens once this runs per frame instead of once in a probe.
+- **Specified, not yet implemented:** `presentImage` must submit through a path that waits the acquire semaphore and
+  signals a render-finished semaphore, and present waiting on that. The current submission goes through the context's
+  command-buffer helpers, which submit with a fence and no semaphores, so this needs either a submit variant on the
+  context or an inline `vkQueueSubmit` in the swapchain.
+
+Until that is done the present-from-composite switch stays off and the shipped path's validation output stays empty.
