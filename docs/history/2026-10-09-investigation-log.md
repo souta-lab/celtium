@@ -8933,3 +8933,25 @@ GPU受入の代わりではない。抽出後に通常fixtureを回し、AMD RX6
 fixture PASSED / terrainPasses 714 と、抽出前と同じ挙動であることを確認した（imageFilledMirrors 113、
 imageUploadsSkipped 3511、animatedImageFills 106、inPlaceRefreshes 1001、mirroredTextures 11、descriptorSets 1）。
 チェック自身のexpectationを1つ間違えていた（`0x2A2B2C2D` の赤は `0x2B` で、レンダラが正しかった）ことも記録する。
+
+---
+
+## 第3回監査 A08/A09: preflightをappend前に移し、全branchでdropを数える
+
+**A08**（受理前失敗でpending meshに頂点が残る）は監査のとおりで、`copyVertices` が頂点をpending meshへ入れた**後**に
+texture mirror確認（1763行）とparticle descriptor preflight（1770行）が `return false` していた。拒否されたバッチは
+GLが描き、かつVulkanのqueueにも残るため、後でflushされれば同じgeometryが二度描かれ得る。
+
+修正は監査の第1案（全preflightをappend前に行う）を採用した。両チェックは `boundTexture` と `formatId` しか見ず、
+appendされた頂点に依存しないので、`copyVertices` の前に移せる。拒否時は**何もappendされていない**のでrollbackは不要で、
+二重描画は構造的に起こらない。`currentGroupUsed` も拒否時はfalseのままになる。測器として `refusedBeforeAppend` を足し、
+AMD RX6400のrunで **1件** を実測した（拒否されたバッチはGLが描き、pending queueには残らない）。
+
+**A09**（受理後の消失を全形式で数えていない）も監査のとおりで、`postAcceptDroppedGroups++` はparticleのdescriptor失敗
+（4002行）にしか無く、item/block/textured各分岐の `continue` は数えていなかった。「drop=0」が全geometryの描画を意味して
+いなかったわけである。描画ループ内の**7つのskip地点すべて**が計数するようにした。実測は `postAcceptDroppedGroups=0` で、
+これは**全formatが描かれた**ことを意味する（以前の0はparticleだけの0だった）。branch別内訳とbatch ID対応付けは残る。
+
+両修正後のrun: exit 0 / validationClean true / messages 0 / fixture PASSED / nativeTerrainVerified true /
+terrainPasses 714 / glDrawsCancelled 2681 / acceptedByFormat 1:13,2:0,3:0,4:0,5:242,6:1414,7:872,8:128,9:12 /
+descriptorSets 1。

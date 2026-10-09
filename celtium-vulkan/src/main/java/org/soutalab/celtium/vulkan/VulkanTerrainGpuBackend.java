@@ -461,6 +461,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetAccepted;
     /** Batches refused because the mirror they need has only ever received a partial write. */
     private int partialMirrorRefusals;
+    /** Batches refused by a preflight that now runs before anything is appended (audit A08). */
+    private int refusedBeforeAppend;
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
     private int announcedUploads;
@@ -1743,17 +1745,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupTarget = this.currentRenderTarget;
                 this.currentGroupViewport = this.currentViewportKey;
             }
-            if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
-                this.immediateLastRefusal = "the pending batch buffer refused the vertices";
-                // Order (S10): what is already accepted is drawn before this batch goes to GL.
-                this.flushPendingBeforeGlDraw();
-                return false;
-            }
-            this.currentGroupUsed = true;
-            this.pendingImmediateIndices += indices.length;
-            // Everything the draw will need is prepared before the batch is accepted: the audit's S14 is the
-            // failure mode where geometry is taken and then dropped, and the fix is to refuse here instead, where GL
-            // can still draw the batch itself. The texture is the one requirement the pipeline check does not cover.
+            // Every preflight comes before the append (audit A08). It used to run after `copyVertices` had already put the
+            // vertices in the pending mesh, so a refused batch was drawn by GL **and** left sitting in the Vulkan queue,
+            // ready to be flushed as a second copy of the same geometry. Refusing before anything is appended needs no
+            // rollback and cannot double-draw.
             if (this.textureRegistry == null) {
                 // The other place the acceptance needs it: this check runs while a batch is being offered, before any flush
                 // has created the registry. Fixing only the descriptor probe left this one throwing, which the instrument
@@ -1763,6 +1758,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
                 this.textureRefusalsBeforeAccept++;
+                this.refusedBeforeAppend++;
                 // Order (S10): what is already accepted is drawn before this batch goes to GL.
                 this.flushPendingBeforeGlDraw();
                 return false;
@@ -1774,10 +1770,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // than on the pipeline's state key, so one pipeline is enough to ask the question.
                 this.immediateLastRefusal = "the particle descriptor could not be built for this lightmap";
                 this.particleDescriptorRefusals++;
+                this.refusedBeforeAppend++;
                 // Order (S10): what is already accepted is drawn before this batch goes to GL.
                 this.flushPendingBeforeGlDraw();
                 return false;
             }
+
+            if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
+                this.immediateLastRefusal = "the pending batch buffer refused the vertices";
+                // Order (S10): what is already accepted is drawn before this batch goes to GL.
+                this.flushPendingBeforeGlDraw();
+                return false;
+            }
+            this.currentGroupUsed = true;
+            this.pendingImmediateIndices += indices.length;
 
             this.immediateTaken++;
 
@@ -2462,6 +2468,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
+                + " refusedBeforeAppend=" + this.refusedBeforeAppend
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
                 + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
@@ -3918,10 +3925,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 for (Object[] group : this.immediateGroups) {
                     if (onlyTarget != null && ((Long) group[7]).longValue() != onlyTarget.longValue()) {
+                        // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
+                        // all formats drew, which it could not while only format 5 incremented this (audit A09).
+                        this.postAcceptDroppedGroups++;
                         continue;
                     }
                     VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
                     if (mesh.isEmpty()) {
+                        // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
+                        // all formats drew, which it could not while only format 5 incremented this (audit A09).
+                        this.postAcceptDroppedGroups++;
                         continue;
                     }
                     int formatId = ((Integer) group[3]).intValue();
@@ -4011,6 +4024,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         long descriptorSet = texture == null ? 0L : item.descriptorSetFor(texture);
                         if (descriptorSet == 0L) {
                             this.immediateTextureRefusals++;
+                            // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
+                            // all formats drew, which it could not while only format 5 incremented this (audit A09).
+                            this.postAcceptDroppedGroups++;
                             continue;
                         }
                         item.draw(this.commandBuffer, mesh, push, descriptorSet);
@@ -4028,6 +4044,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                 : block.descriptorSetFor(texture, this.lightmapTexture);
                         if (descriptorSet == 0L) {
                             this.immediateTextureRefusals++;
+                            // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
+                            // all formats drew, which it could not while only format 5 incremented this (audit A09).
+                            this.postAcceptDroppedGroups++;
                             continue;
                         }
                         block.draw(this.commandBuffer, mesh, push, descriptorSet);
@@ -4069,11 +4088,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                     this.textureRegistry.get(((Integer) group[4]).intValue());
                             if (texture == null) {
                                 this.immediateTextureRefusals++;
+                                // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
+                                // all formats drew, which it could not while only format 5 incremented this (audit A09).
+                                this.postAcceptDroppedGroups++;
                                 continue;
                             }
                             long descriptorSet = textured.descriptorSetFor(texture);
                             if (descriptorSet == 0L) {
                                 this.immediateTextureRefusals++;
+                                // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
+                                // all formats drew, which it could not while only format 5 incremented this (audit A09).
+                                this.postAcceptDroppedGroups++;
                                 continue;
                             }
                             textured.draw(this.commandBuffer, mesh, push, descriptorSet);
@@ -4083,6 +4108,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             // "commandBuffer must be in the recording state" messages the first attempt produced.
                             this.immediateTextureRefusals++;
                             record("textured group failed: " + describe(error));
+                            // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
+                            // all formats drew, which it could not while only format 5 incremented this (audit A09).
+                            this.postAcceptDroppedGroups++;
                             continue;
                         }
                     } else {

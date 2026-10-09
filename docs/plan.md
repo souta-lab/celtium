@@ -26,8 +26,8 @@
 | **A05** | patch寸法でmip chainを作り直す | **修正済** | A03の修正でpatchはmip chainを記録しない。sprite単位mipは `MIRROR_GL_MIPS` 経路がGLの各levelをコピーする（全atlas blitを正解とせず、遠景・透明境界での比較は残る） |
 | **A06** | 保持画像とpatchの競合、hash skip | **修正済** | patch成功時に `lastPixelHash` を無効化し、patch後の同一内容全面uploadが重複skipされないようにした。CPU shadowとresource generationでの全面管理は残る |
 | **A07** | metadata・転送成功の扱い | **修正済** | hashを転送**後**に確定、`imageUploads` は成功時のみ、`Entry.width/height` が画像に追随（寸法を可変に）、skipは `imageUploadsSkipped` として別計数。GL ID再使用の検証は残る |
-| **A08** | 受理前失敗でpending meshに頂点が残る | **未解決** | preflightをappend前に置くかrollback。失敗時はGL/VKの一方のみ |
-| **A09** | 受理後の消失を全形式で数えていない | **部分** | particleのみ `postAcceptDroppedGroups`。item/block/textured分岐は未集計。「drop=0」は全描画を証明しない |
+| **A08** | 受理前失敗でpending meshに頂点が残る | **修正済・受入済** | 監査の第1案（preflightをappend前に置く）を採用: texture mirror確認とparticle descriptor preflightを `copyVertices` の**前**へ移動。拒否時は何もappendされないのでrollback不要・二重描画不能。runで `refusedBeforeAppend=1` を実測（拒否されたバッチはGLが描き、pending queueには残らない） |
+| **A09** | 受理後の消失を全形式で数えていない | **修正済** | 描画ループ内の**7つのskip地点すべて**が `postAcceptDroppedGroups` を増やす（以前はformat 5のdescriptor失敗のみ）。実測は0で、これは**全formatが描かれた**ことを意味する。branch別の内訳とbatch ID対応付けは残る |
 | **A10** | `offTargetDrawn` は実描画ではない | **計器分離・主張撤回** | `offTargetOffered`（意図）/ `offTargetAccepted`（受理位置、現状0＝計器の位置が違う）/ `offTargetCopiedBack`（実描画の書き戻しのみ）に分離。**「copy-backが証拠」という前版の記述は撤回**（A32参照）。target別の順序・clear・depth・resize・sampleは未確認 |
 | **A11** | format 2（POSITION_TEX_COLOR）は既定でGL | **既知・未対応** | `DEFAULT_ACCEPTED="1,3,4,5,6,7,8,9"`、実測 `2:0`。screen compositeとGUIをformatだけで同一視しない |
 | **A12** | state modelとpipelineの不一致 | **未解決** | alpha enable/func、depth func、separate alpha blend、color mask、scissor、texture matrix。pipelineはLEQUAL/ADD等を固定 |
