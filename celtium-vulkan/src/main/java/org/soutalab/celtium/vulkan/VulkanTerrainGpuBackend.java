@@ -504,6 +504,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private int immediateRefusedWindowBudget;
     /**
+     * Offered and accepted batch counts per format id.
+     * <p>
+     * Added to answer a specific question rather than to add telemetry: the GUI-visible difference is in the first-person
+     * hand, and the first thing to know is which formats its batches carry and whether they are served by Vulkan at all.
+     * Reported once, at a count a run actually crosses.
+     */
+    private final int[] immediateOfferedByFormat = new int[8];
+    private final int[] immediateAcceptedByFormat = new int[8];
+    /**
      * Whether this frame's submission actually reached the queue.
      * <p>
      * Set by {@code submitCommands} on a successful {@code vkQueueSubmit} and cleared when a frame opens, so reading it
@@ -740,6 +749,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
         this.immediateBatchesOffered++;
+        if (formatId >= 0 && formatId < this.immediateOfferedByFormat.length) {
+            this.immediateOfferedByFormat[formatId]++;
+        }
         long submitStart = System.nanoTime();
         try {
             return submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
@@ -932,6 +944,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
                 flushImmediateWindow();
             }
+            if (this.immediateBatchesOffered % 500 == 0) {
+                StringBuilder histogram = new StringBuilder("immediate formats offered/accepted:");
+                for (int id = 0; id < this.immediateOfferedByFormat.length; id++) {
+                    if (this.immediateOfferedByFormat[id] > 0) {
+                        histogram.append(" id").append(id).append('=').append(this.immediateOfferedByFormat[id]).append('/')
+                                .append(this.immediateAcceptedByFormat[id]);
+                    }
+                }
+                record(histogram.toString());
+            }
             if (this.immediateTaken == 500) {
                 // One-shot snapshot of what happens to accepted batches: a batch counts as accepted only when GL's own
                 // draw was cancelled, so anything accepted and not drawn is lost geometry.
@@ -941,6 +963,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " deferredNextFrame=" + this.immediateDeferredNextFrame
                         + " refusedWindowBudget=" + this.immediateRefusedWindowBudget
                         + " lastError=" + this.immediateLastFlushError);
+            }
+            if (formatId >= 0 && formatId < this.immediateAcceptedByFormat.length) {
+                this.immediateAcceptedByFormat[formatId]++;
             }
             this.immediateLastRefusal = "none";
             return true;

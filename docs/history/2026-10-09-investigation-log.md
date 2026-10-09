@@ -2216,3 +2216,28 @@ frame's later passes, and it is exactly what the hidden-GUI captures excluded.
 The next step is to instrument those batches rather than keep bisecting by image: which format id, pipeline state and
 texture the hand and item batches carry, and whether they are accepted at all, would say which of the pipelines in the
 mask mishandles them.
+
+---
+
+## The hand-batch instrumentation is in the tree but does not reach the run's report
+
+The recorded next step was to instrument the batches rather than keep bisecting by image, and the first thing worth
+knowing is which formats the first-person hand's batches carry and whether Vulkan serves them at all. A per-format
+offered/accepted histogram was added for exactly that - eight counters each way, reported periodically so the last report
+sits near the capture, which is the lesson from the refusal counters two rounds ago.
+
+Two runs later the histogram **never appears in the run's debug output**:
+
+| Attempt | Result |
+|---|---|
+| reported once at 1000 offered batches | not printed |
+| reported every 500 offered batches | `histogram lines: 0` |
+
+The runs themselves are green (PASSED, 1670 passes, 0 messages), so nothing is broken - what is broken is the reporting
+path, and this is the second time in this session that a counter wired to the debug list failed to surface while a print
+from a mixin surfaced immediately. The next attempt therefore uses the channel that demonstrably works - a
+`System.out.println` from the backend, as the mixins already do - rather than a third variation on the same list.
+
+That distinction matters for the answer this instrumentation exists to give: whether the hand's batches are Vulkan-drawn
+at all is currently **unknown**, and "the histogram did not print" must not be read as "there were none". The counters stay
+in the tree, harmless and unused until the reporting works.
