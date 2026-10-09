@@ -8298,3 +8298,33 @@ not of anything in this change, and diagnosing it is the next step rather than s
 So this round's honest state: **the code is written, it builds, and it is unmeasured.** The counters that will measure it are in
 place, and the first run that starts will say whether the eleven mirrors are now filled from the announced images instead of
 from a readback.
+
+---
+
+## Measured: seven of eight mirrors are now filled from the announced image, not from a readback
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+mirroredTextures = 8     imageFilledMirrors = 7     announcedUploads = 8
+inPlaceRefreshes = 4821  descriptorSets = 1
+acceptedByFormat = 1:14, 5:289, 6:1714, 7:1044, 9:12
+```
+
+**Seven of the eight mirrored textures are built from the image the upload hook hands over**, so for those the GL readback is no
+longer the source of the mirror: the Vulkan image is filled from the same pixels GL is given. Validation is silent, the fixture
+passes, the acceptance is intact and descriptor sets stay at one across the run's five thousand refreshes.
+
+Getting that measurement took three failures, and two of them were mine rather than the environment's:
+
+1. **The disk really did fill** - 620 per-run game directories at 7.6 GB - and pruning to twenty freed 7 GB. That part was real.
+2. **`FileExistsError`**, not a corrupt launcher: the harness refuses to reuse an existing run directory and I had left one
+   behind. The previous round's "the launcher's extracted-library state was corrupted" was a **diagnosis without evidence**, and
+   it was wrong.
+3. **A stale diagnostic flag.** `celtium.vulkan.withoutGlIdentity` had been added to the run script two rounds earlier to
+   exercise condition three's no-identity path, and was never removed - so every run since had started with no GL identity, and
+   the interop path dereferenced the absent identity and crashed the game with a `NullPointerException`. That is a **real defect
+   in the no-identity path**, found by accident and now recorded as such, and the flag is out of the script.
+
+The lesson is the one this project keeps re-learning in a new costume: a run that fails is **evidence about something**, and
+reading its log is cheaper than reasoning about what it must have been. Two of the three causes above were visible in one line of
+output that had not been read.

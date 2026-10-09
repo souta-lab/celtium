@@ -131,9 +131,11 @@ remains for the bridge is not a mechanism but the **ownership decision**: whethe
 for those eleven textures, and which GL-facing call sites change with it. The refresh path keeps descriptor sets stable across
 4,523 refreshes (`descriptorSets=1`). **And the data arrives with the announcement**: the hook's own signature receives the
 `BufferedImage` being uploaded, so a Vulkan image can be built from those pixels directly and the GL readback
-(`readGlLevel0`/`readGlLevel`, three call sites) becomes unnecessary for exactly those eleven textures. That makes the
-ownership decision a change at **one hook and one code path** rather than a subsystem, and the first candidate is the mirror's
-initial fill.
+(`readGlLevel0`/`readGlLevel`, three call sites) becomes unnecessary for exactly those eleven textures. That made the ownership decision a change at **one hook and one code path**, and it is now
+**measured**: `mirroredTextures=8` with **`imageFilledMirrors=7`** - seven of the eight mirrors are built from the image the
+upload hook hands over rather than from a readback of GL - with `inPlaceRefreshes=4821`, `descriptorSets=1`, exit 0, validation
+clean, 0 messages, fixture PASSED. **Open:** the no-identity path (`celtium.vulkan.withoutGlIdentity`) dereferences the absent
+identity in the interop code and crashes; a real defect found by accident when the flag was left in the run script.
 
 **The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
 drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and
