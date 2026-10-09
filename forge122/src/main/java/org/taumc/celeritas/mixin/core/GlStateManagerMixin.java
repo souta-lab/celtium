@@ -146,6 +146,18 @@ public abstract class GlStateManagerMixin {
      * to call {@code GL11.glBlendFunc}. The particle family was asserting its own blend because the mirror could not report
      * these; with them captured the pipeline can use what Minecraft actually set.
      */
+    /**
+     * A clear is an ordering boundary (audit S10).
+     * <p>
+     * Accepted batches are held until a flush; a clear wipes the target immediately, so anything still held would be
+     * drawn <em>after</em> the clear rather than before it. Flushing here keeps the frame's order - the same rule the
+     * refusal sites already follow.
+     */
+    @Inject(method = "func_179086_m", at = @At("HEAD"), require = 0)
+    private static void celtium$clear(int mask, CallbackInfo info) {
+        celtium$mirror(backend -> backend.flushBeforeClear(mask));
+    }
+
     @Inject(method = "func_179112_b", at = @At("HEAD"), require = 0)
     private static void celtium$blendFunc(int sourceFactor, int destinationFactor, CallbackInfo info) {
         celtium$mirror(backend -> backend.blendFunc(sourceFactor, destinationFactor));

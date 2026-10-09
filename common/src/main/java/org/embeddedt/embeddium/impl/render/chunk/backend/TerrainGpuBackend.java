@@ -176,6 +176,10 @@ public interface TerrainGpuBackend {
     default void blendFunc(int sourceFactor, int destinationFactor) {
     }
 
+    /** Called before a GL clear, so held batches are drawn before the target is wiped (audit S10). */
+    default void flushBeforeClear(int mask) {
+    }
+
     default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                          int vertexCount, int drawMode) {
         return false;

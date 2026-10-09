@@ -5857,3 +5857,29 @@ the window the edit looks at, and they are recorded rather than assumed harmless
 The honest boundary is unchanged: this ordering is correct by construction. No image comparison can see a six-event ordering
 fault in this scene, and the scene does not present clears or FBO switches between accepted batches, so the other half of S10
 remains unexercised as well as partly unfixed.
+
+---
+
+## Clears are an ordering boundary now, and this scene never exercises one
+
+A clear wipes the target immediately while accepted batches are held for a flush, so anything held would be drawn *after*
+the clear instead of before it - the same fault the refusal sites had, with a different trigger. There was no hook on clears
+at all: `GlStateManager.func_179086_m` is the SRG name of `glClear`, and it is now hooked, calling `flushBeforeClear`, which
+draws what is held and counts itself.
+
+Measured:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED | passes=2176 | taken=550 | flushes=563 | dropped=0
+orderPreservingFlushes=6   clearOrderFlushes=0
+```
+
+**Zero.** The scene never clears while batches are pending, so the new hook is correct by construction and **unexercised** -
+the same distinction this project has had to make about the generation keys in S12. The FBO half of the same audit item was
+already in place from an earlier round: the render target is part of the group key and `bindFramebuffer` flushes the pending
+group when the target changes, which the two-target fixture exercised with `passBoundaryFlushes=10`.
+
+So S10 now stands as: the refusal ordering implemented at all seventeen refusal sites and measured at six occurrences per
+run; clears implemented and measured at zero; FBO switches implemented and measured on the gated fixture only. What is left
+is not more code but **scene coverage** - the ordinary suite presents neither a clear nor an FBO switch between accepted
+batches, and the gated fixture that does present the latter is the one whose capture the suite suppresses.

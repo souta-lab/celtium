@@ -608,6 +608,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long flushCount;
     private long retiredFlushes;
     private int orderPreservingFlushes;
+    private int clearOrderFlushes;
     private int frameAccepted;
     private int frameDrawn;
     private int lastFrameAccepted;
@@ -973,6 +974,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             org.lwjgl.system.MemoryUtil.memFree(projection);
             org.lwjgl.system.MemoryUtil.memFree(modelView);
         }
+    }
+
+    public void flushBeforeClear(int mask) {
+        if (this.immediateGroups.isEmpty()) {
+            return;
+        }
+        // The clear is about to wipe the target, so what this renderer has already accepted is drawn first.
+        this.flushPendingBeforeGlDraw();
+        this.clearOrderFlushes++;
     }
 
     public void blendFunc(int sourceFactor, int destinationFactor) {
@@ -1948,7 +1958,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
-                + " orderPreservingFlushes=" + this.orderPreservingFlushes
+                + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes

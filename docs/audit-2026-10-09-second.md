@@ -179,9 +179,16 @@ seventeen in the file, one method each side of the wrapper boundary. Measured: *
 exit 0, validation clean, 0 messages, fixture PASSED, `immediateTaken=551`, `immediateFlushes=558`,
 `postAcceptDroppedGroups=0` - so in this scene one further refusal happens while batches are pending, and no regression.
 
-**Still open:** the ordering is correct by construction rather than observed - no image comparison can see a six-event
-ordering fault on this scene - and the scene never presents **clears or FBO switches** between accepted batches, so that half
-of S10 remains unexercised. The other half of the item - reading what the 2000 is - was answered earlier: it is
+**Clears are handled too, and the FBO half was already.** A clear is an ordering boundary as much as a refusal is, so a
+mixin hook on `GlStateManager.func_179086_m` (`glClear`) calls `flushBeforeClear`, which draws what is held before the target
+is wiped and counts itself (`clearOrderFlushes`). Measured: **`clearOrderFlushes=0`** - this scene never clears while batches
+are pending, so the hook is correct by construction and **unexercised**, which is recorded as the distinction it is. The FBO
+half was already in place from an earlier round: the render target is part of the group key, and `bindFramebuffer` flushes the
+pending group when the target changes (`passBoundaryFlushes` was measured at 10 on the two-target fixture).
+
+**Still open:** the ordering is correct by construction rather than observed - no image comparison can see these ordering
+faults on this scene - and neither the clear nor the FBO path is exercised by the ordinary suite, only by the gated
+two-target fixture. The other half of the item - reading what the 2000 is - was answered earlier: it is
 `setupOverlayRendering`'s `translate(0, 0, -2000)`, not the fixture.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.
