@@ -1430,7 +1430,29 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   確定させたので、**verdict 側も同じ扱いにする**必要がある。したがって out-of-date の**復旧**はまだ受入できていない
   （受入できたのは「通常の present 経路が綺麗に回る」ところまで）。
 
-**次の一手**: (1) `forceOutOfDate` を確定的に発火させる（acquire 側と同じ直し方）、(2) その状態で
+**out-of-date 復旧の受入（このターン・成立）**: `forceOutOfDate` は**発火していた**。私が前ターンに見落としていた。
+
+- `recordOutOfDateInjection()` の出力は **stdout（ログ）**で、report の `rendererDebug` には出ない。前ターンは report だけを
+  見て「発火していない」と判断したが、**ログには毎フレーム出ていた**（AMD 458回 / Intel 210回）。
+- `forcedOutOfDate` は**設定されるだけで、どこでもリセットされない**（書き込みは 567 行の1箇所のみ）。それでも
+  **フレーム数と同じ回数**発火している＝**`VulkanSwapchain` インスタンスが毎フレーム作り直されている**。
+  つまり `outOfDate=true` を受けた呼び出し側（`VulkanTerrainGpuBackend` 1844行の `if (this.swapchain.outOfDate())`）が
+  **実際にドロップして再作成している**（`ensureSwapchain()` の遅延再作成）。
+
+| run | worldFrames | present trace | 注入（＝再作成） | exit | validationClean | VUID | p50 | vulkanPasses |
+|---|---|---|---|---|---|---|---|---|
+| AMD | 458 | 458 | **458** | **0** | **true** | **0** | 16.49 ms | 2143 |
+| Intel | 210 | 210 | **210** | **0** | **true** | **0** | 39.44 ms | — |
+
+- **毎フレーム・スワップチェーンを作り直しながら、validation 0・exit 0・描画継続・p50 も悪化しない**。
+  これは out-of-date からの**復旧経路の受入**である（458回ぶんの再作成を踏んでいる）。
+- **計器の読み方の訂正**: `swapchainOutOfDate`（summary のフィールド）は**再作成後の新しいインスタンス**を読むため
+  0 になる。0 は「out-of-date が起きていない」意味ではない。前ターンはこれを誤読した。
+
+**次の一手**: (1) texture/descriptor/allocation 失敗を両GPUで確認する、(2) minimize 相当（サイズ0や present 失敗）を
+別途確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) `forceOutOfDate` を確定的に発火させる（acquire 側と同じ直し方）、(2) その状態で
 `presentImage` の out-of-date 復旧（verdict が OUT_OF_DATE のときの再作成）を受入する、(3) texture/descriptor/
 allocation 失敗を両GPUで確認する。
 
