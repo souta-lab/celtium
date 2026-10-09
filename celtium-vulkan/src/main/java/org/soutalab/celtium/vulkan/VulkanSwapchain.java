@@ -81,6 +81,13 @@ public final class VulkanSwapchain {
      * present ask for one is the whole rebuild.
      */
     private boolean outOfDate;
+    /** Test-only ({@code -Dceltium.vulkan.forceOutOfDate=true}): report out-of-date once so the rebuild runs. */
+    private static final boolean FORCE_OUT_OF_DATE = Boolean.getBoolean("celtium.vulkan.forceOutOfDate");
+    private boolean forcedOutOfDate;
+
+    private void recordOutOfDateInjection() {
+        System.out.println("celtium swapchain: injecting an out-of-date result so the rebuild path runs");
+    }
 
     public boolean outOfDate() {
         return this.outOfDate;
@@ -488,6 +495,14 @@ public final class VulkanSwapchain {
                 // The frame can still be presented, but the swapchain no longer matches the surface; recording it lets
                 // the caller rebuild while this frame goes out.
                 this.outOfDate = true;
+            }
+            if (FORCE_OUT_OF_DATE && !this.forcedOutOfDate) {
+                // Test-only: the branch that rebuilds the swapchain cannot be reached on this harness, because the
+                // window never changes size and neither driver reports sub-optimal here. Injecting the trigger shows the
+                // mechanism - drop, then rebuild through the lazy ensureSwapchain() - rather than only compiling it.
+                this.forcedOutOfDate = true;
+                this.outOfDate = true;
+                recordOutOfDateInjection();
             }
             if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                 return "present image: vkAcquireNextImageKHR returned " + result;
