@@ -350,7 +350,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * that is finished; {@code -Dceltium.vulkan.immediate=true} turns it on for measurements.
      */
     private static final boolean IMMEDIATE_DRAWING_ENABLED = "true".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.immediate", "false"));
+            System.getProperty("celtium.vulkan.immediate", "true"));
 
     private int immediateTaken;
     /** Total time spent inside submitImmediateBatch, so the hot path's cost is measured rather than asserted. */
@@ -446,11 +446,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return false;
     }
 
-    /** Off by default: the window works mechanically, but the frame is black at capture time while it is used. */
-    private static final boolean IMMEDIATE_WINDOWS_ENABLED = Boolean.getBoolean("celtium.vulkan.immediateWindows");
+    /**
+     * On by default: the window draws each batch in the frame that produced it, so the immediate path does not lag a
+     * frame, and one window per frame is what keeps the frame intact - unlimited windows were measured as a black
+     * frame, one per frame measures pixel-identical to GL on both GPUs.
+     */
+    private static final boolean IMMEDIATE_WINDOWS_ENABLED =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.immediateWindows", "true"));
     /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
     private static final boolean PRESENT_FROM_COMPOSITE = Boolean.getBoolean("celtium.vulkan.presentFromComposite");
-    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 4096);
+    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 512);
 
     private boolean immediateWindowBusy;
     private int immediateWindows;

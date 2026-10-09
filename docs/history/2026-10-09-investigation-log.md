@@ -1405,3 +1405,27 @@ Both are testable without touching the present path: a minimal Vulkan program th
 barrier, blit, present with a fresh semaphore pair) and nothing else would show whether these messages are this code's or
 this configuration's. That is the experiment the next round should build, because continuing to vary this code has now cost
 several rounds with the messages unmoved.
+
+---
+
+## The immediate path is the default, and the default is pixel-identical on both GPUs
+
+The verified configuration is now what ships, with no flags set:
+
+```
+status PASSED | nativeTerrainVerified True
+       AMD RX 6400:  0.00 mean, 0.0% over 8 and over 32 against its own GL reference
+       Intel UHD 630: 0.00 mean, 0.0% over 8 and over 32 against its own GL reference
+```
+
+Defaults: `celtium.vulkan.immediate=true` (36 batches drawn by Vulkan in the measured frame),
+`celtium.vulkan.immediateWindows=true` with `immediateFlushIndices=512` - the window flush is what makes the path
+lag-free, since it draws each batch in the frame that produced it - and the acceptance mask `1,3,4,5`, which keeps the
+24-byte family on GL because in this scene it is the framebuffer-to-screen composite rather than content.
+
+That is stage 3's deliverable in the plan's terms: the draw and upload entry points Minecraft and Forge mods use are
+served by Vulkan by default, for every layout that carries content, with the frame measured identical to GL on both target
+GPUs. It is deliberately not a claim about the whole renderer, and the plan's status table says why in the same row: the
+composite and the presentation of the frame are still GL's, the Vulkan present exists but is off because it emits
+validation messages, and the content that has not been exercised yet - entities with models, particles in motion, GUI over
+more than one world, resource reload, resize, world switch - is what stages 4 and 5 are for.
