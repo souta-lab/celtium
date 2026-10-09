@@ -7100,3 +7100,34 @@ the copy-back and the pipeline, with validation silent. What it needs next is th
 that is now a named structural change rather than a checklist item. Worth recording as the fourth time in this project that a
 step described as mechanical turned out to have a structural question inside it - the mask, the mapping, the element
 comparison, and now the pass nesting - and the first time the withdrawal happened before the tree went red.
+
+---
+
+## The structural change attempted, did not compile, and was reverted - with the obstacles named
+
+Letting the flush interrupt itself is the change the structural finding called for, and this round attempted it: a target
+filter on the shared draw path so the off-target groups can be drawn in their own pass, and a recorder for that pass modelled
+on the helper that already does exactly this shape.
+
+It did not compile, and rather than leave the tree red the whole change was **reverted** and the run verified:
+
+```
+BUILD SUCCESSFUL | exit 0 | clean | messages 0 | fixture PASSED
+self-test: differingPixels=0 glError=0 glPixel=64,128,191 passed=true
+nativeTerrainVerified=True   terrainPasses=1635   glDrawsCancelled=572
+```
+
+Three obstacles are worth writing down, because each cost time and each is avoidable:
+
+1. **The draw loop is not the first loop over the group list.** Patching `for (Object[] group : this.immediateGroups)` by
+   pattern hit `discardImmediateGroups` first, so the filter landed in the loop that **retires** groups rather than the one that
+   draws them - which the compiler caught, but only after the edit had been written.
+2. **`glTextureId` no longer exists.** The GL texture resolution was removed last round as unused, so the copy-back call in the
+   new recorder had nothing to bind to. It comes back with the pass, not before.
+3. **There is already the right template.** `recordImmediateOnlyPass` - "a render pass containing nothing but the pending
+   immediate groups" - is precisely the shape the off-target pass needs, and the change should have **mirrored it** from the
+   start rather than working from the structural description.
+
+So the state is the same as the previous round's, and the next attempt has a shorter path: restore the texture resolution, copy
+the structure of `recordImmediateOnlyPass` into the off-target recorder, put the target filter in the draw loop by **line
+number** rather than by pattern, and re-enable the acceptance last.
