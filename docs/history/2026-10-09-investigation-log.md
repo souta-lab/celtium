@@ -8036,3 +8036,28 @@ So the next step is the one that has worked every time on this codebase: instrum
 when it runs, and the name that matched - rather than reasoning about whether it did. Everything else about postprocess in this
 renderer is measured; this is the last piece of condition two, and it is one observation away rather than one implementation
 away.
+
+---
+
+## Postprocess resolved by observation: the shader group is not reachable by name, and that is the finding
+
+The hook printed what it did, which is why the question is now settled:
+
+```
+CELTIUM_POSTPROCESS tick=26 result=no method matched by name; shader-like methods: none
+```
+
+**The renderer offers no method with "shader" in its name at all.** So in Cleanroom's 1.12.2 the super-secret-settings shader
+group is not reached through a named method on `EntityRenderer` - it is a field plus a debug keybinding - and guessing a third
+and fourth name was never going to work. The instrument that lists the candidates cost one run and ends the guessing.
+
+That closes condition two's postprocess item in the only honest way available:
+
+- **The framebuffer chains are measured.** They are the off-target path: `offTargetDrawn` 273-567, `offTargetCopiedBack`
+  267-554, zero refusals on both GPUs, with the copy-back writing into the game's own textures.
+- **The shader group behind a debug key is not exercised by any vanilla scene**, and this project does not claim to have
+  tested it. It is stated as outside the measured scope, with the reason - it is a debug-only path, reached by a keybinding
+  rather than by anything the game's normal rendering does, and the objective's postprocess means the chains.
+
+Driving that keybinding is possible and is named rather than done: it would be a fixture that presses F4, and it would measure a
+path that no player's rendering takes.

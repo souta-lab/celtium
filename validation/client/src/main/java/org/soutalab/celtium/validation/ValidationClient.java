@@ -673,13 +673,26 @@ public final class ValidationClient {
                     method.invoke(mc.entityRenderer);
                     result = "called " + method.getName();
                 } else {
-                    result = "no method matched by name";
+                    // Not guessing a third name: list what the renderer actually offers, so the next attempt uses the real one.
+                    StringBuilder candidates = new StringBuilder();
+                    for (java.lang.reflect.Method candidate : mc.entityRenderer.getClass().getDeclaredMethods()) {
+                        if (candidate.getName().toLowerCase(java.util.Locale.ROOT).contains("shader")) {
+                            candidates.append(candidate.getName()).append('/')
+                                    .append(candidate.getParameterCount()).append(' ');
+                        }
+                    }
+                    result = "no method matched by name; shader-like methods: "
+                            + (candidates.length() == 0 ? "none" : candidates.toString().trim());
                 }
             } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
                 result = String.valueOf(error);
             }
             report.addProperty("postprocessAtTick", Integer.valueOf(worldTicks));
             report.addProperty("postprocessActivated", String.valueOf(result));
+            // Printed as well as reported. The report is written at the end of the run and properties added early can be
+            // overwritten by it - the recipe flag lost its value exactly that way - so the observation that this hook ran, and
+            // what it matched, goes to stdout where nothing can take it away.
+            System.out.println("[Celtium] CELTIUM_POSTPROCESS tick=" + worldTicks + " result=" + result);
         }
         if (worldTicks == 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
