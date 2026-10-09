@@ -393,6 +393,13 @@ p50 63ms（AMDの1.5倍）。つまり **GL↔VK ハンドオフ（全画面コ�
 通常と postprocess が同一**（= フレーム時間の律速ではない。ただし GPU 実行時間は含まない）。
 さらに **spider のハングは AMD でも再現**（exit 124、前回AMDは PASSED でフレーキー）＝Intel固有ではなく、
 spider.json（バニラ最重のポストプロセス）でフレーム時間が閾値を超えるため。次の計器は GPU 側の timestamp。
+**真因を特定・修正**: `mirrorRefreshFrames=8` でもハングし mirror は増えた（898回/927 invalidations）＝周期ではなく
+**使用ごと**に発生。preflight の `textureRegistry.get(boundTexture)` がミラーを誘発しており、**カスタムシェーダ
+（`GL_CURRENT_PROGRAM != 0`）で描かれるバッチを受理**していた（program は診断文字列でしか見ていなかった）。
+ShaderGroup は real program で複数パスを描くため、パスごとにフルスクリーン読み戻しが走り ~15回/フレーム＝約2秒/フレーム。
+**preflight で program≠0 のバッチを受理しない**修正で、spider は exit 124 → **exit 0 / PASSED / 24.9s**、
+mirror 898 → **80（−91%）**、p99 174 → **118ms**、通常runは不変（41.7ms / PASSED）。正しさの修正でもある
+（任意 program は固定パイプラインで再現できない）。
 次の一手は (1) timestamp クエリで handoff の GPU 時間を測る、(2) 同一frame内の連続パスをまとめてハンドオフ回数を減らす、
 (2) 画面サイズテクスチャの mirror を「Vulkan側で実際にサンプルする描画がある場合」に限定する、
 (3) パスあたりのコストを測る計器を足す（budget延長で隠さない）。

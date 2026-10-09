@@ -539,6 +539,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
     private int offTargetRefusals;
     private int textureRefusalsBeforeAccept;
+    /** Batches refused because a custom shader program was bound (the game's post-process chain and mod shaders). */
+    private int shaderProgramRefusals;
     private int postAcceptDroppedGroups;
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
@@ -1828,6 +1830,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // has created the registry. Fixing only the descriptor probe left this one throwing, which the instrument
                 // showed by reporting the identical reason after the first fix.
                 this.textureRegistry = new VulkanTextureRegistry(this.context);
+            }
+            // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
+            // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
+            // full-screen passes with real programs, each of which mirrored its source texture - measured at 898
+            // readbacks, about 15 per frame, which is what turned the spectator spider scene into ~2 s per frame and
+            // left the run unable to reach its capture tick on either GPU. Refused before anything is appended, so GL
+            // keeps drawing those passes with the program that is actually bound.
+            if (org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM) != 0) {
+                this.immediateLastRefusal = "a custom shader program is bound";
+                this.shaderProgramRefusals++;
+                this.refusedBeforeAppend++;
+                this.flushPendingBeforeGlDraw();
+                return false;
             }
             if (this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
