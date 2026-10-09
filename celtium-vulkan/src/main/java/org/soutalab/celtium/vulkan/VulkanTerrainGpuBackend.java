@@ -752,6 +752,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int groupsEnqueuedForOtherTargets;
     /** Batches accepted while a framebuffer other than the main one was bound (audit A10). */
     private int acceptedForOtherTargets;
+    /** Flushes refused because no command buffer was recording (A11 exposes this path). */
+    private int drawsWithoutCommandBuffer;
     /** Set while an off-target batch is inside the offer path, so a refusal can be attributed to it afterwards. */
     private boolean offTargetBatchInFlight;
     /** Refusal reasons seen for batches offered while a non-main framebuffer was bound (audit A10). */
@@ -2586,6 +2588,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
                 + ",enqueuedForOtherTargets=" + this.groupsEnqueuedForOtherTargets
                 + ",acceptedForOtherTargets=" + this.acceptedForOtherTargets + "]"
+                + " drawsWithoutCommandBuffer=" + this.drawsWithoutCommandBuffer
                 + " offTargetRefusals=" + (this.offTargetRefusalsByReason.isEmpty()
                         ? "none" : this.offTargetRefusalsByReason.toString())
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
@@ -4015,6 +4018,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) {
+            return;
+        }
+        if (this.commandBuffer == null) {
+            // Recording into a command buffer that was never begun is a validation error, and with format 2 accepted this
+            // path is reached: `vkCmdBindPipeline` was recorded with no `vkBeginCommandBuffer` before it. Refusing here and
+            // counting it names the path instead of hiding the defect.
+            this.drawsWithoutCommandBuffer++;
+            this.immediateLastRefusal = "no command buffer is recording";
             return;
         }
         // No named target means the main pass: it draws what was offered while the main framebuffer was bound and leaves the

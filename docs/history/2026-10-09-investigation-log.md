@@ -9244,3 +9244,20 @@ severity=ERROR vkCmdBindPipeline(): was recorded, but vkBeginCommandBuffer() was
 赤を残さないため mask は**巻き戻した**（`1,3,4,5,6,7,8,9`）。次段は「format 2 を受理したときにどの経路が
 `vkBeginCommandBuffer` の外で記録するか」を特定して直し、そのうえで mask を開け直す。順序は「記録経路を直す →
 maskを開ける → `atPass`/`drawnPasses` が非0になることを確認する」である。
+
+---
+
+## 記録ガードの前提が誤りだった: command buffer は null ではなく「開始されていない」
+
+maskを開いた状態で、flushの入口に「`commandBuffer == null` なら記録しない」ガードを入れ、経路を数えた。
+
+```
+drawsWithoutCommandBuffer = 0
+acceptedByFormat = 1:6,2:236,3:0,4:0,5:146,6:870,7:568,8:128,9:12
+validation messages = 70   （同じ vkCmdBindPipeline / vkCmdBindDescriptorSets のエラー）
+```
+
+**ガードは一度も発火しなかった**。したがって `commandBuffer` は null ではなく、**「オブジェクトはあるが開始されていない」**
+状態で記録されている。記録中かどうかを知っているのは `VulkanContext` の `beginCommands`/`endCommands` であり、
+backendはその状態を持っていない。次段は `VulkanContext` に「記録中か」を持たせ（`beginCommands` で true、`endCommands` で
+false）、backendのflushをその状態で守ること。maskは再び閉じ、ツリーは green（exit 0 / clean / messages 0 / PASSED）。
