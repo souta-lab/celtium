@@ -1939,3 +1939,26 @@ Measured with the harness guard active:
 
 The audit's B therefore keeps only the swapchain-recreation case, which needs a resize or an out-of-date result that this
 harness cannot produce.
+
+---
+
+## A process change, because the same failure has now cost three rounds
+
+The out-of-date swapchain work failed the same way as the two rounds before it: a batch of text replacements applied by
+one script, the script's assumptions about where methods begin and end wrong, and the file left in a state the compiler
+rejects. Each time the fix was to revert and rerecord, which is honest but expensive - and the pattern is now clear enough
+to name: **these files are too large to edit by bounded-segment surgery in one pass**.
+
+So the process changes rather than the resolution to be more careful:
+
+- **One replacement per step, with a compile between them.** Not a batch, not a script that edits three files and reports
+  at the end. Each step is small enough that a failure identifies itself.
+- **The anchor is the statement being changed, read from the file immediately before the edit**, never a method signature
+  reconstructed from memory - the last three failures all came from recalling a name or a boundary rather than reading it.
+- **`git diff --stat` after each step**, so a replacement that matched nothing is caught by the diff rather than by the
+  compiler three edits later.
+
+The out-of-date design itself is recorded for when it is done this way: record `VK_SUBOPTIMAL_KHR` and
+`VK_ERROR_OUT_OF_DATE_KHR` from both the acquire and the present instead of accepting them silently, and let the backend
+drop the swapchain so the next present's `ensureSwapchain()` rebuilds it - the lazy creation that already exists is the
+whole rebuild.
