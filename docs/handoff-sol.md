@@ -314,6 +314,14 @@ atlas HF の差（vanilla run 34.77 vs mod導入run 32.01）は `TextureAtlasSpr
 次の優先は監査バックログ（失敗経路・coverage・texture所有）へ移す。特に**松明の炎（アニメーションテクスチャ）が未描画**なのは独立の欠陥で、
 sprite animation の移植を進める。
 
+**失敗経路の実機検証（このターン・未完）**: `-Dceltium.vulkan.failSubmits=2` で submit 失敗を注入すると
+**exit 124（duration cap）でハングし fixture report が MISSING**。ログは
+`accepted geometry retained; renderer must be rebuilt` → `beginFrame() ... previous frame is still open` →
+`Game crashed!` の連鎖で、**失敗時に frame が開いたまま残る**ため次フレームで別例外→クラッシュ→ヘッドレスが停止する。
+`VulkanFrameTarget.abandonFrame(reason)`（GPU作業なしで frame を閉じる・冪等）を追加して backend の2経路から呼んだが、
+**再実行でも exit 124 / "still open" ×2 のままで未解決**（frame を開く経路が他にもある。bridge の beginFrameForPresent 系を疑う）。
+失敗再現は p49-failsubmit-r437（修正前）/ p49-failsubmit2-r437（修正後）に保存。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

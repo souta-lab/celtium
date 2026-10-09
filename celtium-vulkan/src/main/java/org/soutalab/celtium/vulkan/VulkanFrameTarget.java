@@ -198,6 +198,9 @@ public final class VulkanFrameTarget {
     private int gameDepthRenderbuffer;
 
     private boolean frameOpen;
+    /** Frames closed by a failure path rather than by {@link #endFrame()}; part of the failure record. */
+    private int abandonedFrames;
+    private String lastAbandonReason;
 
     /**
      * Per-step CPU time of the handoff, so the debug overlay can show where the milliseconds go instead of leaving
@@ -599,6 +602,28 @@ public final class VulkanFrameTarget {
         this.tConvertOut = 0L;
         this.tTimedFrames = 0L;
         return summary;
+    }
+
+    /**
+     * Closes the frame without the write-back to the game framebuffer.
+     * <p>
+     * A submission the driver refused leaves the frame open and the frame's semaphores unconsumed, so the write-back
+     * {@link #endFrame()} performs would wait on a signal that never comes - the client then hangs instead of ending the
+     * run with a message. The failure paths call this instead: the frame is over, nothing is returned to OpenGL, and the
+     * next frame is refused by the backend's stalled flag rather than by an open frame. Idempotent, and safe to call
+     * with no frame open.
+     */
+    public void abandonFrame() {
+        abandonFrame("unspecified");
+    }
+
+    /** {@see #abandonFrame()} - the reason is recorded so the failure reproduction says which path abandoned it. */
+    public void abandonFrame(String reason) {
+        if (frameOpen) {
+            frameOpen = false;
+            abandonedFrames++;
+            lastAbandonReason = reason;
+        }
     }
 
     public void endFrame() {

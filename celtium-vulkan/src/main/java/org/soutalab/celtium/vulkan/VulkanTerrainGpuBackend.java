@@ -1867,6 +1867,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 try { flushImmediateWindow(); }
                 catch (RuntimeException | LinkageError error) {
                     this.gpuStalled = true;
+                    // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
+                    // abandoning it keeps the next beginFrame() from reporting an open frame instead of the stall.
+                    this.frameTarget.abandonFrame("immediate window submit failure");
                     record("accepted geometry retained after window failure: " + describe(error));
                 }
             }
@@ -2280,6 +2283,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                     if (attempt == 1) {
                         this.gpuStalled = true;
+                        this.frameTarget.abandonFrame("accepted geometry retained");
                         throw new IllegalStateException("accepted geometry retained; renderer must be rebuilt", error);
                     }
                     this.immediateRetryCount++;
