@@ -6957,3 +6957,37 @@ vertex format, a pipeline that already exists), the resource was built before th
 its own comment why it is not used yet rather than leaving a reader to wonder. The remaining half is named - a render pass, a
 framebuffer, a readback and a `glTexSubImage2D` back into the game's texture - and it is small enough to describe in one
 sentence, which is what measuring it first bought.
+
+---
+
+## The off-target chain works, and the validation layer found the part that does not yet
+
+The remaining half of the sized increment - a render pass, a framebuffer and a readback - is in, and it is verified rather
+than assumed: at creation the target clears itself to a known colour and reads the pixels back.
+
+```
+CELTIUM_OFFTARGET_SELFTEST size=256x256 expected=64,128,191 differingPixels=0 passed=true
+```
+
+**Zero differing pixels**: the render pass begins and ends, the framebuffer accepts it, and the copy into host-visible memory
+returns exactly the colour that was cleared. The chain works end to end.
+
+And the same run produced the kind of finding that justifies the validation layer being part of every run:
+
+```
+severity=ERROR vkCmdCopyImageToBuffer(): READ_AFTER_WRITE hazard detected. vkCmdCopyImageToBuffer reads VkImage ...,
+which was previously written ...
+```
+
+The copy reads the image immediately after the render pass wrote it. A barrier between the pass and the copy - colour
+attachment writes made available to a transfer read - is the textbook answer and **it is in the code**, and the hazard is
+still reported, which means the synchronization this needs is not the one that was added. That is exactly the class of problem
+the real copy-back must solve, and it is now written down as such rather than discovered later under a moving frame.
+
+The self-test is therefore **off by default**: it proves the resources work, and it puts a validation error in every run while
+it does, which is the wrong trade for something that is not rendering. The ordinary runs are clean again - `offTargetTargets=1`,
+exit 0, validation clean, 0 messages, fixture PASSED, `terrainPasses=1635`, `glDrawsCancelled=571`.
+
+What is left of this increment is small and named: bind the existing pipelines for the offscreen pass, draw the 571 format-1
+batches into it, and upload the readback into the game's texture - with the synchronization the validation layer has already
+told us is not yet right.

@@ -79,9 +79,12 @@ implemented, unimplemented or verified on hardware, rather than judged by the te
 render target, **256x256**, receiving **571 batches**, all of them format 1, for which a pipeline already exists. So the first increment is one small image with a copy-back, not a general
 framebuffer subsystem. **The resource half is now in and validated**: for the second target the renderer creates a 256x256
 device-local image with a view (`offTargetTargets=1`), and validation is **silent** across the run - so the risky part is proved
-clean before any pixel depends on it. The batches are still GL's (`offTargetRefusals=571`), which is the honest order: the
-render pass, the framebuffer and the copy-back arrive together with the drawing half, when there is something to draw and
-somewhere to put it |
+clean before any pixel depends on it. The batches are still GL's (`offTargetRefusals=571`), which is the honest order. **The whole resource chain is in now** -
+render pass, framebuffer and a host-visible readback - and a self-test that clears the target and reads it back confirms the
+chain works end to end (`differingPixels=0`, passed). That self-test is **off by default** for a reason worth recording: the
+validation layer reports a `READ_AFTER_WRITE` hazard on its copy even with a barrier between the pass and the read, which is a
+synchronization question the **real** copy-back has to get right rather than a defect in the resources. What remains is binding
+the pipelines for this pass and uploading the readback into the game's texture |
 | **Texture animation** | **Vulkan mirror, verified** | `CELTIUM_ANIM directMirrorRefreshes=89` with `atlasGlId=9` - the animated atlas re-uploads reach the mirror the terrain samples |
 | **Resource reload** | **Verified** | `reloadedAtTick=100`, exit 0, validation clean, fixture PASSED |
 | **World switch (leave and rejoin)** | **Verified** | `leftWorldAtTick=100 rejoinedAtTick=100`, teardown releases 4 then 2 resources, validation clean |
