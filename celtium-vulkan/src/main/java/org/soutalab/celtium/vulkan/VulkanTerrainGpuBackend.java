@@ -2649,17 +2649,41 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /**
+     * Waits for the last submission of this backend to finish, and refuses to wait forever.
+     * <p>
+     * The fence exists from creation but is signalled only by a submission the driver accepted, so waiting on it when
+     * nothing was submitted is a wait that can never end - which is exactly what a failed {@code vkQueueSubmit} leaves
+     * behind: the previous code cleared the pending flag *before* waiting and passed {@code Long.MAX_VALUE}, so a
+     * submission that never reached the queue, or a device that stopped making progress, hung the client instead of
+     * ending the run. The wait is bounded now, the flag is cleared only once the wait has resolved, and the queue is
+     * only drained after the fence actually signalled - draining a queue whose work never completes would hang in the
+     * driver instead.
+     */
     private void waitForIdle() {
-        this.submissionPending = false;
-        if (this.fence != 0) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                LongBuffer fences = stack.mallocLong(1);
-                fences.put(0, this.fence);
-                vkWaitForFences(this.context.device(), fences, true, Long.MAX_VALUE);
+        if (this.fence == 0 || !this.submissionPending) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer fences = stack.mallocLong(1);
+            fences.put(0, this.fence);
+            int result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
+            if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
+                record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
+                        + "s, so the last submission is not completing; not draining the queue");
+                return;
             }
+            if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                record("waitForIdle: vkWaitForFences returned " + result);
+                return;
+            }
+            this.submissionPending = false;
         }
         vkQueueWaitIdle(this.context.queue());
     }
+
+    /** How long a wait for the GPU will be tolerated before the run ends rather than hanging. */
+    private static final long IDLE_TIMEOUT_NANOS = 5_000_000_000L;
 
     // ------------------------------------------------------------------ shared resources
 
