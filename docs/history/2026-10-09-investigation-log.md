@@ -8905,3 +8905,31 @@ animatedImageFills = 108     inPlaceRefreshes = 991      mirroredTextures = 11  
 **このfixtureではガードは一度も発火しない**。描画に使われるミラーはすべて全面画像を受け取っているためで、A04が想定する
 「patchが先、全面が後」の順序をこの場面が作らないことを意味する。ガードは存在し、その状況では拒否する側に働く。
 A04の**もう半分**（atlas stitch 時の全面データを保持・供給する）は未着手のままである。
+
+---
+
+## 監査A03/A32の専用受入: GPU非依存のCPU契約チェック
+
+監査はA03について「通常fixture cleanのみではpatch外保存の専用受入未確認。少なくとも2つの独立target/groupのCPU契約確認と
+色pattern受入が必要」とし、A32についてもtarget別retireの契約を求めている。デバイスを使わずに検証できるよう、
+**純ロジックを2つ抽出**した。
+
+- `VulkanTextureRegistry.toRgba(int[][] data, int width, int height, ByteBuffer out)` — アニメーション経路の
+  `int[mipLevel][y*width+x]` を読み、ARGB→RGBAへ変換する部分。GPU非依存。
+- `ImmediateGroupQueue.retireGroupsForTarget(List<Object[]>, long)` — 依存フリーの小さなクラスへ移した所有規則。
+  以前は `VulkanTerrainGpuBackend` の中にあり、契約チェックがLWJGL/joml/fastutil/embeddium全体を
+  読み込まないと呼べなかった（実際にその順で失敗した）。backendはこれへ委譲する。
+
+`scripts/cpu-contract/TextureContractCheck.java` が検証する内容と結果:
+
+| 検証 | 内容 | 結果 |
+|---|---|---|
+| A02 平坦texel | `[[11,12,21,22],[99]]` を2x2として読み、texel=11,12,21,22 のRGBA、行配列読みなら99,0になることとの差 | PASS |
+| A03 patch外保存 | 2x2@(1,2) と 3x1@(5,0) を順に当て、**patch外の全byteが0x5Aのまま**・touched=7・patch Aのalpha/redとpatch Bのred | PASS |
+| A32 target別retire | 2独立target×4group＋不正group。A退去後は3件保持（B×2＋不正1）、B退去後は不正1件のみ | PASS |
+
+出力は `CELTIUM_CPU_CONTRACT PASS`（失敗時は非0）。**限界も明記**した: Vulkanのbarrier・layout・実画像内容は検証しないので、
+GPU受入の代わりではない。抽出後に通常fixtureを回し、AMD RX6400で exit 0 / validationClean true / messages 0 /
+fixture PASSED / terrainPasses 714 と、抽出前と同じ挙動であることを確認した（imageFilledMirrors 113、
+imageUploadsSkipped 3511、animatedImageFills 106、inPlaceRefreshes 1001、mirroredTextures 11、descriptorSets 1）。
+チェック自身のexpectationを1つ間違えていた（`0x2A2B2C2D` の赤は `0x2B` で、レンダラが正しかった）ことも記録する。

@@ -2323,6 +2323,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * This is the interruption the structural finding called for. The body mirrors {@link #recordImmediateOnlyPass}, which
      * already does exactly this shape for the frame's pass: begin, set the viewport and scissor, draw the pending groups, end.
      */
+    /**
+     * Removes the pending groups that belong to one render target, leaving every other group in the queue.
+     * <p>
+     * The off-target pass runs before the main pass and filters to a single target. Retiring everything there - which is what
+     * the code did before audit A32 - destroyed the main pass's accepted geometry: accepted, counted, and thrown away before it
+     * could be drawn. Static and device-free so the CPU contract check can exercise the rule with two independent targets.
+     *
+     * @return how many groups were left behind for other targets
+     */
+    public static int retireGroupsForTarget(java.util.List<Object[]> groups, long targetIdentity) {
+        return ImmediateGroupQueue.retireGroupsForTarget(groups, targetIdentity);
+    }
+
     /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
     private boolean hasGroupsForTarget(long targetIdentity) {
         for (Object[] group : this.immediateGroups) {
@@ -4103,16 +4116,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.immediateGroupsDiscarded += this.immediateGroups.size();
                 discardImmediateGroups();
             } else {
-                int kept = 0;
-                java.util.Iterator<Object[]> groups = this.immediateGroups.iterator();
-                while (groups.hasNext()) {
-                    Object[] group = groups.next();
-                    if (((Long) group[7]).longValue() == onlyTarget.longValue()) {
-                        groups.remove();
-                    } else {
-                        kept++;
-                    }
-                }
+                int kept = ImmediateGroupQueue.retireGroupsForTarget(this.immediateGroups, onlyTarget.longValue());
                 this.immediateGroupsOffTargetRetired += 1;
                 if (kept > 0) {
                     this.immediateGroupsKeptForOtherTargets += kept;

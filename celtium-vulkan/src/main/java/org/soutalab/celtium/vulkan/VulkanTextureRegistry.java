@@ -167,6 +167,32 @@ public final class VulkanTextureRegistry {
     }
 
     /**
+     * Converts the animation method's pixel array into the RGBA bytes this renderer uploads.
+     * <p>
+     * The array is {@code int[mipLevel][y * width + x]}: the first index is the mip level and the second is a **flat** texel
+     * offset, not a row. Level 0 is the patch being written. ARGB comes in and RGBA goes out, matching both the readback path
+     * and the image path. This is static and device-free on purpose: it is the piece the CPU contract check exercises.
+     *
+     * @return the number of texels written
+     */
+    public static int toRgba(int[][] data, int width, int height, java.nio.ByteBuffer out) {
+        int[] level0 = data != null && data.length > 0 && data[0] != null ? data[0] : new int[0];
+        int written = 0;
+        for (int row = 0; row < height; row++) {
+            for (int col = 0; col < width; col++) {
+                int texel = row * width + col;
+                int argb = texel < level0.length ? level0[texel] : 0;
+                out.put((byte) ((argb >> 16) & 0xFF));
+                out.put((byte) ((argb >> 8) & 0xFF));
+                out.put((byte) (argb & 0xFF));
+                out.put((byte) ((argb >>> 24) & 0xFF));
+                written++;
+            }
+        }
+        return written;
+    }
+
+    /**
      * Replaces a mirror's content with pixels the caller already has, when the write covers the whole texture.
      * <p>
      * The animation path writes through {@code TextureUtil.func_147955_a}, which takes the pixels and the region and writes into
@@ -218,17 +244,7 @@ public final class VulkanTextureRegistry {
             // The array the animation method passes is int[mipLevel][y * width + x], not an array of rows. The first index is
             // the mip level and the second is the flat texel index, so level 0 is the whole patch and the indexing below is
             // one-dimensional. Treating data[row] as a row read the wrong texels for every patch of every animated sprite.
-            int[] level0 = data.length > 0 && data[0] != null ? data[0] : new int[0];
-            for (int row = 0; row < height; row++) {
-                for (int col = 0; col < width; col++) {
-                    int texel = row * width + col;
-                    int argb = texel < level0.length ? level0[texel] : 0;
-                    rgba.put((byte) ((argb >> 16) & 0xFF));
-                    rgba.put((byte) ((argb >> 8) & 0xFF));
-                    rgba.put((byte) (argb & 0xFF));
-                    rgba.put((byte) ((argb >>> 24) & 0xFF));
-                }
-            }
+            toRgba(data, width, height, rgba);
             rgba.flip();
             if (wholeTexture) {
                 entry.texture.uploadFromImage(width, height, rgba);
