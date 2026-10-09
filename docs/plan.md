@@ -34,6 +34,23 @@ What that means concretely:
 - **The audits and their acceptance tests continue.** This is a statement of direction, not an instruction to delete or
   rewrite what is there: the current audit P0/P1 fixes and their verification stay in the queue.
 
+## Measurement basis: the reference image contains this project (found in round 257)
+
+Every image comparison quoted in the recent rounds was measured against a frame that contains **this project's Vulkan
+terrain**. The run described as the OpenGL reference had the immediate path disabled (`immediateTaken=0`, refusal
+`immediate_drawing_disabled_by_celtium.vulkan.immediate=false`) but the terrain backend installed and drawing
+(`vulkanPasses=1647`, `regions=4 draws=62`, `nativeTerrainVerified True`).
+
+Those percentages therefore measure agreement with this project's own earlier output, **not** with OpenGL. The functional
+evidence is unaffected and stands on its own terms - `postAcceptDroppedGroups=0`, validation clean on AMD and Intel, the
+sampler filters the driver reports, the layout bugs found and fixed - but no image percentage from before this note should be
+read as OpenGL agreement.
+
+A pure OpenGL reference needs a backend switch that installs nothing while leaving the mod present: removing the
+`celtium.vulkan.*` switches still left the terrain backend installed, and removing the mod entirely makes the fixture fail
+before it captures a screenshot. After that switch exists, every image number in this project needs re-baselining, starting
+with the particle and sampler results that have been quoted as improvements.
+
 ## 0b. Java: compile target 21, game runtime 25 (corrected 2026-10-09 14:17)
 
 Two different things, recorded separately because they are not the same claim:
