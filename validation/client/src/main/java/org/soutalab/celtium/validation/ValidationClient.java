@@ -62,6 +62,71 @@ public final class ValidationClient {
     private int framesAtInterop;
     private int fboAtInterop, colorAtInterop, depthAtInterop;
     private int worldTicks;
+    /**
+     * Registry-driven block coverage.
+     * <p>
+     * The generator's flat world contains a handful of block types, so the terrain path was only ever exercised on those.
+     * With {@code -Dceltium.validation.blockSweep=<count>} the fixture walks {@code Block.REGISTRY} and places a bounded
+     * number of blocks per tick on the layer just above the ground, so the mesher and the native terrain pass have to
+     * handle every registered block. Nothing is assumed about the result: the placed/failed/index counters go into the
+     * report, and which blocks reached the frame is read from the renderer's own counters and the image.
+     */
+    private java.util.List<net.minecraft.block.Block> celtium$sweepBlocks;
+    private int celtium$sweepIndex;
+    private int celtium$sweepPlaced;
+    private int celtium$sweepFailed;
+    private int celtium$sweepTotal;
+
+    private void celtium$blockSweep(Minecraft mc) {
+        int wanted = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
+        if (wanted <= 0 || mc.world == null) {
+            return;
+        }
+        if (celtium$sweepBlocks == null) {
+            celtium$sweepBlocks = new java.util.ArrayList<net.minecraft.block.Block>();
+            for (net.minecraft.block.Block block : net.minecraft.block.Block.REGISTRY) {
+                if (block != null) {
+                    celtium$sweepBlocks.add(block);
+                }
+            }
+            celtium$sweepTotal = Math.min(wanted, celtium$sweepBlocks.size());
+            report.addProperty("blockRegistrySize", Integer.valueOf(celtium$sweepBlocks.size()));
+            report.addProperty("blockSweepTotal", Integer.valueOf(celtium$sweepTotal));
+        }
+        // Paced on purpose. Two blocks a tick for 125 ticks measured as "Too few world rendering frames for startup
+        // validation: worldFrames=94 (threshold 100), worldTicks=200" on AMD and a 175 s timeout with MISSING_REPORT on
+        // Intel: filling a layer dirties enough chunks that the terrain rebuilds stop the frame loop keeping up. The
+        // fixture is therefore split into small sweeps - a bounded number of blocks, spaced out - and the counters say
+        // how far each one got.
+        int everyTicks = Math.max(1, Integer.getInteger("celtium.validation.blockSweepEvery", 4).intValue());
+        if (worldTicks % everyTicks != 0) {
+            return;
+        }
+        for (int n = 0; n < 1 && celtium$sweepIndex < celtium$sweepTotal; n++, celtium$sweepIndex++) {
+            net.minecraft.block.Block block = celtium$sweepBlocks.get(celtium$sweepIndex);
+            int gx = celtium$sweepIndex % 16;
+            int gz = celtium$sweepIndex / 16;
+            net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(gx - 8, 4, gz - 8);
+            try {
+                net.minecraft.block.state.IBlockState state = block.getDefaultState();
+                if (state != null) {
+                    mc.world.setBlockState(pos, state, 2);
+                    celtium$sweepPlaced++;
+                }
+            } catch (Throwable error) {
+                celtium$sweepFailed++;
+                if (celtium$sweepFailed <= 5) {
+                    report.addProperty("blockSweepFailure" + celtium$sweepFailed,
+                            String.valueOf(block.getRegistryName()) + ": " + error.getClass().getSimpleName() + ": "
+                                    + String.valueOf(error.getMessage()));
+                }
+            }
+        }
+        report.addProperty("blockSweepIndex", Integer.valueOf(celtium$sweepIndex));
+        report.addProperty("blockSweepPlaced", Integer.valueOf(celtium$sweepPlaced));
+        report.addProperty("blockSweepFailed", Integer.valueOf(celtium$sweepFailed));
+    }
+
     // Once-guards: these hooks live in a render-tick handler, so `worldTicks == 100` is true on every frame of
     // that tick and the reload would run dozens of times instead of once (audit S22).
     private boolean celtium$reloaded;
@@ -1009,6 +1074,7 @@ public final class ValidationClient {
             // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
             // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
             report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
+            celtium$blockSweep(mc);
             if (worldTicks == 20) {
                 mc.player.capabilities.isFlying = true;
                 mc.player.setPositionAndRotation(0.5, 8.0, 0.5, 180.0f, 20.0f);

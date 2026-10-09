@@ -428,6 +428,39 @@ MC の sprite/frame データへ、(3) 相互運用グルー（blit/semaphore/�
 (2) テクスチャの `glGetTexLevelParameteri`（sprite/frame データからの供給）、
 (3) 相互運用グルーの blit/semaphore（同一デバイス present への一本化）を順に潰す。
 
+## 7.9 vanilla coverage: registry駆動のブロック掃引（このターン・新規実装）
+
+優先順位5「registryから自動fixtureを生成し、小場面に分割する」に対応する場面を実装した。
+
+- fixture に `-Dceltium.validation.blockSweep=<count>` を追加。`Block.REGISTRY` を順に歩き、
+  **平坦worldの地表の1つ上（y=4）に 16×16 グリッドでブロックを設置**する。generator は数種類しか作らないので、
+  これまではその数種類でしかメッシュ経路を踏んでいなかった。
+- 設置数・失敗数・進行index・registryサイズを **fixture の report 直下**に記録（`rendererDebug` ではない）。
+
+**最初の実装は失敗し、その原因を実ログから読んだ**（2ブロック/tick・250個）:
+
+| GPU | 結果 | ログの根拠 |
+|---|---|---|
+| AMD | **fixture FAILED** | `Too few world rendering frames for startup validation: worldFrames=94 (threshold 100), worldTicks=200` |
+| Intel | **exit 124 / MISSING_REPORT** | 175秒でタイムアウト（time-limit） |
+
+→ 層を一気に埋めるとチャンク再構築が続き、**フレームループが閾値に間に合わない**。goal の「小場面に分割」に従い、
+**1ブロック/Ntick（既定4）**に間引き、既定の目標数を小さくした。
+
+**間引き後の受入（両GPU）**:
+
+| 指標 | AMD | Intel |
+|---|---|---|
+| `blockRegistrySize`（1.12.2の全ブロック） | **254** | **254** |
+| `blockSweepTotal` / `Placed` / `Failed` / `Index` | 60 / **50** / **0** / 50 | 60 / **50** / **0** / 50 |
+| `worldFrames` | 202（閾値100超） | 同 |
+| verdict | **exit 0 / validationClean / PASSED** | **exit 0 / validationClean / PASSED** |
+
+- 1ブロック/4tick×200tick＝50個になる（ペーシングどおり）。**失敗0**＝`getDefaultState()` と `setBlockState` が
+  254種のうち50種で問題を起こさず、メッシュ・native地形パスがそれらを扱えた。
+- **残り**: 1runあたり50種なので、254種を覆うには `blockSweep` の開始位置をずらして数run回すか、
+  tick数を増やす。次は **item/model と entity/TESR** も同じ方式で registry から掃引する。
+
 ## 8. 第3回監査の最終追補
 
 32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
