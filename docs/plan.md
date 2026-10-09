@@ -87,8 +87,20 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **BLOCK-family acceptance measured, then switched back off on a real validation message, and the GLU mystery is
-  closed.** The fixture now draws a `DefaultVertexFormats.BLOCK` batch (gated behind
+- **BLOCK family is accepted, drawn and validation-clean.** Both defects the validation layer reported are fixed:
+  the lightmap attribute is declared `uvec2` in the shaders to match `VK_FORMAT_R16G16_UINT`
+  (`VUID-VkGraphicsPipelineCreateInfo-Input-08733`), and the integer varying is `flat` on both sides
+  (`VUID-RuntimeSpirv-OpEntryPoint-07754`). Measured with the fixture drawing a `BLOCK` batch each frame:
+  `modDrawBlockFrames=569`, `immediateOffered=8900`, **`immediateTaken=1719`** (from 1161 without it),
+  `immediateFlushes=1717`, `immediateRefusal=none`, **VUID 0**, PASSED, `nativeTerrainVerified True`. The layout that
+  most vanilla immediate content actually uses - blocks in the hand, items, the block atlas path - now has a working
+  Vulkan path with its lightmap sampling.
+  Not yet visible, and not claimed: the batch's pixels do not appear in the frame, which is the same architectural
+  mismatch recorded above (drawn against the next frame's buffers with the previous frame's matrices), so the
+  acceptance is verified while the *image* is not. The remaining 28-byte layouts - `ITEM` (position, colour, texture,
+  normal, padding) and the particle format (a different element order) - still need their own vertex layouts.
+
+- **Original note (the acceptance measurement that led here).** The fixture now draws a `DefaultVertexFormats.BLOCK` batch (gated behind
   `-Dceltium.validation.drawBlockQuad=true`), which made the question answerable: `modDrawBlockFrames=567`,
   `immediateOffered` rose by ~534 and **`immediateTaken` rose from 1161 to 1709**, so those batches are accepted and
   drawn - the layout identification and the acceptance path work. One validation message appeared, and it names the

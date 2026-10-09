@@ -598,16 +598,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateLastRefusal = "textured batch with no texture bound";
             return false;
         }
-        if (formatId == 3) {
-            // Acceptance is off until the attribute type matches the shader: the pipeline declares the lightmap
-            // coordinates as VK_FORMAT_R16G16_UINT while the vertex shader takes them as a float vec2, which the
-            // validation layer reported as VUID-VkGraphicsPipelineCreateInfo-Input-08733. The fix is to declare them as
-            // uvec2 in both shaders and pass the integers through; until that is done and re-measured, the batches are
-            // refused with this reason and GL keeps drawing them.
-            this.immediateLastRefusal = "block format disabled: lightmap attribute type must be uvec2 in the shaders "
-                    + "(VUID-VkGraphicsPipelineCreateInfo-Input-08733)";
-            return false;
-        }
         if (formatId == 3 && this.lightmapTexture == null) {
             // The BLOCK family samples the lightmap, so a missing mirror means the batch would be lit wrongly.
             this.immediateLastRefusal = "block batch with no lightmap texture mirrored";
