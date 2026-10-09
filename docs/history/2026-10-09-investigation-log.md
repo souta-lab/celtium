@@ -4284,3 +4284,36 @@ single caller rather than a family-sized investigation.
 
 Nothing here is a general GL measure: the probe asks the same question the draw asks, in the same way, one step earlier, and
 the answer is the Vulkan-side descriptor's availability.
+
+---
+
+## The descriptor pool was not the cause, and the candidates are now two
+
+The audit's S13 reading was checked and partly acted on: the three immediate pipelines each created their descriptor pool with
+`maxSets(64)` while caching one set **per distinct texture view and never evicting**, so ordinary play exhausts it and every
+later allocation fails - which is exactly what the particle family's behaviour looked like. The pools were raised to 8192,
+sized for a session rather than a scene, and the run says:
+
+```
+status=PASSED  taken=65  postAcceptDropped=488  particleDescriptorRefusals=488
+droppedByFormat=1:0,2:0,3:0,4:0,5:488
+image vs GL reference: mean 0.06 | 0.24% over 8   (best so far; 0.26% with particles refused, 0.40% before that)
+```
+
+**No change in the refusals**, so exhaustion was not the cause - though the 64-set limit was real and would have bitten
+eventually, so the change stays. That leaves two candidates inside `descriptorSetFor`, and they are distinguishable in one
+run rather than by argument:
+
+- it returns 0 early if `lightmap == null` or `descriptorPool == VK_NULL_HANDLE`, or if the texture is null. The offer path
+  already refuses when the backend's lightmap texture is absent, so the interesting case is a lightmap that **exists as an
+  object but has no valid view** - which the per-frame mirror refresh added for the stale-lightmap fix would produce, since
+  it drops every mirror and the lightmap is re-uploaded afterwards;
+- the allocation itself may fail, which is the branch the pool change was meant to address.
+
+One counter in each return path, in a single run, decides between them, and the fix differs completely: the first wants the
+lightmap resolved before the probe (or the descriptor keyed by the lightmap view, which is S13's other half), the second
+wants the pool eviction rule instead of a bigger pool.
+
+The image has improved at every step of this sequence - 0.40% before the particle refusal, 0.26% with it, 0.24% now - which is
+consistent with the picture this log has built up: the particle path was taking geometry it could not draw, and each step
+that stops it taking what it cannot draw moves the frame closer to GL.

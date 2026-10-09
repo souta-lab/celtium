@@ -142,6 +142,12 @@ the same frame's budget. No unique frame ID, no frame-end reconciliation of acce
 keep sets built on stale views. No generation-carrying handles, no fence-based retirement.
 
 ### S13 [P1] the descriptor pool accumulates and the lightmap is not part of the key
+**Partly acted on:** the three immediate pipelines' pools were raised from `maxSets(64)` to 8192, since one set is cached per
+distinct texture view and nothing evicts it - a real limit that ordinary play would reach. **It did not change the particle
+refusals** (`particleDescriptorRefusals=488` before and after), so exhaustion was not what the particle family was hitting;
+the change stays because the limit was real. **Open:** the lightmap is still not part of the descriptor key, and the two
+remaining candidates inside `descriptorSetFor` - a lightmap object with no valid view, or the allocation failing - are to be
+separated by one counter per return path in a single run.
 `setsByTextureView` grows without bound behind `pool.maxSets = 64`, every pipeline also allocates an unused initial set,
 and the block/particle keys use only the main texture view, so a rebuilt lightmap reuses a stale binding.
 

@@ -226,7 +226,12 @@ public final class VulkanImmediateBlockPipeline {
             // the batch rather than drawing with the wrong image.
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
                     org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                            .maxSets(64).pPoolSizes(poolSize);
+                            // Sized for a session rather than for a scene: the set is cached per texture view and nothing
+                            // evicts it, so 64 was reached in ordinary play and every later allocation failed - which is why the
+                            // particle family, with the most distinct views, was taken and then dropped. A pool this size is
+                            // the smallest change that stops exhaustion; eviction by texture generation is the proper fix
+                            // and is recorded as open.
+                            .maxSets(8192).pPoolSizes(poolSize);
             LongBuffer poolHandle = stack.mallocLong(1);
             check(vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle),
                     "vkCreateDescriptorPool(immediate textured)");
