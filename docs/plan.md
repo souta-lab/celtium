@@ -276,7 +276,20 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 - 効果: 即値パスが毎バッチ行っていた**行列の GL 読み戻し（`captureGlMatrices()` の GL 経路）が不要**になり、
   (b) の「GL から読む元を Minecraft 側のデータに替える」の1項目が完了した。
 
-**次の一手（b の続き）**: 同じ方式で (1) `glIsEnabled`/`glGetInteger` による状態ミラー（既定で GL 読みか要確認）、
+**§7.7 の棚卸しの訂正（このターン）**: 「状態ミラー」は**既にミラー側が既定**だった。
+`celtium$captureState()` は `immediateState.*`（ミラー）から読んでおり、`glIsEnabled` の出現箇所の多くは
+**診断文字列の中**（2452-2455行）で、描画経路の依存ではない。行列と同じく、grep の回数は*実際の依存*を
+過大に数えていた。**実依存として残るもの**（ソースで確認）:
+
+| 依存 | 箇所 | 置換方針 |
+|---|---|---|
+| **fog** | `fogMode()` が `glIsEnabled(GL_FOG)` と `glGetInteger(GL_FOG_MODE)` を毎回読む（3737行〜）。`VulkanGlState` に fog フィールドは無く、`GlStateManagerMixin` も fog を追跡していない | Minecraft 側の `GlStateManager.enableFog/disableFog/setFog(FogMode)`＋`setFogDensity/Start/End` を mixin（SRG名）でミラーし、`fogMode()` をミラー読みに。検証は画素一致（fog は画面に出るので差が出る） |
+| **テクスチャ寸法** | `VulkanGlTexture` のミラー作成時の level クエリ | MC の sprite/frame データ（寸法）から供給 |
+| **相互運用グルー** | blit（色・深度）・semaphore・FBO/renderbuffer クエリ・深度変換プログラム | Vulkan-owned target に描き同一デバイス present へ一本化（`presentFromComposite` が既に到達） |
+| 計器・診断 | `glIsEnabled` の診断文字列、`glCheck`、行列比較 | 最終形では不要 |
+
+**次の一手（b の続き）**: 上表の順に潰す。まず **fog のミラー化**（`GlStateManagerMixin` に fog の注入を足し、
+`fogMode()` をミラー読みにして画素一致を確認）。
 (2) テクスチャの `glGetTexLevelParameteri`（sprite/frame データからの供給）、
 (3) 相互運用グルーの blit/semaphore（同一デバイス present への一本化）を順に潰す。
 
