@@ -6532,3 +6532,36 @@ fixture PASSED, acceptance intact at 1614 terrain passes and 554 cancelled draws
 
 So the next action is one line - accept stride 20 with two **or** four elements - and it is recorded with the two-element
 sample beside it rather than as another guess.
+
+---
+
+## The sky mapping, six attempts, and what the round is actually worth
+
+The recorded next action was one line: accept stride 20 with two **or** four elements. It did not work, and neither did the
+five corrections after it. The account is worth keeping because two of the six steps produced findings that outlast the
+attempt.
+
+1. `POSITION_TEX` by element comparison - missed.
+2. `POSITION_TEX_NORMAL` - missed, because the game builds equal format instances rather than reusing the constants.
+3. `getSize() == 20 && elementCount == 4` - missed; the dump had shown four elements in its first samples and two in a later
+   one.
+4. Two named shapes, stride 20 with two elements and size 24 with four - missed.
+5. The same rule using the **uploader's stride** instead of the format's size - missed, and the diagnostic then showed the
+   two numbers differ (`stride=20`, `formatSize=24`).
+6. The same rule moved to the **front** of the chain, before the element comparisons, on the reasoning that `sameElements`
+   ignores padding and a trailing normal and so could be claiming the shape for id 2 - missed.
+
+**What the round established, and it is not nothing.** First, the **provenance field added two rounds ago did its job**:
+comparing `fixture.sha256` across four runs showed the fixture unchanged, which is what sent this round into the build path
+and established that the **main jar is current** (19:22:31 against the run) and that the fixture is legitimately unchanged
+because nothing in `validation/client` was edited. That is the check that would have saved two rounds when shader edits were
+not in the running build, and it took one command.
+
+Second, the two diagnostics **disagree**, and that disagreement is the next thing to explain rather than another rule to try:
+the call site sees a format with `stride=20, formatSize=24, elementCount=4` reaching the mapping as id 0, while the mapping's
+own dump, printing every shape it fails to match, never lists a stride-20 shape at all. Those cannot both be true of the same
+format instance, so the next step is to print the **identity** of the format object at both points - not another condition.
+
+The six mapping edits are reverted, the colourless pipeline, the format-6 wiring, the per-format counters and the diagnostics
+stay, and the tree is green: build successful, exit 0, validation clean, 0 messages, fixture PASSED, acceptance intact at 1617
+terrain passes and 556 cancelled draws.
