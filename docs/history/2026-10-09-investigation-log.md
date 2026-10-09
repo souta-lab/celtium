@@ -758,3 +758,41 @@ Narrowed candidates for the next attempt, all about GL state the bridge touches 
 VAO and texture bindings of its own), and GL's viewport, scissor, blend or depth state could survive a window in a form
 GL's later drawing does not expect. The cheap experiment is to log the GL state that matters (viewport, scissor,
 enabled capabilities, current program, bound VAO and framebuffer) immediately before and after a window and compare.
+
+---
+
+## The black frame was a second window in the same frame, and fixing it moves the question
+
+The GL-state snapshot settled it. Comparing viewport, scissor, capabilities, current program, bound VAO and both
+framebuffer bindings immediately before and after a window showed **"GL state restored unchanged"** every time - and the
+framebuffer content samples told the story in the same log:
+
+```
+mean before=150.46094 after=150.46094  GL state restored unchanged
+mean before=150.46094 after=0.0        GL state restored unchanged     <-- here
+mean before=150.46094 after=150.46094  GL state restored unchanged
+```
+
+The **second** window in a frame is what turned the framebuffer black; the first one, and every window after the second,
+was fine. Limiting the immediate path to **one window per frame** (the remainder is drawn in the next frame's window,
+which is what the earlier design did anyway) fixes it:
+
+| Configuration | Final frame | Local difference vs the offline reference | Validation |
+|---|---|---|---|
+| Window on, unlimited windows per frame | mean [0, 0, 0] | 147.59 | VUID 0 |
+| Window on, **one window per frame** | mean [123.8, 137.2, 149.0] | **14.08**, 34.5% over 8 | VUID 0, PASSED |
+| Window off (the default) | mean [123.3, 136.6, 148.3] | 14.61, 34.5% over 8 | VUID 0, PASSED |
+
+Two things follow, and the second is the more important one:
+
+1. **The mid-frame window is viable.** It copies, draws and restores cleanly, and a frame that uses it is a normal
+   frame. The earlier conclusion that this bridge could not host such a window is now doubly wrong, and the reason is
+   recorded: it was a second window in one frame, not the copy mechanism.
+2. **Frame lag is not what the 14-point difference is made of.** With the window the batches are drawn in the frame that
+   produced them, and the local difference is 14.08 against 14.61 when they are not - a change of half a point, well
+   inside the run-to-run variation measured earlier (0.83). So the image difference has a different cause, and the
+   candidates that remain are state fidelity (the lightmap and alpha handling in the immediate pipelines, blend and
+   depth details) and texture mirror freshness - not timing.
+
+The window stays behind `-Dceltium.vulkan.immediateWindows` (default off) because it has not been shown to improve the
+image; what it has been shown to do is work without breaking the frame.

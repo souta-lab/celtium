@@ -429,6 +429,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateWindows;
     private int immediateFlushDeferredDefaultFbo;
     private int immediateContentSamples;
+    private int immediateWindowsThisFrame;
+    private int immediateDeferredNextFrame;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -882,6 +884,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.windowOpen || this.immediateWindowBusy) {
             return;
         }
+        if (this.immediateWindowsThisFrame >= 1) {
+            // One window per frame: a second one in the same frame is what measured as blackening the frame, and the
+            // remainder is drawn in the next frame's window the way it was before.
+            this.immediateDeferredNextFrame++;
+            return;
+        }
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) {
             return;
@@ -906,8 +914,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateWindowBusy = true;
         boolean opened = false;
         float before = -1.0f;
+        String stateBefore = null;
         try {
             before = sampleBoundFramebufferMean();
+            stateBefore = snapshotGlState();
             this.frameTarget.beginFrame();
             this.windowOpen = true;
             opened = true;
@@ -918,6 +928,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             submitCommands();
             this.passSubmissions++;
             this.immediateWindows++;
+            this.immediateWindowsThisFrame++;
         } catch (RuntimeException | LinkageError error) {
             this.passErrors++;
             record("immediate window failed: " + describeWithStack(error));
@@ -934,7 +945,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 float after = sampleBoundFramebufferMean();
                 if (this.immediateContentSamples < 4) {
                     this.immediateContentSamples++;
-                    record("immediate window content sample: mean before=" + before + " after=" + after);
+                    String stateAfter = snapshotGlState();
+                    record("immediate window content sample: mean before=" + before + " after=" + after
+                            + (stateBefore != null && stateBefore.equals(stateAfter)
+                                    ? " GL state restored unchanged"
+                                    : " GL state changed: before[" + stateBefore + "] after[" + stateAfter + "]"));
                 }
             }
             try {
@@ -944,6 +959,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("immediate window could not restore the framebuffer binding: " + error);
             }
             this.immediateWindowBusy = false;
+        }
+    }
+
+    /**
+     * {@return the GL state a window could leave behind}, as a short string for comparison.
+     * <p>
+     * The framebuffer content survives a window (measured 150.47656 before and after) and the frame is black by capture
+     * time, so the remaining candidates are the pieces of GL state the bridge's copies touch: a window runs depth
+     * conversion with its own program, VAO and texture bindings, and GL's viewport, scissor and capabilities could
+     * survive in a shape GL's later drawing does not expect.
+     */
+    private String snapshotGlState() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.IntBuffer viewport = stack.mallocInt(4);
+            java.nio.IntBuffer scissor = stack.mallocInt(4);
+            org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, viewport);
+            org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_SCISSOR_BOX, scissor);
+            return "viewport=" + viewport.get(0) + "," + viewport.get(1) + "," + viewport.get(2) + "," + viewport.get(3)
+                    + " scissor=" + scissor.get(0) + "," + scissor.get(1) + "," + scissor.get(2) + ","
+                    + scissor.get(3)
+                    + " scissorTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_SCISSOR_TEST)
+                    + " blend=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND)
+                    + " depthTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST)
+                    + " cull=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_CULL_FACE)
+                    + " program=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM)
+                    + " vao=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_VERTEX_ARRAY_BINDING)
+                    + " drawFbo=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING)
+                    + " readFbo=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_READ_FRAMEBUFFER_BINDING)
+                    + " tex2d=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        } catch (RuntimeException | LinkageError error) {
+            return "unavailable: " + error;
         }
     }
 
@@ -1091,6 +1137,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void updateTimings() {
+        // The immediate window count is per frame. The measurement that forced the limit: the first window of a frame
+        // left the framebuffer at 150.46 before and after, and the second turned it to 0.0 with the GL state restored
+        // unchanged, which is what blackened the captured frame.
+        this.immediateWindowsThisFrame = 0;
+        updateTimingsBody();
+    }
+
+    /** The original timing update, called once per frame from the wrapper above. */
+    private void updateTimingsBody() {
         if (this.timestampPool == 0 || this.timestampSlots == 0 || !this.timestampsUsable) {
             return;
         }
