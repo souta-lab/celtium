@@ -559,6 +559,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * The switch is also the attribution instrument: {@code -Dceltium.vulkan.immediateFormats=3} accepts only the
      * BLOCK family, so a difference can be pinned to one pipeline at a time.
      */
+    /** Additive mip bias; 0.0 is GL parity. Swept to separate the chain's content from the shader's LOD. */
+    private static final float MIP_BIAS_ADD =
+            Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
+
     private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5,6");
 
     private static boolean celtium$formatAccepted(int formatId) {
@@ -2956,7 +2960,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         block.putFloat(base + 36, this.fogService != null ? this.fogService.getFogStart() : 0.0f);
         block.putFloat(base + 40, this.fogService != null ? this.fogService.getFogEnd() : 0.0f);
         // Additive atlas LOD shift. The per-material bias already travels in the vertex, so parity needs 0 here.
-        block.putFloat(base + 44, 0.0f);
+        // 0.0 is exact OpenGL parity. The property exists so the shader's level-of-detail can be swept against the
+        // reference: the mirrored chain measures 5.60% while a shallow clamp measures 0.16%, and the question is whether
+        // that difference is the chain's content or the LOD the shader asks for.
+        block.putFloat(base + 44, MIP_BIAS_ADD);
         block.putInt(base + 48, fogMode());
         block.putInt(base + 52, this.fogService != null ? this.fogService.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL);
         block.putInt(base + 56, pass.supportsFragmentDiscard() ? 1 : 0);

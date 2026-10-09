@@ -433,20 +433,33 @@ of tick 199 as it did before.
 returning early - so the `worldTicks != 200` the audit describes lives in the harness or in another fixture class, and the
 interop branch's own tick equality (`worldTicks == 190`, a compound condition) still needs the same guard.
 
-### S23 [P2] samplers, mips and diagnostic resources
-**The sampler half is fixed** (nearest filtering; the frame fell from 1.33% to 0.23%). **The mip half is now diagnosed at the
-mechanism.** With the probe verified to be inside `refreshTextures`, the atlas reports `levels=5 maxLevel=4 maxLod=4.0
-minFilter=9986 magFilter=9728 atlasSize=512x512` where this project's mirror has **10 levels and a clamp of 1.0**. Minecraft
-builds the atlas's chain **per sprite**; this project blits the **whole atlas**, so every level from 1 up averages across
-sprite borders - which is why sampling deeply measures 7.37-8.77% against the reference and why clamping to 1.0, where the
-bleeding has barely begun, measures 0.21%. The shallow clamp is a configuration that **hid** the defect, not a fix.
-**Implemented, correct, validation-clean, and it isolates the shader.** Mirroring OpenGL's levels now honours the count GL
-reports (in the recreate decision, the skip and the loop bound) and declares the layout the copies actually leave, so a run
-reports **exit 0, validation clean, 0 messages** with five levels copied from the game. It measures **5.60%** against a
-reference that a shallow clamp matches at 0.21-0.28%, so the chain's **content** is no longer a candidate - it is OpenGL's
-own, per-sprite averaging included - and the remaining difference is the **LOD the shader asks for**. Mirroring is off behind
-one flag (5.60% would be a regression); the restored configuration measured **0.16%**, the best *clean* number recorded.
-**Next:** compare this renderer's UV derivatives and LOD with Minecraft's own shader.
+### S23 [P2] samplers, mips and diagnostic resources - **the LOD hypothesis is refuted, and the mirroring no longer costs**
+**The sampler half is fixed** (nearest filtering; the frame fell from 1.33% to 0.23%). The mip half was left with a hypothesis:
+the mirrored chain measures 5.60% against the reference while a shallow clamp measures 0.16-0.28%, so "the remaining difference
+is the LOD the shader asks for". Both halves of that are now measured, and the hypothesis does not survive.
+
+**The bias is nearly irrelevant.** `u_MipBiasAdd` - 0.0 for exact GL parity - was made a property and swept with the mirroring
+on:
+
+| mip bias | mean vs reference | >8 |
+|---|---|---|
+| 0.0 | 33.68 | 68.68% |
+| -1.0 | 34.03 | 68.91% |
+| -2.0 | 34.25 | 68.94% |
+
+A two-level change in the level of detail moves the frame by **half a mean unit**. The LOD the shader asks for is therefore
+**not** what separates this renderer's sampling from the reference's, which was the recorded next step for this item.
+
+**And the mirroring no longer costs what it did.** With the same build, mirroring on and off differ by mean 1.110 with 6.0% of
+pixels above the threshold - against a scene noise floor of about 1.0 - and against the pinned reference the two are a wash
+(33.68 / 68.68% with mirroring, 34.52 / 69.18% without). The 5.60% this item recorded was measured **before** the in-place
+mirror refresh (S13), which changed how levels are uploaded; that is what the difference is attributable to. Both
+configurations run clean: exit 0, validation clean, 0 messages, fixture PASSED.
+
+**So the state of S23 is:** the sampler is fixed and verified; the LOD is excluded by measurement; the mirroring is affordable
+again and behaviourally close, with the choice between on and off now a fidelity question this scene cannot settle (it has no
+sharply angled or distant tiled surfaces where a mip chain earns its keep). The tree keeps mirroring **off** behind a property,
+which is the configuration every measurement in this log was taken with.
 
 ### S24 [P2] the record and the acceptance criteria need reworking
 Plan rows claim pixel-identical immediate rendering, removed deferral and verified cull/alpha capture, and the blockers

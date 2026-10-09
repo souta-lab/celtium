@@ -62,7 +62,7 @@ public final class VulkanGlTexture {
 
     /** Number of mip levels of the current image; the OpenGL atlas is sampled with a mip chain. */
     private int mipLevels = 1;
-    private static final boolean MIRROR_GL_MIPS = false;
+    private static final boolean MIRROR_GL_MIPS = Boolean.getBoolean("celtium.vulkan.mirrorGlMips");
     /** Levels the GL texture reported on the last upload, or 0 to compute them from the size. */
     private int mirroredLevels;
     /**

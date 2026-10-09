@@ -6716,3 +6716,35 @@ Getting there took three failed compiles, and the reason is worth recording beca
 in a smaller form: **the API's shape was assumed**. `IJeiRuntime` lives in `mezz.jei.api`, not in a `runtime` subpackage; the
 annotation is `JEIPlugin` with a capitalised name; and `IModPlugin` in this version has no plugin-uid method at all. Reading
 the two interfaces out of the jar with `javap` settled all three in one command, after three rounds of guessing.
+
+---
+
+## S23: the LOD hypothesis refuted by a sweep, and the mip mirroring is no longer a regression
+
+This audit item had one recorded next step - "compare this renderer's UV derivatives and LOD with Minecraft's own shader" -
+and the cheapest way to test it was to make the two knobs properties and sweep them.
+
+**The bias is nearly irrelevant.** `u_MipBiasAdd` was a literal 0.0, documented as exact GL parity. Sweeping it with the mip
+mirroring enabled:
+
+```
+mip bias   mean vs reference   >8
+ 0.0       33.68               68.68%
+-1.0       34.03               68.91%
+-2.0       34.25               68.94%
+```
+
+Two levels of level-of-detail change move the frame by half a mean unit. Whatever separates this renderer's sampling from the
+reference's, it is **not** the LOD the shader asks for, and the hypothesis that had been carried forward for several rounds
+dies here - by measurement, which is the only way it could.
+
+**And the mirroring no longer costs what the item recorded.** With the same build, mirroring on and off differ by mean 1.110
+with 6.0% of pixels above the threshold, against a scene noise floor of about 1.0, and against the pinned reference the two
+configurations are a wash - 33.68 and 68.68% with mirroring, 34.52 and 69.18% without. The 5.60% this item recorded was
+measured **before** the in-place mirror refresh that S13 introduced, which changed how mip levels are uploaded; the regression
+it described belonged to the old upload path. Both configurations run clean: exit 0, validation clean, 0 messages, fixture
+PASSED.
+
+The tree keeps mirroring **off** behind a property, because that is the configuration every measurement in this log was taken
+with, and because this scene has no sharply angled or distant tiled surface where a mip chain earns its keep - so the choice
+between on and off is a fidelity question the scene cannot settle, and it is now recorded as one rather than as a regression.
