@@ -796,3 +796,31 @@ Two things follow, and the second is the more important one:
 
 The window stays behind `-Dceltium.vulkan.immediateWindows` (default off) because it has not been shown to improve the
 image; what it has been shown to do is work without breaking the frame.
+
+---
+
+## Attribution: the whole 14-point difference is one pipeline, and the other three are pixel-perfect
+
+A switch that limits which layouts the backend accepts (`-Dceltium.vulkan.immediateFormats`) turns the aggregate number
+into per-pipeline evidence. Same build, same scene, each run accepting exactly one format:
+
+| Accepted format | Local difference vs the offline reference | Batches taken |
+|---|---|---|
+| 1 - `POSITION_COLOR` (16 B) | **0.00 mean, 0.0% over 8** | 35 |
+| 2 - `POSITION_TEX_COLOR` (24 B) | **14.00 mean, 34.5% over 8** | 1144 |
+| 3 - `BLOCK` (28 B, lightmap) | **0.00 mean, 0.0% over 8** | 560 |
+| 5 - particle (28 B, lightmap) | **0.00 mean, 0.0% over 8** | 556 |
+
+That is as clean an answer as the harness can give: **three of the four immediate pipelines reproduce GL exactly,
+pixel for pixel**, including both lightmapped families, and the entire difference that has been discussed for many
+rounds is produced by the `POSITION_TEX_COLOR` pipeline alone. The number of batches says it is not a rounding case
+either - 1144 batches of that one layout differ, while 1151 batches across the other three do not.
+
+Everything argued earlier about timing, frame lag and the window is therefore beside the point for this difference: it
+is a defect in one pipeline, and the next step is to look at that pipeline specifically - its vertex attribute order
+(`POSITION_TEX_COLOR` is position at 0, texture at 12, colour at 20), its descriptor binding, and whether the batches
+that reach it are really the layout the identification claims (the format id is decided by comparing element lists, and
+the 24-byte family in vanilla also includes layouts that differ only in order).
+
+The switch stays in the tree; it is the instrument that produced this, and it will be used the same way for the
+remaining formats and for any future pipeline.

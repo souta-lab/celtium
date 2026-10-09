@@ -421,6 +421,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateIsolationDraws;
     private VulkanImmediateTexturePipeline texturedImmediatePipeline;
     private int immediateTextureRefusals;
+    /**
+     * Which immediate layouts this backend accepts, as a comma-separated list (default all).
+     * <p>
+     * {@code -Dceltium.vulkan.immediateFormats=3} accepts only the BLOCK family, for instance, so the image
+     * difference can be attributed to one pipeline at a time.
+     */
+    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,2,3,4,5");
+
+    private static boolean celtium$formatAccepted(int formatId) {
+        String accepted = ACCEPTED_FORMATS;
+        for (int i = 0; i < accepted.length(); i++) {
+            char c = accepted.charAt(i);
+            if (c >= '0' && c <= '9' && (c - '0') == formatId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Off by default: the window works mechanically, but the frame is black at capture time while it is used. */
     private static final boolean IMMEDIATE_WINDOWS_ENABLED = Boolean.getBoolean("celtium.vulkan.immediateWindows");
     private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 4096);
@@ -645,6 +664,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 : formatId == 4 ? VulkanImmediateItemPipeline.VERTEX_BYTES
                 : formatId == 5 ? VulkanImmediateParticlePipeline.VERTEX_BYTES
                 : VulkanImmediatePipeline.VERTEX_BYTES;
+        if (!celtium$formatAccepted(formatId)) {
+            // Attribution switch: restricting which layouts this backend accepts makes the image difference
+            // measurable per format instead of as one aggregate number. Refused batches are drawn by GL as usual.
+            this.immediateLastRefusal = "format " + formatId + " not in celtium.vulkan.immediateFormats";
+            return false;
+        }
         if (formatId < 1 || formatId > 5) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices.
