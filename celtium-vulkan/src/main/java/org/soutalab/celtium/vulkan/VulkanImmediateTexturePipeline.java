@@ -53,6 +53,7 @@ public final class VulkanImmediateTexturePipeline {
     private long descriptorSetLayout = VK_NULL_HANDLE;
     private long descriptorPool = VK_NULL_HANDLE;
     private long descriptorSet = VK_NULL_HANDLE;
+    private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
 
     private VulkanImmediateTexturePipeline(VulkanContext context, long renderPass) {
         this.context = context;
@@ -70,13 +71,14 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
-    public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants) {
+    public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
+                     long descriptorSetToBind) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
             return;
         }
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                org.lwjgl.system.MemoryStack.stackGet().longs(this.descriptorSet), null);
+                org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
         vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, pushConstants);
         LongBuffer vertexBuffer = MemoryStack.stackGet().longs(mesh.vertexBuffer());
         vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffer, MemoryStack.stackGet().longs(0L));
@@ -89,28 +91,49 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /**
-     * Points the pipeline's single combined image sampler at a texture.
+     * {@return the descriptor set that samples the given texture}, creating and writing it on first use.
      * <p>
-     * Called per draw because the bound texture can change between groups, which is cheaper than a descriptor set per
-     * texture and small enough to stay in the per-frame budget.
+     * Each texture gets its own set, written **before** it is ever bound, because updating a set that a recording
+     * command buffer has already bound is invalid without {@code UPDATE_AFTER_BIND} - and the validation layer said so
+     * precisely: "VkDescriptorSet was destroyed or updated without UPDATE_AFTER_BIND", after which every following
+     * command in that buffer failed with "commandBuffer must be in the recording state". Returns 0 when the pool is
+     * exhausted, so the caller refuses the batch instead of drawing with a stale binding.
      */
-    public void bindTexture(VulkanGlTexture texture) {
-        if (this.descriptorSet == VK_NULL_HANDLE || texture == null) {
-            return;
+    public long descriptorSetFor(VulkanGlTexture texture) {
+        if (this.descriptorPool == VK_NULL_HANDLE || texture == null) {
+            return 0L;
+        }
+        Long existing = this.setsByTextureView.get(Long.valueOf(texture.view()));
+        if (existing != null) {
+            return existing.longValue();
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
+                    org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                            .descriptorPool(this.descriptorPool)
+                            .pSetLayouts(stack.longs(this.descriptorSetLayout));
+            LongBuffer handle = stack.mallocLong(1);
+            if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) != VK_SUCCESS) {
+                return 0L;
+            }
+            long set = handle.get(0);
             VkDescriptorImageInfo.Buffer image = VkDescriptorImageInfo.calloc(1, stack);
             image.get(0).imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                     .imageView(texture.view())
                     .sampler(texture.sampler());
-            org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
+            org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write =
+                    org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
             write.get(0).sType$Default()
-                    .dstSet(this.descriptorSet)
+                    .dstSet(set)
                     .dstBinding(0)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .descriptorCount(1)
                     .pImageInfo(image);
             vkUpdateDescriptorSets(this.context.device(), write, null);
+            this.setsByTextureView.put(Long.valueOf(texture.view()), Long.valueOf(set));
+            return set;
+        } catch (RuntimeException | LinkageError error) {
+            return 0L;
         }
     }
 
@@ -119,6 +142,7 @@ public final class VulkanImmediateTexturePipeline {
             vkDestroyPipeline(this.context.device(), this.pipeline, null);
             this.pipeline = VK_NULL_HANDLE;
         }
+        this.setsByTextureView.clear();
         if (this.descriptorPool != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
             this.descriptorPool = VK_NULL_HANDLE;
@@ -151,10 +175,12 @@ public final class VulkanImmediateTexturePipeline {
             this.descriptorSetLayout = layoutHandle.get(0);
             org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
                     org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
-            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(1);
+            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(64);
+            // One set per distinct texture the frame binds; the pool refuses beyond that and the caller then refuses
+            // the batch rather than drawing with the wrong image.
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
                     org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                            .maxSets(1).pPoolSizes(poolSize);
+                            .maxSets(64).pPoolSizes(poolSize);
             LongBuffer poolHandle = stack.mallocLong(1);
             check(vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle),
                     "vkCreateDescriptorPool(immediate textured)");

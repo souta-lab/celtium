@@ -558,14 +558,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + expectedStride;
             return false;
         }
-        if (formatId == 2) {
-            // The textured pipeline and the texture registry exist and compile, but accepting these batches aborted
-            // the render pass: the validation layer reported vkCmdBindDescriptorSets and every following command as
-            // "commandBuffer must be in the recording state", which means an exception unwound the pass while the
-            // immediate draws were being recorded. Until that is found, the batches are refused with the reason so GL
-            // keeps drawing them and the frame stays correct, instead of shipping a pass that dies mid-recording.
-            this.immediateLastRefusal = "textured immediate path disabled: it aborted the render pass "
-                    + "(VUID-vkCmdBindDescriptorSets-commandBuffer-recording)";
+        if (formatId == 2 && this.immediateState.boundTextureName() == 0) {
+            this.immediateLastRefusal = "textured batch with no texture bound";
             return false;
         }
         int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
@@ -1820,12 +1814,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.immediatePipeline == null) {
                 this.immediatePipeline = VulkanImmediatePipeline.create(this.context, terrain.renderPass());
             }
-            if (this.texturedImmediatePipeline == null) {
-                this.texturedImmediatePipeline =
-                        VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass());
-            }
-            if (this.textureRegistry == null) {
-                this.textureRegistry = new VulkanTextureRegistry(this.context);
+            try {
+                if (this.texturedImmediatePipeline == null) {
+                    this.texturedImmediatePipeline =
+                            VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass());
+                }
+                if (this.textureRegistry == null) {
+                    this.textureRegistry = new VulkanTextureRegistry(this.context);
+                }
+            } catch (RuntimeException | LinkageError error) {
+                record("textured immediate setup failed: " + describe(error));
             }
             ByteBuffer push = MemoryUtil.memAlloc(128);
             try {
@@ -1838,14 +1836,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     pushMatrixInto((float[]) group[1], push, 0);
                     pushMatrixInto((float[]) group[2], push, 64);
                     if (formatId == 2) {
-                        VulkanGlTexture texture =
-                                this.textureRegistry.get(((Integer) group[4]).intValue());
-                        if (texture == null) {
+                        try {
+                            VulkanGlTexture texture =
+                                    this.textureRegistry.get(((Integer) group[4]).intValue());
+                            if (texture == null) {
+                                this.immediateTextureRefusals++;
+                                continue;
+                            }
+                            long descriptorSet = this.texturedImmediatePipeline.descriptorSetFor(texture);
+                            if (descriptorSet == 0L) {
+                                this.immediateTextureRefusals++;
+                                continue;
+                            }
+                            this.texturedImmediatePipeline.draw(this.commandBuffer, mesh, push, descriptorSet);
+                        } catch (RuntimeException | LinkageError error) {
+                            // Caught and reported rather than left to unwind the render pass: every command after an
+                            // unwind targets a buffer that is no longer recording, which is exactly the 113
+                            // "commandBuffer must be in the recording state" messages the first attempt produced.
                             this.immediateTextureRefusals++;
+                            record("textured group failed: " + describe(error));
                             continue;
                         }
-                        this.texturedImmediatePipeline.bindTexture(texture);
-                        this.texturedImmediatePipeline.draw(this.commandBuffer, mesh, push);
                     } else {
                         this.immediatePipeline.draw(this.commandBuffer, mesh, push);
                     }

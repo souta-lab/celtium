@@ -81,7 +81,23 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **The textured (24-byte) path is built but its acceptance is off after it aborted the pass.** Implemented and
+- **The textured (24-byte) path works and is validation-clean.** The abort was not an exception in the buffered code
+  (the guards added to catch one never fired); the validation layer named the real cause:
+  `VkDescriptorSet ... was destroyed or updated without UPDATE_AFTER_BIND`, followed by
+  `vkCmdBindDescriptorSets(): was called in VkCommandBuffer ... which is now in an invalid state` and then nine
+  messages for every subsequent command. Updating a descriptor set that a recording command buffer has already bound
+  is invalid without `UPDATE_AFTER_BIND`, and the first implementation updated **one shared set per draw**.
+  The fix gives each texture its own descriptor set, written before it is ever bound and cached per texture view (a
+  64-set pool; exhaustion returns 0 so the caller refuses the batch rather than drawing with a stale binding).
+  Verified on hardware: `immediateOffered=8326`, **`immediateTaken=1164`**, **`immediateFlushes=1163`**,
+  `immediateRefusal=none`, **VUID 0**, PASSED, `nativeTerrainVerified True`. In other words most of Minecraft's
+  immediate geometry - entities, particles, the GUI, the sky, weather, mod drawing - is now submitted by Vulkan rather
+  than GL.
+  What is **not** yet verified is that the resulting image is *correct*: the counters say the batches are drawn and the
+  validation layer is silent, but the pixel comparison against the GL reference for this configuration has not been
+  run. That is the first task of the next round, before anything is claimed about visual parity.
+
+- **Original note on the textured path (superseded by the fix above).** Implemented and
   compiling: a `POSITION_TEX_COLOR` pipeline with one combined-image sampler, a structural format id computed by the
   Mixin from the shared element list (stride alone is ambiguous - 24 bytes is both `POSITION_TEX_COLOR` and
   `POSITION_TEX_LMAP_COLOR`), groups keyed by format *and* bound texture, and a descriptor update per draw from the
