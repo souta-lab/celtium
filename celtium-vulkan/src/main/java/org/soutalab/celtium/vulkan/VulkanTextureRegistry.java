@@ -356,6 +356,8 @@ public final class VulkanTextureRegistry {
     private int announceCounter;
     /** How many announced-image conversions were skipped because the same announcement was already consumed. */
     public static long ANNOUNCED_SKIPS;
+    /** {@return how many 1x1 mirrors the last invalidation left alone}. */
+
 
     public VulkanGlTexture get(int glTextureId, boolean nearestFilter) {
         if (glTextureId == 0) {
@@ -407,6 +409,7 @@ public final class VulkanTextureRegistry {
                     // difference between guessing why and knowing why.
                     if (this.readbackIds.size() < 8 && this.readbackIds.add(Integer.valueOf(glTextureId))) {
                         System.out.println("[Celtium] CELTIUM_READBACK_REFRESH glTexture=" + glTextureId
+                                + " size=" + existing.width + "x" + existing.height
                                 + " view=" + Long.toHexString(existing.texture.view())
                                 + " (announced images pending: " + this.announcedImages.size() + ")");
                     }

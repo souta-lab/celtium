@@ -465,6 +465,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int prepareImmediateCalls;
     /** Split of the batch call outside the preflight: group (mesh) creation against the vertex append. */
     private long groupCreateNanos;
+    /** CPU time of the same three inner calls, so wall minus CPU says which one blocks in a native call. */
+    private long appendCpuNanos;
+    private long preflightCpuNanos;
+    private long groupCreateCpuNanos;
     private int groupCreateCount;
     private long appendNanos;
     private int appendCount;
@@ -855,6 +859,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Whether the JVM exposes per-thread CPU time here (it decides whether the split above means anything). */
     public static final boolean THREAD_CPU_SUPPORTED =
             java.lang.management.ManagementFactory.getThreadMXBean().isCurrentThreadCpuTimeSupported();
+    /**
+     * How the render thread spent its non-running time, split by kind.
+     * <p>
+     * The batch call's wall time exceeds its CPU time by 2.0 ms/frame on AMD and 7.8 ms/frame on Intel. If these two
+     * are near zero while that gap is large, the waiting is not Java-level contention but a native call blocking - the
+     * bridge's synchronisation - which is a different fix.
+     */
+    private static long threadWaitedMillis() {
+        if (!THREAD_CPU_SUPPORTED) {
+            return -1L;
+        }
+        java.lang.management.ThreadInfo info = java.lang.management.ManagementFactory.getThreadMXBean()
+                .getThreadInfo(Thread.currentThread().getId());
+        return info == null ? -1L : info.getWaitedTime();
+    }
+
+    private static long threadBlockedMillis() {
+        if (!THREAD_CPU_SUPPORTED) {
+            return -1L;
+        }
+        java.lang.management.ThreadInfo info = java.lang.management.ManagementFactory.getThreadMXBean()
+                .getThreadInfo(Thread.currentThread().getId());
+        return info == null ? -1L : info.getBlockedTime();
+    }
+
     /** The thread's CPU time right now, or -1 when unsupported. */
     public static long threadCpuNanos() {
         return THREAD_CPU_SUPPORTED
@@ -1914,8 +1943,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
             long preflightStart = System.nanoTime();
+            long preflightCpuStart = threadCpuNanos();
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
+            long preflightCpuEnd = threadCpuNanos();
             this.prepareImmediateNanos += System.nanoTime() - preflightStart;
+            if (preflightCpuStart >= 0 && preflightCpuEnd >= 0) this.preflightCpuNanos += preflightCpuEnd - preflightCpuStart;
             this.prepareImmediateCalls++;
             if (prepared == null) {
                 this.immediateLastRefusal = "pipeline or descriptor preflight failed";
@@ -1940,8 +1972,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
                 long groupCreateStart = System.nanoTime();
+                long groupCreateCpuStart = threadCpuNanos();
                 this.currentImmediateMesh = new VulkanDynamicMesh(this.context);
+                long groupCreateCpuEnd = threadCpuNanos();
                 this.groupCreateNanos += System.nanoTime() - groupCreateStart;
+                if (groupCreateCpuStart >= 0 && groupCreateCpuEnd >= 0) this.groupCreateCpuNanos += groupCreateCpuEnd - groupCreateCpuStart;
                 this.groupCreateCount++;
                 // The target and viewport belong to the group being created, here, and not to whichever group happened to be
                 // first: they were recorded in an `if (!currentGroupUsed)` block that the creation path never reset, so every
@@ -2063,8 +2098,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
 
             long appendStart = System.nanoTime();
+            long appendCpuStart = threadCpuNanos();
             boolean appended = this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices);
+            long appendCpuEnd = threadCpuNanos();
             this.appendNanos += System.nanoTime() - appendStart;
+            if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
             this.appendCount++;
             if (!appended) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
@@ -2883,6 +2921,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " batchCallOpeningCount=" + batchCallOpeningCount
                 + " batchCallCpuMillis=" + (batchCallCpuNanos / 1000000L)
                 + " threadCpuSupported=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.THREAD_CPU_SUPPORTED
+                + " threadWaitedMillis=" + threadWaitedMillis()
+                + " threadBlockedMillis=" + threadBlockedMillis()
+                + " threadCpuTotalMillis=" + (threadCpuNanos() / 1000000L)
+                + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
+                + (this.preflightCpuNanos / 1000000L) + ", append " + (this.appendNanos / 1000000L) + "/"
+                + (this.appendCpuNanos / 1000000L) + ", groupCreate " + (this.groupCreateNanos / 1000000L) + "/"
+                + (this.groupCreateCpuNanos / 1000000L) + "]"
                 + " prepareImmediateCalls=" + this.prepareImmediateCalls
                 + " prepareImmediateMillis=" + (this.prepareImmediateNanos / 1000000L)
                 + " groupCreateCount=" + this.groupCreateCount
