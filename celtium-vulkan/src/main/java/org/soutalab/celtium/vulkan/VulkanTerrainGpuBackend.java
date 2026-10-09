@@ -423,6 +423,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int postAcceptDroppedGroups;
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
+    private String particleDescriptorFailureReason;
     private final int[] postAcceptDroppedByFormat = new int[8];
     private int passBoundaryFlushes;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
@@ -986,7 +987,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, ui.renderPass(),
                         false, 0, 0, false, false, false);
             }
-            return this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture) != 0L;
+            boolean ok = this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture) != 0L;
+            this.particleDescriptorFailureReason = this.descriptorProbe.lastFailure();
+            return ok;
         } catch (Throwable error) {
             return false;
         }
@@ -1763,6 +1766,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " textureRefusalsBeforeAccept=" + this.textureRefusalsBeforeAccept
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
+                + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
                 + ",5:" + this.postAcceptDroppedByFormat[5] + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS

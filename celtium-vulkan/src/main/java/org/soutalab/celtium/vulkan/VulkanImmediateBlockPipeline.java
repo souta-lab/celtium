@@ -221,7 +221,10 @@ public final class VulkanImmediateBlockPipeline {
             this.descriptorSetLayout = layoutHandle.get(0);
             org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
                     org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
-            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(128);
+            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)// The per-type count is what actually caps the pool: maxSets alone was raised and had no effect,
+                            // because 128 combined-image-sampler descriptors at 2 per set is 64 sets however large maxSets
+                            // is. The two are now sized together.
+                            .descriptorCount(8192 * 2);
             // One set per distinct texture the frame binds; the pool refuses beyond that and the caller then refuses
             // the batch rather than drawing with the wrong image.
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =

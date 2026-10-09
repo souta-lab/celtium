@@ -151,7 +151,14 @@ separated by one counter per return path in a single run.
 `setsByTextureView` grows without bound behind `pool.maxSets = 64`, every pipeline also allocates an unused initial set,
 and the block/particle keys use only the main texture view, so a rebuilt lightmap reuses a stale binding.
 
-### S14 [P1] geometry that fails after acceptance is dropped and called a GL fallback
+### S14 [P1] geometry that fails after acceptance is dropped and called a GL fallback - **closed**
+**Fixed.** The failure was `vkAllocateDescriptorSets failed` for the particle family, and the cause was the descriptor pool's
+**per-type** count: 128 combined-image-sampler descriptors at two per set caps the pool at 64 sets whatever `maxSets` says,
+so raising `maxSets` alone could not help. With the two sized together, a run reports **`postAcceptDroppedGroups=0`** and
+`particleDescriptorRefusals=0`, with accepted batches rising from 65 to 550 - no accepted geometry is dropped any more.
+**Consequence, recorded rather than glossed:** the frame's difference from the GL reference rises from 0.24% to **1.33%**,
+because the particles are now genuinely drawn and their rendering differs - the same order as the particle discrepancy this
+audit's S09 and the history recorded before the path stopped drawing them.
 **Measured:** with the texture now prepared before acceptance and post-accept drops counted separately, a normal run reports
 `textureRefusalsBeforeAccept=9` and **`postAcceptDroppedGroups=487`** - roughly one group per frame accepted and never
 drawn - while the image stays at 0.40% against its reference. So the defect is real, it happens every run, and it was

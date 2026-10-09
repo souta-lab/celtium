@@ -130,10 +130,19 @@ public final class VulkanImmediateParticlePipeline {
      */
     public long descriptorSetFor(VulkanGlTexture texture, VulkanGlTexture lightmap) {
         if (lightmap == null) {
-            return 0L;
+            return fail("lightmap object absent");
         }
-        if (this.descriptorPool == VK_NULL_HANDLE || texture == null) {
-            return 0L;
+        if (this.descriptorPool == VK_NULL_HANDLE) {
+            return fail("descriptor pool handle is null");
+        }
+        if (texture == null) {
+            return fail("texture object absent");
+        }
+        if (lightmap.view() == VK_NULL_HANDLE || lightmap.sampler() == VK_NULL_HANDLE) {
+            return fail("lightmap has no view or sampler");
+        }
+        if (texture.view() == VK_NULL_HANDLE || texture.sampler() == VK_NULL_HANDLE) {
+            return fail("texture has no view or sampler");
         }
         Long existing = this.setsByTextureView.get(Long.valueOf(texture.view()));
         if (existing != null) {
@@ -146,7 +155,7 @@ public final class VulkanImmediateParticlePipeline {
                             .pSetLayouts(stack.longs(this.descriptorSetLayout));
             LongBuffer handle = stack.mallocLong(1);
             if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) != VK_SUCCESS) {
-                return 0L;
+                return fail("vkAllocateDescriptorSets failed");
             }
             long set = handle.get(0);
             VkDescriptorImageInfo.Buffer image = VkDescriptorImageInfo.calloc(1, stack);
@@ -175,8 +184,20 @@ public final class VulkanImmediateParticlePipeline {
             this.setsByTextureView.put(Long.valueOf(texture.view()), Long.valueOf(set));
             return set;
         } catch (RuntimeException | LinkageError error) {
-            return 0L;
+            return fail(error.getClass().getSimpleName() + ": " + error.getMessage());
         }
+    }
+
+    /** The reason the last zero was returned, so one run can name it instead of guessing between four paths. */
+    private String lastFailure;
+
+    public String lastFailure() {
+        return this.lastFailure == null ? "none" : this.lastFailure;
+    }
+
+    private long fail(String reason) {
+        this.lastFailure = reason;
+        return 0L;
     }
 
     public void delete() {
@@ -221,7 +242,10 @@ public final class VulkanImmediateParticlePipeline {
             this.descriptorSetLayout = layoutHandle.get(0);
             org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
                     org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
-            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(128);
+            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)// The per-type count is what caps the pool: maxSets alone was raised and had no effect, because 128
+                            // combined-image-sampler descriptors at two per set is 64 sets however large maxSets is. The two
+                            // are now sized together.
+                            .descriptorCount(8192 * 2);
             // One set per distinct texture the frame binds; the pool refuses beyond that and the caller then refuses
             // the batch rather than drawing with the wrong image.
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =

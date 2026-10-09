@@ -4317,3 +4317,40 @@ wants the pool eviction rule instead of a bigger pool.
 The image has improved at every step of this sequence - 0.40% before the particle refusal, 0.26% with it, 0.24% now - which is
 consistent with the picture this log has built up: the particle path was taking geometry it could not draw, and each step
 that stops it taking what it cannot draw moves the frame closer to GL.
+
+---
+
+## S14 closed: nothing accepted is dropped any more, and the particles it was hiding are wrong by 1.33%
+
+The reason counter named the failure in one run - `vkAllocateDescriptorSets failed` - which ruled out the pool's `maxSets`
+that had been raised the round before and pointed at the **per-type** count instead:
+
+```java
+poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(128);
+```
+
+128 combined-image-sampler descriptors at **two per set** is 64 sets, whatever `maxSets` says. Raising `maxSets` alone could
+never have helped, which is exactly what the previous run showed. With the two sized together - 8192 sets, 16384
+descriptors - the particle family's descriptors allocate:
+
+| | before | after |
+|---|---|---|
+| accepted batches | 65 | **550** |
+| **post-accept dropped groups** | 488 | **0** |
+| particle descriptor refusals | 488 | **0** |
+| image against the GL reference | 0.24% | **1.33%** |
+
+**The S14 acceptance is met**: no batch that this renderer accepts is dropped any more, and particles are genuinely drawn by
+Vulkan rather than taken and discarded. That closes a P1 that had been happening in every run since the immediate path was
+built.
+
+And it immediately exposes what the drop was hiding. Refusing the particles had *improved* the frame to 0.24%; drawing them
+now makes it 1.33%, which is the same order as the particle discrepancy this log recorded many rounds ago (1.19% to 1.31%
+with a 0.23% floor) before the path stopped drawing them at all. So the sequence was: particles drawn wrongly, then silently
+dropped, then refused, then drawn again - and the honest reading of the last number is that **the particle rendering is
+wrong**, not that the descriptor change was.
+
+The next work is therefore a named defect with a number attached rather than a family-sized investigation: the particle
+pipeline's output differs from GL by 1.33% of pixels while every other family's does not, and the candidates are the ones
+this project already has on file - the lightmap it samples (S09's fix is in, and the descriptor now binds it), the blend and
+depth state it runs with (S07), and the particle atlas it reads.
