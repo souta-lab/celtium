@@ -8777,3 +8777,27 @@ their names say: **offered** is an intention, **drawn** is a record made into th
 produced pixels and put them into the game's texture. The middle one being zero in the same run as 1,957 copy-backs also says
 something worth keeping: the off-target acceptance counter was placed on a path these batches do not take, so it is not yet
 proving what it was added for.
+
+---
+
+## Audit finding three: confirmed, attempted, and reverted with the obstacle named
+
+**Confirmed in the source.** `uploadPatchFromPixels` calls the same `copyToImage` the full upload uses, and that method is built
+for a whole-image rewrite: its barrier transitions from `UNDEFINED` (discarding everything outside the patch, and every mip level)
+and it then calls `recordMipChain` with the **patch's** size. A patch is one sprite's frame inside a 256-square atlas, so both are
+wrong, exactly as the audit says.
+
+**Attempted.** A `preserve` mode was added: transition from the tracked layout instead of `UNDEFINED`, skip the mip chain, and
+have the patch perform its own transition back into the sampled layout. It works - the patch counter and the announcement counts
+all moved, the fixture still passed and validation went from nineteen errors to ten - but ten remain, and the obstacle is now
+precise:
+
+- **The layout is tracked per image, not per level.** A patch writes level 0; the barrier's subresource range covers every level,
+  and the levels of a mipmapped atlas are not all in the same layout. Validation says so directly: it cannot transition the
+  aspect for the range given.
+- **The range has to be level 0 for a patch**, and the tracked layout has to become per level (or the patch has to assume the
+  sampled layout only for the level it is writing).
+
+**Reverted.** The change is withdrawn rather than left with ten validation errors, and the tree is green again - exit 0,
+validation clean, fixture PASSED. Audit finding three therefore stands as **confirmed and not yet fixed**, with the two things the
+next attempt needs written down: a per-level layout, and a level-0 range.
