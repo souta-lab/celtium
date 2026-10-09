@@ -4849,3 +4849,49 @@ That is a specific, checkable statement rather than another law, and the instrum
 zeros themselves - a readback of the mirrored texture and of the GL texture it came from, off by default - rather than a
 sixth frame configuration. The frame itself is unchanged at the measured best: **0.21%** with validation clean and the
 fixture passing.
+
+---
+
+## The atlas answered: five levels, a clamp of four, and a chain built per sprite
+
+The previous round's conclusion - that `refreshTextures()` does not run - was **wrong, and wrong for a reason worth
+recording**: the probe was believed to have been moved to that method and never was. It lived only in the immediate path's
+offer. Checking where the code actually is, by printing the enclosing method of every marker rather than trusting the patch
+that was supposed to move it, showed the placement had silently failed - so a whole round of reasoning rested on a silent
+instrument at a location it never occupied. The probe is now in `refreshTextures`, at the line after the atlas and lightmap
+ids are read, and its location was verified the same way before the run. It fired on the first frame:
+
+```
+CELTIUM_TEXTURE_DIAG atlas=9 levels=5 maxLevel=4 minLod=0.0 maxLod=4.0
+                     minFilter=9986 magFilter=9728 atlasSize=512x512
+
+CELTIUM_SAMPLER size=0x0 levels=10 minFilter=0 magFilter=0 mipmapMode=1 minLod=0.0 maxLod=1.0 bias=0.0 nearest=true
+```
+
+9986 is `GL_NEAREST_MIPMAP_LINEAR` and 9728 is `GL_NEAREST`; our sampler's `NEAREST` filters with a **linear mipmap mode**
+are the same combination, which is the one thing the two agree on. Everything else differs, and now in a way that explains
+every measurement this thread has produced:
+
+| | GL atlas | our mirror |
+|---|---|---|
+| size | 512x512 | 512x512 |
+| levels | **5** (`maxLevel` 4) | **10** |
+| max LOD | **4.0** | **1.0** |
+| min filter | NEAREST_MIPMAP_LINEAR | NEAREST + linear mip mode |
+| mag filter | NEAREST | NEAREST |
+
+The mechanism is now visible in the numbers. Minecraft builds the atlas's mip chain **per sprite**, so no level ever mixes
+two sprites' colours. This project builds it by **blitting the whole atlas** level by level, so from level 1 upward every
+texel is an average of its neighbours **across sprite borders** - which is exactly what the measurements showed: sampling
+deep measures 7.37% (four levels) and 8.77% (the full chain) against the reference, and clamping to 1.0, where the bleeding
+has barely begun, measures 0.21%. The shallow clamp was never right; it was the configuration that hid the defect.
+
+That makes the fix concrete and specific to Minecraft rather than to Vulkan: **copy the levels OpenGL already has instead of
+generating them by blit** - one read and one upload per level, which is faithful by construction because the per-sprite
+averaging has already been done by the game - and then use vanilla's own `maxLod` of 4 with a chain as deep as GL's. The
+acceptance is the same reference image: it should be **better** than 0.21%, and the shallow clamp can then be retired rather
+than kept as a measured accident.
+
+Two process notes stay with this, because both cost a round: a probe's placement must be verified by reading where it is, not
+by trusting the patch that was meant to put it there; and a diagnostic that reports through a capped list can look silent
+when it is merely truncated, which is why this one prints to stdout.

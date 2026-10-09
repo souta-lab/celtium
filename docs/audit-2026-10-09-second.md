@@ -275,26 +275,14 @@ reload/resize hooks at tick 100 have no once-guard.
 **Partially fixed:** the comparator now disqualifies a failing process result. The fixture defects are open.
 
 ### S23 [P2] samplers, mips and diagnostic resources
-**Sampler half fixed:** the registry created every mirrored texture with `nearestFilter = false`, contradicting the
-documentation of the very method it called - `true` for the pixel-art atlas, `false` for the lightmap. The terrain path was
-right; the immediate path's textures were not. With nearest filtering the frame's difference from the GL reference falls
-from 0.42% to **0.23% (2,158 px)**, which is **better than the 0.24% measured with the particles refused** (2,225 px) - so
-the particles now match GL at least as closely as leaving them out. **Mip half: a measured law with an open mechanism.** The clamp was isolated from the creation order (the same clamp measures
-8.77% with the old order and 8.82% with the new, so the order is irrelevant). Vanilla's parameters were read from source:
-`GL_TEXTURE_MAX_LOD` is the level count itself, `MIN_LOD` is 0, bias 0, and the filters are the `*_MIPMAP_*` pair this
-project already uses - so the form of the original expression was right. Measured, four clamps against one reference: **1.0
-gives 0.21-0.28%**, 4.0 (Minecraft's count) 7.37%, 8.0 (full chain) 8.77%, 0.0 13.51%. Deeper sampling diverges and the
-shallow clamp matches, which the mip story does not explain. `maxLod` is therefore pinned at the measured-best value with the
-law in the comment, the level count is computed once and shared, and the chain is capped at vanilla's four levels.
-**The driver answered, the sampler was logged, and a claim was corrected.** The sampler actually created is `minFilter` and
-`magFilter` NEAREST, `mipmapMode` LINEAR, `maxLod` 1.0 over a five-to-ten level image, where the texture the driver reports is
-NEAREST over **one level with a clamp of zero** - so the renderer averages level 1 in where the reference averages nothing,
-yet sampling level 0 alone measures 13.51% against 0.21% for the blend. The reading that fits both is that **our level 0 is
-not the reference's level 0**, in content or alignment. **Corrected:** the terrain pass **does** run - `terrainPasses=1617`,
-`immediateOnlyPasses=546` - so the previous round's inference from a silent diagnostic was wrong about what it implied; the
-pass counters now exist so that question is a number. The off-by-one mip hypothesis is **refuted** by reading the blit
-(`srcSubresource` is `level - 1`, `dstSubresource` is `level`). **Next:** compare the two level zeros (a readback of the
-mirror and of the GL texture), not a sixth frame configuration.
+**The sampler half is fixed** (nearest filtering; the frame fell from 1.33% to 0.23%). **The mip half is now diagnosed at the
+mechanism.** With the probe verified to be inside `refreshTextures`, the atlas reports `levels=5 maxLevel=4 maxLod=4.0
+minFilter=9986 magFilter=9728 atlasSize=512x512` where this project's mirror has **10 levels and a clamp of 1.0**. Minecraft
+builds the atlas's chain **per sprite**; this project blits the **whole atlas**, so every level from 1 up averages across
+sprite borders - which is why sampling deeply measures 7.37-8.77% against the reference and why clamping to 1.0, where the
+bleeding has barely begun, measures 0.21%. The shallow clamp is a configuration that **hid** the defect, not a fix.
+**Next:** copy OpenGL's own levels instead of generating them by blit, then use vanilla's `maxLod` of 4 and a chain as deep as
+GL's; the acceptance is better than 0.21% against the same reference.
 
 ### S24 [P2] the record and the acceptance criteria need reworking
 Plan rows claim pixel-identical immediate rendering, removed deferral and verified cull/alpha capture, and the blockers
