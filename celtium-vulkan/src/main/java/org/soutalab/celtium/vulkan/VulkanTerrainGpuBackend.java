@@ -442,6 +442,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final int[] acceptedByFormat = new int[8];
     private boolean currentRenderTargetIsMain = true;
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
+    /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
+    private final java.util.Map<Long, VulkanOffscreenTarget> offTargetTargets = new java.util.HashMap<Long, VulkanOffscreenTarget>();
+    private int offTargetTargetsCreated;
     private final java.util.Map<Long, java.util.concurrent.atomic.AtomicInteger> offTargetBatchesByTarget =
             new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
     private int offTargetRefusals;
@@ -1235,6 +1238,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // What the per-target work would have to build: which target, how much content it receives, and how big it is.
             // The viewport is read here because at this moment it is the target's own, and the count says whether a target
             // is worth an image at all.
+            if (!this.offTargetTargets.containsKey(this.currentRenderTarget)) {
+                int[] viewport = new int[4];
+                org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
+                if (viewport[2] > 0 && viewport[3] > 0) {
+                    try {
+                        this.offTargetTargets.put(this.currentRenderTarget,
+                                VulkanOffscreenTarget.create(this.context, viewport[2], viewport[3]));
+                        this.offTargetTargetsCreated++;
+                    } catch (RuntimeException | LinkageError error) {
+                        record("off-target target could not be created: " + describe(error));
+                    }
+                }
+            }
             java.util.concurrent.atomic.AtomicInteger seen = this.offTargetBatchesByTarget.get(this.currentRenderTarget);
             if (seen == null) {
                 seen = new java.util.concurrent.atomic.AtomicInteger();
@@ -2124,7 +2140,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
-                + " offTargetByTarget=[" + this.offTargetSummary() + "]"
+                + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
@@ -2423,6 +2439,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } catch (RuntimeException | LinkageError error) {
             record("teardown: held groups could not be released: " + describe(error));
         }
+        for (VulkanOffscreenTarget target : this.offTargetTargets.values()) {
+            released += releaseDirect(target::delete);
+        }
+        this.offTargetTargets.clear();
         released += releaseImmediateMesh(this.currentImmediateMesh);
         this.currentImmediateMesh = null;
         for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {

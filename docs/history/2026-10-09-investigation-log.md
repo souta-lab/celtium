@@ -6932,3 +6932,28 @@ still belongs to the target rather than to the frame.
 Recorded for the next step with the numbers rather than the adjective, because this project has spent three rounds on a mapping
 question that turned out to be smaller than it looked and one round on a mask explanation that was simply wrong: the size of a
 piece of work is worth measuring before it is planned, not after it is attempted.
+
+---
+
+## The per-target resource, built and validated before anything depends on it
+
+The sized increment was "one 256x256 image with a copy-back", and this round built the first half of it: for a target other
+than the main framebuffer, the renderer now creates a device-local Vulkan image with a view.
+
+```
+CELTIUM_OFFTARGET target=1193535128 viewport=256x256 firstBatchFormat=1
+offTargetTargets = 1     offTargetRefusals = 571     retire=retired = 3
+exit 0 | clean | messages 0 | fixture PASSED
+nativeTerrainVerified=True   terrainPasses=1629   glDrawsCancelled=563
+```
+
+**Validation is silent across the whole run**, which is the point of doing it in this order: the risky part of per-target
+rendering is the Vulkan resource - format, usage flags, memory type, view - and that is now proved clean on a real second
+framebuffer before a single pixel depends on it. The batches are still OpenGL's, and they stay refused until the copy-back
+exists, because taking them without it would lose their content.
+
+Written the way this project has learned to write it: the increment is the one the measurement sized (one target, 256x256, one
+vertex format, a pipeline that already exists), the resource was built before the drawing that needs it, and the class says in
+its own comment why it is not used yet rather than leaving a reader to wonder. The remaining half is named - a render pass, a
+framebuffer, a readback and a `glTexSubImage2D` back into the game's texture - and it is small enough to describe in one
+sentence, which is what measuring it first bought.
