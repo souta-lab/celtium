@@ -147,6 +147,11 @@ command buffer の所有権修正と format 2（POSITION_TEX_COLOR）の既定�
 証拠: `.celtium-work/sol-command-buffer/acceptance-summary.json`（各runのexit/clean/messages/fixture/passed/delta/worldFramesと
 3枚のPNGハッシュ）。再現: `sol-cb-base-amd`（70メッセージ）。純ロジック: `VulkanCommandBufferStateTest` 4件。
 
+**フレーム比較の決定性（2026-10-10 実測）**: 同一ビルド・同一flagの2 runでも**最大24.8%のピクセルが異なる**
+（別の組では1.7%・1.4%）。したがって `compare_validation.py` のピクセル一致率だけで受入/不受入を決めない。
+参照との差を主張するときは、**複数runで再現する領域統計**（例: 地形帯の平均色）を使い、
+ピクセル単位の比較は決定性を別途示した場合に限る。
+
 **shader実験の前提確認（2026-10-10）**: `compileTerrainShaders` は `src/main/shaders` を `@InputFiles` として追跡しており、
 jar内の `terrain_solid.frag.spv` の SHA-256 は現在のソースを手動で `glslangValidator -V --target-env vulkan1.0` にかけた結果と
 **バイト一致**する（`bc1e741db9983d32…`）。shaderを変更した実験は、この一致を確認してから結論に使うこと。

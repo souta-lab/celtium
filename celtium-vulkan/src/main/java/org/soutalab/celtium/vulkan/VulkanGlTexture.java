@@ -619,8 +619,11 @@ public final class VulkanGlTexture {
             return;
         }
         try {
-            java.io.File target = new java.io.File(directory,
-                    "gl-texture-" + glTextureId + "-" + level.width + "x" + level.height + ".png");
+            // The object identity is part of the name because one GL texture can be mirrored by more than one
+            // VulkanGlTexture - the terrain keeps its own atlas and the registry keeps the immediate path's copy - and a
+            // comparison that cannot tell those apart cannot say which one the terrain actually samples.
+            java.io.File target = new java.io.File(directory, "gl-texture-" + glTextureId + "-" + level.width + "x"
+                    + level.height + "-obj" + Integer.toHexString(System.identityHashCode(this)) + ".png");
             // One file per texture is enough when the question is "what shape does the mirror have". When the question is
             // "is the mirror stale right now", the last upload is the one that matters, so the overwrite mode keeps it.
             if (target.isFile() && !Boolean.getBoolean("celtium.vulkan.dumpTexturesEvery")) {
