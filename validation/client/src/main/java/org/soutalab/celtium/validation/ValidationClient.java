@@ -74,6 +74,7 @@ public final class ValidationClient {
     private boolean celtium$compositeBlit;
     private boolean celtium$screenReadback;
     private boolean celtium$postprocess;
+    private boolean celtium$spectator;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -1333,6 +1334,32 @@ public final class ValidationClient {
             report.addProperty("weatherSet", "raining=" + mc.world.getWorldInfo().isRaining()
                     + " rainTime=" + mc.world.getWorldInfo().getRainTime()
                     + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f))));
+        }
+        if (worldTicks == 150 && !celtium$spectator) {
+            // The spectator effects the audit lists: creeper, spider and enderman each load their own post shader
+            // (shaders/post/creeper.json, spider.json, invert.json) through EntityRenderer.loadEntityShader. The public
+            // isShaderActive() is recorded beside it, because a run that passes says nothing about whether the shader
+            // was ever active - the postprocess switch taught that.
+            String which = System.getProperty("celtium.validation.spectator", "");
+            if (!which.isEmpty()) {
+                celtium$spectator = true;
+                // Java 8 source level in this module: an if/else chain rather than a switch expression.
+                net.minecraft.entity.Entity effectEntity = null;
+                if ("creeper".equals(which)) {
+                    effectEntity = new net.minecraft.entity.monster.EntityCreeper(mc.world);
+                } else if ("spider".equals(which)) {
+                    effectEntity = new net.minecraft.entity.monster.EntitySpider(mc.world);
+                } else if ("enderman".equals(which)) {
+                    effectEntity = new net.minecraft.entity.monster.EntityEnderman(mc.world);
+                }
+                if (effectEntity != null) {
+                    effectEntity.setLocationAndAngles(mc.player.posX + 2.0D, mc.player.posY, mc.player.posZ, 0.0F, 0.0F);
+                    mc.world.spawnEntity(effectEntity);
+                    mc.entityRenderer.loadEntityShader(effectEntity);
+                    report.addProperty("spectatorEffect", which);
+                    report.addProperty("shaderActive", mc.entityRenderer.isShaderActive());
+                }
+            }
         }
         if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.weather")) {
             // Read at capture time, not when the rain was requested: the client's rain strength ramps in over ticks, so

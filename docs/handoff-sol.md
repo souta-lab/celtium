@@ -379,8 +379,12 @@ thirdPerson / emptyHand は **AMD・Intel 両方**で発火（`thirdPersonView=1
 6場面を AMD・Intel で実行し、**12 runすべて exit 0 / validationClean / PASSED かつ発火の証拠あり**
 （postprocess=`called switchUseShader directly`、particles=`24`、compositeBlit=`185`、thirdPerson=`1`、
 emptyHand=`True`、weather=`raining=true` 0.480(AMD)/0.470(Intel)）。
+**spectator効果のcoverage（追加）**: `-Dceltium.validation.spectator=creeper|spider|enderman` を追加。tick 150 で該当entityを
+スポーンし `EntityRenderer.loadEntityShader(entity)` を呼び、**公開API `isShaderActive()`** を証拠に記録。
+**AMD・Intel 両方で creeper/spider/enderman の3種すべて exit=0 / PASSED / shaderActive=True**。
+fixtureモジュールは `-source 8` のため現代構文は使えない点に注意。
 **未coverage**: registry駆動の全block・item/model、全entity/TESR、GUI/font/HUD各画面、水/溶岩/火、
-破壊/selection overlay、dimension切替、spectator効果（`loadEntityShader`）、sky/cloud。
+破壊/selection overlay、dimension切替、sky/cloud。
 
 ## 3. 残る問題と、次に実装する具体的な一手
 
