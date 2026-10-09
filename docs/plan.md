@@ -141,7 +141,12 @@ content work that does not touch frame structure can proceed in parallel.
 2. **Content port** on top of it: GUI/font/HUD, sky/clouds/weather, water, translucency ordering, FBOs and
    post-processing, texture animation, resource reload, resize, world switch.
 3. **Forge-API mod verification** with the fixture, then real mods, recorded per mod.
-4. **Removing GL**, then re-verifying startup and rendering without a GL context or the bridge.
+4. **Removing GL state reads.** The immediate path reads the live projection and modelview with two `glGetFloatv` calls
+   per matrix change, which the measurements in this plan call the dominant per-batch cost. Replacing them needs the
+   mirrored stack to be faithful, and **it is not**: 1136 comparisons produced **zero** exact matches, with a maximum
+   element difference of 2.0 in the projection and 1.62 in the modelview. That is now a measured prerequisite rather than
+   an assumption, and the next step is dumping one mirrored matrix beside its GL counterpart.
+5. **Removing GL**, then re-verifying startup and rendering without a GL context or the bridge.
 5. **Performance and distribution**, measured, never asserted.
 
 ## 7. Stages: deliverables, acceptance, failure handling

@@ -3262,3 +3262,38 @@ immediate-capture instrument - its counters, its cancellation, its comparison sc
 for it. That work was worth doing once, because the instrument was lying, but it is exactly the kind of work that could
 grow into a layer for its own sake. The direction says where the weight belongs instead: the Vulkan side owning the frame,
 the passes ported by meaning rather than by call, and the bridge and the readbacks shrinking rather than being perfected.
+
+---
+
+## The mirrored matrices do not match GL at all: 1136 comparisons, none exact
+
+The direction says to remove GL state reads and readbacks, and the plan's own note says the two `glGetFloatv` calls per
+matrix change are the dominant per-batch cost - so the mirror is the thing that should replace them. The comparison
+machinery for exactly that judgement already existed in the backend; it reported `-1.0`, its initial value, in every run
+this session, which reads as "never compared" rather than as a result.
+
+Wired into the read path where both sides are in hand, and given a count of exact matches so a single bad sample cannot be
+confused with a broken mirror:
+
+```
+matrixMirrorDelta=proj:2.0005527,view:1.62,comparisons:1136,exact:0
+```
+
+**Sixty comparisons per frame for nineteen frames, and not one of them matched.** The mirror is not occasionally wrong; it
+agrees with OpenGL nowhere. A projection element differing by exactly 2.0 is the shape of a convention difference rather
+than accumulating error - a clip-depth remap, a transposed layout, or a different matrix stack - and the immediate path has
+been reading the live matrices because of the Mixin limit recorded in the compatibility file, not because anyone measured
+the mirror.
+
+Two conclusions follow, and both matter for what comes next:
+
+- **Removing the `glGetFloatv` reads is blocked by evidence, not by caution.** The replacement is wrong everywhere it has
+  been checked, and removing the reads now would move the renderer onto matrices that do not describe what Minecraft is
+  drawing.
+- **The measurement is cheap and was always available.** The counter existed, the comparison function existed, and the only
+  problem was that the comparison sat on a path whose result never reached the log. One line of wiring turned "the mirror is
+  probably fine" into a number.
+
+The next step is a dump rather than a guess: print the first comparison's sixteen elements from each side, which separates a
+transpose from a remap from a wrong stack in a single run. That is one run and one line of code, and it is the difference
+between fixing the mirror and re-deriving it.

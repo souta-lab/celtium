@@ -391,6 +391,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private float mirroredProjectionDelta = -1.0f;
     private float mirroredModelViewDelta = -1.0f;
     private int matrixComparisons;
+    private int matrixExactComparisons;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -1117,6 +1118,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.glModelView);
         this.mirroredProjectionDelta = Math.max(this.mirroredProjectionDelta, projectionDelta);
         this.mirroredModelViewDelta = Math.max(this.mirroredModelViewDelta, modelViewDelta);
+        // How many comparisons matched exactly. A maximum on its own cannot tell "1130 samples, one of them wrong
+        // somewhere" from "every sample wrong", and those two need different work: the first is one uncaptured
+        // operation, the second is a broken mirror.
+        if (projectionDelta == 0.0f && modelViewDelta == 0.0f) {
+            this.matrixExactComparisons++;
+        }
     }
 
     private static float maxDelta(float[] left, float[] right) {
@@ -1392,6 +1399,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
+                + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
@@ -2801,6 +2809,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, modelView);
                 projection.get(this.glProjection);
                 modelView.get(this.glModelView);
+                // Compare here, where both sides are in hand: the mirrored stack against what OpenGL reports. The
+                // comparison existed but sat on a path that did not run, so the reported delta stayed at its initial -1
+                // and no one could tell "the mirror is exact" from "the mirror was never checked".
+                compareMirroredAndLiveMatrices();
             } finally {
                 MemoryUtil.memFree(projection);
                 MemoryUtil.memFree(modelView);
