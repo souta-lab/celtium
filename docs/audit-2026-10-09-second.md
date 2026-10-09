@@ -236,6 +236,12 @@ reload/resize hooks at tick 100 have no once-guard.
 **Partially fixed:** the comparator now disqualifies a failing process result. The fixture defects are open.
 
 ### S23 [P2] samplers, mips and diagnostic resources
+**Sampler half fixed:** the registry created every mirrored texture with `nearestFilter = false`, contradicting the
+documentation of the very method it called - `true` for the pixel-art atlas, `false` for the lightmap. The terrain path was
+right; the immediate path's textures were not. With nearest filtering the frame's difference from the GL reference falls
+from 0.42% to **0.23% (2,158 px)**, which is **better than the 0.24% measured with the particles refused** (2,225 px) - so
+the particles now match GL at least as closely as leaving them out. **Open:** mip levels still bake `maxLod` from a
+dimension computed after sampler creation, and the remaining S23 items stand.
 Samplers are created before the image and bake `maxLod` from an initial `mipLevels = 1`; the registry creates every texture
 with linear filtering, ignoring the GL sampler state and the original mipmaps; the first size query uses the currently
 bound texture rather than the given ID; the pixel hash is updated before the upload succeeds. The `FRESH_SEMAPHORES` pool

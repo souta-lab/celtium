@@ -4392,3 +4392,29 @@ particle = VulkanImmediateParticlePipeline.create(this.context, terrain.renderPa
 So the diagnosis was right and most of it is fixed: **the particles were being drawn with blending off**, and the residual
 0.18% over the "particles refused" baseline is a smaller particle-specific error - the lightmap tint and the depth-write
 flag are the two candidates, and the same localisation method can separate them without a new measurement of the whole scene.
+
+---
+
+## The mirrored textures were filtered linearly, and fixing that beats the refused-particles baseline
+
+The residual after the blend fix pointed at the sampler, which the audit lists as S23. `VulkanGlTexture.create` documents
+itself clearly - "`true` for the pixel-art block atlas, `false` for the light map, whose OpenGL texture is filtered linearly"
+- and the registry called it with `false` **for every texture it mirrored**. The terrain path had it right; the immediate
+path's textures, which go through the registry, did not.
+
+The registry now creates with `nearestFilter = true` - Minecraft's own setting for its atlases and sprites - and offers
+`getLinear` for the lightmap, which the terrain side already mirrors correctly.
+
+| Stage | Difference from the GL reference |
+|---|---|
+| particles unblended | 1.33% (12,303 px) |
+| particles blended | 0.42% (3,839 px) |
+| **textures nearest-filtered** | **0.23% (2,158 px)** |
+
+**0.23% is better than the 0.24% the run with particles refused measured** - the same scene, at 2,225 pixels - so the
+particles are now drawn at least as closely to GL as not drawing them at all, and the whole frame is at its closest match
+yet. Two defects that had been in the tree for many rounds are gone: geometry accepted and dropped (S14), and a sampler that
+never matched the texture it was sampling (the sampler half of S23).
+
+The comparison is against the same-fixture reference throughout, and the runs differ only by these changes, so the
+progression is attributable rather than coincidental.

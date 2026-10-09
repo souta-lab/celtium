@@ -54,7 +54,17 @@ public final class VulkanTextureRegistry {
      * {@return the Vulkan mirror of the given GL texture, creating it if needed}, or {@code null} when the name is 0
      * or the mirror could not be created - the caller then refuses the batch instead of drawing with a wrong image.
      */
+    /** As {@link #get(int)}, with linear filtering - for the lightmap, whose GL texture is filtered linearly. */
+    public VulkanGlTexture getLinear(int glTextureId) {
+        return get(glTextureId, false);
+    }
+
     public VulkanGlTexture get(int glTextureId) {
+        return get(glTextureId, true);
+    }
+
+    /** @param nearestFilter see {@link VulkanGlTexture#create(VulkanContext, int, int, boolean)} */
+    public VulkanGlTexture get(int glTextureId, boolean nearestFilter) {
         if (glTextureId == 0) {
             return null;
         }
@@ -71,7 +81,10 @@ public final class VulkanTextureRegistry {
                 this.lastFailure = "GL texture " + glTextureId + " reports size " + width + "x" + height;
                 return null;
             }
-            VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, false);
+            // Nearest by default, because that is what Minecraft sets for its textures - block atlas, item atlas,
+            // particle sprites - and it is what the create() documentation has said all along while this call passed
+            // false for every texture. The lightmap is the exception and asks for the linear variant (audit S23).
+            VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
             texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
             this.entries.put(glTextureId, new Entry(glTextureId, width, height, texture));
             this.mirrorCount++;
