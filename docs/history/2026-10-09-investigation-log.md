@@ -7468,3 +7468,38 @@ Worth noting as a pattern across the last four rounds: each one ended by **namin
 it - a missing branch, a stale bound, an artifact of when a report runs, and now a shape. The names come from instruments that
 count what the code actually sees, which is what the runtime lock's provenance work was for and what the arrival census
 generalised.
+
+---
+
+## The position-only shader half, attempted and withdrawn - with the obstacle named and the process fixed
+
+The census said the largest category still going to OpenGL is one shape: position-only vertices, twelve bytes, no colour. Its
+shader half was attempted - the twelve bytes left before the push block's guaranteed limit, spent on a colour, in thirteen
+shaders, plus a new colourless textureless pair - and it has been **withdrawn**, with both obstacles recorded because both came
+from tools rather than from reading.
+
+**A vector in a push constant block aligns to sixteen bytes, and offset 116 is not a multiple of sixteen.** The compiler said so;
+three floats occupy the same twelve bytes and are legal there.
+
+**Raising the shaders to 128 requires raising the push-constant range in every pipeline layout at the same time.** With the
+shaders at 128 and layouts still at 116, validation refused every pipeline:
+
+```
+pStages[0] shader has a push constant buffer Block with range [0, 128] which is outside the VkPushConstantRange of [0, 116]
+```
+
+There are **eight** sites - six `PUSH_CONSTANT_BYTES` constants and two push buffers - and they now have a name.
+
+**And a process failure worth stating plainly.** One commit was written while the build was failing, because the commit was not
+gated on the build: the exact mistake this project's history warns about, made by the author of that history. The attempt was
+pushed before that was noticed, and the remote now carries it, so the next attempt starts by repairing the push ranges rather
+than by re-deriving them. Every commit in this session from here on gates on the build result before it writes.
+
+A smaller lesson from the same recovery: `git checkout -- .` restores from the **index**, not from `HEAD`, so a `reset --soft`
+leaves the changes staged and the "revert" silently does nothing. `git reset --hard` is the one that means what it says.
+
+The position-only work therefore stands where the census left it - **named, sized, and with a complete change list**: three
+float fields at 116/120/124 in the thirteen shaders, `VkPushConstantRange` of 128 at **all eight** sites, a
+`DefaultVertexFormats.POSITION` branch in the id chain, `7` admitted by the range check and the acceptance mask, a pipeline
+factory modelled on the position-texture one, a cache for it, and the current colour read with `glGetFloatv(GL_CURRENT_COLOR)`
+at upload time.
