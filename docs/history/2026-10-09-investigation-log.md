@@ -4253,3 +4253,34 @@ structure rather than a new one.
 One inconsistency is recorded rather than smoothed: `snapshotServed` (573) exceeds `immediateTaken` (552) because the two
 count different events - the snapshot serves a matrix capture, not a batch - so the equality that held in the previous
 round's numbers should not be read as "every batch" without that caveat.
+
+---
+
+## Every post-accept drop is the particle family, and refusing it brings the frame closer to GL
+
+The per-family counter answered the question in one run: `droppedByFormat=1:0,2:0,3:0,4:0,5:483`. **All of the accepted-and-
+dropped groups are particles** - the family whose descriptor needs the lightmap - and the drawing path has been taking them
+and then discarding them, roughly once per frame, in every run this project has measured.
+
+With a probe at offer time - one particle pipeline kept for the question, since the descriptor depends on the textures rather
+than on the pipeline's state key - the family is refused before acceptance instead:
+
+| | before | after |
+|---|---|---|
+| accepted batches | 547 | **65** |
+| particle refusals before acceptance | - | **484** |
+| image against the GL reference | 0.14 mean, **0.40%** over 8 | 0.06 mean, **0.26%** over 8 |
+
+**Refusing the particles moved the frame closer to GL, by about a third.** That is the substantive result of the round: the
+particle geometry Vulkan was taking was not merely dropped, and leaving it to GL makes the frame match the reference better
+than taking it did. It also lines up with the older note in this log that particles carried a difference that survived
+several fixes.
+
+The drop counter still reads 484 after the change, which is worth stating plainly rather than reading as a failure of the
+probe: the refusals now happen before acceptance, so the drops are groups from a path the probe does not intercept - the
+pending groups and the draw's own descriptor build - and both counters now describe the same underlying failure,
+`descriptorSetFor` returning zero for the particle family. That is the next patch, and it is now a single function with a
+single caller rather than a family-sized investigation.
+
+Nothing here is a general GL measure: the probe asks the same question the draw asks, in the same way, one step earlier, and
+the answer is the Vulkan-side descriptor's availability.

@@ -421,6 +421,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetRefusals;
     private int textureRefusalsBeforeAccept;
     private int postAcceptDroppedGroups;
+    private VulkanImmediateParticlePipeline descriptorProbe;
+    private int particleDescriptorRefusals;
+    private final int[] postAcceptDroppedByFormat = new int[8];
     private int passBoundaryFlushes;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
@@ -963,6 +966,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.snapshotCaptures++;
     }
 
+    /**
+     * Whether a particle-family batch with this texture can have its descriptor built at all.
+     * <p>
+     * The probe pipeline is created once and kept: the descriptor's inputs are the texture and the lightmap, not the
+     * pipeline's state key, so any particle pipeline answers the same question about them.
+     */
+    private boolean canBuildDescriptor(int boundTexture) {
+        VulkanGlTexture texture = this.textureRegistry.get(boundTexture);
+        if (texture == null || this.lightmapTexture == null) {
+            return false;
+        }
+        try {
+            if (this.descriptorProbe == null) {
+                VulkanTerrainPipeline ui = pipelineFor(this.lastUiPass);
+                if (ui == null) {
+                    return false;
+                }
+                this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, ui.renderPass(),
+                        false, 0, 0, false, false, false);
+            }
+            return this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture) != 0L;
+        } catch (Throwable error) {
+            return false;
+        }
+    }
+
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
         if (fovDegrees <= 0.0F || aspect <= 0.0F || near <= 0.0F || far <= near) {
             this.derivedProjectionRefusals++;
@@ -1217,6 +1246,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
                 this.textureRefusalsBeforeAccept++;
+                return false;
+            }
+            if (formatId == 5 && !canBuildDescriptor(boundTexture)) {
+                // The particle family is the one that dropped: every post-accept drop counted so far is format 5, which is
+                // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
+                // refusal - before acceptance, where GL still owns the draw. The descriptor depends on the textures rather
+                // than on the pipeline's state key, so one pipeline is enough to ask the question.
+                this.immediateLastRefusal = "the particle descriptor could not be built for this lightmap";
+                this.particleDescriptorRefusals++;
                 return false;
             }
 
@@ -1723,7 +1761,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals
                 + " offTargetRefusals=" + this.offTargetRefusals
                 + " textureRefusalsBeforeAccept=" + this.textureRefusalsBeforeAccept
-                + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
+                + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
+                + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
+                + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
+                + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
+                + ",5:" + this.postAcceptDroppedByFormat[5] + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
@@ -2984,6 +3026,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             // separately and loudly rather than folded into the ordinary refusal count.
                             this.immediateTextureRefusals++;
                             this.postAcceptDroppedGroups++;
+                            if (formatId >= 0 && formatId < this.postAcceptDroppedByFormat.length) {
+                                this.postAcceptDroppedByFormat[formatId]++;
+                            }
                             continue;
                         }
                         particle.draw(this.commandBuffer, mesh, push, descriptorSet);
