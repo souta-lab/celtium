@@ -275,6 +275,17 @@ mipBias−2 で+3.6%・指数不変、lightmap 1.0 で+5%のみ、shade off 完�
 周辺コメントの「0.16-0.28%一致」は過去の別状態の測定なので現在の証拠に使わない。
 次の一手は `maxLod` を上げて（level 2以降を許可）指数と遠景の帯を再測定し、併せて我々とGLのmip各levelを数値比較すること。
 
+**upstreamとの対応画素比較（このターン）**: 格子（明るいブロック）は vanilla (192.0,199.8,187.5) / upstream
+(171.9,178.7,167.8) / celtium (108.7,112.6,106.3) で比 **0.632**、地面は (113.6,119.4,105.5)/(101.5,106.7,94.4)/
+(69.8,72.9,65.5) で比 **0.688**。=> **全体に一様な約0.66倍**（格子固有ではない）。松明は upstream の最も明るい画素が
+(251,241,194)（暖色の炎）だが celtium は (201,204,196) の灰色で、**炎（アニメーションテクスチャ）が描けていない**
+（plan優先順位4のsprite animation未移植と一致する独立欠陥）。`forceCompactFormat` のA/Bはレイアウト不一致で
+青い画像になり不成立だが、**その壊れた画像でもfixtureはPASSED**だった（verdictが画像の正しさを検出しない実例）。
+**機構**: `ChunkBuilderMeshingTask` は mod pipeline と vanilla dispatcher を呼び分けるが、`writeGeometry` の
+brightnessヒストグラムが一度も出ない＝**全ジオメトリが vanilla dispatcher 経由**。よって頂点色は MC が焼いた色で、
+`VintageBlockRenderer` の tint×light.br は使われていない。次の一手は vanilla 参照run から実際のチャンク頂点色を
+dumpし、我々の同じ頂点色と数値比較すること（差分→データ側、一致→適用側）。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

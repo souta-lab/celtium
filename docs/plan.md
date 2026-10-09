@@ -428,8 +428,29 @@ lightmap 1.0 → +5%のみ／shade off → 完全同一／UV半テクセル → 
 - コード側: terrain sampler は `maxLod(1.0)`（level 0〜1のみ）＋LINEAR。周辺コメントの「0.16-0.28%一致」は
   **過去の別状態の測定**であり現在の証拠に使わない（goal の警告どおり）。
 
-**次の一手（具体）**: `maxLod` を上げて（level 2以降を許可）指数と遠景の帯を再測定する（aliasing darkening仮説）。
-併せて我々のmip各levelとGLのmip各levelをdumpして**数値で**比較する。
+**upstreamとの対応画素比較（このターン）**: 画像を分離して測った（upstreamの明るい格子/地面を基準に分類）。
+
+| 対象 | vanilla GL | upstream GL | celtium | celtium/upstream |
+|---|---|---|---|---|
+| 格子（明るいブロック） | (192.0,199.8,187.5) | (171.9,178.7,167.8) | **(108.7,112.6,106.3)** | **0.632** |
+| 地面（暗いブロック） | (113.6,119.4,105.5) | (101.5,106.7,94.4) | **(69.8,72.9,65.5)** | **0.688** |
+
+- 差は**格子だけでなく全体に一様な約0.66倍**（以前の「格子だけ暗い」という見立ては誤り。コントラストがやや悪いだけ）。
+- **松明**: upstreamの水平帯で最も明るい画素は (251,241,194)（暖色の炎）だが、celtiumは (201,204,196) の灰色。
+  → **cutout/炎（アニメーションテクスチャ）が正しく描かれていない**。これはplan優先順位4の
+  「sprite animation未移植」と一致する**独立した欠陥**。
+- `-Dceltium.terrain.forceCompactFormat=true` のA/Bは**レイアウト不一致で青い画像**になり不成立。
+  ただし**その壊れた画像でもfixtureは exit 0 / validationClean / PASSED** だった（fixtureのverdictは画像の
+  正しさを検出しないという事実の実例として記録）。
+
+**機構の確定（このターン・重要）**: `ChunkBuilderMeshingTask` は mod 自身の pipeline（`VintageBlockRenderer`）と
+vanilla の `BlockRendererDispatcher` の両方を呼び分けるが、`writeGeometry` に仕込んだbrightnessヒストグラムが
+**一度も出ない**＝**全ジオメトリが vanilla dispatcher 経由**で作られている。したがって我々の頂点色は
+**MC自身が焼いた色**であり、`VintageBlockRenderer` の `tint × light.br` は**使われていない**。
+
+**次の一手（具体）**: 「同一データか否か」を確定させる。*vanilla参照run* の中から（= modの経路を介さずに）
+実際のチャンク頂点色をdumpして、我々のrunの同じ頂点色と**数値で**比較する。差分が出ればデータ側、
+一致すれば適用側（我々のVulkan経路）に残因がある。
 
 **（旧メモ）**「GLの固定機能パイプラインが我々のshaderに対して*余分に*掛けているもの」を特定する。
 候補: (a) フレームバッファの色空間（sRGB/gamma）差、(b) 固定機能の `GL_TEXTURE_ENV` 合成（RGB_SCALE等）、

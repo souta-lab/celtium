@@ -145,6 +145,12 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     }
 
     private ChunkVertexType chooseVertexType() {
+        // Diagnostic: the compact path builds its colours in VintageBlockRenderer, the vanilla-like path copies the
+        // game's own vertex data. Forcing one or the other separates "the brightness term is missing from one path"
+        // from "the sampler is wrong", which the frame cannot distinguish on its own.
+        if (Boolean.getBoolean("celtium.terrain.forceCompactFormat")) {
+            return ChunkMeshFormats.COMPACT;
+        }
         if (!CeleritasVintage.options().performance.useCompactVertexFormat) {
             return ChunkMeshFormats.VANILLA_LIKE;
         }
