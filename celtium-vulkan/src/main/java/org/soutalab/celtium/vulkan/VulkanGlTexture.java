@@ -563,6 +563,12 @@ public final class VulkanGlTexture {
     private void recreateImageResources(int newWidth, int newHeight) {
         destroyImageResources();
         createImageResources(newWidth, newHeight);
+        // The new image is in VK_IMAGE_LAYOUT_UNDEFINED for every level, and the next write may be a patch, which only
+        // transitions level 0. Levels 1..N then stay UNDEFINED while the descriptor that samples the view expects
+        // SHADER_READ_ONLY_OPTIMAL, which is the validation error the world-switch scene produced (ten of them, one per
+        // level, "current layout is VK_IMAGE_LAYOUT_UNDEFINED"). Moving every level here - contents are undefined, only
+        // the layout changes - is what the create path already does for level 0.
+        transitionToShaderRead();
     }
 
     private void destroyImageResources() {
@@ -600,9 +606,15 @@ public final class VulkanGlTexture {
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            // Every level, not just level 0: the descriptor samples the whole view, so a level left in UNDEFINED is a
+            // validation error at draw time (VUID-vkCmdDraw-None-09600), and after a resize the levels above 0 have
+            // never been transitioned by anything else.
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, Math.max(1, this.mipLevels), 0, 1);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, SAMPLING_STAGES,
                     0, null, null, barrier);
+            for (int covered = 0; covered < Math.max(1, this.mipLevels); covered++) {
+                setLevelLayout(covered, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
         } finally {
             context.endCommands(commandBuffer);
         }

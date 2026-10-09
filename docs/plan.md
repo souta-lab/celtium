@@ -1279,7 +1279,39 @@ GPU時間と待ち時間を出す（既存の timestamp 機構が使える）、
   level 0 が `UNDEFINED` 前提の barrier と、全ミップを移す barrier の順序を揃えてから、**両GPUで世界切替の受入を
   取り直して**閉じる。半端な修正を入れない。
 
-**次の一手**: (1) `transitionToShaderRead()` を全 `mipLevels` に広げ、`recreateImageResources()` の直後で
+**修正（このターン・解決）**: validation メッセージの全文が答えだった。
+
+```
+expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED      （mipLevel 2, 3 … も同様に10件）
+```
+
+- **原因**: `recreateImageResources()` が image を作り直すと**全レベルが UNDEFINED** になるが、
+  `createImageResources()` は遷移を行わず、その後の書き込みが **patch（`preserve=true`）** だと
+  **level 0 しか遷移しない**。レベル1以降は誰も遷移させないまま、記述子は view 全体をサンプルするため
+  draw 時に VUID が出ていた。
+- **修正**: (1) `transitionToShaderRead()` の barrier 範囲を `Math.max(1, this.mipLevels)` に広げ、レベルごとの
+  レイアウト記録も全レベル更新する、(2) `recreateImageResources()` の直後で `transitionToShaderRead()` を呼ぶ。
+  `oldLayout=UNDEFINED` は常に有効（内容を捨てる意味になる）なので、既存の barrier と衝突しない。
+
+**修正後の受入（両GPU）**:
+
+| run | exit | validationClean | fixture | 所要 | p50 | `VUID-vkCmdDraw-None-09600` |
+|---|---|---|---|---|---|---|
+| world switch AMD | **0** | **true** | PASSED | 26.1 s | 16.22 ms | **0**（修正前10） |
+| world switch Intel | **0** | **true** | PASSED | 25.8 s | 21.64 ms | **0**（修正前10） |
+| 通常 AMD（回帰確認） | 0 | true | PASSED | — | 16.09 ms | 0 |
+| 通常 Intel（回帰確認） | 0 | true | PASSED | — | 28.49 ms | 0 |
+| command-buffer target受入 | 0 | true | PASSED | — | 16.05 ms | `targets=True` |
+
+- 切替そのものも動作（`leftWorldAtTick=100` / `rejoinedAtTick=100`）。
+- **画像の回帰なし**: 修正前後で AMD 0.0155 / Intel 0.0169 で、いずれも**測定済みの床（約0.017）と同値**。
+
+**次の一手**: (1) 残る失敗経路（texture/descriptor/allocation 失敗、minimize/out-of-date）を両GPUで確認する、
+(2) 切替後の中身が正しいかを画像で詰める（現在は「validation が綺麗で切替が起きている」まで）、
+(3) 完成条件(b) に向けてブリッジの置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) `transitionToShaderRead()` を全 `mipLevels` に広げ、`recreateImageResources()` の直後で
 呼ぶ経路を整える（level 0 の `oldLayout` 前提と衝突しないように）、(2) world switch を AMD/Intel で再受入し、
 `validationClean=true` と `exit 0` を確認する、(3) 同様に「切替後」の描画が正しいかを画像で確かめる。
 
