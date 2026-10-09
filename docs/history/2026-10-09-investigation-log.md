@@ -5014,3 +5014,42 @@ holds, and the two can be compared numerically. A seventh frame would only re-me
 
 Mirroring is off, the clamp is at the value the table says is best, and the configuration is the one that has measured
 0.16-0.28% with validation clean throughout.
+
+---
+
+## The reference image every recent comparison used has this project's Vulkan terrain in it
+
+The mip table ended with a contradiction - the frame matched a chain this project generates and not the levels the game
+itself holds - so the reference was finally inspected instead of used. Its own report says:
+
+```
+p14s-weather-part-ref1
+  immediateTaken=0  immediateRefusal=immediate_drawing_disabled_by_celtium.vulkan.immediate=false
+  vulkanPasses=1647  nativeTerrainVerified=True
+  Transfer Queue: vulkan [AMD Radeon RX 6400] regions=4 draws=62 sections=62 uploaded=378880B
+```
+
+The immediate path was disabled for that run, which is what made it look like a reference - but the **terrain backend was
+still installed and drew**: regions 4, draws 62, 1647 passes, and `nativeTerrainVerified True`. So the image every recent
+comparison has been measured against is **OpenGL plus this project's Vulkan terrain**, and the comparisons have been
+measuring agreement **with this project's own earlier rendering**, not with OpenGL.
+
+That explains the mip table exactly and removes its mystery:
+
+- the reference matches the **generated** chain at 0.16-0.28% because the generated chain is what drew the reference;
+- it does **not** match the levels copied from OpenGL - 5.56-5.60% - because those are different texels from the ones the
+  reference was rendered from;
+- level 0 alone is far off in both modes - 13.51% and 13.52% - for the same reason.
+
+The consequences are recorded rather than softened. The changes of the last rounds are real and stand on their own evidence:
+particles are drawn instead of dropped (`postAcceptDroppedGroups=0`), the sampler matches the filters the driver reports,
+validation is clean on both GPUs, and the layout bugs the mirroring attempt exposed are fixed. But the **image numbers**
+quoted alongside them - 1.33% to 0.23%, and the whole clamp table - measured movement toward this project's own previous
+output, and they are **not** evidence of agreement with OpenGL. Nothing in this log should be read as if they were.
+
+A true reference was attempted two ways and neither worked as it stands: removing the Vulkan switches still left the terrain
+backend installed (`Transfer Queue: vulkan ... regions=4`), and removing the mod entirely makes the fixture fail before it
+captures a screenshot (`fixture FAILED`, no image), because the fixture needs the mod present to reach that point. The next
+step is therefore a **reference switch in the backend** - a documented option that installs nothing and lets the fixture
+capture a pure OpenGL frame - after which every image number in this project needs re-baselining, starting with the particle
+and sampler results that have been quoted as improvements.
