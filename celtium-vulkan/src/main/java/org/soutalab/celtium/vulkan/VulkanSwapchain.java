@@ -79,6 +79,8 @@ public final class VulkanSwapchain {
     private static final boolean PRESENT_NO_RECORD = Boolean.getBoolean("celtium.vulkan.presentNoRecord");
     /** Experiment: a fresh semaphore pair per present, to test whether reuse is what validation objects to. */
     private static final boolean FRESH_SEMAPHORES = Boolean.getBoolean("celtium.vulkan.freshPresentSemaphores");
+    /** Puts the clear-and-present probe back on its earlier, previously clean submit shape. */
+    private static final boolean PROBE_OLD_SHAPE = Boolean.getBoolean("celtium.vulkan.probeOldShape");
 
     /** {@return the mean of a centre patch of a swapchain image}, or -1 when it cannot be read. */
     public float lastPresentedMean() {
@@ -339,14 +341,19 @@ public final class VulkanSwapchain {
                     vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
                     transitionToPresent(stack, commands, image);
                 } finally {
-                    // The same wait/signal pair as the frame present: the submission modifies the acquired image, so
-                    // it waits on the acquire semaphore and the presentation waits on its signal. Submitting with no
-                    // semaphores at all is what the validation layer reports as "performs a layout transition on
-                    // presentable VkImage ... but VkSemaphore ... was not waited on".
-                    this.context.submitWithSemaphores(commands, acquire, renderFinished);
+                    // Two shapes, one switch. The wait/signal pair is the shape the frame present uses, because a
+                    // submission that writes the acquired image has to wait for the acquire. The earlier shape -
+                    // submit with no semaphores, present waiting the acquire itself - measured zero validation
+                    // messages in this very probe, so putting it back isolates whether the pair is what the layer
+                    // objects to.
+                    if (PROBE_OLD_SHAPE) {
+                        this.context.endCommands(commands);
+                    } else {
+                        this.context.submitWithSemaphores(commands, acquire, renderFinished);
+                    }
                 }
                 VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
-                        .pWaitSemaphores(stack.longs(renderFinished))
+                        .pWaitSemaphores(stack.longs(PROBE_OLD_SHAPE ? acquire : renderFinished))
                         .swapchainCount(1)
                         .pSwapchains(stack.longs(this.swapchain))
                         .pImageIndices(index);

@@ -1690,3 +1690,30 @@ rather than a program: make `clearAndPresent` use the earlier shape again and co
 the two shapes differ in exactly one respect and the frame path needs the correct one - a submission that writes the
 acquired image genuinely must wait the acquire - with the layer's disagreement about that being the real question, rather
 than anything this code does wrong that has not already been ruled out.
+
+---
+
+## The shapes are separated: the present complaint is about waiting, the submit complaint is not about this code
+
+The probe's earlier shape - submit with no semaphores, present waiting the acquire - was restored behind a switch and
+measured:
+
+| Probe shape | Validation messages |
+|---|---|
+| submit waits acquire, present waits render-finished (the frame path's shape) | **2** |
+| **submit with no semaphores, present waits the acquire** (the earlier shape) | **1** |
+
+So the two complaints have different causes and only one of them is about the shape:
+
+- The **present** complaint ("pImageIndices[0] was acquired with a semaphore ... that has not since been waited on")
+  disappears the moment the presentation waits the semaphore the acquire signalled. That is a real, wanted result: the
+  present path should wait the acquire when nothing else does.
+- The **submit** complaint ("performs a layout transition on presentable VkImage ... but VkSemaphore ... was not waited
+  on") is present in **both** shapes - including the one where the submission demonstrably *does* wait the acquire, as the
+  counters showed and the fresh-semaphore run confirmed. So it is not about what this code passes; it is about how the
+  layer classifies the acquire semaphore or the transition on a device created for external semaphore and memory.
+
+That leaves the frame path exactly where it should be: it keeps the correct shape (a submission that writes the acquired
+image waits for the acquire), the presentation waits the render-finished signal, and one validation message per present
+remains that this code cannot remove by changing what it passes. The switch stays in the tree as the evidence for that
+statement, off by default, and the frame present stays off by default too - one message is still a message.
