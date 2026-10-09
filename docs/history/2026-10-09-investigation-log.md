@@ -596,3 +596,38 @@ those three calls happens once per group. So the reads cannot be reduced by spli
 reverted rather than left in as complexity with no gain. Combined with the mirror measurement (proj 2.0, view 2000.0
 apart) this closes the question from both sides: the matrices have to come from somewhere other than a GL read, and the
 only such source is a renderer that supplies them itself.
+
+---
+
+## The mid-frame window, fourth attempt: the gate works, the image does not survive it
+
+The exception was finally identified by recording it **with its stack** instead of its message:
+
+```
+immediate window failed: java.lang.IllegalStateException: beginFrame: the bound draw framebuffer is the default
+framebuffer; the verified bridge needs an FBO whose colour attachment is an RGBA8 texture and whose depth attachment
+is a D24 renderbuffer
+  at org.soutalab.celtium.vulkan.VulkanFrameTarget...
+```
+
+The window was being opened while GL was drawing to the **default** framebuffer (the screen), where the bridge has no
+colour/depth pair to read. Gating the flush on `GL_DRAW_FRAMEBUFFER_BINDING != 0` fixed exactly that:
+
+| With the gate | Result |
+|---|---|
+| Window failures | **none** |
+| Windows opened | 1267 (plus 316 properly deferred while the default framebuffer was bound) |
+| `immediateTaken` / `immediateFlushes` | 2836 / 2836 |
+| Run status, validation | PASSED, `nativeTerrainVerified True`, **VUID 0** |
+| Local image difference against the same build with the path off | **mean 147.59, 100% of pixels over 8 and over 32** |
+
+So the mechanism now runs cleanly and every accepted batch is drawn in a window opened at the point that produced it -
+and the frame is destroyed for it. A full-frame difference means the picture is no longer the scene, which points at the
+window's cost rather than at the geometry: each window copies the **whole** colour and depth image in and copies them
+back out, and 1267 of those in a run interact with GL's own use of the same buffers (the depth round-trip in particular),
+so the consecutive copies do not compose into the same image.
+
+That is a design conclusion, not a bug to patch: a bridge that merges two renderers by copying whole images cannot
+host a window per flush point. Making the immediate path correct needs the renderer to own the frame - drawing GL's
+remaining content into Vulkan images as it is ported - which is the same conclusion the matrix measurements reached from
+the other side. The window is reverted, the tree is green, and the immediate path stays off by default.
