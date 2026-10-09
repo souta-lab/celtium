@@ -2813,3 +2813,35 @@ What remains for the particle difference is the same narrowed set, now with one 
 the pipeline binds (whether the mirror holds what GL's lightmap has, and whether it is current), the flat integer varying
 carrying the coordinate, and the sampling of the particle atlas. The verification habit is what should carry forward: hash
 the shipped artifact, then conclude.
+
+---
+
+## The lightmap mirror is stale - found in the source - and the first hook for it crashed the client
+
+Following the shortened candidate list to the lightmap texture, the source answered before any experiment did:
+
+```
+DynamicTexture.func_110564_a()                      // updateDynamicTexture, called by EntityRenderer:1025
+  -> TextureUtil.func_110988_a(glTextureId, data, w, h)
+```
+
+`EntityRenderer` calls that **once per frame** for the 16x16 lightmap, and **neither of the two upload hooks in
+`TextureUtilMixin`** - `func_110989_a` for registration and `func_147955_a` for animation frames - covers
+`func_110988_a`. So the mirror of the lightmap is uploaded once and never refreshed, while the real lightmap keeps
+changing: lighting that freezes at whatever the first frame had. That is a real defect in the shipped configuration, found
+by reading rather than by another comparison, and it is exactly the shape of a difference that appears in lit content and
+not in uniformly lit content.
+
+The hook written for it **crashed the client**, reproducibly, in six seconds:
+
+```
+java.lang.NoClassDefFoundError: net/minecraft/client/renderer/texture/TextureUtil
+```
+
+so it is reverted, the build is green again and the water scene is back to PASSED with `nativeTerrainVerified True` and
+2229 passes. The defect it was written to fix is still there, and the crash says the *target* was wrong rather than the
+idea: `func_110988_a` on `TextureUtil` destabilised the class load.
+
+The next attempt targets `DynamicTexture.func_110564_a` instead - a concrete method on a small class, no parameters, called
+once per frame - with an `@Invoker` for `func_110552_b` to read the texture id the way Mixin's own accessor mechanism
+intends, rather than a static method inside `TextureUtil` whose signature Mixin and the remapper evidently disagreed about.
