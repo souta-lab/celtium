@@ -209,14 +209,15 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 |---|---|
 | `DISPLAY` / `WAYLAND_DISPLAY` | `:0` / `wayland-1` が設定されている（`/tmp/.X11-unix/X0` も存在） |
 | `ffmpeg -f x11grab -i :0` | **失敗**: `Capture area 1920x1080 ... outside the screen size 0x0`（**X screen が 0×0**） |
-| `xrandr` / `xdpyinfo` | 出力なし＝**有効な X 出力が無い** |
-| Wayland capture client | `grim` / `wayshot` / `wf-recorder` / `slurp` いずれも**未インストール** |
-| `--headless` を外した実行 | **exit 1 / validationClean=false / fixture FAILED**（このセッションに実窓を出す経路が無い） |
+| **`grim`（Wayland screencopy）** | **インストール済み**（`/usr/bin/grim`, `/usr/bin/slurp`）だが **`no wl_output`** ＝ Wayland に出力が無い |
+| `--headless` を外した実行（Wayland） | プロセスは exit 0 で終了するが **fixture FAILED / screenshotSaved=false**（`--force-x11` 時は `Too few world rendering frames for startup validation: worldFrames=20`） |
 
-**具体的な不足条件**（goal の「取得不能なら不足条件を残す」に対応）:
-1. capturable な X11 screen（現在は 0×0 で x11grab が拒否する）、または
-2. Wayland の screencopy クライアント（`grim` 等）と `wlr-screencopy` を実装した compositor、または
-3. 実窓を出せる非 headless 実行環境（現在は exit 1 / fixture FAILED）。
+**具体的な不足条件**（goal の「取得不能なら不足条件を残す」に対応し、method名ではなく**この環境で実測**）:
+1. **capturable な表示出力が存在しない**: X11 は screen 0×0（x11grab が拒否）、Wayland は `no wl_output`
+   （`grim` は導入済みだが出力が無い）。物理/仮想モニタを持つセッションが要る。
+2. 実窓を出して安定描画できる非 headless 環境（現在は fixture が `worldFrames=20` で閾値未満）。
+3. もしくは GPU 側で提示画像をファイル化する経路（`presentReadback` の拡張で可能。compositor 到達の
+   代替にはならないが、少なくとも「提示画像の中身」は既に取れている）。
 
 いずれも「method 名」ではなく、**この環境で実測して不可能と確認した**ものである。なお present 側の証拠
 （提示画像の中身＝マーカー平均 191.25）は取得済みなので、残る主張は「提示が compositor まで届いたか」に限定される。
