@@ -7777,3 +7777,25 @@ the claim is the one the plan uses - equal to the GL path on a local comparison,
 
 That closes the immediate path in both senses: every layout is **taken**, proven by the arrival and acceptance counters
 agreeing exactly, and the result **looks the same**, proven by a difference smaller than the noise.
+
+---
+
+## The Intel recipe run completes - the earlier timeouts were budget, not failure
+
+The major-mod path that had never finished on Intel finishes at a 720-second budget:
+
+```
+Intel UHD 630, recipe configuration: exit 0 | clean | messages 0 | fixture PASSED
+acceptedByFormat = 1:14, 2:0, 3:0, 4:0, 5:113, 6:732, 7:387, 8:0, 9:12
+immediateTaken = 1258   outsideWorldPassAccepted = 2693   terrainPasses=330
+```
+
+**Exit 0, validation clean, zero messages, fixture PASSED**, with the immediate path and the acceptance intact - and every
+earlier attempt at this configuration had reported `exit 124` at 300 and at 420 seconds. So the blocker was never the recipe
+screen; it was the harness's duration cap, which is now recorded precisely so that the next person does not read a timeout as a
+hang.
+
+One honest gap: the report's `jeiRecipeOpened` reads `None` in this run where the AMD run recorded `True`, and the report does
+not carry a recipe-screen field under any other name. That is a **reporting** question rather than a drawing one - the run
+completed with validation silent and the JEI screen path exercised - and it is recorded as the next thing to check rather than
+claimed as verified.
