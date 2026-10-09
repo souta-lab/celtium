@@ -7851,3 +7851,25 @@ change with its own reasoning, and it is the honest next step for this item rath
 
 What is established: the recipe screen path works and is measured **on AMD** (opened at tick 180, `jeiRecipeOpened=True`), and
 the JEI screen path works on **both** (AMD and Intel at tick 170 in the runs that reached it).
+
+---
+
+## The hooks fire as soon as the world is up - and that observed the last layout
+
+The end-of-run tick count settled the contradiction: the fixture's counter advances one per game tick, so with JEI on the
+slower GPU a tick costs seconds of wall-clock and an absolute hook number is the wrong key. The hooks moved to 30 and 34 -
+just after the command run at 20, as early as the world is certainly up - and the AMD run shows both firing and one more thing
+entirely:
+
+```
+AMD, recipe configuration: exit 0 | clean | messages 0 | fixture PASSED
+jeiScreenOpenedAtTick = 30   jeiRecipeOpenedAtTick = 34   jeiRecipeOpened = True   worldTicksAtEnd = 200
+acceptedByFormat = 1:79, 2:0, 3:0, 4:441, 5:229, 6:1425, 7:1069, 8:128, 9:12
+```
+
+**`4:441`** - the item/block layout, which every previous run reported as zero, is accepted 441 times. It appears because the
+**recipe screen draws items**, and it is the last id that had never been observed being taken. With it, every layout the game
+has been seen to upload is now measured **accepted**: 1, 4, 5, 6, 7, 8 and 9, with format 0 at zero throughout.
+
+The end-of-run count is now part of the report, so "the hook never fired" and "the run never got there" are distinguishable
+without a second run - which is exactly the ambiguity that cost two rounds of moving constants around.

@@ -432,6 +432,10 @@ public final class ValidationClient {
             }
             if (mc.world == null || mc.player == null) return;
             worldTicks++;
+            // The value at the end of the run, so "the hook never fired" can be told apart from "the run never got there". Four
+            // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
+            // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
+            report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
             if (worldTicks == 20) {
                 mc.player.capabilities.isFlying = true;
                 mc.player.setPositionAndRotation(0.5, 8.0, 0.5, 180.0f, 20.0f);
@@ -647,7 +651,7 @@ public final class ValidationClient {
             mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
             report.addProperty("reloadedAtTick", worldTicks);
         }
-        if (worldTicks == 160 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
+        if (worldTicks == 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
             // plan named as unestablished: JEI loading proves the mod, opening a screen proves that its own rendering goes
             // through the renderer under test. Closed again before the capture so the saved frame stays the normal scene.
@@ -655,15 +659,16 @@ public final class ValidationClient {
             mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.player));
             report.addProperty("jeiScreenOpenedAtTick", worldTicks);
         }
-        if (worldTicks == 164 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
+        if (worldTicks == 34 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
             // The mod's own heavier screen, opened through its public plugin API rather than by simulating input. Guarded
             // behind its own flag because it needs JEI present and compiled in.
             //
-            // At 164, and the screen at 160, rather than 180 and 170: the fixture's ticks advance with the game's, so on a
-            // slower GPU a fixed wall-clock budget reaches fewer of them. Two Intel runs showed the whole range of it - one
-            // opened the screen at 170 and never reached 180, the next reached neither inside the same budget - which reads as
-            // "the recipe screen does not work there" when it means "the budget ended first". Both hooks are now early enough
-            // to fire on both GPUs and still late enough for the world to be up.
+            // At 34, and the screen at 30, rather than 180 and 170. The fixture's ticks advance one per game tick, and on the
+            // slower GPU combined with JEI a tick costs seconds of wall-clock: four runs at one budget reached tick 170 once
+            // and tick 160 not at all. An absolute tick number is therefore the wrong key for a hook that has to fire under a
+            // wall-clock budget - what it needs is the earliest point at which the world is certainly up, which is what 30 and
+            // 34 are, just after the command run at 20. The end-of-run count is reported alongside so reachability is measured
+            // rather than assumed.
             celtium$jeiRecipe = true;
             try {
                 Class<?> plugin = Class.forName("org.soutalab.celtium.validation.CeltiumJeiPlugin");

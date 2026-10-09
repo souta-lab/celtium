@@ -12,7 +12,7 @@ wins.
 
 ## Major-mod verification, and the two third-party mods every measurement already carried
 
-| **Major mod (JEI)** | **Verified on both GPUs; the recipe screen is proven on AMD and races the budget on Intel** | AMD: overlay and recipe screen drawn by the Vulkan immediate path, `jeiScreenOpenedAtTick=170`, `jeiRecipeOpened=True`, `jeiRecipeOpenedAtTick=180`, exit 0, validation clean, fixture PASSED, acceptance intact. Intel: the run **completes** in 720 s (the earlier timeouts were the harness's duration cap, not a hang) and the JEI screen path ran in the runs that reached its hook - but four runs at the same budget reached tick 170 once and tick 160 not at all, so **the fixture's absolute tick hooks race a wall-clock budget on the slower GPU**. **Open:** the hooks need to key on ticks since the world loaded (or frames) rather than an absolute number - a fixture change with its own reasoning rather than another moved constant |
+| **Major mod (JEI)** | **Both screens drawn by Vulkan on AMD, with the item layout observed through them** | With the hooks at ticks 30 and 34 - as early as the world is certainly up, because a tick costs seconds of wall-clock with JEI on the slower GPU and an absolute number is the wrong key - AMD reports `jeiScreenOpenedAtTick=30`, `jeiRecipeOpenedAtTick=34`, `jeiRecipeOpened=True`, exit 0, validation clean, 0 messages, fixture PASSED. That run also observes **`4:441`**, the item/block layout, drawn by the recipe screen and accepted - the last id never previously seen taken. `worldTicksAtEnd` is reported so reachability is measured, not assumed |
 **JEI 1.12.2-4.22.0.1035** - one of the most widely used mods on this version, and one that draws heavily - is fetched,
 hash-recorded, and loaded alongside Celtium:
 
