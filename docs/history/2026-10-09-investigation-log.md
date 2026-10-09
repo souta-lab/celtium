@@ -2035,3 +2035,25 @@ So the change does not disturb anything measured. Whether the refusal actually f
 verified: the counter did not appear in the run's debug line, and that is either because it never fired or because the
 reporting line did not take the new field - the same distinction this log has had to draw before, and it is drawn here
 rather than guessed.
+
+---
+
+## The refusal counters are reported now, and why the firing is still unobserved
+
+The counters that would show the in-frame refusal firing were not on any reported line, so they were added to the one
+snapshot this backend prints - at exactly 500 accepted batches - together with `deferredNextFrame`. The run that should
+make refusals frequent, a window budget of one, measures:
+
+```
+fixture PASSED | nativeTerrainVerified True | 1663 passes
+(no snapshot line)
+```
+
+and the absence has a precise, checkable cause rather than being a mystery: the snapshot fires when the accepted count
+**equals 500**, and with a budget of one the refusals happen *before* a batch is counted as accepted, so the counter can
+stall below 500 and the snapshot never prints. The reporting mechanism is the limitation here, not the refusal logic.
+
+So the state of this item is: the refusal is implemented, does not disturb the shipped configuration (verified earlier at
+0.00 against the GL reference and 0 validation messages), and its counters are wired to a line that a low-budget run does
+not reach. Making it observable needs a threshold that a run actually crosses - a counter printed periodically, or the
+refusal count included in the run summary - and that is the next step rather than another attempt to force the firing.

@@ -930,6 +930,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("immediate flush snapshot at 500 accepted: flushes=" + this.immediateFlushes
                         + " drawn=" + this.immediateGroupsDrawn + " discarded=" + this.immediateGroupsDiscarded
                         + " noPipeline=" + this.immediateFlushNoPipeline
+                        + " deferredNextFrame=" + this.immediateDeferredNextFrame
+                        + " refusedWindowBudget=" + this.immediateRefusedWindowBudget
                         + " lastError=" + this.immediateLastFlushError);
             }
             this.immediateLastRefusal = "none";
