@@ -2969,3 +2969,41 @@ submitWithSemaphores calls=1 withWait=2
 `withWait=2` is the measurement: the submission waits two semaphores where it waited one, which is the acquire and the
 bridge. What remains of B is the part the semaphore counts cannot show - the shared image's ownership and `GENERAL`-layout
 handoff for the external-memory path, which needs the EXTERNAL acquire/release pair rather than another wait.
+
+---
+
+## The second audit's S08 and S09 are fixed from the source, and the residual turns out to be something else
+
+Both were reproduced from the sources before being touched.
+
+**S08** - `DefaultVertexFormats.POSITION_TEX_COLOR` is `POSITION_3F`, `TEX_2F`, `COLOR_4UB`, so UV sits at offset 12 and
+colour at 20, and `immediate_tex_color.vert` declares location 1 as `a_TexCoord` and location 2 as `a_Color`. The pipeline
+bound them the other way round: the shader read colour bytes as texture coordinates and coordinates as colour, in a form no
+swapchain validation can object to because both descriptions are well-formed.
+
+**S09** - the fragment shaders computed `((coord >> 8) + 0.5) / 256`. Minecraft writes the coordinate short directly and
+installs a texture matrix of scale `1/256` and translate `8`, so a 0..240 value shifted right by eight is zero every time
+and every sample landed on the same dark texel; the flat integer varying also threw away the per-vertex interpolation the
+fixed pipeline has. Both vertex shaders now pass `(vec2(a_LightCoord) + 8.0) / 256.0` as an interpolated `vec2` and both
+fragment shaders sample with it.
+
+This also corrects an entry from two rounds ago: the "+8 bias" experiment is what led to the conclusion that the lightmap
+bias was not the cause. That experiment changed the bias from 0.5 to 8 and left `>> 8` in place, so it tested neither the
+decode nor the interpolation, and the conclusion drawn from it - that the lightmap path was innocent - was too broad. The
+audit's reading of `BufferBuilder` and `EntityRenderer` is the one the source supports.
+
+The four SPIR-V files were recompiled and the copies inside the built jar compared by hash with the files on disk: all
+identical, so unlike the earlier bias round there is no question of whether the change reached the run. The measurement is
+also unchanged:
+
+| Weather and particles, hidden GUI | mean | over 8 | pixels over 8 |
+|---|---|---|---|
+| floor (reference against reference) | 0.06 | 0.23% | - |
+| after the mirror refresh | 0.13 | 0.40% | 3,715 |
+| **after S08 and S09** | **0.14** | **0.40%** | **3,714** |
+
+So the decode was genuinely wrong and is now right, and **it is not what the residual difference is made of**. The
+acceptance fixtures the audit asks for - ITEM with an asymmetric checker texture, and the lightmap with dark, fullbright,
+sky-only and block-only values differing per vertex - are what would show these two fixes working, and they are not built
+yet. The residual's next candidate is the audit's S13: the block and particle pipelines key their descriptor sets on the
+main texture view alone, so a rebuilt lightmap reuses the old binding.

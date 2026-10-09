@@ -270,8 +270,12 @@ public final class VulkanImmediateItemPipeline {
                 VkVertexInputAttributeDescription.Buffer attributes =
                         VkVertexInputAttributeDescription.calloc(3, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                attributes.get(1).location(1).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(12);
-                attributes.get(2).location(2).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(16);
+                // DefaultVertexFormats.POSITION_TEX_COLOR is POSITION_3F then TEX_2F then COLOR_4UB, and
+                // immediate_tex_color.vert declares location 1 as a_TexCoord and location 2 as a_Color. These two lines
+                // had them the other way round, so the shader read colour bytes as texture coordinates and texture
+                // coordinates as colour - a swap that no swapchain validation can see, because both are well-formed.
+                attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
+                attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(20);
                 VkPipelineVertexInputStateCreateInfo vertexInput =
                         VkPipelineVertexInputStateCreateInfo.calloc(stack).sType$Default()
                                 .pVertexBindingDescriptions(binding)

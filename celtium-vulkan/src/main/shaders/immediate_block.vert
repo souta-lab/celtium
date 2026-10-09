@@ -20,11 +20,15 @@ layout(location = 0) out vec4 v_Color;
 layout(location = 1) out vec2 v_TexCoord;
 // Integer varyings must be flat: interpolating them is not defined, which the validation layer reported as
 // VUID-RuntimeSpirv-OpEntryPoint-07754.
-layout(location = 2) flat out uvec2 v_LightCoord;
+layout(location = 2) // Interpolated like the fixed pipeline's texture coordinates: flat integers lost the per-vertex blend that
+    // Minecraft relies on at light boundaries. The value is the raw coordinate - the >> 8 that used to be here shifted a
+    // 0..240 range to zero, so every sample landed on the same dark texel - scaled and biased exactly as vanilla's
+    // texture matrix does it, scale 1/256 and translate 8.
+    out vec2 v_Lightmap;
 
 void main() {
     v_Color = a_Color;
     v_TexCoord = a_TexCoord;
-    v_LightCoord = a_LightCoord;
+    v_Lightmap = (vec2(a_LightCoord) + 8.0) / 256.0;
     gl_Position = celtium.u_ProjectionMatrix * celtium.u_ModelViewMatrix * vec4(a_Position, 1.0);
 }

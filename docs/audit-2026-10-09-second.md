@@ -61,12 +61,24 @@ ITEM normal/fixed lighting, immediate fog, texture matrix, colour mask and sciss
 ### S08 [P1, GLSL against checked-in SPIR-V] ITEM's UV and colour inputs are swapped
 `VulkanImmediateItemPipeline` binds location 1 to colour at offset 12 and location 2 to UV at offset 16, while the shader it
 loads declares location 1 as UV and location 2 as colour - confirmed against the SPIR-V's `OpName`/`Location`.
+**Fixed:** the pipeline now binds location 1 as `R32G32_SFLOAT` at offset 12 and location 2 as `R8G8B8A8_UNORM` at offset
+20, matching both `DefaultVertexFormats.POSITION_TEX_COLOR` (POSITION_3F, TEX_2F, COLOR_4UB) and the shader. **Open:** the
+minimum fixture the acceptance condition asks for - an asymmetric checker texture with non-white colour and UVs outside
+0/1, on more than one face.
 
 ### S09 [P1, Minecraft source against the shader] the lightmap coordinate is decoded wrongly
 Both fragment shaders compute `(coord >> 8 + 0.5) / 256`. `BufferBuilder` writes the coordinate short directly and
 `EntityRenderer` installs a texture matrix with scale `1/256` and translate `8`, so vanilla is `(coord + 8) / 256` - the
 `>> 8` shifts a 0..240 value to zero every time, sampling the same dark texel. A still-integer varying also loses
 per-vertex interpolation.
+**Fixed:** both vertex shaders now emit `v_Lightmap = (vec2(a_LightCoord) + 8.0) / 256.0` as an **interpolated** `vec2`,
+and both fragment shaders sample the lightmap with it - the raw coordinate, the vanilla scale and bias, and per-vertex
+interpolation. The four SPIR-V files were recompiled and the copies inside the built jar were compared by hash with them
+(identical), so this is a change that demonstrably reached the run.
+**Measured, and the residual did not move:** the weather and particle scene still differs by **0.40% of pixels over 8
+(3,714, was 3,715)** against the same **0.23%** floor. The decode was wrong in the source and is now right, and it is not
+what the remaining difference is made of. **Not yet done:** the acceptance fixture - dark/fullbright/sky-only/block-only
+with differing per-vertex light values compared against GL.
 
 ### S10 [P1] draw order, FBO and viewport are not preserved across the hybrid
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
