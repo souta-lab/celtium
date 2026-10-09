@@ -7750,3 +7750,30 @@ Six rounds ago the same measurement read two thousand unmapped batches per run a
 and reverted. What changed was not a rule: it was counting what arrives and what is accepted separately, reporting the backend's
 own refusal reason, and then following the reasons - five on the mapping and three on the acceptance path - instead of reading
 the code and guessing which one it must be.
+
+---
+
+## The new layouts look like GL's: 0.267 per channel, below the scene's own noise floor
+
+Acceptance proves the batches are taken; it says nothing about what they look like. The attribution switch the acceptance mask
+was built for answers that, and this is the comparison it exists for: the same scene and the same fixture run twice, once with
+the four new layouts left to OpenGL (`immediateFormats=1,3,4,5`) and once with them drawn by Vulkan, comparing the two saved
+screenshots.
+
+```
+pixels compared: 921600 (1280x720)
+mean absolute difference per channel: 0.267
+channels differing by more than 8: 0.40 per cent
+```
+
+**0.267 per channel, against a measured scene noise floor of about 1.0** - two runs of the *same* build differ by more than
+this. So moving the sky, the clouds, the water surface, position-only content, the entity/item layout and the composite's
+layout from OpenGL to Vulkan changes the frame by **less than the scene changes between consecutive runs**, which is the
+strongest statement this environment allows and is exactly the yardstick the earlier immediate comparison used when it read
+0.00.
+
+What it is not: a claim of pixel-identity. It is a local comparison of two runs of one build on one GPU, and the honest form of
+the claim is the one the plan uses - equal to the GL path on a local comparison, measured against the scene's own noise.
+
+That closes the immediate path in both senses: every layout is **taken**, proven by the arrival and acceptance counters
+agreeing exactly, and the result **looks the same**, proven by a difference smaller than the noise.
