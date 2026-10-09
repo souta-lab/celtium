@@ -230,6 +230,34 @@ public final class VulkanTextureRegistry {
         }
     }
 
+    /**
+     * Applies an announced image to a texture this registry does not own.
+     * <p>
+     * The block atlas and the light map are held directly by the backend rather than through this registry, and they refreshed
+     * with a readback on every animation - about eleven hundred of them a run - without ever consulting an announcement. The
+     * light map is a whole-texture write, so the same pixel path serves it.
+     *
+     * @return whether an announced image was available and applied
+     */
+    public boolean applyAnnouncedTo(VulkanGlTexture target, int glTextureId) {
+        java.awt.image.BufferedImage image = this.announcedImages.remove(Integer.valueOf(glTextureId));
+        if (image == null || target == null) {
+            return false;
+        }
+        java.nio.ByteBuffer rgba = rgbaOf(image);
+        try {
+            target.uploadFromImage(image.getWidth(), image.getHeight(), rgba);
+            this.imageUploads++;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.failureCount++;
+            this.lastFailure = "announced image for directly held GL texture " + glTextureId + ": " + error;
+            return false;
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(rgba);
+        }
+    }
+
     /** {@return how many mirrors were created by an announcement rather than by the draw path asking} */
     public int createdByAnnouncement() {
         return this.createdByAnnouncement;

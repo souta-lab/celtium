@@ -459,6 +459,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateAcceptedTotal;
     private int announcedUploads;
     private int animatedImageFills;
+    private int directMirrorFromAnnouncement;
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
@@ -807,7 +808,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // here, in place, which keeps their view and generation - and therefore every descriptor key - unchanged.
         if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
             try {
-                this.atlasTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                // The announcement first: if the write that triggered this invalidation handed its pixels over, the mirror can
+                // be filled from them and the readback is unnecessary - which is the whole stream this path was.
+                if (this.textureRegistry != null
+                        && this.textureRegistry.applyAnnouncedTo(this.atlasTexture, glTextureId)) {
+                    this.directMirrorFromAnnouncement++;
+                } else {
+                    this.atlasTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
                 record("atlas re-upload failed: " + describe(error));
@@ -815,7 +823,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         if (this.lightmapTexture != null && glTextureId == this.lightmapSourceGlId) {
             try {
-                this.lightmapTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                if (this.textureRegistry != null
+                        && this.textureRegistry.applyAnnouncedTo(this.lightmapTexture, glTextureId)) {
+                    this.directMirrorFromAnnouncement++;
+                } else {
+                    this.lightmapTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
                 record("light map re-upload failed: " + describe(error));
@@ -2325,6 +2338,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
                 + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
+                + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
                 + " mirrorsCreatedByAnnouncement="
                 + (this.textureRegistry != null ? this.textureRegistry.createdByAnnouncement() : 0)
                 + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)

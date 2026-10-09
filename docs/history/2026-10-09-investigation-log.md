@@ -8532,3 +8532,29 @@ applied to the wrong texture, and the other is a direct mirror that predates the
 Both have the same fix and it is small: **route them through the announced pixels the same way the registry does**. The light map
 is a whole-texture write, so the patch path already handles it; the atlas's per-sprite frames are patches, and that path works
 now too, as the hundred and five applications show.
+
+---
+
+## The direct mirrors were inert for a good reason, and the remaining stream has other ids
+
+The change routes the directly held atlas and light map mirrors through the announced pixels before falling back to the
+readback. It applied **zero** times:
+
+```
+imageFilledMirrors = 113   animatedImageFills = 106   directMirrorFromAnnouncement = 0
+inPlaceRefreshes = 4881    descriptorSets = 1
+```
+
+And that is not a failure, it is a queue: the block atlas is **both** mirrored by the registry (for the terrain path) and held
+directly (for the animation refresh), and the announcement is consumed by **whichever asks first**. The registry asks first, so
+the pixels are used - which is exactly what `imageFilledMirrors = 113` is, up from seven before the ordering fix - and the direct
+path finds nothing pending. The change is correct and unnecessary, and the pixels are not being read back for that texture at
+all.
+
+The four thousand eight hundred and eighty-one remaining refreshes are **other textures**, and the instrument from two rounds
+ago already named them: `glTexture=18, 19, 20, 22, 23, 24, 25, 26`. Those are not the block atlas - that one is filled from
+announcements - and identifying them is the next step, with the naming instrument that has now answered this question three
+times.
+
+So the state of this stream is precise: the **block atlas** is announcement-fed, the **light map and the numbered textures** are
+not, and the difference between them is the whole of what is left.
