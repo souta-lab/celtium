@@ -203,6 +203,24 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 - 残る: `presented image mean=` の値を report に出す（提示画像にマーカー色が入った証拠）、および
   window/compositor capture の可否調査。
 
+**window/compositor capture の可否（このターン・環境側で不可と確定）**: 実画面の capture を試みた。
+
+| 試行 | 結果 |
+|---|---|
+| `DISPLAY` / `WAYLAND_DISPLAY` | `:0` / `wayland-1` が設定されている（`/tmp/.X11-unix/X0` も存在） |
+| `ffmpeg -f x11grab -i :0` | **失敗**: `Capture area 1920x1080 ... outside the screen size 0x0`（**X screen が 0×0**） |
+| `xrandr` / `xdpyinfo` | 出力なし＝**有効な X 出力が無い** |
+| Wayland capture client | `grim` / `wayshot` / `wf-recorder` / `slurp` いずれも**未インストール** |
+| `--headless` を外した実行 | **exit 1 / validationClean=false / fixture FAILED**（このセッションに実窓を出す経路が無い） |
+
+**具体的な不足条件**（goal の「取得不能なら不足条件を残す」に対応）:
+1. capturable な X11 screen（現在は 0×0 で x11grab が拒否する）、または
+2. Wayland の screencopy クライアント（`grim` 等）と `wlr-screencopy` を実装した compositor、または
+3. 実窓を出せる非 headless 実行環境（現在は exit 1 / fixture FAILED）。
+
+いずれも「method 名」ではなく、**この環境で実測して不可能と確認した**ものである。なお present 側の証拠
+（提示画像の中身＝マーカー平均 191.25）は取得済みなので、残る主張は「提示が compositor まで届いたか」に限定される。
+
 **完成条件(c)の証拠（このターン）**: 提示画像の内容を report に出して実測した（`presentMarker` は画像を
 マゼンタ (1,0,1,1) でクリアする。8bit のバイト平均は (255+0+255+255)/4 = **191.25**）。
 
