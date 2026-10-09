@@ -6500,3 +6500,35 @@ That names the work precisely, and it is more than a flag: the immediate path ha
 `POSITION_TEX_COLOR`, the block format, the particle format and the UI quad, but **none for a position-texture vertex without
 a colour**, so taking this content needs a new pipeline as well as a mapping entry. Recorded as the next step, with the
 evidence above rather than a hypothesis about which pass is missing.
+
+---
+
+## Sky and clouds: the infrastructure is in, the mapping rule is one number away
+
+The recorded next step was a `POSITION_TEX` pipeline plus a mapping entry, and the pipeline half is done: a colourless
+shader pair (`immediate_position_tex.vert`/`.frag`), a second vertex layout in the texture pipeline (stride 20, two
+attributes, the colour attribute absent rather than read past the end of the vertex), a per-format acceptance counter, and
+format 6 accepted by default and dispatched to that pipeline through its own cache. All of it builds, runs, and leaves the
+frame clean.
+
+The mapping half is not, and the round is honest about why. Three attempts to recognise the shape failed:
+
+1. comparing against `DefaultVertexFormats.POSITION_TEX` - missed;
+2. comparing against `DefaultVertexFormats.POSITION_TEX_NORMAL`, which the element dump had just shown - missed too, because
+   the game builds an **equal format instance** rather than reusing the constant;
+3. matching `getSize() == 20 && getElementCount() == 4` - missed, because the dump's first two samples had four elements
+   while a later sample has two.
+
+The diagnostic was then widened to print the numbers instead of the elements, and that is what settled it:
+
+```
+elements=[3,Position,Float 2,UV,Float]   formatSize=20   elementCount=2
+```
+
+**Two different shapes share stride 20** - `POSITION_TEX` with two elements and `POSITION_TEX_NORMAL` with four - which is
+why every single-condition rule matched one and not the other. The shape branch was taken back out rather than left matching
+half its target, the diagnostic stayed, and the tree is green: build successful, exit 0, validation clean, 0 messages,
+fixture PASSED, acceptance intact at 1614 terrain passes and 554 cancelled draws.
+
+So the next action is one line - accept stride 20 with two **or** four elements - and it is recorded with the two-element
+sample beside it rather than as another guess.

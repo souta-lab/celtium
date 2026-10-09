@@ -438,6 +438,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int snapshotServedCaptures;
     private int outsideWorldPassRefusals;
     private int outsideWorldPassAccepted;
+    /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
+    private final int[] acceptedByFormat = new int[8];
     private boolean currentRenderTargetIsMain = true;
     private int offTargetRefusals;
     private int textureRefusalsBeforeAccept;
@@ -530,6 +532,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
     private final java.util.Map<Long, VulkanImmediatePipeline> immediatePipelineCache =
             new java.util.HashMap<Long, VulkanImmediatePipeline>();
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
@@ -555,7 +559,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * The switch is also the attribution instrument: {@code -Dceltium.vulkan.immediateFormats=3} accepts only the
      * BLOCK family, so a difference can be pinned to one pipeline at a time.
      */
-    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5");
+    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5,6");
 
     private static boolean celtium$formatAccepted(int formatId) {
         String accepted = ACCEPTED_FORMATS;
@@ -1247,7 +1251,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        int expectedStride = formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
+        int expectedStride = formatId == 6 ? VulkanImmediateTexturePipeline.POSITION_TEX_BYTES
+                : formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
                 : formatId == 3 ? VulkanImmediateBlockPipeline.VERTEX_BYTES
                 : formatId == 4 ? VulkanImmediateItemPipeline.VERTEX_BYTES
                 : formatId == 5 ? VulkanImmediateParticlePipeline.VERTEX_BYTES
@@ -1500,6 +1505,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
 
             this.immediateTaken++;
+
+            if (formatId >= 0 && formatId < this.acceptedByFormat.length) {
+
+                this.acceptedByFormat[formatId]++;
+
+            }
             this.frameAccepted++;
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
                 flushImmediateWindow();
@@ -2104,6 +2115,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
                 + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
+                + " acceptedByFormat=1:" + this.acceptedByFormat[1] + ",2:" + this.acceptedByFormat[2]
+                + ",3:" + this.acceptedByFormat[3] + ",4:" + this.acceptedByFormat[4] + ",5:" + this.acceptedByFormat[5]
+                + ",6:" + this.acceptedByFormat[6]
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
                 + ",5:" + this.postAcceptDroppedByFormat[5] + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
@@ -3571,13 +3585,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             continue;
                         }
                         block.draw(this.commandBuffer, mesh, push, descriptorSet);
-                    } else if (formatId == 2) {
+                    } else if (formatId == 2 || formatId == 6) {
+                        // Format 6 is the colourless POSITION_TEX shape RenderGlobal uses for the sky, the clouds and the
+                        // water surface. It shares this draw path but not the pipeline: a colourless vertex cannot be fed
+                        // to a pipeline that reads a colour at offset 20, so it has its own cache as well as its own
+                        // pipeline.
+                        boolean colourless = formatId == 6;
+                        java.util.Map<Long, VulkanImmediateTexturePipeline> cache = colourless
+                                ? this.positionTexPipelineCache : this.texturedPipelineCache;
                         VulkanImmediateTexturePipeline textured =
-                                texturedPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
+                                cache.get(Long.valueOf(((Long) group[5]).longValue()));
                         if (textured == null) {
-                            textured = VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass(),
-                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
-                            texturedPipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), textured);
+                            textured = colourless
+                                    ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, terrain.renderPass(),
+                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                                    : VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass(),
+                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                            cache.put(Long.valueOf(((Long) group[5]).longValue()), textured);
                         }
                         try {
                             VulkanGlTexture texture =

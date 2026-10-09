@@ -116,8 +116,13 @@ public abstract class WorldVertexBufferUploaderMixin {
                 // null format has neither a stride nor a pipeline. Printing where it comes from turns "format 0 is
                 // refused" into a named call site (sky, clouds, weather and the water surface are the candidates).
                 celtium$nullFormatDumps++;
+                StringBuilder elements = new StringBuilder();
+                for (int i = 0; i < format.getElementCount(); i++) {
+                    elements.append(format.getElement(i)).append(' ');
+                }
                 System.out.println("[Celtium] CELTIUM_NULLFORMAT stride=" + stride + " vertices=" + vertices
-                        + " stack=" + celtium$stack());
+                        + " elements=[" + elements.toString().trim() + "] formatSize=" + format.getSize()
+                        + " elementCount=" + format.getElementCount() + " stack=" + celtium$stack());
             }
             int mode = celtium$drawMode(buffer);
             // The call that decides everything. It was lost when a dead branch was cleaned out of this method, and
@@ -191,8 +196,7 @@ public abstract class WorldVertexBufferUploaderMixin {
         if (celtium$sameElements(format, DefaultVertexFormats.POSITION_COLOR)) {
             id = 1;
         } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX_COLOR)) {
-            id = 2;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.BLOCK)) {
+            id = 2;        } else if (celtium$sameElements(format, DefaultVertexFormats.BLOCK)) {
             id = 3;
         } else if (celtium$sameElements(format, DefaultVertexFormats.ITEM)) {
             id = 4;
