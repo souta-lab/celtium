@@ -2703,6 +2703,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " presentSubmitDone=" + (this.swapchain != null && this.swapchain.lastPresentSubmitDone())
                 + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
+                + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
@@ -3735,6 +3736,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * state, which is what the OpenGL backend's {@code GLStateManagerFogService} reads as well.
      */
     private static int fogMode() {
+        if (VulkanFogMirror.hasValue()) {
+            // No GL query on this path: the game pushed GlStateManager.fogState (the same source the GL fog service
+            // reads). The query below stays as the fallback for a caller that has not pushed yet.
+            int mirrored = VulkanFogMirror.enabled() ? VulkanFogMirror.mode() : 0;
+            if (mirrored == 0) {
+                return 0;
+            }
+            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP2) {
+                return 1;
+            }
+            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP) {
+                return 2;
+            }
+            return 3;
+        }
         if (!org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_FOG)) {
             return 0;
         }

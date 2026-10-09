@@ -303,7 +303,26 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 - 検証は**画素一致**（fog は画面に出るので、写像や既定値を誤れば必ず差が出る）。前例: 行列ミラーは
   meanAbsDiff 0.000 で既定化できた。
 
-**次の一手**: (1) backend に `setFogMirror(boolean enabled, int mode)` と mirror フィールドを追加し
+**fog ミラー化 実装・検証済み（このターン）**: 設計どおりに実装した。
+
+- `celtium-vulkan` に **MC非依存の静的ホルダ `VulkanFogMirror`**（`set(enabled, mode)` / `hasValue()`）を追加。
+  まだ push されていなければ `fogMode()` は**従来の GL クエリにフォールバック**する（安全側）。
+- forge 側 `CeleritasWorldRenderer` の per-frame 経路で `GlStateManager.fogState.fog.currentState` と
+  `fogState.mode` を push。
+- report に `fogModeSource=mirror|gl_query` を追加して**どちらが使われたかを証拠化**。
+
+| 検証 | 結果 |
+|---|---|
+| 標準run（`p82-standard`）旧既定との**画素一致** | **meanAbsDiff 0.000**、`fogModeSource=mirror` |
+| weather（`p82-weather` vs `p82-weather2`）**同一ビルドのノイズ床** | **1.208** |
+| weather（ミラー前 `p64-weather-amd` vs 新） | **0.992（ノイズ床以下）** |
+| verdict（両run） | exit 0 / validationClean / PASSED |
+
+=> **fog の GL クエリ（`glIsEnabled(GL_FOG)` / `glGetInteger(GL_FOG_MODE)`）を廃止**し、画像が変わらないことを
+確認した。これで (b) の「GL から読む」依存は **行列 → fog** の2項目が完了。
+
+**次の一手**: (1) 残る `glIsEnabled`/`glGetInteger`（診断以外）を同方式で潰す、(2) テクスチャ寸法の level クエリを
+MC の sprite/frame データへ、(3) 相互運用グルー（blit/semaphore/深度変換）の一本化。
 `fogMode()` を mirror 読みに、(2) forge 側の per-frame 経路から push、(3) 既定 run と旧実装の画素一致を確認して
 既定化、(4) `glIsEnabled`/`glGetInteger` の残り（診断以外）を同じ方式で潰す。（`GlStateManagerMixin` に fog の注入を足し、
 `fogMode()` をミラー読みにして画素一致を確認）。
