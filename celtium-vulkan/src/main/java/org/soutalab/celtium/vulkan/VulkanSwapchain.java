@@ -82,6 +82,8 @@ public final class VulkanSwapchain {
      */
     private boolean outOfDate;
     private int acquireOutOfDate;
+    /** Presents a solid marker colour instead of the frame, so the screen can be attributed to this path. */
+    private static final boolean PRESENT_MARKER = Boolean.getBoolean("celtium.vulkan.presentMarker");
     /** Test-only ({@code -Dceltium.vulkan.forceOutOfDate=true}): report out-of-date once so the rebuild runs. */
     private static final boolean FORCE_OUT_OF_DATE = Boolean.getBoolean("celtium.vulkan.forceOutOfDate");
     /**
@@ -566,8 +568,27 @@ public final class VulkanSwapchain {
                         .layerCount(1);
                 region.get(0).dstOffsets().get(0).set(0, 0, 0);
                 region.get(0).dstOffsets().get(1).set(this.width, this.height, 1);
-                vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+                if (PRESENT_MARKER) {
+                    // A deliberately distinguishable present. The blit is replaced by a solid marker colour, so a screen that
+                    // shows the marker can only have been written by this path - which is the question the screen readback
+                    // could observe but not settle, because an effective present and an effective copy-back followed by a GL
+                    // frame both leave the right frame on the screen.
+                    transitionToTransferDst(stack, commands, image);
+                    org.lwjgl.vulkan.VkClearColorValue marker = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+                    marker.float32(0, 1.0f);
+                    marker.float32(1, 0.0f);
+                    marker.float32(2, 1.0f);
+                    marker.float32(3, 1.0f);
+                    // The Buffer form, exactly as the other clear in this class declares it: the struct overload is what a
+                    // bare type name resolves to, and it is not what this call takes.
+                    org.lwjgl.vulkan.VkImageSubresourceRange.Buffer markerRange =
+                            org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
+                    markerRange.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+                    vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, marker, markerRange);
+                } else {
+                    vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+                }
                 transitionForBlitSourceBack(stack, commands, sourceImage, sourceLayoutAfter);
                 transitionToPresent(stack, commands, image);
             } finally {

@@ -7256,3 +7256,39 @@ over.
 Worth recording alongside: the game's own screenshot helper reads its **FBO**, not the screen, so every "the frame looks
 right" measurement in this project has been about the game's framebuffer. This readback is the first look at the screen itself,
 and it is a look rather than a proof.
+
+---
+
+## The marker present answers it: the present's output is not in the framebuffer GL reads
+
+Last round's screen readback was recorded as "a look rather than a proof" because the present also copies the frame back, so a
+screen holding the right content is what both paths would produce. This round made the present **deliberately wrong**: with
+`celtium.vulkan.presentMarker` the blit into the acquired swapchain image is replaced by a **solid magenta clear**, so anything
+that shows the marker can only have been written by the present path.
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+screenReadbackMean = 179.0, 207.0, 255.0      screenReadbackNonBlackPercent = 100.0
+CELTIUM_OOD outOfDate=0 acquireOutOfDate=0 presentFailures=0
+```
+
+**The readback is unchanged - the scene's sky colour, no magenta anywhere.** The present reports no failure and no out-of-date
+state, and the frame is entirely absent from the default framebuffer's back buffer.
+
+Two conclusions, and the second corrects the previous round.
+
+**The present's output does not reach the surface GL reads.** Vulkan's swapchain images and GL's back buffer are different
+images on the same window; the marker never appears in the latter. So "the screenshot looks right" says nothing about the
+present - which is consistent with the earlier finding that the game's own screenshot helper reads its FBO rather than the
+screen.
+
+**Last round's observation measured GL's surface, not the present.** It reported a fully covered, sky-coloured screen and
+called it consistent with a present rather than a blit; the marker shows it was GL's own back buffer. The framing was
+deliberately cautious - "a look rather than a proof" - and it was still one step too generous, which makes it the sixth
+assumption in this project to be corrected by measuring it.
+
+What this does not settle, and what would: whether the **physical screen** shows the presented image can only be observed from
+**outside GL** - a window-level capture (X11 or the compositor's own screenshot) - and that is now the named next step for this
+item rather than another in-game readback. Worth stating plainly for the record: the renderer **presents cleanly and the
+present's result is not observable through GL**, which is exactly the boundary this project exists to move, observed from the
+wrong side.
