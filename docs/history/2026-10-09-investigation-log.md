@@ -3737,3 +3737,30 @@ to be applied at exactly that point to be correct for all three camera modes.
 Nothing changed in the renderer this round; what it produced is the structure of the camera setup, one located fact
 (`setupViewBobbing` is outside `func_78479_a`, so a derivation at its return cannot clobber bobbing), and the decision to
 stop filtering the source.
+
+---
+
+## The camera-setup seed runs once and changes nothing
+
+The seed was moved from the first comparison to the end of `func_78479_a` - the moment the camera transform is complete and
+GL holds the finished world matrix - and the earlier seed was disabled so that the two could not both write:
+
+```
+matrixMirrorDelta=proj:1.6200542E-4, view:1.62, comparisons:1154, exact:0, cameraSeeds:1
+```
+
+**The seed ran exactly once and the modelview delta is unchanged at 1.62.** So the hypothesis is not supported: copying
+GL's finished world modelview at that moment does not leave the mirror agreeing with GL at the samples. Something between
+the seed and the comparison removes the translation again - the most likely candidate being the modelview `loadIdentity` that
+each pass performs, after which the hooked operations re-apply only what they see, and the camera translation is not among
+them at the times that matter.
+
+Rather than a third hypothesis, the next step is a trace: record the mirror's translation elements at each
+`loadIdentity`, at each `translate`, and at the comparison, with a small ring of the last few values. That answers where the
+translation goes missing instead of guessing which of four candidates is responsible, and it is the same instrument-not-argument
+move that found the `matrix(mode)` copy two rounds ago.
+
+Worth stating plainly after three rounds on this one value: the modelview is still 1.62 off, the projection is exact to
+1.6e-4, and each attempt has produced a precise negative result rather than a fix. The negative results are why the last two
+turned out to be one root cause, and this one narrows the search to the interval between the camera setup and the first
+comparison.

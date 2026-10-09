@@ -394,6 +394,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int matrixExactComparisons;
     private String matrixDump;
     private boolean mirrorSeeded;
+    private int cameraSetupSeeds;
     private int derivedProjections;
     private int derivedProjectionRefusals;
     private boolean derivedProjectionPending;
@@ -804,6 +805,39 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * that puts a real projection in it. The acceptance is the existing worst-sample counter: {@code matrixMirrorDelta}'s
      * projection term should fall from 2.0006 to near zero.
      */
+    /**
+     * Seeds the mirrored projection and modelview from OpenGL once, at the moment the world camera is fully applied.
+     * <p>
+     * The earlier seed ran at the first comparison, which is a moment when GL itself holds the identity - the first batch
+     * of a frame is offered during a pass like the GUI's, after that pass reset both stacks - so it copied the wrong
+     * moment rather than the wrong matrix. The camera setup is the right moment: {@code func_78479_a} has by then applied
+     * the nausea wobble, {@code orientCamera}'s rotations and its interpolated eye-position translation, and nothing later
+     * in the frame resets the stack until the next pass. It is one read, not two per batch, and it happens before the
+     * comparison counters move, so they still measure tracking rather than the copy.
+     */
+    public void seedMirrorFromCameraSetup() {
+        if (this.mirrorSeeded) {
+            return;
+        }
+        this.mirrorSeeded = true;
+        java.nio.FloatBuffer projection = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
+        java.nio.FloatBuffer modelView = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
+        try {
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, projection);
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, modelView);
+            float[] p = new float[16];
+            float[] m = new float[16];
+            projection.get(p);
+            modelView.get(m);
+            this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, p);
+            this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW, m);
+            this.cameraSetupSeeds++;
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(projection);
+            org.lwjgl.system.MemoryUtil.memFree(modelView);
+        }
+    }
+
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
         if (fovDegrees <= 0.0F || aspect <= 0.0F || near <= 0.0F || far <= near) {
             this.derivedProjectionRefusals++;
@@ -1182,7 +1216,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.matrixComparisons > 4000) {
             return;
         }
-        if (!this.mirrorSeeded) {
+        if (!this.mirrorSeeded && false) {
             // One bootstrap read, once, before any comparison is recorded. The first dump showed the mirror's modelview
             // missing exactly the translation that was applied before the hooks were installed, so the stack starts from
             // what GL already had rather than from empty. The seed is taken before the counters move, so the comparisons
@@ -1492,6 +1526,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
+                + ",cameraSeeds:" + this.cameraSetupSeeds
                 + ",derivedCompared:" + this.derivedProjectionComparisons
                 + ",writeId:" + this.derivedWriteIdentity + ",compareId:" + this.derivedCompareIdentity
                 + ",loadIdentityWhilePending:" + this.loadIdentityWhilePending

@@ -25,6 +25,27 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(EntityRenderer.class)
 public abstract class EntityRendererMixin {
 
+    /**
+     * Seeds the mirror once the camera transform is complete.
+     * <p>
+     * The hooks cannot have seen everything: `func_78479_a` applies `loadIdentity` and the camera transform, and any of it
+     * that ran before the backend existed is lost to the mirror. This runs at the end of that method, when GL holds the
+     * finished world matrix - the right moment, unlike the first batch of a frame, which is offered during a pass that has
+     * already reset both stacks.
+     */
+    @Inject(method = "func_78479_a", at = @At("RETURN"), require = 0)
+    private void celtium$seedMirrorAtCameraSetup(float partialTicks, int pass,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.seedMirrorFromCameraSetup();
+            }
+        } catch (Throwable ignored) {
+            // A hint must never break the frame.
+        }
+    }
+
     @Inject(method = "func_78481_a", at = @At("RETURN"), require = 0)
     private void celtium$reportFieldOfView(float partialTicks, boolean useFovSetting,
             CallbackInfoReturnable<Float> info) {

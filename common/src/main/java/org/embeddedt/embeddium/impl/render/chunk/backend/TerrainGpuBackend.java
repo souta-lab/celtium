@@ -144,6 +144,10 @@ public interface TerrainGpuBackend {
     default void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
     }
 
+    /** Seeds the mirrored matrices once, when the world camera has just been applied. See the Vulkan backend. */
+    default void seedMirrorFromCameraSetup() {
+    }
+
     default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                          int vertexCount, int drawMode) {
         return false;
