@@ -35,7 +35,7 @@ assert p.get('exitCode')==0 and p.get('fixtureStatus')=='PASSED' and p.get('vali
 assert p.get('gpuRequirementMet') is True, p
 assert d.get('commandBufferTargets',{}).get('passed') is True, d.get('commandBufferTargets')
 assert d.get('nativeTerrainVerified') is True, d.get('nativeTerrainVerified')
-for name in ('celtium-command-buffer-main-before.png','celtium-command-buffer-main.png','celtium-command-buffer-secondary.png','celtium-command-buffer-secondary-cleared.png'):
+for name in ('celtium-command-buffer-main-before.png','celtium-command-buffer-main.png','celtium-command-buffer-secondary.png','celtium-command-buffer-secondary-cleared.png','celtium-command-buffer-secondary-depth.png'):
     assert (root/'screenshots'/name).is_file(), name
 print(json.dumps({'process':p,'commandBufferTargets':d['commandBufferTargets']},ensure_ascii=False,indent=2))
 PY

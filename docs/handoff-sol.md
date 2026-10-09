@@ -84,6 +84,21 @@ clear後の読み戻しは **全ピクセルがclear色**（描いた矩形も�
 clearがそれを消すという順序が実geometryで確認できた。PNGは
 `screenshots/celtium-command-buffer-secondary-cleared.png`。
 
+### depth順序の受入（追加）
+
+同じ矩形に**近傍batch→遠方batch**の順で描き、近傍だけが残ることを確認した
+（`sol-cb-depth5-amd` / `sol-cb-depth-intel`）: 中心ピクセルは近傍の青、rectangle不一致0、
+`farLeakedPixels` 0、4段カウンタが+2、pending 0。D24→D32→D24の往復と、GL準拠のdepth順序
+（`glOrtho(near=-1,far=1)` は -z 方向を見るため `z=+0.5` が近傍）が実geometryで確認できた。
+PNGは `screenshots/celtium-command-buffer-secondary-depth.png`。
+
+**途中の2つの失敗はどちらもfixture側で、実装の欠陥ではなかった**（記録として残す）:
+1. depth相の最初の失敗は `Framebuffer.framebufferClear()` が最後に `unbindFramebuffer()` するため、
+   clear後のquadが**既定FBO宛**になっていたこと。backendは契約外として**描かずに拒否**し、
+   これは「GLへfalseで返したofferをVK描画済みとしない」が実際に効いている例である。
+2. 2度目は期待値のz符号が逆だった。Vulkan側のdepth remap（GLの[0,1]をVulkanの[0,1]へ）は
+   GLと一致しており、fixtureの期待値を正した。
+
 ### 限界（未実施・未検証）
 
 - **Intel UHD 630**: **受入完了**。`sol-cb-clean-intel` が exit 0 / clean / msgs 0 / fixture PASSED /
@@ -93,7 +108,7 @@ clearがそれを消すという順序が実geometryで確認できた。PNGは
 - **重要な訂正**: 途中のIntel 480秒タイムアウト2件（`sol-cb-final-intel2`・`p31b-intel-normal`）は
   **同時にAMD runを走らせていた競合が原因**で、Intelの退行ではなかった。単独runは24〜27秒で完走する。
   **測定は必ず単独で行う**（この誤診を記録として残す）。
-- このfixtureは **depth occlusion を確かめない**（depth test を切っている）。別FBOの depth 依存・順序、sample/resize は未検証。
+- sample数>1のtargetと resize中の受理は未検証（別FBOの depth 順序と clear 順序は受入済み）。
 - 画面（window/compositor）への present 到達は相変わらず未確認（環境の X が 0x0）。
 - 失敗経路で確認したのは **submit前の失敗**のみ。submit成功後の `endFrame` 失敗、fence timeout、
   device lost は分岐を実装したが **実機注入していない**。

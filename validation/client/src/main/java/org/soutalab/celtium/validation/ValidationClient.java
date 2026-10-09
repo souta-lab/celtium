@@ -473,6 +473,85 @@ public final class ValidationClient {
             result.addProperty("pendingBeforeClearObserved", pendingBeforeClearObserved);
             result.addProperty("clearedAfterDrawing", clearedAfterDrawing);
             result.addProperty("clearOrderPassed", clearOrderPassed);
+            // Depth ordering across the bridge: the near batch is drawn first and the far batch second over the same
+            // rectangle, so the far one can only be missing if the depth test ran against the depth the bridge carried.
+            // This also exercises the D24 -> D32 -> D24 round trip, because the second batch compares against depth the
+            // first one wrote inside a Vulkan pass.
+            commandBufferSecondary.bindFramebuffer(true);
+            commandBufferSecondary.setFramebufferColor(0.0F, 0.0F, 0.0F, 1.0F);
+            GlStateManager.enableDepth();
+            GlStateManager.depthMask(true);
+            GlStateManager.clearDepth(1.0D);
+            commandBufferSecondary.framebufferClear();
+            // framebufferClear() ends with unbindFramebuffer(), so the target has to be bound again before drawing. The
+            // first attempt drew into the default framebuffer, which the bridge refuses on purpose: it will not infer a
+            // render target from a vertex format. Re-binding also restores the viewport the clear left behind.
+            commandBufferSecondary.bindFramebuffer(true);
+            GlStateManager.colorMask(true, true, true, true);
+            commandBufferMatrices(256, 256);
+            java.lang.reflect.Method refusal = backend.getClass().getMethod("lastRefusal");
+            // Where the refusal comes from has to be visible: the contract covers the draw framebuffer, the viewport and the
+            // attachment shapes, and three of those look identical in the reason string.
+            java.nio.IntBuffer probeViewport = org.lwjgl.BufferUtils.createIntBuffer(4);
+            GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, probeViewport);
+            int probeFbo = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+            int probeColor = GL45C.glGetNamedFramebufferAttachmentParameteri(probeFbo, GL30C.GL_COLOR_ATTACHMENT0,
+                    GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+            int probeDepth = GL45C.glGetNamedFramebufferAttachmentParameteri(probeFbo, GL30C.GL_DEPTH_ATTACHMENT,
+                    GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+            int probeColorType = GL45C.glGetNamedFramebufferAttachmentParameteri(probeFbo, GL30C.GL_COLOR_ATTACHMENT0,
+                    GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
+            int probeW = probeColorType == GL11C.GL_TEXTURE
+                    ? GL45C.glGetTextureLevelParameteri(probeColor, 0, GL11C.GL_TEXTURE_WIDTH) : -1;
+            int probeH = probeColorType == GL11C.GL_TEXTURE
+                    ? GL45C.glGetTextureLevelParameteri(probeColor, 0, GL11C.GL_TEXTURE_HEIGHT) : -1;
+            result.addProperty("depthPhaseViewport", probeViewport.get(0) + "," + probeViewport.get(1) + ","
+                    + probeViewport.get(2) + "x" + probeViewport.get(3));
+            result.addProperty("depthPhaseDrawFbo", probeFbo);
+            result.addProperty("depthPhaseColorTexture", probeColor + " type=" + probeColorType + " " + probeW + "x" + probeH);
+            result.addProperty("depthPhaseDepthAttachment", probeDepth);
+            result.addProperty("depthPhaseDrawBuffer0", GL11C.glGetInteger(GL30C.GL_DRAW_BUFFER0));
+            result.addProperty("depthPhaseReadBuffer", GL11C.glGetInteger(GL11C.GL_READ_BUFFER));
+            // glOrtho(near=-1, far=1) looks down -z, so in this eye space a *larger* z is nearer: z=+0.5 is the near
+            // plane and z=-0.5 the far one. The near batch goes first and the far one second, which is the only order
+            // that distinguishes a working depth test (near stays) from none at all (the last batch wins).
+            commandBufferQuadZ(96, 96, 160, 160, 0, 0, 255, 0.5F); // near, first
+            long[] afterNear = commandBufferCounters(backend, counters);
+            String nearRefusal = String.valueOf(refusal.invoke(backend));
+            commandBufferQuadZ(96, 96, 160, 160, 255, 0, 0, -0.5F); // far, second: must be rejected
+            long[] afterFar = commandBufferCounters(backend, counters);
+            String farRefusal = String.valueOf(refusal.invoke(backend));
+            result.add("afterNearQuad", commandBufferCounterJson(afterNear));
+            result.add("afterFarQuad", commandBufferCounterJson(afterFar));
+            result.addProperty("nearQuadRefusal", nearRefusal);
+            result.addProperty("farQuadRefusal", farRefusal);
+            GlStateManager.clear(0);
+            long[] afterDepth = commandBufferCounters(backend, counters);
+            java.awt.image.BufferedImage depthImage = commandBufferReadback(commandBufferSecondary);
+            commandBufferSavePng(mc, "celtium-command-buffer-secondary-depth.png", depthImage);
+            int nearKeptWrong = commandBufferRectangleMismatches(depthImage, 96, 96, 160, 160, 0x0000FF);
+            int farLeakedPixels = 0;
+            for (int y = 96; y < 160; y++) {
+                for (int x = 96; x < 160; x++) {
+                    if ((depthImage.getRGB(x, y) & 0xFFFFFF) == 0xFF0000) farLeakedPixels++;
+                }
+            }
+            result.add("afterDepth", commandBufferCounterJson(afterDepth));
+            result.addProperty("secondaryDepthPng", "screenshots/celtium-command-buffer-secondary-depth.png");
+            result.addProperty("centerPixelAfterDepth", Integer.toHexString(depthImage.getRGB(128, 128) & 0xFFFFFF));
+            result.addProperty("nearRectangleMismatchPixels", nearKeptWrong);
+            result.addProperty("farLeakedPixels", farLeakedPixels);
+            boolean depthCountersAdvanced = afterDepth[0] - afterClear[0] == 2 && afterDepth[1] - afterClear[1] == 2
+                    && afterDepth[2] - afterClear[2] == 2 && afterDepth[3] - afterClear[3] == 2 && afterDepth[4] == 0;
+            // The near colour fills the rectangle and not one pixel of the far colour survived.
+            boolean depthOrderPassed = depthCountersAdvanced && nearKeptWrong == 0 && farLeakedPixels == 0;
+            result.addProperty("depthCountersAdvanced", depthCountersAdvanced);
+            result.addProperty("depthOrderPassed", depthOrderPassed);
+            result.addProperty("depthPassed", depthOrderPassed);
+            commandBufferTargetsPassed = commandBufferTargetsPassed && depthOrderPassed;
+            if (!depthOrderPassed) result.addProperty("error", "depth-order check failed: the far batch was not rejected by the near batch's depth");
+            GlStateManager.disableDepth();
+            GlStateManager.depthMask(false);
             commandBufferTargetsPassed = commandBufferTargetsPassed && clearOrderPassed;
             if (!clearOrderPassed) result.addProperty("error", "clear-order check failed: the accepted batch was not drawn before the clear or survived it");
             result.addProperty("passed", commandBufferTargetsPassed);
@@ -506,14 +585,20 @@ public final class ValidationClient {
     }
 
     private static void commandBufferQuad(int left, int top, int right, int bottom, int red, int green, int blue) {
+        commandBufferQuadZ(left, top, right, bottom, red, green, blue, 0.0F);
+    }
+
+    /** The same quad at an explicit depth: with the fixture's ortho (-1 near, 1 far) a smaller z is nearer. */
+    private static void commandBufferQuadZ(int left, int top, int right, int bottom, int red, int green, int blue,
+                                           float z) {
         Tessellator tessellator = Tessellator.getInstance();
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.setTranslation(0.0D, 0.0D, 0.0D);
         buffer.begin(GL11C.GL_QUADS, DefaultVertexFormats.POSITION_TEX_COLOR);
-        buffer.pos(left, bottom, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
-        buffer.pos(right, bottom, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
-        buffer.pos(right, top, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
-        buffer.pos(left, top, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        buffer.pos(left, bottom, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        buffer.pos(right, bottom, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        buffer.pos(right, top, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        buffer.pos(left, top, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
         tessellator.draw();
     }
 
