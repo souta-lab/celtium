@@ -855,7 +855,34 @@ descriptor の確保は 1.09 ms の原因ではない。
 ただし**既定化はまだしない**。既定化するなら Intel・全場面・失敗経路の受入を取り直す必要があり、
 この1ラウンドではそれを検証できないため（フラグは残っており、いつでも既定化できる）。
 
-**次の一手**: (1) `presentFromComposite=true` で **Intel と主要場面の受入を取り直す**、(2) 通れば既定化して
+**既定化を試して撤回（このターン・受入が壊れるため）**: フラグを既定化し、受入を取り直した。
+
+| run（フラグON） | exit | validationClean | fixture | p50 |
+|---|---|---|---|---|
+| AMD 通常 | 0 | true | PASSED | **15.89 ms** |
+| Intel 通常 | 0 | true | PASSED | **30.86 ms**（既定off時 42.66 → 28%改善） |
+| postprocess (AMD) | 0 | true | PASSED | 15.99 ms |
+| weather (AMD) | 0 | true | PASSED | 15.17 ms |
+| spectator spider (AMD) | 0 | true | PASSED | 17.31 ms |
+| submit失敗注入 | 1 | true | FAILED（期待どおり） | 有界・24.7s・report あり |
+| idle失敗注入 | 1 | true | FAILED（期待どおり） | 有界・24.9s・report あり |
+| **command-buffer target受入** | **1** | true | **FAILED** | — |
+
+- **受入が1つ壊れた**: `commandBufferTargets.passed=false`。この fixture は
+  `RenderGameOverlayEvent.Post/ALL` で **`POSITION_TEX_COLOR`（format 2）** のバッチを描き、
+  target 群が**受理され順序どおり flush される**ことを検査する。フラグONでは **format 2 は present 経路の担当**に
+  なるため、この検査が成立しなくなる（フレーム自体は PASSED、validation も clean）。
+- **判断**: **既定化を撤回**した（フラグは残す）。理由はコードにも書いた。P0 の受入が黙って
+  カバレッジを失うより、fixture を「即値経路が持つ形式」に載せ替えて**再検証してから**既定化するのが正しい。
+- **撤回の検証**: 既定offに戻して target受入を再実行 → **exit 0 / validationClean / PASSED**、
+  `commandBufferTargets.passed=True`。
+
+**次の一手**: (1) target fixture の描画形式を即値経路が持つ形式（例: `POSITION_COLOR`）に載せ替え、
+同じ性質（target群の受理と順序）を検査したまま再受入を取る、(2) それが通ったら `presentFromComposite` を既定化し、
+AMD/Intel と主要場面・失敗経路の受入を一式取り直す。速度の利得（AMD -2.4 ms/フレーム、Intel -11.8 ms/フレーム）と
+画面サイズ読み戻しの消滅（6.2 → 0.3 ms/フレーム）は測定済みで、あとは受入の付け替えだけである。
+
+**（旧メモ）** 次の一手: (1) `presentFromComposite=true` で **Intel と主要場面の受入を取り直す**、(2) 通れば既定化して
 docs/plan の受入表を更新する、(3) 併せて残る `stale`（0.3 ms/フレームまで減っている）と
 batch call（5.4 ms/フレーム）の内訳を再取得する。
 

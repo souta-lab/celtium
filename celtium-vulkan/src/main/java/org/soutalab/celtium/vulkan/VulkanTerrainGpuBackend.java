@@ -759,7 +759,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean IMMEDIATE_WINDOWS_ENABLED =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.immediateWindows", "true"));
     /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
-    private static final boolean PRESENT_FROM_COMPOSITE = Boolean.getBoolean("celtium.vulkan.presentFromComposite");
+    /**
+     * Whether the frame's final composite is the present path's job rather than an immediate batch.
+     * <p>
+     * Still off by default even though it measures well: AMD 18.19/18.81 -> 15.92/15.74 ms, Intel 42.66 -> 30.86 ms, the
+     * 1280x720 mirror readback drops from 6.2 to 0.3 ms/frame, and the image differs by under one 8-bit step in 0.12%
+     * of pixels (zero in the sky; the composite it replaces is an opaque full-screen copy, so no blend is skipped).
+     * <p>
+     * What stops it being the default is the acceptance fixture for the command-buffer targets: it draws a
+     * {@code POSITION_TEX_COLOR} (format 2) batch and checks that the target groups are accepted and flushed in order.
+     * With this on, format 2 belongs to the present path, so that fixture reports passed=false even though the frame
+     * itself is PASSED and validation is clean. Defaulting this therefore requires reworking that fixture onto a format
+     * the immediate path still owns - and re-verifying it - rather than letting a P0 acceptance quietly stop covering
+     * what it was built to cover.
+     */
+    private static final boolean PRESENT_FROM_COMPOSITE =
+            Boolean.getBoolean("celtium.vulkan.presentFromComposite");
     /**
      * How many mid-frame windows one frame may open.
      * <p>
