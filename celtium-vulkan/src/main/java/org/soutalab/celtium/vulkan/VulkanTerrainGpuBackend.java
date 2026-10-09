@@ -501,6 +501,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * frame.
      */
     private boolean frameSubmitReachedQueue;
+    /**
+     * Whether the mid-frame window samples the game framebuffer around itself.
+     * <p>
+     * Each sample is a {@code glReadPixels} of a centre patch plus a state snapshot of roughly twenty {@code glGet}
+     * calls, and they were running on every window of every frame. Off by default, as the audit's item G asks; set
+     * {@code -Dceltium.vulkan.immediateWindowSamples=true} when a frame is being diagnosed.
+     */
+    private static final boolean DIAGNOSTIC_WINDOW_SAMPLES =
+            Boolean.getBoolean("celtium.vulkan.immediateWindowSamples");
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -1078,8 +1087,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         float before = -1.0f;
         String stateBefore = null;
         try {
-            before = sampleBoundFramebufferMean();
-            stateBefore = snapshotGlState();
+            if (DIAGNOSTIC_WINDOW_SAMPLES && this.immediateContentSamples < 4) {
+                // Diagnostic only. Both of these are glReadPixels plus a pile of glGet calls, and they used to run on
+                // every window of every frame - the audit's item G - which puts a synchronous stall in the shipped path
+                // to collect numbers nobody reads unless a frame is being diagnosed.
+                before = sampleBoundFramebufferMean();
+                stateBefore = snapshotGlState();
+            }
             this.frameSubmitReachedQueue = false;
             this.frameTarget.beginFrame();
             this.windowOpen = true;
@@ -1110,8 +1124,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 } catch (RuntimeException | LinkageError error) {
                     record("immediate window close failed: " + describeWithStack(error));
                 }
-                float after = sampleBoundFramebufferMean();
-                if (this.immediateContentSamples < 4) {
+                float after = -1.0f;
+                if (DIAGNOSTIC_WINDOW_SAMPLES && this.immediateContentSamples < 4) {
+                    after = sampleBoundFramebufferMean();
                     this.immediateContentSamples++;
                     String stateAfter = snapshotGlState();
                     record("immediate window content sample: mean before=" + before + " after=" + after
