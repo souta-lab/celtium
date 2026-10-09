@@ -7227,3 +7227,32 @@ an assumed one.
 That is the fifth assumption in this project to be corrected by measuring it - the mask, the mapping, the element comparison,
 the pass nesting and now this - and the pattern is stable enough to be worth stating as a rule: a difference of a few units
 between two counters is exactly the kind of thing that sounds obvious and is usually not.
+
+---
+
+## The screen itself read back, and what that does and does not establish
+
+The last named unestablished item was whether the **screen** shows the Vulkan present rather than GL's blit. The fixture now
+reads the default framebuffer - the screen, not the game's FBO - once, just after the composite, and reports what it finds:
+
+```
+screenReadbackSize = 1280x720
+screenReadbackMean = 179.0, 207.0, 255.0      screenReadbackNonBlackPercent = 100.0
+compositeBlitAtTick = 185   CELTIUM_OOD outOfDate=0 acquireOutOfDate=0 presentFailures=0
+exit 0 | clean | messages 0 | fixture PASSED | nativeTerrainVerified=True | terrainPasses=1605
+```
+
+**What this establishes.** With `presentFromComposite` active the renderer **cancels GL's blit**, the present path runs and
+reports no failure and no out-of-date state, and the screen at that moment holds a **fully covered, sky-coloured frame** - mean
+179, 207, 255, nothing black. A screen that nothing had drawn to would be black, and GL's own composite was declined, so the
+visible frame is consistent with having been presented rather than blitted.
+
+**What it does not establish.** Which path put those pixels there. The present copies the frame target's image back as well as
+presenting it, so a screen showing the right content is what *both* an effective present and an effective copy-back followed by
+a later GL frame would produce. The decisive version needs the presented image to be **deliberately distinguishable** - a
+marker colour or an inverted frame - which is a fixture change rather than an inference, and is named here rather than papered
+over.
+
+Worth recording alongside: the game's own screenshot helper reads its **FBO**, not the screen, so every "the frame looks
+right" measurement in this project has been about the game's framebuffer. This readback is the first look at the screen itself,
+and it is a look rather than a proof.

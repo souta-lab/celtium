@@ -71,6 +71,7 @@ public final class ValidationClient {
     private boolean celtium$jeiScreen;
     private boolean celtium$jeiRecipe;
     private boolean celtium$compositeBlit;
+    private boolean celtium$screenReadback;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -152,6 +153,50 @@ public final class ValidationClient {
             net.minecraft.client.shader.Framebuffer framebuffer = Minecraft.getMinecraft().getFramebuffer();
             framebuffer.framebufferRender(framebuffer.framebufferWidth, framebuffer.framebufferHeight);
             report.addProperty("compositeBlitAtTick", worldTicks);
+        }
+        // The screen itself, read from the default framebuffer. With the composite present active the renderer cancels GL's
+        // blit, so whatever is there was not drawn by GL - which is the closest this fixture can come to observing the present
+        // rather than inferring it. Recorded as an observation with its numbers: it does not prove which path put the pixels
+        // on the screen, and the game's own screenshot helper reads its FBO rather than this.
+        if (!celtium$screenReadback && worldTicks >= 186
+                && Boolean.getBoolean("celtium.validation.screenReadback")) {
+            celtium$screenReadback = true;
+            net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
+            int width = client.displayWidth;
+            int height = client.displayHeight;
+            java.nio.ByteBuffer pixels = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
+            try {
+                org.lwjgl.opengl.GL30C.glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER, 0);
+                org.lwjgl.opengl.GL11C.glReadBuffer(org.lwjgl.opengl.GL11C.GL_BACK);
+                org.lwjgl.opengl.GL11C.glReadPixels(0, 0, width, height, org.lwjgl.opengl.GL11C.GL_RGBA,
+                        org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, pixels);
+                long sumRed = 0;
+                long sumGreen = 0;
+                long sumBlue = 0;
+                long nonBlack = 0;
+                int samples = width * height;
+                for (int i = 0; i < samples; i++) {
+                    int red = pixels.get(i * 4) & 0xFF;
+                    int green = pixels.get(i * 4 + 1) & 0xFF;
+                    int blue = pixels.get(i * 4 + 2) & 0xFF;
+                    sumRed += red;
+                    sumGreen += green;
+                    sumBlue += blue;
+                    if (red + green + blue > 12) {
+                        nonBlack++;
+                    }
+                }
+                report.addProperty("screenReadbackSize", width + "x" + height);
+                report.addProperty("screenReadbackMean",
+                        String.format("%.1f,%.1f,%.1f", (double) sumRed / samples, (double) sumGreen / samples,
+                                (double) sumBlue / samples));
+                report.addProperty("screenReadbackNonBlackPercent",
+                        String.format("%.1f", 100.0 * nonBlack / samples));
+            } catch (RuntimeException | LinkageError error) {
+                report.addProperty("screenReadbackError", String.valueOf(error));
+            } finally {
+                org.lwjgl.system.MemoryUtil.memFree(pixels);
+            }
         }
         if (!Boolean.getBoolean("celtium.validation.drawTest")
                 || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
