@@ -626,6 +626,44 @@ public final class ValidationClient {
      * what separates a stale mirror from a sampling difference, and neither number can be obtained from the other: the
      * terrain comparison showed a dark ground whose tint matches the daylight lightmap texel exactly.
      */
+    /**
+     * Writes the block atlas the game itself has in OpenGL to {@code <dumpDir>/gl-atlas-live.png}.
+     * <p>
+     * The terrain samples the mirrored atlas, so a texture that is subtly darker than GL's own would darken every
+     * terrain pixel while leaving sky and fog untouched - which is the shape of the measured difference. Reading GL's
+     * live atlas in the same run is the only way to tell that apart from a shading difference.
+     */
+    private static void dumpLiveAtlas(Minecraft mc, String directory) {
+        try {
+            Object textureMap = mc.getTextureMapBlocks();
+            if (!(textureMap instanceof net.minecraft.client.renderer.texture.AbstractTexture)) return;
+            int id = ((net.minecraft.client.renderer.texture.AbstractTexture) textureMap).getGlTextureId();
+            int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, id);
+            int width = GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_WIDTH);
+            int height = GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_HEIGHT);
+            if (width > 0 && height > 0 && width <= 4096 && height <= 4096) {
+                java.nio.ByteBuffer pixels = org.lwjgl.BufferUtils.createByteBuffer(width * height * 4);
+                GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, pixels);
+                java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                        java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        int offset = (y * width + x) * 4;
+                        image.setRGB(x, y, (0xFF << 24) | ((pixels.get(offset) & 0xFF) << 16)
+                                | ((pixels.get(offset + 1) & 0xFF) << 8) | (pixels.get(offset + 2) & 0xFF));
+                    }
+                }
+                java.io.File target = new java.io.File(directory, "gl-atlas-live.png");
+                target.getParentFile().mkdirs();
+                javax.imageio.ImageIO.write(image, "png", target);
+            }
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, previous);
+        } catch (Throwable ignored) {
+            // Diagnostic only: the render path must not be affected by a dump failure.
+        }
+    }
+
     private static void dumpLiveLightmap(Minecraft mc, String directory) {
         try {
             java.lang.reflect.Field field = findField(mc.entityRenderer.getClass(),
@@ -1391,7 +1429,10 @@ public final class ValidationClient {
                 ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation-post-interop.png", mc.displayWidth, mc.displayHeight, target);
             }
             String dumpDirectory = System.getProperty("celtium.vulkan.dumpTextures");
-            if (dumpDirectory != null && !dumpDirectory.isEmpty()) dumpLiveLightmap(mc, dumpDirectory);
+            if (dumpDirectory != null && !dumpDirectory.isEmpty()) {
+                dumpLiveLightmap(mc, dumpDirectory);
+                dumpLiveAtlas(mc, dumpDirectory);
+            }
             if (worldFrames < 100 || !report.has("framebuffer")) {
                 // The count is in the message on purpose: the threshold is the acceptance, and a run that misses it must say
                 // by how much rather than leaving the next attempt to guess whether it was close or nowhere near.

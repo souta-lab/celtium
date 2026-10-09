@@ -191,13 +191,17 @@
 | AO/面シェーディング表 | `AoNeighborInfo.java` は pinned checkout と diff なし |
 | fogが暗い | fog色は明るい青灰 (0.552,0.640,0.789)、range 96-128ブロックで近傍帯に効かない |
 | 地形が未描画(void) | 暗部は778色のテクスチャ（同一座標で参照と内容が対応） |
+| atlas mirrorが暗い | GLの実atlas（fixtureが `gl-atlas-live.png` をcapture時に出力）とmirrorを比較: **平均が完全一致** (82.6,76.7,63.8)、差は56/65536テクセル（アニメsprite分）のみ |
+| lightmap除数 /256 vs /16 | 過去roundで修正済み。shaderコメントの実測でも「サンプルを1.0に固定して画素が変わらない」＝lightmapは支配要因ではない |
 
 **残る手がかり**: 同一座標での比が **0.42〜0.65 と面ごとに変動**する（単純な乗算ではない）。
 面シェーディング係数の適用が参照と異なることを示す。
 
-**次の一手（具体）**: Vulkan側の地形頂点バッファから数点をdecodeして `a_Color` / `a_LightCoord` の実値を出し、
-解析的な期待値（tint、面のshade、light 15/0）と比べる。`a_Color` が tint の約0.6になっていれば、
-mesh builderの頂点色合成か頂点formatのdecodeが原因と確定する。
+**次の一手（具体）**: 残る唯一の支配要因は **頂点色 `a_Color`**（fragment shaderが `rgb *= a_Color.rgb` と
+`rgb *= a_Color.a` を行う。round 267の実測: この乗算ありで地形帯98・参照131、乗算を外すと215）。
+Vulkan側の地形頂点バッファから数点をdecodeして `a_Color` / `a_LightCoord` の実値を出し、
+解析的な期待値（tint、面shade、AO=1.0、light 15/0）と比べる。`a_Color` が期待の約0.6なら、
+mesh builderの色合成か頂点format（`VK_FORMAT_R8G8B8A8_UNORM` のoffset/解釈）が原因と確定する。
 
 ## 8. 第3回監査の最終追補
 

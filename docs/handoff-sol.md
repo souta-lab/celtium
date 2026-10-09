@@ -129,13 +129,16 @@ PNGは `screenshots/celtium-command-buffer-secondary-depth.png`。
 正午固定後に全chunkを再構築しても地形帯は 79.6/85.5/75.4 で完全不変）。回帰fitは `y ≈ 0.42x + 20`・残差sd≈19で
 単純な乗算ではなく、高周波エネルギーは参照7.1に対し候補5.5（約22%滑らか＝mip/補間の差）。
 
-**このラウンドで反証した候補**: lightmap mirrorのstale（mirrorの最終=GLの実測=(250,250,250)）、頂点色への焼き込み
+**このラウンドで反証した候補（8件・すべて実測）**: atlas mirrorの暗さ（GLの実atlasとmirrorの平均が完全一致、
+差はアニメspriteの56テクセルのみ）、lightmap除数（過去roundで修正済み・サンプルを1.0に固定しても画素不変）、
+lightmap mirrorのstale（mirrorの最終=GLの実測=(250,250,250)）、頂点色への焼き込み
 （reloadAtTick=120で全chunk再構築しても不変）、生成mip鎖（mirrorGlMips=trueでも不変）、AO表（上流とdiff無し）、
 fog（色は明るい青灰で近傍帯に無関係）、void（暗部は778色のテクスチャ）。残る手がかりは
 **同一座標の比が0.42〜0.65と面ごとに変動**することで、面シェーディングの適用差を示す。
 
 診断用に追加したもの: `-Dceltium.vulkan.dumpTexturesEvery=true`（mirrorのdumpを毎回上書き＝最後のアップロードが見える）、
-fixtureの `gl-lightmap-live.png`（GLの実lightmapをcapture時に読む）、`scripts/run-gl-comparison.sh`。
+fixtureの `gl-lightmap-live.png`（GLの実lightmap）と `gl-atlas-live.png`（GLの実atlas）をcapture時に読む、
+`-Dceltium.validation.reloadAtTick=<tick>`（chunk再構築実験）、`scripts/run-gl-comparison.sh`（直列比較）。
 
 ## 3. 残る問題と、次に実装する具体的な一手
 
