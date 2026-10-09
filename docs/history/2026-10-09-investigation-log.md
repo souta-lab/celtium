@@ -3434,3 +3434,46 @@ What this changes about the plan for the mirror:
   loader, so the mirror never sees it. If that is what the 2.0 is, the answer is not to hook harder but to **derive the
   projection from Minecraft's own camera parameters** - the meaning-based approach the direction calls for, rather than
   another attempt to mirror a GL call that cannot be reached.
+
+---
+
+## The worst-sample dump names the cause: the mirror never sees the world camera
+
+Dumping when a new maximum occurs, rather than at the first comparison, gives the sample that matters:
+
+```
+projMirror = identity
+projGl     = [0.803  0      0      0
+              0      1.428  0      0
+              0      0     -1.001 -1.000
+              0      0     -0.100  0    ]
+viewMirror = [-1 0 0 0 | 0 1 0 0 | 0 0 -1 0 | 0      0     0 1]
+viewGl     = [-1 0 0 0 | 0 1 0 0 | 0 0 -1 0 | 0  -1.620 0.050 1]
+```
+
+The mirror's projection is the **identity** where GL holds a real perspective frustum, and the mirror's modelview is the
+right rotation **without the camera translation**. So the earlier reading that the mirror was "nearly right" was an
+artefact of the sample: the first comparison happens when GL is also identity, which makes any mirror look correct. At the
+sample where it is actually wrong, it is wrong by the whole camera.
+
+Two things follow, and the second retires an approach rather than refining it.
+
+**The seed at the first comparison was the wrong moment.** It copies whatever GL has at the first comparison, which is
+identity, so it seeds nothing useful - and the change is visible in the numbers as no change at all (`comparisons:1143`,
+`exact:0`, the same 2.0006 and 1.62 maxima). A bootstrap has to happen when the state it copies is the state that matters,
+and there is no hook that marks that moment.
+
+**Hooking cannot fix this.** The world projection is applied through `Project.gluPerspective`, whose class the
+compatibility file already records as outside the transforming loader - it compiles, it applies, and its counter stays at
+zero. The camera translation is applied before the backend exists. Both are exactly the operations the mirror needs, and
+neither reaches a hook. Continuing to add hooks would be adding surface to a mechanism that has been shown to miss the
+load-bearing calls.
+
+What the direction says to do instead is what the numbers now argue for as well: **derive the world projection and camera
+transform from Minecraft's own state** - field of view, aspect, near and far for the projection, `ActiveRenderInfo`'s
+position and orientation for the modelview - rather than mirroring GL calls whose call sites are unreachable. That is a
+Vulkan renderer that understands what a world pass is, which is the stated approach, and it removes the two `glGetFloatv`
+reads per matrix change as a consequence rather than as a goal.
+
+One instrument note: the dump is now taken at a new maximum, and it earned its place immediately - the first-sample version
+had produced a conclusion ("nearly right") that this sample contradicts.

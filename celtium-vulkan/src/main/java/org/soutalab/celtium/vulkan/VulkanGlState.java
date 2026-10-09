@@ -218,6 +218,18 @@ public final class VulkanGlState {
         return this.matrixMode;
     }
 
+    /**
+     * Seeds the projection and modelview stacks from OpenGL once, at installation.
+     * <p>
+     * The mirrored stack starts empty, so everything Minecraft set up before the hooks were installed is missing from it -
+     * the first dump showed exactly that as a modelview without its translation. This is a single read used as a
+     * bootstrap, not a per-batch one, and it happens before any mirror comparison is recorded.
+     */
+    public void copyMatricesFrom(float[] projection, float[] modelView) {
+        System.arraycopy(projection, 0, matrix(MATRIX_MODE_PROJECTION), 0, 16);
+        System.arraycopy(modelView, 0, matrix(MATRIX_MODE_MODELVIEW), 0, 16);
+    }
+
     public void matrixMode(int mode) {
         this.matrixMode = mode;
     }

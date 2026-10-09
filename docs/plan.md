@@ -166,8 +166,14 @@ content work that does not touch frame structure can proceed in parallel.
    element difference of 2.0 in the projection and 1.62 in the modelview. That is now a measured prerequisite rather than
    an assumption. The first dump shows the mirror is **close, not broken**: at the first comparison the projection matches
    exactly and the modelview differs only by a missing translation, so the error is a **bootstrap** one - state applied
-   before the hooks were installed - and the 2.0 maximum comes from a later sample. Two steps follow: seed the mirror once
-   from GL at installation, and dump **at the maximum** rather than at the first sample. The known candidate for the
+   before the hooks were installed - and the 2.0 maximum comes from a later sample. The worst-sample dump then named the cause: the mirror's projection is the **identity** where GL holds a real frustum,
+   and its modelview is the right rotation **without the camera translation**. Both operations happen where no hook reaches -
+   the world projection goes through `Project.gluPerspective`, outside the transforming loader, and the camera translation is
+   applied before the backend exists - so **hooking cannot fix this**. The way forward is the one the direction states:
+   **derive the projection and camera transform from Minecraft's own state** (field of view, aspect, near/far;
+   `ActiveRenderInfo` position and orientation) rather than mirroring unreachable GL calls. The two `glGetFloatv` reads per
+   matrix change then disappear as a consequence. A one-time seed was tried and is recorded as ineffective: at the first
+   comparison GL is also identity, so it seeds nothing. The known candidate for the
    projection maximum is `Project.gluPerspective`, which the compatibility file already records as unreachable; if that is
    what it is, the answer is to derive the projection from Minecraft's camera parameters rather than to mirror the call.
 5. **Removing GL**, then re-verifying startup and rendering without a GL context or the bridge.

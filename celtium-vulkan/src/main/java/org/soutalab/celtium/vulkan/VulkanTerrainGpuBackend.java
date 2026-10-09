@@ -393,6 +393,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int matrixComparisons;
     private int matrixExactComparisons;
     private String matrixDump;
+    private boolean mirrorSeeded;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -1112,6 +1113,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.matrixComparisons > 4000) {
             return;
         }
+        if (!this.mirrorSeeded) {
+            // One bootstrap read, once, before any comparison is recorded. The first dump showed the mirror's modelview
+            // missing exactly the translation that was applied before the hooks were installed, so the stack starts from
+            // what GL already had rather than from empty. The seed is taken before the counters move, so the comparisons
+            // below still measure whether the mirror *tracks* GL, not whether it was copied from it.
+            this.immediateState.copyMatricesFrom(this.glProjection, this.glModelView);
+            this.mirrorSeeded = true;
+            return;
+        }
         this.matrixComparisons++;
         float projectionDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION),
                 this.glProjection);
@@ -1120,7 +1130,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // Dump the first comparison's sixteen elements from each side. The counter said the mirror is wrong
         // everywhere; whether that is a transpose, a clip-depth remap or a different stack cannot be read from a
         // maximum, and one dump answers it in a single run.
-        if (this.matrixDump == null) {
+        boolean newWorst = projectionDelta > this.mirroredProjectionDelta
+                || modelViewDelta > this.mirroredModelViewDelta;
+        if (newWorst || this.matrixDump == null) {
             this.matrixDump = "projMirror=" + java.util.Arrays.toString(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION))
                     + ";projGl=" + java.util.Arrays.toString(this.glProjection)
                     + ";viewMirror=" + java.util.Arrays.toString(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW))
