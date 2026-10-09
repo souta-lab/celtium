@@ -139,6 +139,18 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.rotate(angle, x, y, z));
     }
 
+    /**
+     * The blend factors, which the mirror never saw.
+     * <p>
+     * The audit lists the integer {@code blendFunc} overloads as part of S07, and this is the one whose body was confirmed
+     * to call {@code GL11.glBlendFunc}. The particle family was asserting its own blend because the mirror could not report
+     * these; with them captured the pipeline can use what Minecraft actually set.
+     */
+    @Inject(method = "func_179112_b", at = @At("HEAD"), require = 0)
+    private static void celtium$blendFunc(int sourceFactor, int destinationFactor, CallbackInfo info) {
+        celtium$mirror(backend -> backend.blendFunc(sourceFactor, destinationFactor));
+    }
+
     @Inject(method = "func_179152_a", at = @At("HEAD"), require = 0)
     private static void celtium$scale(float x, float y, float z, CallbackInfo info) {
         celtium$mirror(backend -> backend.scale(x, y, z));

@@ -101,6 +101,11 @@ before creation so an allocation failure leaves the existing data valid. **Measu
 **Open:** the acceptance fixture that crosses both boundaries.
 
 ### S07 [P1, certain in code] the state mirror and pipelines do not carry the state that matters
+**First hook in:** `GlStateManager.func_179112_b` - whose SRG body calls `GL11.glBlendFunc` - is captured, and a run reports
+`blendObserved=true(770,771)`, i.e. `SRC_ALPHA` and `ONE_MINUS_SRC_ALPHA`. That **confirms by observation** what the particle
+family had been asserting. Using the observed factors in the pipeline is **not** done yet, and deliberately: the pipeline
+cache key does not carry them, so the first group's factors were shared by every later group and the frame got worse (0.23%
+to 0.33%). **Next:** add the blend factors to the key, then use them.
 **Correction (2026-10-09, from the SRG source):** the "float `translate`" item in this list is **not** a missing hook in
 1.12.2 - `GlStateManager.func_179137_b` has a single `(DDD)` overload and the float literals in the decompiled source are
 widened by the compiler, so the existing hook is the right one. Verified by adding a `(FFF)`-qualified hook that matched

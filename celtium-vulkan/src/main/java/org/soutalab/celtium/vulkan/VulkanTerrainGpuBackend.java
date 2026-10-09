@@ -443,6 +443,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int FAIL_IDLE_AFTER = Integer.getInteger("celtium.vulkan.failIdleAfter", 0).intValue();
     private int idleWaits;
     private int injectedIdleFailures;
+    private boolean blendObserved;
+    private int observedBlendSrc = -1;
+    private int observedBlendDst = -1;
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
     private String particleDescriptorFailureReason;
@@ -931,6 +934,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             org.lwjgl.system.MemoryUtil.memFree(projection);
             org.lwjgl.system.MemoryUtil.memFree(modelView);
         }
+    }
+
+    public void blendFunc(int sourceFactor, int destinationFactor) {
+        this.observedBlendSrc = sourceFactor;
+        this.observedBlendDst = destinationFactor;
+        this.blendObserved = true;
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
@@ -1815,6 +1824,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
+                + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
@@ -3103,10 +3113,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             // (audit S07). Measured, that gap showed up as particles that were brighter and warmer than GL's,
                             // which is what an unblended overlay looks like. The family's meaning is asserted here rather than
                             // read from a state the project cannot yet observe.
+                            // Observed factors when the mirror has them - the blendFunc hook above captures what Minecraft
+                            // set - and the family's own alpha blend only as the documented fallback for a pass whose
+                            // factors were never seen.
+                            // The observed factors are recorded (770 and 771 in the measured run - exactly what the family
+                            // assertion used), but they are not yet used to build the pipeline: the cache key does not
+                            // include them, so the first group's factors would be shared by every later group and the frame
+                            // got worse (0.33% against 0.23%). Using them needs the key to carry them first.
+                            int blendSrc = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
+                            int blendDst = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
                             particle = VulkanImmediateParticlePipeline.create(this.context, terrain.renderPass(),
-                                    true, org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
-                                    org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                    true, false, false);
+                                    true, blendSrc, blendDst, true, false, false);
                             particlePipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), particle);
                         }
                         VulkanGlTexture texture = this.textureRegistry.get(((Integer) group[4]).intValue());

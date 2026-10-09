@@ -172,6 +172,10 @@ public interface TerrainGpuBackend {
     default void viewport(int x, int y, int width, int height) {
     }
 
+    /** The blend factors Minecraft set, captured because the mirror did not observe them (audit S07). */
+    default void blendFunc(int sourceFactor, int destinationFactor) {
+    }
+
     default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                          int vertexCount, int drawMode) {
         return false;

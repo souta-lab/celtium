@@ -4558,3 +4558,26 @@ Worth recording about method: the last three rounds each moved the injection and
 call site, and the fix at every step was to **close an entry** rather than to add a counter. The injection is documented,
 off by default, and is the test - a safe fake result kept apart from any real latency measurement, which is what the audit
 asked for.
+
+---
+
+## The blend factors are now observed, and using them needs the cache key first
+
+The audit's S07 lists the integer `blendFunc` overloads as state the mirror never sees. One of them - `func_179112_b`, whose
+body the SRG source confirms calls `GL11.glBlendFunc` - is now hooked, and a run reports what Minecraft actually set:
+
+```
+blendObserved=true(770,771)   |   fixture PASSED   |   image 0.23% against the GL reference
+```
+
+770 and 771 are `GL_SRC_ALPHA` and `GL_ONE_MINUS_SRC_ALPHA`: **exactly the factors the particle family had been asserting**.
+The assertion was right, and the project can now say so from observation rather than from the family's meaning.
+
+Wiring the observed factors straight into the pipeline, however, made the frame **worse** - 0.23% to 0.33% - and the reason is
+worth keeping: the pipeline cache is keyed by the group's state key, which does **not** include the blend factors, so the first
+group's factors are handed to every later group. **Reading a value the key does not carry is not the same as using it.** The
+pipeline is back on the documented family semantics and the frame is back to 0.23%, and the hook stays: the observation is
+correct and is the raw material for the next step.
+
+That next step is small and named rather than an investigation: put the blend factors into the key, then use them. It has the
+same shape as the pass-identity work - the value a batch is drawn with has to be part of what identifies the batch.
