@@ -8984,3 +8984,28 @@ main passのflush（`drawPendingImmediate()` / `flushPendingBeforeGlDraw()` / `r
 onlyTarget.longValue()) { continue; }`）が正規表現と一致せず**未適用**のままだった。その状態では測定値が動かない
 （`atPass=0` のまま）ので、**半端な変更を残さず巻き戻した**。次回はこの1行を実文どおり置換し、`atPass` が
 非0になり `drawnPasses` が増えることを受入にする。
+
+---
+
+## 「main pass は main のgroupだけを描く」を実装し、A09で混入した誤計数も除去
+
+前ラウンドで保留にした1行を含め、A10の核心を実装した。
+
+- `framebuffer(...)` で `isMain` のとき `mainTargetIdentity` を覚える。
+- `drawPendingImmediate(onlyTarget)` は `wantedTarget = onlyTarget != null ? onlyTarget : mainTargetIdentity` を
+  一度だけ決め、描画フィルタとretireの双方でこれを使う。フィルタ無しのflush（`drawPendingImmediate()`、
+  `flushPendingBeforeGlDraw()`、`recordImmediateOnlyPass`）は**main宛のgroupだけ**を描き、他targetのgroupは
+  そのままqueueに残って自分のpassを待つ。teardown用の `discardImmediateGroups()` 呼び出しは変更していない。
+
+**実装中に自分の誤りを1つ見つけた**: A09で「全branchの `continue` を数える」際、機械的に挿入したカウンタが
+**「別targetのためskipする `continue`」にも入っていた**。これは drop ではない（そのgroupは自分のpassで描かれる）ので、
+フィルタブロックごと置換して除去した。`postAcceptDroppedGroups` の意味が正しくなった。
+
+**実測（AMD RX6400・second-target fixture）**: exit 0 / validationClean true / messages 0 / fixture PASSED /
+nativeTerrainVerified true / terrainPasses 723 / glDrawsCancelled 2616 / postAcceptDroppedGroups 0 /
+acceptedByFormat 1:14,2:0,3:0,4:0,5:246,6:1444,7:900,8:0,9:12。
+
+**ただしこのrunはoff-target分岐を踏んでいない**（`offTargetPerTarget` が空＝offered 0）。fixtureの形状はrunごとに
+変わり、offers=246を記録したrunと踏まないrunがある。したがって「off-targetの内容が自分のpassへ届くようになった」
+という**測定による確認はまだ得られていない**。`offTargetPassesSkippedEmpty=2529` が高いのは、このrunでは
+off-target宛のgroupがそもそもqueueに無いためである。CPU契約チェック（A02/A03/A32）は変更後も PASS。

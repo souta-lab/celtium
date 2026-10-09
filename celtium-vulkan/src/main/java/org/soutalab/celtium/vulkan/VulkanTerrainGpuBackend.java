@@ -449,6 +449,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     private final int[] acceptedByFormat = new int[VulkanImmediateFormats.COUNT];
     private boolean currentRenderTargetIsMain = true;
+    /** The identity of the main framebuffer, so an unfiltered flush can mean "main" rather than "everything". */
+    private long mainTargetIdentity = Long.MIN_VALUE;
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
     private final java.util.Map<Long, VulkanOffscreenTarget> offTargetTargets = new java.util.HashMap<Long, VulkanOffscreenTarget>();
@@ -1236,6 +1238,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.currentRenderTarget = targetIdentity;
         this.currentRenderTargetIsMain = isMain;
+        if (isMain) {
+            // The main pass flushes with no target filter, so it has to know which identity "main" means: without this it drew
+            // every pending group, including the ones offered for another framebuffer, which is why the off-target pass found
+            // an empty queue every time (246 offered, 0 at pass time).
+            this.mainTargetIdentity = targetIdentity;
+        }
     }
 
     public void viewport(int x, int y, int width, int height) {
@@ -3899,16 +3907,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.immediateGroups.isEmpty()) {
             return;
         }
+        // No named target means the main pass: it draws what was offered while the main framebuffer was bound and leaves the
+        // rest for their own pass. Drawing everything here consumed the off-target batches into the main image instead.
+        long wantedTarget = onlyTarget != null ? onlyTarget.longValue() : this.mainTargetIdentity;
         try {
             VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
             if (terrain == null) {
                 // Counted rather than silently returned: an accepted batch whose GL draw was cancelled must be drawn
                 // here, so a null pipeline means geometry is being lost, not deferred.
                 this.immediateFlushNoPipeline++;
-                if (onlyTarget == null) {
-                    this.immediateGroupsDiscarded += this.immediateGroups.size();
-                    discardImmediateGroups();
-                }
+                this.immediateGroupsDiscarded += ImmediateGroupQueue.retireGroupsForTarget(this.immediateGroups,
+                        wantedTarget);
                 // With a target filter this pass must leave everything else alone: the off-target pass runs before the main
                 // one, and discarding here would take the main pass's accepted geometry with it (audit A32).
                 return;
@@ -3924,10 +3933,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             ByteBuffer push = MemoryUtil.memAlloc(128);
             try {
                 for (Object[] group : this.immediateGroups) {
-                    if (onlyTarget != null && ((Long) group[7]).longValue() != onlyTarget.longValue()) {
-                        // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
-                        // all formats drew, which it could not while only format 5 incremented this (audit A09).
-                        this.postAcceptDroppedGroups++;
+                    // A group offered for another target is not a drop; it waits for its own pass.
+                    if (((Long) group[7]).longValue() != wantedTarget) {
                         continue;
                     }
                     VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
@@ -4140,15 +4147,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Retire only what this pass actually handled. The off-target pass runs before the main pass and filters to one
             // target; discarding every group there destroyed the main pass's accepted geometry - accepted, counted, and then
             // thrown away before it could be drawn (audit A32). The main pass keeps the old behaviour.
-            if (onlyTarget == null) {
-                this.immediateGroupsDiscarded += this.immediateGroups.size();
-                discardImmediateGroups();
-            } else {
-                int kept = ImmediateGroupQueue.retireGroupsForTarget(this.immediateGroups, onlyTarget.longValue());
-                this.immediateGroupsOffTargetRetired += 1;
-                if (kept > 0) {
-                    this.immediateGroupsKeptForOtherTargets += kept;
-                }
+            int kept = ImmediateGroupQueue.retireGroupsForTarget(this.immediateGroups, wantedTarget);
+            this.immediateGroupsOffTargetRetired += 1;
+            if (kept > 0) {
+                this.immediateGroupsKeptForOtherTargets += kept;
             }
         }
     }
