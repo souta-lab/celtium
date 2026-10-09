@@ -8587,3 +8587,24 @@ printed the ids and proved the announcements were arriving for other textures.
 
 What is left of the stream is a thousand refreshes, and the light map is the named candidate - the one texture that never
 consulted an announcement because it is held directly.
+
+---
+
+## The collapse on both GPUs, and the light map's precise status
+
+| | image-filled mirrors | in-place refreshes | descriptor sets | validation |
+|---|---|---|---|---|
+| AMD RX 6400 | **3643** | **1004** (was 4881) | 1 | clean |
+| Intel UHD 630 | **1682** | **471** (was 1941) | 1 | clean |
+
+Both exit 0 with the fixture passing and the acceptance intact, and both show the same shape: the announcement-fed fills up by
+orders of magnitude and the readback refreshes down by about eighty per cent. The two-GPU condition therefore extends to the
+largest improvement this bridge work has produced.
+
+`directMirrorFromAnnouncement` is **still zero on both**, which settles what the light map does: it does **not** announce through
+either of the two `TextureUtil` methods that are hooked. It is a dynamic texture, updated through a third path, and that is the
+named remainder - the one texture in the renderer that still reaches the readback every time it changes, and the reason a
+thousand refreshes remain on AMD and four hundred and seventy on Intel.
+
+Recorded as a measurement rather than a suspicion: the counter would have gone up if the light map's write had been announced by
+a hooked method, and it did not, on either GPU.
