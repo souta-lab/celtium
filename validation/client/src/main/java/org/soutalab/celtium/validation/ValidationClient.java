@@ -118,7 +118,12 @@ public final class ValidationClient {
             try {
                 net.minecraft.block.state.IBlockState state = block.getDefaultState();
                 if (state != null) {
-                    mc.world.setBlockState(pos, state, 2);
+                    // Flag 3 = 1 | 2: no neighbour updates, but tell the client (which is this one) so the chunk is
+                    // rebuilt. The first version passed 2, which leaves the neighbour update in - and every placement
+                    // then made six neighbours react (water flowing, plants popping, fire spreading), which is what
+                    // made the later slices time out while the earlier ones did not. This scene wants the blocks drawn,
+                    // not simulated.
+                    mc.world.setBlockState(pos, state, 3);
                     celtium$sweepPlaced++;
                 }
             } catch (Throwable error) {
