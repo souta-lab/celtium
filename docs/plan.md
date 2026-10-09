@@ -597,6 +597,17 @@ throw している）。正しい縮退点は**外側の GL intercept で false 
   **使用ごと**に発生。ShaderGroup は real program で複数パスを描くため、パスごとにフルスクリーン読み戻しが走り
   ~15回/フレーム＝約2秒/フレームになっていた。
 
+**容量整理（このターン）**: `.celtium-work/runtime` が 10G まで増え、ディスク空きが 9.8G（90%）になっていた。
+内訳は **mods のコピー 5.8G / test-libraries のコピー 2.2G / saves（world data）1.5G** で、いずれも**受入証拠ではない**
+（run ごとの入力コピーと再生成可能なworld ✗ 証拠は `validation-process.json` / `logs/` / `screenshots/`）。
+canonical な `celtium-headless-interop/test-libraries` だけ残して削除した結果:
+
+- `.celtium-work/runtime`: **10G → 589M**
+- ディスク: 空き **9.8G → 20G**（使用率 90% → 80%）
+- 保持を確認: `validation-process.json` **282件**、`celtium-validation.png` **248件**
+- 引用中の受入 run（p32-glref-r434 / p32-celtium-r434 / p39-vanilla2-r426 / p71-spider / p71-spider-intel /
+  p68-spider-intel / p49-failsubmit-r437 / p64-weather-intel / sol-cb-r454-amd）は report+PNG とも残存を確認。
+
 **次の一手**: (1) `shaderProgramRefusals` / `accepted` が report に出るかの確認、(2) `switchUseShader` の各 shader
 でも受入、(3) timestamp クエリで handoff の GPU 時間を測る。
 
