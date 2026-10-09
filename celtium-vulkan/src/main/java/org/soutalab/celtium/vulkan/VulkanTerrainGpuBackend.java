@@ -2998,6 +2998,62 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (mesh.sectionFirstColor != null) {
                     mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
                 }
+                if (TERRAIN_VERTEX_COLOUR_SAMPLES > 0 && colourSamples < TERRAIN_VERTEX_COLOUR_SAMPLES) {
+                    colourSamples++;
+                    // What the mesh builder packed, in the layout the pipeline declares (vanilla BLOCK: colour at byte 12).
+                    // The frame is darker than the reference by a per-pixel factor, so the question is whether the colour
+                    // arrives dark (alpha below 255 would do it: the fragment shader multiplies rgb by alpha) or arrives
+                    // correct and is lost later. Mean and extremes answer that without a second build.
+                    int stride = 32;
+                    int count = Math.max(1, vertexBytes / stride);
+                    long sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+                    int minA = 255, maxA = 0;
+                    int step = Math.max(1, count / 64);
+                    int sampled = 0;
+                    java.nio.ByteOrder order = vertices.order();
+                    try {
+                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                        for (int v = 0; v < count; v += step) {
+                            int at = v * stride;
+                            int r = vertices.get(at + 12) & 0xFF;
+                            int g = vertices.get(at + 13) & 0xFF;
+                            int b = vertices.get(at + 14) & 0xFF;
+                            int a = vertices.get(at + 15) & 0xFF;
+                            sumR += r; sumG += g; sumB += b; sumA += a; sampled++;
+                            if (a < minA) minA = a;
+                            if (a > maxA) maxA = a;
+                        }
+                    } finally {
+                        vertices.order(order);
+                    }
+                    // The light element is two unsigned shorts at byte 24 in the vanilla BLOCK layout. Their units decide
+                    // the light map divisor: byte-sized light values (0..15) belong with /16, values already shifted for a
+                    // 256-texel map (0..240) belong with /256, and the two cannot both be right.
+                    int light0 = 0, light1 = 0;
+                    java.nio.ByteOrder lightOrder = vertices.order();
+                    try {
+                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                        light0 = vertices.getShort(24) & 0xFFFF;
+                        light1 = vertices.getShort(26) & 0xFFFF;
+                    } finally {
+                        vertices.order(lightOrder);
+                    }
+                    float u0 = 0.0f, v0 = 0.0f;
+                    java.nio.ByteOrder uvOrder = vertices.order();
+                    try {
+                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                        u0 = vertices.getFloat(16);
+                        v0 = vertices.getFloat(20);
+                    } finally {
+                        vertices.order(uvOrder);
+                    }
+                    System.out.println("[Celtium] CELTIUM_VERTEX_COLOUR pass=" + mesh.pass + " section=" + mesh.sectionIndex
+                            + " first=0x" + Integer.toHexString(firstVertexColor(vertices))
+                            + " meanRGBA=" + (sumR / sampled) + "," + (sumG / sampled) + "," + (sumB / sampled)
+                            + "," + (sumA / sampled) + " alphaRange=" + minA + ".." + maxA
+                            + " lightShort0=" + light0 + " lightShort1=" + light1
+                            + " uv=" + u0 + "," + v0 + " vertices=" + count);
+                }
                 int beforeColour = firstVertexColor(vertices);
                 long beforeAddress = MemoryUtil.memAddress(vertices);
                 VulkanArena.Segment vertexSegment = resources.vertexArena.allocate(vertexBytes);
@@ -3119,6 +3175,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Colour word of the first vertex of a mesh, in the little-endian byte order the GPU reads. */
+    /** How many section uploads print their packed vertex colours; a property so a normal run stays quiet. */
+    private static final int TERRAIN_VERTEX_COLOUR_SAMPLES =
+            Integer.getInteger("celtium.vulkan.vertexColourSamples", 0).intValue();
+    private int colourSamples;
+
     private static int firstVertexColor(ByteBuffer vertices, int at) {
         java.nio.ByteOrder order = vertices.order();
         try {

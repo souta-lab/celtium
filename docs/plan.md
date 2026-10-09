@@ -197,7 +197,17 @@
 **残る手がかり**: 同一座標での比が **0.42〜0.65 と面ごとに変動**する（単純な乗算ではない）。
 面シェーディング係数の適用が参照と異なることを示す。
 
-**次の一手（具体）**: 残る唯一の支配要因は **頂点色 `a_Color`**（fragment shaderが `rgb *= a_Color.rgb` と
+**頂点データの実測（`-Dceltium.vulkan.vertexColourSamples=N` を追加）**: 地形はvanilla 32バイトlayout（pos float3 @0、色 @12、UV float2 @16、light short2 @24、法線 @28）で、
+- **alpha は全頂点 255**（shaderの `rgb *= alpha` は無効）✅
+- 頂点色は明るい緑（solid平均 **136,158,108**、先頭 0xff59bd91）で、参照の暗さを説明しない ✅
+- UV は sprite 座標として正常（例 0.125, 0.469 = 512atlasの 64,240）✅
+- light short は `light×16` の byte（例 0xE0=224=sky14×16）。`/16`（現行）と `/256`（上流）は**同じテクセルに解決**するため、除数の違いは結果に影響しない ✅
+- **`textureLod(...,0.0)` でbiasを無効化しても画像は不変**（mid 81.0→83.4、near 同一）→ mip/LODは否定 ✅
+- 頂点色(0.53,0.62,0.42)×lightmap(0.98)=(133,155,106) が**参照の実測(136.8,146.5,117.2)とほぼ一致**する一方、候補はその0.6倍。かつ候補の画素値は参照の輝度と単調対応しない（ref133→87、ref103→43）＝**テクスチャ内容そのものが違う**
+- Atlas level0 の内容は GL の実atlasと平均完全一致 ✅。ただし比較したのは **registry 側の mirror** であり、terrain が bind する `this.atlasTexture` が**別オブジェクト**である可能性は未検証
+
+**次の一手（具体）**: 残る唯一の支配要因は **テクスチャサンプル**（`u_BlockTex`）。terrain が実際に bind する `this.atlasTexture` の内容を capture 時に dump し、GLの実atlasと比べる（registry mirror との比較だけでは同一性を証明できない）。
+そのうえで、同じbuildで **GL terrain にフォールバックした frame** と比べる（参照に依存せず、Vulkan地形の当否を判定できる。初回試行は起動時の `getSkyColorBody` NPE で落ちたため、その原因も見る）。（fragment shaderが `rgb *= a_Color.rgb` と
 `rgb *= a_Color.a` を行う。round 267の実測: この乗算ありで地形帯98・参照131、乗算を外すと215）。
 Vulkan側の地形頂点バッファから数点をdecodeして `a_Color` / `a_LightCoord` の実値を出し、
 解析的な期待値（tint、面shade、AO=1.0、light 15/0）と比べる。`a_Color` が期待の約0.6なら、

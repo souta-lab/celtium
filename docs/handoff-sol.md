@@ -140,6 +140,19 @@ fog（色は明るい青灰で近傍帯に無関係）、void（暗部は778色�
 fixtureの `gl-lightmap-live.png`（GLの実lightmap）と `gl-atlas-live.png`（GLの実atlas）をcapture時に読む、
 `-Dceltium.validation.reloadAtTick=<tick>`（chunk再構築実験）、`scripts/run-gl-comparison.sh`（直列比較）。
 
+## 2.6 地形の頂点データ実測（このターンで追加）
+
+`-Dceltium.vulkan.vertexColourSamples=N` を追加し、地形セクションのアップロード時に**実際の頂点データ**を出すようにした。
+結果: 地形は vanilla 32バイトlayout（pos float3 @0、色 @12、UV float2 @16、light short2 @24、法線 @28）で、
+alpha は全頂点255、頂点色は明るい緑（solid平均 136,158,108）、UVはsprite座標として正常（0.125,0.469）、
+light short は `light×16`（0xE0=sky14×16）で `/16` と `/256` は同じテクセルに解決する。
+`textureLod(...,0.0)` でbiasを無効化しても画像は不変（mip/LOD否定）。
+
+決定的な不整合: **頂点色×lightmap = (133,155,106) が参照の実測 (136.8,146.5,117.2) とほぼ一致**するのに、
+候補はその0.6倍で、しかも候補の画素値は参照の輝度と単調対応しない（ref133→87、ref103→43）。
+つまり**テクスチャ内容が違う**。atlas level0 は GL の実atlasと平均一致するが、比較したのは registry 側の mirror で、
+terrain が bind する `this.atlasTexture` が別オブジェクトである可能性は未検証。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
@@ -153,9 +166,10 @@ fixtureの `gl-lightmap-live.png`（GLの実lightmap）と `gl-atlas-live.png`�
    「次のwindow内で適用するイベント」として保持する、(c) main targetの受理済みgroupはフレーム自身の
    terrain pass で描く（`recordRenderPass` は既に描いている）。いずれも順序の正しさを保つ条件を
    docsへ明記してから実装する）。
-3. **地形の暗さ（優先順位3の本命）**: 焼き込み仮説は反証済み。次は **両buildで同一section・同一faceの地形頂点を
-   dumpして `a_Color` / `a_LightCoord` の実値を上流とdiff**する（shaderコメント round 267 が示す「mesh builderが
-   何を詰めるか」を推測ではなく実測で比べる）。あわせて `v_MaterialMipBias` を確認（候補は22%滑らか）。
+3. **地形の暗さ（優先順位3の本命）**: 候補を9件実測で否定済み（lightmap mirror/焼き込み/mip鎖/AO表/fog/void/atlas mirror/除数/LOD）。
+   残るのは **`u_BlockTex` のサンプル内容**。次は terrain が bind する `this.atlasTexture` の内容を dump して
+   GLの実atlasと比べ（registry mirror との比較では同一性を証明できない）、あわせて**同じbuildのGL terrain frame**と
+   比べる（初回は起動時 `getSkyColorBody` NPE で落ちたので、その原因も見る）。
 4. **submit後失敗の実機注入**を足す: `submitCommands()` 成功後・`endFrame()` 前に例外を注入する property を作り、
    「二重signalingしない・資源を壊さない・stallして可視に失敗する」ことを1 run で示す。
 3. **別FBOの depth/clear 依存**を小さな場面で確認する（depth test 有効・clear 後の上書き）。
