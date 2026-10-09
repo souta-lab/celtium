@@ -2,6 +2,7 @@ package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.renderer.BufferBuilder;
 import net.minecraft.client.renderer.WorldVertexBufferUploader;
+import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import java.nio.ByteBuffer;
 
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
@@ -37,13 +38,14 @@ public abstract class WorldVertexBufferUploaderMixin {
             // the vertex count come from the shadowed fields because Minecraft exposes no accessor for them.
             Object format = celtium$vertexFormat(buffer);
             int stride = celtium$vertexStride(format);
+            int formatId = celtium$formatId(format);
             long address = celtium$vertexAddress(buffer);
             int vertices = celtium$vertexCount(buffer);
             int mode = celtium$drawMode(buffer);
             if (address == 0L || vertices <= 0) {
                 return;
             }
-            if (backend.submitImmediateBatch(format, stride, address, vertices, mode)) {
+            if (backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode)) {
                 info.cancel();
             }
         } catch (Throwable ignored) {
@@ -52,11 +54,56 @@ public abstract class WorldVertexBufferUploaderMixin {
     }
 
     /** The stride comes from the format itself, so the backend can decide structurally rather than by class. */
+    private static final java.util.Map<Object, Integer> celtium$formatIds =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Object, Integer>());
+
     private static int celtium$vertexStride(Object format) {
         if (format instanceof net.minecraft.client.renderer.vertex.VertexFormat) {
             return ((net.minecraft.client.renderer.vertex.VertexFormat) format).getSize();
         }
         return 0;
+    }
+
+    /**
+     * Identifies the layout by comparing its element list with vanilla's own formats.
+     * <p>
+     * Class identity would fail for the formats mods build themselves and a stride alone is ambiguous - 24 bytes is
+     * both {@code POSITION_TEX_COLOR} and {@code POSITION_TEX_LMAP_COLOR}. The element instances are shared, so
+     * comparing them is exact, and the result is cached per format instance because this runs for every batch.
+     */
+    private static int celtium$formatId(Object format) {
+        if (!(format instanceof net.minecraft.client.renderer.vertex.VertexFormat)) {
+            return 0;
+        }
+        net.minecraft.client.renderer.vertex.VertexFormat vertexFormat =
+                (net.minecraft.client.renderer.vertex.VertexFormat) format;
+        Integer cached = celtium$formatIds.get(vertexFormat);
+        if (cached != null) {
+            return cached;
+        }
+        int id = 0;
+        if (celtium$sameElements(vertexFormat, DefaultVertexFormats.POSITION_COLOR)) {
+            id = 1;
+        } else if (celtium$sameElements(vertexFormat, DefaultVertexFormats.POSITION_TEX_COLOR)) {
+            id = 2;
+        }
+        celtium$formatIds.put(vertexFormat, id);
+        return id;
+    }
+
+    private static boolean celtium$sameElements(net.minecraft.client.renderer.vertex.VertexFormat left,
+                                                net.minecraft.client.renderer.vertex.VertexFormat right) {
+        java.util.List<net.minecraft.client.renderer.vertex.VertexFormatElement> a = left.getElements();
+        java.util.List<net.minecraft.client.renderer.vertex.VertexFormatElement> b = right.getElements();
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (int i = 0; i < a.size(); i++) {
+            if (a.get(i) != b.get(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Object celtium$vertexFormat(BufferBuilder buffer) {

@@ -360,9 +360,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
     private boolean currentGroupUsed;
+    private int currentGroupFormatId;
+    private int currentGroupTexture;
     private int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
     private int immediateIsolationDraws;
+    private VulkanImmediateTexturePipeline texturedImmediatePipeline;
+    private int immediateTextureRefusals;
     /**
      * Groups whose draws are already recorded but whose command buffer may still be in flight.
      * <p>
@@ -533,18 +537,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     @Override
-    public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, long vertexAddress, int vertexCount,
-                                        int drawMode) {
+    public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
+                                        int vertexCount, int drawMode) {
         this.immediateBatchesOffered++;
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null) {
             this.immediateLastRefusal = reason;
             return false;
         }
-        if (vertexStride != VulkanImmediatePipeline.VERTEX_BYTES) {
-            // Only the POSITION_COLOR layout has a pipeline so far. Refusing by stride - not by class name - keeps
-            // this structural: any mod format with those 16 bytes takes the same path.
-            this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex";
+        int expectedStride = formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
+                : VulkanImmediatePipeline.VERTEX_BYTES;
+        if (formatId != 1 && formatId != 2) {
+            // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
+            // one is refused with its size rather than drawn with a pipeline that would misread its vertices.
+            this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ")";
+            return false;
+        }
+        if (vertexStride != expectedStride) {
+            this.immediateLastRefusal = "layout id " + formatId + " has stride " + vertexStride + ", expected "
+                    + expectedStride;
+            return false;
+        }
+        if (formatId == 2) {
+            // The textured pipeline and the texture registry exist and compile, but accepting these batches aborted
+            // the render pass: the validation layer reported vkCmdBindDescriptorSets and every following command as
+            // "commandBuffer must be in the recording state", which means an exception unwound the pass while the
+            // immediate draws were being recorded. Until that is found, the batches are refused with the reason so GL
+            // keeps drawing them and the frame stays correct, instead of shipping a pass that dies mid-recording.
+            this.immediateLastRefusal = "textured immediate path disabled: it aborted the render pass "
+                    + "(VUID-vkCmdBindDescriptorSets-commandBuffer-recording)";
             return false;
         }
         int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
@@ -558,7 +579,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // matrixChannels=persp:0), while reading them on the render thread with the GL context current needs no
             // cooperation from any class and gives exactly what Minecraft is drawing with.
             captureGlMatrices();
+            int boundTexture = this.immediateState.boundTextureName();
             if (this.currentImmediateMesh == null
+                    || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
                     || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
                     || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
@@ -566,6 +589,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentImmediateMesh = new VulkanDynamicMesh(this.context);
                 System.arraycopy(this.glProjection, 0, this.currentGroupProjection, 0, 16);
                 System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
+                this.currentGroupFormatId = formatId;
+                this.currentGroupTexture = boundTexture;
             }
             if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
@@ -666,7 +691,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
             remapClipDepth(this.currentGroupProjection, projection);
             System.arraycopy(this.currentGroupModelView, 0, modelView, 0, 16);
-            this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView});
+            this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
+                    Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture)});
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -1794,6 +1820,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.immediatePipeline == null) {
                 this.immediatePipeline = VulkanImmediatePipeline.create(this.context, terrain.renderPass());
             }
+            if (this.texturedImmediatePipeline == null) {
+                this.texturedImmediatePipeline =
+                        VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass());
+            }
+            if (this.textureRegistry == null) {
+                this.textureRegistry = new VulkanTextureRegistry(this.context);
+            }
             ByteBuffer push = MemoryUtil.memAlloc(128);
             try {
                 for (Object[] group : this.immediateGroups) {
@@ -1801,10 +1834,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (mesh.isEmpty()) {
                         continue;
                     }
-                    reportGroupBounds(group);
+                    int formatId = ((Integer) group[3]).intValue();
                     pushMatrixInto((float[]) group[1], push, 0);
                     pushMatrixInto((float[]) group[2], push, 64);
-                    this.immediatePipeline.draw(this.commandBuffer, mesh, push);
+                    if (formatId == 2) {
+                        VulkanGlTexture texture =
+                                this.textureRegistry.get(((Integer) group[4]).intValue());
+                        if (texture == null) {
+                            this.immediateTextureRefusals++;
+                            continue;
+                        }
+                        this.texturedImmediatePipeline.bindTexture(texture);
+                        this.texturedImmediatePipeline.draw(this.commandBuffer, mesh, push);
+                    } else {
+                        this.immediatePipeline.draw(this.commandBuffer, mesh, push);
+                    }
                     this.immediateFlushes++;
                 }
             } finally {

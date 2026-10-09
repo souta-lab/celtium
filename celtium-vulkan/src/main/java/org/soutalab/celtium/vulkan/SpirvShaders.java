@@ -46,6 +46,12 @@ public final class SpirvShaders {
     /** Vertex module for untextured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_COLOR}). */
     public static final String IMMEDIATE_COLOR_VERTEX = "immediate_color.vert";
 
+    /** Vertex module for textured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_TEX_COLOR}). */
+    public static final String IMMEDIATE_TEX_COLOR_VERTEX = "immediate_tex_color.vert";
+
+    /** Fragment module for textured immediate-mode geometry. */
+    public static final String IMMEDIATE_TEX_COLOR_FRAGMENT = "immediate_tex_color.frag";
+
     /** Fragment module for untextured immediate-mode geometry. */
     public static final String IMMEDIATE_COLOR_FRAGMENT = "immediate_color.frag";
 

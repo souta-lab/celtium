@@ -81,6 +81,21 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **The textured (24-byte) path is built but its acceptance is off after it aborted the pass.** Implemented and
+  compiling: a `POSITION_TEX_COLOR` pipeline with one combined-image sampler, a structural format id computed by the
+  Mixin from the shared element list (stride alone is ambiguous - 24 bytes is both `POSITION_TEX_COLOR` and
+  `POSITION_TEX_LMAP_COLOR`), groups keyed by format *and* bound texture, and a descriptor update per draw from the
+  texture registry. With acceptance on, the counters jump (`immediateTaken=1155`, `immediateRefusal=none`) and the
+  validation layer reports 113 messages, all of the form "commandBuffer must be in the recording state" starting at
+  `vkCmdBindDescriptorSets` - i.e. an exception unwound the render pass while the textured groups were being recorded,
+  and every following command then targeted a buffer that was no longer recording.
+  Acceptance is therefore **off** again, with the refusal naming that exact reason
+  (`immediateRefusal=textured_immediate_path_disabled: it aborted the render pass (VUID-...)`), so GL keeps drawing
+  those batches, the frame stays correct and the validation output is empty (VUID 0, PASSED,
+  `nativeTerrainVerified True`). Next step: find the throw inside the textured flush (the likely candidates are the
+  texture registry's GL readback happening while the Vulkan pass is open, and the descriptor update path) and only
+  then re-enable acceptance.
+
 - **Texture state is captured and arbitrary GL textures can be mirrored.** A `GlStateManager.func_179144_i` Mixin
   reports the bound GL texture name into the state (`texture:270958` binds captured in one run, with the run still
   PASSED and the terrain verification intact), and `VulkanTextureRegistry` turns such a name into a Vulkan image on
