@@ -215,7 +215,21 @@ def main():
             shutil.copy2(library, target)
             cp.append(str(target))
             report["extraTestLibraries"].append({"file": target.name, "sha256": digest(target)})
-    report["testMods"] = [{"file": p.name, "sha256": digest(p)} for p in sorted((game / "mods").glob("*.jar"))]    # The runner's own arguments are a separate channel from the profile's, and only the union reaches the JVM.
+    report["testMods"] = [{"file": p.name, "sha256": digest(p)} for p in sorted((game / "mods").glob("*.jar"))]
+    # Reference the capabilities the renderer recorded rather than duplicating them (audit S24): the driver and limits
+    # belong to the run, and that file is where they are measured rather than restated.
+    capabilities = game / "logs" / "celtium-capabilities.json"
+    if capabilities.is_file():
+        try:
+            caps = json.loads(capabilities.read_text())
+            report["driver"] = {
+                "source": str(capabilities.relative_to(game)),
+                "deviceName": caps.get("deviceName") or caps.get("device", {}).get("deviceName"),
+                "driverVersion": caps.get("driverVersion") or caps.get("device", {}).get("driverVersion"),
+                "apiVersion": caps.get("apiVersion") or caps.get("device", {}).get("apiVersion"),
+            }
+        except (OSError, ValueError):
+            report["driver"] = {"source": str(capabilities.relative_to(game)), "error": "unreadable"}    # The runner's own arguments are a separate channel from the profile's, and only the union reaches the JVM.
     report["effectiveConfig"]["runnerJvmArgs"] = [str(a) for a in (args.jvm_arg or [])]
     report["effectiveConfig"]["jvmArgs"] = (list(report["effectiveConfig"].get("profileJvmArgs", []))
             + report["effectiveConfig"]["runnerJvmArgs"])
@@ -341,6 +355,25 @@ def main():
         outcome["validationClean"] = False
         if outcome["validationExitCode"] == 0:
             outcome["validationExitCode"] = 1
+    # The driver and limits the renderer recorded, referenced rather than duplicated (audit S24). This is read after the
+    # run, which is when the file exists - reading it when the lock is written finds nothing, which is what the first
+    # attempt did.
+    capabilities = game / "logs" / "celtium-capabilities.json"
+    if capabilities.is_file():
+        try:
+            caps = json.loads(capabilities.read_text())
+            devices = caps.get("vulkanDevices") or []
+            device = devices[0] if devices else {}
+            flat = {"lwjglVersion": caps.get("lwjglVersion"),
+                    "vulkanLoaderVersion": caps.get("vulkanLoaderVersion"),
+                    "vulkanDeviceCount": len(devices)}
+            for key in ("deviceName", "driverName", "driverInfo", "driverVersion", "apiVersion", "deviceType",
+                        "deviceId", "vendorId"):
+                if isinstance(device, dict) and device.get(key) is not None:
+                    flat[key] = device[key]
+            outcome["driver"] = {"source": str(capabilities.relative_to(game)), **flat}
+        except (OSError, ValueError) as error:
+            outcome["driver"] = {"source": str(capabilities.relative_to(game)), "error": str(error)}
     (game / "validation-process.json").write_text(json.dumps(outcome, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(outcome))
     return code if ended_by == "process-exit" else 124

@@ -472,8 +472,22 @@ glDrawsCancelled      = 556      556 batches had their GL draw cancelled rather 
 exit 0 | clean | messages 0 | fixture PASSED
 ```
 
-**Still open in S24:** the plan rows that claim more than has been verified, the shader-source/SPIR-V sync check, and the
-driver in the lock (which the capabilities file already records and which should be referenced rather than duplicated).
+**The driver is referenced, and two plan rows were wrong rather than optimistic.** The post-run report now points at the
+run's own `logs/celtium-capabilities.json` and carries what it finds there - `lwjglVersion 3.4.1-snapshot`,
+`vulkanLoaderVersion 1.4.363`, `vulkanDeviceCount 3`, `apiVersion 1.4.354` - so the driver is recorded by reference rather
+than restated. The first attempt read the file when the lock is written, which is before the run, and found nothing; the fix
+was to read it where it exists.
+
+Two rows of the plan's claim table were corrected, and in an unusual direction - they **understated** the renderer:
+- the mirror-versus-live row still said "view 2000.0 apart", which this project later established was
+  `setupOverlayRendering`'s `translate(0, 0, -2000)` being compared **across passes**. The scoped figure is **1.62**, and 1140
+  of 2262 comparisons had been cross-pass;
+- the terrain row said "both GPUs" without distinguishing revisions. It now reads **verified on AMD with the current
+  revision, verified on Intel at an earlier one**, with the outstanding Intel re-run named and the new real-path evidence
+  (`vulkanTerrainPasses=1620`, `glDrawsCancelled=564`) quoted.
+
+**Still open in S24:** the shader-source/SPIR-V sync check - which the build's compile step has largely answered from the
+other side, since a stale artefact can no longer survive a build - and the Intel re-run the corrected row names.
 
 ## Order of work
 

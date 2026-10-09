@@ -235,9 +235,9 @@ One table, no narrative: what exists, what was verified on hardware, and what is
 
 | Area | State | Evidence / caveat |
 |---|---|---|
-| Terrain on Vulkan (both GPUs) | **Verified** | Per-pass handoff; `nativeTerrainVerified True`; ~1600 passes per run; VUID 0 |
+| Terrain on Vulkan | **Verified on AMD RX 6400 with the current revision**; **verified on Intel UHD 630 at an earlier revision** | Per-pass handoff; `nativeTerrainVerified True` **and now real-path evidence**: `vulkanTerrainPasses=1635`, `glDrawsCancelled=556`; VUID 0. The Intel verification predates this session's changes and a re-run is outstanding |
 | Per-pass handoff, uniform pre-reservation, backend counters | **Verified** | Audit fixes P0/P1/P2 kept; handoff ~130 us measured |
-| GL state mirrored from `GlStateManager` (matrices, blend, depth, cull, alpha, texture, colour) | **Verified** capturing; **not faithful** for the world matrices | Mirror vs live measured: proj 2.0, view 2000.0 apart |
+| GL state mirrored from `GlStateManager` (matrices, blend, depth, cull, alpha, texture, colour) | **Verified** capturing | Mirror vs live measured **1.62** in the world pass, and that residual is the renderer's own. The earlier "view 2000.0 apart" **was `setupOverlayRendering`'s `translate(0, 0, -2000)` being compared across passes** - the correction is recorded in the history, and 1140 of 2262 comparisons had been cross-pass |
 | Immediate draw entry (`WorldVertexBufferUploader`) with `Accessor` and structural format ids | **Verified** capturing | ~10k batches offered per run, ~2.8k accepted, no refusals |
 | Immediate pipelines: `POSITION_COLOR`, `BLOCK`, `ITEM`, particle | **Implemented and pixel-identical to GL** | Verified on both GPUs (0.00 local difference) |
 | Immediate pipeline: `POSITION_TEX_COLOR` | **Implemented; excluded by default** | In this scene it is the final full-screen composite, not content; drawing it into the game framebuffer flattens the picture |

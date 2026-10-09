@@ -6357,3 +6357,24 @@ was only ever drawn by GL, and batches that were accepted but never drawn - both
 What remains of S24 is smaller and named: the plan rows that still claim more than has been verified, the shader-source/SPIR-V
 sync check, and the driver in the lock - which the capabilities file already records, so the right change there is a
 reference rather than a duplicate.
+
+---
+
+## Two plan rows understated the renderer, and the driver is recorded by reference
+
+Correcting the record is not always about removing over-claims. Two rows of the plan's claim table were wrong in the other
+direction.
+
+The mirror-versus-live row still carried "proj 2.0, view 2000.0 apart". This project later established what the 2000 was:
+`setupOverlayRendering`'s `translate(0, 0, -2000)`, compared **across passes** - and 1140 of 2262 comparisons had been
+cross-pass. The scoped figure is **1.62**. The row now says so, and names the correction rather than quietly improving.
+
+The terrain row said "both GPUs" with no distinction between revisions. Every measurement in this session was taken on AMD
+after the Intel runs, so the row now reads **verified on AMD with the current revision** and **verified on Intel at an earlier
+one**, names the outstanding Intel re-run, and quotes the real-path evidence the acceptance now requires
+(`vulkanTerrainPasses=1620`, `glDrawsCancelled=564`).
+
+The driver is now recorded **by reference**: the post-run report points at the run's own `logs/celtium-capabilities.json` and
+carries `lwjglVersion 3.4.1-snapshot`, `vulkanLoaderVersion 1.4.363`, `vulkanDeviceCount 3` and `apiVersion 1.4.354` from it.
+The first attempt put this in the lock, which is written **before** the run - so it found nothing and reported an empty
+driver, which its own output showed immediately. Reading it where it exists is the whole fix.
