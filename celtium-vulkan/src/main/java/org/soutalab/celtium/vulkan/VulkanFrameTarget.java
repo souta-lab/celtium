@@ -311,6 +311,20 @@ public final class VulkanFrameTarget {
      *                               bound framebuffer does not match the verified contract (the message names the
      *                               difference)
      */
+    /** Preflight the CURRENT bound Minecraft FBO without opening/signalling an interop handoff. */
+    public String currentFramebufferViolation() {
+        checkAlive();
+        try (GlState state = new GlState()) {
+            int fbo = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+            if (fbo == 0) return "default framebuffer";
+            int texture = glGetNamedFramebufferAttachmentParameteri(fbo, GL_COLOR_ATTACHMENT0,
+                    GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+            int depth = glGetNamedFramebufferAttachmentParameteri(fbo, GL_DEPTH_ATTACHMENT,
+                    GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+            return contractViolation(fbo, texture, depth, true);
+        }
+    }
+
     public void beginFrame() {
         beginFrame(false);
     }

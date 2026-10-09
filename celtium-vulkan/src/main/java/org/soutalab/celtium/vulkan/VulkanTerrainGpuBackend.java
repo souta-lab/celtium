@@ -122,6 +122,39 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long readbackMemory;
     private long readbackMapped;
     private boolean submissionPending;
+    private VulkanCommandBufferState commandState;
+    private long activeImmediateTarget;
+    private final java.util.List<Object[]> recordedImmediateGroups = new java.util.ArrayList<>();
+    private long immediateRecordedBatches, immediateSubmittedBatches, immediateCompletedBatches;
+    private long offTargetRecordedBatches, offTargetCompletedBatches;
+    private long invalidImmediateRecords;
+    private long immediateRetryCount;
+    private int failImmediateSubmits;
+
+    /** Restricted to the small validation scene, so retry is exercised after a real batch was accepted. */
+    public void injectImmediateSubmitFailure(int count) {
+        if (!Boolean.getBoolean("celtium.validation.commandBufferTargets") || count < 0 || count > 1)
+            throw new IllegalArgumentException("submit failure injection requires the target acceptance fixture");
+        this.failImmediateSubmits = count;
+    }
+    private int currentGroupBatches;
+    private int[] currentGroupViewportValues;
+    private PreparedImmediate currentPreparedImmediate;
+
+    private static final class PreparedImmediate {
+        final Object pipeline;
+        final long descriptor;
+        PreparedImmediate(Object pipeline, long descriptor) { this.pipeline = pipeline; this.descriptor = descriptor; }
+    }
+
+    /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
+    public long[] immediateExecutionCounters() {
+        long pending = this.currentGroupUsed ? this.currentGroupBatches : 0;
+        for (Object[] group : this.immediateGroups) pending += ((Integer) group[12]).intValue();
+        return new long[] {this.immediateTaken, this.immediateRecordedBatches, this.immediateSubmittedBatches,
+                this.immediateCompletedBatches, pending, this.invalidImmediateRecords, this.acceptedForOtherTargets,
+                this.offTargetRecordedBatches, this.offTargetCompletedBatches, this.immediateRetryCount};
+    }
 
     /**
      * Whether the shared images are currently handed to Vulkan. The round trip is per *frame*, not per pass: the
@@ -337,6 +370,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("render failed: " + describe(error));
         }
 
+        if (this.gpuStalled) return;
         if (!submitted) {
             // endFrame() makes GL wait on the Vulkan->GL semaphore, and GL has no timeout. A submission must
             // therefore consume the GL->Vulkan semaphore and signal the Vulkan->GL one even when nothing was
@@ -344,7 +378,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // the game expects. Only the first attempt is repeated - a failing recovery is reported and endFrame()
             // still runs so the frame cannot be left open.
             try {
-                waitForIdle();
+                if (!waitForIdle()) throw new IllegalStateException("terrain recovery fence failed");
+                check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
+                        "vkResetCommandBuffer(terrain recovery)");
+                this.commandState.reset();
+                this.immediateGroups.addAll(0, this.recordedImmediateGroups);
+                this.recordedImmediateGroups.clear();
                 beginCommands();
                 this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
@@ -453,7 +492,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long mainTargetIdentity = Long.MIN_VALUE;
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
-    private final java.util.Map<Long, VulkanOffscreenTarget> offTargetTargets = new java.util.HashMap<Long, VulkanOffscreenTarget>();
     private int offTargetTargetsCreated;
     private int offTargetReadyToTake;
     private int offTargetDrawn;
@@ -480,11 +518,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
     /** Set while an off-target pass records, so the shared draw path binds that pass's pipeline. */
-    private VulkanImmediatePipeline offscreenPipelineOverride;
     private int offTargetCopiedBack;
     /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
-    private final java.util.Map<Long, VulkanImmediatePipeline> offTargetPipelineCache =
-            new java.util.HashMap<Long, VulkanImmediatePipeline>();
+
     private final java.util.Map<Long, java.util.concurrent.atomic.AtomicInteger> offTargetBatchesByTarget =
             new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
     private int offTargetRefusals;
@@ -755,8 +791,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Flushes refused because no command buffer was recording (A11 exposes this path). */
     private int drawsWithoutCommandBuffer;
     private int flushWithoutBufferStacks;
-    /** Set while an off-target batch is inside the offer path, so a refusal can be attributed to it afterwards. */
-    private boolean offTargetBatchInFlight;
     /** Refusal reasons seen for batches offered while a non-main framebuffer was bound (audit A10). */
     private final java.util.Map<String, Integer> offTargetRefusalsByReason =
             new java.util.LinkedHashMap<String, Integer>();
@@ -817,6 +851,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * makes. The id and the size are asked of GL because the method that performs the write takes neither.
      */
     public void announceDynamicTexture(int[] pixels) {
+        if (!this.immediateWindowBusy) flushPendingBeforeGlDraw();
         if (pixels == null) {
             return;
         }
@@ -847,6 +882,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Called by the upload hook with the image the game is uploading, so the mirror need not read GL back. */
     public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
+        if (!this.immediateWindowBusy) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
@@ -861,6 +897,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * renderer where a GL query buys something a hook cannot supply.
      */
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
+        if (!this.immediateWindowBusy) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
@@ -1218,13 +1255,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void flushBeforeClear(int mask) {
-        if (this.immediateGroups.isEmpty()) {
-            return;
-        }
-        // The clear is about to wipe the target, so what this renderer has already accepted is drawn first.
-        this.flushPendingBeforeGlDraw();
+        if (this.immediateWindowBusy) return; // bridge GL state restore must not recursively flush
+        flushPendingBeforeGlDraw();
         this.clearOrderFlushes++;
     }
+
 
     public void blendFunc(int sourceFactor, int destinationFactor) {
         // Only the factors Vulkan and OpenGL actually define: one run showed every particle group capturing
@@ -1250,6 +1285,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
+        if (!this.immediateWindowBusy && targetIdentity != this.currentRenderTarget) {
+            // Framebuffer.bind HEAD: the OLD framebuffer is still bound, so complete its accepted draws before switching.
+            flushPendingBeforeGlDraw();
+        }
         if (targetIdentity != this.currentRenderTarget && this.currentImmediateMesh != null) {
             // A pass change is an ordering boundary: whatever is pending belongs to the pass that is ending, so it is closed
             // here and drawn before the new pass's work rather than merged with it.
@@ -1267,6 +1306,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void viewport(int x, int y, int width, int height) {
+        if (!this.immediateWindowBusy && this.currentGroupUsed) {
+            flushPendingBeforeGlDraw(); // called at GlStateManager.viewport HEAD, before GL changes the old viewport
+        }
         // Packed so the comparison in the group key is one test rather than four.
         this.currentViewportKey = ((long) x << 42) ^ ((long) y << 21) ^ ((long) width << 10) ^ (long) height;
     }
@@ -1427,69 +1469,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         if (!this.currentRenderTargetIsMain) {
-            // Every batch offered for another framebuffer, not only the first for that target: the flag is what attributes a
-            // refusal to it, and setting it inside the once-per-target diagnostic block covered one batch in three hundred.
-            this.offTargetBatchInFlight = true;
-            // The hybrid draws into the shared image, which stands in for the main framebuffer only. A batch issued for
-            // another render target cannot be honoured, so it is refused here, before acceptance, and GL draws it - which
-            // is the behaviour the audit's S10 acceptance asks for instead of viewing it in the wrong place.
-            // Taken. The structural obstacle is answered by recording this content in its own pass before the frame's pass
-            // begins, which is the only place that can be done without interrupting one, and copying the result back into the
-            // game's texture through the path the self-test proves on every run.
-            // Offered, not accepted: this runs before the target is built and before the batch reaches the acceptance point, so
-            // anything that fails in between sends the batch to GL with this counter already incremented. The audit is right
-            // that it cannot be cited as "the framebuffer is drawn by Vulkan" - the acceptance counter below is the one that can.
             this.offTargetOffered++;
-            this.offTargetReadyToTake++;
-            // What the per-target work would have to build: which target, how much content it receives, and how big it is.
-            // The viewport is read here because at this moment it is the target's own, and the count says whether a target
-            // is worth an image at all.
-            if (!this.offTargetTargets.containsKey(this.currentRenderTarget)) {
-                int[] viewport = new int[4];
-                org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
-                if (viewport[2] > 0 && viewport[3] > 0) {
-                    try {
-                        VulkanOffscreenTarget target =
-                                VulkanOffscreenTarget.create(this.context, viewport[2], viewport[3]);
-                        // A pipeline is bound to its render pass, and this pass is not the main one, so the immediate format-1
-                        // pipeline has to be built for it. Created here, with the target, so the pipeline - the part of the
-                        // drawing half that has caught this project out before - is proved clean before any batch is taken.
-                        // Vulkan's blend factors, not GL's: 771 is GL_ONE_MINUS_SRC_ALPHA, and validation rejected it here -
-                        // which is exactly what creating the pipeline before taking any batch is for.
-                        this.offTargetPipelineCache.put(this.currentRenderTarget,
-                                VulkanImmediatePipeline.create(this.context, target.renderPass(), true,
-                                        org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
-                                        org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false));
-                        // Resolved while the game's framebuffer is still bound: that is when its colour attachment can be
-                        // asked for, and the copy-back has nowhere to write without it.
-                        target.resolveGlTexture();
-                        this.offTargetTargets.put(this.currentRenderTarget, target);
-                        this.offTargetTargetsCreated++;
-                    } catch (RuntimeException | LinkageError error) {
-                        record("off-target target could not be created: " + describe(error));
-                    }
-                }
-            }
-            java.util.concurrent.atomic.AtomicInteger seen = this.offTargetBatchesByTarget.get(this.currentRenderTarget);
-            if (seen == null) {
-                seen = new java.util.concurrent.atomic.AtomicInteger();
-                this.offTargetBatchesByTarget.put(this.currentRenderTarget, seen);
-                int[] viewport = new int[4];
-                org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
-                System.out.println("[Celtium] CELTIUM_OFFTARGET target=" + this.currentRenderTarget + " viewport="
-                        + viewport[2] + "x" + viewport[3] + " firstBatchFormat=" + formatId);
-                if (this.offTargetOfferDiagnostics < 4) {
-                    this.offTargetOfferDiagnostics++;
-                    System.out.println("[Celtium] CELTIUM_OFFTARGET_IDS renderTarget=" + this.currentRenderTarget
-                            + " groupTarget=" + this.currentGroupTarget + " mainTarget=" + this.mainTargetIdentity
-                            + " isMain=" + this.currentRenderTargetIsMain
-                            + " groupOpen=" + (this.currentImmediateMesh != null)
-                            + " pendingGroups=" + this.immediateGroups.size());
-                }
-            }
-            seen.incrementAndGet();
-            this.flushPendingBeforeGlDraw();
-            return false;
+            this.offTargetBatchesByTarget.computeIfAbsent(this.currentRenderTarget,
+                    ignored -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
         }
         this.immediateBatchesOffered++;
         if (formatId >= 0 && formatId < this.immediateOfferedByFormat.length) {
@@ -1499,10 +1481,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             boolean taken = submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress,
                     vertexCount, drawMode);
-            if (!taken && this.offTargetBatchInFlight) {
+            if (!taken && !this.currentRenderTargetIsMain) {
                 // Refused in this very call: attribute the reason now, because the offers arrive in one burst at the end of a
                 // run and there is no later call to sample from.
-                this.offTargetBatchInFlight = false;
                 this.offTargetRefusalsByReason.merge(this.immediateLastRefusal == null ? "unset" : this.immediateLastRefusal,
                         Integer.valueOf(1), Integer::sum);
             }
@@ -1629,22 +1610,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             return false;
         }
-        if (IMMEDIATE_WINDOWS_PER_FRAME > 0 && this.immediateWindowsThisFrame >= IMMEDIATE_WINDOWS_PER_FRAME
-                && this.immediateGroups.isEmpty() && !this.windowOpen) {
-            // The frame's window budget is spent and no batch of this frame is being held. Refusing here hands the batch
-            // to GL **in this frame**, which is what the audit's D asks for: accepting it would cancel GL's draw and then
-            // defer it to a later frame. Ordering is preserved because nothing of this frame is pending, and the cost is
-            // stated rather than hidden - this geometry is GL-drawn and the counter below says how often.
-            this.immediateRefusedWindowBudget++;
-            this.immediateLastRefusal = "the frame's window budget is spent, so this batch stays with GL";
-            if (this.immediateRefusedWindowBudget == 1) {
-                // Reported at the first refusal rather than at a count a run may never reach: the previous attempt wired
-                // these counters to a snapshot that fires at exactly 500 accepted batches, and a low-budget run refuses
-                // batches before they are counted, so the line never printed and the path looked unexercised.
-                record("first batch left to GL because the frame's window budget was spent: windowsThisFrame="
-                        + this.immediateWindowsThisFrame + " limit=" + IMMEDIATE_WINDOWS_PER_FRAME
-                        + " deferredNextFrame=" + this.immediateDeferredNextFrame);
-            }
+        if (this.immediateWindowBusy) {
+            this.immediateLastRefusal = "reentrant upload during bridge handoff";
+            return false;
+        }
+        if (!supportedImmediateTarget()) {
+            this.immediateLastRefusal = "target is outside the RGBA8/D24/full-viewport bridge contract";
+            flushPendingBeforeGlDraw();
             return false;
         }
         if (!celtium$formatAccepted(formatId)) {
@@ -1725,6 +1697,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             int[] state = celtium$captureState();
             long stateKey = celtium$stateKey(formatId, state);
+            PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
+            if (prepared == null) {
+                this.immediateLastRefusal = "pipeline or descriptor preflight failed";
+                this.refusedBeforeAppend++;
+                flushPendingBeforeGlDraw();
+                return false;
+            }
             // The pass identity joins the key here: a batch from another render target or viewport is not part of this
             // group, which is what stops two passes merging into one draw (audit S10).
             boolean samePass = this.currentGroupTarget == this.currentRenderTarget
@@ -1735,6 +1714,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
                     || this.currentGroupStateKey != stateKey || !samePass
+                    || this.currentPreparedImmediate == null || this.currentPreparedImmediate.pipeline != prepared.pipeline
+                    || this.currentPreparedImmediate.descriptor != prepared.descriptor
                     || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
                     || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
@@ -1748,6 +1729,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupTarget = this.currentRenderTarget;
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
+                this.currentGroupBatches = 0;
+                this.currentGroupViewportValues = currentViewport();
+                this.currentPreparedImmediate = prepared;
                 System.arraycopy(this.glProjection, 0, this.currentGroupProjection, 0, 16);
                 System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
                 this.currentGroupFormatId = formatId;
@@ -1838,10 +1822,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return false;
             }
             this.currentGroupUsed = true;
+            this.currentGroupBatches++;
             this.pendingImmediateIndices += indices.length;
 
             this.immediateTaken++;
-            this.offTargetBatchInFlight = false;
 
             if (!this.currentRenderTargetIsMain) {
                 // Offered for another framebuffer and accepted: the number that says whether these batches are taken at all,
@@ -1856,7 +1840,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.frameAccepted++;
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
-                flushImmediateWindow();
+                try { flushImmediateWindow(); }
+                catch (RuntimeException | LinkageError error) {
+                    this.gpuStalled = true;
+                    record("accepted geometry retained after window failure: " + describe(error));
+                }
             }
             if (this.immediateBatchesOffered % 500 == 0) {
                 StringBuilder histogram = new StringBuilder("immediate formats offered/accepted:");
@@ -2177,126 +2165,168 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void flushPendingBeforeGlDraw() {
-        if (this.immediateGroups.isEmpty()) {
-            return;
-        }
+        if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
-        drawPendingImmediate();
-        this.orderPreservingFlushes++;
+        if (this.immediateGroups.isEmpty()) return;
+        try {
+            if (this.commandState != null && this.commandState.inRenderPass()) {
+                drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
+            } else {
+                flushImmediateWindow();
+            }
+            this.orderPreservingFlushes++;
+        } catch (RuntimeException | LinkageError error) {
+            this.gpuStalled = true;
+            throw error; // stop the ordering operation, retain accepted geometry/resources; never silent fallback
+        }
     }
 
+    /** Synchronous same-target LOAD window; no draw command is emitted outside this backend's pass. */
     private void flushImmediateWindow() {
-        if (this.gpuStalled) {
-            // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
-            // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
-            // still referenced it, both from paths that assumed the frame had been recorded.
-            return;
-        }
-        if (this.gpuStalled) {
-            return;
-        }
-        if (this.windowOpen || this.immediateWindowBusy) {
-            return;
-        }
-        // The limit used to be one, because a second window in the same frame measured as a black frame. That
-        // measurement was taken before the missing VkSubmitInfo.waitSemaphoreCount was found, so the black frame had a
-        // sufficient explanation in handoffs that were never waited on; the audit asks for the hypothesis to be
-        // re-evaluated after that fix, and this switch is how.
-        if (this.immediateWindowsThisFrame >= IMMEDIATE_WINDOWS_PER_FRAME) {
-            // One window per frame: a second one in the same frame is what measured as blackening the frame, and the
-            // remainder is drawn in the next frame's window the way it was before.
-            this.immediateDeferredNextFrame++;
-            return;
-        }
+        if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
-        if (this.immediateGroups.isEmpty()) {
-            return;
-        }
-        int previousDrawFramebuffer;
-        try {
-            previousDrawFramebuffer =
-                    org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
-        } catch (RuntimeException | LinkageError error) {
-            this.immediateFlushNoPipeline++;
-            return;
-        }
-        if (previousDrawFramebuffer == 0) {
-            this.immediateFlushDeferredDefaultFbo++;
-            return;
-        }
+        if (this.immediateGroups.isEmpty()) return;
+        if (this.gpuStalled) throw new IllegalStateException("GPU stalled with accepted geometry pending");
+        if (this.commandState.recording()) throw new IllegalStateException("nested immediate command recording");
+        if (!supportedImmediateTarget()) throw new IllegalStateException("accepted target disappeared before flush");
         VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
-        if (terrain == null || !ensureFrameTarget()) {
-            this.immediateFlushNoPipeline++;
-            return;
-        }
+        if (terrain == null) throw new IllegalStateException("accepted geometry has no render pass");
+        if (countGroupsForTarget(this.currentRenderTarget) == 0) return; // others remain owned in the queue
+        boolean offTarget = !this.currentRenderTargetIsMain;
+        long identity = this.currentRenderTarget;
         this.immediateWindowBusy = true;
-        boolean opened = false;
-        float before = -1.0f;
-        String stateBefore = null;
         try {
-            if (DIAGNOSTIC_WINDOW_SAMPLES && this.immediateContentSamples < 4) {
-                // Diagnostic only. Both of these are glReadPixels plus a pile of glGet calls, and they used to run on
-                // every window of every frame - the audit's item G - which puts a synchronous stall in the shipped path
-                // to collect numbers nobody reads unless a frame is being diagnosed.
-                before = sampleBoundFramebufferMean();
-                stateBefore = snapshotGlState();
-            }
-            this.frameSubmitReachedQueue = false;
-            this.frameTarget.beginFrame();
-            this.windowOpen = true;
-            opened = true;
-            beginCommands();
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                // The frame's pass has not begun yet here, so this is the one place an off-target pass can be recorded
-                // without interrupting anything.
-                for (Long identity : new java.util.ArrayList<Long>(this.offTargetTargets.keySet())) {
-                    recordOffscreenPass(stack, identity.longValue());
-                }
-                recordImmediateOnlyPass(stack, terrain);
-            }
-            submitCommands();
-            this.passSubmissions++;
-            this.immediateWindows++;
-            this.immediateWindowsThisFrame++;
-        } catch (RuntimeException | LinkageError error) {
-            this.passErrors++;
-            record("immediate window failed: " + describeWithStack(error));
-            this.immediateGroupsDiscarded += this.immediateGroups.size();
-            this.otherTargetGroupsDiscarded += pendingGroupsForOtherTargets();
-            discardImmediateGroups();
-        } finally {
-            if (opened) {
-                this.windowOpen = false;
+            // Retry a pre-submit failure once. Never retry after vkQueueSubmit success/a fence timeout.
+            for (int attempt = 0; attempt < 2; attempt++) {
+                boolean opened = false;
                 try {
-                    if (this.frameSubmitReachedQueue) {
-                        this.frameTarget.endFrame();
-                    } else {
-                        this.passErrors++;
-                        record("immediate window submitted nothing, so the frame is not ended");
+                    this.frameSubmitReachedQueue = false;
+                    this.frameTarget.beginFrame();
+                    opened = true;
+                    this.windowOpen = true;
+                    beginCommands();
+                    try (MemoryStack stack = MemoryStack.stackPush()) {
+                        this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                        recordImmediateOnlyPass(stack, terrain);
+                        this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                     }
+                    submitCommands();
+                    if (!waitForIdle()) throw new IllegalStateException("immediate submission did not complete");
+                    this.frameTarget.endFrame();
+                    opened = false;
+                    this.passSubmissions++;
+                    this.immediateWindows++;
+                    this.immediateWindowsThisFrame++;
+                    if (offTarget) {
+                        this.offTargetDrawnByTarget.merge(identity, 1, Integer::sum);
+                        this.offTargetCopiedBack++; // completed bridge return, not an empty offscreen copy
+                        if (this.textureRegistry != null) {
+                            int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+                            int source = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
+                                    org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0,
+                                    org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+                            this.textureRegistry.invalidateRenderedTexture(source);
+                        }
+                    }
+                    return;
                 } catch (RuntimeException | LinkageError error) {
-                    record("immediate window close failed: " + describeWithStack(error));
-                }
-                float after = -1.0f;
-                if (DIAGNOSTIC_WINDOW_SAMPLES && this.immediateContentSamples < 4) {
-                    after = sampleBoundFramebufferMean();
-                    this.immediateContentSamples++;
-                    String stateAfter = snapshotGlState();
-                    record("immediate window content sample: mean before=" + before + " after=" + after
-                            + (stateBefore != null && stateBefore.equals(stateAfter)
-                                    ? " GL state restored unchanged"
-                                    : " GL state changed: before[" + stateBefore + "] after[" + stateAfter + "]"));
-                }
+                    if (this.frameSubmitReachedQueue || this.submissionPending || this.gpuStalled) {
+                        this.gpuStalled = true; // no reset/retire/GL fallback while the GPU may own these resources
+                        throw error;
+                    }
+                    // No queue submission: reset the failed attempt and restore recorded groups before releasing GL's semaphore.
+                    check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
+                            "vkResetCommandBuffer(abort)");
+                    this.commandState.reset();
+                    for (Object[] group : this.recordedImmediateGroups) {
+                        int batches = ((Integer) group[12]).intValue();
+                        this.pendingImmediateIndices += ((VulkanDynamicMesh) group[0]).indexCount();
+                        this.immediateRecordedBatches -= batches;
+                        if (((Long) group[7]).longValue() != this.mainTargetIdentity) this.offTargetRecordedBatches -= batches;
+                    }
+                    this.immediateGroups.addAll(0, this.recordedImmediateGroups);
+                    this.recordedImmediateGroups.clear();
+                    if (opened) {
+                        beginCommands();
+                        this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                        this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                        submitCommands();
+                        if (!waitForIdle()) throw new IllegalStateException("bridge recovery did not complete", error);
+                        this.frameTarget.endFrame();
+                    }
+                    if (attempt == 1) {
+                        this.gpuStalled = true;
+                        throw new IllegalStateException("accepted geometry retained; renderer must be rebuilt", error);
+                    }
+                    this.immediateRetryCount++;
+                    record("retrying unsubmitted immediate window: " + describe(error));
+                } finally { this.windowOpen = false; }
             }
-            try {
-                org.lwjgl.opengl.GL30C.glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER,
-                        previousDrawFramebuffer);
-            } catch (RuntimeException | LinkageError error) {
-                record("immediate window could not restore the framebuffer binding: " + error);
-            }
-            this.immediateWindowBusy = false;
-        }
+        } finally { this.immediateWindowBusy = false; }
     }
+
+    /** Validate before acceptance; final default-FBO composite remains GL-owned, never inferred from format id. */
+    private boolean supportedImmediateTarget() {
+        int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        if (fbo == 0) return false;
+        int[] viewport = currentViewport();
+        if (viewport[0] != 0 || viewport[1] != 0 || !ensureFrameTarget()) return false;
+        if (viewport[2] != this.targetWidth || viewport[3] != this.targetHeight) return false;
+        return this.frameTarget.currentFramebufferViolation() == null;
+    }
+
+    private PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
+        VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        if (terrain == null) return null;
+        if (this.textureRegistry == null) this.textureRegistry = new VulkanTextureRegistry(this.context);
+        VulkanGlTexture texture = this.textureRegistry.get(textureId);
+        if (format != 1 && texture == null) return null;
+        long pass = terrain.renderPass();
+        Object pipeline;
+        long descriptor = 0;
+        if (format == 5) {
+            long particleKey = key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            VulkanImmediateParticlePipeline value = this.particlePipelineCache.computeIfAbsent(particleKey,
+                    k -> VulkanImmediateParticlePipeline.create(this.context, pass, true,
+                            VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false));
+            descriptor = value.descriptorSetFor(texture, this.lightmapTexture); pipeline = value;
+        } else if (format == 4) {
+            VulkanImmediateItemPipeline value = this.itemPipelineCache.computeIfAbsent(key,
+                    k -> VulkanImmediateItemPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
+                            state[3] != 0, state[4] != 0, state[5] != 0));
+            descriptor = value.descriptorSetFor(texture); pipeline = value;
+        } else if (format == 3) {
+            VulkanImmediateBlockPipeline value = this.blockPipelineCache.computeIfAbsent(key,
+                    k -> VulkanImmediateBlockPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
+                            state[3] != 0, state[4] != 0, state[5] != 0));
+            descriptor = value.descriptorSetFor(texture, this.lightmapTexture); pipeline = value;
+        } else if (format >= 2) {
+            java.util.Map<Long, VulkanImmediateTexturePipeline> cache = format == 9 ? this.positionTexNormalPipelineCache
+                    : format == 8 ? this.positionTexColorNormalPipelineCache : format == 7 ? this.positionOnlyPipelineCache
+                    : format == 6 ? this.positionTexPipelineCache : this.texturedPipelineCache;
+            VulkanImmediateTexturePipeline value = cache.get(key);
+            if (value == null) {
+                value = format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        : format == 7 ? VulkanImmediateTexturePipeline.createForPosition(this.context, pass,
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        : format == 6 ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, pass,
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        : VulkanImmediateTexturePipeline.create(this.context, pass,
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                cache.put(key, value);
+            }
+            descriptor = value.descriptorSetFor(texture); pipeline = value;
+        } else {
+            pipeline = this.immediatePipelineCache.computeIfAbsent(key,
+                    k -> VulkanImmediatePipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
+                            state[3] != 0, state[4] != 0, state[5] != 0));
+        }
+        return format == 1 || descriptor != 0 ? new PreparedImmediate(pipeline, descriptor) : null;
+    }
+
 
     /**
      * {@return the GL state a window could leave behind}, as a short string for comparison.
@@ -2450,59 +2480,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return summary.toString().trim();
     }
 
-    private boolean hasGroupsForTarget(long targetIdentity) {
-        for (Object[] group : this.immediateGroups) {
-            if (((Long) group[7]).longValue() == targetIdentity
-                    && !((VulkanDynamicMesh) group[0]).isEmpty()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void recordOffscreenPass(MemoryStack stack, long targetIdentity) {
-        VulkanOffscreenTarget target = this.offTargetTargets.get(Long.valueOf(targetIdentity));
-        VulkanImmediatePipeline pipeline = this.offTargetPipelineCache.get(Long.valueOf(targetIdentity));
-        if (target == null || pipeline == null || this.gpuStalled) {
-            return;
-        }
-        int matching = countGroupsForTarget(targetIdentity);
-        this.offTargetPassGroupsByTarget.merge(Long.valueOf(targetIdentity), Integer.valueOf(matching),
-                Integer::sum);
-        if (matching == 0) {
-            // Nothing to draw for this target. Beginning the pass would clear it and the copy-back would then write that empty
-            // clear into the game's own GL texture - which is what made the copy-back counter look like proof of drawing when
-            // it was counting empty passes (audit A32).
-            this.offTargetPassesSkippedEmpty++;
-            return;
-        }
-        int drawnBefore = this.immediateGroupsDrawn;
-        target.begin(this.commandBuffer, 0.0f, 0.0f, 0.0f, 1.0f);
-        org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
-        viewport.get(0).x(0.0f).y(0.0f).width(target.width()).height(target.height()).minDepth(0.0f).maxDepth(1.0f);
-        vkCmdSetViewport(this.commandBuffer, 0, viewport);
-        org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-        scissor.get(0).offset().set(0, 0);
-        scissor.get(0).extent().set(target.width(), target.height());
-        vkCmdSetScissor(this.commandBuffer, 0, scissor);
-        this.offscreenPipelineOverride = pipeline;
-        try {
-            this.otherTargetGroupsFlushedByWindow += pendingGroupsForOtherTargets();
-            drawPendingImmediate(Long.valueOf(targetIdentity));
-        } finally {
-            this.offscreenPipelineOverride = null;
-        }
-        target.end(this.commandBuffer);
-        if (this.immediateGroupsDrawn > drawnBefore && target.glTextureId() != 0) {
-            // Only content that was actually drawn is copied back, and only that counts: the counter means "a target with
-            // geometry was written into the game's texture", not "a copy was recorded" (audit A32).
-            target.copyBackToGlTexture(this.commandBuffer, target.glTextureId());
-            this.offTargetCopiedBack++;
-            this.offTargetDrawnByTarget.merge(Long.valueOf(targetIdentity), Integer.valueOf(1), Integer::sum);
-        }
-    }
-
-
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
         this.immediateOnlyPasses++;
         if (this.gpuStalled) {
@@ -2520,9 +2497,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         area.get(0).extent().set(this.targetWidth, this.targetHeight);
         begin.renderArea(area.get(0));
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        this.activeImmediateTarget = this.currentRenderTarget;
+        this.commandState.beginPass(this.activeImmediateTarget);
         setViewportAndScissor(stack);
-        drawPendingImmediate();
+        if (!this.currentRenderTargetIsMain) {
+            this.offTargetPassGroupsByTarget.merge(this.currentRenderTarget, countGroupsForTarget(this.currentRenderTarget),
+                    Integer::sum);
+        }
+        drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         vkCmdEndRenderPass(this.commandBuffer);
+        this.commandState.endPass();
     }
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
@@ -2546,7 +2530,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
                     Long.valueOf(this.currentGroupStateKey), this.currentGroupState,
                     Long.valueOf(this.currentGroupTarget), this.currentGroupColor,
-                    Integer.valueOf(this.currentGroupBlendSrc), Integer.valueOf(this.currentGroupBlendDst)});
+                    Integer.valueOf(this.currentGroupBlendSrc), Integer.valueOf(this.currentGroupBlendDst),
+                    this.currentPreparedImmediate, Integer.valueOf(this.currentGroupBatches), this.currentGroupViewportValues});
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -2555,11 +2540,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void discardImmediateGroups() {
+        if (!waitForIdle()) return;
         releaseRetiredImmediateGroups();
         for (Object[] group : this.immediateGroups) {
             this.retiredImmediateGroups.add(group);
         }
         this.immediateGroups.clear();
+        this.pendingImmediateIndices = 0;
         if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
             this.currentImmediateMesh = null;
@@ -2589,6 +2576,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
                 + ",enqueuedForOtherTargets=" + this.groupsEnqueuedForOtherTargets
                 + ",acceptedForOtherTargets=" + this.acceptedForOtherTargets + "]"
+                + " immediateRecordedBatches=" + this.immediateRecordedBatches
+                + " immediateSubmittedBatches=" + this.immediateSubmittedBatches
+                + " immediateCompletedBatches=" + this.immediateCompletedBatches
+                + " immediateRetries=" + this.immediateRetryCount
+                + " invalidImmediateRecords=" + this.invalidImmediateRecords
+                + " backendCommandBuffer=" + Long.toHexString(this.commandBuffer.address())
+                + " backendCommandState=" + this.commandState.state()
                 + " drawsWithoutCommandBuffer=" + this.drawsWithoutCommandBuffer
                 + " offTargetRefusals=" + (this.offTargetRefusalsByReason.isEmpty()
                         ? "none" : this.offTargetRefusalsByReason.toString())
@@ -2904,18 +2898,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("teardown: held groups could not be released: " + describe(error));
         }
         int pendingCopies = 0;
-        for (VulkanOffscreenTarget target : this.offTargetTargets.values()) {
-            if (target.copyBackPending()) {
-                pendingCopies++;
-            }
-            released += releaseDirect(target::delete);
-        }
-        // The drawn/copied difference is expected to be exactly this: copies recorded in the last frames that the final fence
-        // wait never saw. Reported rather than assumed.
-        System.out.println("[Celtium] CELTIUM_OFFTARGET_PENDING pendingCopies=" + pendingCopies
-                + " drawn=" + this.offTargetDrawn + " copiedBack=" + this.offTargetCopiedBack
-                + " difference=" + (this.offTargetDrawn - this.offTargetCopiedBack));
-        this.offTargetTargets.clear();
+
         released += releaseImmediateMesh(this.currentImmediateMesh);
         this.currentImmediateMesh = null;
         for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
@@ -3240,6 +3223,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     timestampSlot * 2);
         }
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+        this.activeImmediateTarget = this.currentRenderTarget;
+        this.commandState.beginPass(this.activeImmediateTarget);
 
         setViewportAndScissor(stack);
         pipeline.bindPipeline(this.commandBuffer);
@@ -3332,7 +3317,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         if (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty()) {
-            drawPendingImmediate();
+            drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         }
 
         if (this.uiTestEnabled && pass.isSorted()) {
@@ -3343,6 +3328,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         vkCmdEndRenderPass(this.commandBuffer);
+        this.commandState.endPass();
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
                     (timestampSlot * 2) + 1);
@@ -3641,8 +3627,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private boolean ensureFrameTarget() {
-        int width = currentDrawableWidth();
-        int height = currentDrawableHeight();
+        int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        if (fbo == 0) return false;
+        int type = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
+                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
+        if (type != org.lwjgl.opengl.GL11.GL_TEXTURE) return false;
+        int texture = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
+                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+        int width = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+        int height = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
         if (width <= 0 || height <= 0) {
             record("drawable size unavailable");
             return false;
@@ -3785,6 +3778,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             org.lwjgl.PointerBuffer buffers = stack.mallocPointer(1);
             check(vkAllocateCommandBuffers(this.context.device(), allocate, buffers), "vkAllocateCommandBuffers");
             this.commandBuffer = new VkCommandBuffer(buffers.get(0), this.context.device());
+            this.commandState = new VulkanCommandBufferState(this.commandBuffer.address());
 
             VkFenceCreateInfo fenceInfo = VkFenceCreateInfo.calloc(stack).sType$Default();
             check(vkCreateFence(this.context.device(), fenceInfo, null, handle), "vkCreateFence");
@@ -3854,6 +3848,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void beginCommands() {
+        if (this.commandState.recording()) throw new IllegalStateException("nested begin on backend command buffer");
         // The frame uses one command buffer, so the previous submission has to finish before it is reset: resetting
         // or re-recording a pending buffer is invalid and, on some drivers, makes the GPU execute a half-rewritten
         // command stream - which shows up as the wrong vertex data reaching the shader.
@@ -3867,23 +3862,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.gpuStalled = true;
                 this.stalledStops++;
                 record("gpu stalled: the previous submission did not complete; drawing is refused from here");
-                return;
+                throw new IllegalStateException("pending backend command buffer did not complete");
             }
             this.submissionPending = false;
             // The device is genuinely idle here - the wait above succeeded - so this is the one place where retired
             // textures can be destroyed without racing a command buffer that still names them (audit S12).
             // The device is idle, so any off-target copy recorded for the previous frame has certainly completed: this is
             // where its pixels go into the game's texture.
-            for (VulkanOffscreenTarget target : this.offTargetTargets.values()) {
-                if (target.copyBackPending()) {
-                    try {
-                        target.uploadCopyBack();
-                        this.offTargetCopiedBack++;
-                    } catch (RuntimeException | LinkageError error) {
-                        record("off-target copy-back failed: " + describe(error));
-                    }
-                }
-            }
             int drained = VulkanRetireQueue.flush();
             if (drained > 0) {
                 this.retiredFlushes += drained;
@@ -3891,11 +3876,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The previous frame's timestamps are complete now, which is the only moment they can be read reliably.
             updateTimings();
         }
-        vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+        check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "vkResetCommandBuffer");
+        this.commandState.reset();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()
                     .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
             check(vkBeginCommandBuffer(this.commandBuffer, begin), "vkBeginCommandBuffer");
+            this.commandState.begin();
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
@@ -4014,284 +4001,45 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
      */
     private void drawPendingImmediate(Long onlyTarget) {
-        if (this.gpuStalled) {
-            return;
-        }
+        long target = onlyTarget == null ? this.mainTargetIdentity : onlyTarget.longValue();
+        try { this.commandState.requireDraw(target); }
+        catch (IllegalStateException error) { this.invalidImmediateRecords++; throw error; }
         closeCurrentImmediateGroup();
-        if (this.immediateGroups.isEmpty()) {
-            return;
-        }
-        if (this.commandBuffer == null) {
-            // Recording into a command buffer that was never begun is a validation error, and with format 2 accepted this
-            // path is reached: `vkCmdBindPipeline` was recorded with no `vkBeginCommandBuffer` before it. Refusing here and
-            // counting it names the path instead of hiding the defect.
-            this.drawsWithoutCommandBuffer++;
-            this.immediateLastRefusal = "no command buffer is recording";
-            if (this.flushWithoutBufferStacks < 3) {
-                // Who asks for a flush while nothing is recording. The count says how often; this says from where, which is
-                // the part that decides whether the flush belongs inside the frame's recording window.
-                this.flushWithoutBufferStacks++;
-                StringBuilder stack = new StringBuilder();
-                StackTraceElement[] frames = Thread.currentThread().getStackTrace();
-                for (int i = 2; i < Math.min(frames.length, 10); i++) {
-                    stack.append(frames[i].getClassName().replaceAll(".*\\.", "")).append('.')
-                            .append(frames[i].getMethodName()).append(" (").append(frames[i].getLineNumber())
-                            .append(") <- ");
-                }
-                System.out.println("[Celtium] CELTIUM_FLUSH_NO_BUFFER stack=" + stack);
-            }
-            return;
-        }
-        // No named target means the main pass: it draws what was offered while the main framebuffer was bound and leaves the
-        // rest for their own pass. Drawing everything here consumed the off-target batches into the main image instead.
-        long wantedTarget = onlyTarget != null ? onlyTarget.longValue() : this.mainTargetIdentity;
-        if (onlyTarget == null) {
-            this.otherTargetGroupsAtMainFlush += pendingGroupsForOtherTargets();
-        }
-        try {
-            VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
-            if (terrain == null) {
-                // Counted rather than silently returned: an accepted batch whose GL draw was cancelled must be drawn
-                // here, so a null pipeline means geometry is being lost, not deferred.
-                this.immediateFlushNoPipeline++;
-                this.immediateGroupsDiscarded += ImmediateGroupQueue.retireGroupsForTarget(this.immediateGroups,
-                        wantedTarget);
-                // With a target filter this pass must leave everything else alone: the off-target pass runs before the main
-                // one, and discarding here would take the main pass's accepted geometry with it (audit A32).
-                return;
-            }
-            if (this.immediatePipeline == null) {
-                this.immediatePipeline = VulkanImmediatePipeline.create(this.context, terrain.renderPass());
-            }
-            if (this.textureRegistry == null) {
-                this.textureRegistry = new VulkanTextureRegistry(this.context);
-            }
-            // 116 bytes: projection 64, the model view's three affine columns 48, alpha reference 4 - inside the 128
-            // bytes the API guarantees, and the same block both stages declare (audit S19).
-            ByteBuffer push = MemoryUtil.memAlloc(128);
-            try {
-                for (Object[] group : this.immediateGroups) {
-                    // A group offered for another target is not a drop; it waits for its own pass.
-                    if (((Long) group[7]).longValue() != wantedTarget) {
-                        continue;
-                    }
-                    VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
-                    if (mesh.isEmpty()) {
-                        // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
-                        // all formats drew, which it could not while only format 5 incremented this (audit A09).
-                        this.postAcceptDroppedGroups++;
-                        continue;
-                    }
-                    int formatId = ((Integer) group[3]).intValue();
-                    int[] state = (int[]) group[6];
-                    // One combined matrix: the projection times the model view, computed here rather than in the shader. The
-                    // shader used to rebuild the model view's fourth column as (0, 0, 0, 1), which discarded the translation -
-                    // the affine constant is the last ROW of a model view, not the last column, and the translation lives in
-                    // elements 12 to 14. Folding the two matrices together puts it back at the cost of one multiply per group.
-                    pushCombinedMatrixInto((float[]) group[1], (float[]) group[2], push, 0);
-                    // The model-view columns stay declared in the shader's block so its layout is unchanged; they are now zero.
-                    for (int i = 64; i < 112; i += 4) {
-                        push.putFloat(i, 0.0f);
-                    }
-                    push.putFloat(112, Float.intBitsToFloat(state[6]));
-                    float[] groupColour = group.length > 8 ? (float[]) group[8] : null;
-                    push.putFloat(116, groupColour == null ? 1.0f : groupColour[0]);
-                    push.putFloat(120, groupColour == null ? 1.0f : groupColour[1]);
-                    push.putFloat(124, groupColour == null ? 1.0f : groupColour[2]);
-                    if (formatId == 5) {
-                        // The observation is global-latest, not per-batch: this is the factors from the most recent blendFunc call
-                        // anywhere, and using them gave 0.31% against the constants' 0.23%. Until they are captured with the
-                        // group - at the moment the batch is offered - the family's constants are the better answer.
-                        // The group's own factors are captured and carried, but using them still measures 0.33% against the
-                        // constants' 0.21-0.23%, so the factors alone are not what differs: the family's other asserted
-                        // fields - depth write in particular - are the likely remainder, and they are not observed yet. The
-                        // constants stay until the whole per-group triple can be observed together.
-                        // The group's own factors, now that a value the API does not define cannot reach them: the only
-                        // outlier in the measured run was (6, 7), and every real group captured the same pair the constants
-                        // used.
-                        // Not used yet: 573 of 574 groups capture the constants exactly, and the single outlier - a valid
-                        // but different pair, since the range check did not reject it - makes the frame worse (0.32%
-                        // against 0.24%) when its own factors are honoured. That one group is the whole difference and is
-                        // the next thing to identify, by printing its factors rather than inferring them from a packed key.
-                        int observedSrc = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
-                        int observedDst = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                        // The key carries the blend factors as well as the captured state: a pipeline built for one pair
-                        // must not be handed to a group that set another, which is what made the frame worse when the
-                        // observed values were used without being part of the key.
-                        long particleKey = ((Long) group[5]).longValue() * 31L
-                                + (((long) observedSrc) << 20) + observedDst;
-                        VulkanImmediateParticlePipeline particle =
-                                particlePipelineCache.get(Long.valueOf(particleKey));
-                        if (particle == null) {
-                            // The particle family is translucent by definition: Minecraft draws its particles with source-alpha
-                            // blending, depth testing on and depth writes off, whichever of those the state mirror happened to
-                            // capture - and the mirror is known not to capture the integer blend overloads or alpha enable
-                            // (audit S07). Measured, that gap showed up as particles that were brighter and warmer than GL's,
-                            // which is what an unblended overlay looks like. The family's meaning is asserted here rather than
-                            // read from a state the project cannot yet observe.
-                            // Observed factors when the mirror has them - the blendFunc hook above captures what Minecraft
-                            // set - and the family's own alpha blend only as the documented fallback for a pass whose
-                            // factors were never seen.
-                            // The observed factors are recorded (770 and 771 in the measured run - exactly what the family
-                            // assertion used), but they are not yet used to build the pipeline: the cache key does not
-                            // include them, so the first group's factors would be shared by every later group and the frame
-                            // got worse (0.33% against 0.23%). Using them needs the key to carry them first.
-                            int blendSrc = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
-                            int blendDst = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                            particle = VulkanImmediateParticlePipeline.create(this.context, terrain.renderPass(),
-                                    true, observedSrc, observedDst, true, false, false);
-                            particlePipelineCache.put(Long.valueOf(particleKey), particle);
-                        }
-                        VulkanGlTexture texture = this.textureRegistry.get(((Integer) group[4]).intValue());
-                        long descriptorSet = texture == null ? 0L
-                                : particle.descriptorSetFor(texture, this.lightmapTexture);
-                        if (descriptorSet == 0L) {
-                            // This path should be unreachable now that the texture is prepared before acceptance; if it ever
-                            // runs, the geometry has already been taken and the original draw cancelled, so it is counted
-                            // separately and loudly rather than folded into the ordinary refusal count.
-                            this.immediateTextureRefusals++;
-                            this.postAcceptDroppedGroups++;
-                            if (formatId >= 0 && formatId < this.postAcceptDroppedByFormat.length) {
-                                this.postAcceptDroppedByFormat[formatId]++;
-                            }
-                            continue;
-                        }
-                        particle.draw(this.commandBuffer, mesh, push, descriptorSet);
-                    } else if (formatId == 4) {
-                        VulkanImmediateItemPipeline item =
-                                itemPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
-                        if (item == null) {
-                            item = VulkanImmediateItemPipeline.create(this.context, terrain.renderPass(),
-                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
-                            itemPipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), item);
-                        }
-                        VulkanGlTexture texture = this.textureRegistry.get(((Integer) group[4]).intValue());
-                        long descriptorSet = texture == null ? 0L : item.descriptorSetFor(texture);
-                        if (descriptorSet == 0L) {
-                            this.immediateTextureRefusals++;
-                            // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
-                            // all formats drew, which it could not while only format 5 incremented this (audit A09).
-                            this.postAcceptDroppedGroups++;
-                            continue;
-                        }
-                        item.draw(this.commandBuffer, mesh, push, descriptorSet);
-                    } else if (formatId == 3) {
-                        VulkanImmediateBlockPipeline block =
-                                blockPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
-                        if (block == null) {
-                            block = VulkanImmediateBlockPipeline.create(this.context, terrain.renderPass(),
-                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
-                            blockPipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), block);
-                        }
-                        VulkanGlTexture texture =
-                                this.textureRegistry.get(((Integer) group[4]).intValue());
-                        long descriptorSet = texture == null ? 0L
-                                : block.descriptorSetFor(texture, this.lightmapTexture);
-                        if (descriptorSet == 0L) {
-                            this.immediateTextureRefusals++;
-                            // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
-                            // all formats drew, which it could not while only format 5 incremented this (audit A09).
-                            this.postAcceptDroppedGroups++;
-                            continue;
-                        }
-                        block.draw(this.commandBuffer, mesh, push, descriptorSet);
-                    } else if (formatId == 2 || formatId == 6 || formatId == 7 || formatId == 8 || formatId == 9) {
-                        // Format 6 is the colourless POSITION_TEX shape RenderGlobal uses for the sky, the clouds and the
-                        // water surface. It shares this draw path but not the pipeline: a colourless vertex cannot be fed
-                        // to a pipeline that reads a colour at offset 20, so it has its own cache as well as its own
-                        // pipeline.
-                        boolean colourless = formatId == 6 || formatId == 9;
-                        // A pipeline bakes its vertex stride, so each wider layout needs its own cache: sharing one with the
-                        // narrower layout would hand a 24-byte pipeline a 28-byte mesh.
-                        java.util.Map<Long, VulkanImmediateTexturePipeline> cache = formatId == 9
-                                ? this.positionTexNormalPipelineCache
-                                : formatId == 8 ? this.positionTexColorNormalPipelineCache
-                                : formatId == 7 ? this.positionOnlyPipelineCache
-                                : colourless ? this.positionTexPipelineCache : this.texturedPipelineCache;
-                        VulkanImmediateTexturePipeline textured =
-                                cache.get(Long.valueOf(((Long) group[5]).longValue()));
-                        if (textured == null) {
-                            textured = formatId == 9
-                                    ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, terrain.renderPass(),
-                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
-                                    : formatId == 8
-                                    ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context,
-                                            terrain.renderPass(), state[0] != 0, state[1], state[2], state[3] != 0,
-                                            state[4] != 0, state[5] != 0)
-                                    : formatId == 7
-                                    ? VulkanImmediateTexturePipeline.createForPosition(this.context, terrain.renderPass(),
-                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
-                                    : colourless
-                                    ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, terrain.renderPass(),
-                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
-                                    : VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass(),
-                                            state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
-                            cache.put(Long.valueOf(((Long) group[5]).longValue()), textured);
-                        }
-                        try {
-                            VulkanGlTexture texture =
-                                    this.textureRegistry.get(((Integer) group[4]).intValue());
-                            if (texture == null) {
-                                this.immediateTextureRefusals++;
-                                // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
-                                // all formats drew, which it could not while only format 5 incremented this (audit A09).
-                                this.postAcceptDroppedGroups++;
-                                continue;
-                            }
-                            long descriptorSet = textured.descriptorSetFor(texture);
-                            if (descriptorSet == 0L) {
-                                this.immediateTextureRefusals++;
-                                // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
-                                // all formats drew, which it could not while only format 5 incremented this (audit A09).
-                                this.postAcceptDroppedGroups++;
-                                continue;
-                            }
-                            textured.draw(this.commandBuffer, mesh, push, descriptorSet);
-                        } catch (RuntimeException | LinkageError error) {
-                            // Caught and reported rather than left to unwind the render pass: every command after an
-                            // unwind targets a buffer that is no longer recording, which is exactly the 113
-                            // "commandBuffer must be in the recording state" messages the first attempt produced.
-                            this.immediateTextureRefusals++;
-                            record("textured group failed: " + describe(error));
-                            // Every branch counts a dropped accepted group, not only the particle one: "drop = 0" has to mean
-                            // all formats drew, which it could not while only format 5 incremented this (audit A09).
-                            this.postAcceptDroppedGroups++;
-                            continue;
-                        }
-                    } else {
-                        VulkanImmediatePipeline plain =
-                                immediatePipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
-                        if (plain == null) {
-                            plain = VulkanImmediatePipeline.create(this.context, terrain.renderPass(),
-                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
-                            immediatePipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), plain);
-                        }
-                        plain.draw(this.commandBuffer, mesh, push);
-                    }
-                    this.immediateFlushes++;
-                    this.immediateGroupsDrawn++;
-                    // One per flush that reached the draw stage: the per-frame counterpart of the run totals, used by the
-                    // frame reconciliation (S11). Groups per flush are already counted by immediateGroupsDrawn.
-                    this.frameDrawn++;
-                }
-            } finally {
-                MemoryUtil.memFree(push);
-            }
-        } catch (RuntimeException | LinkageError error) {
-            this.immediateLastFlushError = describe(error);
-            this.immediateGroupsDiscarded += this.immediateGroups.size();
-            record("immediate flush failed: " + describe(error));
-        } finally {
-            // Retire only what this pass actually handled. The off-target pass runs before the main pass and filters to one
-            // target; discarding every group there destroyed the main pass's accepted geometry - accepted, counted, and then
-            // thrown away before it could be drawn (audit A32). The main pass keeps the old behaviour.
-            int kept = ImmediateGroupQueue.retireGroupsForTarget(this.immediateGroups, wantedTarget);
-            this.immediateGroupsOffTargetRetired += 1;
-            if (kept > 0) {
-                this.immediateGroupsKeptForOtherTargets += kept;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            ByteBuffer push = stack.calloc(128);
+            Iterator<Object[]> iterator = this.immediateGroups.iterator();
+            while (iterator.hasNext()) {
+                Object[] group = iterator.next();
+                if (((Long) group[7]).longValue() != target) continue; // kept for its own pass
+                VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
+                if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
+                PreparedImmediate prepared = (PreparedImmediate) group[11];
+                pushCombinedMatrixInto((float[]) group[1], (float[]) group[2], push, 0);
+                int[] state = (int[]) group[6];
+                push.putFloat(112, Float.intBitsToFloat(state[6]));
+                float[] color = (float[]) group[8];
+                push.putFloat(116, color == null ? 1 : color[0]);
+                push.putFloat(120, color == null ? 1 : color[1]);
+                push.putFloat(124, color == null ? 1 : color[2]);
+                Object pipeline = prepared.pipeline;
+                if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
+                else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
+                int batches = ((Integer) group[12]).intValue();
+                this.immediateRecordedBatches += batches;
+                if (target != this.mainTargetIdentity) this.offTargetRecordedBatches += batches;
+                this.immediateGroupsDrawn++;
+                this.immediateFlushes++;
+                this.frameDrawn++;
+                iterator.remove();
+                this.pendingImmediateIndices -= mesh.indexCount();
+                this.recordedImmediateGroups.add(group); // until submit success; not freed here
             }
         }
     }
+
 
     /**
      * Records the non-terrain test geometry: one textured quad in normalised device coordinates, drawn with the UI
@@ -4380,9 +4128,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         if (!MATRIX_DIAGNOSTICS) {
-            // Outside the world pass, or without a snapshot, the matrices are not this renderer's to use. The batch is
-            // refused before acceptance by submitImmediateBatch, so reaching here means a diagnostic read was requested.
-            this.outsideWorldPassRefusals++;
+            // Minecraft's overlay/FBO setup uses the mirrored GlStateManager ortho/model-view stacks. These batches ARE
+            // accepted: returning without capturing them left the previous world's perspective here and clipped real GUI
+            // geometry. Snapshot the local pass matrices, never borrow another pass's camera.
+            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
+            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
             return;
         }
         try {
@@ -4489,7 +4239,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             check(vkEndCommandBuffer(this.commandBuffer), "vkEndCommandBuffer");
-            vkResetFences(this.context.device(), this.fence);
+            this.commandState.end();
+            check(vkResetFences(this.context.device(), this.fence), "vkResetFences");
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
             LongBuffer waitSemaphores = stack.mallocLong(1);
             waitSemaphores.put(0, this.frameTarget.waitSemaphore());
@@ -4507,16 +4258,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
                     .pCommandBuffers(commandBuffers)
                     .pSignalSemaphores(signalSemaphores);
+            if (this.immediateWindowBusy && !this.recordedImmediateGroups.isEmpty() && failImmediateSubmits > 0) {
+                failImmediateSubmits--;
+                throw new IllegalStateException("injected immediate submit failure before queue ownership");
+            }
             if (FAIL_SUBMITS_REMAINING > 0) {
                 // Test-only injection, so the fail-closed paths can be exercised instead of merely compiled: the
                 // submission is treated as refused by the driver, which is the case the audit's E asks to be shown to
                 // end in bounded time rather than in a wait for a signal that never comes.
                 FAIL_SUBMITS_REMAINING--;
                 record("injected submit failure (" + FAIL_SUBMITS_REMAINING + " left): this submission is not sent");
-                return;
+                throw new IllegalStateException("injected submit failure before queue ownership");
             }
             check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
             this.submissionPending = true;
+            this.commandState.submitted();
+            for (Object[] group : this.recordedImmediateGroups) {
+                this.immediateSubmittedBatches += ((Integer) group[12]).intValue();
+                this.retiredImmediateGroups.add(group);
+            }
+            this.recordedImmediateGroups.clear();
             this.frameSubmitReachedQueue = true;
         }
     }
@@ -4546,13 +4307,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
             // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
             this.stalledTeardownSkips++;
-            return;
+            throw new IllegalStateException("cannot settle/retire a stalled GPU: " + reason);
         }
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
         if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-            record("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
-            return;
+            this.gpuStalled = true;
+            throw new IllegalStateException("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
         }
         long millis = (System.nanoTime() - start) / 1_000_000L;
         if (millis > 200L) {
@@ -4567,6 +4328,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // steady-state one this audit item describes, and the earlier run showed exactly that as a start-up abort.
         if (FAIL_IDLE_AFTER > 0 && ++this.idleWaits >= FAIL_IDLE_AFTER) {
             this.injectedIdleFailures++;
+            this.gpuStalled = true;
             return false;
         }
         if (this.fence == 0 || !this.submissionPending) {
@@ -4579,15 +4341,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
                         + "s, so the last submission is not completing; not draining the queue");
-                return true;
+                this.gpuStalled = true;
+                return false;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 record("waitForIdle: vkWaitForFences returned " + result);
-                return true;
+                this.gpuStalled = true;
+                return false;
             }
             this.submissionPending = false;
+            this.commandState.completed();
+            for (Object[] group : this.retiredImmediateGroups) {
+                int batches = ((Integer) group[12]).intValue();
+                this.immediateCompletedBatches += batches;
+                if (((Long) group[7]).longValue() != this.mainTargetIdentity) this.offTargetCompletedBatches += batches;
+            }
+            releaseRetiredImmediateGroups();
+            if (this.immediateGroups.isEmpty() && this.currentImmediateMesh == null) VulkanRetireQueue.flush();
         }
-        vkQueueWaitIdle(this.context.queue());
         return true;
     }
 
@@ -4720,7 +4491,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private void readBackAndLog() {
         this.readbackPending = false;
         this.readbackDone = true;
-        waitForIdle();
+        if (!waitForIdle()) throw new IllegalStateException("readback fence did not complete");
         ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, Math.max(64, this.readbackSlots * 64));
         view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
         StringBuilder line = new StringBuilder("gpu draws:");

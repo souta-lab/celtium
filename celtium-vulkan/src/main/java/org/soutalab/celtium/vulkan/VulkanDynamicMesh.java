@@ -207,22 +207,21 @@ public final class VulkanDynamicMesh {
                 || stride < 4 || stride > 256) {
             return false;
         }
-        this.layout = new Layout(stride, 0, -1, -1, -1, -1);
-        // The base vertex of this append. Indices arrive relative to the batch that produced them, and the draw issues
-        // vkCmdDrawIndexed with vertexOffset 0, so without this the second batch in a group indexes the first batch's
-        // vertices: a merged group drew the wrong geometry for everything after the first append.
         int baseVertex = this.vertexCount;
-        long required = this.vertexBytes + ((long) stride * count);
-        if (required > this.vertices.size()) {
-            this.vertices.ensureCapacity(Math.max(required, this.vertices.size() * 2L));
+        long addedVertices = (long) stride * count;
+        long requiredVertices = this.vertexBytes + addedVertices;
+        long requiredIndices = this.indexBytes + (long) indices.length * 4;
+        if (requiredVertices > this.vertices.size()) this.vertices.ensureCapacity(Math.max(requiredVertices, this.vertices.size() * 2));
+        if (requiredIndices > this.indices.size()) this.indices.ensureCapacity(Math.max(requiredIndices, this.indices.size() * 2));
+        MemoryUtil.memCopy(sourceAddress, this.vertices.mappedAddress() + this.vertexBytes, addedVertices);
+        for (int i = 0; i < indices.length; i++) {
+            MemoryUtil.memPutInt(this.indices.mappedAddress() + this.indexBytes + (long) i * 4, indices[i] + baseVertex);
         }
-        org.lwjgl.system.MemoryUtil.memCopy(sourceAddress, this.vertices.mappedAddress() + this.vertexBytes,
-                (long) stride * count);
-        this.vertexBytes += (long) stride * count;
+        this.layout = new Layout(stride, 0, -1, -1, -1, -1);
+        this.vertexBytes = requiredVertices;
+        this.indexBytes = requiredIndices;
         this.vertexCount += count;
-        for (int index : indices) {
-            index(index + baseVertex);
-        }
+        this.indexCount += indices.length;
         return true;
     }
 

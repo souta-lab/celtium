@@ -8,6 +8,7 @@ import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.renderer.BufferBuilder;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.util.ScreenShotHelper;
@@ -84,6 +85,11 @@ public final class ValidationClient {
     private int testQuadFrames;
     private final boolean drawBlockQuad = Boolean.getBoolean("celtium.validation.drawBlockQuad");
     private int blockQuadFrames;
+    private final boolean commandBufferTargets = Boolean.getBoolean("celtium.validation.commandBufferTargets");
+    private boolean commandBufferTargetsAttempted;
+    private boolean commandBufferTargetsPassed;
+    private Framebuffer commandBufferSecondary;
+    private DynamicTexture commandBufferWhite;
 
     /**
      * The acceptance fixture for the merged-group defect (the second audit's S05), drawn inside a Forge render event
@@ -264,6 +270,368 @@ public final class ValidationClient {
         report.addProperty("drawTestPass", "RenderGameOverlayEvent.Post/ALL");
     }
 
+    /**
+     * A one-frame format-2 ordering test, independent of the camera and of the final screen composite.
+     * Geometry still uses the unmodified Tessellator API; reflection observes execution, not submission.
+     * The secondary target deliberately has the same RGBA8/D24 attachment contract as Minecraft's main target.
+     */
+    @SubscribeEvent(priority = net.minecraftforge.fml.common.eventhandler.EventPriority.LOWEST)
+    public void onRenderOverlayForCommandBufferTargets(net.minecraftforge.client.event.RenderGameOverlayEvent.Post event) {
+        if (!enabled || finished || !commandBufferTargets || commandBufferTargetsAttempted || worldTicks < 40
+                || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.world == null || mc.player == null) return;
+        commandBufferTargetsAttempted = true;
+        JsonObject result = new JsonObject();
+        result.addProperty("attempted", true);
+        result.addProperty("passed", false);
+        result.addProperty("worldTicks", worldTicks);
+        result.addProperty("pass", "RenderGameOverlayEvent.Post/ALL");
+        result.addProperty("format", "POSITION_TEX_COLOR");
+        result.addProperty("formatId", 2);
+        result.addProperty("batches", 4);
+        result.addProperty("depthScope", "RGBA8/D24 bridge; depth test disabled, not a depth-occlusion test");
+        report.add("commandBufferTargets", result);
+        CommandBufferFixtureState saved = null;
+        try {
+            Framebuffer main = mc.getFramebuffer();
+            if (main.framebufferWidth < 256 || main.framebufferHeight < 256 || main.framebufferObject <= 0
+                    || GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING) != main.framebufferObject) {
+                throw new IllegalStateException("Format-2 fixture requires the main FBO bound in overlay ALL, at least 256x256");
+            }
+            Object backend = Class.forName("org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends")
+                    .getMethod("current").invoke(null);
+            if (backend == null) throw new IllegalStateException("No live backend for required format-2 target test");
+            java.lang.reflect.Method counters = backend.getClass().getMethod("immediateExecutionCounters");
+            result.addProperty("backendClass", backend.getClass().getName());
+            saved = new CommandBufferFixtureState();
+            // Construction also binds through OpenGlHelper directly, before its Framebuffer.bind hook. Drain HUD work now.
+            GlStateManager.clear(0);
+            // Framebuffer's constructor and clear obey these masks too. Prepare resources before any test batch is pending.
+            GlStateManager.colorMask(true, true, true, true);
+            GlStateManager.depthMask(true);
+            GL11C.glDisable(GL11C.GL_SCISSOR_TEST);
+            commandBufferSecondary = new Framebuffer(256, 256, true);
+            commandBufferSecondary.setFramebufferColor(8.0F / 255.0F, 16.0F / 255.0F, 32.0F / 255.0F, 1.0F);
+            commandBufferSecondary.framebufferClear();
+            main.bindFramebuffer(true);
+            commandBufferWhite = new DynamicTexture(1, 1);
+            commandBufferWhite.getTextureData()[0] = 0xFFFFFFFF;
+            commandBufferWhite.updateDynamicTexture();
+            GlStateManager.bindTexture(commandBufferWhite.getGlTextureId());
+            GlStateManager.enableTexture2D();
+            GlStateManager.disableDepth();
+            GlStateManager.depthMask(false);
+            GlStateManager.disableCull();
+            GlStateManager.disableBlend();
+            GlStateManager.disableAlpha();
+            GlStateManager.disableLighting();
+            GlStateManager.disableFog();
+            GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+            saved.pushMatrices();
+            commandBufferMatrices(main.framebufferWidth, main.framebufferHeight);
+            // Clear with mask zero is a flush barrier, not a pixel/depth clear. Drain unrelated HUD work before measuring.
+            GlStateManager.clear(0);
+            long[] before = commandBufferCounters(backend, counters);
+            result.add("before", commandBufferCounterJson(before));
+            int injected = Integer.getInteger("celtium.vulkan.failImmediateSubmits", 0).intValue();
+            if (injected > 0) backend.getClass().getMethod("injectImmediateSubmitFailure", int.class)
+                    .invoke(backend, Integer.valueOf(injected));
+            if (before[4] != 0) throw new IllegalStateException("Unrelated immediate batches remained pending before fixture");
+            java.awt.image.BufferedImage mainBefore = commandBufferReadback(main);
+            commandBufferSavePng(mc, "celtium-command-buffer-main-before.png", mainBefore);
+            result.addProperty("mainBeforePng", "screenshots/celtium-command-buffer-main-before.png");
+            result.add("mainFramebuffer", framebuffer(main));
+            result.add("secondaryFramebuffer", framebuffer(commandBufferSecondary));
+
+            // One small main batch must remain pending until the bind HEAD hook flushes the OLD framebuffer.
+            commandBufferQuad(16, 16, 80, 80, 0, 0, 255);
+            long[] mainPending = commandBufferCounters(backend, counters);
+            result.add("mainPending", commandBufferCounterJson(mainPending));
+            commandBufferSecondary.bindFramebuffer(true);
+            long[] mainFlushed = commandBufferCounters(backend, counters);
+            result.add("afterBindSecondary", commandBufferCounterJson(mainFlushed));
+            commandBufferMatrices(256, 256);
+            // Two separate begin/draw pairs with identical state/texture/matrices: merging must rebase their indices.
+            commandBufferQuad(24, 96, 88, 160, 255, 0, 0);
+            commandBufferQuad(144, 184, 208, 240, 0, 255, 0);
+            long[] secondaryPending = commandBufferCounters(backend, counters);
+            result.add("secondaryPending", commandBufferCounterJson(secondaryPending));
+            main.bindFramebuffer(true);
+            long[] secondaryFlushed = commandBufferCounters(backend, counters);
+            result.add("afterBindMain", commandBufferCounterJson(secondaryFlushed));
+            commandBufferMatrices(main.framebufferWidth, main.framebufferHeight);
+            commandBufferQuad(112, 16, 176, 80, 255, 255, 0);
+            GlStateManager.clear(0);
+            long[] after = commandBufferCounters(backend, counters);
+            result.add("after", commandBufferCounterJson(after));
+            long[] delta = new long[before.length];
+            for (int i = 0; i < delta.length; i++) delta[i] = after[i] - before[i];
+            result.add("delta", commandBufferCounterJson(delta));
+
+            // Both reads and PNGs occur in this same event, before another frame can hide a dropped or deferred batch.
+            java.awt.image.BufferedImage mainAfter = commandBufferReadback(main);
+            java.awt.image.BufferedImage secondaryAfter = commandBufferReadback(commandBufferSecondary);
+            commandBufferSavePng(mc, "celtium-command-buffer-main.png", mainAfter);
+            commandBufferSavePng(mc, "celtium-command-buffer-secondary.png", secondaryAfter);
+            result.addProperty("mainPng", "screenshots/celtium-command-buffer-main.png");
+            result.addProperty("secondaryPng", "screenshots/celtium-command-buffer-secondary.png");
+            int blueWrong = commandBufferRectangleMismatches(mainAfter, 16, 16, 80, 80, 0x0000FF);
+            int yellowWrong = commandBufferRectangleMismatches(mainAfter, 112, 16, 176, 80, 0xFFFF00);
+            int redWrong = commandBufferRectangleMismatches(secondaryAfter, 24, 96, 88, 160, 0xFF0000);
+            int greenWrong = commandBufferRectangleMismatches(secondaryAfter, 144, 184, 208, 240, 0x00FF00);
+            int mainBackgroundWrong = 0;
+            for (int y = 0; y < mainAfter.getHeight(); y++) {
+                for (int x = 0; x < mainAfter.getWidth(); x++) {
+                    if (!commandBufferInside(x, y, 16, 16, 80, 80) && !commandBufferInside(x, y, 112, 16, 176, 80)
+                            && (mainBefore.getRGB(x, y) & 0xFFFFFF) != (mainAfter.getRGB(x, y) & 0xFFFFFF)) {
+                        mainBackgroundWrong++;
+                    }
+                }
+            }
+            int secondaryBackgroundWrong = 0;
+            for (int y = 0; y < 256; y++) {
+                for (int x = 0; x < 256; x++) {
+                    if (!commandBufferInside(x, y, 24, 96, 88, 160) && !commandBufferInside(x, y, 144, 184, 208, 240)
+                            && (secondaryAfter.getRGB(x, y) & 0xFFFFFF) != 0x081020) secondaryBackgroundWrong++;
+                }
+            }
+            JsonObject pixels = new JsonObject();
+            pixels.addProperty("mainBlue", Integer.toHexString(mainAfter.getRGB(48, 48) & 0xFFFFFF));
+            pixels.addProperty("mainYellow", Integer.toHexString(mainAfter.getRGB(144, 48) & 0xFFFFFF));
+            pixels.addProperty("secondaryRed", Integer.toHexString(secondaryAfter.getRGB(56, 128) & 0xFFFFFF));
+            pixels.addProperty("secondaryGreen", Integer.toHexString(secondaryAfter.getRGB(176, 212) & 0xFFFFFF));
+            pixels.addProperty("secondaryBackground", Integer.toHexString(secondaryAfter.getRGB(8, 8) & 0xFFFFFF));
+            pixels.addProperty("mainBlueMismatchPixels", blueWrong);
+            pixels.addProperty("mainYellowMismatchPixels", yellowWrong);
+            pixels.addProperty("secondaryRedMismatchPixels", redWrong);
+            pixels.addProperty("secondaryGreenMismatchPixels", greenWrong);
+            pixels.addProperty("mainUntouchedChangedPixels", mainBackgroundWrong);
+            pixels.addProperty("secondaryUntouchedMismatchPixels", secondaryBackgroundWrong);
+            result.add("pixels", pixels);
+            boolean mainWasPending = mainPending[0] - before[0] == 1 && mainPending[4] == 1
+                    && mainPending[1] == before[1] && mainPending[2] == before[2] && mainPending[3] == before[3];
+            boolean mainFlushedBeforeSecondary = mainFlushed[4] == 0 && mainFlushed[1] - before[1] == 1
+                    && mainFlushed[2] - before[2] == 1 && mainFlushed[3] - before[3] == 1;
+            boolean secondaryWasPending = secondaryPending[4] == 2 && secondaryPending[6] - before[6] == 2;
+            boolean secondaryFlushedBeforeMain = secondaryFlushed[4] == 0 && secondaryFlushed[7] - before[7] == 2
+                    && secondaryFlushed[8] - before[8] == 2;
+            boolean executionPassed = delta[0] == 4 && delta[1] == 4 && delta[2] == 4 && delta[3] == 4
+                    && after[4] == 0 && before[5] == 0 && after[5] == 0
+                    && delta[6] == 2 && delta[7] == 2 && delta[8] == 2;
+            boolean pixelsPassed = blueWrong == 0 && yellowWrong == 0 && redWrong == 0 && greenWrong == 0
+                    && mainBackgroundWrong == 0 && secondaryBackgroundWrong == 0;
+            boolean retryRequired = Integer.getInteger("celtium.vulkan.failImmediateSubmits", 0).intValue() > 0;
+            // An injected failure may fire in an earlier native window; report both total and fixture-local retries.
+            boolean retryPassed = !retryRequired || delta[9] == 1;
+            result.addProperty("retryRequired", retryRequired);
+            result.addProperty("retryObservedTotal", after[9]);
+            result.addProperty("retryObservedInFixture", delta[9]);
+            result.addProperty("retryPassed", retryPassed);
+            result.addProperty("mainWasPending", mainWasPending);
+            result.addProperty("mainFlushedBeforeSecondary", mainFlushedBeforeSecondary);
+            result.addProperty("secondaryWasPending", secondaryWasPending);
+            result.addProperty("secondaryFlushedBeforeMain", secondaryFlushedBeforeMain);
+            result.addProperty("executionPassed", executionPassed);
+            result.addProperty("pixelsPassed", pixelsPassed);
+            commandBufferTargetsPassed = mainWasPending && mainFlushedBeforeSecondary && secondaryWasPending
+                    && secondaryFlushedBeforeMain && executionPassed && pixelsPassed && retryPassed;
+            result.addProperty("passed", commandBufferTargetsPassed);
+            if (!commandBufferTargetsPassed) result.addProperty("error", "Required format-2 pending/flush/execution/pixel checks failed");
+        } catch (Throwable error) {
+            commandBufferTargetsPassed = false;
+            result.addProperty("passed", false);
+            result.addProperty("error", error.toString());
+            error.printStackTrace();
+        } finally {
+            if (saved != null) {
+                try {
+                    saved.restore(mc.getFramebuffer());
+                } catch (Throwable error) {
+                    commandBufferTargetsPassed = false;
+                    result.addProperty("passed", false);
+                    result.addProperty("restoreError", error.toString());
+                    error.printStackTrace();
+                }
+            }
+        }
+        System.out.println("[Celtium] CELTIUM_COMMAND_BUFFER_TARGETS " + result);
+    }
+
+    private static void commandBufferMatrices(int width, int height) {
+        GlStateManager.matrixMode(org.lwjgl.opengl.GL11.GL_PROJECTION);
+        GlStateManager.loadIdentity();
+        GlStateManager.ortho(0.0D, width, height, 0.0D, -1.0D, 1.0D);
+        GlStateManager.matrixMode(org.lwjgl.opengl.GL11.GL_MODELVIEW);
+        GlStateManager.loadIdentity();
+    }
+
+    private static void commandBufferQuad(int left, int top, int right, int bottom, int red, int green, int blue) {
+        Tessellator tessellator = Tessellator.getInstance();
+        BufferBuilder buffer = tessellator.getBuffer();
+        buffer.setTranslation(0.0D, 0.0D, 0.0D);
+        buffer.begin(GL11C.GL_QUADS, DefaultVertexFormats.POSITION_TEX_COLOR);
+        buffer.pos(left, bottom, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        buffer.pos(right, bottom, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        buffer.pos(right, top, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        buffer.pos(left, top, 0.0D).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        tessellator.draw();
+    }
+
+    private static long[] commandBufferCounters(Object backend, java.lang.reflect.Method method) throws Exception {
+        Object value = method.invoke(backend);
+        if (!(value instanceof long[]) || ((long[]) value).length != 10) {
+            throw new IllegalStateException("immediateExecutionCounters must return ten execution counters");
+        }
+        return ((long[]) value).clone();
+    }
+
+    private static JsonObject commandBufferCounterJson(long[] values) {
+        String[] names = {"accepted", "recorded", "submitted", "completed", "pending", "invalidDraws",
+                "offTargetAccepted", "offTargetRecorded", "offTargetCompleted", "retries"};
+        JsonObject result = new JsonObject();
+        for (int i = 0; i < names.length; i++) result.addProperty(names[i], values[i]);
+        return result;
+    }
+
+    private static boolean commandBufferInside(int x, int y, int left, int top, int right, int bottom) {
+        return x >= left && x < right && y >= top && y < bottom;
+    }
+
+    private static int commandBufferRectangleMismatches(java.awt.image.BufferedImage image,
+            int left, int top, int right, int bottom, int expected) {
+        int mismatches = 0;
+        // Exclude rasterisation edges; interior checks still cover thousands of pixels, not just a lucky centre sample.
+        for (int y = top + 2; y < bottom - 2; y++) {
+            for (int x = left + 2; x < right - 2; x++) {
+                if ((image.getRGB(x, y) & 0xFFFFFF) != expected) mismatches++;
+            }
+        }
+        return mismatches;
+    }
+
+    private static java.awt.image.BufferedImage commandBufferReadback(Framebuffer target) {
+        int previousReadFbo = GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING);
+        int previousReadBuffer = GL11C.glGetInteger(GL11C.GL_READ_BUFFER);
+        int previousPackBuffer = GL11C.glGetInteger(org.lwjgl.opengl.GL21C.GL_PIXEL_PACK_BUFFER_BINDING);
+        int[] packNames = {GL11C.GL_PACK_ALIGNMENT, GL11C.GL_PACK_ROW_LENGTH,
+                GL11C.GL_PACK_SKIP_ROWS, GL11C.GL_PACK_SKIP_PIXELS};
+        int[] previousPack = new int[packNames.length];
+        for (int i = 0; i < packNames.length; i++) previousPack[i] = GL11C.glGetInteger(packNames[i]);
+        int width = target.framebufferWidth;
+        int height = target.framebufferHeight;
+        java.nio.ByteBuffer pixels = java.nio.ByteBuffer.allocateDirect(width * height * 4);
+        try {
+            // READ-only binding does not change the tracked DRAW target or create another ordering boundary.
+            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, target.framebufferObject);
+            GL11C.glReadBuffer(GL30C.GL_COLOR_ATTACHMENT0);
+            org.lwjgl.opengl.GL15C.glBindBuffer(org.lwjgl.opengl.GL21C.GL_PIXEL_PACK_BUFFER, 0);
+            for (int i = 0; i < packNames.length; i++) GL11C.glPixelStorei(packNames[i], i == 0 ? 1 : 0);
+            GL11C.glReadPixels(0, 0, width, height, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, pixels);
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int offset = (y * width + x) * 4;
+                    int argb = (pixels.get(offset + 3) & 0xFF) << 24 | (pixels.get(offset) & 0xFF) << 16
+                            | (pixels.get(offset + 1) & 0xFF) << 8 | (pixels.get(offset + 2) & 0xFF);
+                    image.setRGB(x, height - 1 - y, argb);
+                }
+            }
+            return image;
+        } finally {
+            for (int i = 0; i < packNames.length; i++) GL11C.glPixelStorei(packNames[i], previousPack[i]);
+            org.lwjgl.opengl.GL15C.glBindBuffer(org.lwjgl.opengl.GL21C.GL_PIXEL_PACK_BUFFER, previousPackBuffer);
+            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, previousReadFbo);
+            GL11C.glReadBuffer(previousReadBuffer);
+        }
+    }
+
+    private static void commandBufferSavePng(Minecraft mc, String name, java.awt.image.BufferedImage image)
+            throws java.io.IOException {
+        Path target = mc.gameDir.toPath().resolve("screenshots").resolve(name);
+        Files.createDirectories(target.getParent());
+        if (!javax.imageio.ImageIO.write(image, "png", target.toFile())) {
+            throw new java.io.IOException("No PNG writer for " + name);
+        }
+    }
+
+    /** Restore through GlStateManager so its cache and the backend mirror agree with GL; never use push/popAttrib. */
+    private static final class CommandBufferFixtureState {
+        private final int matrixMode = GL11C.glGetInteger(org.lwjgl.opengl.GL11.GL_MATRIX_MODE);
+        private final int activeTexture = GL11C.glGetInteger(org.lwjgl.opengl.GL13C.GL_ACTIVE_TEXTURE);
+        private final int readFramebuffer = GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING);
+        private final int readBuffer = GL11C.glGetInteger(GL11C.GL_READ_BUFFER);
+        private final boolean depth = GL11C.glIsEnabled(GL11C.GL_DEPTH_TEST);
+        private final boolean depthMask = GL11C.glGetInteger(GL11C.GL_DEPTH_WRITEMASK) != 0;
+        private final boolean blend = GL11C.glIsEnabled(GL11C.GL_BLEND);
+        private final boolean cull = GL11C.glIsEnabled(GL11C.GL_CULL_FACE);
+        private final boolean alpha = GL11C.glIsEnabled(org.lwjgl.opengl.GL11.GL_ALPHA_TEST);
+        private final boolean lighting = GL11C.glIsEnabled(org.lwjgl.opengl.GL11.GL_LIGHTING);
+        private final boolean fog = GL11C.glIsEnabled(org.lwjgl.opengl.GL11.GL_FOG);
+        private final boolean scissor = GL11C.glIsEnabled(GL11C.GL_SCISSOR_TEST);
+        private final java.nio.IntBuffer viewport = org.lwjgl.BufferUtils.createIntBuffer(4);
+        private final java.nio.FloatBuffer color = org.lwjgl.BufferUtils.createFloatBuffer(4);
+        private final java.nio.FloatBuffer clearColor = org.lwjgl.BufferUtils.createFloatBuffer(4);
+        private final java.nio.ByteBuffer colorMask = org.lwjgl.BufferUtils.createByteBuffer(4);
+        private final double clearDepth = GL11C.glGetDouble(GL11C.GL_DEPTH_CLEAR_VALUE);
+        private final int texture;
+        private final boolean textureEnabled;
+        private boolean projectionPushed;
+        private boolean modelviewPushed;
+
+        private CommandBufferFixtureState() {
+            GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, viewport);
+            GL11C.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, color);
+            GL11C.glGetFloatv(GL11C.GL_COLOR_CLEAR_VALUE, clearColor);
+            GL11C.glGetBooleanv(GL11C.GL_COLOR_WRITEMASK, colorMask);
+            GlStateManager.setActiveTexture(net.minecraft.client.renderer.OpenGlHelper.defaultTexUnit);
+            texture = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+            textureEnabled = GL11C.glIsEnabled(GL11C.GL_TEXTURE_2D);
+        }
+
+        private void pushMatrices() {
+            GlStateManager.matrixMode(org.lwjgl.opengl.GL11.GL_PROJECTION);
+            GlStateManager.pushMatrix();
+            projectionPushed = true;
+            GlStateManager.matrixMode(org.lwjgl.opengl.GL11.GL_MODELVIEW);
+            GlStateManager.pushMatrix();
+            modelviewPushed = true;
+        }
+
+        private void restore(Framebuffer main) {
+            main.bindFramebuffer(true);
+            if (modelviewPushed) {
+                GlStateManager.matrixMode(org.lwjgl.opengl.GL11.GL_MODELVIEW);
+                GlStateManager.popMatrix();
+            }
+            if (projectionPushed) {
+                GlStateManager.matrixMode(org.lwjgl.opengl.GL11.GL_PROJECTION);
+                GlStateManager.popMatrix();
+            }
+            GlStateManager.matrixMode(matrixMode);
+            GlStateManager.viewport(viewport.get(0), viewport.get(1), viewport.get(2), viewport.get(3));
+            GlStateManager.setActiveTexture(net.minecraft.client.renderer.OpenGlHelper.defaultTexUnit);
+            GlStateManager.bindTexture(texture);
+            if (textureEnabled) GlStateManager.enableTexture2D(); else GlStateManager.disableTexture2D();
+            if (depth) GlStateManager.enableDepth(); else GlStateManager.disableDepth();
+            GlStateManager.depthMask(depthMask);
+            if (blend) GlStateManager.enableBlend(); else GlStateManager.disableBlend();
+            if (cull) GlStateManager.enableCull(); else GlStateManager.disableCull();
+            if (alpha) GlStateManager.enableAlpha(); else GlStateManager.disableAlpha();
+            if (lighting) GlStateManager.enableLighting(); else GlStateManager.disableLighting();
+            if (fog) GlStateManager.enableFog(); else GlStateManager.disableFog();
+            GlStateManager.color(color.get(0), color.get(1), color.get(2), color.get(3));
+            GlStateManager.colorMask(colorMask.get(0) != 0, colorMask.get(1) != 0, colorMask.get(2) != 0, colorMask.get(3) != 0);
+            GlStateManager.clearColor(clearColor.get(0), clearColor.get(1), clearColor.get(2), clearColor.get(3));
+            GlStateManager.clearDepth(clearDepth);
+            if (scissor) GL11C.glEnable(GL11C.GL_SCISSOR_TEST); else GL11C.glDisable(GL11C.GL_SCISSOR_TEST);
+            GlStateManager.setActiveTexture(activeTexture);
+            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, readFramebuffer);
+            GL11C.glReadBuffer(readBuffer);
+        }
+    }
+
     private net.minecraft.client.shader.Framebuffer celtium$secondaryTarget(net.minecraft.client.Minecraft client) {
         if (this.celtium$secondary == null) {
             try {
@@ -408,6 +776,8 @@ public final class ValidationClient {
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
                 mc.gameSettings.limitFramerate = 260;
                 mc.gameSettings.enableVsync = false;
+                // Overlay ALL is the required fixture phase; do not let a copied setting make the test unreachable.
+                if (commandBufferTargets) mc.gameSettings.hideGUI = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
                 settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:leaves,minecraft:stained_glass;1;");
@@ -804,6 +1174,10 @@ public final class ValidationClient {
         // question this project was asking. One tick is one image.
         if (worldTicks != 200) return;
         try {
+            if (commandBufferTargets && (!commandBufferTargetsAttempted || !commandBufferTargetsPassed)) {
+                throw new IllegalStateException("Required commandBufferTargets fixture "
+                        + (commandBufferTargetsAttempted ? "failed: " + report.get("commandBufferTargets") : "never exercised"));
+            }
             if (!Boolean.getBoolean("celtium.validation.interop")) {
                 // The frame that was just drawn may still contain an entity the client tick did not see. Drop it and
                 // capture on the next frame, so the saved scene contains terrain and the sky only.
@@ -845,7 +1219,10 @@ public final class ValidationClient {
                 ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation-post-interop.png", mc.displayWidth, mc.displayHeight, target);
             }
             if (worldFrames < 100 || !report.has("framebuffer")) {
-                throw new IllegalStateException("Too few world rendering frames for startup validation");
+                // The count is in the message on purpose: the threshold is the acceptance, and a run that misses it must say
+                // by how much rather than leaving the next attempt to guess whether it was close or nowhere near.
+                throw new IllegalStateException("Too few world rendering frames for startup validation: worldFrames="
+                        + worldFrames + " (threshold 100), worldTicks=" + worldTicks);
             }
             Path probe = mc.gameDir.toPath().resolve("logs/celtium-capabilities.json");
             if (report.get("celtiumCommandRegistered").getAsBoolean()) {
@@ -992,6 +1369,25 @@ public final class ValidationClient {
 
     private void finish(Minecraft mc) {
         finished = true;
+        // Test-only GL resources stay alive through their same-frame captures and are released before shutdown.
+        if (commandBufferTargets) {
+            try {
+                if (commandBufferSecondary != null) {
+                    commandBufferSecondary.deleteFramebuffer();
+                    commandBufferSecondary = null;
+                }
+                if (commandBufferWhite != null) {
+                    commandBufferWhite.deleteGlTexture();
+                    commandBufferWhite = null;
+                }
+                mc.getFramebuffer().bindFramebuffer(true);
+                report.addProperty("commandBufferTargetsResourcesReleased", true);
+            } catch (Throwable error) {
+                report.addProperty("status", "FAILED");
+                report.addProperty("commandBufferTargetsCleanupError", error.toString());
+                error.printStackTrace();
+            }
+        }
         try {
             Path output = mc.gameDir.toPath().resolve("logs/celtium-validation.json");
             Files.createDirectories(output.getParent());

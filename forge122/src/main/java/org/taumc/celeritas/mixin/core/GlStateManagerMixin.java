@@ -131,7 +131,8 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179083_b", at = @At("HEAD"), require = 0)
     private static void celtium$viewport(int x, int y, int width, int height, CallbackInfo info) {
-        celtium$mirror(backend -> backend.viewport(x, y, width, height));
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend != null) backend.viewport(x, y, width, height);
     }
 
     @Inject(method = "func_179114_b", at = @At("HEAD"), require = 0)
@@ -155,7 +156,8 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179086_m", at = @At("HEAD"), require = 0)
     private static void celtium$clear(int mask, CallbackInfo info) {
-        celtium$mirror(backend -> backend.flushBeforeClear(mask));
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend != null) backend.flushBeforeClear(mask); // ordering failure must not be swallowed as a state hint
     }
 
     @Inject(method = "func_179112_b", at = @At("HEAD"), require = 0)

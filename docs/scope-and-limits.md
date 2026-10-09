@@ -20,8 +20,8 @@ stdout) and the end-of-run report, on AMD RX 6400 and Intel UHD 630.
 | Sky, clouds, weather, water surface | colourless `POSITION_TEX` | `6:1353`-`6:2374` (AMD), `6:660`-`732` (Intel) |
 | Position-only content | `POSITION` with the colour passed in the push block | `7:1008`-`1097` (AMD), `7:396` (Intel) |
 | The composite's layout | `POSITION_TEX_NORMAL` | `9:12` on both GPUs |
-| The game's other framebuffers | off-target render targets | `offTargetDrawn` 273-567 with `offTargetCopiedBack` 267-554, zero refusals |
-| Final composite and present | the Vulkan swapchain | present traces cycling the swapchain images, `presentFailures=0`, `outOfDate=0` |
+| The game's other framebuffers | off-target render targets | measured by the command-buffer acceptance fixture: `offTargetAccepted/Recorded/Completed = 2/2/2`, red and green rectangles at the expected pixels in the target's own PNG, untouched pixels unchanged |
+| Final composite and present | the Vulkan swapchain | present traces cycling the swapchain images, `presentFailures=0`, `outOfDate=0`. **The default-framebuffer composite is refused before acceptance** and stays GL's |
 
 **Unmapped arrivals: zero**, verified on both GPUs and in a partial Intel run carrying **674,500** uploads.
 
@@ -115,3 +115,18 @@ pixel-identity.
 - native passの**存在**と**coverageの検証**を分ける。nativeで描いているのは terrain、即時系family（block/item/particle/position/position_tex/tex_color/composite）、GUI/font/HUD・hand、particles、sky/cloud/water等のformat-6コンテンツ。**未検証**は全block/state・全entity/TESR・破壊/selection overlay・dimension・FBO/postprocess・spectator 3視点。**未実装**はvanilla ShaderGroupとentity outline。
 - off-target passは**一致groupのみretire**し、他targetのgroupは保持する（A32）。空targetでは passを開始しない。
 - A03は**通常fixture cleanのみでは閉じない**。2つの独立target/groupのCPU契約確認と色pattern受入が必要。
+
+## 追補（コマンドバッファ所有権・2026-10-10）
+
+- immediate系の記録は **backend専用の `VkCommandBuffer` 1本**で行い、その状態は `VulkanCommandBufferState`（handle別ライフサイクル）が持つ。
+  `VulkanContext` の bootstrap 用 handle とは別物であり、context 全体の boolean で代用しない。
+- 受理済みgroupは `pending → recorded（記録済み）→ retired（submit成功）→ fence確認後に解放` の順で所有権が移る。
+  失敗時は queue へ戻し、**描かなかった geometry を捨てない**。
+- 順序境界（Framebuffer の bind/unbind、clear、viewport、texture upload の告知）では、**GLが状態を変える前**に
+  その時点の target の受理済みgroupを同期windowで描く。
+- 旧 `VulkanOffscreenTarget` の scaffold（常に拒否し、空passをclear/copyしていた）は削除した。off-target の実描画は
+  上記windowが担い、**copy-back回数を描画の証拠にしない**。
+- 失敗時の扱い: submit前の失敗は再試行1回（資源は保持）、fence timeout/error は `gpuStalled` を立てて以降の記録・
+  解放を行わない。**submit成功後失敗と device lost は分岐のみで実機注入は未実施**。
+- 受入の実行: `bash scripts/run-command-buffer-targets.sh amd|intel <new-run-name> [failImmediateSubmits]`。
+  非0終了は Python/fixture/verdict のいずれかの失敗を意味する。

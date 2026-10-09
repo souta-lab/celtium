@@ -96,6 +96,12 @@ public final class VulkanTextureRegistry {
      * The upload hook receives this image - it is the same data GL is about to be given - which is what makes ownership of these
      * textures a change at one hook rather than a subsystem.
      */
+    /** FBO rendering invalidates the old CPU announcement; future sampling must read the returned game texture. */
+    public void invalidateRenderedTexture(int id) {
+        this.announcedImages.remove(Integer.valueOf(id));
+        this.staleIds.add(Integer.valueOf(id));
+    }
+
     public void announceImage(int glTextureId, java.awt.image.BufferedImage image) {
         if (glTextureId == 0 || image == null) {
             return;

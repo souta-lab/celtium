@@ -23,18 +23,16 @@ public abstract class FramebufferMixin {
 
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
-        try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
-            if (backend != null) {
-                // The main framebuffer is the only target the hybrid can honour: everything it draws goes into the shared
-                // image, so a batch issued for another target cannot be drawn correctly and must be refused before
-                // acceptance rather than taken and then dropped (audit S10/S14).
-                net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
-                boolean main = mc != null && mc.getFramebuffer() == (Object) this;
-                backend.bindFramebuffer(System.identityHashCode(this), main);
-            }
-        } catch (Throwable ignored) {
-            // A hint must never break the frame.
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend != null) {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            backend.bindFramebuffer(System.identityHashCode(this), mc != null && mc.getFramebuffer() == (Object) this);
         }
     }
+    @Inject(method = "func_147609_e", at = @At("HEAD"), require = 0)
+    private void celtium$beforeUnbind(CallbackInfo info) {
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend != null) backend.bindFramebuffer(0L, false);
+    }
+
 }

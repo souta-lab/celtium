@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkMemoryAllocateInfo;
@@ -77,29 +78,13 @@ public final class VulkanHostBuffer {
         if (requiredBytes <= this.size) {
             return;
         }
-        long previousSize = this.size;
-        long previousMapped = this.mapped;
-        long previousHandle = this.handle;
-        long previousMemory = this.memory;
-        // Detach the old objects before creating the new ones, so a failure in create() cannot leave this instance
-        // pointing at freed handles.
-        this.mapped = 0L;
-        this.handle = VK_NULL_HANDLE;
-        this.memory = VK_NULL_HANDLE;
-        this.size = VulkanContext.alignUp4(requiredBytes);
-        create();
-        if (previousMapped != 0L && this.mapped != 0L && previousSize > 0L) {
-            org.lwjgl.system.MemoryUtil.memCopy(previousMapped, this.mapped, Math.min(previousSize, this.size));
-        }
-        if (previousMapped != 0L) {
-            vkUnmapMemory(this.context.device(), previousMemory);
-        }
-        if (previousHandle != VK_NULL_HANDLE) {
-            vkDestroyBuffer(this.context.device(), previousHandle, null);
-        }
-        if (previousMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(this.context.device(), previousMemory, null);
-        }
+        VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, requiredBytes, this.usageFlags);
+        MemoryUtil.memCopy(this.mapped, replacement.mapped, this.size);
+        delete();
+        this.handle = replacement.handle;
+        this.memory = replacement.memory;
+        this.mapped = replacement.mapped;
+        this.size = replacement.size;
     }
 
     public void delete() {
