@@ -687,7 +687,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // blit, so the screen shows the Vulkan present instead. It runs before the acceptance mask, which keeps
             // this layout on GL by default.
             try {
-                if (this.frameTarget != null && this.swapchain != null) {
+                if (this.frameTarget != null && ensureSwapchain()) {
                     this.frameTarget.beginFrameForPresent();
                     String result = this.swapchain.presentImage(this.frameTarget.colorImage(),
                             org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
@@ -1984,6 +1984,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * advertises, and presents one cleared image. GL still presents this window in the hybrid build, so this runs
      * once and only when {@code -Dceltium.vulkan.swapchainProbe=true} is set.
      */
+    /**
+     * Creates the swapchain if it does not exist yet, and reports why when it cannot.
+     * <p>
+     * It used to be created as a side effect of the diagnostic probe, which meant turning the probe off silently turned
+     * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
+     * needs to present calls this instead, so the probe is only a probe.
+     */
+    private boolean ensureSwapchain() {
+        if (this.swapchain != null) {
+            return true;
+        }
+        long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+        java.util.List<String> reasons = new java.util.ArrayList<String>();
+        this.swapchain = VulkanSwapchain.create(this.context, window, 1280, 720, reasons);
+        if (this.swapchain == null) {
+            record("swapchain unavailable at surface and swapchain creation: " + reasons);
+            return false;
+        }
+        record(this.swapchain.describe());
+        return true;
+    }
+
     private void runSwapchainProbe() {
         if (this.swapchainProbeDone) {
             return;
@@ -1991,12 +2013,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.swapchainProbeDone = true;
         String step = "window handle";
         try {
-            long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-            java.util.List<String> reasons = new java.util.ArrayList<String>();
-            step = "surface and swapchain creation";
-            this.swapchain = VulkanSwapchain.create(this.context, window, 1280, 720, reasons);
-            if (this.swapchain == null) {
-                record("swapchain probe: unavailable at " + step + ": " + reasons);
+            if (!ensureSwapchain()) {
                 return;
             }
             record(this.swapchain.describe());

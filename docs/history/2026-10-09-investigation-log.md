@@ -1214,3 +1214,42 @@ question "is the frame present validation-clean" can finally be asked of a run t
 The readback itself is in place (`-Dceltium.vulkan.presentReadback=true` copies a centre patch of the blitted image to a
 host buffer and reports its mean), which is what will make "the screen shows the frame" a measurement - once a run presents
 again.
+
+---
+
+## The frame present now runs on its own, and the presented image has content - with 42 messages left
+
+Three gates had to be pulled apart before the present could stand alone, and each one was a place where the *diagnostic
+probe* had been standing in for the feature:
+
+1. `ensureSwapchain()` - the swapchain was created as a side effect of the probe, so turning the probe off silently
+   disabled the present. Anything that presents now calls this instead.
+2. `VulkanContext`'s device-extension gate - `VK_KHR_swapchain` was enabled only when the probe property was set, so a
+   present-only run created no swapchain at all.
+3. `VulkanSwapchain.create`'s own guard - it also required the probe property, and refused for that reason even once the
+   extension was there.
+
+With those fixed, a run with the probe off and `presentFromComposite` on does what it says:
+
+```
+presented the frame from the composite: present image: blitted 1280x720 onto image 0 (0)
+presented image mean=118.25
+```
+
+The mean is the readback measurement this round added, and it says the image Vulkan presented is **not** empty - it carries
+the frame's content, in the same range as the game framebuffer's own mean. That answers the question the earlier attempts
+could not: the screen is being given the frame, not a blank surface.
+
+Two defects are recorded with it rather than glossed over:
+
+- The readback itself is invalid: `vkCmdCopyImageToBuffer(): srcImage ... was created with
+  VK_IMAGE_USAGE_2_TRANSFER_DST_BIT_KHR|VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR` - the swapchain image was created
+  without `TRANSFER_SRC`, so the number above is provisional until that is added (or the readback is dropped and the check
+  done another way).
+- **42 validation messages remain** in this standalone run, the leading one being the same
+  `pSubmits[0] performs a layout transition on presentable VkImage ... but VkSemaphore ... was signaled by image acquire
+  operation was not waited on`. So the pairing complaint is not the probe's after all - the probe added its own, but this
+  one is the frame path's, and it is now reproducible without any diagnostic flag in the picture.
+
+`presentFromComposite` therefore stays off by default, and the honest summary is: the present runs, the image it presents
+has content, and it is not validation-clean yet.

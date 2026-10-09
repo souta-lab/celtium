@@ -498,7 +498,11 @@ public final class VulkanContext {
             // when the swapchain probe asks for them. A normal run keeps the exact extension set it was verified
             // with, and the probe reports "extension not enabled" instead of the instance being changed silently.
             List<String> enabledInstanceExtensions = new ArrayList<String>();
-            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)) {
+            // Enabled when anything wants to present: the diagnostic probe, or the frame present itself. Gating it on the probe
+            // alone is what made a run with the probe off create no swapchain at all and look validation-clean for the
+            // trivial reason that it presented nothing. It is still capability-checked below.
+            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
+                    || Boolean.getBoolean("celtium.vulkan.presentFromComposite")) {
                 java.util.Set<String> available = instanceExtensionNames(stack);
                 for (String candidate : new String[]{"VK_KHR_surface", "VK_KHR_xlib_surface", "VK_KHR_wayland_surface"}) {
                     if (available.contains(candidate)) {
@@ -661,7 +665,8 @@ public final class VulkanContext {
             // enabled the loader table has no vkCreateSwapchainKHR and LWJGL's own capability check reports a
             // NullPointerException on the missing function pointer, which is exactly what the first probes hit.
             // Enabled only for the probe, and only when the device advertises it.
-            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)) {
+            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
+                    || Boolean.getBoolean("celtium.vulkan.presentFromComposite")) {
                 Set<String> available = deviceExtensionNames(stack, this.physicalDevice);
                 if (available.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                     deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
