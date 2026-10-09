@@ -200,7 +200,17 @@ colorFormat=0x25`）のに、**fragmentが受ける `v_Color` は地形帯でち
 arena上のその頂点は正しい色を持つ。readbackをdraw単位に拡張中（1フレームで複数slotを読む経路が未完、
 `-Dceltium.vulkan.vertexDiagnostics=true` にゲート済み・通常runでは走らない）。
 
-**原因判明（このターン）**: mesh builderが書いた色のsection別ヒストグラム（`vertexColourSamples` の出力に
+**【訂正】前ラウンドの「translucent pass が不透明な暗灰色で地面を塗っている」は誤り**。UV先のspriteは
+**alpha 197 の青い半透明テクスチャ（水）**で、診断shaderが alpha=1.0 を出力していたため水が不透明に
+描かれて地面を覆っていた（診断アーティファクト）。translucent pass の中身は正当な水。
+
+面の明るさ別に「適用色（通常run ÷ 色乗算無効run）」を測ると、上面 (0.405,0.419,0.385) vs 参照相当
+(0.703,0.733,0.661) = 比0.57、中間0.61、側面0.62 と、**比が面に依らず一様に約0.6**。
+草地だけの比は0.62-0.66、水面は0.56-0.58。つまり面シェーディング差ではなく**一様な係数**。
+`VanillaLikeChunkVertex` はCeltium固有（上流に無い）ため、上流はこの色の参照にならない点に注意。
+次は「vanilla GLの同じ面が出す色」と比べる。
+
+**（参考・原因判明としていた観測）**: mesh builderが書いた色のsection別ヒストグラム（`vertexColourSamples` の出力に
 `distinctColours`/`top=` を追加）で、**診断画像の2値 (26,26,26)/(255,255,255) は translucent pass の頂点色
 0xff1a1a1a / 0xffffffff そのもの**だと判明。translucent の alpha は255（不透明）で、**可視地面の上に不透明な
 暗灰色が描かれている**。solid pass の色 0xff59bd91 から期待される 0.83×0.35×255 ≈ 74 は通常描画の実測 79.6 と
