@@ -411,6 +411,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private float worstModelViewDelta;
     private boolean worldPassActive;
     private int crossPassComparisonsSkipped;
+    private boolean mirrorMidSetup;
+    private int midSetupComparisonsSkipped;
     private String worstModelViewSample;
 
     private static String fmt3(double value) {
@@ -728,6 +730,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             float[] v = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
             this.trace.add("L" + this.framesSeen + "[mv " + fmt3(v[12]) + "," + fmt3(v[13]) + "," + fmt3(v[14]) + "]");
         }
+        this.mirrorMidSetup = true;
         this.loadIdentityByMode[this.lastMatrixMode == 5889 ? 0 : this.lastMatrixMode == 5888 ? 1 : 2]++;
         if (this.derivedProjectionPending) {
             this.loadIdentityWhilePending++;
@@ -1288,6 +1291,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.matrixComparisons > 4000) {
             return;
         }
+        // Skip while the mirror is still the zeroed array a reset leaves, which is the condition itself rather than a
+        // proxy for it: a flag that cleared after one skip was too narrow, and the worst sample stayed a zeroed matrix.
+        // Comparing an unset matrix with GL's measures the interval between two frames, not the mirror.
+        float[] viewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        if (viewNow[0] == 0.0f && viewNow[5] == 0.0f && viewNow[12] == 0.0f && viewNow[13] == 0.0f && viewNow[14] == 0.0f) {
+            this.midSetupComparisonsSkipped++;
+            return;
+        }
         if (!this.worldPassActive) {
             // Comparing here would compare the world pass's mirrored matrices with whatever pass is running - the overlay's
             // translate(0, 0, -2000) turned up in this counter exactly that way, in a run that passed. The comparison is
@@ -1629,7 +1640,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + ",passSplits:" + this.passSplits + ",target:" + this.currentRenderTarget
                 + ",worstView[" + (this.worstModelViewSample == null ? "none" : this.worstModelViewSample) + "]"
                 + " trace[" + String.join(" ", this.trace) + "]"
-                + ",steadyComparisons:" + this.steadyComparisons + ",crossPassSkipped:" + this.crossPassComparisonsSkipped
+                + ",steadyComparisons:" + this.steadyComparisons + ",crossPassSkipped:" + this.crossPassComparisonsSkipped + ",midSetupSkipped:" + this.midSetupComparisonsSkipped
                 + ",steadyDelta=proj:" + this.steadyProjectionDelta + ",view:" + this.steadyModelViewDelta
                 + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
                 + ",cameraSeeds:" + this.cameraSetupSeeds

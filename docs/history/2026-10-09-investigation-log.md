@@ -4107,3 +4107,44 @@ check - whether the modelview's trace is still the value left by the reset - exp
 Nothing in the renderer changed this round, and the direction's own work is where it was: the pass identity is in the group
 key and the comparison is scoped to its pass. The mirror reads can be removed once the metric stops reporting artefacts
 rather than the state it is supposed to describe.
+
+---
+
+## The zero-test never fired because "0.00" was rounding, and the pass flag is unreliable
+
+Two counters contradicted each other and the resolution is worth the round:
+
+```
+midSetupSkipped: 0                      the "mirror is unset" test never fired
+worstView[frame=12 ... mirror[m0=0.00, m5=-0.00, t=0.00, 0.00, 0.00]]    ...and it shows zeros
+comparisons: 1148, view: 1.62, proj: 1.6200542E-4, fixture PASSED
+```
+
+The test compares `viewNow[0] == 0.0f` and the recorder prints `%.2f`. An **orthographic** projection has `m[0] = 2 / width`,
+which is about `0.0015` - **not zero, and printed as `0.00`**. So the mirror at that sample is not unset: it holds an
+**orthographic** matrix, the overlay's, while GL holds the world's with its camera translation. The 1.62 is the two
+translations apart, and the mirror is **stale by one pass**.
+
+That also means the pass flag the last two rounds relied on is wrong. `worldPassActive` is set when a perspective projection
+is derived and cleared by the hooked `ortho`, and MC evidently installs orthographic projections through paths this project
+does not hook - `loadMatrix`, a `Matrix4f` upload, or a mode this backend does not track. The flag says "world" while the
+mirror holds an overlay matrix, which is exactly how a wrong 1.62 survived a check written to remove it.
+
+The robust discriminator is not the mirrored state at all, since that is the thing in question. It is GL's own projection in
+the diagnostic path: a perspective projection has `m[11] == -1`, an orthographic one does not. One read of GL, in a
+measurement-only path, and the comparison is taken only when both sides describe the same kind of pass.
+
+Recording the fourth artefact's history honestly, because the pattern is now the finding:
+
+| Attempt | What it assumed | Result |
+|---|---|---|
+| skip one comparison after a reset | the mirror fills immediately | 1125 skips, `view` still 1.62 |
+| skip while the mirror is all zeros | `0.00` means zero | 0 skips - it was rounding |
+
+Both were wrong for the same underlying reason: they tried to infer which pass owns the mirror from the mirror itself. The
+thing that knows is GL, and reading it - once per comparison, in the diagnostic path only - is cheaper than the four
+suppositions it replaces.
+
+Nothing in the renderer changed, and this remains measurement work: the renderer's own pass identity is in the group key and
+draws against the matrices the batch was issued with. What is unresolved is a counter that cannot yet tell two passes apart
+without asking GL.
