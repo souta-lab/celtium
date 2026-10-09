@@ -300,8 +300,11 @@ the alpha reference** (to match their fragment stages), so inserting it again pr
 shaders. This time all nine blocks were replaced with one identical text.
 
 Verified: `BUILD SUCCESSFUL`, exit 0, validation clean, **0 messages**, fixture PASSED, `immediateTaken=553`,
-`postAcceptDroppedGroups=0`, `descriptorSets=1`, `passes=2179` - and the frame is unchanged from before the migration
-(mean difference below one unit), so this is a capability fix with no behavioural effect.
+`postAcceptDroppedGroups=0`, `descriptorSets=1`, `passes=2179`. The frame comparison against the run before the migration
+reads mean 0.968 with a maximum of 255 - and that is **this scene's frame-to-frame variation**, not an effect of the change:
+comparing two unrelated rounds of the *same* build gives 0.95 with the same maximum, because the scene has time-varying
+content. The honest statement is therefore that the migration shows **no difference beyond the scene's own noise**, rather
+than "no difference".
 
 ### S20 [P1] the validation gate misses errors by their format
 `prism_validation` skips any message not starting with `vk`, and stores no severity or message ID, so

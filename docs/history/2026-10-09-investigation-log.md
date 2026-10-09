@@ -6092,3 +6092,17 @@ difference), which is what a pure capability fix should look like: **less asked 
 
 Six push ranges moved to 116 and the terrain pipeline keeps its own separate 128-byte layout, which is legal because it is a
 different pipeline layout.
+
+---
+
+## A note on what the frame comparison can and cannot say
+
+The S19 verification compared the frame before and after the migration and got a mean difference of 0.968 with a maximum of
+255. Before recording that as "the frame is unchanged", the same comparison was run between two rounds of the **same build** -
+unrelated runs with no code difference between them - and it gives **0.95 with the same maximum**. The scene contains
+time-varying content, so roughly one unit of mean difference is its own noise floor, and the migration sits inside it.
+
+This is written down because the number would otherwise be quoted as evidence of pixel equality, which it is not: the honest
+claim is that the change produced **no difference beyond the scene's noise**, and the way to know that is to have measured the
+noise. Several earlier rounds in this log compared frames across builds and read small non-zero means as noise without
+checking; this is the measurement that justifies doing so.
