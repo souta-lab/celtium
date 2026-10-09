@@ -7650,3 +7650,28 @@ one guesses.
 Worth noting as the fifth guard on this one path, and the first of them that was a **defect** rather than a stale constant: the
 id chain had no branch, the range check stopped at 6, the mask excluded the id, the stride table predated the layout, and now
 an initialisation order that assumed the flush always ran first. None of the five was visible from reading the mapping.
+
+---
+
+## Both new layouts are accepted: the entity/TESR layout is drawn by Vulkan
+
+The second null-registry site was the real one - fixing only the descriptor probe left the acceptance-side texture check
+throwing, and the instrument said so by reporting the **identical reason** after the first fix, which is what made the second
+site findable rather than guessed at. With both fixed:
+
+```
+acceptedByFormat = 1:15, 2:0, 3:0, 4:0, 5:312, 6:1854, 7:1089, 8:128, 9:12
+immediateTaken = 3410   glDrawsCancelled = 3410   terrainPasses=918
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+**128 batches of the entity/TESR layout and 12 of the composite's are accepted and drawn by Vulkan**, where both were zero
+before. The immediate path rose from 3192 to 3410 with the cancelled GL draws one for one.
+
+The entity layout is the one the completion conditions name explicitly - `entity/TESR` - and it needed a branch in the id
+chain, admission by the range check and the mask, a stride of its own, a cache of its own (sharing one across two strides
+would hand a 24-byte pipeline a 28-byte mesh), and two initialisation-order fixes on the acceptance path. Five guards in
+total, every one of them named by an instrument rather than found by reading.
+
+Three refusals remain per run, and their reason has changed again: `pass is null` inside the terrain render pass lookup,
+which is a third, separate defect on the same path and is recorded as the next step rather than folded into this one.

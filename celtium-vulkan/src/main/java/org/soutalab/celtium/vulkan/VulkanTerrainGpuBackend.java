@@ -1599,6 +1599,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Everything the draw will need is prepared before the batch is accepted: the audit's S14 is the
             // failure mode where geometry is taken and then dropped, and the fix is to refuse here instead, where GL
             // can still draw the batch itself. The texture is the one requirement the pipeline check does not cover.
+            if (this.textureRegistry == null) {
+                // The other place the acceptance needs it: this check runs while a batch is being offered, before any flush
+                // has created the registry. Fixing only the descriptor probe left this one throwing, which the instrument
+                // showed by reporting the identical reason after the first fix.
+                this.textureRegistry = new VulkanTextureRegistry(this.context);
+            }
             if (this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
                 this.textureRefusalsBeforeAccept++;
