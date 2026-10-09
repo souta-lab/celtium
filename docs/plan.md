@@ -34,24 +34,32 @@ What that means concretely:
 - **The audits and their acceptance tests continue.** This is a statement of direction, not an instruction to delete or
   rewrite what is there: the current audit P0/P1 fixes and their verification stay in the queue.
 
-## 0b. Minimum runtime: Java 21 (2026-10-09 14:11)
+## 0b. Java: compile target 21, game runtime 25 (corrected 2026-10-09 14:17)
 
-`celtium-vulkan` and `celtium-interop` compile with `--release 21`; release 25 was considered and **not** adopted. Builds and
-verification runs use JDK 25, but nothing in these modules may use a Java 22+ API, language feature or preview - the two
-facts are kept apart deliberately.
+Two different things, recorded separately because they are not the same claim:
+
+| | Value |
+|---|---|
+| **Celtium's compile target** | **Java 21** - `celtium-vulkan` and `celtium-interop` build with `--release 21` (class file major 65), and nothing in them may use a Java 22+ API, language feature or preview |
+| **The game's runtime and verification environment** | **Java 25** - the environment Cleanroom 0.6.13-alpha runs on, and where every startup, render and validation measurement in this project is taken |
+
+The correction that produced this section: an earlier reading made "minimum runtime 21" mean *the game must start on Java 21*, which
+made Cleanroom's own class file version (69, Java 25) look like a blocker and put "verify startup on Java 21" in the work queue.
+**It is not a blocker and it is not a goal.** "The game's minimum runtime is 21" and "start the Cleanroom game on Java 21" are
+**removed from the completion conditions and from the work queue**; Cleanroom is not modified or swapped for it, and no further
+out-of-game load tests are run for it.
+
+What is still true, and is checked:
 
 | Check | State |
 |---|---|
 | `--release 21` for the renderer modules | Done |
-| Final distribution jar's `celtium/vulkan/*` classes are major **65** | **Verified** in `celtium-forge-mc1.12.2-...jar` |
-| Mod-side `org/taumc/celeritas/*` classes stay major **52** | **Verified** - existing Forge mods are not asked to recompile, and their bytecode is not rewritten |
-| Shadow/embedding/downgrade does not return the renderer to major 8 | Verified for the embedding path in use; `common`'s `downgraded` configuration is a compile-only dependency of `celtium-vulkan` and does not rewrite its output |
-| Startup and rendering still pass after the change (JDK 25) | **Verified**: fixture PASSED, `nativeTerrainVerified True`, 2185 passes, `validation-clean` |
-| **Java 21 runtime: the renderer's classes load and initialise** | **Verified outside Cleanroom.** `java 21.0.12.1 --source` running `-cp <distribution jar>` loads `VulkanContext`, `VulkanSwapchain`, `VulkanTerrainGpuBackend` and `VulkanGlState` - all class file major **65** - with no error, and `VulkanGlState` and `VulkanHostBuffer` also **initialise** (static initialisers run) on Java 21. This is the Java 21 runtime check the entry below says is impossible inside the game |
-| **Startup and rendering on Java 21 (in game)** | **IMPOSSIBLE ON THIS CLEANROOM BUILD, and therefore not verified.** Pointing the launcher at JDK 21 (`--java .../jdks/21/jdk-21.0.12.1+1/bin/java`) fails in 0.3 s with the game never starting, and the console says why: `UnsupportedClassVersionError: top/outlands/foundation/boot/Foundation has been compiled by a more recent version of the Java Runtime (class file version 69.0)`. **Cleanroom 0.6.13-alpha's own launcher is class 69, so JDK 21 cannot start it at all.** Celtium's classes are major 65 and JDK 25 loads them; whether they load on 21 has not been tested on a host that can run them, and no Java 21 claim is made |
+| Final distribution jar's `celtium/vulkan/*` classes are major **65** | **Verified** |
+| Mod-side `org/taumc/celeritas/*` classes stay major **52**, so existing Forge mods keep their binary/API/event compatibility and are not asked to recompile | **Verified** |
+| Startup and rendering pass on the runtime in use (Java 25) | **Verified** - fixture PASSED, `nativeTerrainVerified True`, validation-clean |
 
-Java 21 language or API features are adopted only where necessity, maintainability or measurement justify them, and the
-release change alone is **not** reported as a speed-up.
+**Not claimed:** that `--release 21` makes the whole game, including Cleanroom, run on Java 21. It does not, and no document here
+says otherwise.
 
 ## 1. Purpose and completion condition
 

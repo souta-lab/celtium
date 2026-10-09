@@ -3509,3 +3509,27 @@ So the work has an order and a measurement: hook `func_78479_a`, report `fov`, `
 position and rotation, compute the projection in the backend, and read the two deltas. If the fov modifier is the residual,
 the number says so - which is the same measure-before-switching discipline that stopped the `glGetFloatv` removal two
 rounds ago when the mirror turned out to be empty.
+
+---
+
+## Correction from the user, 14:17 JST: the game runs on 25, only the compiled classes target 21
+
+The earlier reading of "minimum Java 21" made it mean *the game must start on Java 21*, which turned Cleanroom's own class
+file version - 69, Java 25 - into a blocker and put a Java 21 startup check into the work queue. The correction separates
+the two: **Celtium's compile target is 21** (release 21, major 65, no Java 22+ APIs), and **the game's runtime and
+verification environment is 25**, which is what every run in this log has used.
+
+So three things change, and one does not:
+
+- the goal and the plan now state the split as two separate facts rather than as a target and a shortfall;
+- "the game's minimum runtime is 21" and "start the Cleanroom game on Java 21" are **removed from the completion conditions
+  and from the work queue** - Cleanroom is not to be modified or swapped for it, and the out-of-game load checks stop here;
+- the plan states explicitly that `--release 21` does **not** mean the whole game runs on 21, so no document implies it;
+- **the release 21 migration itself stands.** This is a correction of interpretation, not a retraction of the change: the
+  renderer's classes are major 65, the mod-side classes remain major 52, and the distribution jar is verified for both.
+
+Two rounds went into the version question - reading the launcher's class version, the failed 21 launches (two of which were
+my own script edits), the standalone load and initialisation checks - and the useful residue is the jar verification and the
+explicit table. The instruction that goes with the correction is the one to act on now: **stop splitting Java versions and
+go back to the rendering.** The next work is the derivation of the world projection and camera from Minecraft's own state,
+whose anchors are recorded above, and the audit items still open.
