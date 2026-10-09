@@ -2688,6 +2688,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
+                // Condition (c) evidence: what the swapchain last presented, and whether the present was accepted. With
+                // presentMarker the image is cleared to magenta (1,0,1), whose 8-bit channel mean is ~170, so a
+                // presented mean near 170 says the swapchain image held this renderer's frame rather than nothing.
+                + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
+                + " presentSubmitDone=" + (this.swapchain != null && this.swapchain.lastPresentSubmitDone())
+                + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
+                + " presentMarkerExpected=170.0_magenta_1_0_1"
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.

@@ -203,6 +203,21 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 - 残る: `presented image mean=` の値を report に出す（提示画像にマーカー色が入った証拠）、および
   window/compositor capture の可否調査。
 
+**完成条件(c)の証拠（このターン）**: 提示画像の内容を report に出して実測した（`presentMarker` は画像を
+マゼンタ (1,0,1,1) でクリアする。8bit のバイト平均は (255+0+255+255)/4 = **191.25**）。
+
+| 指標 | 実測 |
+|---|---|
+| `presentSucceeded` | **true** |
+| `presentedMean` | **191.25**（マゼンタ期待値 191.25 と**完全一致**） |
+| `presentFailures` | 0 |
+| verdict | exit 0 / validationClean / PASSED |
+
+- **提示された swapchain 画像に、このrendererが合成したフレームが入っている**ことの直接証拠が取れた
+  （前ターンまで「presentFailures=0」だけで、画像の中身は未確認だった）。
+- 残るのは **window/compositor への到達**（画面そのものの capture）。headless セッションのため
+  X11/Wayland の capture 手段が必要で、利用可否の調査は次項。
+
 **（旧メモ）** 次の一手: (1) present 経路のレイアウト遷移と記述子の宣言を突き合わせて `VUID-vkCmdDraw-None-09600` を解消する、
 (2) `presentReadback` の平均値がマーカー色と一致することを記録して「提示画像にフレームが入った」証拠を取る、
 (3) window/compositor capture の可否を調べる（取れない場合は不足条件を明記）。
