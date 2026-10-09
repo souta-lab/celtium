@@ -2845,3 +2845,30 @@ idea: `func_110988_a` on `TextureUtil` destabilised the class load.
 The next attempt targets `DynamicTexture.func_110564_a` instead - a concrete method on a small class, no parameters, called
 once per frame - with an `@Invoker` for `func_110552_b` to read the texture id the way Mixin's own accessor mechanism
 intends, rather than a static method inside `TextureUtil` whose signature Mixin and the remapper evidently disagreed about.
+
+---
+
+## Two hooks for the stale lightmap, two crashes, and the elimination narrows the cause
+
+The second attempt targeted the pair the audit's own advice points at - a concrete method on a small class plus Mixin's
+official `@Invoker` for the texture id - and produced the same failure as the first, in the same six seconds:
+
+| Attempt | Target | Crash |
+|---|---|---|
+| 1 | `TextureUtil.func_110988_a(glTextureId, int[][], int, int)` | `NoClassDefFoundError: net/minecraft/client/renderer/texture/TextureUtil` |
+| 2 | `DynamicTexture.func_110564_a` with `@Invoker("func_110552_b")` | `NoClassDefFoundError: net/minecraft/client/renderer/texture/DynamicTexture` |
+
+Both are transformation failures surfacing as a class that cannot be loaded, and together they exclude the obvious
+explanations. `TextureUtil` **is** targetable - the registration hook on it has fired in every run since it was added - so
+attempt 1's failure was not the class but the **injected method's signature**, an `int[][]` parameter. `DynamicTexture` was
+a first-time target and the only machinery attempt 2 added was the `@Invoker`, which makes **the accessor machinery** the
+prime suspect there.
+
+Both are reverted; the build is green and the scene measures PASSED with `nativeTerrainVerified True` and 2220 passes. The
+defect they were written to fix - a lightmap mirror uploaded once and never refreshed, while Minecraft updates it every
+frame - is still in the tree and still unaddressed.
+
+The next attempts, in the order the evidence suggests: a minimal mixin whose only content is the `@Invoker`, to confirm or
+clear the accessor machinery in one run; a hook on `DynamicTexture.func_110564_a` that reads no id at all and instead asks
+the backend to drop whichever texture the game has bound, which is what the animation hook already does; and, if both fail,
+invalidating every mirror on a frame counter, which is blunt but cannot be wrong about which texture changed.
