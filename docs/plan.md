@@ -1062,7 +1062,47 @@ descriptor の確保は 1.09 ms の原因ではない。
 （同定に使った view ハンドルは run ごとに変わるため、前ターンの「21 = 1×1」という対応は**古い run のもので誤り**だった。
 サイズをログに出すようにして正しく同定した。）
 
-**次の一手**: (1) **ライトマップの更新を毎回 announce に載せる**（`DynamicTexture.updateDynamicTexture` のフックはあるので、
+**周期 invalidate を既定で無効化（このターン・完了。毎フレームのGL読み戻しが消えた）**:
+
+`invalidateAll()` は毎フレーム**全ミラー**を stale にしていた。stale は「announce が届いたとき」に消える
+（`announceFullPixels` が `staleIds.remove` する）ので、**ライトマップが変わっていないフレーム**では stale が
+残り、次の使用で **GL 読み戻し**が走っていた。これが Intel の 2.30 ms/フレームのネイティブブロックの正体。
+
+**床と比較して再判定**（前ターンの「画像が 0.016 変わる」という反対理由を、測定した床で裁いた）:
+
+| 比較（Intel） | meanAbsDiff | 差のある画素 |
+|---|---|---|
+| 既定 vs 既定（床） | 0.0000 | 3 |
+| **既定 vs `mirrorRefreshFrames=0`** | **0.0000** | **7** ✅ |
+| `=0` vs `=0`（別run） | **0.0169** | 1979 |
+
+AMD も 既定 vs `=0` が **0.0000（5画素）**。つまり **`=0` は既定と画素一致**で、`=0` 同士の 0.0169 は
+**経路差の床**（round 496 で測定した「Vulkan経路に取られるバッチが run ごとに違う」現象）である。
+
+**利得（測定）**: `regStaleMillis` **2.30 → 0.00 ms/フレーム（Intel）** / 0.31 → 0.00（AMD）。
+
+**既定化後の受入（一式・すべて緑）**:
+
+| run | exit | validationClean | fixture | p50 | stale |
+|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | **16.02 ms** | 0.00 ms/f |
+| **Intel 通常** | 0 | true | **PASSED** | **28.54 ms** | 0.00 ms/f |
+| postprocess (AMD) | 0 | true | PASSED | 16.15 ms | 0.00 |
+| weather (AMD) | 0 | true | PASSED | 15.72 ms | 0.00 |
+| spectator spider (AMD) | 0 | true | PASSED | 16.15 ms | 0.00 |
+| submit失敗注入 | 1 | true | FAILED（期待どおり） | — | 0.00 |
+| idle失敗注入 | 1 | true | FAILED（期待どおり） | — | 0.00 |
+| command-buffer target受入 | 0 | true | **PASSED** | 16.03 ms | `targets=True` |
+
+- **AMD 16.02 ms は celeritas 参照（16.18 ms）を上回る**。Intel はこのセッションで **42.66 → 28.54 ms（33%改善）**。
+- **毎フレームの GL 読み戻しが消えた**（`stale=0.00`）。優先順位4の「GL readback を不要にする」に対する前進で、
+  残る読み戻しは**更新時のみ**（announce が届かない経路のとき）である。
+
+**次の一手**: (1) 残る `batchCall` の wall−CPU（Intel で約 5.6 ms/フレーム）の内訳を、同じ wall/CPU 計器で
+さらに割る、(2) `actualFlushMillis`（Intel 4.1 ms/フレーム）の中身を分ける、(3) GL context なしの起動
+（完成条件(b)）に向けて、まだ GL に残っている依存（ブリッジの blit/semaphore と depth 変換）を数え直す。
+
+**（旧メモ）** 次の一手: (1) **ライトマップの更新を毎回 announce に載せる**（`DynamicTexture.updateDynamicTexture` のフックはあるので、
 なぜ announce が pending でない瞬間があるのかをログで確かめる）、(2) `invalidateAll()` を「更新が届いている
 テクスチャには stale を立てない」形にする、(3) どちらも画像が不変であることを確認する（不変なテクスチャの読み戻しを
 消すのが目的なので、画像が変わったら仮定が間違っている）。

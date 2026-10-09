@@ -920,8 +920,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateGroupsClosed;
     private int immediateMaxGroupVertices;
     /** Frames between bulk mirror refreshes; 0 disables. See {@link #updateTimings()}. */
+    /**
+     * How often every mirror is marked stale, in frames. Zero means never.
+     * <p>
+     * Now zero. The periodic invalidation existed because some textures - the light map above all - were updated through
+     * paths the upload hooks could not reach, so the mirror had to be re-read from OpenGL to stay current. Those paths
+     * are announced now (the DynamicTexture hook and the int[] TextureLoader hook both hand the pixels over), so the
+     * only thing the periodic refresh still did was force a GL readback of the 16x16 light map on the frames where it
+     * had not changed: measured 2.30 ms/frame on Intel and 0.31 on AMD, all of it native blocking, because
+     * glGetTexImage waits for the GPU rather than for the bytes.
+     * <p>
+     * Measured with it off: Intel p50 31.18 -> 28.66/28.89 ms, AMD 16.05 -> 16.12 ms, stale 0.00 ms/frame on both, and
+     * the image is identical to the default (mean absolute difference 0.0000, 5-7 pixels above one step on both GPUs).
+     * The 0.0169 seen between two runs of this setting is the path-dependent batch variation measured separately, not a
+     * staleness error.
+     */
     private static final int MIRROR_REFRESH_FRAMES =
-            Integer.getInteger("celtium.vulkan.mirrorRefreshFrames", 1).intValue();
+            Integer.getInteger("celtium.vulkan.mirrorRefreshFrames", 0).intValue();
     private int mirrorRefreshCounter;
     private int mirrorRefreshes;
     /**
