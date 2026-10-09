@@ -9009,3 +9009,32 @@ acceptedByFormat 1:14,2:0,3:0,4:0,5:246,6:1444,7:900,8:0,9:12。
 変わり、offers=246を記録したrunと踏まないrunがある。したがって「off-targetの内容が自分のpassへ届くようになった」
 という**測定による確認はまだ得られていない**。`offTargetPassesSkippedEmpty=2529` が高いのは、このrunでは
 off-target宛のgroupがそもそもqueueに無いためである。CPU契約チェック（A02/A03/A32）は変更後も PASS。
+
+---
+
+## 自己訂正: per-target計器は私の巻き戻しで消えており、「offers=0」は計器の不在だった
+
+A10の測定受入（off-target分岐を踏むrunで `atPass`/`drawnPasses` を見る）に3ラウンドかけて到達できなかった理由が
+判明した。**per-target計器はラウンド395で私が自分で入れた後、同じラウンドの `git checkout --` による巻き戻しで
+消えていた**。巻き戻しは「半端な変更を残さない」ために行ったが、そのファイルには**すでに計器も入っていた**ため、
+計器ごと消えた。以後のラウンドで私は報告に `offTargetPerTarget` が無いのを見て「offers=0（このrunは分岐を踏んで
+いない）」と読んだが、正しくは**その計器が存在しなかった**。`offTargetOfferedByTarget` のような**存在しない計器の
+不在をゼロと読む**のは、このプロジェクトが繰り返してきた誤りの新しい形である。
+
+証拠はログにあった。再現run（`-Dceltium.validation.drawTestTargets=true`）は毎回こう出している:
+
+```
+CELTIUM_OFFTARGET target=2131877082 viewport=256x256 firstBatchFormat=1
+CELTIUM_OFFTARGET_SELFTEST size=256x256 expected=64,128,191 differingPixels=0 glError=0 glPixel=64,128,191 passed=true
+```
+
+つまり**第二targetは作られ、format 1のバッチが提示され、self-testは通っている**。したがって
+「off-targetの内容が自分のtargetへ届いていない」という前ラウンドの結論は、**提示までは起きている**という形に
+限定される。提示後の経路（queueに入るか、mainのflushに消費されるか、自分のpassで描かれるか）は、計器を
+戻してから測る。
+
+**次回の具体作業**: 既存の `offTargetBatchesByTarget`（offer分岐が既に保持している per-target マップ）を使い、
+pass時に `offTargetPassGroupsByTarget`、copy-back時に `offTargetDrawnByTarget` を足して
+`offTargetPerTarget=[id:offered=..,atPass=..,drawnPasses=..]` を報告に出す。アンカーは
+`/** {@return whether the target has no pending geometry}, asked before a pass is begun. */` ではなく
+実際のメソッド宣言行を確認してから当てる（2回続けてアンカー相違で未適用になっている）。
