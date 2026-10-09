@@ -60,9 +60,13 @@ renderer it replaced rather than with its own previous frame, and it is far larg
 (minimum at zero offset), and the terrain is **uniformly about 40% darker** than the reference (luminance 77-80 against
 129-131 in the three terrain bands). So the 68.81% is a **shading** defect rather than a geometry one. The lightmap divisor was wrong (256 where 1.12.2's 16x16
 light map needs 16, and where the shader's own clamp was already written in 16-texel terms); it is **fixed**, and the
-measurement is **unchanged** - which proves the light value reaching the shader is already at the clamp, i.e. **zero**. The
-two candidates left are `vertex.light` being zero as the mesh is built, and the light map texture the terrain pipeline binds
-not being the one the dump shows; both need one line of instrumentation each.
+measurement is **unchanged** - which proves the light value reaching the shader is already at the clamp, i.e. **zero**. The vertex light is **not** zero: an instrument at the write shows `block=0 sky=240` (full noon sky, no torch light) in the
+**vanillalike** format, and the shader unpacks exactly that. The row-order hypothesis was tested and is **wrong**: flipping
+the uploaded rows turns the terrain almost black (band luminance 3.2 against the reference's 131, mean difference 90.94), the
+atlas's UVs being in the same OpenGL row order - so the flip is reverted and the baseline is back at **34.08 / 68.81%**. The
+light coordinates are (block 0, sky 15), so the sample must land on the full-sky corner and does not; what remains is the
+light map's own row/axis order (checkable from the existing dump, no run needed) and whether the texture bound at set 0
+binding 1 is that light map.
 
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for

@@ -11,6 +11,10 @@ import java.util.List;
 import java.util.Map;
 
 public class CompactChunkVertex implements ChunkVertexType {
+    private static final boolean LIGHT_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.lightDiagnostics");
+    private static int lightSamplesPrinted;
+
     public static final GlVertexFormat VERTEX_FORMAT = GlVertexFormat.builder(24)
             .addElement("a_PosId", 0, GlVertexAttributeFormat.UNSIGNED_SHORT, 4, false, true)
             .addElement("a_Color", 8, GlVertexAttributeFormat.UNSIGNED_BYTE, 4, true, false)
@@ -87,6 +91,12 @@ public class CompactChunkVertex implements ChunkVertexType {
             LWJGL.memPutShort(ptr + 12, (short) (u >>> TEXTURE_LOW_BITS));
             LWJGL.memPutShort(ptr + 14, (short) (v >>> TEXTURE_LOW_BITS));
 
+            if (LIGHT_DIAGNOSTICS && lightSamplesPrinted < 8) {
+                lightSamplesPrinted++;
+                System.out.println("[Celtium] CELTIUM_VERTEX_LIGHT format=compact flag=" + LIGHT_DIAGNOSTICS + " raw=" + vertex.light
+                        + " block=" + (vertex.light & 0xFF) + " sky=" + ((vertex.light >> 16) & 0xFF)
+                        + " encoded=" + encodeLight(vertex.light));
+            }
             LWJGL.memPutInt(ptr + 16, (encodeDrawParameters(material, sectionIndex, u, v) << 0) | (encodeLight(vertex.light) << 16));
             LWJGL.memPutInt(ptr + 20, vertex.rdhFactor);
 

@@ -12,6 +12,10 @@ import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
  * compatible with mods & resource packs that need high precision for models.
  */
 public class VanillaLikeChunkVertex implements ChunkVertexType {
+    private static final boolean LIGHT_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.lightDiagnostics");
+    private static int lightSamplesPrinted;
+
     public static final int STRIDE = 32;
 
     public static final GlVertexFormat VERTEX_FORMAT = GlVertexFormat.builder(STRIDE)
@@ -51,6 +55,12 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
             LWJGL.memPutInt(ptr + 12, vertex.color);
             LWJGL.memPutFloat(ptr + 16, encodeTexture(vertex.u));
             LWJGL.memPutFloat(ptr + 20, encodeTexture(vertex.v));
+            if (LIGHT_DIAGNOSTICS && lightSamplesPrinted < 8) {
+                lightSamplesPrinted++;
+                System.out.println("[Celtium] CELTIUM_VERTEX_LIGHT format=vanillalike raw=" + vertex.light
+                        + " block=" + (vertex.light & 0xFF) + " sky=" + ((vertex.light >> 16) & 0xFF)
+                        + " encoded=" + encodeLight(vertex.light));
+            }
             LWJGL.memPutInt(ptr + 24, (encodeDrawParameters(material, sectionIndex) << 0) | (encodeLight(vertex.light) << 16));
             LWJGL.memPutInt(ptr + 28, vertex.rdhFactor);
 

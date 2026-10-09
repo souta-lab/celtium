@@ -65,6 +65,8 @@ public final class VulkanGlTexture {
     private static final boolean MIRROR_GL_MIPS = false;
     /** Levels the GL texture reported on the last upload, or 0 to compute them from the size. */
     private int mirroredLevels;
+    /** GL's row order is bottom-up and Vulkan's is top-down, so the mirror has to flip. */
+    private static final boolean FLIP_ROWS = false;
     private static final boolean SAMPLER_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
 
@@ -612,7 +614,20 @@ public final class VulkanGlTexture {
         // buffer into device visible memory without an intermediate Java array. The row order is kept as GL
         // returned it; a vertical flip here made the whole terrain black, so the orientation question is not
         // settled and must be answered with a controlled pattern instead of by flipping this copy.
-        MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), stagingAddress, bytes);
+        if (FLIP_ROWS) {
+            // Off, and measured: flipping every mirrored row turned the terrain almost black (band luminance 3.2 against
+            // the reference's 131) because the atlas's UVs and this upload are both in OpenGL's row order, so the flip
+            // inverted every block face. The earlier note that a flip "made the whole terrain black" was right, and this
+            // round's attempt to overrule it is recorded as the mistake it was. The light map's darkness has another
+            // cause; the flip is kept only as a lab flag.
+            int rowBytes = pixelWidth * BYTES_PER_PIXEL;
+            for (int y = 0; y < pixelHeight; y++) {
+                MemoryUtil.memCopy(MemoryUtil.memAddress(pixels) + (long) y * rowBytes,
+                        stagingAddress + (long) (pixelHeight - 1 - y) * rowBytes, rowBytes);
+            }
+        } else {
+            MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), stagingAddress, bytes);
+        }
         if (!stagingCoherent) {
             // Non-coherent host memory needs an explicit flush before the copy; coherent memory (the common case)
             // is made available to the device by the queue submission itself.

@@ -5248,3 +5248,39 @@ vertex's light value as it is encoded, and print the texture id bound at set 0 b
 
 Recorded with the fix kept: the divisor correction is a real correctness fix (16 is what the clamp, the comment, the dump and
 the game all say), it is simply not the defect that makes the terrain dark.
+
+---
+
+## The light reaching the shader is full daylight, and the row flip is harmful - both by measurement
+
+The two candidates from the previous round were "the vertex light is zero" and "the light map bound is not the one the dump
+shows". The first is now **excluded by data**, with an instrument at the one place the light is written:
+
+```
+CELTIUM_VERTEX_LIGHT format=vanillalike raw=15728640 block=0 sky=240 encoded=61440
+```
+
+`raw` is `0xF00000`: block light 0 and sky light 15, scaled by sixteen, which is a clear noon sky with no torch light - what
+the fixture should have. The active format is **vanillalike**, not compact, and the shader's unpacking of it
+(`>> 16`, then two bytes) reads exactly those values. So the light value is real, correct, and arrives; the darkness is
+downstream of it.
+
+The second thing this round did was test the remaining orientation hypothesis directly. The upload copies OpenGL's rows in
+order, and a comment in that code has said since early on that "a vertical flip here made the whole terrain black". Flipping
+the rows measures:
+
+| configuration | mean difference | terrain band luminance (Celtium vs reference) |
+|---|---|---|
+| no flip (as it was) | 34.09 / 68.81% | 79.9 vs 131.0 |
+| **flip** | **90.94 / 71.00%** | **3.2 vs 131.1** |
+
+The flip turns the terrain almost black, exactly as the comment said, and the reason is now clear: the atlas's UVs and this
+upload are **both** in OpenGL's row order, so flipping inverts every block face. **The old note was right and this round's
+attempt to overrule it was the mistake.** The flip is reverted, kept only as a lab flag with the numbers beside it, and the
+baseline is re-measured at **34.08 / 68.81%** - unchanged, no regression.
+
+What that leaves is narrower than before: the light coordinates are (block 0, sky 15), so the light map sample must land on
+the full-sky corner, and it evidently does not. Two things can still explain it - the dumped 16x16 light map's own row and
+axis order (checkable from the PNG that already exists, with no run at all), and whether the texture bound at set 0 binding 1
+is that light map. The instrument for the second was written and did not apply - the anchor was not unique - and is recorded
+as pending rather than as done.
