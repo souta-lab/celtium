@@ -608,6 +608,20 @@ canonical な `celtium-headless-interop/test-libraries` だけ残して削除し
 - 引用中の受入 run（p32-glref-r434 / p32-celtium-r434 / p39-vanilla2-r426 / p71-spider / p71-spider-intel /
   p68-spider-intel / p49-failsubmit-r437 / p64-weather-intel / sol-cb-r454-amd）は report+PNG とも残存を確認。
 
+**計器を接続して修正の的を証明（このターン）**: 前ターンの「未接続」は**部分的に誤り**だった。
+`verificationSummary()`（= report の `rendererDebug` に入る `celtium/vulkan-check ...` 文字列）には
+`refusedBeforeAppend` が**既に載っていた**。一方 `diagnostics()` は report に出ない（別リスト・report は10項目上限）。
+そこで `shaderProgramRefusals` と `acceptedBatches` を `verificationSummary()` に追加した。実測:
+
+| run | refusedBeforeAppend | **shaderProgramRefusals** | mirroredTextures | p50 / p99 |
+|---|---|---|---|---|
+| **通常** | 106 | **0** | 11 | 42.1 / 47.3ms |
+| **spider** | 439 | **340** | 17 | 46.3 / 120.0ms |
+
+- **通常runでは新判定が一度も発動しない（0）**＝正当なバッチを拒否していない ✅
+- **shader場面では340回発動**し、mirror は 898（修正前）→ **17** に減少 ✅
+- どちらも exit 0 / validationClean / PASSED。p99 は spider 120ms / 通常 47ms。
+
 **計器の未接続を確認（このターン）**: 拒否カウンタを `VulkanTerrainGpuBackend.diagnostics()` の先頭に足したが、
 report の `rendererDebug` には**出ていない**。report 側は **10項目で上限**されており（実測: count = 10、内容は
 `solid - 62 sections, 284.2 us` などのパス統計）、backend の `diagnostics()` とは**別経路**の文字列が入っている。

@@ -2688,6 +2688,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
+                // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
+                // the report (it is a separate list, and the report keeps ten items), while this string is the one the
+                // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
+                + " shaderProgramRefusals=" + this.shaderProgramRefusals
+                + " acceptedBatches=" + this.frameAccepted
                 + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
                 + " imageUploadsSkipped="
                 + (this.textureRegistry != null ? this.textureRegistry.imageUploadsSkipped() : 0)
