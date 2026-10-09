@@ -7570,3 +7570,28 @@ Worth recording as the sixth time in this project that a conclusion outran its e
 reading was a **counter read for the wrong question**: arrivals say what the frame offered, acceptance says what this renderer
 took, and only the second one is a claim about drawing. The widened report is why the difference was visible at all - a
 counter that had been printing ids 0 to 6 would have hidden it for another round.
+
+---
+
+## Position-only accepted on both GPUs, with the arithmetic as the proof
+
+The Intel confirmation needed one thing the earlier attempt did not have, and it was not code: **budget**. At 480 seconds the
+run completes.
+
+| | format 5 | format 6 | format 7 | immediate taken | cancelled GL draws | terrain passes | validation |
+|---|---|---|---|---|---|---|---|
+| AMD RX 6400 | 309 | 1770 | **1097** | 3181 | 3181 | 915 | clean |
+| Intel UHD 630 | 114 | 660 | **396** | 1171 | 1171 | 330 | clean |
+
+Both runs: exit 0, fixture PASSED, acceptance intact, zero off-target refusals, and three position refusals in the first
+frames before the pipeline exists. The arithmetic is the proof that the counter is not lying: on Intel `1+114+660+396 = 1171`,
+which is exactly `immediateTaken`, and `glDrawsCancelled` matches it one for one on both GPUs.
+
+The two-GPU condition now covers every drawing path this renderer has: terrain, the immediate content outside the world pass
+(the GUI, the font, the HUD, the hand), the sky and clouds and water surface, position-only content, and the game's other
+framebuffers with the copy-back that puts their content back into its textures.
+
+One thing the earlier Intel attempt recorded stays true and is worth keeping: a partial run's **arrival census** was still
+readable and still useful - 4864 position-only arrivals, twelve unmapped - even though the run itself timed out. An instrument
+that reports before the run ends is worth more than one that reports at the end, which is why the census prints every five
+hundred arrivals rather than on shutdown.
