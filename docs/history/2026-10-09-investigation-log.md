@@ -8659,3 +8659,33 @@ What that leaves is an **enumeration** rather than another guess, and it is the 
 print, once, every texture the renderer mirrors together with where its invalidation came from. Three named hooks have failed to
 catch the light map; the fourth attempt should start by listing what actually calls `invalidateTexture` for the light map's id,
 rather than by naming a fourth method on the strength of what the code appears to do.
+
+---
+
+## The enumeration, and it is not the light map at all
+
+One run with the stack printed once per texture answers the question three guesses failed to:
+
+```
+glTexture=9  <- invalidateBoundTexture <- invalidateAnimatedTexture <- func_147955_a
+             <- TextureAtlasSprite.func_180599_n
+glTexture=19 <- invalidateUploadedTexture <- func_110989_a <- SimpleTexture.func_110551_a
+             <- TextureManager.func_110579_a <- TextureManager.func_110577_a
+glTexture=20, 22, 23, 24 ... the same second shape
+```
+
+Two origins, both hooked, and **neither is the light map**:
+
+- **id 9** is the block atlas, invalidated by the sprite animation through `TextureAtlasSprite.func_180599_n` - the path the
+  animation hook was written for, and the one whose announcements now fill the mirror without a readback.
+- **ids 19, 20, 22, 23, 24** and the rest are invalidated from **`TextureManager.bindTexture` → `loadTexture` →
+  `SimpleTexture.func_110551_a` → `func_110989_a`**. That is the game **re-uploading a texture from its file when it is bound**,
+  and it is the origin of the refreshes that remain.
+
+So the light map is not in the remaining stream at all, and the whole of it is the GUI, item and entity textures going through
+`SimpleTexture`'s load path. Those announcements **are** arriving - `func_110989_a` announces and the registry reports
+`imageFilledMirrors = 3619` - which is why the next question is not "which method is missing" but **how many refreshes come from
+each origin**, since the counters say most of them are already served from announcements and a thousand are not.
+
+Recorded because it is the third time a named suspicion has been wrong and the first time the enumeration was done **before**
+naming the fourth: three hooks were written for the light map, and the light map was never the problem.

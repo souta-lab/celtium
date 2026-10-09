@@ -463,6 +463,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int animatedAnnounceDiagnostics;
     private int dynamicTextureFills;
     private int dynamicAnnounceDiagnostics;
+    /** The texture ids whose invalidation origin has been printed. */
+    private final java.util.Set<Integer> invalidationOrigins = new java.util.HashSet<Integer>();
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
@@ -842,6 +844,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void invalidateTexture(int glTextureId) {
+        // Who invalidates what, named once per texture. Three hooks have failed to catch the light map's writes, and the
+        // alternative to naming a fourth is asking the code that performs the invalidation to say where it came from.
+        if (this.invalidationOrigins.size() < 12 && this.invalidationOrigins.add(Integer.valueOf(glTextureId))) {
+            StringBuilder stack = new StringBuilder();
+            StackTraceElement[] frames = Thread.currentThread().getStackTrace();
+            for (int i = 2; i < Math.min(frames.length, 9); i++) {
+                StackTraceElement frame = frames[i];
+                stack.append(frame.getClassName().replaceAll(".*\\.", "")).append('.')
+                        .append(frame.getMethodName()).append(" (").append(frame.getLineNumber()).append(") <- ");
+            }
+            System.out.println("[Celtium] CELTIUM_INVALIDATE_ORIGIN glTexture=" + glTextureId
+                    + " lightmapGlId=" + this.lightmapSourceGlId + " atlasGlId=" + this.atlasSourceGlId
+                    + " stack=" + stack);
+        }
         // Animated sprites re-upload every frame; dropping the mirror makes the next draw re-read the GL texture.
         // The registry is created lazily, and Minecraft uploads textures - it registers them - before any world draw:
         // invalidating through a registry that does not exist yet is what made the first attempt crash during
