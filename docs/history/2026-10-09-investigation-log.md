@@ -5284,3 +5284,46 @@ the full-sky corner, and it evidently does not. Two things can still explain it 
 axis order (checkable from the PNG that already exists, with no run at all), and whether the texture bound at set 0 binding 1
 is that light map. The instrument for the second was written and did not apply - the anchor was not unique - and is recorded
 as pending rather than as done.
+
+---
+
+## The terrain shaders ship as checked-in SPIR-V: two rounds of shader edits never reached the running build
+
+The experiment that forced the light map sample to a constant changed **nothing** - again - and the build that produced it
+took eight seconds, which is what a build looks like when it has nothing to do. The jar was then opened instead of assumed:
+
+```
+org/soutalab/celtium/vulkan/spirv/terrain_solid.vert.spv   8556 bytes
+org/soutalab/celtium/vulkan/spirv/terrain_solid.frag.spv   8872 bytes
+```
+
+The pipeline loads **SPIR-V**, the SPIR-V lives in `celtium-vulkan/src/main/resources/.../spirv/` as a checked-in generated
+file, and the GLSL in `celtium-vulkan/src/main/shaders/` is **not** an input to any build step - the only shader compilation
+in the tree belongs to the `celtium-interop` module and covers its own two shaders. So:
+
+- the light map divisor change (256 to 16) **was never in the running build**, and its "no change" measurement measured
+  nothing;
+- the same is true of the forced-light experiment's first attempt;
+- and the conclusion recorded from the divisor change - that the light arriving is at the clamp, i.e. zero - is
+  **withdrawn**. The divisor fix is kept as a correctness fix (16 is what the clamp, the shader's own comment, the dump and
+  the game all say) but it has **not** been measured.
+
+With the shaders recompiled by `glslangValidator` into the resources directory, the jar's SPIR-V verified by size
+(`8332`/`8864` for the experiment, `8524`/`8864` after restoring), the experiment was finally run for real: forcing the light
+map sample to `vec4(1.0)` changes **no pixel** - `mean 34.07 | 68.81%` against `34.08 | 68.81%`, and identical band
+luminances. That is a sound elimination at last: **the light map is not what darkens the terrain**, whatever the coordinates
+do.
+
+The prime suspect moves to the other multiplier in the same fragment shader:
+
+```glsl
+diffuseColor.rgb *= m_color.rgb;   // vertex colour
+diffuseColor.rgb *= m_color.a;     // ambient-occlusion "shade"
+```
+
+`m_color.a` is the shade/AO term, and a value around 0.6 would produce exactly the uniform 40% reduction that was measured -
+so the place to look is the colour the mesh builder packs (`VanillaLikeChunkVertex`, whose colour layout the shader must
+agree with) rather than anything on the light path.
+
+Recorded as a process rule, because this cost two rounds: **a generated artefact must be verified inside the jar - by size
+or hash - before any measurement of its effect is trusted.** The GLSL source is not the artefact; the SPIR-V is.

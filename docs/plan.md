@@ -60,7 +60,14 @@ renderer it replaced rather than with its own previous frame, and it is far larg
 (minimum at zero offset), and the terrain is **uniformly about 40% darker** than the reference (luminance 77-80 against
 129-131 in the three terrain bands). So the 68.81% is a **shading** defect rather than a geometry one. The lightmap divisor was wrong (256 where 1.12.2's 16x16
 light map needs 16, and where the shader's own clamp was already written in 16-texel terms); it is **fixed**, and the
-measurement is **unchanged** - which proves the light value reaching the shader is already at the clamp, i.e. **zero**. The vertex light is **not** zero: an instrument at the write shows `block=0 sky=240` (full noon sky, no torch light) in the
+measurement is **unchanged** - which proves the light value reaching the shader is already at the clamp, i.e. **zero**. **Process defect found and fixed in the work, not yet in the build:** the terrain shaders ship as **checked-in SPIR-V**
+(`celtium-vulkan/src/main/resources/.../spirv/*.spv`) and the GLSL in `src/main/shaders/` is **not** a build input, so shader
+edits do not reach the running game unless `glslangValidator` is re-run by hand. Two rounds of shader "fixes" and their
+measurements were therefore void; the divisor change is kept as a correctness fix and its conclusion is withdrawn. With the
+SPIR-V verified in the jar by size, the forced-light experiment was run for real and changes **no pixel** - the light map is
+**not** what darkens the terrain. The prime suspect is now the other multiplier in the same fragment shader,
+`diffuseColor.rgb *= m_color.a` (the AO/shade term), i.e. the colour the mesh builder packs. **Rule:** verify a generated
+artefact inside the jar before trusting any measurement of its effect. Earlier note: the vertex light is **not** zero: an instrument at the write shows `block=0 sky=240` (full noon sky, no torch light) in the
 **vanillalike** format, and the shader unpacks exactly that. The row-order hypothesis was tested and is **wrong**: flipping
 the uploaded rows turns the terrain almost black (band luminance 3.2 against the reference's 131, mean difference 90.94), the
 atlas's UVs being in the same OpenGL row order - so the flip is reverted and the baseline is back at **34.08 / 68.81%**. The
