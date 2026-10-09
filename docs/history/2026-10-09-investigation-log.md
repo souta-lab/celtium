@@ -852,3 +852,32 @@ element order - through this pipeline.
 
 What this round adds permanently: the per-format acceptance switch, the texturing-off mirror (which the sky and any
 colour-only content needs regardless), and the rendered side-by-side as a way to see a difference instead of counting it.
+
+---
+
+## What the format-2 batches actually are, and why refusing them wholesale is worse
+
+Dumping the first accepted `POSITION_TEX_COLOR` batches answers the question directly:
+
+```
+elements=[12bPOSITION 8bUV 4bCOLOR] vertices=4 mode=7
+v0=(pos 0.0,720.0  uv 0.0,0.0  col 0xffffffff)
+v1=(pos 1280.0    uv 1.0      col 0xffffffff)
+```
+
+A four-vertex quad covering the whole 1280x720 display, texture coordinates 0..1, and **white** vertices - no gradient in
+the data at all. That is a full-screen textured quad drawn in screen coordinates, i.e. the final composite rather than
+sky geometry, and it is drawn to the **default framebuffer**, not the game framebuffer.
+
+That also explains the earlier finding that the format-2 acceptance flattens the sky: the batch is taken, drawn into the
+game framebuffer one frame later, and covers everything the frame had drawn with one texture.
+
+The obvious fix - refuse batches while the default framebuffer is bound - was implemented and **made the measurement
+worse**: the local difference went from 14.61 to **62.34** (with 30.4% of pixels differing, so a smaller but far larger
+error). Refusing on that condition alone therefore rejects batches that were being drawn correctly, which means the
+decision cannot be made from the binding at submission time alone; it has to distinguish the composite from the content.
+
+Two facts are now established beyond argument, and they are what the next attempt builds on: the format-2 family in this
+scene is the **final full-screen composite** (white vertices, uv 0..1, screen coordinates), and it belongs to the frame's
+end, not to the game framebuffer's content. The remaining question is where in the frame it can be drawn by Vulkan - which
+is the present-ownership work, not a pipeline detail. The change is reverted and the tree is green.
