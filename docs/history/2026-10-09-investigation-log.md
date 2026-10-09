@@ -733,3 +733,28 @@ default configuration is verified unchanged (frame mean [123.3, 136.6, 148.3], l
 8, the known immediate-path difference), and the black frame is confirmed to be caused by the window and is still
 unexplained. The sample has to be placed in a way the fixture's build accepts - most likely inside an existing helper the
 fixture already compiles, called from the capture path - rather than by editing the capture statement itself.
+
+---
+
+## Localised: the game framebuffer really is black at capture time
+
+The capture-time sample is in place and it builds - the earlier failures were the fixture module needing a real build
+(`:forge122:validationRemapJar`), first because the edit had been committed unbuilt, then because a `LOGGER` field the
+edit referenced was never inserted. With an inline logger and a plain JDK direct buffer (no dependency on LWJGL's
+`MemoryUtil`), both packaging tasks pass and the fixture logs:
+
+```
+celtium capture frame sample: mean=0.0
+final frame mean: [0. 0. 0]
+```
+
+So the capture reads the surface it means to read, and that surface is black. The question is no longer "is the capture
+lying" - it is not - but "what stops GL from drawing once windows are in use". The measurements bracket it precisely:
+inside a window the framebuffer holds its content (150.47656 before and after), and by the time the frame is captured it
+holds nothing.
+
+Narrowed candidates for the next attempt, all about GL state the bridge touches and may not put back: the bridge's
+`GlState` guard restores what its own copies need, but a window also runs `endFrame`'s depth conversion (a program, a
+VAO and texture bindings of its own), and GL's viewport, scissor, blend or depth state could survive a window in a form
+GL's later drawing does not expect. The cheap experiment is to log the GL state that matters (viewport, scissor,
+enabled capabilities, current program, bound VAO and framebuffer) immediately before and after a window and compare.

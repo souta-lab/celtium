@@ -529,7 +529,11 @@ public final class ValidationClient {
             report.addProperty("frameIntervalP95Ms", percentile(0.95));
             report.addProperty("frameIntervalP99Ms", percentile(0.99));
             report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark");
-            if (!interopRun) ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+            if (!interopRun) {
+                celtium$logFrameSample(mc);
+                ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth,
+                        mc.displayHeight, mc.getFramebuffer());
+            }
             report.addProperty("status", "PASSED");
             finish(mc);
         } catch (Throwable error) {
@@ -547,6 +551,35 @@ public final class ValidationClient {
         report.addProperty("status", "FAILED");
         report.addProperty("error", error.toString());
         finish(mc);
+    }
+
+    /**
+     * Logs the mean of a small centre patch of the game framebuffer at the moment the validation frame is captured.
+     * <p>
+     * This localises the mid-frame window's black frame: the backend measured the framebuffer at 150.48 immediately
+     * before and after each window, yet the saved screenshot is entirely black, so the question is whether the
+     * framebuffer is black *here* or whether the capture reads a different surface. The buffer is a plain JDK direct
+     * buffer, which is all glReadPixels needs and which keeps this module free of a dependency on LWJGL's
+     * MemoryUtil.
+     */
+    private void celtium$logFrameSample(Minecraft mc) {
+        try {
+            int size = 8;
+            int x = Math.max(0, (mc.displayWidth / 2) - (size / 2));
+            int y = Math.max(0, (mc.displayHeight / 2) - (size / 2));
+            java.nio.ByteBuffer pixels = java.nio.ByteBuffer.allocateDirect(size * size * 4);
+            GL11C.glReadPixels(x, y, size, size, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, pixels);
+            long total = 0;
+            for (int i = 0; i < size * size * 4; i++) {
+                total += pixels.get(i) & 0xFF;
+            }
+            float mean = (float) ((double) total / (size * size * 4));
+            org.apache.logging.log4j.LogManager.getLogger("CeltiumValidation")
+                    .info("celtium capture frame sample: mean={}", mean);
+        } catch (Throwable error) {
+            org.apache.logging.log4j.LogManager.getLogger("CeltiumValidation")
+                    .info("celtium capture frame sample failed: {}", error.toString());
+        }
     }
 
     private void finish(Minecraft mc) {
