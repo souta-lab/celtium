@@ -2040,7 +2040,24 @@ CELTIUM_ACCEPTED total=1500 byFormat=[0:0 1:7 2:0 3:0 4:0 5:137 6:856 7:0 8:0 9:
 - **正直な欠落**: **UV の v 成分**は今の計器に入っていない（u のみ）。`PositionTextureVertex` の v フィールド名を
   確認して足す必要がある。**「頂点データが完全」とは言わない**。
 
-**次の一手**: (1) `PositionTextureVertex` の v 成分を捕獲に足す、(2) 12リスト分の頂点を **Vulkan の頂点バッファ**へ
+**UV の v 成分を捕獲（このターン・前ターンの欠落を閉じた）**:
+
+- `PositionTextureVertex` は `texturePositionX` と **`texturePositionY`** を持ち、`TexturedQuad.draw` は
+  `.tex(texturePositionX, texturePositionY)` を渡している（ソース確認済み）。捕獲と保存の両方に v を足した。
+- **実測（三人称＋GUI、AMD、100 s）**: `modelFirstVertex = list 2 v0=(0.063,-0.125,0.125)
+  **uv0=(0.797,0.313)** n0=(1.0,0.0,0.0)`、`modelStoredFloats=1656`（本数は同じで**中身が埋まった**）、
+  `modelLists=12`／`modelQuads=72`、verdict は exit 0 / validationClean=true / PASSED（回帰なし）。
+- **計測ミスの記録（2回目）**: 最初の試行は**コンパイルエラー**（保持側のメソッド署名の置換がアンカー不一致で
+  適用されず、mixin だけが新しい引数で呼んでいた）でビルドが落ち、その状態で run を回して**古い jar の数値**を
+  読んでいた。**ビルド成否と jar の時刻を確認してから run する**、を手順として守る（round 519 と同じ罠を踏んだ）。
+- **これで native 描画の入力が完全に揃った**: リストごとの**位置（モデル空間）・UV（u,v）・法線**、
+  **リスト id**、**再生時の行列**（backend の写し）。
+
+**次の一手**: (1) 12リスト分の頂点を **Vulkan の頂点バッファ**へ載せ、**再生時の行列**で描く最小のパイプライン
+（アトラステクスチャ・深度テスト・アルファ）を用意する、(2) `callList` の注入で**対象リストの GL 再生をキャンセル**し、
+(3) **画像一致**と `displayListReplays` の対象リスト減少で確認する。
+
+**（旧メモ）** 次の一手: (1) `PositionTextureVertex` の v 成分を捕獲に足す、(2) 12リスト分の頂点を **Vulkan の頂点バッファ**へ
 載せ、**再生時の行列**で描くための最小のパイプライン（アトラステクスチャ・深度テスト・アルファ）を用意する、
 (3) `callList` の注入で**対象リストの GL 再生をキャンセル**し、**画像一致**と `displayListReplays` の減少で確認する。
 

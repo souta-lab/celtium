@@ -69,7 +69,7 @@ public final class VulkanModelQuadCapture {
      * the one in effect while the part is compiled - a display list stores transformed vertices, so the geometry has to
      * be paired with the transform it was compiled under. Both are read here rather than assumed.
      */
-    public static synchronized void quad(int count, float[] xs, float[] us, float[] ys, float[] zs,
+    public static synchronized void quad(int count, float[] xs, float[] ys, float[] zs, float[] us, float[] vs,
             float nx, float ny, float nz) {
         int listId = 0;
         try {
@@ -97,6 +97,7 @@ public final class VulkanModelQuadCapture {
             geometry.positions[(base + i) * 3 + 1] = ys[i];
             geometry.positions[(base + i) * 3 + 2] = zs[i];
             geometry.uvs[(base + i) * 2] = us[i];
+            geometry.uvs[(base + i) * 2 + 1] = vs[i];
         }
         int normalBase = geometry.quads * 3;
         geometry.normals[normalBase] = nx;
@@ -145,7 +146,7 @@ public final class VulkanModelQuadCapture {
             return "none";
         }
         return "list " + largest.listId + " v0=(" + round(largest.positions[0]) + "," + round(largest.positions[1]) + ","
-                + round(largest.positions[2]) + ") uv0=(" + round(largest.uvs[0]) + ") n0=("
+                + round(largest.positions[2]) + ") uv0=(" + round(largest.uvs[0]) + "," + round(largest.uvs[1]) + ") n0=("
                 + round(largest.normals[0]) + "," + round(largest.normals[1]) + "," + round(largest.normals[2]) + ")";
     }
 
