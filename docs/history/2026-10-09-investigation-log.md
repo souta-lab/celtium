@@ -2241,3 +2241,32 @@ from a mixin surfaced immediately. The next attempt therefore uses the channel t
 That distinction matters for the answer this instrumentation exists to give: whether the hand's batches are Vulkan-drawn
 at all is currently **unknown**, and "the histogram did not print" must not be read as "there were none". The counters stay
 in the tree, harmless and unused until the reporting works.
+
+---
+
+## The source answers the first question, and the obvious second hypothesis is refuted
+
+Three attempts to report a per-format histogram through the run's own output failed to surface, so the question was put
+to the source instead - the instrument that has worked all session. `ItemRenderer` draws the first-person item, the arm and
+the overlays with **`DefaultVertexFormats.POSITION_TEX`** (twenty bytes: position and uv). That format is **not in the
+acceptance mask** - the five it holds are the sixteen-byte colour format, the twenty-four-byte textured-colour format and
+three twenty-eight-byte families for blocks, items and particles - so the hand and the arm are **drawn by GL**, and their
+drawing cannot be what differs.
+
+That left the interaction: with the GUI visible the frame offers many more batches, so the sixteen-window budget might be
+consumed by HUD work and push world geometry to GL, mixing the two in one frame. The test is a property change, and it
+refutes the hypothesis:
+
+| Configuration (empty hand, GUI visible) | mean | over 8 |
+|---|---|---|
+| window budget 16 | 0.96 | 0.78% |
+| **window budget 64** | **1.53** | 1.22% |
+| noise floor | 0.10 | 0.08% |
+
+Raising the budget makes the difference **worse**, not better: more batches drawn by Vulkan means more difference, so the
+offending drawing is inside the Vulkan path rather than in a mixture of paths. The refusal counters agree - refusals fall as
+the budget rises - so this is not the budget being exhausted either.
+
+What that leaves is the same class of question the terrain work answered early on, and the instrument for it already
+exists: accept **one format at a time** across the GUI-visible scene, and the mask that creates the difference names the
+pipeline. That is four runs and a comparison each, all of it machinery this project has used before.

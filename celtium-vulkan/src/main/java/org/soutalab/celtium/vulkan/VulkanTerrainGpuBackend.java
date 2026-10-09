@@ -953,6 +953,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                 }
                 record(histogram.toString());
+                System.out.println("celtium " + histogram);
             }
             if (this.immediateTaken == 500) {
                 // One-shot snapshot of what happens to accepted batches: a batch counts as accepted only when GL's own
