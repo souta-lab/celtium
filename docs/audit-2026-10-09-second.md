@@ -173,10 +173,16 @@ batch is refused, whatever this renderer has already accepted is closed and draw
 deferred batch cannot appear **after** content that came later in the frame. Measured: **`orderPreservingFlushes=5`** on a
 normal run - five refusals happened while batches were still pending, and each of those was a draw-order violation before
 this change - with exit 0, validation clean, 0 messages, fixture PASSED, `immediateTaken=546`, `immediateFlushes=558`,
-`postAcceptDroppedGroups=0`, no regression. **Open:** four of the offer's refusal sites carry the flush (the ones whose shape
-matched); the rest still return immediately and need the same treatment, and the ordering is argued by construction rather
-than observed directly. The scene also never presents clears or FBO switches between accepted batches, so that half of the
-item remains unexercised.
+`postAcceptDroppedGroups=0`, no regression. **All refusal sites carry it now.** The first pass covered the four early refusals in `submitImmediateBatch`; the refusals
+that actually fire in numbers live in `submitImmediateBatchTimed`, and **thirteen** more sites there got the same call -
+seventeen in the file, one method each side of the wrapper boundary. Measured: **`orderPreservingFlushes=6`** (up from 5) with
+exit 0, validation clean, 0 messages, fixture PASSED, `immediateTaken=551`, `immediateFlushes=558`,
+`postAcceptDroppedGroups=0` - so in this scene one further refusal happens while batches are pending, and no regression.
+
+**Still open:** the ordering is correct by construction rather than observed - no image comparison can see a six-event
+ordering fault on this scene - and the scene never presents **clears or FBO switches** between accepted batches, so that half
+of S10 remains unexercised. The other half of the item - reading what the 2000 is - was answered earlier: it is
+`setupOverlayRendering`'s `translate(0, 0, -2000)`, not the fixture.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.
 

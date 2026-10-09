@@ -1174,11 +1174,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Comparison switch, default on: turning it off makes every immediate batch fall back to GL, which is
             // exactly the reference image the Vulkan path has to reproduce.
             this.immediateLastRefusal = "immediate drawing disabled by celtium.vulkan.immediate=false";
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null) {
             this.immediateLastRefusal = reason;
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         int expectedStride = formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
@@ -1269,35 +1273,49 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Attribution switch: restricting which layouts this backend accepts makes the image difference
             // measurable per format instead of as one aggregate number. Refused batches are drawn by GL as usual.
             this.immediateLastRefusal = "format " + formatId + " not in celtium.vulkan.immediateFormats";
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if (formatId < 1 || formatId > 5) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices.
             this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ")";
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if (vertexStride != expectedStride) {
             this.immediateLastRefusal = "layout id " + formatId + " has stride " + vertexStride + ", expected "
                     + expectedStride;
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if ((formatId == 3 || formatId == 5) && this.lightmapTexture == null) {
             this.immediateLastRefusal = "lightmapped batch with no lightmap texture mirrored";
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if (formatId >= 2 && this.immediateState.boundTextureName() == 0) {
             this.immediateLastRefusal = "textured batch with no texture bound";
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if (formatId == 3 && this.lightmapTexture == null) {
             // The BLOCK family samples the lightmap, so a missing mirror means the batch would be lit wrongly.
             this.immediateLastRefusal = "block batch with no lightmap texture mirrored";
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
         if (indices == null) {
             this.immediateLastRefusal = "topology " + drawMode + " has no expansion";
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         try {
@@ -1368,6 +1386,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
+                // Order (S10): what is already accepted is drawn before this batch goes to GL.
+                this.flushPendingBeforeGlDraw();
                 return false;
             }
             this.currentGroupUsed = true;
@@ -1378,6 +1398,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
                 this.textureRefusalsBeforeAccept++;
+                // Order (S10): what is already accepted is drawn before this batch goes to GL.
+                this.flushPendingBeforeGlDraw();
                 return false;
             }
             if (formatId == 5 && !canBuildDescriptor(boundTexture)) {
@@ -1387,6 +1409,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // than on the pipeline's state key, so one pipeline is enough to ask the question.
                 this.immediateLastRefusal = "the particle descriptor could not be built for this lightmap";
                 this.particleDescriptorRefusals++;
+                // Order (S10): what is already accepted is drawn before this batch goes to GL.
+                this.flushPendingBeforeGlDraw();
                 return false;
             }
 
@@ -1424,6 +1448,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } catch (RuntimeException | LinkageError error) {
             this.immediateLastRefusal = "copy failed: " + describe(error);
             record("immediate batch refused: " + describe(error));
+            // Order (S10): what is already accepted is drawn before this batch goes to GL.
+            this.flushPendingBeforeGlDraw();
             return false;
         }
     }

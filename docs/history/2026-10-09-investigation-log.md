@@ -5831,3 +5831,29 @@ passes, validation is silent, and the accepted/dropped figures are unchanged in 
 Recorded with its limits: the ordering is correct by construction rather than observed directly - no image comparison can see
 a five-event ordering fault on this scene - and the scene never presents clears or FBO switches between accepted batches, so
 that half of S10 remains unexercised as well as partly unfixed.
+
+---
+
+## The refusal sites that matter are in the timed wrapper, and the count goes to six
+
+The previous round put the order-preserving flush at the four early refusals in `submitImmediateBatch` and recorded that
+"the rest still return immediately". Listing every `immediateLastRefusal` assignment with its enclosing method showed the
+guess was wrong in an instructive way: the refusals that fire in numbers are not in `submitImmediateBatch` at all but in
+`submitImmediateBatchTimed`, the wrapper the first method delegates to - **fifteen** assignments there, against four before
+the boundary. The same insertion applies, and **thirteen** of them now flush what is pending before the batch goes to GL,
+seventeen calls in the file in total.
+
+Measured:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED | passes=2180 | taken=551 | flushes=558 | dropped=0
+orderPreservingFlushes=6      (5 before this round)
+```
+
+One more refusal in the run happens while batches are pending, so the fix reaches a case the first pass did not; no
+regression anywhere else. The two that did not take the call are the ones whose return is not a plain `return false` within
+the window the edit looks at, and they are recorded rather than assumed harmless.
+
+The honest boundary is unchanged: this ordering is correct by construction. No image comparison can see a six-event ordering
+fault in this scene, and the scene does not present clears or FBO switches between accepted batches, so the other half of S10
+remains unexercised as well as partly unfixed.
