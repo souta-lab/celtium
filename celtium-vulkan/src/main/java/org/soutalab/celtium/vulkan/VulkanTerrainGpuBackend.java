@@ -228,6 +228,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                        CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+        if (this.gpuStalled) {
+            // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
+            // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
+            // still referenced it, both from paths that assumed the frame had been recorded.
+            return;
+        }
+        if (this.gpuStalled) {
+            // S02's other half: once a wait has timed out, the frame's remaining stages are skipped rather than run against
+            // a command buffer that was never begun. Recording is refused earlier; this stops everything that would use the
+            // recording, so the renderer stops drawing and the process keeps running.
+            this.passSkips++;
+            this.lastSkipReason = pass.name() + ": the GPU stalled";
+            return;
+        }
         if (!renderLists.hasPass(pass)) {
             // No geometry for this pass; nothing is opened, nothing has to be closed.
             return;
@@ -1060,6 +1074,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                               int vertexCount, int drawMode) {
+        if (this.gpuStalled) {
+            // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
+            // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
+            // still referenced it, both from paths that assumed the frame had been recorded.
+            return false;
+        }
         if (!IMMEDIATE_DRAWING_ENABLED) {
             // Comparison switch, default on: turning it off makes every immediate batch fall back to GL, which is
             // exactly the reference image the Vulkan path has to reproduce.
@@ -1514,6 +1534,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * that uses it, which is what the fixture-side sampling below is for.
      */
     private void flushImmediateWindow() {
+        if (this.gpuStalled) {
+            // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
+            // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
+            // still referenced it, both from paths that assumed the frame had been recorded.
+            return;
+        }
+        if (this.gpuStalled) {
+            return;
+        }
         if (this.windowOpen || this.immediateWindowBusy) {
             return;
         }
@@ -2638,6 +2667,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void runSwapchainProbe() {
+        if (this.gpuStalled) {
+            // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
+            // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
+            // still referenced it, both from paths that assumed the frame had been recorded.
+            return;
+        }
         if (this.swapchainProbeDone) {
             return;
         }
@@ -3000,6 +3035,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void drawPendingImmediate() {
+        if (this.gpuStalled) {
+            return;
+        }
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) {
             return;

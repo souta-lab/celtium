@@ -4480,3 +4480,28 @@ The next patch is therefore specific: when `gpuStalled` is set, the frame's rema
 present path and the terrain passes - so the renderer stops drawing and keeps running, which is what "fail closed" has to
 mean for a frame rather than for one buffer. The injection is the test for it, and the acceptance is that the injected run
 ends with refusals and no validation messages instead of an abort.
+
+---
+
+## S02's frame side: four entries guarded, the injected run unchanged, and the location narrowed
+
+The guards went in at every entry the frame target is used from - `render`, `flushImmediateWindow`, `submitImmediateBatchTimed`
+and `runSwapchainProbe`, plus `ensureFrameTarget` earlier - with the reasoning stated at each site: a stalled GPU closes
+everything that touches the frame target, its command buffer or the bridge. The injected run is unchanged:
+
+```
+INJECTED: exit -6 | clean False | messages 17 | fixture MISSING_REPORT
+  * vkCmdPipelineBarrier(): was recorded, but vkBeginCommandBuffer() was not called prior to this command
+  * vkDestroyFramebuffer(): can't be called on VkFramebuffer 0x... that is currently in use by VkCommandBuffer 0x...
+```
+
+So the barrier that is recorded into an un-begun buffer does **not** come from any of the five guarded entries. That is
+narrowing rather than progress, and it is worth saying which way it points: the remaining candidates are the paths that own
+the frame target directly rather than through these methods - `VulkanFrameTarget`'s own copy-in and copy-out, and the
+swapchain's present path, which creates and records its own commands. The second validation message supports that reading:
+a framebuffer destroyed while a command buffer still references it is a lifetime interaction between the target and the
+buffer, not a drawing call.
+
+The guards that are in place are correct and stay: nothing invalid is reset, re-recorded or drawn through those five
+entries. **S02 is still open**, and its acceptance is unchanged - an injected run that refuses and stays clean instead of
+aborting - with the search now inside `VulkanFrameTarget` and the swapchain rather than in the backend's frame stage.

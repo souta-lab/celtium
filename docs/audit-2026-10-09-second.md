@@ -33,8 +33,12 @@ touches nothing, and every later batch is refused before acceptance, with a docu
 (`-Dceltium.vulkan.failIdle=true`) for the path no ordinary run reaches. Measured: the normal run is unchanged (exit 0,
 validation clean, 0 messages, PASSED, `gpuStalled false`), and the **injected** stall still ends in `SIGABRT` with 17
 validation messages - because the rest of the frame (`endFrame`, present, terrain passes) still assumes a recorded buffer.
-**Open:** skip those stages when stalled, with the injection as the test; the acceptance is an injected run that refuses and
-stays clean instead of aborting.
+**Open, and narrowed:** five entries that touch the frame target are now guarded (`render`, `flushImmediateWindow`,
+`submitImmediateBatchTimed`, `runSwapchainProbe`, `ensureFrameTarget`) and the injected run is unchanged - the same two
+messages, a barrier recorded into a buffer that was never begun and a framebuffer destroyed while a stale command buffer
+referenced it. So the offending path is **not** in the backend's frame stage; the candidates are `VulkanFrameTarget`'s own
+copy-in and copy-out and the swapchain's present path, which create and record their own commands. The acceptance is
+unchanged: an injected run that refuses and stays clean instead of aborting.
 `waitForIdle` logs `VK_TIMEOUT` and returns; `beginCommands` then proceeds, clears `submissionPending` and resets the
 command buffer although the GPU may still be reading it. `settleGpu` is described as bounded but `vkDeviceWaitIdle` has no
 timeout, and the context drains queues with `vkQueueWaitIdle` and `Long.MAX_VALUE` fences. The submit-failure injection
