@@ -659,3 +659,35 @@ a broken frame whose breakage has a cause that has not been found yet. The next 
 the shared colour image right after the window's `beginFrame()` and again after its `endFrame()`, and compare both
 against what the game framebuffer holds at those moments. That says whether the content is lost on the way in, on the
 way out, or never present - instead of inferring it from a final image.
+
+---
+
+## The window's copies are sound; the black frame comes from after the window
+
+The targeted diagnostic was implemented and it changes the picture again. The window now samples a small centre patch of
+the bound framebuffer immediately before it opens and immediately after it closes, and reports the mean. Two runs:
+
+| Measurement | Result |
+|---|---|
+| Game framebuffer mean before / after the window | **150.47656 / 150.47656** - the content is preserved |
+| Window failures | none |
+| Batches taken / flushed | all of them, e.g. 2836 / 2836 |
+| Run status, validation | PASSED, `nativeTerrainVerified True`, VUID 0 |
+| **Final screenshot** | **mean [0, 0, 0]** - entirely black, in every window run so far |
+
+Two conclusions follow, and both correct earlier statements in this log:
+
+1. **The copies are sound.** `beginFrame()`'s colour and depth copy-in, the render pass, the submission and
+   `endFrame()`'s blit and depth conversion all leave the game framebuffer with exactly the content it had. The
+   earlier "a bridge that copies whole images cannot host a window per flush point" was therefore **not** supported by
+   the evidence, and the "black frame means the frame was destroyed" reading was wrong: the frame is intact *at the
+   window*.
+2. **Something after the window blacks the picture out.** Restoring the framebuffer *binding* around the window - the
+   obvious candidate, since the screenshot helper reads pixels and would read whatever was left bound - did not change
+   the result: the final frame is still entirely black with the binding handed back exactly as found. So the loss
+   happens between the last window of a frame and the moment the fixture captures, and the next diagnostic is to sample
+   the same patch at the capture point itself (in the fixture's screenshot path) and one frame earlier, which
+   distinguishes "the game framebuffer really is cleared" from "the capture reads the wrong surface".
+
+The window is reverted again so the tree stays green and the immediate path stays off by default; the measurements above
+are from the runs that had it enabled.
