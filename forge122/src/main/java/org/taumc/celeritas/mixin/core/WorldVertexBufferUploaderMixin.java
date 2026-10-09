@@ -42,6 +42,7 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     private static int celtium$nullFormatDumps;
     private static int celtium$compositeRefusals;
+    private static int celtium$positionTexRefusals;
 
     /** Describes a format the same way the dump does, so an unmatched shape can be put beside a known one. */
     private static String celtium$describe(VertexFormat format) {
@@ -155,6 +156,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
             // backend was never called, GL drew every batch, and the counters reported zeros while the images matched.
             accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+            if (!accepted && formatId == 6 && celtium$positionTexRefusals < 3) {
+                // The sky, the clouds and the water surface are mapped now, so a refusal here is a guard downstream of the
+                // mapping. Printing the backend's own reason is what identified the composite's, and it is the same question.
+                celtium$positionTexRefusals++;
+                System.out.println("[Celtium] CELTIUM_POSITIONTEX_REFUSED reason=" + backend.lastRefusal()
+                        + " stride=" + stride + " vertices=" + vertices);
+            }
             if (!accepted && formatId == 2 && celtium$compositeRefusals < 3) {
                 // The composite batch is the one the present path keys on, and three rounds of reasoning about which guard
                 // stops it have produced one wrong answer already. Printing the backend's own reason replaces the reasoning.

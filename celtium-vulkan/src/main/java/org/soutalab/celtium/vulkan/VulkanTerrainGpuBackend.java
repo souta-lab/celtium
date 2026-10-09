@@ -1441,9 +1441,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        if (formatId < 1 || formatId > 5) {
+        if (formatId < 1 || formatId > 6) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
-            // one is refused with its size rather than drawn with a pipeline that would misread its vertices.
+            // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
+            // bound was 5, written before id 6 existed: position-plus-texture - the sky, the clouds, the water surface -
+            // passed the mapping, passed the acceptance mask, and was then refused here as an unknown layout by a range
+            // check that simply predated the format.
             this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ")";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             this.flushPendingBeforeGlDraw();

@@ -7358,3 +7358,37 @@ which has no id of its own and is the same one the present path keys on.
 Worth recording as the shape of the whole investigation: six rules, one identity-comparison fix, three rounds, and the answer
 was a **missing else-if**. What found it was putting the two formats side by side on one line and then reading the chain -
 neither of which had been done, because each earlier attempt started from the assumption that a rule needed to match.
+
+---
+
+## The sky, the clouds and the water surface are drawn by Vulkan
+
+The downstream guard that refused the newly mapped format was one line, written before the format existed:
+
+```java
+if (formatId < 1 || formatId > 5) {     // upper bound predates id 6
+```
+
+The shape passed the mapping (id 6), passed the acceptance mask, and was refused here as an unknown layout by a **range check
+that simply predated the format**. With the bound at 6:
+
+```
+acceptedByFormat = 1:0, 2:0, 3:0, 4:0, 5:354, 6:2374
+immediateTaken = 2728          (about 560 before)
+glDrawsCancelled = 2728
+exit 0 | clean | messages 0 | fixture PASSED | nativeTerrainVerified=True | terrainPasses=1056
+```
+
+**2374 batches of sky, clouds and water surface are now taken by the Vulkan path**, where every previous run of this project
+reported `6:0`. The immediate path went from roughly 560 batches to 2728, and the cancelled GL draws moved with it one for one.
+Validation is silent and the fixture passes; the three reported position-texture refusals are the first frames, before the
+pipeline exists, which is the lazy creation behaving as designed.
+
+Two things are worth recording alongside the result. **Format 1 fell to zero** (`1:17` before, `1:0` now), which was not
+predicted and is the next thing to explain rather than assume - plausibly the scene's composition changed once the sky stopped
+going through GL, but that is a hypothesis and is written down as one. And **two rounds of this investigation ended with the
+same shape of answer**: a missing else-if, then a stale upper bound. Both were invisible to every rule-based attempt because
+both were about *what the code did not say* rather than about what it computed wrongly.
+
+The item is the one that resisted six rules, three rounds and a fixed identity comparison - the sky, the clouds, the water
+surface - and it moved on a single character of a range check, found by printing the backend's own refusal reason.
