@@ -1004,3 +1004,19 @@ when it is, this is the quad Vulkan will draw.
 
 It also explains every earlier observation about this layout in one stroke: taking it drew a full-screen texture into the
 game framebuffer a frame later, which is why the sky went flat and why the measured difference was 14 points.
+
+---
+
+## The present mechanism for the real frame is implemented; wiring it into the probe is next
+
+`VulkanSwapchain.presentImage(sourceImage, sourceLayout, width, height)` implements the step that will replace
+Minecraft's `Framebuffer.func_178038_a`: acquire an image from the swapchain, barrier the source image to
+`TRANSFER_SRC_OPTIMAL`, barrier the acquired image to `TRANSFER_DST_OPTIMAL`, `vkCmdBlitImage` (scaling to the swapchain
+extent if they differ), barrier to `PRESENT_SRC_KHR`, submit through the context's command-buffer helpers and present
+with the presentation waiting on the reusable acquire semaphore - the same synchronisation shape as the clear-and-present
+probe that the validation layer already accepts.
+
+It compiles and is committed. The attempt to call it from the swapchain probe did not apply - the anchor text had moved
+again, the same failure mode as the previous round's instrumentation - so it has not run yet and nothing about present
+ownership has been demonstrated beyond the probe's cleared image. The next step is to wire that one call where the probe
+already presents and read its result, with the string it prints recorded either way.

@@ -268,6 +268,93 @@ public final class VulkanSwapchain {
         }
     }
 
+    /**
+     * Blits a Vulkan image into the swapchain and presents it - the mechanism that will replace Minecraft's
+     * {@code Framebuffer.func_178038_a} shader blit.
+     * <p>
+     * That method was identified by capturing its stack: it is the game framebuffer's composite onto the screen,
+     * implemented as a shader program over a full-screen quad with white vertices and uv 0..1, which is exactly the
+     * batch the immediate path used to take and flatten the picture with. Presenting the shared colour image is what
+     * replaces it.
+     * <p>
+     * The synchronisation follows the verified clear-and-present probe, which the validation layer accepts: the image is
+     * acquired with the reusable semaphore and the presentation waits on it, so presentation is ordered after the
+     * acquire. Wired to the frame path only when the backend asks for it, so this can be measured before it is trusted
+     * with the frame.
+     */
+    public String presentImage(long sourceImage, int sourceLayout, int width, int height) {
+        if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
+            return "present image: no swapchain or no source image";
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer index = stack.mallocInt(1);
+            if (this.acquireSemaphore == VK_NULL_HANDLE) {
+                LongBuffer semaphore = stack.mallocLong(1);
+                if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
+                        .sType$Default(), null, semaphore) != VK_SUCCESS) {
+                    return "present image: could not create an acquire semaphore";
+                }
+                this.acquireSemaphore = semaphore.get(0);
+            }
+            long acquire = this.acquireSemaphore;
+            int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
+                    VK_NULL_HANDLE, index);
+            if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+                return "present image: vkAcquireNextImageKHR returned " + result;
+            }
+            long image = this.images[index.get(0)];
+            VkCommandBuffer commands = this.context.beginCommands();
+            try {
+                transitionForBlitSource(stack, commands, sourceImage, sourceLayout);
+                transitionToTransferDst(stack, commands, image);
+                org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
+                region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                        .layerCount(1);
+                region.get(0).srcOffsets().get(0).set(0, 0, 0);
+                region.get(0).srcOffsets().get(1).set(width, height, 1);
+                region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                        .layerCount(1);
+                region.get(0).dstOffsets().get(0).set(0, 0, 0);
+                region.get(0).dstOffsets().get(1).set(this.width, this.height, 1);
+                vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+                transitionToPresent(stack, commands, image);
+            } finally {
+                this.context.endCommands(commands);
+            }
+            VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
+                    .pWaitSemaphores(stack.longs(acquire))
+                    .swapchainCount(1)
+                    .pSwapchains(stack.longs(this.swapchain))
+                    .pImageIndices(index);
+            int presented = vkQueuePresentKHR(this.context.queue(), present);
+            if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
+                return "present image: vkQueuePresentKHR returned " + presented;
+            }
+            return "present image: blitted " + width + "x" + height + " onto image " + index.get(0) + " (" + presented
+                    + ")";
+        }
+    }
+
+    /** Moves the source image to the layout a blit reads from, from wherever the frame left it. */
+    private void transitionForBlitSource(MemoryStack stack, VkCommandBuffer commands, long image, int currentLayout) {
+        if (currentLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+            return;
+        }
+        org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier =
+                org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default()
+                .oldLayout(currentLayout)
+                .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image);
+        barrier.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+        barrier.get(0).srcAccessMask(VK_ACCESS_MEMORY_WRITE_BIT).dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+        vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null,
+                barrier);
+    }
+
     public void delete() {
         if (this.acquireSemaphore != VK_NULL_HANDLE) {
             // The queue is drained first: the semaphore may still be referenced by a pending present.
