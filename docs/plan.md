@@ -1257,6 +1257,32 @@ GPU時間と待ち時間を出す（既存の timestamp 機構が使える）、
   以前の（vanilla に対する）`1.475 × ref^0.915` より**線形に近づいた**（ただし基準が違うので直接の比較ではない）。
 - 性能も同じ run で: **AMD p50 16.02 ms**（参照 16.18）、**Intel 28.54 ms**（p50）、p99 は AMD 23.18 / Intel 36.79。
 
+## 7.14 world switch の受入（このターン・新規。validation エラーを検出）
+
+優先順位6の未消化項目である**ワールド切替**を fixture の `-Dceltium.validation.worldSwitch=true` で両GPU実行した。
+
+| run | exit | validationClean | fixture | 所要 | p50 |
+|---|---|---|---|---|---|
+| AMD | 1 | **false** | PASSED | 26.0 s | 16.13 ms |
+| Intel | 1 | **false** | PASSED | 25.9 s | **22.40 ms** |
+
+- **切替そのものは動く**: report に `leftWorldAtTick=100`、`rejoinedAtTick=100`、`worldTicksAtEnd=200`、
+  `worldFrames` 553（AMD）/343（Intel）、`regStaleMillis=0.00`。fixture は PASSED。
+- **しかし validation が汚れる**: **`VUID-vkCmdDraw-None-09600` が10件**（AMD/Intel とも）。メッセージは
+  同一 image（`0x1ad9...`）の **mipLevel 1, 2, 3 …** が、記述子が書かれたときのレイアウトと違う、というもの。
+- **原因の候補をコードで確認**: `VulkanGlTexture.transitionToShaderRead()` の barrier は
+  `subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, **0, 1**, 0, 1)` で **level 0 しか覆っていない**。
+  ワールド切替では `recreateImageResources()` が image を作り直すが、この関数は
+  `destroyImageResources(); createImageResources(...)` だけで、**全ミップを SHADER_READ_ONLY へ遷移させない**。
+  通常のアップロード経路は末尾の barrier で全ミップを遷移させるが、切替後の経路ではそれが効いていない。
+- **まだ直していない理由**: レイアウト遷移は壊すと別の VUID を生む（コードのコメントにも「fifteen errors」の記録がある）。
+  level 0 が `UNDEFINED` 前提の barrier と、全ミップを移す barrier の順序を揃えてから、**両GPUで世界切替の受入を
+  取り直して**閉じる。半端な修正を入れない。
+
+**次の一手**: (1) `transitionToShaderRead()` を全 `mipLevels` に広げ、`recreateImageResources()` の直後で
+呼ぶ経路を整える（level 0 の `oldLayout` 前提と衝突しないように）、(2) world switch を AMD/Intel で再受入し、
+`validationClean=true` と `exit 0` を確認する、(3) 同様に「切替後」の描画が正しいかを画像で確かめる。
+
 ## 8. 第3回監査の最終追補
 
 32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
