@@ -448,6 +448,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Off by default: the window works mechanically, but the frame is black at capture time while it is used. */
     private static final boolean IMMEDIATE_WINDOWS_ENABLED = Boolean.getBoolean("celtium.vulkan.immediateWindows");
+    /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
+    private static final boolean PRESENT_FROM_COMPOSITE = Boolean.getBoolean("celtium.vulkan.presentFromComposite");
     private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 4096);
 
     private boolean immediateWindowBusy;
@@ -458,6 +460,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateDeferredNextFrame;
     private int whiteTextureGlId;
     private int immediateRefusedDefaultFbo;
+    private int immediatePresentedFrames;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -678,6 +681,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 : formatId == 4 ? VulkanImmediateItemPipeline.VERTEX_BYTES
                 : formatId == 5 ? VulkanImmediateParticlePipeline.VERTEX_BYTES
                 : VulkanImmediatePipeline.VERTEX_BYTES;
+        if (formatId == 2 && PRESENT_FROM_COMPOSITE) {
+            // Present the frame's content at the moment Minecraft composites it. The stack trace identified this batch
+            // as Framebuffer.func_178038_a - the game framebuffer blitted onto the screen - and taking it cancels GL's
+            // blit, so the screen shows the Vulkan present instead. It runs before the acceptance mask, which keeps
+            // this layout on GL by default.
+            try {
+                if (this.frameTarget != null && this.swapchain != null) {
+                    this.frameTarget.beginFrameForPresent();
+                    String result = this.swapchain.presentImage(this.frameTarget.colorImage(),
+                            org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
+                            this.targetHeight);
+                    this.frameTarget.endFrame();
+                    this.immediatePresentedFrames++;
+                    if (this.immediatePresentedFrames == 1) {
+                        record("presented the frame from the composite: " + result);
+                    }
+                    return true;
+                }
+            } catch (RuntimeException | LinkageError error) {
+                if (this.immediatePresentedFrames == 0) {
+                    record("presenting from the composite failed: " + describe(error));
+                }
+            }
+            return false;
+        }
         if (!celtium$formatAccepted(formatId)) {
             // Attribution switch: restricting which layouts this backend accepts makes the image difference
             // measurable per format instead of as one aggregate number. Refused batches are drawn by GL as usual.

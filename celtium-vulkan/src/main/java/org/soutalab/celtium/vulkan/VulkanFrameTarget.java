@@ -312,6 +312,23 @@ public final class VulkanFrameTarget {
      *                               difference)
      */
     public void beginFrame() {
+        beginFrame(false);
+    }
+
+    /**
+     * Begins a frame using the game framebuffer this bridge already validated, even when it is not the bound one.
+     * <p>
+     * Minecraft's final composite - {@code Framebuffer.func_178038_a}, identified by its stack trace - draws to the
+     * default framebuffer while *reading* the game framebuffer's texture as a sampler. At that moment the game
+     * framebuffer is not bound, so the ordinary {@link #beginFrame()} refuses; this variant uses the remembered target
+     * instead, and only when it was validated before, which is what makes presenting the frame's own content possible
+     * at the one moment that matters.
+     */
+    public void beginFrameForPresent() {
+        beginFrame(true);
+    }
+
+    private void beginFrame(boolean useRememberedTarget) {
         checkAlive();
         if (frameOpen) {
             throw new IllegalStateException("beginFrame() was called while the previous frame is still open; endFrame() is required first");
@@ -320,21 +337,30 @@ public final class VulkanFrameTarget {
         try (GlState state = new GlState()) {
             drainGlErrors();
             int fbo = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
-            if (fbo == 0) {
+            int colorTexture;
+            int depthRenderbuffer;
+            if (fbo == 0 && useRememberedTarget && gameFbo != 0) {
+                // Reuse the target validated earlier in the frame: the composite's moment has the default framebuffer
+                // bound, and the game framebuffer is still the source of the picture.
+                fbo = gameFbo;
+                colorTexture = gameColorTexture;
+                depthRenderbuffer = gameDepthRenderbuffer;
+            } else if (fbo == 0) {
                 // Querying attachments of the default framebuffer is not what this bridge is built on, and some
                 // drivers reject it; fail with the contract message before touching it.
                 throw new IllegalStateException("beginFrame: the bound draw framebuffer is the default framebuffer; the"
                         + " verified bridge needs an FBO whose colour attachment is an RGBA8 texture and whose depth"
                         + " attachment is a D24 renderbuffer");
+            } else {
+                colorTexture = glGetNamedFramebufferAttachmentParameteri(fbo, GL_COLOR_ATTACHMENT0,
+                        GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+                depthRenderbuffer = glGetNamedFramebufferAttachmentParameteri(fbo, GL_DEPTH_ATTACHMENT,
+                        GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+                requireVerifiedContract(fbo, colorTexture, depthRenderbuffer, "beginFrame");
+                gameFbo = fbo;
+                gameColorTexture = colorTexture;
+                gameDepthRenderbuffer = depthRenderbuffer;
             }
-            int colorTexture = glGetNamedFramebufferAttachmentParameteri(fbo, GL_COLOR_ATTACHMENT0,
-                    GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-            int depthRenderbuffer = glGetNamedFramebufferAttachmentParameteri(fbo, GL_DEPTH_ATTACHMENT,
-                    GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-            requireVerifiedContract(fbo, colorTexture, depthRenderbuffer, "beginFrame");
-            gameFbo = fbo;
-            gameColorTexture = colorTexture;
-            gameDepthRenderbuffer = depthRenderbuffer;
 
             long step = System.nanoTime();
             glBlitNamedFramebuffer(fbo, sharedFbo, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,

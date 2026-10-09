@@ -1051,3 +1051,29 @@ What remains for present ownership, in order: call `presentImage` from the compo
 sees that batch, and the frame's content is bound there), cancel GL's blit for that batch, and then verify that the screen
 shows the frame while the frame buffer keeps its content - the screenshot path reads the game framebuffer, so both can be
 checked in one run.
+
+---
+
+## Vulkan presents the game's own frame - with thirteen validation messages to fix
+
+`presentFromComposite` is wired and it does what it says, at the moment the stack trace pointed at:
+
+```
+presented the frame from the composite: present image: blitted 1280x720 onto image 1 (0)
+status PASSED | nativeTerrainVerified True
+```
+
+Minecraft's `Framebuffer.func_178038_a` batch arrives, the bridge is opened with `beginFrameForPresent()` - which reuses
+the game framebuffer validated earlier in the frame, because at this moment the default framebuffer is bound - the shared
+colour image is blitted into an acquired swapchain image (1280x720, VkResult 0) and presented, and GL's own blit for that
+batch is cancelled. That is the present step running on Vulkan.
+
+It is **not trustworthy yet**: the same run produced **13 validation messages**, which is against the project's rule and
+is recorded rather than skipped over. The candidates are the ones the clear-and-present probe never had to face: the
+layout the shared colour image is actually in when it is blitted (this asks for `COLOR_ATTACHMENT_OPTIMAL`, while
+`endFrame`'s copy-back may leave it elsewhere), and the synchronisation of a blit that *writes* the acquired image - the
+probe only cleared, so presenting right after the acquire happened to be ordered, whereas writing needs the submission
+itself to wait on the acquire semaphore and the presentation to wait on a render-finished semaphore instead.
+
+The switch is off by default, so the shipped path is unaffected and its validation output stays empty; the next step is
+to read those thirteen messages, fix the layout and the semaphore pair, and only then consider the present step ported.
