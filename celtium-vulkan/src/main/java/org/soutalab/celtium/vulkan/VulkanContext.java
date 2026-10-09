@@ -288,6 +288,52 @@ public final class VulkanContext {
      * <p>
      * Render thread only.
      */
+    /**
+     * Ends and submits a command buffer, waiting on one semaphore and signalling another.
+     * <p>
+     * {@link #endCommands} submits with no semaphores and then drains the queue, which is what the one-shot uploads
+     * want. A presentation needs more: the submission that modifies the acquired image must *wait* on the semaphore the
+     * acquire signalled, and the presentation must wait on a signal from that submission instead. The validation layer
+     * reports the alternative as "pSubmits[0] performs a layout transition on presentable VkImage ... but VkSemaphore
+     * ... signaled by image acquire operation was not waited on".
+     * <p>
+     * The fence is waited for, so the command buffer can be freed, but the queue is not drained: the signal semaphore
+     * is handed to the caller's presentation, which waits on it.
+     */
+    public void submitWithSemaphores(VkCommandBuffer commandBuffer, long waitSemaphore, long signalSemaphore) {
+        if (commandBuffer == null) {
+            throw new IllegalArgumentException("commandBuffer must not be null");
+        }
+        requireUsable();
+        long fence = VK_NULL_HANDLE;
+        try {
+            check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                LongBuffer fenceHandle = stack.mallocLong(1);
+                check(vkCreateFence(this.device, org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(), null,
+                        fenceHandle), "vkCreateFence(submitWithSemaphores)");
+                fence = fenceHandle.get(0);
+                VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
+                        .pCommandBuffers(stack.pointers(commandBuffer));
+                if (waitSemaphore != VK_NULL_HANDLE) {
+                    submit.pWaitSemaphores(stack.longs(waitSemaphore));
+                    submit.pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_TRANSFER_BIT
+                            | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT));
+                }
+                if (signalSemaphore != VK_NULL_HANDLE) {
+                    submit.pSignalSemaphores(stack.longs(signalSemaphore));
+                }
+                check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit(submitWithSemaphores)");
+                check(vkWaitForFences(this.device, fence, true, Long.MAX_VALUE), "vkWaitForFences(submitWithSemaphores)");
+            }
+        } finally {
+            if (fence != VK_NULL_HANDLE) {
+                vkDestroyFence(this.device, fence, null);
+            }
+            vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+        }
+    }
+
     public void endCommands(VkCommandBuffer commandBuffer) {
         if (commandBuffer == null) {
             throw new IllegalArgumentException("commandBuffer must not be null");

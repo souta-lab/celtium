@@ -1107,3 +1107,26 @@ Two fixes landed this round and one is now precisely specified:
   context or an inline `vkQueueSubmit` in the swapchain.
 
 Until that is done the present-from-composite switch stays off and the shipped path's validation output stays empty.
+
+---
+
+## The semaphore pair is implemented and the present is still not validation-clean
+
+`VulkanContext.submitWithSemaphores(commandBuffer, waitSemaphore, signalSemaphore)` now exists: it ends the command
+buffer, submits with a wait on one semaphore and a signal on another (waiting at transfer and colour-attachment-output
+stages), waits a fence so the buffer can be freed, and leaves the queue undrained so the caller's presentation can wait on
+the signal. `presentImage` uses it - wait on the acquire, signal a render-finished semaphore from a pool paired with the
+acquire pool - and the presentation waits on the render-finished one instead of on the acquire.
+
+It runs and it presents (`present image: blitted 1280x720 onto image 1 (0)`), and the validation output is still **not
+clean: ten VUIDs remain**, which is against the project's rule. So the fix addressed the message that was read last round
+and the present step is not finished; the counting also shows how easy it is to misread this output - one of the greps
+used here matched the layer's informational lines as well, and the honest number is the ten real VUIDs, not the 37 lines
+that mention a call.
+
+The state is unchanged in the way that matters: `presentFromComposite` is off by default, the shipped path's validation
+output is empty, and the immediate path is pixel-identical on both GPUs with the composite left to GL. What is *not* true
+is that present ownership is ported - it runs, and it is not clean yet, and both halves of that sentence go in the record.
+The next step is to read the ten current messages (not the previous run's) and decide whether the remaining problem is the
+layout the shared colour image is actually in, the fence-wait inside the submit removing the ordering the presentation
+needs, or the reuse distance of the render-finished pool.

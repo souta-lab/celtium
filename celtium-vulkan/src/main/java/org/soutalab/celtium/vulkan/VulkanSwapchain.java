@@ -66,6 +66,9 @@ public final class VulkanSwapchain {
      */
     private long[] acquireSemaphores;
     private int acquireSemaphoreCursor;
+    /** One render-finished semaphore per image, paired with the acquire ones: the presentation waits on these. */
+    private long[] renderFinishedSemaphores;
+    private int renderFinishedCursor;
 
     private VulkanSwapchain(VulkanContext context, long surface, String platform) {
         this.context = context;
@@ -295,8 +298,9 @@ public final class VulkanSwapchain {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer index = stack.mallocInt(1);
             long acquire = acquireSemaphore(stack);
-            if (acquire == VK_NULL_HANDLE) {
-                return "present image: could not create an acquire semaphore";
+            long renderFinished = renderFinishedSemaphore(stack);
+            if (acquire == VK_NULL_HANDLE || renderFinished == VK_NULL_HANDLE) {
+                return "present image: could not create the semaphores";
             }
             int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                     VK_NULL_HANDLE, index);
@@ -321,10 +325,13 @@ public final class VulkanSwapchain {
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
                 transitionToPresent(stack, commands, image);
             } finally {
-                this.context.endCommands(commands);
+                // Waiting on the acquire semaphore and signalling a render-finished one: the submission writes the
+                // acquired image, so it has to wait for the presentation engine to release it, and the presentation has
+                // to wait for this submission rather than for the acquire.
+                this.context.submitWithSemaphores(commands, acquire, renderFinished);
             }
             VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
-                    .pWaitSemaphores(stack.longs(acquire))
+                    .pWaitSemaphores(stack.longs(renderFinished))
                     .swapchainCount(1)
                     .pSwapchains(stack.longs(this.swapchain))
                     .pImageIndices(index);
@@ -357,6 +364,26 @@ public final class VulkanSwapchain {
         return result;
     }
 
+    /** {@return the next render-finished semaphore}, created alongside the acquire pool on first use. */
+    private long renderFinishedSemaphore(MemoryStack stack) {
+        if (this.renderFinishedSemaphores == null) {
+            int count = Math.max(2, this.images.length);
+            long[] pool = new long[count];
+            LongBuffer semaphore = stack.mallocLong(1);
+            for (int i = 0; i < count; i++) {
+                if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
+                        .sType$Default(), null, semaphore) != VK_SUCCESS) {
+                    return VK_NULL_HANDLE;
+                }
+                pool[i] = semaphore.get(0);
+            }
+            this.renderFinishedSemaphores = pool;
+        }
+        long result = this.renderFinishedSemaphores[this.renderFinishedCursor];
+        this.renderFinishedCursor = (this.renderFinishedCursor + 1) % this.renderFinishedSemaphores.length;
+        return result;
+    }
+
     /** Moves the source image to the layout a blit reads from, from wherever the frame left it. */
     private void transitionForBlitSource(MemoryStack stack, VkCommandBuffer commands, long image, int currentLayout) {
         if (currentLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
@@ -377,6 +404,13 @@ public final class VulkanSwapchain {
     }
 
     public void delete() {
+        if (this.renderFinishedSemaphores != null) {
+            vkQueueWaitIdle(this.context.queue());
+            for (long semaphore : this.renderFinishedSemaphores) {
+                vkDestroySemaphore(this.context.device(), semaphore, null);
+            }
+            this.renderFinishedSemaphores = null;
+        }
         if (this.acquireSemaphores != null) {
             vkQueueWaitIdle(this.context.queue());
             for (long semaphore : this.acquireSemaphores) {
