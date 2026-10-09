@@ -6378,3 +6378,25 @@ The driver is now recorded **by reference**: the post-run report points at the r
 carries `lwjglVersion 3.4.1-snapshot`, `vulkanLoaderVersion 1.4.363`, `vulkanDeviceCount 3` and `apiVersion 1.4.354` from it.
 The first attempt put this in the lock, which is written **before** the run - so it found nothing and reported an empty
 driver, which its own output showed immediately. Reading it where it exists is the whole fix.
+
+---
+
+## The Intel re-run closes the two-GPU condition on the current revision
+
+The corrected plan row named one outstanding item - the Intel UHD 630 verification predated this session's changes - and
+that is now done. The Intel run script differs from the AMD one only in the run name and the render node, so it carries the
+same flags and the same acceptance.
+
+```
+Intel UHD 630: exit 0 | clean | messages 0 | fixture PASSED
+acceptance: nativeTerrainVerified=True  terrainPasses=804  glDrawsCancelled=278  vulkanPasses=1082
+```
+
+**Zero validation messages on Intel's driver** across everything this session changed: the 116-byte push block in nine
+shaders, the retirement queue, the generation-carrying descriptor keys, the in-place mirror refresh, the animation
+refresh of the directly held atlas, the order-preserving flushes at seventeen refusal sites, the clear hook, the framebuffer
+check on the composite present, the out-of-date handling and the teardown. Each of those was verified on AMD when it was made;
+this run says none of them is AMD-specific.
+
+The two-GPU condition is therefore met **on the current revision** rather than on an earlier one, and the plan row says so
+with the numbers from both runs rather than a claim.
