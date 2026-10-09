@@ -375,6 +375,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean currentGroupUsed;
     private int currentGroupFormatId;
     private int[] currentGroupState = new int[7];
+    /** {@code -Dceltium.vulkan.alphaTest=false} turns the immediate path's alpha test off, for measurements. */
+    private static final boolean ALPHA_TEST_ENABLED = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.alphaTest", "true"));
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
@@ -730,7 +733,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         boolean blend = this.immediateState.blendEnabled();
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
-        float alphaReference = this.immediateState.alphaTestEnabled()
+        // Comparison switch, default on: forcing the threshold to zero turns every discard off, which isolates the
+        // alpha test's effect inside one build instead of comparing across builds.
+        float alphaReference = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
                 ? this.immediateState.alphaFuncReference() : 0.0f;
         return new int[] {
                 blend ? 1 : 0,

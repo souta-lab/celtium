@@ -81,7 +81,21 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Measurement noise floor established, and it changes what the numbers mean.** Four runs, two per configuration:
+- **Correction: the alpha test is not what changed the difference - isolated within one build, it moves 0.11 of 255.**
+  The previous round attributed the change from 11.87 to ~14 to the alpha test. Isolating it properly - same build,
+  `-Dceltium.vulkan.alphaTest=false` against the default true, both against the same GL reference - gives:
+  `false` 14.44 mean / 34.5% over 8, `true` 14.44 / 34.5%, and false against true only **0.11 mean / 0.6% of pixels**.
+  So the test contributes about a tenth of a level and the attribution was wrong. The source check backs the
+  behaviour up as well: vanilla calls `func_179092_a(516, 0.1F)` in ten places and `(516, 0.5F)`, `(516, 1/255)` and
+  `(519, 0.0F)` once each, i.e. `GL_GREATER` almost always, which is what the shader implements up to the equality
+  case.
+  That leaves the ~14.4 gap to be explained by the candidates that were already listed, and it moves them to the front:
+  the **flush running a frame later than the batch** (whose fingerprint is the 0.83 run-to-run variation measured on the
+  Vulkan side, since that is one frame of scene motion) and the **24-byte formats that carry a lightmap**, which the
+  backend still refuses so GL draws them while nearby batches come from Vulkan.
+  The alpha test stays in place, validation-clean, behind its switch.
+
+- **Original noise-floor note (its attribution to the alpha test is corrected above).** Four runs, two per configuration:
   `off vs off` differ by **0.00** (the GL reference is bit-identical between runs, so the scene is deterministic),
   `on vs on` differ by **0.83 mean / 1.5% of pixels over 8 / 0.4% over 32** - that is the run-to-run variation of the
   Vulkan path itself, most likely the one-frame lag interacting with the captured frame - and the cross comparison is
