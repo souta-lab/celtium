@@ -1,5 +1,7 @@
 # Celtium current plan
 
+Audit records: [first](audit-2026-10-09.md), [second](audit-2026-10-09-second.md).
+
 Celtium moves Minecraft 1.12.2's rendering to **native Vulkan**: the game's own drawing, the final composition and the
 present, with no GL context and no shared-image bridge. This file is the current plan and the only one that describes
 what is being built now. Evidence, measurements and disproved hypotheses live in
