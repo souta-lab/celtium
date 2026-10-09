@@ -55,16 +55,42 @@ public final class VulkanImmediateTexturePipeline {
     private long descriptorSet = VK_NULL_HANDLE;
     private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
 
-    private VulkanImmediateTexturePipeline(VulkanContext context, long renderPass) {
+    private final boolean blend;
+    private final int srcFactor;
+    private final int dstFactor;
+    private final boolean depthTest;
+    private final boolean depthWrite;
+    private final boolean cull;
+
+    private VulkanImmediateTexturePipeline(VulkanContext context, long renderPass, boolean blend, int srcFactor,
+                                           int dstFactor, boolean depthTest, boolean depthWrite, boolean cull) {
         this.context = context;
         this.renderPass = renderPass;
+        this.blend = blend;
+        this.srcFactor = srcFactor;
+        this.dstFactor = dstFactor;
+        this.depthTest = depthTest;
+        this.depthWrite = depthWrite;
+        this.cull = cull;
     }
 
+    /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
     public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass) {
+        return create(context, renderPass, true, org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
+                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false);
+    }
+
+    /**
+     * Creates a pipeline for one drawing state: blending with the given Vulkan factors, the depth test and its write
+     * mask, and face culling. These bake into the pipeline object, which is why the immediate path caches one per
+     * state instead of forcing every batch through a single hardcoded combination.
+     */
+    public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
+                            boolean depthTest, boolean depthWrite, boolean cull) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
-        VulkanImmediateTexturePipeline result = new VulkanImmediateTexturePipeline(context, renderPass);
+        VulkanImmediateTexturePipeline result = new VulkanImmediateTexturePipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull);
         result.createPipelineLayout();
         result.createPipeline();
         return result;
@@ -250,7 +276,7 @@ public final class VulkanImmediateTexturePipeline {
                 VkPipelineRasterizationStateCreateInfo raster =
                         VkPipelineRasterizationStateCreateInfo.calloc(stack).sType$Default()
                                 .polygonMode(VK_POLYGON_MODE_FILL)
-                                .cullMode(VK_CULL_MODE_NONE)
+                                .cullMode(this.cull ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE)
                                 .frontFace(VK_FRONT_FACE_CLOCKWISE)
                                 .lineWidth(1.0f);
                 VkPipelineMultisampleStateCreateInfo multisample =
@@ -263,15 +289,15 @@ public final class VulkanImmediateTexturePipeline {
                 // with the test disabled; this run answers whether the comparison itself is what hides it.
                 VkPipelineDepthStencilStateCreateInfo depth =
                         VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default()
-                                .depthTestEnable(true)
-                                .depthWriteEnable(false)
+                                .depthTestEnable(this.depthTest)
+                                .depthWriteEnable(this.depthWrite)
                                 .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
                         VkPipelineColorBlendAttachmentState.calloc(1, stack);
                 blendAttachment.get(0)
-                        .blendEnable(true)
-                        .srcColorBlendFactor(VK_BLEND_FACTOR_SRC_ALPHA)
-                        .dstColorBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+                        .blendEnable(this.blend)
+                        .srcColorBlendFactor(this.srcFactor)
+                        .dstColorBlendFactor(this.dstFactor)
                         .colorBlendOp(VK_BLEND_OP_ADD)
                         .srcAlphaBlendFactor(VK_BLEND_FACTOR_ONE)
                         .dstAlphaBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)

@@ -374,7 +374,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final float[] currentGroupModelView = new float[16];
     private boolean currentGroupUsed;
     private int currentGroupFormatId;
+    private int[] currentGroupState = new int[6];
     private int currentGroupTexture;
+    private long currentGroupStateKey;
+    /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
+    private final java.util.Map<Long, VulkanImmediatePipeline> immediatePipelineCache =
+            new java.util.HashMap<Long, VulkanImmediatePipeline>();
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
     private int immediateIsolationDraws;
@@ -593,8 +600,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // cooperation from any class and gives exactly what Minecraft is drawing with.
             captureGlMatrices();
             int boundTexture = this.immediateState.boundTextureName();
+            int[] state = celtium$captureState();
+            long stateKey = celtium$stateKey(formatId, state);
             if (this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
+                    || this.currentGroupStateKey != stateKey
                     || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
                     || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
@@ -604,6 +614,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
                 this.currentGroupFormatId = formatId;
                 this.currentGroupTexture = boundTexture;
+                this.currentGroupStateKey = stateKey;
             }
             if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
@@ -696,6 +707,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /**
+     * Snapshots the drawing state that bakes into a pipeline.
+     * <p>
+     * Captured with the group, like the matrices: by the time the flush runs a frame later the live state has moved on,
+     * and using it would draw with a blend or depth combination the batch never asked for. The array is
+     * {blend, srcFactor, dstFactor, depthTest, depthWrite, cull} with the factors already in Vulkan form.
+     */
+    private int[] celtium$captureState() {
+        boolean blend = this.immediateState.blendEnabled();
+        int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
+        int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
+        return new int[] {
+                blend ? 1 : 0,
+                source < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA : source,
+                destination < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destination,
+                this.immediateState.depthTestEnabled() ? 1 : 0,
+                this.immediateState.depthMask() ? 1 : 0,
+                this.immediateState.cullEnabled() ? 1 : 0,
+        };
+    }
+
+    private static long celtium$stateKey(int formatId, int[] state) {
+        long key = formatId;
+        for (int value : state) {
+            key = (key * 31) + value;
+        }
+        return key;
+    }
+
     /** Moves the open group into the flush list together with the matrices it was built with. */
     private void closeCurrentImmediateGroup() {
         if (this.currentImmediateMesh != null && this.currentGroupUsed) {
@@ -705,7 +745,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             remapClipDepth(this.currentGroupProjection, projection);
             System.arraycopy(this.currentGroupModelView, 0, modelView, 0, 16);
             this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
-                    Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture)});
+                    Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
+                    Long.valueOf(this.currentGroupStateKey), this.currentGroupState});
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -1760,6 +1801,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
+     * Maps an OpenGL blend factor onto its Vulkan equivalent.
+     * <p>
+     * The numbers are the GL constants Minecraft's own enum carries, recorded here next to the mapping so the
+     * correspondence is checkable rather than implied: 0 ZERO, 1 ONE, 768 SRC_COLOR, 769 ONE_MINUS_SRC_COLOR,
+     * 770 SRC_ALPHA, 771 ONE_MINUS_SRC_ALPHA, 772 DST_ALPHA, 773 ONE_MINUS_DST_ALPHA, 774 DST_COLOR,
+     * 775 ONE_MINUS_DST_COLOR, 776 SRC_ALPHA_SATURATE, 32769 CONSTANT_COLOR, 32770 ONE_MINUS_CONSTANT_COLOR,
+     * 32771 CONSTANT_ALPHA, 32772 ONE_MINUS_CONSTANT_ALPHA. An unknown value returns -1 so the caller can refuse the
+     * batch rather than silently blend differently.
+     */
+    static int glBlendFactorToVk(int glFactor) {
+        switch (glFactor) {
+            case 0: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ZERO;
+            case 1: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE;
+            case 768: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_COLOR;
+            case 769: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+            case 770: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
+            case 771: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            case 772: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_DST_ALPHA;
+            case 773: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+            case 774: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_DST_COLOR;
+            case 775: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+            case 776: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+            case 32769: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_CONSTANT_COLOR;
+            case 32770: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR;
+            case 32771: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_CONSTANT_ALPHA;
+            case 32772: return org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA;
+            default: return -1;
+        }
+    }
+
+    /**
      * Draws the immediate-mode batches accumulated since the last flush.
      * <p>
      * Timing note: the batches arrive while the frame is already past its terrain passes (entities, particles, the
@@ -1833,16 +1905,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.immediatePipeline == null) {
                 this.immediatePipeline = VulkanImmediatePipeline.create(this.context, terrain.renderPass());
             }
-            try {
-                if (this.texturedImmediatePipeline == null) {
-                    this.texturedImmediatePipeline =
-                            VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass());
-                }
-                if (this.textureRegistry == null) {
-                    this.textureRegistry = new VulkanTextureRegistry(this.context);
-                }
-            } catch (RuntimeException | LinkageError error) {
-                record("textured immediate setup failed: " + describe(error));
+            if (this.textureRegistry == null) {
+                this.textureRegistry = new VulkanTextureRegistry(this.context);
             }
             ByteBuffer push = MemoryUtil.memAlloc(128);
             try {
@@ -1852,9 +1916,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         continue;
                     }
                     int formatId = ((Integer) group[3]).intValue();
+                    int[] state = (int[]) group[6];
                     pushMatrixInto((float[]) group[1], push, 0);
                     pushMatrixInto((float[]) group[2], push, 64);
                     if (formatId == 2) {
+                        VulkanImmediateTexturePipeline textured =
+                                texturedPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
+                        if (textured == null) {
+                            textured = VulkanImmediateTexturePipeline.create(this.context, terrain.renderPass(),
+                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                            texturedPipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), textured);
+                        }
                         try {
                             VulkanGlTexture texture =
                                     this.textureRegistry.get(((Integer) group[4]).intValue());
@@ -1867,7 +1939,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                 this.immediateTextureRefusals++;
                                 continue;
                             }
-                            this.texturedImmediatePipeline.draw(this.commandBuffer, mesh, push, descriptorSet);
+                            textured.draw(this.commandBuffer, mesh, push, descriptorSet);
                         } catch (RuntimeException | LinkageError error) {
                             // Caught and reported rather than left to unwind the render pass: every command after an
                             // unwind targets a buffer that is no longer recording, which is exactly the 113
@@ -1877,7 +1949,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             continue;
                         }
                     } else {
-                        this.immediatePipeline.draw(this.commandBuffer, mesh, push);
+                        VulkanImmediatePipeline plain =
+                                immediatePipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
+                        if (plain == null) {
+                            plain = VulkanImmediatePipeline.create(this.context, terrain.renderPass(),
+                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                            immediatePipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), plain);
+                        }
+                        plain.draw(this.commandBuffer, mesh, push);
                     }
                     this.immediateFlushes++;
                 }

@@ -82,10 +82,12 @@ public abstract class GlStateManagerMixin {
                                                     GlStateManager.DestFactor destRgb,
                                                     GlStateManager.SourceFactor sourceAlpha,
                                                     GlStateManager.DestFactor destAlpha, CallbackInfo info) {
-        int src = sourceRgb == null ? 0 : sourceRgb.ordinal();
-        int dst = destRgb == null ? 0 : destRgb.ordinal();
-        int srcAlpha = sourceAlpha == null ? 0 : sourceAlpha.ordinal();
-        int dstAlpha = destAlpha == null ? 0 : destAlpha.ordinal();
+        // The GL constant each constant carries, not its ordinal: the enum stores the real factor (SRC_ALPHA is 770)
+        // and reading that table once keeps the mirror correct even if the declaration order ever changes.
+        int src = celtium$glFactor(SOURCE_FACTORS, sourceRgb);
+        int dst = celtium$glFactor(DEST_FACTORS, destRgb);
+        int srcAlpha = celtium$glFactor(SOURCE_FACTORS, sourceAlpha);
+        int dstAlpha = celtium$glFactor(DEST_FACTORS, destAlpha);
         celtium$mirror(backend -> backend.setBlendFunc(src, dst, srcAlpha, dstAlpha));
     }
 
@@ -125,6 +127,41 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179110_a", at = @At("HEAD"), require = 0)
     private static void celtium$multiplyMatrix(java.nio.FloatBuffer buffer, CallbackInfo info) {
         celtium$mirror(backend -> backend.multiplyMatrix(buffer));
+    }
+
+    private static final int[] SOURCE_FACTORS = celtium$factorTable(GlStateManager.SourceFactor.values());
+    private static final int[] DEST_FACTORS = celtium$factorTable(GlStateManager.DestFactor.values());
+
+    /**
+     * Reads the OpenGL constant out of each blend-factor enum constant.
+     * <p>
+     * Both enums declare exactly one {@code int} field, which is the GL factor they wrap, so finding it by type is
+     * robust whereas assuming the declaration order is not. The table is built once.
+     */
+    private static int[] celtium$factorTable(Enum<?>[] values) {
+        int[] table = new int[values.length];
+        for (int i = 0; i < values.length; i++) {
+            try {
+                for (java.lang.reflect.Field field : values[i].getDeclaringClass().getDeclaredFields()) {
+                    if (field.getType() == int.class) {
+                        field.setAccessible(true);
+                        table[i] = field.getInt(values[i]);
+                        break;
+                    }
+                }
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                table[i] = 0;
+            }
+        }
+        return table;
+    }
+
+    private static int celtium$glFactor(int[] table, Enum<?> value) {
+        if (value == null) {
+            return 0;
+        }
+        int ordinal = value.ordinal();
+        return ordinal >= 0 && ordinal < table.length ? table[ordinal] : 0;
     }
 
     private static void celtium$mirror(Consumer<TerrainGpuBackend> action) {

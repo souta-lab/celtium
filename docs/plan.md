@@ -81,7 +81,23 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **State-driven pipeline selection: what already exists, and the one thing to verify first.** `VulkanGlState`
+- **State-driven selection is wired, but the flush is dropping groups: measured, recorded, path still off.**
+  The blend-factor question is settled the right way: each `GlStateManager` blend factor enum constant carries the
+  real OpenGL constant (SRC_ALPHA is 770, not an ordinal), so the Mixin reads that `int` field once per constant and
+  reports the GL value, and the backend maps it onto `VkBlendFactor` with the correspondence written next to the table.
+  Both immediate pipelines now take the state dimensions (blending with its factors, depth test, depth write, culling)
+  and the backend caches one pipeline per (format, state) pair, capturing the state with the group the way the matrices
+  are already captured.
+  Measured with the path enabled: `immediateTaken=1169`, `immediateRefusal=none`, VUID 0, PASSED, and the frame is
+  **identical** to the GL reference (mean absolute difference 0.00, 0.0% of pixels differing by more than 8) - a real
+  improvement over the 12.85/25.5% measured before the state was honoured. But **`immediateFlushes=28` against 1169
+  accepted batches** says most groups are never drawn: the flush returns early (or discards) for them, and since GL's
+  own draw was already cancelled for those batches, that is lost geometry waiting to become visible content. The path
+  therefore stays **off by default** (verified again: PASSED, `nativeTerrainVerified True`, `immediateTaken=0`, VUID 0).
+  Next step, specific: instrument the flush to count drawn versus discarded groups and find the early return - the only
+  candidate in the current code is `pipelineFor(this.lastUiPass)` returning null, which returns before the loop.
+
+- **Original note on the state model (superseded by the wiring above).** `VulkanGlState`
   already carries the whole selection inputs - blend enable plus all four factors, depth test/function/mask, culling
   with face, alpha test with function, lighting and shade model - and `pipelineKey(vertexFormatHash)` already folds
   exactly those into one key, deliberately excluding matrices, colour and texture bindings because those are push
