@@ -81,6 +81,19 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Alpha test: the call site is identified, and the first attempt is recorded as failed.** Minecraft's alpha test
+  is `GlStateManager.func_179092_a(int, float)`, which ends in `GL11.glAlphaFunc(func, reference)`; the state model
+  already records the function, but not the reference value, and neither immediate pipeline implements the test, so
+  cutout content (leaves, plants, particles with sharp edges) draws as opaque quads - one of the listed reasons the
+  image differs from GL.
+  The attempt to wire it is **reverted**: the boundary-method insertion into `TerrainGpuBackend` silently did not
+  apply (the artifact was checked afterwards and contains no such method), so the Mixin referenced a method that does
+  not exist and the build failed. Keeping the tree green took priority, so the change was rolled back rather than left
+  half-applied. Next attempt should add the boundary method first, rebuild `:common:shadeDowngradedApi`, verify the
+  method is present in the jar, and only then add the Mixin - and the reference value should travel as an extra
+  4-byte push constant at offset 128 (extending the range to 132) so the fragment shader can `discard` on it, with the
+  threshold folded into the pipeline key the way the other state dimensions are.
+
 - **Correction: the "identical image" measurement was invalid, and the lost-group bug is fixed.**
   The flush snapshot (`immediate flush snapshot at 500 accepted: flushes=498 drawn=498 discarded=0 noPipeline=0`)
   shows the dropped groups were not an early return but a stale reference: the textured branch still called a field that
