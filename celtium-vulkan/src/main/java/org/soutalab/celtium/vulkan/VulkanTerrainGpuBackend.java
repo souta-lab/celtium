@@ -837,6 +837,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // stated rather than hidden - this geometry is GL-drawn and the counter below says how often.
             this.immediateRefusedWindowBudget++;
             this.immediateLastRefusal = "the frame's window budget is spent, so this batch stays with GL";
+            if (this.immediateRefusedWindowBudget == 1) {
+                // Reported at the first refusal rather than at a count a run may never reach: the previous attempt wired
+                // these counters to a snapshot that fires at exactly 500 accepted batches, and a low-budget run refuses
+                // batches before they are counted, so the line never printed and the path looked unexercised.
+                record("first batch left to GL because the frame's window budget was spent: windowsThisFrame="
+                        + this.immediateWindowsThisFrame + " limit=" + IMMEDIATE_WINDOWS_PER_FRAME
+                        + " deferredNextFrame=" + this.immediateDeferredNextFrame);
+            }
             return false;
         }
         if (!celtium$formatAccepted(formatId)) {

@@ -2057,3 +2057,26 @@ So the state of this item is: the refusal is implemented, does not disturb the s
 0.00 against the GL reference and 0 validation messages), and its counters are wired to a line that a low-budget run does
 not reach. Making it observable needs a threshold that a run actually crosses - a counter printed periodically, or the
 refusal count included in the run summary - and that is the next step rather than another attempt to force the firing.
+
+---
+
+## The in-frame refusal fires, and nothing is deferred
+
+The previous round explained why the refusal counters were never printed - they were wired to a snapshot that fires at
+exactly 500 accepted batches, and a low-budget run refuses batches *before* they are counted, so that count stalls below
+500. The fix was to report the counters where the event happens, and it produces the observation the item was missing:
+
+```
+first batch left to GL because the frame's window budget was spent: windowsThisFrame=1 limit=1 deferredNextFrame=0
+fixture PASSED | nativeTerrainVerified True | 1657 passes
+```
+
+with the window budget forced to one, which is sterner than the sixteen that ship.
+
+`deferredNextFrame=0` is the property the audit's D asked for: geometry the frame cannot draw goes to **GL in that frame**,
+and none of it is carried into a later one. The deferral path still exists for the case where a group of the current frame
+is already being held - which is why the guard checks for that before refusing - but in a run that would previously have
+deferred every excess batch, nothing is deferred at all.
+
+So D closes with its measurement, its cost named (`immediateRefusedWindowBudget`, and the geometry that goes to GL), and the
+configuration it was verified in - stated as sterner than the shipped one rather than as identical to it.
