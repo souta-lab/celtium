@@ -107,6 +107,11 @@ public final class VulkanTextureRegistry {
             return;
         }
         this.announcedImages.put(Integer.valueOf(glTextureId), image);
+        // A generation, not the image identity: Minecraft updates a DynamicTexture in place, so the same BufferedImage
+        // object arrives with different pixels. The generation changes on every announcement and is consumed when the
+        // mirror is built from it, which is what makes "already converted this one" safe to skip.
+        this.announcedGeneration.put(Integer.valueOf(glTextureId),
+                Integer.valueOf(this.announceCounter = this.announceCounter + 1));
     }
 
     /** {@return the announced images converted to RGBA bytes}, or null when this texture has none. */
@@ -339,6 +344,19 @@ public final class VulkanTextureRegistry {
         return this.imageUploads;
     }
 
+    /** Split of the registry lookup cost: announced-image conversions, stale GL re-uploads, plain hits. */
+    public static long ANNOUNCED_NANOS;
+    public static long ANNOUNCED_CALLS;
+    public static long STALE_NANOS;
+    public static long STALE_CALLS;
+    public static long HIT_CALLS;
+    /** Announcement generation per texture, and the generation already turned into a mirror. */
+    private final java.util.Map<Integer, Integer> announcedGeneration = new java.util.HashMap<Integer, Integer>();
+    private final java.util.Map<Integer, Integer> consumedGeneration = new java.util.HashMap<Integer, Integer>();
+    private int announceCounter;
+    /** How many announced-image conversions were skipped because the same announcement was already consumed. */
+    public static long ANNOUNCED_SKIPS;
+
     public VulkanGlTexture get(int glTextureId, boolean nearestFilter) {
         if (glTextureId == 0) {
             return null;
@@ -348,7 +366,27 @@ public final class VulkanTextureRegistry {
         java.awt.image.BufferedImage announced = VulkanGlTexture.mirrorsGlMips() ? null
                 : this.announcedImages.get(Integer.valueOf(glTextureId));
         if (announced != null) {
-            return this.fromImage(glTextureId, announced, nearestFilter);
+            // The conversion is 1.17 ms per call and it ran on almost every batch: the announcement stayed pending, so the
+            // same image was turned into RGBA again and again. A consumed generation means the mirror already holds these
+            // pixels, and this lookup is then a plain hit.
+            Integer current = this.announcedGeneration.get(Integer.valueOf(glTextureId));
+            Integer consumed = this.consumedGeneration.get(Integer.valueOf(glTextureId));
+            if (current != null && current.equals(consumed) && this.entries.get(Integer.valueOf(glTextureId)) != null) {
+                ANNOUNCED_SKIPS++;
+                HIT_CALLS++;
+                return this.entries.get(Integer.valueOf(glTextureId)).texture;
+            }
+            long announcedStart = System.nanoTime();
+            try {
+                VulkanGlTexture converted = this.fromImage(glTextureId, announced, nearestFilter);
+                if (converted != null) {
+                    this.consumedGeneration.put(Integer.valueOf(glTextureId), current);
+                }
+                return converted;
+            } finally {
+                ANNOUNCED_NANOS += System.nanoTime() - announcedStart;
+                ANNOUNCED_CALLS++;
+            }
         }
         Entry existing = this.entries.get(glTextureId);
         if (existing != null) {
@@ -356,7 +394,10 @@ public final class VulkanTextureRegistry {
                 // In place: same image, same view, same generation - so the descriptor keys built for this mirror stay
                 // valid and the cache keeps working (audit S13). Recreating it instead cost 545 sets for 546 batches.
                 try {
+                    long uploadStart = System.nanoTime();
                     existing.texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
+                    STALE_NANOS += System.nanoTime() - uploadStart;
+                    STALE_CALLS++;
                     this.inPlaceRefreshes++;
                     // Which origin produced this refresh. The counters say most updates are served from announcements and a thousand
                     // are not; this says which caller the thousand belong to, rather than another name being guessed at.
@@ -373,6 +414,7 @@ public final class VulkanTextureRegistry {
                     this.lastFailure = "re-upload of GL texture " + glTextureId + ": " + error;
                 }
             }
+            HIT_CALLS++;
             return existing.texture;
         }
         try {

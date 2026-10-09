@@ -463,6 +463,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Split of the per-batch cost: time inside prepareImmediate (pipeline and descriptor preparation). */
     private long prepareImmediateNanos;
     private int prepareImmediateCalls;
+    /** Split of prepareImmediate: pipeline+texture lookup against the pipeline/descriptor branch. */
+    private long prepLookupNanos;
+    /** Which half of the lookup dominates: the terrain pipeline lookup or the texture registry lookup. */
+    private long prepTerrainPipelineNanos;
+    private long prepRegistryNanos;
+    private long prepBranchNanos;
     /**
      * Set whenever a mirrored matrix call changes the matrix state, so the next batch re-reads the live
      * matrices instead of every batch doing it: two glGetFloatv calls per batch measured 28 us of the
@@ -2491,12 +2497,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
+        // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
+        // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
+        long prepLookupStart = System.nanoTime();
         VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        this.prepTerrainPipelineNanos += System.nanoTime() - prepLookupStart;
         if (terrain == null) return null;
         if (this.textureRegistry == null) this.textureRegistry = new VulkanTextureRegistry(this.context);
+        long prepRegistryStart = System.nanoTime();
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
+        this.prepRegistryNanos += System.nanoTime() - prepRegistryStart;
+        this.prepLookupNanos += System.nanoTime() - prepLookupStart;
         if (format != 1 && texture == null) return null;
         long pass = terrain.renderPass();
+        long prepBranchStart = System.nanoTime();
         Object pipeline;
         long descriptor = 0;
         if (format == 5) {
@@ -2539,6 +2553,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     k -> VulkanImmediatePipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
                             state[3] != 0, state[4] != 0, state[5] != 0));
         }
+        this.prepBranchNanos += System.nanoTime() - prepBranchStart;
         return format == 1 || descriptor != 0 ? new PreparedImmediate(pipeline, descriptor) : null;
     }
 
@@ -2788,6 +2803,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " batchCallMillis=" + (batchCallNanos / 1000000L)
                 + " prepareImmediateCalls=" + this.prepareImmediateCalls
                 + " prepareImmediateMillis=" + (this.prepareImmediateNanos / 1000000L)
+                + " prepLookupMillis=" + (this.prepLookupNanos / 1000000L)
+                + " prepTerrainPipelineMillis=" + (this.prepTerrainPipelineNanos / 1000000L)
+                + " prepRegistryMillis=" + (this.prepRegistryNanos / 1000000L)
+                + " regAnnouncedCalls=" + VulkanTextureRegistry.ANNOUNCED_CALLS
+                + " regAnnouncedMillis=" + (VulkanTextureRegistry.ANNOUNCED_NANOS / 1000000L)
+                + " regStaleCalls=" + VulkanTextureRegistry.STALE_CALLS
+                + " regStaleMillis=" + (VulkanTextureRegistry.STALE_NANOS / 1000000L)
+                + " regHitCalls=" + VulkanTextureRegistry.HIT_CALLS
+                + " regAnnouncedSkips=" + VulkanTextureRegistry.ANNOUNCED_SKIPS
+                + " prepBranchMillis=" + (this.prepBranchNanos / 1000000L)
                 + " descriptorHits=" + VulkanImmediateTexturePipeline.DESCRIPTOR_HITS
                 + " descriptorMisses=" + VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
