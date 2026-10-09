@@ -6452,3 +6452,26 @@ cache still at a single set. Terrain is unaffected and its real-path evidence is
 
 So one row of the inventory moves from "OpenGL, explicitly refused" to "Vulkan, measured", and the honest statement of what
 remains on GL is now narrower: sky, clouds, weather, water, the FBO chains, postprocess and the final composite.
+
+---
+
+## The GUI path verified on Intel as well: 3,965 batches, zero messages
+
+The new path was measured on AMD when it was made; this round ran the same configuration - GUI visible - on the Intel UHD
+630, which is where the second half of the standing two-GPU condition lives.
+
+```
+Intel UHD 630, GUI visible:
+outsideWorldPassAccepted = 3965      outsideWorldPassRefusals = 0
+postAcceptDroppedGroups  = 0         every per-format drop counter at 0
+descriptorSets           = 1
+nativeTerrainVerified    = True      terrainPasses=810   glDrawsCancelled=283
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+So the GUI, the font, the HUD and the hand are drawn by the Vulkan immediate path on **both** GPUs, with **no validation
+messages** on either driver and no drops of any format. The inventory row moves from "OpenGL, explicitly refused" to
+"Vulkan, verified on both GPUs", and the AMD and Intel figures sit beside it.
+
+What is left on OpenGL is unchanged and named: sky, clouds, weather, water, the framebuffer chains, postprocess and the final
+composite.
