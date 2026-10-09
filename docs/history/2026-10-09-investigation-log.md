@@ -924,3 +924,32 @@ own (same build, immediate path off) rather than against the AMD frame:
 The default acceptance mask is now `1,3,4,5`, so enabling the immediate path gives the verified configuration rather
 than one that paints the composite into the game framebuffer. The path itself stays off by default until the composite
 and present ownership are settled, which is the remaining engineering task for it.
+
+---
+
+## The lag-free configuration is also pixel-identical
+
+The mid-frame window draws each batch in the frame that produced it, which removes the one-frame lag the default flush
+has, and with the composite excluded it measures the same as GL:
+
+| Configuration (same build, same scene, both compared against the immediate path being off) | Local difference |
+|---|---|
+| Immediate path on, window flush off (batches drawn in the next frame's pass) | 0.00 mean, 0.0% over 8 and 32 |
+| Immediate path on, **window flush on** (`immediateWindows=true`, `immediateFlushIndices=512`) | **0.00 mean, 0.0% over 8 and 32** |
+
+Both are pixel-identical; the difference between them is *when* the content is drawn, which a still comparison cannot see
+and a moving scene would. That is why the window variant matters: it is the one that does not introduce a frame of lag
+for entities, particles or the GUI.
+
+Recorded configuration, ready for the content stage:
+
+```
+-Dceltium.vulkan.immediate=true
+-Dceltium.vulkan.immediateWindows=true
+-Dceltium.vulkan.immediateFlushIndices=512
+```
+
+The immediate path still defaults to off. The reason is not doubt about these measurements but their coverage: they are
+one scene on two GPUs, and the plan's own rule is that a class is ported (or left on GL and named) once it has been seen
+to work across the content it applies to. Enabling it by default belongs with the content verification stage, where the
+same measurements run over GUI, HUD, weather and entities rather than over a single world.
