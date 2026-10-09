@@ -374,6 +374,21 @@ GL に問い合わせない経路を実装した（`common` の `TerrainGpuBacke
 | verdict | exit 0 / validationClean / PASSED |
 | target受入 | exit 0 |
 
+**FBO読みの置換を試みて撤回（このターン）**: `VulkanFrameTarget` は game の framebuffer 名（`gameFbo`）を
+保持しているので、ブリッジ経路の `glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING)` をそれで置き換え、
+使用元を数える計器（`drawFramebufferMirrorUses` / `drawFramebufferQueries`）を付けて実行した。
+
+**結果: 両方とも 0**＝**そのコード経路がfixtureで一度も走っていない**。標準run（`p88-fbo`）でも
+postprocess 場面（`p89-offtarget`）でも `offTargetAccepted=0` / `offTargetDrawn=0` / `offTargetCopiedBack=0` で、
+**オフターゲットの copy-back 経路は未実行**だった。検証できない挙動変更を残さないため**その場で撤回**した
+（画像は両runとも PASSED / meanAbsDiff 0.000 で、変更が中立であることは確認できている）。
+
+- **重要な訂正**: 計画が「オフターゲット受入」として挙げてきた経路は、**いま使っている fixture では発生していない**。
+  したがって `offTarget*` の受入を「確認済み」として扱わない。オフターゲットを実際に発生させる場面
+  （別 target へ描くゲーム経路、例えば描画先を切り替える mod/場面）を用意するまで、この経路の受入は**未検証**とする。
+- 計器（カウンタ）だけを足して 0 のまま残すことも避けた。0 を報告し続ける計器は「使われていない」ことの
+  証拠にはなるが、そのためだけにコードを増やさない方針にした（必要になった時点で戻せる）。
+
 **(b) の進捗**: 行列 → fog → bound texture → テクスチャ寸法 → current colour の **5項目が完了**。残りは
 **相互運用グルー**（blit/semaphore/深度変換/FBOクエリ）と `GL_DRAW_FRAMEBUFFER_BINDING` の実読み箇所。
 
