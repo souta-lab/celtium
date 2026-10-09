@@ -3398,3 +3398,39 @@ The third row is the one that must not be inferred from the first two, and it no
 being left to the reader. The first attempt at this check also failed for a mundane reason worth noting: the jar path used
 was a directory level off, so the classpath was empty and the error was `ClassNotFoundException` rather than anything about
 Java versions - the same shape of mistake as the earlier broken launcher invocation.
+
+---
+
+## The matrix dump shows the mirror is nearly right, and that the dump was taken at the wrong sample
+
+Two things came out of the first dump, and the second is a mistake of mine worth recording.
+
+The data:
+
+| Matrix | First comparison |
+|---|---|
+| `projMirror` | identity |
+| `projGl` | identity - **identical**, maximum element difference 0.0 |
+| `viewMirror` | equals GL in the rotation, but its translation column is `0, 0, 0` |
+| `viewGl` | the same rotation with a translation of `(0, -1.62, 0.05)` |
+
+So at that sample the mirror is not "wrong everywhere" at all: the projection matches exactly and the modelview differs
+only by a missing translation, which is what it looks like when the mirror starts from an empty stack and never saw the
+setup that happened **before the backend was installed**. The reported maximum of 2.0 in the projection and 1.62 in the
+modelview therefore comes from some **later** sample - and the 1.62 is recognisably the translation the first sample was
+missing.
+
+The mistake: the dump records the **first** comparison. A maximum over 1136 samples cannot be diagnosed from the first of
+them, and the right instrument is to dump **when a new maximum occurs**. That is one condition, and it is the difference
+between reading the interesting sample and reading whatever happened first.
+
+What this changes about the plan for the mirror:
+
+- the mirror is close, not broken, and its first-sample error is a **bootstrap** problem - state applied before the hooks
+  were installed. Seeding the mirror **once** from GL at installation time is the natural fix, and it costs a single
+  read rather than two per batch;
+- the projection maximum is the one that needs the worst-sample dump, and the known candidate is already in the
+  compatibility file: the world projection is set through `Project.gluPerspective`, whose class is outside the transforming
+  loader, so the mirror never sees it. If that is what the 2.0 is, the answer is not to hook harder but to **derive the
+  projection from Minecraft's own camera parameters** - the meaning-based approach the direction calls for, rather than
+  another attempt to mirror a GL call that cannot be reached.

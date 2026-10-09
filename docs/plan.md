@@ -164,7 +164,12 @@ content work that does not touch frame structure can proceed in parallel.
    per matrix change, which the measurements in this plan call the dominant per-batch cost. Replacing them needs the
    mirrored stack to be faithful, and **it is not**: 1136 comparisons produced **zero** exact matches, with a maximum
    element difference of 2.0 in the projection and 1.62 in the modelview. That is now a measured prerequisite rather than
-   an assumption, and the next step is dumping one mirrored matrix beside its GL counterpart.
+   an assumption. The first dump shows the mirror is **close, not broken**: at the first comparison the projection matches
+   exactly and the modelview differs only by a missing translation, so the error is a **bootstrap** one - state applied
+   before the hooks were installed - and the 2.0 maximum comes from a later sample. Two steps follow: seed the mirror once
+   from GL at installation, and dump **at the maximum** rather than at the first sample. The known candidate for the
+   projection maximum is `Project.gluPerspective`, which the compatibility file already records as unreachable; if that is
+   what it is, the answer is to derive the projection from Minecraft's camera parameters rather than to mirror the call.
 5. **Removing GL**, then re-verifying startup and rendering without a GL context or the bridge.
 5. **Performance and distribution**, measured, never asserted.
 

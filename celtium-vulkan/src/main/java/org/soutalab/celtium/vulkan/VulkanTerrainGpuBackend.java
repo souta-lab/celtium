@@ -392,6 +392,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private float mirroredModelViewDelta = -1.0f;
     private int matrixComparisons;
     private int matrixExactComparisons;
+    private String matrixDump;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -1116,6 +1117,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.glProjection);
         float modelViewDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW),
                 this.glModelView);
+        // Dump the first comparison's sixteen elements from each side. The counter said the mirror is wrong
+        // everywhere; whether that is a transpose, a clip-depth remap or a different stack cannot be read from a
+        // maximum, and one dump answers it in a single run.
+        if (this.matrixDump == null) {
+            this.matrixDump = "projMirror=" + java.util.Arrays.toString(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION))
+                    + ";projGl=" + java.util.Arrays.toString(this.glProjection)
+                    + ";viewMirror=" + java.util.Arrays.toString(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW))
+                    + ";viewGl=" + java.util.Arrays.toString(this.glModelView);
+        }
         this.mirroredProjectionDelta = Math.max(this.mirroredProjectionDelta, projectionDelta);
         this.mirroredModelViewDelta = Math.max(this.mirroredModelViewDelta, modelViewDelta);
         // How many comparisons matched exactly. A maximum on its own cannot tell "1130 samples, one of them wrong
@@ -1400,6 +1410,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
+                + " matrixDump[" + (this.matrixDump == null ? "none" : this.matrixDump) + "]"
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
