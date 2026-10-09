@@ -469,7 +469,11 @@ public final class ValidationClient {
                 // phase the run happens to capture; the swing and arm angles are the ones that move every frame.
             }
         }
-        if (worldTicks < 200) return;
+        // Captured on one exact tick rather than "the first frame at or after 200". The difference matters for the
+        // GUI-visible comparison: animated textures advance per tick, so a run whose capture lands a tick later shows
+        // different water, lava and fire frames, and that alone measured as a larger difference than any renderer
+        // question this project was asking. One tick is one image.
+        if (worldTicks != 200) return;
         try {
             if (!Boolean.getBoolean("celtium.validation.interop")) {
                 // The frame that was just drawn may still contain an entity the client tick did not see. Drop it and

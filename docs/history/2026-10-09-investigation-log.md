@@ -2307,3 +2307,36 @@ The lesson is the one this log has now paid for three times: an instrument whose
 configuration** will produce differences that look like findings. The hidden-GUI scene has that floor; the GUI-visible one
 does not, and until the hand can be frozen properly - an empty hand was not enough - it should not be used to claim
 anything about the renderer.
+
+---
+
+## The instrument was never broken: the comparison used a reference from a different fixture revision
+
+The format bisection that produced four identical 3.7 differences is explained, and the explanation is not the
+instrument. Those runs were compared against a reference captured **before** the fixture gained the animation freeze and
+the tick pin, and the fixture is part of the instrument: changing what it renders invalidates every reference captured
+with the old revision. Comparing new runs against an old reference produces a difference that belongs to the fixture
+change, not to the renderer - which is exactly the 3.7 that matched the old unfrozen floor.
+
+Re-measured with references regenerated from the same revision - GUI visible, empty hand, frozen animation, capture
+pinned to one tick:
+
+| Comparison | mean | over 8 | over 32 |
+|---|---|---|---|
+| **reference against reference (noise floor)** | **0.11** | 0.08% | 0.05% |
+| immediate path against reference | **0.97** | 0.78% | 0.49% |
+
+The pin itself changed nothing measurable (the floor was 0.10 before it, 0.11 after), so the animated-texture theory for
+the variation is not the dominant term and is not claimed. What the measurement does say is consistent and repeatable: in
+the GUI-visible frame the immediate path differs from GL by **about nine times the floor**, that this grows when the window
+budget lets Vulkan draw more (1.53 at a budget of 64), and that the hand's own geometry cannot be the cause because
+`ItemRenderer`'s `POSITION_TEX` is outside the acceptance mask and GL draws it.
+
+So the position after this round, with two corrections layered on each other and both recorded:
+
+- **withdrawn:** "the GUI-visible scene cannot support renderer claims". It can; the floor is 0.11 and the difference is
+  nine times it;
+- **added, as a rule:** the fixture is part of the instrument, so any change to it - a freeze, a pin, a switch - retires
+  every reference captured before it. Three comparisons in this area were made against stale references, and all three
+  produced numbers that looked like findings;
+- **open:** what in the Vulkan path differs in that frame, now measurable with an instrument that has a floor.
