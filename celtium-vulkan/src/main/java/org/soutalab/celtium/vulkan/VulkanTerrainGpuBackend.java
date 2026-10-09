@@ -557,6 +557,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int textureRefusalsBeforeAccept;
     /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
     private int boundTextureComparisons;
+    /** Announces that carried the size from the game instead of asking OpenGL for it. */
+    private int announcedDynamicTextures;
     private int boundTextureMismatches;
 
     /**
@@ -917,6 +919,38 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * The light map's write does not pass through either hooked texture utility method, so this is the only announcement it ever
      * makes. The id and the size are asked of GL because the method that performs the write takes neither.
      */
+    /**
+     * The announce with the size the game already has: same work as {@link #announceDynamicTexture(int[])}, minus the two
+     * {@code glGetTexLevelParameteri} calls, which is what the caller's own fields make unnecessary (condition (b): the
+     * values come from Minecraft rather than from a GL query).
+     */
+    @Override
+    public void announceDynamicTexture(int[] pixels, int width, int height) {
+        if (pixels == null || width <= 0 || height <= 0) {
+            announceDynamicTexture(pixels);
+            return;
+        }
+        if (this.textureRegistry == null) {
+            this.textureRegistry = new VulkanTextureRegistry(this.context);
+        }
+        int bound = this.immediateState.boundTextureName();
+        compareBoundTextureWithGl(bound);
+        if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
+        if (bound == 0 || pixels.length < width * height) {
+            return;
+        }
+        int[][] rows = new int[height][width];
+        for (int row = 0; row < height; row++) {
+            System.arraycopy(pixels, row * width, rows[row], 0, width);
+        }
+        this.announcedDynamicTextures++;
+        if (this.textureRegistry.announceFullPixels(bound, rows, width, height, 0, 0)) {
+            this.animatedImageFills++;
+            this.dynamicTextureFills++;
+        }
+    }
+
+    @Override
     public void announceDynamicTexture(int[] pixels) {
         if (pixels == null) {
             return;
@@ -2740,6 +2774,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
                 + " boundTextureSamples=" + this.boundTextureComparisons
                 + " boundTextureMismatches=" + this.boundTextureMismatches
+                + " announcedDynamicTextures=" + this.announcedDynamicTextures
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.

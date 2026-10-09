@@ -337,6 +337,24 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 - 変更後の検証: **標準runは前回との meanAbsDiff 0.000**、weather は 1.548（同一ビルドのノイズ床 1.2〜1.5 の範囲）、
   両run exit 0 / validationClean / PASSED、target受入 exit 0。
 
+**テクスチャ寸法の供給（このターン・実装したが未使用と判明）**: `announceDynamicTexture` の寸法を
+GL に問い合わせない経路を実装した（`common` の `TerrainGpuBackend` に寸法付きオーバーロード、
+`VulkanTerrainGpuBackend` にその実装、`DynamicTextureMixin` が `DynamicTexture` の private な
+`width`/`height` を読んで渡す）。
+
+**しかし実測すると新経路は一度も使われなかった**: report の `announcedDynamicTextures=0`、
+ログは `CELTIUM_DYNAMIC_ANNOUNCE bound=28 size=1x1` で**従来の GL 経路**のままだった。
+
+- **原因**: 本番（SRG名）では `DynamicTexture.class.getDeclaredField("width")` が一致しない。
+  同じ mixin の**ピクセル配列が動いている理由は「型（`int[].class`）で探している」**ことで、
+  名前で探す私の実装は production では原理的に当たらない。
+- これは**計器が捕まえた**（`announcedDynamicTextures` を report に足していたので「使われていない」と分かった）。
+  画像は PASSED（前回weather runとの差 0.980＝ノイズ床 1.2〜1.5 以下）なので、退行はしていない。
+- **正しい供給元**: `TextureUtil.uploadTexture(int id, int[] data, int width, int height)` の**引数**。
+  このプロジェクトは既に `TextureUtil` をフックしているので、そこで寸法を受け取ればリフレクション不要で
+  名前問題も起きない。次はこの経路に載せ替える（`announceDynamicTexture(pixels, width, height)` は実装済みなので
+  呼び出し元だけの変更で済む）。
+
 **(b) の進捗**: 行列 → fog → bound texture の3項目が完了。残りは (1) テクスチャ**寸法**の
 `glGetTexLevelParameteri`、(2) 相互運用グルー（blit/semaphore/深度変換/FBO クエリ）、(3) `GL_CURRENT_COLOR` /
 `GL_DRAW_FRAMEBUFFER_BINDING` の残り。

@@ -190,6 +190,15 @@ public interface TerrainGpuBackend {
     }
 
     /** Announces a dynamic texture's write, which arrives as a flat pixel array. */
+    /**
+     * Announces a dynamic texture write together with the size the game already knows, so the backend does not have to
+     * ask OpenGL for it ({@code glGetTexLevelParameteri}). The pixel array alone says nothing about the shape, and the
+     * caller - Minecraft's own update path - has it.
+     */
+    default void announceDynamicTexture(int[] pixels, int width, int height) {
+        announceDynamicTexture(pixels);
+    }
+
     default void announceDynamicTexture(int[] pixels) {
     }
 
