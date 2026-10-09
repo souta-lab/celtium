@@ -287,21 +287,25 @@ The flags are not reset at the top of `presentImage`, so an early return leaves 
 present look successful; and after `swapchain = null` the next present can dereference a null image. The injection measured
 a successful acquire, not the failure path, and re-injects on every recreate.
 
-### S19 [P1] immediate push constants exceed the guaranteed minimum - **analysed, fix specified**
-**The violation, exactly.** Every immediate pipeline declares `PUSH_CONSTANT_BYTES = 132` - in six files: `VulkanImmediatePipeline`,
-`VulkanImmediateBlockPipeline`, `VulkanImmediateItemPipeline`, `VulkanImmediateParticlePipeline`,
-`VulkanImmediateTexturePipeline` and `VulkanUiPipeline` - and the shaders' block is two `mat4` (128 bytes) plus
-`layout(offset = 128) float u_AlphaRef` (4). Vulkan guarantees **128** bytes, so the last four are a promise the API does not
-make; two desktops rendering correctly is not evidence that a third will.
+### S19 [P1] immediate push constants exceed the guaranteed minimum - **attempted, constraint found, reverted**
+**The violation, exactly.** Each immediate pipeline declares `PUSH_CONSTANT_BYTES` in six files, and the shaders' block is two
+`mat4` (128 bytes) plus `layout(offset = 128) float u_AlphaRef` (4). Vulkan guarantees **128**, so the last four are a promise
+the API does not make.
 
-**The fix, specified.** `u_AlphaRef` is used in four fragment shaders for one test each - `alphaRef > 0 && colour.a <
-alphaRef` - and the immediate pipelines are already **created per state key**, which is how blend, depth and cull are handled.
-So the alpha reference belongs in that same mechanism as a **specialisation constant** (`layout(constant_id = 0) const float
-kAlphaRef = 0.0;`), with `VkSpecializationInfo` added to the fragment stage; the push block then becomes exactly 128 bytes.
-The submission site is uniform - `vkCmdPushConstants(commandBuffer, layout, VERTEX_BIT | FRAGMENT_BIT, 0, pushConstants)` in
-each pipeline - and the buffer is built by the backend, which must stop writing at offset 128. Recorded as the next change
-rather than attempted in this round: the push-constant size is a compiled artefact now, so a half-migrated layout would be
-worse than the current over-by-four.
+**Attempted in full and reverted.** The migration to 116 bytes - the model view as its three affine columns, since the fourth
+is (0, 0, 0, 1) by construction: projection 64 + 48 + alpha reference 4 - compiled and built, and Vulkan **rejected the
+pipeline**: `pStages[0] shader [VK_SHADER_STAGE_VERTEX_BIT] has a push constant buffer Block with range ...`. **Both stages
+must declare the same push constant block**; the vertex stage described 112 bytes and the fragment stage 116. No reading of
+the Java would have shown that - it took building it and letting the validation gate answer. The correction then broke two of
+the five shaders (`immediate_block.vert` and `immediate_particle.vert` declare members of their own past the matrices), so the
+migration was reverted rather than half-carried and the tree verified green: build successful, exit 0, validation clean, 0
+messages, fixture PASSED, `immediateTaken=565`, `postAcceptDroppedGroups=0`, `descriptorSets=1`.
+
+**Two things worth more than the aborted change.** The **shader build wiring proved itself** - a broken shader now fails the
+build, exactly the trap that cost two rounds. And it has a **gap**: the task runs the compiler through `providers.exec`
+without capturing its output, so a failure says *that* a shader failed and not *why* - the message had to be recovered by
+running `glslangValidator` over every file by hand. Capturing and printing it is the next small change, and the migration
+follows with the same-block constraint respected.
 
 ### S20 [P1] the validation gate misses errors by their format
 `prism_validation` skips any message not starting with `vk`, and stores no severity or message ID, so

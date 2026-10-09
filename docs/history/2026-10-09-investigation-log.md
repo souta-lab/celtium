@@ -6005,3 +6005,30 @@ bytes.
 Recorded as the next change rather than half-done now, for a reason this project has learned twice: the push constant size is
 a **compiled artefact** since the shaders moved into the build, so a layout migrated in one place and not another would be a
 worse state than being over by four.
+
+---
+
+## S19 attempted: 116 bytes compiled, and the driver refused it for a reason worth keeping
+
+The plan from last round was projected to work - compress the model view to its three affine columns, since the fourth is
+(0, 0, 0, 1) by construction, giving projection 64 + 48 + alpha reference 4 = **116 bytes**, inside the 128 Vulkan guarantees
+- and it was carried out in full: five vertex shaders and four fragment shaders rewritten, the CPU side writing the new
+layout including the isolation push, six push ranges changed from 132 to 116.
+
+It compiled, it built, and **the pipeline was rejected**: the vertex stage described 112 bytes and the fragment stage 116, and
+the driver refuses a pipeline whose stages disagree about the push constant block. **Both stages must declare the same
+block.** The first plan had this wrong, and no amount of reading the Java would have shown it: it took building the change
+and letting the validation gate answer. The correction (declare the member in the vertex stage as well) then broke two of the
+five shaders, whose own members put the offset in conflict, so the migration was **reverted** rather than half-carried - and
+because the revert restored the files to their committed state, the tree is green with nothing to undo: build successful,
+exit 0, validation clean, 0 messages, fixture PASSED, `immediateTaken=565`, `postAcceptDroppedGroups=0`,
+`descriptorSets=1`.
+
+Two outcomes matter more than the aborted change. **The shader build wiring proved itself** - a broken shader now fails the
+build, precisely the trap that cost two rounds of measuring a previous jar. And it has a **gap to close**: the task runs the
+compiler through `providers.exec` without capturing its output, so a failure reports *that* a shader failed and not *why*; the
+message had to be recovered by running `glslangValidator` by hand over every file. Capturing and printing it is a small,
+obvious next change.
+
+Also recorded for the next attempt: `immediate_block.vert` and `immediate_particle.vert` already declare members of their own
+past the matrices, which is why the naive alignment broke them.
