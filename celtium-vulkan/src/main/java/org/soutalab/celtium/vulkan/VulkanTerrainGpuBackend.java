@@ -786,6 +786,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int lastReportedAcquireOutOfDate = -1;
     private int lastReportedDirectRefreshes = -1;
     private int orderPreservingFlushes;
+    /** Handoffs that actually carried geometry (the counters above count calls, many of which return early). */
+    private int actualFlushes;
+    private long actualFlushNanos;
+    private long actualFlushWorstNanos;
     private int clearOrderFlushes;
     private int compositePresentRefusals;
     private int frameAccepted;
@@ -2317,6 +2321,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
+        // Counted here, after the emptiness check: clearOrderFlushes counts *calls* (many return early), so it cannot
+        // say how many handoffs a frame really makes. The wall time is what says whether a handoff is a stall.
+        this.actualFlushes++;
+        long flushStartedNanos = System.nanoTime();
         try {
             if (this.commandState != null && this.commandState.inRenderPass()) {
                 drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
@@ -2324,6 +2332,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 flushImmediateWindow();
             }
             this.orderPreservingFlushes++;
+            long tookNanos = System.nanoTime() - flushStartedNanos;
+            this.actualFlushNanos += tookNanos;
+            if (tookNanos > this.actualFlushWorstNanos) {
+                this.actualFlushWorstNanos = tookNanos;
+            }
         } catch (RuntimeException | LinkageError error) {
             this.gpuStalled = true;
             // The ordering operation stops here and the accepted batches cannot be drawn: the device is stalled and
@@ -2749,7 +2762,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
-                + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
+                + " orderPreservingFlushes=" + this.orderPreservingFlushes
+                + " actualFlushes=" + this.actualFlushes
+                + " actualFlushMillis=" + (this.actualFlushNanos / 1000000L)
+                + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L) + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
                 + " refusedBeforeAppend=" + this.refusedBeforeAppend
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
