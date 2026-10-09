@@ -1370,7 +1370,29 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - **受入の基準を訂正**: `acquireOutOfDate` は `presentImage` 側のカウンタで、**probe 経路では増えない**。
   probe の受入に `acquireOutOfDate>0` を要求するのは誤りだった（前ターンの自分の基準を訂正する）。
 
-**次の一手**: (1) present trace と VUID の発生順から**シグナル済みの semaphore を特定**する、(2) 特定できたら
+**シグナル済み semaphore を特定し、対処を入れた（ただし検証は未達）**:
+
+- **特定できた（ログの順序で）**: probe の acquire が使った **`0x10`** が失敗でシグナル済みのまま残り、
+  `presentImage` が `0x11`→`0x12`→`0x13` と巡回したあと**同じ `0x10` に戻った acquire** の直前で
+  `VUID-vkAcquireNextImageKHR-semaphore-01286` が出ていた（ログ 254行 → 274/283/285行 → 287行のVUID → 288行）。
+  つまり**ローテートは先送りにすぎない**（4枚なら4回で戻ってくる）。これが前ターンのローテートが効かなかった理由である。
+- **対処**: 失敗した acquire が渡された semaphore を**新しいものに差し替える**（`replaceAcquireSemaphore`）。
+  古いものは `VulkanRetireQueue` で**退役**させ、破棄しない（待っている wait がまだ名前を保持しうるため）。
+  probe と `presentImage` の両方の失敗分岐から呼ぶ。**この変更は木に入っている**。
+- **検証は未達**: 検証runでは probe の acquire が**成功**してしまい（`present probe:` の行が出ない＝失敗していない）、
+  失敗経路に到達しなかった。したがって**修正の効果は測れていない**。
+- **併せて判明**: 前ターンに私が入れた注入の条件変更（`SUCCESS` だけでなく `SUBOPTIMAL` でも注入）は、
+  同じファイルに対する `git checkout` で**一緒に巻き戻っていた**（訂正の記録として残す）。
+  現在の注入は元の `result == VK_SUCCESS` のままである。
+- **注入が確定的でない**ことも分かった: headless の acquire は**自然に OUT_OF_DATE を返す**ことがあり、
+  その場合は注入条件（SUCCESS）が偽になって**何も注入されない**。注入を「結果に関わらず発火」に変えるのが次の一歩
+  だが、このターンではその編集がアンカー不一致で適用されず、**未適用のまま**である（適用できていないことを明記）。
+
+**次の一手**: (1) 注入を**結果に関わらず発火**させる（アンカーを実際のコードに合わせて適用する）、
+(2) その上で probe を両GPUで走らせ、**`injections>0` かつ `VUID=0` / `clean=true`** を確認する、
+(3) `presentImage` 側の out-of-date（`acquireOutOfDate>0`）も別途受入する。
+
+**（旧メモ）** 次の一手: (1) present trace と VUID の発生順から**シグナル済みの semaphore を特定**する、(2) 特定できたら
 その semaphore の扱い（失敗経路での wait/再作成）を直す、(3) 直ったら probe を両GPUで受入し、そのうえで
 `presentImage` 側の out-of-date（`acquireOutOfDate>0`）も別途受入する。
 

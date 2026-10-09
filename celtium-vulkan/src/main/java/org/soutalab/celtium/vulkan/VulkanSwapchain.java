@@ -402,12 +402,17 @@ public final class VulkanSwapchain {
             }
             long renderFinished = VK_NULL_HANDLE;
             {
+                // Named immediately before the call: the validation layer does not print the semaphore handle in
+                // VUID-vkAcquireNextImageKHR-semaphore-01286, so printing the one this call hands over is the only way to
+                // know which semaphore it objected to.
+                System.out.println("celtium acquire: probe uses semaphore=0x" + Long.toHexString(acquire));
                 int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                         VK_NULL_HANDLE, index);
                 if (FORCE_ACQUIRE_OUT_OF_DATE && result == VK_SUCCESS) {
                     result = VK_ERROR_OUT_OF_DATE_KHR;
                 }
                 if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+                    replaceAcquireSemaphore(stack, acquire);
                     return "present probe: vkAcquireNextImageKHR returned " + result;
                 }
                 long image = this.images[index.get(0)];
@@ -559,6 +564,7 @@ public final class VulkanSwapchain {
                 recordOutOfDateInjection();
             }
             if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+                replaceAcquireSemaphore(stack, acquire);
                 return "present image: vkAcquireNextImageKHR returned " + result;
             }
             long image = this.images[index.get(0)];
@@ -667,6 +673,37 @@ public final class VulkanSwapchain {
     }
 
     /** {@return the next acquire semaphore, creating the pool on first use}, or 0 when creation failed. */
+    /**
+     * Replaces the acquire semaphore a failed acquire was handed with a fresh one.
+     * <p>
+     * A failed acquire may leave its semaphore signaled (the spec allows it), and rotating the cursor only postpones
+     * the problem: with four semaphores the signaled one comes back into use four acquires later, which is exactly what
+     * the log showed - the probe's failed acquire used 0x10, presentImage cycled 0x11, 0x12, 0x13 and then took 0x10
+     * again, and VUID-vkAcquireNextImageKHR-semaphore-01286 was reported at that acquire. The old semaphore is retired
+     * rather than destroyed, because a pending wait may still name it.
+     */
+    private void replaceAcquireSemaphore(MemoryStack stack, long used) {
+        if (this.acquireSemaphores == null || used == VK_NULL_HANDLE) {
+            return;
+        }
+        for (int i = 0; i < this.acquireSemaphores.length; i++) {
+            if (this.acquireSemaphores[i] != used) {
+                continue;
+            }
+            LongBuffer fresh = stack.mallocLong(1);
+            if (vkCreateSemaphore(this.context.device(),
+                    org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack).sType$Default(), null,
+                    fresh) != VK_SUCCESS) {
+                return;
+            }
+            final long retired = this.acquireSemaphores[i];
+            this.acquireSemaphores[i] = fresh.get(0);
+            org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(
+                    () -> vkDestroySemaphore(this.context.device(), retired, null));
+            return;
+        }
+    }
+
     private long acquireSemaphore(MemoryStack stack) {
         int count = Math.max(2, this.images.length);
         if (this.acquireSemaphores == null) {
