@@ -1642,3 +1642,23 @@ round:
   not by calling `loadWorld` from a tick handler;
 - and a fixture-induced crash in vanilla code is not evidence about the renderer, so a test that crashes this way has to be
   fixed or discarded rather than reported as a renderer failure.
+
+---
+
+## World switch works on both GPUs, and the previous crash was the fixture's missing call
+
+The same test, with the third call the vanilla path makes:
+
+| GPU | Result |
+|---|---|
+| AMD RX 6400 | **PASSED, `nativeTerrainVerified True`**, left and rejoined at tick 100, 885 passes |
+| Intel UHD 630 | **PASSED, `nativeTerrainVerified True`**, left and rejoined at tick 100, 591 passes |
+
+`GuiIngame`'s "Save and Quit to Title" makes three calls - `sendQuittingDisconnectingPacket()`, `loadWorld(null)`,
+`displayGuiScreen(new GuiMainMenu())` - and the previous round's crash came from making only the first two. With all three
+the client leaves the world, joins the same save again, and the Vulkan terrain path keeps drawing through both: 885 and 591
+passes, no validation message, run PASSED.
+
+That closes the second of the three items the plan listed as unported around the frame's lifetime. The renderer now has
+evidence for resource reload and world switch on both GPUs; what remains in that group is resize, which this harness cannot
+exercise, and the present question, which is about validation-layer agreement rather than about the picture.

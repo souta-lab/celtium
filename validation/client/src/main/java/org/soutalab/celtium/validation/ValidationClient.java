@@ -52,6 +52,8 @@ public final class ValidationClient {
     private final List<Double> frameIntervals = new ArrayList<Double>();
     private boolean enabled;
     private boolean launched;
+    private boolean celtium$leftWorld;
+    private boolean celtium$rejoinPending;
     private boolean commandsRun;
     private boolean finished;
     private boolean interopRun;
@@ -192,6 +194,24 @@ public final class ValidationClient {
                 mc.gameSettings.enableVsync = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
+                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:leaves,minecraft:stained_glass;1;");
+                mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
+            }
+            if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks == 100 && !celtium$leftWorld) {
+                celtium$leftWorld = true;
+                report.addProperty("leftWorldAtTick", worldTicks);
+                // The same three calls GuiIngame's "Save and Quit to Title" makes, in the same order. The previous
+                // attempt omitted the third one and vanilla's own renderer dereferenced a player that no longer
+                // existed, which is a fixture bug rather than a renderer one.
+                mc.world.sendQuittingDisconnectingPacket();
+                mc.loadWorld((net.minecraft.client.multiplayer.WorldClient) null);
+                mc.displayGuiScreen(new net.minecraft.client.gui.GuiMainMenu());
+                celtium$rejoinPending = true;
+            }
+            if (celtium$rejoinPending && mc.world == null && mc.currentScreen instanceof GuiMainMenu) {
+                celtium$rejoinPending = false;
+                report.addProperty("rejoinedAtTick", worldTicks);
+                WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:leaves,minecraft:stained_glass;1;");
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
             }
