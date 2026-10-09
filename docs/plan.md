@@ -629,6 +629,18 @@ report の `rendererDebug` には**出ていない**。report 側は **10項目�
 `diagnostics()` への追加だけでは足りない。これは「計器を足したが読めていない」状態なので、
 未完了として明示する（読めた `refusedBeforeAppend=97` は別の `vulkan-check` 系の行に含まれる値）。
 
+**修正後の Intel 再受入（このターン）**: カスタムシェーダ拒否はホットパス（受理判定）に触れるため、
+Intel 側を取り直した。
+
+| run | exit | validationClean | fixture | 所要 | nativeTerrainVerified | errors | p50 |
+|---|---|---|---|---|---|---|---|
+| Intel 通常 | 0 | true | PASSED | 24.6s | true | 0 | 62.9ms |
+| Intel postprocess | 0 | true | PASSED | 24.8s | true | 0 | 63.5ms |
+| Intel weather | 0 | true | PASSED | 28.1s | true | 0 | 74.6ms |
+| Intel target受入 | 0 | — | — | — | — | — | — |
+
+spider は前ターンに AMD/Intel 両方で PASSED（修正後）。これで修正後の受入は AMD/Intel の両方で揃った。
+
 **次の一手**: (1) `shaderProgramRefusals` / `accepted` が report に出るかの確認、(2) `switchUseShader` の各 shader
 でも受入、(3) timestamp クエリで handoff の GPU 時間を測る。
 
