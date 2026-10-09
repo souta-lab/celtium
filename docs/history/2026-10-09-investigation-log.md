@@ -7021,3 +7021,24 @@ That is worth recording as the shape of the whole round: build the resource, che
 read the error message rather than the intuition. This project has spent several rounds on exactly the opposite - a mask
 explanation that was wrong, six mapping rules that did nothing, an element comparison that was right to fix and explained
 nothing - and this one took three attempts and ended with the diagnosis coming from the tool rather than from the author.
+
+---
+
+## The offscreen target now has every entry point the drawing half needs
+
+The remaining step was "bind the pipelines for the offscreen pass, draw the 571 batches into it, and upload the readback into
+the game's texture". The target now offers all of it: `begin` and `end` for its render pass, the pass and framebuffer handles a
+pipeline needs, and `copyBackToGlTexture`, which reuses the path the self-test proved - a barrier performing the only layout
+transition, a copy into host-visible memory, and an upload through `glTexSubImage2D`.
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+offTargetTargets = 1
+CELTIUM_OFFTARGET_SELFTEST size=256x256 expected=64,128,191 differingPixels=0 glError=0 glPixel=64,128,191 passed=true
+nativeTerrainVerified=True   terrainPasses=1629   glDrawsCancelled=558
+```
+
+The tree is clean and the chain is still proven on the run, so what is left is mechanical: create a format-1 pipeline for the
+offscreen pass, bind it with the group's mesh and push constants, draw, copy back, and stop refusing those batches. Nothing in
+that list is unknown - which is the point of having spent the previous two rounds on the resources and the synchronization
+instead of on the drawing.

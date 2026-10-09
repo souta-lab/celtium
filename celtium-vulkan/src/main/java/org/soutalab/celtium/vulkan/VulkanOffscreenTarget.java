@@ -4,6 +4,7 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.*;
 
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkImageCreateInfo;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
@@ -353,6 +354,76 @@ public final class VulkanOffscreenTarget {
                 }
             }
             throw new IllegalStateException("no host-visible memory type for the offscreen readback");
+        }
+    }
+
+    /** Begins the pass that draws into this target; the caller ends it and then copies the content back. */
+    public void begin(VkCommandBuffer commands, float red, float green, float blue, float alpha) {
+        try (MemoryStack stack = stackPush()) {
+            org.lwjgl.vulkan.VkClearValue.Buffer clear = org.lwjgl.vulkan.VkClearValue.calloc(1, stack);
+            clear.get(0).color().float32(0, red).float32(1, green).float32(2, blue).float32(3, alpha);
+            org.lwjgl.vulkan.VkRenderPassBeginInfo begin = org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack)
+                    .sType$Default().renderPass(renderPass).framebuffer(framebuffer).pClearValues(clear);
+            begin.renderArea().offset().set(0, 0);
+            begin.renderArea().extent().set(width, height);
+            vkCmdBeginRenderPass(commands, begin, VK_SUBPASS_CONTENTS_INLINE);
+        }
+    }
+
+    public void end(VkCommandBuffer commands) {
+        vkCmdEndRenderPass(commands);
+    }
+
+    public long renderPass() {
+        return renderPass;
+    }
+
+    public long framebuffer() {
+        return framebuffer;
+    }
+
+    /**
+     * Copies this target's content into a GL texture, which is the only way the game's framebuffer can be updated.
+     * <p>
+     * The same path the self-test proved: a barrier that performs the only layout transition, a copy into host-visible
+     * memory, and an upload. The barrier is here rather than in the pass because a transition made by ending a render pass
+     * is not something a later barrier can synchronize - which is what validation said, and what the self-test now checks on
+     * every run.
+     */
+    public void copyBackToGlTexture(VkCommandBuffer commands, int glTextureId) {
+        try (MemoryStack stack = stackPush()) {
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, barrier);
+
+            org.lwjgl.vulkan.VkBufferImageCopy.Buffer region = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+            region.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0);
+            region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                    .layerCount(1);
+            region.get(0).imageOffset().set(0, 0, 0);
+            region.get(0).imageExtent().set(width, height, 1);
+            vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readbackBuffer, region);
+            context.endCommands(commands);
+
+            org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
+            long bytes = (long) width * height * 4L;
+            if (vkMapMemory(context.device(), readbackMemory, 0L, bytes, 0, pointer) != VK_SUCCESS) {
+                throw new IllegalStateException("vkMapMemory(offscreen copy-back) failed");
+            }
+            org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, glTextureId);
+            org.lwjgl.opengl.GL11C.glTexSubImage2D(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0, 0, 0, width, height,
+                    org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE,
+                    org.lwjgl.system.MemoryUtil.memByteBuffer(pointer.get(0), (int) bytes));
+            vkUnmapMemory(context.device(), readbackMemory);
         }
     }
 
