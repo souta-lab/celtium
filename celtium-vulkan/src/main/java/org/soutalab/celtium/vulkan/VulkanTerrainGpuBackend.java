@@ -407,6 +407,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int translateCalls;
     private int translateZeroCalls;
     private final java.util.List<String> trace = new java.util.ArrayList<String>();
+    private float traceWorstDelta;
 
     private static String fmt3(double value) {
         return String.format(java.util.Locale.ROOT, "%.2f", value);
@@ -676,7 +677,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     delta = Math.max(delta, Math.abs(mirrored[i] - live.get(i)));
                 }
                 this.derivedProjectionComparisons++;
-                if (this.trace.size() < 40 && delta > 1.0E-3F) {
+                // Record the worst samples rather than the first forty: the cap filled with early events and hid the
+                // sample the counter was reporting, which is the same mistake the matrix dump made two rounds ago.
+                if (delta > this.traceWorstDelta) {
+                    this.traceWorstDelta = delta;
+                    while (this.trace.size() >= 12) {
+                        this.trace.remove(0);
+                    }
                     float[] mvBefore = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
                     java.nio.FloatBuffer glMv = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
                     try {

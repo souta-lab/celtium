@@ -3927,3 +3927,35 @@ The 2000 is the next thing to read: whether it is a GUI ortho matrix reaching th
 being compared against a target that has been cleared and rebound. Both are consistent with the number, and the trace
 instrument that resolved the last question - forty capped events, comparisons above a threshold - is already in place to
 distinguish them.
+
+---
+
+## The worst-sample trace was keyed on the wrong delta
+
+The trace was changed to record new maxima instead of the first forty events, and it still produced only `L` entries -
+resets with a zero translation - because the condition sits inside the **derived-projection comparison block** and keys on
+the *projection* delta. The number the fixture fails on is the **modelview** delta of 2000, which never triggers it. The
+instrument is in the wrong place, which is the sixth time in this session that a reading was taken through the wrong
+window: two truncated log lines, a truncated counter, a stale reference, three greps that dropped the line, and now a trace
+gated on the other matrix.
+
+What the round did establish, from the counters rather than the trace:
+
+```
+steadyDelta=proj:1.6200542E-4, view:2000.0
+fixture FAILED | nativeTerrainVerified False
+```
+
+The 2000 is a **steady-state** figure - the steady counters are the ones that report it - so it is not warm-up either. It is
+the modelview mirror disagreeing with GL by two thousand during the fixture that binds a second render target, which is a
+magnitude consistent with the orthographic projection the overlay pass installs (`glOrtho(0, width, height, 0, 1000, 3000)`
+contains exactly those two numbers) rather than with anything in world space.
+
+The fix for the instrument is one move: record the worst sample inside `compareMirroredAndLiveMatrices`, where both deltas
+are in scope, and include the **pass identity** in the entry - the render target and viewport the backend now tracks - so
+the sample names the pass it belongs to instead of leaving it to be inferred. That is a two-line change and it answers both
+open questions at once: what the 2000 is, and which pass produces it.
+
+The fixture itself is doing its job. It fails, it fails only when a second render target is present, and it produces a
+number large enough to be a pass leaking into another pass's comparison rather than a subtle numerical difference. Three
+rounds ago the corresponding statement would have been a hypothesis; now it is a failing test with a counter next to it.
