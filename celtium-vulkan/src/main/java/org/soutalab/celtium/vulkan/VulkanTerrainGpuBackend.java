@@ -260,7 +260,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
-                    + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
+                    + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
+                + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
                 + " modelListQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listSummary()
                 + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
                 + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
@@ -268,6 +269,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
+                + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
                 + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
                 + " modelListQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listSummary()
                 + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
@@ -3106,6 +3108,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
+                + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
                 + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
                 + " modelListQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listSummary()
                 + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()

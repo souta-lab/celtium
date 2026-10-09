@@ -28,6 +28,21 @@ public final class VulkanDisplayListCensus {
     /** Records one replay of {@code list}, called from the {@code GlStateManager.callList} hook. */
     public static synchronized void replay(int list) {
         total++;
+        // The matrix in effect at replay, next to the one captured while the list was compiled. Whether a display list
+        // bakes the transform or is replayed under the current matrix decides how a native replacement has to combine
+        // them, and this pair is what answers it instead of an argument about the specification.
+        if (!MATRICES.containsKey(Integer.valueOf(list)) && matricesTaken < 24) {
+            try {
+                java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
+                float[] values = new float[16];
+                matrix.get(values);
+                MATRICES.put(Integer.valueOf(list), values);
+                matricesTaken++;
+            } catch (RuntimeException | LinkageError ignored) {
+                // Measurement only.
+            }
+        }
         Integer seen = REPLAYS.get(Integer.valueOf(list));
         if (seen == null) {
             distinctLists++;
@@ -37,6 +52,14 @@ public final class VulkanDisplayListCensus {
             }
         }
         REPLAYS.put(Integer.valueOf(list), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+    }
+
+    private static final Map<Integer, float[]> MATRICES = new LinkedHashMap<Integer, float[]>();
+    private static int matricesTaken;
+
+    /** {@return the replay-time modelview matrix of a list, or null when it has not been replayed yet}. */
+    public static synchronized float[] replayMatrix(int list) {
+        return MATRICES.get(Integer.valueOf(list));
     }
 
     /** {@return the number of replays seen so far}. */

@@ -94,6 +94,36 @@ public final class VulkanModelQuadCapture {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
     }
 
+    /**
+     * {@return a comparison of the compile-time and replay-time modelview matrices for the captured lists}.
+     * <p>
+     * Translation and scale are enough to see the relationship: if the replay matrix is the compile matrix preceded by
+     * an entity transform, the translations differ; if the list baked the transform, they agree.
+     */
+    public static synchronized String matrixComparison() {
+        StringBuilder text = new StringBuilder();
+        int shown = 0;
+        for (ListGeometry geometry : LISTS.values()) {
+            if (shown >= 3) {
+                break;
+            }
+            float[] replay = VulkanDisplayListCensus.replayMatrix(geometry.listId);
+            if (replay == null) {
+                continue;
+            }
+            shown++;
+            if (text.length() > 0) {
+                text.append(" | ");
+            }
+            text.append("list ").append(geometry.listId)
+                    .append(" compile(t=").append(round(geometry.modelView[12])).append(',')
+                    .append(round(geometry.modelView[13])).append(',').append(round(geometry.modelView[14])).append(')')
+                    .append(" replay(t=").append(round(replay[12])).append(',').append(round(replay[13])).append(',')
+                    .append(round(replay[14])).append(')');
+        }
+        return text.length() == 0 ? "no list seen both ways" : text.toString();
+    }
+
     /** {@return how many distinct display lists the captured quads belong to}. */
     public static synchronized int lists() {
         return LISTS.size();
