@@ -1541,3 +1541,25 @@ So the P1 recorded two rounds ago - "an animated texture drawn through the immed
 is closed at the mechanism level, with the evidence being the hook firing in a green run rather than an argument. What a
 still image cannot show is that the animation *moves* in the Vulkan path; the comparison frames are static, so motion
 remains for a visual check rather than being claimed here.
+
+---
+
+## Resize: the test is written down, and the fixture cannot build it yet
+
+The plan lists resize as unported until it has been seen to work, and the cheapest way to see it is from the fixture:
+resize the window mid-run before the capture, and let the saved screenshot's own dimensions be the evidence that the
+resize reached Minecraft. The test was written that way - `glfwSetWindowSize` to 1024x640 at tick 100, with
+`resizedAtTick`, `captureWidth` and `captureHeight` added to the report - and it does not build:
+
+```
+ValidationClient.java:410: error: package org.lwjgl.glfw does not exist
+```
+
+The validation fixture compiles without the GLFW binding: the mod only needs the core LWJGL for `MemoryUtil`, which is
+why this had not come up in any earlier fixture work. Two small ways forward, both one change: add `lwjgl-glfw` as a
+compile-only dependency of the validation module, or drive the resize through Minecraft's own path so the fixture needs no
+new dependency.
+
+The change is reverted, the tree is green (`packageJar` and `validationRemapJar` both pass), and nothing about resize is
+claimed either way - it stays on the unported list, now with the method and the obstacle written down so the next attempt
+starts from here rather than from scratch.
