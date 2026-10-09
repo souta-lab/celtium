@@ -3855,3 +3855,37 @@ the key separates them.
 This is also the first piece of work in several rounds that follows the direction rather than the mirror: pass ownership is
 what the renderer needs to own frames and ordering on its own side, and getting it from Minecraft's own classes is the
 meaning-based route rather than another GL read.
+
+---
+
+## S10's first step is in: the pass identity is in the key, and this scene does not exercise it
+
+Implemented as located: a viewport hook on `GlStateManager.func_179083_b`, a render-target hook on `Framebuffer.func_147610_a`
+(identity only, so no shadowed field and no accessor machinery), two fields in the backend, and those fields in the
+condition that opens a group.
+
+```
+passSplits:0, target:1682163939
+immediateOffered=9077, immediateTaken=596, immediateGroupsClosed=596
+fixture PASSED | nativeTerrainVerified True | 2231 passes
+difference against the same-fixture reference: mean 0.14 | 0.40% over 8 | 3,714 px
+```
+
+Three honest readings of that:
+
+- **the hooks work.** `target` is a real framebuffer identity rather than the initial -1, so the binding reaches the
+  backend and the viewport hook compiles and applies;
+- **`passSplits:0`** - in this scene, no group *would* have merged two passes. The key now separates them, and this
+  fixture never presents the case, so the number is zero for the same reason a test of a bridge is zero when nobody crosses
+  it. That is not evidence the feature is unnecessary, and it is not evidence it works;
+- **no regression**: the frame is identical to the same-fixture reference at 0.40% and 3,714 pixels, exactly as before the
+  change, so adding the pass to the key did not disturb what already rendered correctly.
+
+What would show it is the fixture the audit's S10 acceptance names and this project still does not have: two render targets,
+translucent quads that overlap across a boundary, and a clear at the switch. That fixture is now the blocking item for this
+audit entry rather than more hooks, and it is also what the direction calls for - the renderer owning draw order and frame
+targets, demonstrated on a scene that actually crosses them.
+
+The mirror counters are unchanged (`proj:1.62e-4, view:1.62, exact:0`, 1192 comparisons), which is expected: the group key
+decides how batches are grouped, not what the mirror holds, and the residual modelview figure is the cross-pass sampling the
+trace identified.

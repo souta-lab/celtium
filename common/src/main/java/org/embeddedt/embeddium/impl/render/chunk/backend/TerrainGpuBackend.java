@@ -148,6 +148,14 @@ public interface TerrainGpuBackend {
     default void seedMirrorFromCameraSetup() {
     }
 
+    /** The render target a batch belongs to; identity only, as a pass discriminator (audit S10). */
+    default void bindFramebuffer(long targetIdentity) {
+    }
+
+    /** The viewport in effect, which the group key also needs (audit S10). */
+    default void viewport(int x, int y, int width, int height) {
+    }
+
     default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                          int vertexCount, int drawMode) {
         return false;

@@ -111,6 +111,12 @@ what the remaining difference is made of. **Not yet done:** the acceptance fixtu
 with differing per-vertex light values compared against GL.
 
 ### S10 [P1] draw order, FBO and viewport are not preserved across the hybrid
+**First step implemented:** the render target and viewport are now part of the condition that opens a group - a viewport hook
+on `GlStateManager.func_179083_b` and a target hook on `Framebuffer.func_147610_a` (identity only, so no accessor
+machinery), with the result that two passes can no longer merge into one draw. **Measured: `passSplits:0` and no
+regression** - the frame is identical to its same-fixture reference at 0.40% (3,714 px) - which says this scene never
+presents the case, not that the case does not exist. **Open:** draw order across GL fallback, clears and FBO switches, and
+the fixture that crosses two targets with overlapping translucent quads, which is now the blocking item for this entry.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.
 

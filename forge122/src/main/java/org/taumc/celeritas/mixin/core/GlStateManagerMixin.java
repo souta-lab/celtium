@@ -129,6 +129,11 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.translate(x, y, z));
     }
 
+    @Inject(method = "func_179083_b", at = @At("HEAD"), require = 0)
+    private static void celtium$viewport(int x, int y, int width, int height, CallbackInfo info) {
+        celtium$mirror(backend -> backend.viewport(x, y, width, height));
+    }
+
     @Inject(method = "func_179114_b", at = @At("HEAD"), require = 0)
     private static void celtium$rotate(float angle, float x, float y, float z, CallbackInfo info) {
         celtium$mirror(backend -> backend.rotate(angle, x, y, z));

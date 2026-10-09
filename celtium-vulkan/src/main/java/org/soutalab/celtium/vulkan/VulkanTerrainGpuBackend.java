@@ -396,6 +396,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean mirrorSeeded;
     private int cameraSetupSeeds;
     private int framesSeen;
+    private long currentRenderTarget = -1L;
+    private long currentViewportKey = -1L;
+    private long currentGroupTarget = Long.MIN_VALUE;
+    private long currentGroupViewport = Long.MIN_VALUE;
+    private int passSplits;
     private float steadyProjectionDelta;
     private float steadyModelViewDelta;
     private int steadyComparisons;
@@ -872,6 +877,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    public void bindFramebuffer(long targetIdentity) {
+        this.currentRenderTarget = targetIdentity;
+    }
+
+    public void viewport(int x, int y, int width, int height) {
+        // Packed so the comparison in the group key is one test rather than four.
+        this.currentViewportKey = ((long) x << 42) ^ ((long) y << 21) ^ ((long) width << 10) ^ (long) height;
+    }
+
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
         if (fovDegrees <= 0.0F || aspect <= 0.0F || near <= 0.0F || far <= near) {
             this.derivedProjectionRefusals++;
@@ -1067,9 +1081,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             int[] state = celtium$captureState();
             long stateKey = celtium$stateKey(formatId, state);
+            // The pass identity joins the key here: a batch from another render target or viewport is not part of this
+            // group, which is what stops two passes merging into one draw (audit S10).
+            boolean samePass = this.currentGroupTarget == this.currentRenderTarget
+                    && this.currentGroupViewport == this.currentViewportKey;
+            if (!samePass && this.currentImmediateMesh != null) {
+                this.passSplits++;
+            }
             if (this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
-                    || this.currentGroupStateKey != stateKey
+                    || this.currentGroupStateKey != stateKey || !samePass
                     || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
                     || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
@@ -1086,6 +1107,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
                 this.currentGroupState = state.clone();
+                this.currentGroupTarget = this.currentRenderTarget;
+                this.currentGroupViewport = this.currentViewportKey;
             }
             if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
@@ -1569,6 +1592,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
+                + ",passSplits:" + this.passSplits + ",target:" + this.currentRenderTarget
                 + " trace[" + String.join(" ", this.trace) + "]"
                 + ",steadyComparisons:" + this.steadyComparisons
                 + ",steadyDelta=proj:" + this.steadyProjectionDelta + ",view:" + this.steadyModelViewDelta
