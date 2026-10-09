@@ -43,6 +43,9 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$nullFormatDumps;
     private static int celtium$compositeRefusals;
     private static int celtium$positionTexRefusals;
+    /** Uploads seen per mapped format id, before any accept/refuse decision. */
+    private static final int[] celtium$arrivalsByFormat = new int[9];
+    private static int celtium$arrivalTotal;
 
     /** Describes a format the same way the dump does, so an unmatched shape can be put beside a known one. */
     private static String celtium$describe(VertexFormat format) {
@@ -132,6 +135,21 @@ public abstract class WorldVertexBufferUploaderMixin {
                 return;
             }
             int formatId = celtium$formatId(format);
+            // What arrives, not what is accepted. A counter nobody was watching moved when the mapping was fixed - format 1 went
+            // to zero while format 6 started being taken - and the way to tell "these batches no longer arrive" from "these
+            // batches arrive and are declined" is to count them here, before any decision is made.
+            if (formatId >= 0 && formatId < celtium$arrivalsByFormat.length) {
+                celtium$arrivalsByFormat[formatId]++;
+                celtium$arrivalTotal++;
+                if (celtium$arrivalTotal % 500 == 0) {
+                    StringBuilder table = new StringBuilder();
+                    for (int i = 0; i < celtium$arrivalsByFormat.length; i++) {
+                        table.append(i).append(':').append(celtium$arrivalsByFormat[i]).append(' ');
+                    }
+                    System.out.println("[Celtium] CELTIUM_ARRIVALS total=" + celtium$arrivalTotal
+                            + " byFormat=[" + table.toString().trim() + "]");
+                }
+            }
             if (formatId == 0 && celtium$nullFormatDumps < 2) {
                 // Something uploads vertices with no VertexFormat at all, and the immediate path cannot take it because a
                 // null format has neither a stride nor a pipeline. Printing where it comes from turns "format 0 is

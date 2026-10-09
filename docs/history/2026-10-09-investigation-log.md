@@ -7417,3 +7417,28 @@ the next diagnostic for this item rather than another guess at it.
 
 Recorded as the third item in this project whose change moved a counter nobody was looking at: the identity comparison, then
 the missing branch, then the range bound, and now a format that stopped being accepted while two others started.
+
+---
+
+## The format-1 drop was a reporting artifact, and the arrival table says so
+
+The named diagnostic was to count what **arrives** rather than what is accepted, and one run settled it:
+
+```
+CELTIUM_ARRIVALS total=5500 byFormat=[0:2092 1:17 2:683 3:0 4:0 5:336 6:2372 7:0 8:0]
+acceptedByFormat = 1:5, 2:0, 3:0, 4:0, 5:360, 6:2394
+```
+
+**Format 1 arrives seventeen times and five of them are accepted.** It never went to zero: the earlier readings of `1:0` on
+both GPUs were an artifact of **when the report was taken** - the fixture's format-1 quads arrive in a narrow window, and the
+accepted counter is a snapshot. Two consecutive runs now read `1:0` and `1:5` for the same code, which is what a timing
+artifact looks like and what "systematic, because both GPUs agreed" did not.
+
+That is the second time in this project that measuring the **right** thing refuted a conclusion drawn from a counter, and the
+lesson is worth stating more precisely than "measure carefully": the earlier reading was not wrong about the number, it was
+wrong about **what the number was a number of**. An accepted-count is a snapshot taken whenever the report happens to run; an
+arrival-count is a census of what the frame actually offered.
+
+The table also documents two things nobody had measured before: **format 2 arrives 683 times and is accepted zero** - the
+acceptance mask excludes it by default, which is consistent - and **format 0 arrives 2092 times**, which is the unmapped shapes
+(the composite batch among them) and is the largest single category of content still going to OpenGL.
