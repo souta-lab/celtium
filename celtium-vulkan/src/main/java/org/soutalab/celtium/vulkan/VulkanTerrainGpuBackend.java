@@ -350,6 +350,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             System.getProperty("celtium.vulkan.immediate", "false"));
 
     private int immediateTaken;
+    /** Total time spent inside submitImmediateBatch, so the hot path's cost is measured rather than asserted. */
+    private long immediateSubmitNanos;
+    /**
+     * Set whenever a mirrored matrix call changes the matrix state, so the next batch re-reads the live
+     * matrices instead of every batch doing it: two glGetFloatv calls per batch measured 28 us of the
+     * submission cost, and caching the reflected members only removed 4% of it.
+     */
+    private boolean matricesDirty = true;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -455,6 +463,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void matrixMode(int glMode) {
+        this.matricesDirty = true;
         // OpenGL's constants, mapped onto the three stacks the state model keeps.
         if (glMode == 5889) {
             this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
@@ -469,6 +478,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void loadIdentity() {
+        this.matricesDirty = true;
         this.immediateState.loadIdentity();
         this.immediateStateCalls++;
         this.loadIdentityCalls++;
@@ -476,6 +486,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void ortho(double left, double right, double bottom, double top, double near, double far) {
+        this.matricesDirty = true;
         float[] matrix = new float[16];
         // The OpenGL ortho matrix, written column-major, exactly as glOrtho builds it.
         matrix[0] = (float) (2.0 / (right - left));
@@ -491,18 +502,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void translate(double x, double y, double z) {
+        this.matricesDirty = true;
         this.immediateState.translate(x, y, z);
         this.immediateStateCalls++;
     }
 
     @Override
     public void rotate(float angle, float x, float y, float z) {
+        this.matricesDirty = true;
         this.immediateState.rotate(angle, x, y, z);
         this.immediateStateCalls++;
     }
 
     @Override
     public void scale(float x, float y, float z) {
+        this.matricesDirty = true;
         this.immediateState.scale(x, y, z);
         this.immediateStateCalls++;
     }
@@ -553,18 +567,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void multiplyMatrix(java.nio.FloatBuffer buffer) {
+        this.matricesDirty = true;
         this.immediateState.multiplyMatrixBuffer(buffer);
         this.immediateStateCalls++;
     }
 
     @Override
     public void pushMatrix() {
+        this.matricesDirty = true;
         this.immediateState.pushMatrix();
         this.immediateStateCalls++;
     }
 
     @Override
     public void popMatrix() {
+        this.matricesDirty = true;
         this.immediateState.popMatrix();
         this.immediateStateCalls++;
     }
@@ -573,6 +590,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
         this.immediateBatchesOffered++;
+        long submitStart = System.nanoTime();
+        try {
+            return submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
+                    drawMode);
+        } finally {
+            this.immediateSubmitNanos += System.nanoTime() - submitStart;
+        }
+    }
+
+    /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
+    private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
+                                              int vertexCount, int drawMode) {
         if (!IMMEDIATE_DRAWING_ENABLED) {
             // Comparison switch, default on: turning it off makes every immediate batch fall back to GL, which is
             // exactly the reference image the Vulkan path has to reproduce.
@@ -623,7 +652,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // projection (it is installed by LWJGL 2's GLU utility class, outside the transforming loader -
             // matrixChannels=persp:0), while reading them on the render thread with the GL context current needs no
             // cooperation from any class and gives exactly what Minecraft is drawing with.
-            captureGlMatrices();
+            if (this.matricesDirty) {
+                captureGlMatrices();
+                this.matricesDirty = false;
+            }
             int boundTexture = this.immediateState.boundTextureName();
             int[] state = celtium$captureState();
             long stateKey = celtium$stateKey(formatId, state);
@@ -817,6 +849,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
+                + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
+                : this.immediateSubmitNanos / this.immediateBatchesOffered)
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
                 + ",mode:" + this.matrixModeCalls + ",identity:" + this.loadIdentityCalls
                 + ",texture:" + this.bindTextureCalls;

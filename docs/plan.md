@@ -6,6 +6,81 @@ this document wins.
 
 Last rewritten: 2026-10-09.
 
+## 0. Supported runtime: CleanroomMC only
+
+Celtium targets **CleanroomMC** and nothing else. Starting a game on plain Forge (the old Java 8 / LWJGL 2 stack) or on
+another Forge plus lwjgl3ify/RFB configuration is **not a supported runtime** and is not something this project will
+keep working. That is a statement about the *environment*, not about mods:
+
+- **Keep:** binary compatibility with existing Forge mods **as they run on Cleanroom** - class and method signatures,
+  event order, model and baked-quad data, the `Tessellator`/`BufferBuilder`/`WorldVertexBufferUploader`/
+  `GlStateManager` entry points, `RenderItem`, `TESR`, `RenderWorldLastEvent`. A mod that works on Cleanroom today is
+  meant to keep working, unchanged.
+- **Drop:** the ability to launch on a runtime that is not Cleanroom. No compatibility shims, no "it also works on
+  Forge 1.12.2" claims, no testing matrix for the old stack.
+
+Supported and verified environment (pinned, not floating):
+
+| Item | Value | Status |
+|---|---|---|
+| Minecraft | 1.12.2 | verified on hardware |
+| Runtime | CleanroomMC **0.6.13-alpha** | verified on hardware (both GPUs) |
+| JDK | **25** for the Gradle build; the mod is produced for the runtime's target | verified |
+| LWJGL | **3.4.1** | verified |
+| GPUs | AMD RX 6400 (RADV), Intel UHD Graphics 630 (ANV) | verified |
+| OS | Linux, Wayland/Xwayland session | verified |
+
+Upstream `main` moves; nothing from a newer Cleanroom foundation is applied to this environment without being pinned,
+built and driven through the acceptance checks below. "Newer" is not a reason, and **stopping Java 8 output is not by
+itself treated as a speed-up** - only a measurement makes that claim.
+
+### Migration stages for the specialization
+
+| Stage | Work | Acceptance |
+|---|---|---|
+| S1 | State the target: this document, the README and any startup diagnostics say Cleanroom-only | Documents agree; no text promises plain-Forge support |
+| S2 | Retire the legacy-runtime code paths: `CeleritasVintageMixinPlugin.onLoad`'s RFB detection and `CeleritasLwjgl3ifyCompat` (which reaches into `SharedConfig.getRfbTransformers()` to add exclusions), after checking what still depends on them | Build and startup succeed without them; the client starts and renders on the pinned Cleanroom; no reflection into RFB remains |
+| S3 | Evaluate moving the build to Cleanroom-oriented tooling, in steps that each leave a working build behind | Each step: `packageJar` + validation run PASSED, `nativeTerrainVerified True`, VUID 0, before the next step starts |
+| S4 | Keep mod compatibility measured, not assumed: the fixture mod, then real mods, with `docs/mod-compatibility.md` recording what was actually observed | A mod from outside this repository renders through the Forge API path without modification |
+
+### Hot path: measured, not asserted
+
+The submission path was profiled with a counter that accumulates the time spent inside `submitImmediateBatch` over a
+run, because the instruction that started this work named the per-batch reflection as a candidate. The measurements, on
+the pinned RX 6400 configuration and with the immediate path enabled:
+
+| Revision | `immediateSubmitAvgNs` per offered batch |
+|---|---|
+| reflective lookup per batch (`getDeclaredField`/`setAccessible`, `Class.forName`/`getMethod`/`invoke`) | **29252** |
+| reflective members cached in statics | **28026** (-4%) |
+| cached, and the live GL matrices re-read only when the mirrored matrix state changes | **27439** (-6% in total) |
+
+So the reflection was **not** the cost, and neither was reading the matrices every batch: the remaining ~27 us is
+dominated by what the current design has to do per batch, and the honest conclusion is that this is a *matrix-mirror*
+problem, not a micro-optimisation one. Two consequences are recorded rather than glossed:
+
+- In the fixture scene the cost is invisible (about 1.1 batches per frame, ~30 us of a 16.6 ms frame), but the same 27
+  us per batch would be **54 ms per frame** at 2000 batches, which real entity, particle and GUI scenes can easily
+  reach. The path must not be enabled for real content until that number comes down.
+- The way down is to stop asking OpenGL for the matrices per batch, which means mirroring the projection (the thing the
+  missing GLU class prevents) or owning the frame - the same workstream as the image-correctness problem, not a
+  separate tuning exercise.
+
+### What specialization does **not** solve
+
+Dropping the old runtime is not the same as finishing the renderer, and the plan keeps these as independent work:
+
+- **Direct GL calls** (`GL11` matrix functions, direct texture and framebuffer use, GLSL shipped by a mod) still need
+  translation or replacement; the Forge entry points never see them. `docs/mod-compatibility.md` records each pattern
+  found, and any feature that will not be covered is listed there **with the reason**.
+- **GL readback and synchronisation** (the texture mirrors, the shared-image copies, the semaphore handoffs) still cost
+  what they cost; removing the old runtime does not remove them.
+- **Image correctness** still depends on frame ownership, as the measurements in section 2 record.
+
+And the standing rule: deleting compatibility code is not evidence of a faster renderer. Rendering and performance
+comparisons continue under the same conditions as the original Celeritas reference, and any speed claim comes with the
+measurement that produced it.
+
 ## 1. Completion condition
 
 Full-screen **native Vulkan** in Minecraft 1.12.2 on Cleanroom:
@@ -139,6 +214,10 @@ Kept separate on purpose - terrain success and present success are different thi
   and the new path's acceptance is **unverified** - the scene apparently contains no hand-held or item-rendered
   geometry. The next step is to have the fixture draw a `BLOCK`-format batch the way it already draws a
   `POSITION_COLOR` one, so the pipeline is exercised and the lightmap path is compared against GL rather than assumed.
+
+- **Runtime target (2026-10-09 instruction).** Celtium supports **CleanroomMC only**; plain Forge and other
+  lwjgl3ify/RFB configurations are out of scope, while Forge *mod* compatibility on Cleanroom is kept. Section 0
+  states the pinned environment, the migration stages and what specialization does not solve.
 
 - **A second window inside the GL frame breaks the submission protocol: measured, reverted, and it defines the real
   next step.** The flush-point design was implemented as described - a window opened where the batches are produced, with

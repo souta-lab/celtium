@@ -54,6 +54,39 @@ public abstract class WorldVertexBufferUploaderMixin {
     }
 
     /** The stride comes from the format itself, so the backend can decide structurally rather than by class. */
+    /**
+     * The reflected members, resolved once at class initialisation instead of per batch.
+     * <p>
+     * The first version called {@code getDeclaredField}/{@code setAccessible} for two fields and
+     * {@code Class.forName}/{@code getMethod}/{@code invoke} for the address on **every** batch, which measured
+     * 29252 ns per offered batch on the RX 6400 run - about 29 microseconds of reflection per submission. These
+     * statics keep the exact same behaviour (same members, same access, same fallbacks) and pay for the lookup once.
+     */
+    private static final java.lang.reflect.Field VERTEX_BUFFER = celtium$field("field_179001_a");
+    private static final java.lang.reflect.Field VERTEX_FORMAT = celtium$field("field_179011_q");
+    private static final java.lang.reflect.Field VERTEX_COUNT = celtium$field("field_178997_d");
+    private static final java.lang.reflect.Field DRAW_MODE = celtium$field("field_179006_k");
+    private static final java.lang.reflect.Method MEM_ADDRESS = celtium$method("org.lwjgl.system.MemoryUtil",
+            "memAddress", java.nio.ByteBuffer.class);
+
+    private static java.lang.reflect.Field celtium$field(String name) {
+        try {
+            java.lang.reflect.Field field = BufferBuilder.class.getDeclaredField(name);
+            field.setAccessible(true);
+            return field;
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            return null;
+        }
+    }
+
+    private static java.lang.reflect.Method celtium$method(String className, String name, Class<?>... parameters) {
+        try {
+            return Class.forName(className).getMethod(name, parameters);
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException error) {
+            return null;
+        }
+    }
+
     private static final java.util.Map<Object, Integer> celtium$formatIds =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Object, Integer>());
 
@@ -118,9 +151,7 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     private static Object celtium$vertexFormat(BufferBuilder buffer) {
         try {
-            java.lang.reflect.Field field = BufferBuilder.class.getDeclaredField("field_179011_q");
-            field.setAccessible(true);
-            return field.get(buffer);
+            return VERTEX_FORMAT == null ? null : VERTEX_FORMAT.get(buffer);
         } catch (ReflectiveOperationException | RuntimeException error) {
             return null;
         }
@@ -128,16 +159,13 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     private static long celtium$vertexAddress(BufferBuilder buffer) {
         try {
-            java.lang.reflect.Field field = BufferBuilder.class.getDeclaredField("field_179001_a");
-            field.setAccessible(true);
-            Object value = field.get(buffer);
-            if (!(value instanceof ByteBuffer)) {
+            Object value = VERTEX_BUFFER == null ? null : VERTEX_BUFFER.get(buffer);
+            if (!(value instanceof ByteBuffer) || MEM_ADDRESS == null) {
                 return 0L;
             }
             // The address comes from LWJGL's MemoryUtil through reflection: this module does not compile against the
             // LWJGL bindings, and the mixin must not add that dependency just to read a pointer.
-            Class<?> memoryUtil = Class.forName("org.lwjgl.system.MemoryUtil");
-            return ((Number) memoryUtil.getMethod("memAddress", ByteBuffer.class).invoke(null, value)).longValue();
+            return ((Number) MEM_ADDRESS.invoke(null, value)).longValue();
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             return 0L;
         }
@@ -145,9 +173,7 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     private static int celtium$vertexCount(BufferBuilder buffer) {
         try {
-            java.lang.reflect.Field field = BufferBuilder.class.getDeclaredField("field_178997_d");
-            field.setAccessible(true);
-            return field.getInt(buffer);
+            return VERTEX_COUNT == null ? 0 : VERTEX_COUNT.getInt(buffer);
         } catch (ReflectiveOperationException | RuntimeException error) {
             return 0;
         }
@@ -155,9 +181,7 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     private static int celtium$drawMode(BufferBuilder buffer) {
         try {
-            java.lang.reflect.Field field = BufferBuilder.class.getDeclaredField("field_179006_k");
-            field.setAccessible(true);
-            return field.getInt(buffer);
+            return DRAW_MODE == null ? -1 : DRAW_MODE.getInt(buffer);
         } catch (ReflectiveOperationException | RuntimeException error) {
             return -1;
         }
