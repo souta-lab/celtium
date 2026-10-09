@@ -1759,3 +1759,27 @@ log's own conclusions:
   reused.
 - The multi-window black frame now has a second, sufficient explanation: handoffs that were never waited on. The one-window
   limit is still a real observation, but it was not established as the cause.
+
+---
+
+## Audit C reproduced, then fixed: 13 messages on reload, 0 after settling the GPU
+
+The audit's C was measured before it was changed, and it was real - the reload run reported:
+
+```
+exitCode 0 | fixtureStatus PASSED | validationMessageCount 13 | validationClean False
+first: vkDestroyBuffer(): can't be called on VkBuffer 0xdd00000000dd that is currently in use by VkCommandBuffer ...
+```
+
+a PASSED fixture with thirteen messages inside it, which is exactly the shape the audit's F describes and which the new
+harness guard now reports. `settleGpu(reason)` - `vkDeviceWaitIdle` with a message rather than a hang if the device stops
+making progress - is called before `delete()` releases anything and before a region is evicted, and the same runs measure:
+
+| Run | Before | After |
+|---|---|---|
+| Reload, RX 6400 | 13 messages | **0**, `validationClean True`, 897 passes |
+| Reload, UHD 630 | (same path) | **0**, `validationClean True`, 585 passes |
+| World leave and rejoin, RX 6400 | (same path) | **0**, `validationClean True`, 885 passes |
+
+With the P0 fix in place this ordering matters more than it did: submissions genuinely wait now, so a resource released
+while the GPU still reads it is a real hazard rather than a mostly-theoretical one.

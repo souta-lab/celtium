@@ -1252,6 +1252,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         while (iterator.hasNext()) {
             Reference2ReferenceMap.Entry<RenderRegion, RegionResources> entry = iterator.next();
             if (!live.contains(entry.getKey())) {
+                // Same rule as delete(): a region's buffers and pipeline are released only once the GPU has finished
+                // with them, because eviction happens while frames are being submitted.
+                settleGpu("region eviction");
                 entry.getValue().delete();
                 iterator.remove();
             }
@@ -1375,6 +1378,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void delete() {
+        // Nothing may be released while a submission is still reading it: the audit reproduced
+        // vkDestroyBuffer/-Pipeline/-DescriptorPool/-RenderPass/-Framebuffer while a command buffer was in use, on the
+        // reload and world-leave paths. Ending the queue's work first is the difference between freeing a resource and
+        // pulling it out from under the GPU.
+        settleGpu("backend delete");
         releaseRetiredImmediateGroups();
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
         uninstall();
@@ -2660,6 +2668,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * only drained after the fence actually signalled - draining a queue whose work never completes would hang in the
      * driver instead.
      */
+    /**
+     * Ends all work the device is doing, so resources can be released without the GPU still reading them.
+     * <p>
+     * Bounded on purpose: a device that has stopped making progress must end the run with a message rather than hang
+     * it, which is what the audit asked for on every failure path. {@code vkDeviceWaitIdle} is the honest call here -
+     * submissions from several command buffers and from the bridge's handoffs are all outstanding - and the timeout is
+     * the same one the frame waits use.
+     */
+    private void settleGpu(String reason) {
+        long start = System.nanoTime();
+        int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
+        if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+            record("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
+            return;
+        }
+        long millis = (System.nanoTime() - start) / 1_000_000L;
+        if (millis > 200L) {
+            record("settleGpu(" + reason + ") waited " + millis + "ms for the device");
+        }
+    }
+
     private void waitForIdle() {
         if (this.fence == 0 || !this.submissionPending) {
             return;

@@ -264,7 +264,13 @@ def main():
             outcome["validationFirstMessages"] = messages[:3]
             if code == 0:
                 code = 1
+    # The reported codes have to carry the verdict: a validation message is a failed run, not a note in the JSON.
     outcome["validationExitCode"] = code if ended_by == "process-exit" else 124
+    if outcome.get("validationClean") is False:
+        outcome["fixturePassed"] = outcome.get("fixtureStatus") == "PASSED"
+        outcome["validationClean"] = False
+        if outcome["validationExitCode"] == 0:
+            outcome["validationExitCode"] = 1
     (game / "validation-process.json").write_text(json.dumps(outcome, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(outcome))
     return code if ended_by == "process-exit" else 124
