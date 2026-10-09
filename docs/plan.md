@@ -190,6 +190,7 @@ content work that does not touch frame structure can proceed in parallel.
    translate call **is** hooked and the mirror misses it only because it was applied before the hooks existed, and the seed
    written to repair that copies GL at the **first comparison**, which is a moment when GL itself holds the identity. The
    camera setup's structure is read (`orientCamera` holds the per-mode translations; `setupViewBobbing` is outside
+   A seed at the **camera setup** - the moment the world matrix is finished, rather than the first comparison - was then tried: it runs exactly once (`cameraSeeds:1`) and leaves the modelview delta at 1.62, so the gap lies between that moment and the comparison and is to be **traced** rather than hypothesised - record the mirror's translation elements at each `loadIdentity`, each `translate` and each comparison.
    `func_78479_a`, so a derivation at its return cannot clobber bobbing), and the exact point of the `-viewerPos` translate
    is to be read **unfiltered** - three greps in a row filtered out the line being looked for, the fifth time this session
    that a filtered read produced a conclusion the whole source did not support. Earlier notes: `func_78481_a` is hooked at its return and the backend computes `gluPerspective`
