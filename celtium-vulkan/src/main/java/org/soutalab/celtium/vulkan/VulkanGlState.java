@@ -253,6 +253,17 @@ public final class VulkanGlState {
         this.blendEnabled = enabled;
     }
 
+    /**
+     * {@return whether the current factors actually mix anything}
+     * <p>
+     * Minecraft 1.12.2 leaves blending enabled and expresses "no blending" as the {@code ONE, ZERO} function rather than by
+     * disabling it - which is why counting the enable bit reported every batch as translucent. The function is the honest
+     * question to ask.
+     */
+    public boolean blendMixes() {
+        return this.blendSrcRgb != BLEND_ONE || this.blendDstRgb != BLEND_ZERO;
+    }
+
     public void blendFunc(int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
         this.blendSrcRgb = srcRgb;
         this.blendDstRgb = dstRgb;

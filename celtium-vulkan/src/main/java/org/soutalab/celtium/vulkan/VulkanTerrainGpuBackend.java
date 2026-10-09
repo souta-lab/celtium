@@ -1572,6 +1572,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
                 this.currentGroupState = state.clone();
+                // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can, and it
+                // has to be counted here rather than where the flag is read for pipeline selection: at flush time the state
+                // belongs to the group being flushed and blending is on for the whole family, which made the first version of
+                // this instrument report every acceptance as blended. Here the state is the batch's own.
+                // The live state rather than a slot in the captured array: at this moment - the batch being offered - the live
+                // state is the batch's own. Reading state[0] here instead reported every batch as blended, which is how the
+                // first attempt at this went wrong twice over: once by sampling at flush time and once by guessing the slot.
+                if (this.immediateState.blendMixes()) {
+                    this.immediateBlendedAccepted++;
+                } else {
+                    this.immediateOpaqueAccepted++;
+                }
                 // Position-only content has no colour in its vertices: the game draws it with whatever colour it had current,
                 // so that is read here, at the moment the batch is offered, and carried with the group.
                 if (formatId == 7) {
@@ -1683,7 +1695,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                     System.out.println("[Celtium] CELTIUM_ACCEPTED total=" + this.immediateAcceptedTotal
                             + " byFormat=[" + accepted.toString().trim() + "]"
-                            + " blended=" + this.immediateBlendedAccepted + " opaque=" + this.immediateOpaqueAccepted);
+                            + " blendingFactorsMix=" + this.immediateBlendedAccepted
+                            + " blendingOff=" + this.immediateOpaqueAccepted);
                 }
             }
             this.immediateLastRefusal = "none";
@@ -1781,13 +1794,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
-        // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can: the batches
-        // accepted with blending on are exactly the translucent content the game asked for, whatever layout carries it.
-        if (blend) {
-            this.immediateBlendedAccepted++;
-        } else {
-            this.immediateOpaqueAccepted++;
-        }
+
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
         // Comparison switch, default on: forcing the threshold to zero turns every discard off, which isolates the

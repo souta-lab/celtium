@@ -7984,3 +7984,32 @@ What is **not** in doubt from this run: the mixing fabric itself. The blend enab
 (`setBlendEnabled(true)` and `(false)` from the two methods), the factors are hooked as well, and the pipelines bake the
 factors into their state keys - so translucency **is** carried into the Vulkan pipelines; what this instrument failed to do is
 report how much of the accepted content asked for it.
+
+---
+
+## Translucency, measured properly at the third attempt: the factors, and what they say
+
+Three attempts were needed and each failure was informative.
+
+1. **Sampled at flush time** reported `blended=3052, opaque=0` - the flag at that moment belongs to the group being flushed and
+   blending is on for this whole family, so the instrument answered a different question than the one asked.
+2. **Sampled at offer time from the captured state array** also reported every batch as blended - and the slot I read as the
+   blend flag is not the blend flag, which is what guessing a slot in an array of packed floats gets you.
+3. **Sampled at offer time from the live state** reported the same, and this time it is the truth about the **enable bit**:
+   Minecraft 1.12.2 leaves blending **enabled** and expresses "no blending" through the factors instead.
+
+So the instrument now asks the factors, and the answer is:
+
+```
+CELTIUM_ACCEPTED total=3000 byFormat=[0:0 1:6 2:0 3:0 4:0 5:279 6:1660 7:1052 8:3 9:0]
+  blendingFactorsMix=3221   blendingOff=0
+```
+
+**Of the immediate content this renderer accepts, all of it is drawn with factors that mix.** That is plausible as the truth
+rather than as a fourth sampling error, because the family is exactly the content that is alpha-blended in vanilla: the GUI, the
+font, the HUD, the hand, the sky, the particles and the items. **Opaque content takes a different path** - the terrain, whose
+pipelines are its own and whose material is solid - so "no opaque immediate batches" is a statement about this content family
+and not about the frame.
+
+The state now answers the question itself (`blendMixes()`), with the reason written where the question is asked, so the next
+person to want this number does not have to rediscover which of the three readings is the real one.
