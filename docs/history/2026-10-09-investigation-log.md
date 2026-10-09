@@ -8247,3 +8247,25 @@ to stop reading GL rather than about whether it can be done, and the first candi
 
 Recorded with its evidence, because the previous two rounds described the work from the outside and this one read the
 signature that answers it.
+
+---
+
+## The ownership change attempted, and the shape it actually needs
+
+The first ownership step was attempted: give `VulkanGlTexture` a pixel-fed upload path and let `uploadFromGlTexture` delegate to
+it, so the mirror can be filled from the image the hook already carries instead of from a readback of GL. The extraction did not
+land - the method's body has several early-return paths that reference the readback result by name, and pulling the shared half
+out without rewriting them leaves the file not compiling.
+
+It was reverted rather than left failing, and the tree is green again. That is the seventh attempt in this project to be
+withdrawn, and the second in a row where the withdrawal was caused by **partial extraction** rather than by a wrong idea: the
+plan is sound - the hook has the image, the dedupe and transfer are shared, and the readback becomes unnecessary for the eleven
+mirrored textures - but the method has to be **rewritten** rather than have its middle pulled out. The concrete shape is:
+
+- `uploadFromGlTexture` becomes: read the level, then call a pixel path.
+- The pixel path owns: the size, the hash dedupe, the staging upload, and the generation bump.
+- The early returns inside the current body (identical-content skip, failure paths) have to move into the pixel path with it,
+  which means rewriting the method rather than cutting it.
+
+Recorded so the next attempt starts from "rewrite these two methods" instead of "extract a shared half", which is the difference
+between the attempt that failed and the one that will not.
