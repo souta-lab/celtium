@@ -15,6 +15,17 @@ package org.soutalab.celtium.vulkan;
  */
 public final class VulkanModelQuadCapture {
 
+    /** Per-display-list geometry, keyed by the list GL is compiling into. */
+    private static final java.util.LinkedHashMap<Integer, ListGeometry> LISTS =
+            new java.util.LinkedHashMap<Integer, ListGeometry>();
+
+    private static final class ListGeometry {
+        int quads;
+        int listId;
+        float[] modelView = new float[16];
+        String source = "unknown";
+    }
+
     private static long quads;
     private static long vertices;
     private static float minX = Float.MAX_VALUE;
@@ -34,7 +45,35 @@ public final class VulkanModelQuadCapture {
      * @param xs    x of each vertex, already scaled by the model's scale
      * @param us    u of each vertex
      */
+    /**
+     * Groups the quads by the display list GL is compiling into and keeps the modelview matrix of the first quad of
+     * each list.
+     * <p>
+     * The list id comes from {@code GL_LIST_INDEX}, which names the list being compiled (0 when none is). The matrix is
+     * the one in effect while the part is compiled - a display list stores transformed vertices, so the geometry has to
+     * be paired with the transform it was compiled under. Both are read here rather than assumed.
+     */
     public static synchronized void quad(int count, float[] xs, float[] us) {
+        int listId = 0;
+        try {
+            listId = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+        } catch (RuntimeException | LinkageError ignored) {
+            listId = -2;
+        }
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        if (geometry == null) {
+            geometry = new ListGeometry();
+            geometry.listId = listId;
+            try {
+                java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
+                matrix.get(geometry.modelView);
+            } catch (RuntimeException | LinkageError ignored) {
+                geometry.source = "matrix unavailable";
+            }
+            LISTS.put(Integer.valueOf(listId), geometry);
+        }
+        geometry.quads++;
         quads++;
         vertices += count;
         for (int i = 0; i < count; i++) {
@@ -53,6 +92,31 @@ public final class VulkanModelQuadCapture {
 
     private static String round(float value) {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
+    }
+
+    /** {@return how many distinct display lists the captured quads belong to}. */
+    public static synchronized int lists() {
+        return LISTS.size();
+    }
+
+    /** {@return per-list quad counts, largest first, capped for one summary line}. */
+    public static synchronized String listSummary() {
+        if (LISTS.isEmpty()) {
+            return "none";
+        }
+        java.util.List<ListGeometry> all = new java.util.ArrayList<ListGeometry>(LISTS.values());
+        all.sort((a, b) -> b.quads - a.quads);
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < Math.min(all.size(), 8); i++) {
+            if (i > 0) {
+                text.append(' ');
+            }
+            text.append(all.get(i).listId).append(':').append(all.get(i).quads);
+        }
+        if (all.size() > 8) {
+            text.append(" +").append(all.size() - 8).append(" more");
+        }
+        return text.toString();
     }
 
     /** {@return how many quads have been captured}. */
