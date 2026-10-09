@@ -110,6 +110,10 @@ census reports ~2000 unmapped uploads per run and censusing them by shape gives 
 position-only vertices with no colour and no texture coordinates, matching none of the six pipelines that exist. The immediate path
 refuses such batches by name rather than dropping them quietly.
 
+**The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
+drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and
+why, the Java versions, and the licensing lineage.
+
 ## 0. Architecture stance (2026-10-09 policy)
 
 Celtium is a **Minecraft 1.12.2 / Cleanroom-specific native Vulkan renderer**. It is not, and will not become, a general
