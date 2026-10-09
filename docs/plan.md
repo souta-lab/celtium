@@ -9,6 +9,30 @@ what is being built now. Evidence, measurements and disproved hypotheses live in
 [Sodium optimization deltas](sodium-optimization-deltas.md). Where an older document disagrees with this one, this one
 wins.
 
+
+## Completion condition (2), item by item, with the evidence for each state
+
+Required by the objective: terrain plus entity/TESR/item, hand/GUI/font/HUD, particles, sky/cloud/weather/water,
+translucency, the various FBOs, postprocess, texture animation, resource reload, resize and world switch - each stated as
+implemented, unimplemented or verified on hardware, rather than judged by the terrain backend's name.
+
+| Item | State | Evidence |
+|---|---|---|
+| **Terrain**, including its translucent and cutout layers | **Vulkan, verified on both GPUs** | `vulkanTerrainPasses=1632`, `glDrawsCancelled=566` (AMD) and `804`/`278` (Intel); `nativeTerrainVerified True` now requires both |
+| **World-pass content in a covered vertex format** (blocks, entities, particles, the fixture's test quads) | **Vulkan, measured** | `immediateTaken=566` with `postAcceptDroppedGroups=0` and `droppedByFormat 1:0 2:0 3:0 4:0 5:0` |
+| **GUI, font, HUD, hand and inventory rendering** | **OpenGL - explicitly refused, not silently** | With the GUI visible the accepted count does not change, and the refusal reason is `outside_the_world_pass_or_without_a_snapshot`: this content is drawn outside the world pass, so the immediate path declines it and GL draws it |
+| **Sky, clouds, weather and the water surface** | **OpenGL** - not covered by the world-pass capture | The weather fixture runs and the frame is correct, but nothing in the counters attributes that content to Vulkan |
+| **Various FBOs and postprocess** | **OpenGL** | Same reason: off-target batches are refused (`offTargetRefusals` is non-zero on runs that bind another framebuffer) |
+| **Texture animation** | **Vulkan mirror, verified** | `CELTIUM_ANIM directMirrorRefreshes=89` with `atlasGlId=9` - the animated atlas re-uploads reach the mirror the terrain samples |
+| **Resource reload** | **Verified** | `reloadedAtTick=100`, exit 0, validation clean, fixture PASSED |
+| **World switch (leave and rejoin)** | **Verified** | `leftWorldAtTick=100 rejoinedAtTick=100`, teardown releases 4 then 2 resources, validation clean |
+| **Resize** | **Fixture exists, once-guarded, not yet run in this series** | `-Dceltium.validation.resize=true` |
+| **Final composite and present** | **OpenGL blit; the Vulkan present path exists but is off by default and unreached** | `presentFromComposite` is off, and with it on this scene presents no format-2 batch at all, so the present code is inert |
+
+This table is the honest boundary of the project: **terrain is Vulkan and verified on both GPUs; everything outside the world
+pass - the GUI, the font, the HUD, the hand, sky, clouds, weather, water, the FBO chains, postprocess and the final present -
+is OpenGL**, and the immediate path refuses such batches by name rather than dropping them quietly.
+
 ## 0. Architecture stance (2026-10-09 policy)
 
 Celtium is a **Minecraft 1.12.2 / Cleanroom-specific native Vulkan renderer**. It is not, and will not become, a general

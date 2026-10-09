@@ -6400,3 +6400,25 @@ this run says none of them is AMD-specific.
 
 The two-GPU condition is therefore met **on the current revision** rather than on an earlier one, and the plan row says so
 with the numbers from both runs rather than a claim.
+
+---
+
+## Completion condition (2) written up item by item, and the GUI run is what proves the boundary
+
+The objective asks for each rendering area to be stated as implemented, unimplemented or verified rather than judged by the
+terrain backend's name, so this round ran the fixture **with the GUI visible** and read what the counters say.
+
+The result is compact and worth stating plainly. **566** batches were taken by the immediate path with **zero** post-accept
+drops and every per-format drop counter at zero - the same figure the hidden-GUI runs give, to within a few batches. Showing
+the GUI therefore adds **nothing** to the accepted count, and the refusal reason on the run says why:
+`outside_the_world_pass_or_without_a_snapshot`. The HUD, the font, the hotbar and the hand are drawn **outside the world
+pass**, so the immediate path declines them and OpenGL draws them - refused by name rather than dropped quietly, which is what
+the plan's inventory table now records.
+
+The table in `docs/plan.md` states, with evidence: terrain on Vulkan verified on **both** GPUs (1632/566 on AMD, 804/278 on
+Intel); world-pass content in a covered format measured and taken (566, no drops); **GUI, font, HUD, hand, sky, clouds,
+weather, water, the FBO chains and postprocess on OpenGL**; texture animation verified through the mirror refresh counter;
+resource reload and world switch verified; resize once-guarded but not yet run in this series; and the final composite a GL
+blit, with the Vulkan present path off by default and unreached even when enabled.
+
+That is the honest boundary of the project as it stands, and it is now written where the objective asked for it.
