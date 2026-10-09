@@ -148,6 +148,27 @@ frame-time distribution, with the immediate path's counters, the validation outp
 and other optional features are never made mandatory. As the standing rule says, **no FPS claim follows from
 specialisation or from deleting compatibility code** - only from a measurement taken this way.
 
+### The matrix mirror is measurably unfaithful, which is why the GL reads exist
+
+The immediate path pays two `glGetFloatv` calls per matrix change, and that was measured as the dominant per-batch cost
+(~27 us). The obvious way to remove them is to use the matrix state the `GlStateManager` Mixins already mirror, so the
+backend now compares the two continuously and reports the worst disagreement seen:
+
+```
+matrixMirrorDelta = proj: 2.0005527, view: 2000.0
+```
+
+Both are wrong, and the model view is wrong by the size of the world transform itself: the mirrored stack never
+receives it. That is consistent with everything measured earlier about the world transform living outside the wrapper -
+`GlStateManager` only wraps `glOrtho`, the GLU helper is not on the runtime classpath at all, and mixing into LWJGL's
+own `GL11` stops the client during startup. In other words, **the matrices are set through direct GL calls that no Mixin
+of ours can see**, so reading them back is not laziness: it is the only correct option short of the renderer owning the
+frame and supplying the matrices itself.
+
+The switch (`-Dceltium.vulkan.mirroredMatrices=true`) and the comparison stay in the tree so the claim can be re-checked
+rather than remembered, and the numbers are printed in the verification line. The consequence for priority is
+unchanged: frame ownership is what makes both the image correct and the per-batch cost go away, and it is the same work.
+
 ### What specialization does **not** solve
 
 Dropping the old runtime is not the same as finishing the renderer, and the plan keeps these as independent work:

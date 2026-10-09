@@ -358,6 +358,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * submission cost, and caching the reflected members only removed 4% of it.
      */
     private boolean matricesDirty = true;
+
+    /**
+     * Whether the group matrices come from the mirrored state instead of a live glGetFloatv pair.
+     * <p>
+     * Default false, because the mirrored stack was measured to disagree with what OpenGL actually had when the
+     * projection was first investigated. The comparison below keeps measuring that disagreement so the switch can be
+     * flipped on evidence: reading the matrices per group is the dominant cost of the whole immediate path.
+     */
+    private static final boolean MIRRORED_MATRICES = Boolean.getBoolean("celtium.vulkan.mirroredMatrices");
+
+    /** Largest absolute element difference seen between the mirrored matrices and the ones read from OpenGL. */
+    private float mirroredProjectionDelta = -1.0f;
+    private float mirroredModelViewDelta = -1.0f;
+    private int matrixComparisons;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -655,8 +669,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.matricesDirty) {
                 captureGlMatrices();
                 this.matricesDirty = false;
+                compareMirroredAndLiveMatrices();
             }
             int boundTexture = this.immediateState.boundTextureName();
+            if (MIRRORED_MATRICES) {
+                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
+                        this.glProjection, 0, 16);
+                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+                        this.glModelView, 0, 16);
+                this.matricesDirty = false;
+            }
             int[] state = celtium$captureState();
             long stateKey = celtium$stateKey(formatId, state);
             if (this.currentImmediateMesh == null
@@ -806,6 +828,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return key;
     }
 
+    /**
+     * Compares the mirrored matrix state with the matrices OpenGL reports, recording the largest difference seen.
+     * <p>
+     * This exists because the whole immediate path pays two {@code glGetFloatv} calls per matrix change (measured as
+     * the dominant per-batch cost). If the mirrored stack is faithful, those calls can go away; if it is not, the
+     * number says by how much, instead of leaving it to a guess.
+     */
+    private void compareMirroredAndLiveMatrices() {
+        if (this.matrixComparisons > 4000) {
+            return;
+        }
+        this.matrixComparisons++;
+        float projectionDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION),
+                this.glProjection);
+        float modelViewDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW),
+                this.glModelView);
+        this.mirroredProjectionDelta = Math.max(this.mirroredProjectionDelta, projectionDelta);
+        this.mirroredModelViewDelta = Math.max(this.mirroredModelViewDelta, modelViewDelta);
+    }
+
+    private static float maxDelta(float[] left, float[] right) {
+        float worst = 0.0f;
+        for (int i = 0; i < 16; i++) {
+            worst = Math.max(worst, Math.abs(left[i] - right[i]));
+        }
+        return worst;
+    }
+
     /** Moves the open group into the flush list together with the matrices it was built with. */
     private void closeCurrentImmediateGroup() {
         if (this.currentImmediateMesh != null && this.currentGroupUsed) {
@@ -849,6 +899,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
+                + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
