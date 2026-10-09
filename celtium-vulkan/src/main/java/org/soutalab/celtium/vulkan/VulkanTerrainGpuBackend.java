@@ -409,6 +409,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.List<String> trace = new java.util.ArrayList<String>();
     private float traceWorstDelta;
     private float worstModelViewDelta;
+    private boolean worldPassActive;
+    private int crossPassComparisonsSkipped;
     private String worstModelViewSample;
 
     private static String fmt3(double value) {
@@ -738,6 +740,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void ortho(double left, double right, double bottom, double top, double near, double far) {
+        this.worldPassActive = false;
         this.matricesDirty = true;
         float[] matrix = new float[16];
         // The OpenGL ortho matrix, written column-major, exactly as glOrtho builds it.
@@ -910,6 +913,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         frustum[14] = (2.0F * far * near) / (near - far);
         this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, frustum);
         this.derivedProjections++;
+        // The world pass installs a perspective projection; the overlay and the GUI install orthographic ones.
+        // That is enough to tell the passes apart for the mirror comparison, which is only meaningful within one.
+        this.worldPassActive = true;
         // The comparison cannot happen here: at this instant gluPerspective has not applied its result to GL yet, so GL
         // still holds the identity and any delta would measure the wrong thing. The flag defers it to the next hookable
         // operation after that call, which is the matrixMode(GL_MODELVIEW) that immediately follows it.
@@ -1282,6 +1288,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.matrixComparisons > 4000) {
             return;
         }
+        if (!this.worldPassActive) {
+            // Comparing here would compare the world pass's mirrored matrices with whatever pass is running - the overlay's
+            // translate(0, 0, -2000) turned up in this counter exactly that way, in a run that passed. The comparison is
+            // only meaningful while the pass that owns the mirror is the pass that is drawing, so it is skipped otherwise
+            // and counted separately.
+            this.crossPassComparisonsSkipped++;
+            return;
+        }
         if (!this.mirrorSeeded && false) {
             // One bootstrap read, once, before any comparison is recorded. The first dump showed the mirror's modelview
             // missing exactly the translation that was applied before the hooks were installed, so the stack starts from
@@ -1615,7 +1629,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + ",passSplits:" + this.passSplits + ",target:" + this.currentRenderTarget
                 + ",worstView[" + (this.worstModelViewSample == null ? "none" : this.worstModelViewSample) + "]"
                 + " trace[" + String.join(" ", this.trace) + "]"
-                + ",steadyComparisons:" + this.steadyComparisons
+                + ",steadyComparisons:" + this.steadyComparisons + ",crossPassSkipped:" + this.crossPassComparisonsSkipped
                 + ",steadyDelta=proj:" + this.steadyProjectionDelta + ",view:" + this.steadyModelViewDelta
                 + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
                 + ",cameraSeeds:" + this.cameraSetupSeeds

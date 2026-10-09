@@ -123,7 +123,12 @@ coordinate rather than a world one. **Correction:** the 2000 is **not** the fixt
 reports `steadyDelta=view:2000.0` **and passes** - and 2000 is `setupOverlayRendering`'s `translate(0, 0, -2000)`. So the
 symptom S10 describes is present in the ordinary suite: a comparison that lands in the overlay pass while the mirror holds
 the world pass's modelview. The fixture forces it into the verdict; it does not cause it, and it is gated off so the suite
-keeps producing captures. **The fix is not to compare across passes.** **Open:** draw order across GL
+keeps producing captures. **The fix is not to compare across passes - and it is now in.** The world pass installs a perspective projection, which is
+where `applyDerivedProjection` already fires; the overlay and GUI install orthographic ones, which the existing `ortho` hook
+already sees. Scoping the comparison to the world pass moves `view` from **2000.0 to 1.62** with the renderer unchanged, and
+reports that **1140 of 2262 comparisons had been cross-pass** - about half of the number this project had been quoting.
+The residual 1.62 is now measured only in the pass that owns the mirror, which is the first time that figure means the
+renderer rather than the mixture. **Open:** draw order across GL
 fallback, clears and FBO switches - the fix - and reading what the 2000 is.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.

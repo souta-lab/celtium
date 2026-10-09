@@ -4031,3 +4031,38 @@ identity the group key now carries is the raw material for that, and the target 
 One more instrument lesson, the fourth of its kind: the gated run also shows 2732 passes against the 1900 of the failing one,
 which is what a fixture that suppresses the capture looks like from the outside - fewer passes, no screenshot, a FAILED
 status. A test that breaks the instrument cannot report on it.
+
+---
+
+## The comparison is scoped to its pass, and half of it had been noise
+
+The fix the audit names - do not compare across passes - is now in, and it needed no new hooks. The world pass installs a
+**perspective** projection, which is exactly where `applyDerivedProjection` already fires; the overlay and the GUI install
+**orthographic** ones, which is exactly what the existing `ortho` hook already sees. Those two facts are enough to tell the
+passes apart:
+
+| | before | after |
+|---|---|---|
+| modelview delta | **2000.0** | **1.62** |
+| projection delta | 1.6200542E-4 | 1.6200542E-4 |
+| comparisons | 1132 | 1122 in-pass, **1140 skipped as cross-pass** |
+| fixture | PASSED | PASSED, `nativeTerrainVerified True`, 2733 passes |
+
+Two things worth stating precisely.
+
+**The metric improved by three orders of magnitude** - 2000 to 1.62 - and nothing about the renderer changed; what changed
+is that the overlay's `translate(0, 0, -2000)` no longer enters a comparison it never belonged to. That is the difference
+between a number that describes the renderer and a number that describes the instrument.
+
+**Half of the comparisons had been cross-pass.** 1140 skipped against 1122 kept is not a marginal contamination: the
+counter this project has been quoting for several rounds was, by its own accounting, about fifty per cent measurements of
+one pass against another. Every "the mirror is off by X" statement in that period was drawn from that mixture - including
+the 1.62 that three rounds of seeding tried to fix.
+
+Which leaves the residual as a clean number for the first time: **1.62, measured only in the pass that owns the mirror**.
+That is the camera translation the trace showed the mirror sometimes having and sometimes not, now with the cross-pass noise
+removed from the question. Whether it is a real gap in the world pass or a further sampling artefact is the next thing the
+now-scoped counter can answer, and for the first time the answer will be about the renderer rather than about the mixture.
+
+This also closes the loop on the direction: the pass identity that made this possible came from the two hooks added for
+S10's group key, and it fixed a measurement before it fixed a draw. Pass ownership is load-bearing in both places.
