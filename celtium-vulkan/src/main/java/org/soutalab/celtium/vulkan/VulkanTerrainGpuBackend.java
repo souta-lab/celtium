@@ -394,6 +394,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int matrixExactComparisons;
     private String matrixDump;
     private boolean mirrorSeeded;
+    private int derivedProjections;
+    private int derivedProjectionRefusals;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -756,6 +758,30 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     @Override
+    /**
+     * Writes the world projection the way {@code Project.gluPerspective} would, from the values Minecraft used.
+     * <p>
+     * The mirrored stack sees {@code loadIdentity} for the projection and never sees the frustum, so this is the only thing
+     * that puts a real projection in it. The acceptance is the existing worst-sample counter: {@code matrixMirrorDelta}'s
+     * projection term should fall from 2.0006 to near zero.
+     */
+    public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
+        float[] projection = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        if (fovDegrees <= 0.0F || aspect <= 0.0F || near <= 0.0F || far <= near) {
+            this.derivedProjectionRefusals++;
+            return;
+        }
+        float radians = (float) Math.toRadians(fovDegrees * 0.5F);
+        float f = 1.0F / (float) Math.tan(radians);
+        java.util.Arrays.fill(projection, 0.0F);
+        projection[0] = f / aspect;
+        projection[5] = f;
+        projection[10] = (far + near) / (near - far);
+        projection[11] = -1.0F;
+        projection[14] = (2.0F * far * near) / (near - far);
+        this.derivedProjections++;
+    }
+
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
         this.immediateBatchesOffered++;
@@ -1422,6 +1448,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
+                + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
                 + " matrixDump[" + (this.matrixDump == null ? "none" : this.matrixDump) + "]"
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)

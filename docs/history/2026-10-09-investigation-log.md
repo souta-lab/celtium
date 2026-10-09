@@ -3565,3 +3565,34 @@ its SRG name is the next lookup - or reproducing its rules from the player's sta
 For the modelview the relation to verify before writing any code is whether the mirrored translation equals
 `-RenderManager.viewerPosX/Y/Z`, which is what vanilla's camera transform amounts to. That is one report field and one run,
 and it is the same measure-then-change order that stopped the `glGetFloatv` removal when the mirror turned out to be empty.
+
+---
+
+## The derived projection is computed 3409 times and the comparison still sees identity
+
+The projection now comes from Minecraft's own numbers: `func_78481_a` is hooked at its return for the field-of-view
+modifier, and the backend does the `gluPerspective` arithmetic with `displayWidth / displayHeight`, `0.05F` and
+`renderDistanceChunks * 16 * SQRT_2`. The counters say it runs - `derivedProj:3409, refused:5` - and the deltas say it made
+no difference at all:
+
+```
+matrixMirrorDelta=proj:2.0005527, view:1.62, comparisons:1163, exact:0, derivedProj:3409, refused:5
+proj max|diff| now 2.0006 (was 2.0006)   mirror still the identity matrix
+```
+
+The reason is not that the arithmetic is wrong; it is that **the fix and the metric are about different moments**. The
+derivation happens inside the world pass, where it belongs. The comparison happens whenever a batch is offered, and the
+worst sample is taken from a frame where the projection stack has been reset again by another pass - the GUI and the hand
+set their own projections through the same hooked `matrixMode` + `loadIdentity` pair. So the mirror is correct for the world
+pass and identity for whatever pass the sample happened to land in, and the worst-of-1163 counter reports the latter.
+
+The acceptance therefore has to move to where the change is: **compare the derived projection with GL at the instant it is
+derived**, which is one read in a measurement-only path and says whether the arithmetic matches Minecraft's frustum. That is
+a different question from "which projection should a given batch use", which is the pass-ownership problem the audit lists
+as S10 - a batch's FBO, viewport and pass are not part of its group key, and that is what makes the mirror's projection
+ambiguous in the first place.
+
+So this round produced a working derivation and a metric that cannot see it, and the honest state is: the projection is now
+computed from Minecraft state rather than mirrored, **not yet verified against GL**, and the verification is one line in the
+right place. Saying "the projection is fixed" from `derivedProj:3409` would repeat the mistake this session has made and
+recorded four times already - a counter that rises is not a value that is right.

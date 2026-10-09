@@ -137,6 +137,13 @@ public interface TerrainGpuBackend {
      * @param drawMode      Minecraft/OpenGL draw mode
      * @return {@code true} when the batch was consumed; {@code false} means the caller must draw it itself
      */
+    /**
+     * Sets the world projection from Minecraft's own numbers - field of view, aspect, near and far - instead of from a
+     * mirrored GL call. The backend computes {@code gluPerspective} itself; see {@code EntityRendererMixin}.
+     */
+    default void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
+    }
+
     default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                          int vertexCount, int drawMode) {
         return false;
