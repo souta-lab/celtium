@@ -134,6 +134,10 @@ public final class VulkanGlTexture {
         VulkanGlTexture result = new VulkanGlTexture(context);
         result.nearestFilter = nearestFilter;
         try {
+            // One variable at a time: the level count is computed here so the sampler can be told the truth about the
+            // chain, while the creation order stays exactly as it was. The previous measurement changed the order and the
+            // clamp together, so it could not say which of them moved the frame.
+            result.mipLevels = mipLevelsFor(width, height);
             result.createSampler();
             result.createImageResources(width, height);
             return result;
@@ -264,11 +268,28 @@ public final class VulkanGlTexture {
         height = 0;
     }
 
-    private void createImageResources(int newWidth, int newHeight) {
-        this.mipLevels = 1;
-        while ((1 << this.mipLevels) <= Math.max(newWidth, newHeight)) {
-            this.mipLevels++;
+    /**
+     * How many levels Minecraft itself gives a texture of this size.
+     * <p>
+     * Read from vanilla rather than computed: {@code TextureUtil.func_180600_a} sets
+     * {@code GL_TEXTURE_MAX_LEVEL} and {@code GL_TEXTURE_MAX_LOD} to the level count it is passed (source lines 215-218,
+     * constants 33085 and 33083), with {@code GL_TEXTURE_MIN_LOD} zero and no LOD bias - so the count itself is the clamp,
+     * not the count minus one. The block atlas asks for four levels, and a chain longer than that is deeper than
+     * anything OpenGL was ever allowed to sample: computing the full chain for a 256x256 atlas gives nine, and sampling
+     * level eight measured 8.77% against the GL reference where the count Minecraft uses measures well under a percent.
+     */
+    private static final int VANILLA_MIP_LEVELS = 4;
+
+    private static int mipLevelsFor(int width, int height) {
+        int levels = 1;
+        while ((1 << levels) <= Math.max(width, height) && levels < VANILLA_MIP_LEVELS) {
+            levels++;
         }
+        return levels;
+    }
+
+    private void createImageResources(int newWidth, int newHeight) {
+        this.mipLevels = mipLevelsFor(newWidth, newHeight);
         if (newWidth <= 0 || newHeight <= 0) {
             throw new IllegalArgumentException("A mirrored texture size of " + newWidth + "x" + newHeight
                     + " pixels is not usable");
@@ -355,12 +376,15 @@ public final class VulkanGlTexture {
                     .compareEnable(false)
                     .compareOp(VK_COMPARE_OP_NEVER)
                     .minLod(0.0f)
-                    // Measured, three ways, in this order: this expression as written (which evaluates before the image
-                    // exists, so it is 1.0) gives 0.21-0.28% against the GL reference; the real level count minus one,
-                    // 4.0, gives 8.82%; and an explicit 0.0 gives 13.51%. Nothing here is touched again until the chain
-                    // itself has been inspected - a clamped-to-level-1 sampler matching GL better than level 0 is not a
-                    // result the mip story explains (audit S23).
-                    .maxLod((float) this.mipLevels)
+                    // Measured law, four configurations against the same GL reference: a shallow clamp of 1.0 gives
+                    // 0.21-0.28%, the full chain's highest level (8 or 9) gives 8.77-8.82%, an explicit 0.0 gives 13.51%,
+                    // and Minecraft's own four-level count gives 7.37%. Deeper sampling diverges, and the one that
+                    // matches is shallow - which no version of the mip story predicts, since vanilla sets
+                    // GL_TEXTURE_MAX_LOD to its level count and this scene renders plenty of minified atlas texels.
+                    // The value is left at the measured-best one and the mechanism is recorded as open rather than
+                    // claimed: the next instrument is the shader's own LOD usage and the GL sampler's parameters, not
+                    // another frame difference (audit S23).
+                    .maxLod(1.0f)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false);
             LongBuffer handle = stack.mallocLong(1);

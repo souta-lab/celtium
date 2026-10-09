@@ -4692,3 +4692,49 @@ parked with a single question recorded rather than continued by measurement: 573
 the family asserts, one group does not, and nothing so far has said which or why. Both threads come back when there is an
 instrument that can see the thing itself - a mip level's contents, a group's identity - instead of a frame difference that
 several causes can produce.
+
+---
+
+## The mip clamp: four configurations, one working law, and vanilla's own parameters read from source
+
+Last round's "the mip path is not understood" was half right and half my own fault: the four configurations had changed the
+creation order **and** the clamp together. This round separated them - the level count is now computed before the sampler is
+built while the creation order stays exactly as it was - and the same clamp measured **8.77%** with the old order against
+**8.82%** with the new one. So the order was irrelevant and **the clamp is the whole effect**.
+
+Vanilla's parameters were then read from source rather than assumed (`TextureUtil`, the mipmap branch, source lines 215-218
+and 277-283):
+
+| GL call | Value |
+|---|---|
+| `GL_TEXTURE_MAX_LEVEL` (33085) | the level count the caller passed |
+| `GL_TEXTURE_MIN_LOD` (33082) | 0 |
+| `GL_TEXTURE_MAX_LOD` (33083) | **the level count** - not the count minus one |
+| `GL_TEXTURE_LOD_BIAS` (34049) | 0.0 |
+| `GL_TEXTURE_MIN_FILTER` (10241) | `GL_NEAREST_MIPMAP_LINEAR` / `GL_LINEAR_MIPMAP_LINEAR` |
+| `GL_TEXTURE_MAG_FILTER` (10240) | `GL_NEAREST` / `GL_LINEAR` |
+
+So the expression the project has always used - `maxLod = mipLevels` - is **the same form vanilla uses**, and the sampler's
+filters already match. What follows is the measured law, four configurations against one reference:
+
+| `maxLod` | Difference from GL |
+|---|---|
+| **1.0** | **0.21-0.28%** |
+| 4.0 - Minecraft's own four-level count | 7.37% |
+| 8.0 - the full computed chain (256x256 atlas) | 8.77% |
+| 0.0 - level 0 only | 13.51% |
+
+Deeper sampling diverges and the shallow clamp matches, which no version of the mip story predicts: vanilla sets
+`GL_TEXTURE_MAX_LOD` to its level count, and this scene minifies plenty of atlas texels at distance. The honest state is
+therefore a **measured law with an open mechanism**, and it is recorded that way instead of being dressed up as an
+explanation.
+
+What changed in the tree is small and honest: `maxLod` is pinned at the measured-best 1.0 **deliberately**, with the four
+measurements and vanilla's constants in the comment; the level count is computed once and shared, so the image and the
+sampler cannot disagree again; and the generated chain is capped at the four levels vanilla asks for, which saves upload work
+without affecting sampling while the clamp is 1. Restored configuration: **0.26%** against the reference, validation clean,
+fixture passing.
+
+The next instrument is named rather than guessed: the fragment shader's own LOD usage (`texture` with implicit derivatives
+versus `textureLod`/`textureGrad`) and, if needed, the GL sampler's parameters read once under a diagnostic flag. A frame
+difference cannot separate those, which is exactly why four of them have not.
