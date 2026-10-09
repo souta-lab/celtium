@@ -551,7 +551,23 @@ mid (136.5, 140.9, 130.4) / near (133.1, 140.0, 131.2)、verdict は exit 0 / va
 が出ており、**失敗時に frame が開いたまま残り、次フレームで別の例外→クラッシュ→ヘッドレスはクラッシュ画面で停止**
 という連鎖だった（validationClean は true / 0 messages のまま＝validationでは検出されない）。
 
-**修正（このターンで解決）**: frame を開く経路は4系統（terrain render / present bridge / composite / present）あり、
+**待機タイムアウト注入の検証（このターン・未完）**: `-Dceltium.vulkan.failIdleAfter=60`（定常状態で発火）では
+**exit 124（ハング）→ 修正後 exit 255（クラッシュ）** と推移し、**まだ run が終わらない**。判明した連鎖:
+
+1. `waitForIdle()` の失敗で `gpuStalled` が立ち、frame が開いたまま → `endFrame()` のGL書き戻しがVulkanシグナルを
+   待ち続ける（`abandonFrame` を待機失敗経路にも追加して解消）。
+2. 次に `flushImmediateWindow()` の `GPU stalled with accepted geometry pending` が**render loop まで到達**して
+   クラッシュ → **例外ではなく計数して降りる**方式に変更（`stalledGeometryDrops` / `stalledGeometryDroppedBatches`、
+   監査の「全dropを数える／falseを描画済みとしない」に沿う）。
+3. 次に `beginCommands()` の `pending backend command buffer did not complete` が発覚。
+
+**この過程で通常経路を一度壊した（重要）**: `flushImmediateWindow()` の早期returnより前に `beginCommands()` を
+ガード付きで呼ぶ変更を入れたところ、command buffer が recording のまま残り、**通常runが exit 255 でクラッシュ**した
+（`cannot settle/retire a stalled GPU: region eviction`）。当該パッチは**撤回済み**で、通常runは
+exit 0 / mid (136.5,140.9,130.4) / PASSED / target受入 exit 0 に復帰。**ホットパスへの前置ガードは早期returnと
+両立しない**という教訓として残す。待機タイムアウト経路は引き続き未解決（`settleGpu` の teardown 経路が次の候補）。
+
+**修正（submit失敗・解決済み）**: frame を開く経路は4系統（terrain render / present bridge / composite / present）あり、
 失敗時に開いたまま残っていた。`VulkanFrameTarget` を**自己修復**にした:
 
 - `beginFrame()`: 前のframeが開いていたら**例外を投げずに放棄して計数**（`leakedFrames`）し、続行する。

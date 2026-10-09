@@ -539,6 +539,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Inject a wait failure after this many waits; 0 disables. See the comment in waitForIdle. */
     private static final int FAIL_IDLE_AFTER = Integer.getInteger("celtium.vulkan.failIdleAfter", 0).intValue();
     private int idleWaits;
+    /** Windows abandoned because the device stalled; the batches they held are lost and counted. */
+    private int stalledGeometryDrops;
+    private int stalledGeometryDroppedBatches;
     private int injectedIdleFailures;
     private boolean blendObserved;
     private int observedBlendSrc = -1;
@@ -2213,7 +2216,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
-        if (this.gpuStalled) throw new IllegalStateException("GPU stalled with accepted geometry pending");
+        if (this.gpuStalled) {
+            // A stalled device cannot draw this window, and the batches it holds were already cancelled in OpenGL when
+            // they were accepted, so they cannot be handed back. Throwing here reached Minecraft's render loop and the
+            // client died on the crash screen - which the idle-failure injection measured as exit 124 with no report.
+            // The loss is counted and named instead, so the run ends with a message and the verdict says the terrain is
+            // not verified (audit: count every drop rather than claim a draw that did not happen).
+            int dropped = 0;
+            for (Object[] group : this.immediateGroups) {
+                dropped += ((Integer) group[12]).intValue();
+            }
+            this.stalledGeometryDrops++;
+            this.stalledGeometryDroppedBatches += dropped;
+            if (this.stalledGeometryDrops <= 3) {
+                record("GPU stalled: dropping " + dropped + " accepted immediate batches (total "
+                        + this.stalledGeometryDroppedBatches + ")");
+            }
+            this.immediateGroups.clear();
+            this.pendingImmediateIndices = 0;
+            return;
+        }
         if (this.commandState.recording()) throw new IllegalStateException("nested immediate command recording");
         if (!supportedImmediateTarget()) throw new IllegalStateException("accepted target disappeared before flush");
         VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
@@ -4477,6 +4499,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (FAIL_IDLE_AFTER > 0 && ++this.idleWaits >= FAIL_IDLE_AFTER) {
             this.injectedIdleFailures++;
             this.gpuStalled = true;
+            // Nothing was submitted, so the frame's semaphores are never consumed. Leaving the frame open made the
+            // caller's endFrame() wait in the GL write-back for a Vulkan signal that cannot come: the injected idle
+            // failure then hung the client (exit 124, report missing) instead of ending the run with a message.
+            this.frameTarget.abandonFrame("injected idle failure");
             return false;
         }
         if (this.fence == 0 || !this.submissionPending) {
@@ -4490,6 +4516,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
                         + "s, so the last submission is not completing; not draining the queue");
                 this.gpuStalled = true;
+                this.frameTarget.abandonFrame("fence wait timed out");
                 return false;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {

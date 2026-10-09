@@ -314,7 +314,16 @@ atlas HF の差（vanilla run 34.77 vs mod導入run 32.01）は `TextureAtlasSpr
 次の優先は監査バックログ（失敗経路・coverage・texture所有）へ移す。特に**松明の炎（アニメーションテクスチャ）が未描画**なのは独立の欠陥で、
 sprite animation の移植を進める。
 
-**失敗経路（解決済み）**: frame を開く4系統のうち失敗時に開いたまま残るものがあったため `VulkanFrameTarget` を
+**待機タイムアウト注入（未完）**: `failIdleAfter=60` は exit 124（ハング）→ 修正後 exit 255（クラッシュ）で、まだ終わらない。
+(1) waitForIdle失敗でframeが開いたまま→GL書き戻しが待つ（abandonFrame追加で解消）。(2) `GPU stalled with accepted
+geometry pending` が render loop へ到達してクラッシュ→**計数して降りる**方式へ変更（stalledGeometryDrops）。
+(3) `beginCommands()` の "pending backend command buffer did not complete" が次の候補。
+**この過程で通常経路を一度壊した**: 早期returnより前に beginCommands をガード付きで呼ぶと buffer が recording のまま
+残り、通常runが exit 255（`cannot settle/retire a stalled GPU: region eviction`）になった。パッチは撤回済みで
+通常runは exit 0 / mid (136.5,140.9,130.4) / PASSED / target受入 exit 0 に復帰。教訓: ホットパスへの前置ガードは
+早期returnと両立しない。未解決は `settleGpu` の teardown 経路が次の候補。
+
+**失敗経路（submit失敗・解決済み）**: frame を開く4系統のうち失敗時に開いたまま残るものがあったため `VulkanFrameTarget` を
 自己修復にした（beginFrame は前frameを放棄して計数／endFrame は放棄済みなら no-op／abandonFrame はGPU作業なし）。
 結果: 注入run が **exit 124（165s ハング）→ exit 1（24.2s、report あり）** になり、`vulkanErrors=2`・
 `nativeTerrainVerified=false` として失敗が記録され、"still open" は0件。通常run・target受入は無影響。
