@@ -422,6 +422,19 @@ public final class VulkanSwapchain {
      */
     public String presentImage(long sourceImage, int sourceLayout, int width, int height, long bridgeWaitSemaphore,
             long bridgeDoneSemaphore) {
+        return presentImage(sourceImage, sourceLayout, width, height, bridgeWaitSemaphore, bridgeDoneSemaphore,
+                sourceLayout);
+    }
+
+    /**
+     * Presents an image and hands it back in {@code sourceLayoutAfter}.
+     * <p>
+     * The audit's B asks for the source to be returned in the layout its owner expects: the frame target keeps using the
+     * shared colour image as a colour attachment, so leaving it in the transfer layout would force the next frame to
+     * guess. The layout it goes back to is passed in rather than assumed here.
+     */
+    public String presentImage(long sourceImage, int sourceLayout, int width, int height, long bridgeWaitSemaphore,
+            long bridgeDoneSemaphore, int sourceLayoutAfter) {
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
             return "present image: no swapchain or no source image";
         }
@@ -494,6 +507,7 @@ public final class VulkanSwapchain {
                 region.get(0).dstOffsets().get(1).set(this.width, this.height, 1);
                 vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+                transitionForBlitSourceBack(stack, commands, sourceImage, sourceLayoutAfter);
                 transitionToPresent(stack, commands, image);
             } finally {
                 // Waiting on the acquire semaphore and signalling a render-finished one: the submission writes the
@@ -572,6 +586,25 @@ public final class VulkanSwapchain {
             this.renderFinishedSemaphores = pool;
         }
         return this.renderFinishedSemaphores[imageIndex % this.renderFinishedSemaphores.length];
+    }
+
+    /** Moves the source image out of the transfer layout, back to the layout its owner uses it in. */
+    private void transitionForBlitSourceBack(MemoryStack stack, VkCommandBuffer commands, long image, int target) {
+        if (target == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+            return;
+        }
+        org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barrier =
+                org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default()
+                .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                .newLayout(target)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image);
+        barrier.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+        barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_MEMORY_WRITE_BIT);
+        vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null,
+                barrier);
     }
 
     /** Moves the source image to the layout a blit reads from, from wherever the frame left it. */

@@ -367,6 +367,9 @@ public final class VulkanFrameTarget {
                     GL_NEAREST);
             long afterColor = System.nanoTime();
             this.tColorIn += afterColor - step;
+            // The bridge's commands leave the shared colour image as a colour attachment from here on; recording it is
+            // what lets the present path stop being told a layout.
+            this.colorImageLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             glBlitNamedFramebuffer(fbo, scratchFbo, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
                     GL_NEAREST);
             long afterDepth = System.nanoTime();
@@ -392,6 +395,24 @@ public final class VulkanFrameTarget {
      * the handle is returned as the {@code long} the caller's Vulkan calls take. The caller does not own it and must
      * not destroy it.
      */
+    /**
+     * {@return the layout the shared colour image is currently in}, as far as Vulkan is concerned.
+     * <p>
+     * The bridge's own commands are the only ones that move it - the copy-in leaves it as a colour attachment, and GL's
+     * blits are not Vulkan commands and do not enter this bookkeeping - so this stays consistent across a frame and a
+     * caller may read it instead of asserting a layout.
+     */
+    public int colorImageLayout() {
+        return this.colorImageLayout;
+    }
+
+    /** Records the layout a caller left the shared colour image in. */
+    public void noteColorImageLayout(int layout) {
+        this.colorImageLayout = layout;
+    }
+
+    private int colorImageLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
+
     public long colorImage() {
         checkAlive();
         return color.image;

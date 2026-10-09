@@ -1913,3 +1913,29 @@ The attempt did not land. Two text-surgery failures, the same pair this log has 
 raised before applying the swapchain and backend halves. Nothing about the change is therefore in the tree; it is reverted,
 the build is green, and the design above is what the next attempt implements - with a statement read before it is edited,
 and with every replacement asserted rather than assumed.
+
+---
+
+## The shared image's layout is tracked, not asserted, and handed back
+
+The design recorded last round is implemented, and this time the edits were made by reading each statement first and
+asserting every replacement - the two habits whose absence cost the previous two attempts.
+
+- `VulkanFrameTarget` tracks its own shared colour image layout. The assignment sits after the copy-in statement, because
+  that is the moment the bridge's commands put the image into the colour-attachment layout, and it exposes
+  `colorImageLayout()` / `noteColorImageLayout(int)`. GL's blits are not Vulkan commands, so they do not enter this
+  bookkeeping and it stays consistent across a frame.
+- `presentImage` takes the source layout from that tracker and a seventh argument for the layout to hand the image back in,
+  recording a barrier from `TRANSFER_SRC_OPTIMAL` to it between the blit and the transition to present.
+- The backend reads the tracked layout, passes the colour-attachment layout as the one to restore, and records the
+  hand-back so the owner's bookkeeping follows what the commands actually did.
+
+Measured with the harness guard active:
+
+| Configuration | Result |
+|---|---|
+| Frame present | **PASSED, `nativeTerrainVerified True`, 3264 passes, 0 messages** |
+| Default (terrain + immediate) | **PASSED, `nativeTerrainVerified True`, 1665 passes, 0 messages** |
+
+The audit's B therefore keeps only the swapchain-recreation case, which needs a resize or an out-of-date result that this
+harness cannot produce.

@@ -766,9 +766,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.frameTarget.beginFrameForPresent();
                     long bridgeWait = this.frameTarget.waitSemaphore();
                     long bridgeDone = this.frameTarget.doneSemaphore();
-                    String result = this.swapchain.presentImage(this.frameTarget.colorImage(),
-                            org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
-                            this.targetHeight, bridgeWait, bridgeDone);
+                    int sourceLayout = this.frameTarget.colorImageLayout();
+                    int restoredLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                    String result = this.swapchain.presentImage(this.frameTarget.colorImage(), sourceLayout,
+                            this.targetWidth, this.targetHeight, bridgeWait, bridgeDone, restoredLayout);
+                    // The present moved the shared image through the transfer layout and this hands it back, so the
+                    // owner's bookkeeping follows what the commands actually did.
+                    this.frameTarget.noteColorImageLayout(restoredLayout);
                     // Report both facts before anything acts on them: the previous attempt to fail closed on them
                     // broke the run (four terrain passes instead of two thousand), and which flag was false is the
                     // question to answer with a measurement rather than another guess.
