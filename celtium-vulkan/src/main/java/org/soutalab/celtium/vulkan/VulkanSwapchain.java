@@ -179,7 +179,32 @@ public final class VulkanSwapchain {
             copy.get(0).imageOffset().set(Math.max(0, (width / 2) - (size / 2)),
                     Math.max(0, (height / 2) - (size / 2)), 0);
             copy.get(0).imageExtent().set(size, size, 1);
+            // The image has just been presented, so it is in VK_IMAGE_LAYOUT_PRESENT_SRC_KHR. A transfer cannot read
+            // it from there and the layout a descriptor was written with is checked at draw time: the validation layer
+            // reported VUID-vkCmdDraw-None-09600 ("expects ... TRANSFER_SRC_OPTIMAL--instead, current layout is
+            // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR") for every readback this instrumentation made. The two barriers below are
+            // what the copy needs: presentable -> transfer source, and back again so the next present is legal.
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toTransfer =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            toTransfer.get(0).sType$Default()
+                    .oldLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR).newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image).srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+            toTransfer.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1)
+                    .baseArrayLayer(0).layerCount(1);
+            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null,
+                    toTransfer);
             vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, copy);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer backToPresent =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            backToPresent.get(0).sType$Default()
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL).newLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(0);
+            backToPresent.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1)
+                    .baseArrayLayer(0).layerCount(1);
+            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, null,
+                    null, backToPresent);
             context.endCommands(commands);
 
             PointerBuffer mapped = stack.mallocPointer(1);

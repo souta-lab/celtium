@@ -182,7 +182,28 @@
 - 未確認のまま残る部分: **window/compositor への到達**（提示画像の読み戻しは取れるが、実際の画面出力は
   X11/Wayland の capture が必要。方法の調査は未了）。
 
-**次の一手**: (1) present 経路のレイアウト遷移と記述子の宣言を突き合わせて `VUID-vkCmdDraw-None-09600` を解消する、
+**修正（このターン・解決）**: validation メッセージの全文で原因が確定した。
+
+```
+expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+--instead, current layout is VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+```
+
+`readBackMean()`（presentReadback の計器）が **レイアウト遷移なしで `vkCmdCopyImageToBuffer` を記録**しており、
+提示済み画像（PRESENT_SRC_KHR）をそのまま読もうとしていた。対策として **提示→TRANSFER_SRC のバリアと、
+コピー後に PRESENT_SRC へ戻すバリア**を追加した。
+
+| 指標 | 修正前 | 修正後 |
+|---|---|---|
+| `VUID-vkCmdDraw-None-09600` | 6件 | **0件** |
+| verdict | exit 1 / validationClean=false | **exit 0 / validationClean=true / msgs=0 / fixture PASSED** |
+| present | presentFailures=0 | **presentFailures=0（維持）** |
+
+- つまり**提示そのものは元から成功**しており、欠陥は計器（読み戻し）側にあった。通常runは present 無効なので影響なし。
+- 残る: `presented image mean=` の値を report に出す（提示画像にマーカー色が入った証拠）、および
+  window/compositor capture の可否調査。
+
+**（旧メモ）** 次の一手: (1) present 経路のレイアウト遷移と記述子の宣言を突き合わせて `VUID-vkCmdDraw-None-09600` を解消する、
 (2) `presentReadback` の平均値がマーカー色と一致することを記録して「提示画像にフレームが入った」証拠を取る、
 (3) window/compositor capture の可否を調べる（取れない場合は不足条件を明記）。
 
