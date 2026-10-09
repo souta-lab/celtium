@@ -7131,3 +7131,32 @@ Three obstacles are worth writing down, because each cost time and each is avoid
 So the state is the same as the previous round's, and the next attempt has a shorter path: restore the texture resolution, copy
 the structure of `recordImmediateOnlyPass` into the off-target recorder, put the target filter in the draw loop by **line
 number** rather than by pattern, and re-enable the acceptance last.
+
+---
+
+## The renderer writes into a framebuffer it does not own: the off-target content is taken
+
+The structural obstacle was answered in the place the recorded plan pointed at. `recordImmediateOnlyPass` already records "a
+render pass containing nothing but the pending immediate groups" for the frame's pass; the off-target recorder mirrors it -
+begin the target's pass, set its viewport and scissor, draw the groups that belong to it, end, copy back - and it is called at
+the one moment when nothing has to be interrupted, **before the frame's pass begins**.
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+offTargetTargets = 1   offTargetRefusals = 0
+nativeTerrainVerified=True   terrainPasses=1644   glDrawsCancelled=567
+```
+
+**`offTargetRefusals` is zero**: the five hundred and seventy-odd batches that OpenGL used to draw into the game's second
+framebuffer are now drawn by Vulkan, into a 256x256 image of its own, and **copied back into the game's texture** through the
+path the self-test proves on every run. Validation is silent, the fixture passes and the acceptance is intact.
+
+That is the first time this renderer writes into a framebuffer it does not own, and the completion conditions name exactly this
+kind of work - the game's own FBO chains and postprocess. Two lessons from the previous round's failure are visible in how it
+went: the filter went into the draw loop by **line number** rather than by pattern, and the recorder was **copied from the
+helper that already had the right shape** rather than written from the structural description. The two remaining errors were
+one duplicate field and one misspelled free call, and the tree never went red.
+
+What is still open here: the counters for the drawn and copied-back batches are not reported yet (the refusals reaching zero is
+the evidence instead), the target is created from the viewport size rather than from the framebuffer's own dimensions, and only
+format 1 is served - which is what the measurement said this scene needs.

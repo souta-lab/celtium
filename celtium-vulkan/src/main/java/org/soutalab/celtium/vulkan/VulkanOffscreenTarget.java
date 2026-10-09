@@ -323,6 +323,7 @@ public final class VulkanOffscreenTarget {
     }
 
     private boolean selfTestPassed;
+    private int glTextureId;
     private int selfTestTexture;
 
     /** The one memory type this target needs: device-local, since nothing reads it from the host yet. */
@@ -424,6 +425,27 @@ public final class VulkanOffscreenTarget {
                     org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE,
                     org.lwjgl.system.MemoryUtil.memByteBuffer(pointer.get(0), (int) bytes));
             vkUnmapMemory(context.device(), readbackMemory);
+        }
+    }
+
+    /** The game's colour texture for this target; the copy-back writes into it. Zero until resolved. */
+    public int glTextureId() {
+        return glTextureId;
+    }
+
+    /**
+     * Resolves the GL texture this target mirrors, while the game's framebuffer is still bound - afterwards there is nothing
+     * to ask. The integer query with a buffer is the form LWJGL 3 offers here.
+     */
+    public void resolveGlTexture() {
+        java.nio.IntBuffer name = org.lwjgl.system.MemoryUtil.memAllocInt(1);
+        try {
+            org.lwjgl.opengl.GL30C.glGetFramebufferAttachmentParameteriv(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER,
+                    org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0,
+                    org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, name);
+            this.glTextureId = name.get(0);
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(name);
         }
     }
 

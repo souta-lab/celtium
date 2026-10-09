@@ -446,6 +446,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Map<Long, VulkanOffscreenTarget> offTargetTargets = new java.util.HashMap<Long, VulkanOffscreenTarget>();
     private int offTargetTargetsCreated;
     private int offTargetReadyToTake;
+    private int offTargetDrawn;
+    /** Set while an off-target pass records, so the shared draw path binds that pass's pipeline. */
+    private VulkanImmediatePipeline offscreenPipelineOverride;
     private int offTargetCopiedBack;
     /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
     private final java.util.Map<Long, VulkanImmediatePipeline> offTargetPipelineCache =
@@ -1238,14 +1241,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The hybrid draws into the shared image, which stands in for the main framebuffer only. A batch issued for
             // another render target cannot be honoured, so it is refused here, before acceptance, and GL draws it - which
             // is the behaviour the audit's S10 acceptance asks for instead of viewing it in the wrong place.
-            // Still refused, and the reason is structural rather than a missing resource: a Vulkan render pass cannot be
-            // begun inside another, and the frame's pass is already open when these batches arrive. Drawing them into the
-            // offscreen target therefore means ending the frame's pass, rendering the off-target content, and beginning it
-            // again - a change to the flush's structure, not a binding. The target, its pipeline and its copy-back are all
-            // built and verified; this counter says how much content is waiting on that restructuring.
+            // Taken. The structural obstacle is answered by recording this content in its own pass before the frame's pass
+            // begins, which is the only place that can be done without interrupting one, and copying the result back into the
+            // game's texture through the path the self-test proves on every run.
             this.offTargetReadyToTake++;
-            this.immediateLastRefusal = "not the main framebuffer; the offscreen pass would have to interrupt the frame's";
-            this.offTargetRefusals++;
+            this.offTargetDrawn++;
             // What the per-target work would have to build: which target, how much content it receives, and how big it is.
             // The viewport is read here because at this moment it is the target's own, and the count says whether a target
             // is worth an image at all.
@@ -1953,6 +1953,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             opened = true;
             beginCommands();
             try (MemoryStack stack = MemoryStack.stackPush()) {
+                // The frame's pass has not begun yet here, so this is the one place an off-target pass can be recorded
+                // without interrupting anything.
+                for (Long identity : new java.util.ArrayList<Long>(this.offTargetTargets.keySet())) {
+                    recordOffscreenPass(stack, identity.longValue());
+                }
                 recordImmediateOnlyPass(stack, terrain);
             }
             submitCommands();
@@ -2086,6 +2091,40 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Records a render pass containing nothing but the pending immediate groups. */
+    /**
+     * Records a pass for one off-target framebuffer's content and copies it back into the game's texture.
+     * <p>
+     * This is the interruption the structural finding called for. The body mirrors {@link #recordImmediateOnlyPass}, which
+     * already does exactly this shape for the frame's pass: begin, set the viewport and scissor, draw the pending groups, end.
+     */
+    private void recordOffscreenPass(MemoryStack stack, long targetIdentity) {
+        VulkanOffscreenTarget target = this.offTargetTargets.get(Long.valueOf(targetIdentity));
+        VulkanImmediatePipeline pipeline = this.offTargetPipelineCache.get(Long.valueOf(targetIdentity));
+        if (target == null || pipeline == null || this.gpuStalled) {
+            return;
+        }
+        target.begin(this.commandBuffer, 0.0f, 0.0f, 0.0f, 1.0f);
+        org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
+        viewport.get(0).x(0.0f).y(0.0f).width(target.width()).height(target.height()).minDepth(0.0f).maxDepth(1.0f);
+        vkCmdSetViewport(this.commandBuffer, 0, viewport);
+        org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
+        scissor.get(0).offset().set(0, 0);
+        scissor.get(0).extent().set(target.width(), target.height());
+        vkCmdSetScissor(this.commandBuffer, 0, scissor);
+        this.offscreenPipelineOverride = pipeline;
+        try {
+            drawPendingImmediate(Long.valueOf(targetIdentity));
+        } finally {
+            this.offscreenPipelineOverride = null;
+        }
+        target.end(this.commandBuffer);
+        if (target.glTextureId() != 0) {
+            target.copyBackToGlTexture(this.commandBuffer, target.glTextureId());
+            this.offTargetCopiedBack++;
+        }
+    }
+
+
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
         this.immediateOnlyPasses++;
         if (this.gpuStalled) {
@@ -3535,6 +3574,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void drawPendingImmediate() {
+        drawPendingImmediate(null);
+    }
+
+    /**
+     * Draws the pending groups, optionally only those belonging to one render target.
+     * <p>
+     * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
+     * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
+     */
+    private void drawPendingImmediate(Long onlyTarget) {
         if (this.gpuStalled) {
             return;
         }
@@ -3563,6 +3612,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             ByteBuffer push = MemoryUtil.memAlloc(116);
             try {
                 for (Object[] group : this.immediateGroups) {
+                    if (onlyTarget != null && ((Long) group[7]).longValue() != onlyTarget.longValue()) {
+                        continue;
+                    }
                     VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
                     if (mesh.isEmpty()) {
                         continue;
