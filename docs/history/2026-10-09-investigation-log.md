@@ -8351,3 +8351,29 @@ reference from the one fixed earlier, reached only when there is no bridge. They
 backend's own reason, which is how every guard on this path has been found. Naming them is this round's remainder: the
 no-identity configuration is now a **usable** diagnostic (it starts, it states its configuration, it reports what it cannot do),
 and the next pass should clear its remaining exceptions with the same instrument.
+
+---
+
+## The no-identity configuration runs clean: zero exceptions, and the normal path untouched
+
+Two fixes, and the numbers that show they are right:
+
+| configuration | before | after |
+|---|---|---|
+| normal | exit 0, clean, fixture PASSED, `imageFilledMirrors=7` | **unchanged** |
+| no GL identity | 6 NPEs per run (3, then 3 more once messages stopped throwing) | **0** |
+
+The remaining nulls were not in the entry point - that guard was already there - but in **`pipelineFor(this.lastUiPass)`**,
+called from five places. With no bridge there is no last pass, the field is null, and the map it reads **rejects a null key with a
+NullPointerException**; every caller already handles a null pipeline, so returning "no pipeline for no pass" was the whole fix.
+The message sites were made null-safe first, which is why the count went from three to six before it went to zero: making a
+message stop throwing lets the run **reach the next problem** instead of dying at the first one, and that is the right order.
+
+So condition three's own configuration - start with no GL device identity - now runs without a single exception, states its
+configuration (`proceeding with no OpenGL identity: no device matching and no interop bridge`), and draws nothing because the
+bridge it would need is absent by construction. The normal path is verified unchanged in the same round, which is the check that
+matters: every other measurement in this project is taken in that configuration.
+
+The shape worth keeping: **a configuration that fails loudly is a diagnostic; a configuration that fails silently is a mystery.**
+Three rounds ago the flag that exercises this path was left in the run script and crashed everything; today the same flag produces
+a clean start that says what it is doing.

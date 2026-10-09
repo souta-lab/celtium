@@ -136,9 +136,9 @@ for those eleven textures, and which GL-facing call sites change with it. The re
 upload hook hands over rather than from a readback of GL - with `inPlaceRefreshes=4821`, `descriptorSets=1`, exit 0, validation
 clean, 0 messages, fixture PASSED. **The no-identity path is fixed and now usable**: the interop check treated a missing
 identity as a crash; it now treats it as "no matching, no interop" and says so, with the normal path verified unchanged
-(`exit 0`, clean, fixture PASSED, `imageFilledMirrors=7`). **Open:** that configuration still reports three NPEs per run from an
-unguarded `TerrainRenderPass.name()` - a different site from the one fixed earlier, found the same way, by the refusal reason the
-hook prints.
+(`exit 0`, clean, fixture PASSED, `imageFilledMirrors=7`). **And it runs clean**: the remaining nulls were in `pipelineFor(this.lastUiPass)`,
+called from five places, where a null last pass meets a map that rejects null keys - **zero exceptions per run now**, with the
+normal path verified unchanged in the same round.
 
 **The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
 drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and

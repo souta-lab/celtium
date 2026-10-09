@@ -286,7 +286,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // recorded instead of drawing with an unbound atlas.
             this.passSkips++;
             this.lastSkipReason = pass.name() + ": atlas or lightmap not mirrored";
-            record("pass " + pass.name() + " skipped: the block atlas or the lightmap is not mirrored yet");
+            record("pass " + nameOf(pass) + " skipped: the block atlas or the lightmap is not mirrored yet");
             return;
         }
 
@@ -2812,7 +2812,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 line.append(" light=0x").append(Integer.toHexString(vertices.getInt(16)));
             }
             verticesLogged++;
-            record("mesh" + verticesLogged + " pass=" + mesh.pass.name() + " " + line);
+            record("mesh" + verticesLogged + " pass=" + nameOf(mesh.pass) + " " + line);
             return;
         }
     }
@@ -2999,7 +2999,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
                 record(colors.toString());
                 command0Logged++;
-                record("firstDraw region=" + region.getId() + " pass=" + pass.name()
+                record("firstDraw region=" + region.getId() + " pass=" + nameOf(pass)
                         + " stride=" + this.commonVertexStride
                         + " vertexArenaBytes=" + resources.vertexArena.deviceAllocatedMemoryL()
                         + " baseVertex=" + batch.baseVertex(0) + " elements=" + batch.elementCount(0)
@@ -3228,6 +3228,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private VulkanTerrainPipeline pipelineFor(TerrainRenderPass pass) {
+        if (pass == null) {
+            // With no bridge there is no last pass to look up, and the map this reads rejects a null key with a
+            // NullPointerException - which is what the remaining three-per-run nulls were. The callers all handle a null
+            // pipeline already, so saying "no pipeline for no pass" is the whole fix.
+            return null;
+        }
         VulkanTerrainPipeline pipeline = this.pipelines.get(pass);
         if (pipeline != null) {
             return pipeline;
@@ -3235,7 +3241,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             pipeline = VulkanTerrainPipeline.create(this.context, pass, !pass.isSorted());
             this.pipelines.put(pass, pipeline);
-            record("pipeline for " + pass.name() + " created [" + pipeline.vertexInputSummary() + "]");
+            record("pipeline for " + nameOf(pass) + " created [" + pipeline.vertexInputSummary() + "]");
             if (pipeline.limitsWarning() != null) {
                 record(pipeline.limitsWarning());
             }
@@ -4353,6 +4359,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private void record(String diagnostic) {
         this.diagnostics.add(diagnostic);
+    }
+
+    /**
+     * Names a render pass for a message, tolerating the absence of one.
+     * <p>
+     * Three null pointers per run came from these message sites in the no-bridge configuration, where a caller with no pass
+     * still reaches the logging. A message that throws is worse than no message: it turns a diagnostic into a crash.
+     */
+    private static String nameOf(TerrainRenderPass pass) {
+        return pass == null ? "<no render pass>" : pass.name();
     }
 
     private static String describe(Throwable error) {
