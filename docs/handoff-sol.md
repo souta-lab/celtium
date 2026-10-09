@@ -75,6 +75,15 @@ fixture が確かめていること（`celtium.validation.commandBufferTargets=t
 `celtium-vulkan/src/test/.../VulkanCommandBufferStateTest.java`（4件、`BUILD SUCCESSFUL`）:
 別handleの独立、pass外・別targetの draw 拒否、PENDING 中の reset/begin 禁止、pass を開いたままの end 禁止。
 
+### clear順序の受入（追加）
+
+「clear→描画」は既存の赤・緑矩形で確認済みだったが、監査が求める **「描画→clear」** を追加した
+（`sol-cb-clearorder-amd` / `sol-cb-clearorder-intel`）: 受理済みbatchを1件pendingさせてから
+`framebufferClear()`（実clear）を呼ぶと、clear境界で accepted=recorded=submitted=completed が各+1・pending 0 になり、
+clear後の読み戻しは **全ピクセルがclear色**（描いた矩形も消滅、不一致0）。受理済みgeometryがclearの前に描かれ、
+clearがそれを消すという順序が実geometryで確認できた。PNGは
+`screenshots/celtium-command-buffer-secondary-cleared.png`。
+
 ### 限界（未実施・未検証）
 
 - **Intel UHD 630**: **受入完了**。`sol-cb-clean-intel` が exit 0 / clean / msgs 0 / fixture PASSED /
@@ -84,7 +93,7 @@ fixture が確かめていること（`celtium.validation.commandBufferTargets=t
 - **重要な訂正**: 途中のIntel 480秒タイムアウト2件（`sol-cb-final-intel2`・`p31b-intel-normal`）は
   **同時にAMD runを走らせていた競合が原因**で、Intelの退行ではなかった。単独runは24〜27秒で完走する。
   **測定は必ず単独で行う**（この誤診を記録として残す）。
-- このfixtureは **depth occlusion を確かめない**（depth test を切っている）。別FBOの depth 依存・順序は未検証。
+- このfixtureは **depth occlusion を確かめない**（depth test を切っている）。別FBOの depth 依存・順序、sample/resize は未検証。
 - 画面（window/compositor）への present 到達は相変わらず未確認（環境の X が 0x0）。
 - 失敗経路で確認したのは **submit前の失敗**のみ。submit成功後の `endFrame` 失敗、fence timeout、
   device lost は分岐を実装したが **実機注入していない**。

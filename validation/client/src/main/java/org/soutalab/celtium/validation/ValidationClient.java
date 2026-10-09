@@ -436,6 +436,45 @@ public final class ValidationClient {
             result.addProperty("pixelsPassed", pixelsPassed);
             commandBufferTargetsPassed = mainWasPending && mainFlushedBeforeSecondary && secondaryWasPending
                     && secondaryFlushedBeforeMain && executionPassed && pixelsPassed && retryPassed;
+            // The other half of the clear ordering: a batch accepted *before* a clear of the same target must be drawn, and
+            // then erased by that clear - not drawn afterwards, where it would survive. The flush-before-clear path is the
+            // only thing that decides this, so the pixel check is what proves it.
+            commandBufferSecondary.bindFramebuffer(true);
+            long[] beforeClear = commandBufferCounters(backend, counters);
+            commandBufferMatrices(256, 256);
+            commandBufferQuad(16, 16, 80, 80, 0, 0, 255);
+            long[] pendingBeforeClear = commandBufferCounters(backend, counters);
+            // framebufferClear() binds (same target, so no switch flush) and then clears with the fixture colour, which
+            // makes the clear an explicit ordering boundary for the pending batch.
+            commandBufferSecondary.framebufferClear();
+            long[] afterClear = commandBufferCounters(backend, counters);
+            java.awt.image.BufferedImage secondaryCleared = commandBufferReadback(commandBufferSecondary);
+            commandBufferSavePng(mc, "celtium-command-buffer-secondary-cleared.png", secondaryCleared);
+            int blueAfterClearWrong = commandBufferRectangleMismatches(secondaryCleared, 16, 16, 80, 80, 0x081020);
+            int clearedBackgroundWrong = 0;
+            for (int y = 0; y < 256; y++) {
+                for (int x = 0; x < 256; x++) {
+                    if ((secondaryCleared.getRGB(x, y) & 0xFFFFFF) != 0x081020) clearedBackgroundWrong++;
+                }
+            }
+            result.add("beforeClear", commandBufferCounterJson(beforeClear));
+            result.add("pendingBeforeClear", commandBufferCounterJson(pendingBeforeClear));
+            result.add("afterClear", commandBufferCounterJson(afterClear));
+            result.addProperty("secondaryClearedPng", "screenshots/celtium-command-buffer-secondary-cleared.png");
+            result.addProperty("blueAfterClearMismatchPixels", blueAfterClearWrong);
+            result.addProperty("clearedBackgroundMismatchPixels", clearedBackgroundWrong);
+            boolean pendingBeforeClearObserved = pendingBeforeClear[4] - beforeClear[4] == 1;
+            boolean clearedAfterDrawing = afterClear[4] == 0 && afterClear[0] - beforeClear[0] == 1
+                    && afterClear[1] - beforeClear[1] == 1 && afterClear[2] - beforeClear[2] == 1
+                    && afterClear[3] - beforeClear[3] == 1;
+            // The batch is gone from the picture: every pixel is the clear colour, including where it was drawn.
+            boolean clearOrderPassed = pendingBeforeClearObserved && clearedAfterDrawing
+                    && blueAfterClearWrong == 0 && clearedBackgroundWrong == 0;
+            result.addProperty("pendingBeforeClearObserved", pendingBeforeClearObserved);
+            result.addProperty("clearedAfterDrawing", clearedAfterDrawing);
+            result.addProperty("clearOrderPassed", clearOrderPassed);
+            commandBufferTargetsPassed = commandBufferTargetsPassed && clearOrderPassed;
+            if (!clearOrderPassed) result.addProperty("error", "clear-order check failed: the accepted batch was not drawn before the clear or survived it");
             result.addProperty("passed", commandBufferTargetsPassed);
             if (!commandBufferTargetsPassed) result.addProperty("error", "Required format-2 pending/flush/execution/pixel checks failed");
         } catch (Throwable error) {
