@@ -9172,3 +9172,24 @@ off-targetのバッチは**計器の付いていない拒否経路**で落ちて
 **次段（1点）**: `!currentRenderTargetIsMain` のときに `immediateLastRefusal` を理由別に数えるマップを足し、
 提示された259件が**どの理由で拒否されているか**を1回のrunで出す。拒否理由は既に文字列で設定されているので、
 新しい判定を書くのではなく既存の理由を集計するだけでよい。
+
+---
+
+## ログの拒否理由を読む: 出ているのはfixtureの3件で、259件は無言で拒否されている
+
+新しい計器を書く前に、既にある証拠（拒否フックの印字）を読んだ。再現runのログに出ている拒否は次の3種類で、**各種3件**
+しかない。
+
+```
+CELTIUM_POSITION_REFUSED    reason=the frame's window budget is spent, so this batch stays with GL  stride=12 vertices=4
+CELTIUM_POSITIONTEX_REFUSED reason=the frame's window budget is spent, so this batch stays with GL  stride=20 vertices=4
+CELTIUM_COMPOSITE_REFUSED   reason=format 2 not in celtium.vulkan.immediateFormats                 stride=24 vertices=4
+```
+
+一方、off-targetの提示は**254-259件**で、その最初のバッチは `firstBatchFormat=1`（POSITION_COLOR）である。**format 1 には
+専用の拒否reporterが無い**ため、この254件が拒否されてもログには何も出ない。したがって「受理0」の理由は、既存のログからは
+読めない。拒否理由の集計（`immediateLastRefusal` を off-target バッチに紐付ける計器）が必要である。
+
+計器の設計は4箇所（フィールド2つ、次回offer時の事後サンプリング、受理時のクリア、offer時のフラグ立て、報告行）で、
+今回は4つ目のアンカーが一意でなかったため**書き込み前に停止**した（ツリーは green のまま）。次回は
+`CELTIUM_OFFTARGET target=` の印字が**2箇所**にあることを踏まえ、行番号で一意に指定する。
