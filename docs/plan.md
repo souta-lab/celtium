@@ -1960,7 +1960,34 @@ CELTIUM_ACCEPTED total=1500 byFormat=[0:0 1:7 2:0 3:0 4:0 5:137 6:856 7:0 8:0 9:
   これは「format 6 を native にすること」自体が中間帯に小さな差を持つという意味で、**記録しておく**。
 - 受入: 両 run とも exit 0 / validationClean=true / PASSED。
 
-**次の一手**: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
+**モデルのクワッド捕獲を実装（このターン・計器として動作確認）**:
+
+- **ソースから分かった捕獲点**: `TexturedQuad.draw(BufferBuilder, float scale)` は
+  `renderer.begin(7, DefaultVertexFormats.OLDMODEL_POSITION_TEX_NORMAL)` で**mode 7（QUADS）**を描き、
+  `vertexPositions` は **public フィールド**（4頂点＋UV）。つまり**頂点データはオブジェクトから直接読める**ので、
+  BufferBuilder を覗く必要がない。
+- **実装**: MC 非依存の `VulkanModelQuadCapture`（クワッド数・頂点数・範囲を記録）と、
+  `TexturedQuad.draw` への `@Inject(HEAD, require = 0)`（`TexturedQuadMixin`）。**描画は一切変えず**、
+  数えるだけ。mixin の登録は `CeleritasVintageMixinPlugin` が**パッケージ全体を走査**する方式なので追加作業は不要。
+- **実測（三人称＋GUI、AMD、100 s）**:
+
+| 指標 | 値 |
+|---|---|
+| `modelQuads` | **72**（288 頂点＝72×4） |
+| `modelQuadExtent` | x[-0.281..0.281]、u[0.0..1.0]（＝モデル空間の座標とテクスチャ全域） |
+| 最初のクワッド | `vertices=4 x=0.063..0.063 u=0.797..0.797`（x が一定＝平面の1面） |
+| `displayListReplays` / distinct | 2007 / 13（捕獲前と同じ） |
+| verdict | exit 0 / validationClean=true / PASSED（**回帰なし**） |
+
+- **意味**: モデルの頂点は**記録時（コンパイル時）に捕まえられる**ことが実測で確認できた。native 化に必要なのは
+  この頂点列＋**コンパイル時の行列**（GL がリストに焼き込むのと同じ）＋**再生時の行列**（entity の変換）で、
+  後者は backend が既に写している（`MIRRORED_MATRICES`）。
+
+**次の一手**: (1) 捕獲したクワッドを**永続バッファに保存**し、`callList` の再生時に**native で描いて GL の再生を
+取り消す**（最初はプレイヤーモデル1体だけを対象にする）、(2) コンパイル時の行列を捕獲に含める（backend の写しを使う）、
+(3) 画像で一致を確認し、`displayListReplays` のうち対象リストが native に置き換わったことを数で示す。
+
+**（旧メモ）** 次の一手: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
 （4頂点・UV・法線・現在の行列・テクスチャ）を決める、(2) プレイヤーモデル1体を native 化し、画像と `format 9` の
 受理で確認する、(3) 中間帯の 1018 画素（format 6 の雲・水面）を詰めるかは、entity の後で判断する。
 
