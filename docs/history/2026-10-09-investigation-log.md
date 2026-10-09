@@ -3231,3 +3231,34 @@ work, put a known-good path beside it in the same run instead of guessing at the
 A second, smaller thing was fixed on the way: the first attempt at this A/B called `Gui.drawRect` while the fixture's own
 batch was open, which nested two Tessellator draws and crashed the client in five seconds. The recipe is order-sensitive and
 the crash said so immediately.
+
+---
+
+## Direction from the user, 14:03 JST: no general-purpose Vulkan-isation layer
+
+Stated plainly, because it changes what the plan is allowed to grow into: **a generic OpenGL-to-Vulkan layer is
+pointless and is to stop.** Celtium is a Minecraft 1.12.2 / Cleanroom-specific native Vulkan renderer. It is not a general
+GL-to-Vulkan translator, not an emulation of the whole GL API, and not a Zink-style conversion layer, and it does not aim to
+become one.
+
+The goal and the plan now say so. The plan gained a section 0 for it, and the immediate-path rows are marked *transitional*
+so that nothing in the document reads as a layer being completed for its own sake. The parts of the direction worth keeping
+verbatim:
+
+- the existing Minecraft/Forge public APIs, signatures and event order stay, because that is what existing mods call -
+  what sits behind them is replaced by Vulkan rendering that understands the terrain, models and items, entities and TESRs,
+  particles, UI and text, and the individual passes;
+- the immediate capture, the per-format pipelines and the GL/VK bridge are transitional, not the final architecture, and
+  the work continues to remove GL state reads, texture readback and bridge dependence, with frame ownership, draw order,
+  resource lifetime, composition and present ending up on the Vulkan side;
+- reuse **inside** Vulkan - buffers, descriptor sets, pipeline caches, allocators - is ordinary engineering and is not what
+  is prohibited;
+- mods that use LWJGL, GLSL or native GL directly are investigated individually, with covered and uncovered scope
+  documented, and no plan to translate all of GL so that all mods work;
+- the current audit P0/P1 fixes and acceptance tests continue; this is direction, not an instruction to delete or rewrite.
+
+It is also the right moment to say what this session's work looks like from outside. Several rounds have gone into the
+immediate-capture instrument - its counters, its cancellation, its comparison scene - and the last few into a test fixture
+for it. That work was worth doing once, because the instrument was lying, but it is exactly the kind of work that could
+grow into a layer for its own sake. The direction says where the weight belongs instead: the Vulkan side owning the frame,
+the passes ported by meaning rather than by call, and the bridge and the readbacks shrinking rather than being perfected.

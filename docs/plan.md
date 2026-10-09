@@ -9,6 +9,31 @@ what is being built now. Evidence, measurements and disproved hypotheses live in
 [Sodium optimization deltas](sodium-optimization-deltas.md). Where an older document disagrees with this one, this one
 wins.
 
+## 0. Architecture stance (2026-10-09 policy)
+
+Celtium is a **Minecraft 1.12.2 / Cleanroom-specific native Vulkan renderer**. It is not, and will not become, a general
+OpenGL-to-Vulkan translator, a reimplementation of the whole GL API, or a Zink-style layer: those are **out of scope by
+direction**, not merely deprioritised.
+
+What that means concretely:
+
+- **The compatibility surface is the entry point, not the architecture.** Minecraft's and Forge's existing public APIs,
+  signatures and event order stay as they are, because that is what existing mods call. What sits behind that surface is
+  replaced by Vulkan rendering that understands what the call *means* in Minecraft - terrain, models and items, entities
+  and TESRs, particles, UI and text, and the individual render passes. It is **not** extended into a layer that translates
+  GL calls one by one.
+- **The immediate capture, the per-format pipelines and the GL/VK bridge are transitional.** They exist to move a hybrid
+  along and to produce measurements while doing it; they are not the final architecture and are not a compatibility layer to
+  be completed. The work to remove GL state reads, texture readback and bridge dependence continues, and **frame ownership,
+  draw order, resource lifetime, composition and present end up on the Vulkan side**.
+- **Reuse inside Vulkan is not what is prohibited.** Shared buffers, descriptor sets, pipeline caches and allocators are
+  ordinary renderer engineering. What is prohibited is making a general GL-compatibility emulation the goal.
+- **Direct-LWJGL, GLSL and native-GL mods are investigated individually.** Each one is investigated for a concrete answer
+  at the place it draws; there is no plan to translate all of GL so that all mods work. What is covered and what is not is
+  documented, and "swapping Forge's entry points makes every mod work" is never claimed.
+- **The audits and their acceptance tests continue.** This is a statement of direction, not an instruction to delete or
+  rewrite what is there: the current audit P0/P1 fixes and their verification stay in the queue.
+
 ## 1. Purpose and completion condition
 
 Done means all three, verified on hardware:
@@ -76,8 +101,8 @@ One table, no narrative: what exists, what was verified on hardware, and what is
 | Immediate pipelines: `POSITION_COLOR`, `BLOCK`, `ITEM`, particle | **Implemented and pixel-identical to GL** | Verified on both GPUs (0.00 local difference) |
 | Immediate pipeline: `POSITION_TEX_COLOR` | **Implemented; excluded by default** | In this scene it is the final full-screen composite, not content; drawing it into the game framebuffer flattens the picture |
 | Immediate path: frame-late deferral **removed** | **Verified on both GPUs** | The mid-frame window limit is sixteen per frame rather than one: measured pixel-identical to GL (0.00) with no measurable cost (p50 16.07ms and p99 17.90ms at sixteen against 16.13ms and 18.16ms at one). The old one-window measurement that blackened the frame predates the submit-wait fix and had that defect as its explanation |
-| **Immediate path: replacement demonstrated** | **Verified on hardware** | For the first time the injector's cancellation is effective (the audit's A) *and* the submit call exists (a defect introduced while cleaning a dead branch), so the counters and the log agree: **`immediateOffered=9060`, `immediateTaken=585`, `immediateFlushes=585`, and the vanilla upload body completing 535 fewer times than it is offered** - GL is skipped for exactly the batches Vulkan takes. Measured with the sound instrument (hidden GUI, same-revision references, floor 0.00): **the frame matches GL to nine pixels out of 921,600**, where before the fix every comparison had GL drawing the same content |
-| Immediate path end to end | **On by default and pixel-identical to GL on both GPUs** | Measured with no flags at all against each GPU's own GL reference: **0.00 mean, 0.0% of pixels over 8 and over 32 on the RX 6400 and on the UHD 630**, run PASSED with `nativeTerrainVerified True`. Defaults are `immediate=true`, `immediateWindows=true`, `immediateFlushIndices=512` - the window flush is what keeps the content lag-free - with the acceptance mask `1,3,4,5` | Local comparison (same build, immediate off vs on, terrain Vulkan in both): **mean 0.00, 0.0% over 8 and over 32 on AMD RX 6400 and on Intel UHD 630**, 1725 and 1151 batches drawn by Vulkan respectively, VUID 0. The default acceptance mask is `1,3,4,5`: the 24-byte `POSITION_TEX_COLOR` family is the final full-screen composite and is left to GL until present ownership is settled |
+| *Transitional:* **immediate path, replacement demonstrated** | **Verified on hardware** | For the first time the injector's cancellation is effective (the audit's A) *and* the submit call exists (a defect introduced while cleaning a dead branch), so the counters and the log agree: **`immediateOffered=9060`, `immediateTaken=585`, `immediateFlushes=585`, and the vanilla upload body completing 535 fewer times than it is offered** - GL is skipped for exactly the batches Vulkan takes. Measured with the sound instrument (hidden GUI, same-revision references, floor 0.00): **the frame matches GL to nine pixels out of 921,600**, where before the fix every comparison had GL drawing the same content |
+| *Transitional:* immediate path end to end | **On by default and pixel-identical to GL on both GPUs** | Measured with no flags at all against each GPU's own GL reference: **0.00 mean, 0.0% of pixels over 8 and over 32 on the RX 6400 and on the UHD 630**, run PASSED with `nativeTerrainVerified True`. Defaults are `immediate=true`, `immediateWindows=true`, `immediateFlushIndices=512` - the window flush is what keeps the content lag-free - with the acceptance mask `1,3,4,5` | Local comparison (same build, immediate off vs on, terrain Vulkan in both): **mean 0.00, 0.0% over 8 and over 32 on AMD RX 6400 and on Intel UHD 630**, 1725 and 1151 batches drawn by Vulkan respectively, VUID 0. The default acceptance mask is `1,3,4,5`: the 24-byte `POSITION_TEX_COLOR` family is the final full-screen composite and is left to GL until present ownership is settled |
 | Native present of the game's frames | **Runs and presents the frame's content; not validation-clean** | Vulkan blits the shared colour image into an acquired swapchain image and presents it at the composite - `Framebuffer.func_178038_a`'s moment, identified by stack trace - with the acquire/render-finished semaphore pair; the presented image's centre patch measured 118.25, in the same range as the game framebuffer, so the screen is given the frame rather than a blank surface. **Correction:** an earlier row here claimed this was validation-clean; that run had the probe off, and the probe is what created the swapchain, so it presented nothing and was clean for that reason. The standalone present emits **36 validation messages**, identical on RADV and ANV, with the submission demonstrably waiting the acquire semaphore, a fresh semaphore pair per present, and a stage mask covering all commands - so the remaining explanations are the layer's view of semaphores on a device created for external semaphore and memory, or its reporting of the presentation engine releasing the image. The flag stays off by default |
 | Frame ownership, draw ordering, image layouts | **Not implemented** | Two mid-frame window attempts failed; see the log |
 | **World switch** (leave the world, join it again) | **Verified on both GPUs** | The fixture makes the same three calls `GuiIngame`'s "Save and Quit to Title" makes - `sendQuittingDisconnectingPacket`, `loadWorld(null)`, `displayGuiScreen(new GuiMainMenu())` - at tick 100 and then joins the same save again. **PASSED, `nativeTerrainVerified True`, left and rejoined at tick 100, 885 passes on the RX 6400 and 591 on the UHD 630.** The first attempt omitted the third call and crashed vanilla's renderer on a null player, which is recorded in the history as a fixture bug rather than a renderer one |
