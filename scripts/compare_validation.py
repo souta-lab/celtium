@@ -125,7 +125,14 @@ def compare_images(reference, candidate, tolerance, max_diff_ratio):
             "maxDiffRatio": max_diff_ratio,
         }
 
-    mask = difference.convert("L").point(lambda value: 255 if value > tolerance else 0)
+    # The largest difference across channels, not the luminance of the difference. Converting to "L" collapses three
+    # channels into one weighted value and drops alpha, so a red-only delta of 1, a blue delta of 40 against a tolerance of
+    # 5, and an alpha delta of 255 all read as equal - the audit's three cases, all of them reproduced from this line.
+    channel_masks = difference.split()
+    mask = channel_masks[0]
+    for extra in channel_masks[1:]:
+        mask = ImageChops.lighter(mask, extra)
+    mask = mask.point(lambda value: 255 if value > tolerance else 0)
     total = first.size[0] * first.size[1]
     # histogram()[0] counts pixels whose largest channel delta stayed within the tolerance.
     differing = total - mask.histogram()[0]

@@ -2895,3 +2895,25 @@ That is the whole reason the interval is a property rather than a constant: it w
 it was measured, and the measurement says the conservative value is affordable. A number that had come out the other way -
 say, a millisecond at p50 - would have forced the harder question of refreshing only the texture that changed, which needs
 the hook that crashes.
+
+---
+
+## The comparator's difference mask is fixed, and the audit's cases prove it
+
+The audit's C was reproduced from the code before it was changed: the mask came from `difference.convert("L")`, which
+weights the channels into one luminance and drops alpha, so a difference confined to one channel could not be seen. The
+mask is now the largest absolute difference across channels, and the audit's three cases were run against the logic:
+
+| Case | Before | After |
+|---|---|---|
+| red delta 1, tolerance 0 | equal | not equal |
+| blue delta 40, tolerance 5 | equal | not equal |
+| alpha delta 255, tolerance 0 | equal | not equal |
+| identical | equal | equal |
+
+Two things follow. Any result this project measured **with that script** is suspect and has to be recomputed; the numbers
+quoted in this history were produced by inline maximum-per-channel arithmetic in the analysis scripts rather than by
+`compare_validation.py`, so they are not affected - stated because it is checkable, not assumed. And the audit's second
+observation about the same tool is still open: it does not consult `validation-process.json`'s failure field, so a run that
+failed for a reason outside the fixture's own status can still be reported as a match. That is the next change to this
+file.
