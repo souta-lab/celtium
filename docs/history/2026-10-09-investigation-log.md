@@ -2944,3 +2944,28 @@ destruction-order fix, which reported thirteen validation messages, and the fram
 fix, which reported thirty-six. The numbers in this file that came from inline maximum-per-channel arithmetic are not
 affected by the mask defect, which is stated because it is checkable: the analysis scripts compute the per-channel maximum
 themselves rather than calling the tool.
+
+---
+
+## The present's bridge contract is real now, and a broad revert is what removed it
+
+The audit's B said `presentImage`'s seven-argument form received the bridge's two semaphores and never used them. The code
+agrees: the submission was `submitWithSemaphores(commands, acquire, renderFinished)` - one wait, one signal - while
+`endFrame` makes GL wait on the bridge's done semaphore, which nothing signalled.
+
+The corrected call had been written in an earlier round and measured then. It was **removed by a `git checkout -- .`** used
+to undo an unrelated mistake, and that is the part worth recording: a wholesale revert does not know which of the changes it
+discards were finished work. The same mechanism has been blamed in this log before, for lost instrumentation, and it is now
+demonstrated for finished code.
+
+Restored, with the verdict flags reset at the start of every present so a caller cannot read the previous present's result:
+
+```
+fixture PASSED | nativeTerrainVerified True | 2149 passes
+validation-process.json: validationExitCode 0 | validationClean True | messages 0
+submitWithSemaphores calls=1 withWait=2
+```
+
+`withWait=2` is the measurement: the submission waits two semaphores where it waited one, which is the acquire and the
+bridge. What remains of B is the part the semaphore counts cannot show - the shared image's ownership and `GENERAL`-layout
+handoff for the external-memory path, which needs the EXTERNAL acquire/release pair rather than another wait.

@@ -456,6 +456,9 @@ public final class VulkanSwapchain {
      */
     public String presentImage(long sourceImage, int sourceLayout, int width, int height, long bridgeWaitSemaphore,
             long bridgeDoneSemaphore, int sourceLayoutAfter) {
+        // Reset per present, so a caller reading them after a failure cannot see the previous present's verdict.
+        this.lastPresentSubmitDone = false;
+        this.lastPresentSucceeded = false;
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
             return "present image: no swapchain or no source image";
         }
@@ -547,7 +550,13 @@ public final class VulkanSwapchain {
                 // Waiting on the acquire semaphore and signalling a render-finished one: the submission writes the
                 // acquired image, so it has to wait for the presentation engine to release it, and the presentation has
                 // to wait for this submission rather than for the acquire.
-                this.context.submitWithSemaphores(commands, acquire, renderFinished);
+                // Both contracts in one submission: the window-system acquire and the GL-to-Vulkan bridge semaphore are
+                // waited, and both this swapchain's render-finished semaphore and the bridge's done semaphore are
+                // signalled - the latter because the frame target's endFrame makes GL wait on it. The three-argument form
+                // waits one and signals one, which is what this path used after a broad revert took the corrected call
+                // with it: the bridge's semaphores arrived as parameters and were never used.
+                this.context.submitWithSemaphores(commands, new long[] {acquire, bridgeWaitSemaphore},
+                        new long[] {renderFinished, bridgeDoneSemaphore});
                 this.lastPresentSubmitDone = true;
                 this.lastPresentSucceeded = false;
             }
