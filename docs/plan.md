@@ -56,7 +56,19 @@ Kept separate on purpose - terrain success and present success are different thi
   faults on the way: concurrent sharing with a single queue family
   (`VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278`) and a zeroed `VkAllocationCallbacks`
   (`VUID-VkAllocationCallbacks-pfn*`), the latter crashing the client.
-- **Build-infrastructure finding (blocks the Mixin wiring).** The `celtium-vulkan` module compiles against
+- **Build-infrastructure finding (blocks the Mixin wiring, refined).** The first diagnosis was the `downgraded`
+  artifact being stale; that was wrong - after `:common:shadeDowngradedApi` the jar does contain the new classes.
+  Moving `ImmediateDrawTarget`/`ImmediateDrawTargets` from `common/` into `celtium-vulkan/` (which `forge122`
+  already depends on through `modEmbed`, so the Mixin can import them) did **not** clear the error either: the module
+  still reports "method does not override or implement a method from a supertype" for methods whose signatures match
+  the interface in the same package and module. That points at the module's own compile classpath carrying a stale
+  copy of the interface (a jar or class directory built before the interface existed), not at Gradle task ordering
+  alone. Next step: dump the `compileClasspath` of the `celtium-vulkan` module and find which entry provides
+  `ImmediateDrawTarget`, then fix or exclude it. The groundwork (`common/` interface and holder) stays committed; the
+  backend implementation, the `GlStateManager` Mixin and the reverted `WorldVertexBufferUploader` Mixin follow once
+  that entry is identified.
+
+- **Original note (superseded by the refinement above).** The `celtium-vulkan` module compiles against
   `project(':common', configuration: 'downgraded')`, and that artifact is a *jar*: classes added to `common/` after it
   was built are invisible to the module even though `:common:shadeDowngradedApi` reports success (the checked jar
   contains zero references to the new `ImmediateDrawTarget`). Any change that adds a common class the Vulkan module
