@@ -3792,3 +3792,39 @@ form.
 Worth naming for the record: three rounds on one value have produced four negative results - the float overload that does not
 exist, the seed at the wrong moment, the seed at the right moment, and warm-up - and one positive one, the projection going
 from 2.0 to 1.6e-4. Every negative narrowed the interval, and this one leaves a single class of cause.
+
+---
+
+## The trace reframes the question: the mirror is not broken, the metric samples across passes
+
+Forty traced events - resets, translates and comparisons - read as a sequence rather than a maximum:
+
+```
+L0[mv 0.00,  0.00, 0.00]     reset, modelview translation zero
+L0[mv 0.00, -1.62, 0.05]     ...and after the ops that follow, the camera translation IS there
+T0(-9.50, 63.33, -9.46)      a translate arrives
+L0[mv 9.50, 61.71,  9.51]    another reset, carrying what the translate built
+L2[mv 0.00, -1.62, 0.05]     frame 2: the mirror holds the camera translation, repeatedly
+L2[mv 0.00,  0.00, 0.00]     ...and at some point it is zero again
+```
+
+**The mirror has the camera translation almost all of the time.** The value `1.62` is not a mirror that never received it;
+it is a **maximum over comparisons**, and some comparisons land in a pass where the modelview has just been reset and the
+camera has not been re-applied. GL, at that same instant, is in a different pass and holds the camera - which is what a
+cross-pass sample looks like.
+
+That is the S10 problem in its concrete form, and it changes what the next work is. Three rounds were spent trying to make
+the mirror *receive* the translation - a seed, a seed at a better moment, a float overload that does not exist - and the
+trace says it receives it. What does not exist is a notion of **which pass a batch belongs to**: a group key holds matrices,
+format, texture and state, but not the frame, the target, or the pass, so a batch offered during one pass is compared,
+grouped and drawn against another pass's matrices. The `glGetFloatv` reads hide that today by fetching whatever GL has at
+the moment of the batch; removing them requires the pass identity, not a better mirror.
+
+So the modelview investigation closes with a direction rather than a fix, which is the right outcome for it: the mirror is
+adequate, the missing concept is pass ownership, and the audit already lists it as **S10** with acceptance conditions - store
+the frame, target, viewport and texture generation with the batch, and keep the order across GL fallback, clears and FBO
+switches. The projection derivation stays as it is: verified to 1.6e-4 and used where the world pass needs it.
+
+One instrument note worth keeping: the trace was capped at forty entries and only recorded comparisons whose delta exceeded
+1e-3, which is what made the sequence readable. An uncapped trace of everything would have buried the pattern in the GUI's
+resets, which is the same filtering lesson as before but from the other side - filter the *events*, not the *sources*.

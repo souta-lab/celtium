@@ -401,6 +401,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int steadyComparisons;
     private int translateCalls;
     private int translateZeroCalls;
+    private final java.util.List<String> trace = new java.util.ArrayList<String>();
+
+    private static String fmt3(double value) {
+        return String.format(java.util.Locale.ROOT, "%.2f", value);
+    }
     private int derivedProjections;
     private int derivedProjectionRefusals;
     private boolean derivedProjectionPending;
@@ -666,6 +671,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     delta = Math.max(delta, Math.abs(mirrored[i] - live.get(i)));
                 }
                 this.derivedProjectionComparisons++;
+                if (this.trace.size() < 40 && delta > 1.0E-3F) {
+                    float[] mvBefore = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+                    java.nio.FloatBuffer glMv = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
+                    try {
+                        org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, glMv);
+                        this.trace.add("C" + this.framesSeen + "[mirror " + fmt3(mvBefore[12]) + "," + fmt3(mvBefore[13]) + ","
+                                + fmt3(mvBefore[14]) + " gl " + fmt3(glMv.get(12)) + "," + fmt3(glMv.get(13)) + ","
+                                + fmt3(glMv.get(14)) + "]");
+                    } finally {
+                        org.lwjgl.system.MemoryUtil.memFree(glMv);
+                    }
+                }
                 this.derivedCompareIdentity = System.identityHashCode(mirrored);
                 if (delta > this.derivedProjectionDelta) {
                     this.derivedProjectionDelta = delta;
@@ -691,6 +708,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void loadIdentity() {
+        if (this.trace.size() < 40) {
+            float[] v = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            this.trace.add("L" + this.framesSeen + "[mv " + fmt3(v[12]) + "," + fmt3(v[13]) + "," + fmt3(v[14]) + "]");
+        }
         this.loadIdentityByMode[this.lastMatrixMode == 5889 ? 0 : this.lastMatrixMode == 5888 ? 1 : 2]++;
         if (this.derivedProjectionPending) {
             this.loadIdentityWhilePending++;
@@ -720,6 +741,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void translate(double x, double y, double z) {
         this.translateCalls++;
+        if (this.trace.size() < 40) {
+            this.trace.add("T" + this.framesSeen + "(" + fmt3(x) + "," + fmt3(y) + "," + fmt3(z) + ")");
+        }
         if (y == 0.0D && z == 0.0D && x == 0.0D) {
             this.translateZeroCalls++;
         }
@@ -1545,6 +1569,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
+                + " trace[" + String.join(" ", this.trace) + "]"
                 + ",steadyComparisons:" + this.steadyComparisons
                 + ",steadyDelta=proj:" + this.steadyProjectionDelta + ",view:" + this.steadyModelViewDelta
                 + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
