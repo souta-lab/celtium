@@ -1808,3 +1808,32 @@ harness guard active, so this is a clean run and not a run whose log says otherw
 What remains inside B is written down rather than implied: the shared image's old layout is asserted instead of tracked,
 the source is left in `TRANSFER_SRC` rather than handed back in the layout GL expects, and the caller still treats a
 returned failure string as success instead of leaving GL's composite in place when the present did not happen.
+
+---
+
+## The fail-closed caller broke the run, so it is reverted with its evidence
+
+The audit's B and E both end at the same place - the caller of `presentImage` - and the attempt to act there failed in a way
+worth recording precisely.
+
+`presentImage` now records two facts: `lastPresentSubmitDone` (the submission that signals the bridge's done semaphore was
+made, so `endFrame` is safe) and `lastPresentSucceeded` (the frame actually reached the presentation engine, so GL's
+composite may be cancelled). The caller was changed to gate on them: call `endFrame` only when the submission happened, and
+return `false` - leaving GL's composite in place - when the present did not reach the screen.
+
+Measured immediately after:
+
+```
+exitCode 0 | validationMessageCount 0 | validationClean True
+fixture FAILED | nativeTerrainVerified False | passes 4
+```
+
+Four terrain passes instead of two thousand, so the change broke the path rather than making it safer, and the validation
+output stayed clean while doing it - a reminder that a clean log is not a working run. The reverted state measures
+**PASSED, `nativeTerrainVerified True`, 2178 passes, `validationMessageCount 0`**, so the flags are reported and nothing
+acts on them yet.
+
+The likely explanation, to be instrumented rather than guessed next time: gating `endFrame` means the bridge's copy-back
+does not happen on that path, and whichever present takes it leaves the frame half-handled; the failure count would say
+whether `lastPresentSucceeded` was false (the caller bailing out) or `lastPresentSubmitDone` was (the bridge left
+uncopied). Printing which branch was taken is the next step, not another mutation of the same three lines.

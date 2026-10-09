@@ -72,6 +72,18 @@ public final class VulkanSwapchain {
     private int renderFinishedCursor;
     private int presentTraces;
     private int presentReadbacks;
+    /**
+     * Whether the last {@code presentImage} submission reached the queue, and whether its present reached the screen.
+     * <p>
+     * Both are recorded for a caller that wants to fail closed - {@code endFrame} is only safe once the submission that
+     * signals the bridge's done semaphore has been made, and GL's composite should only be cancelled once the frame
+     * really reached the screen. A first attempt to have the caller act on them made the run fail (fixture FAILED,
+     * four terrain passes), so they are reported without a caller relying on them yet; the attempt and its evidence are
+     * in the history log.
+     */
+    private boolean lastPresentSubmitDone;
+    /** Whether the last present actually reached the presentation engine; GL's composite may only be cancelled then. */
+    private boolean lastPresentSucceeded;
     private float lastPresentedMean = -1.0f;
     /** {@code -Dceltium.vulkan.presentReadback=true} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
@@ -83,6 +95,14 @@ public final class VulkanSwapchain {
     private static final boolean PROBE_OLD_SHAPE = Boolean.getBoolean("celtium.vulkan.probeOldShape");
 
     /** {@return the mean of a centre patch of a swapchain image}, or -1 when it cannot be read. */
+    public boolean lastPresentSubmitDone() {
+        return this.lastPresentSubmitDone;
+    }
+
+    public boolean lastPresentSucceeded() {
+        return this.lastPresentSucceeded;
+    }
+
     public float lastPresentedMean() {
         return this.lastPresentedMean;
     }
@@ -497,6 +517,7 @@ public final class VulkanSwapchain {
             if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                 return "present image: vkQueuePresentKHR returned " + presented;
             }
+            this.lastPresentSucceeded = true;
             return "present image: blitted " + width + "x" + height + " onto image " + index.get(0) + " (" + presented
                     + ")";
         }
