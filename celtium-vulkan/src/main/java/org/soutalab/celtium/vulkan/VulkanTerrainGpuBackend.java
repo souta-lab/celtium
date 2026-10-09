@@ -503,6 +503,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * which keeps ordering and latency right at the cost of GL doing that draw. Named so the configuration is honest.
      */
     private int immediateRefusedWindowBudget;
+    /** Frames between bulk mirror refreshes; 0 disables. See {@link #updateTimings()}. */
+    private static final int MIRROR_REFRESH_FRAMES =
+            Integer.getInteger("celtium.vulkan.mirrorRefreshFrames", 1).intValue();
+    private int mirrorRefreshCounter;
+    private int mirrorRefreshes;
     /**
      * Offered and accepted batch counts per format id.
      * <p>
@@ -1429,6 +1434,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // left the framebuffer at 150.46 before and after, and the second turned it to 0.0 with the GL state restored
         // unchanged, which is what blackened the captured frame.
         this.immediateWindowsThisFrame = 0;
+        // The lightmap is refreshed by Minecraft every frame through DynamicTexture, whose upload path no hook of this
+        // project has been able to reach without crashing the client. Dropping the mirrors here makes the next use of
+        // each re-read its GL texture; the interval is a property so the cost can be measured rather than assumed.
+        if (MIRROR_REFRESH_FRAMES > 0 && (++this.mirrorRefreshCounter % MIRROR_REFRESH_FRAMES) == 0) {
+            if (this.textureRegistry != null) {
+                this.textureRegistry.invalidateAll();
+                this.mirrorRefreshes++;
+            }
+        }
         updateTimingsBody();
     }
 

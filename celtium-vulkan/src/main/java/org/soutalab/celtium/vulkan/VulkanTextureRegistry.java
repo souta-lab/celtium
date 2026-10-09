@@ -84,6 +84,18 @@ public final class VulkanTextureRegistry {
     }
 
     /** Drops one mirror so the next use re-uploads it; used when a texture's contents are known to have changed. */
+    /**
+     * Drops every mirror, so the next use of each re-reads its GL texture.
+     * <p>
+     * Needed because Minecraft updates some textures - the lightmap above all - through a path the upload hooks cannot
+     * reach: {@code DynamicTexture.func_110564_a} uploads into the texture the object owns, and two attempts to hook that
+     * path crashed the client during Mixin transformation. Refreshing from the renderer costs a re-upload per mirrored
+     * texture per refresh and cannot be wrong about which texture changed.
+     */
+    public void invalidateAll() {
+        this.entries.clear();
+    }
+
     public void invalidate(int glTextureId) {
         Entry entry = this.entries.remove(glTextureId);
         if (entry != null) {
