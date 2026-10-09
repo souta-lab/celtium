@@ -851,7 +851,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * makes. The id and the size are asked of GL because the method that performs the write takes neither.
      */
     public void announceDynamicTexture(int[] pixels) {
-        if (!this.immediateWindowBusy) flushPendingBeforeGlDraw();
         if (pixels == null) {
             return;
         }
@@ -859,6 +858,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
         int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
         int width = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
         int height = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
@@ -880,9 +880,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /**
+     * {@return whether a queued group still has to draw a batch that samples this GL texture}.
+     * <p>
+     * A texture mutation only threatens queued work when a queued group actually references the texture: the group holds the
+     * descriptor prepared for it, so replacing the image behind it would swap what those batches sample. When no group
+     * references it, flushing would open a window - four full-screen blits and two depth conversions - to protect nothing.
+     */
+    private boolean queuedGroupUsesTexture(int glTextureId) {
+        for (Object[] group : this.immediateGroups) {
+            if (group.length > 4 && group[4] instanceof Integer
+                    && ((Integer) group[4]).intValue() == glTextureId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Called by the upload hook with the image the game is uploading, so the mirror need not read GL back. */
     public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
-        if (!this.immediateWindowBusy) flushPendingBeforeGlDraw();
+        if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
@@ -897,11 +914,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * renderer where a GL query buys something a hook cannot supply.
      */
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
-        if (!this.immediateWindowBusy) flushPendingBeforeGlDraw();
+        int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
         }
-        int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
         // Which id the animation announces, and which id the light map has: if those differ, the light map's writes are being
         // announced against something else and its refreshes will keep reading back.
         if (this.animatedAnnounceDiagnostics < 5) {
@@ -1306,9 +1323,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void viewport(int x, int y, int width, int height) {
-        if (!this.immediateWindowBusy && this.currentGroupUsed) {
-            flushPendingBeforeGlDraw(); // called at GlStateManager.viewport HEAD, before GL changes the old viewport
-        }
+        // No flush here. Every queued group is drawn with the current target's own viewport and scissor, so a viewport
+        // change cannot strand or invalidate one; it only makes *new* offers outside the full-target contract, and those
+        // are refused before acceptance, where the ordering flush already happens. Flushing here as well cost a whole
+        // bridge round trip per viewport change - four full-screen blits plus two depth conversions - for nothing.
         // Packed so the comparison in the group key is one test rather than four.
         this.currentViewportKey = ((long) x << 42) ^ ((long) y << 21) ^ ((long) width << 10) ^ (long) height;
     }

@@ -95,7 +95,11 @@ fixture が確かめていること（`celtium.validation.commandBufferTargets=t
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
    `CELTIUM_COMMAND_BUFFER_TARGETS` と `validationFirstMessages` を読む）。
-2. **1フレームあたりのブリッジ往復を減らす**（Intelのフレーム数対策。設計案は3つ:
+2. **1フレームあたりのブリッジ往復を減らす** — **1回目実施済み**: `viewport` 変更のflushを削除（キュー済みgroupは
+   常に現targetの全viewportで描かれるため不要）し、テクスチャ告知は **キュー内groupがそのtextureを参照する場合のみ**
+   flush（`queuedGroupUsesTexture`）。実測 `orderPreservingFlushes` 633→388、target受入 exit 0、通常fixture PASSED、
+   記録=submit=完了=2829、invalid 0。**残る設計案**（同一targetの連続window合体、GL clearをwindow内イベント化、
+   main targetはフレーム自身のpassで描く）:
    (a) 同一targetの連続windowを合体する、(b) GLのclearを「windowを強制する境界」ではなく
    「次のwindow内で適用するイベント」として保持する、(c) main targetの受理済みgroupはフレーム自身の
    terrain pass で描く（`recordRenderPass` は既に描いている）。いずれも順序の正しさを保つ条件を
