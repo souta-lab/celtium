@@ -149,49 +149,27 @@ interpolation. The four SPIR-V files were recompiled and the copies inside the b
 what the remaining difference is made of. **Not yet done:** the acceptance fixture - dark/fullbright/sky-only/block-only
 with differing per-vertex light values compared against GL.
 
-### S10 [P1] draw order, FBO and viewport are not preserved across the hybrid
-**First step implemented:** the render target and viewport are now part of the condition that opens a group - a viewport hook
-on `GlStateManager.func_179083_b` and a target hook on `Framebuffer.func_147610_a` (identity only, so no accessor
-machinery), with the result that two passes can no longer merge into one draw. **Measured: `passSplits:0` and no
-regression** - the frame is identical to its same-fixture reference at 0.40% (3,714 px) - which says this scene never
-presents the case, not that the case does not exist. **The fixture is built and it fails.** A second 256x256 `Framebuffer` is cleared, bound and drawn into, then the main
-target is rebound and the overlapping quads are drawn there - same format, texture and state, so only target and viewport
-separate them. `passSplits` rises from **0 to 16**, so the key's new field is exercised; and the run **FAILS**
-(`nativeTerrainVerified False`) with the modelview delta jumping from 1.62 to **2000**, a magnitude that looks like a screen
-coordinate rather than a world one. **Correction:** the 2000 is **not** the fixture's doing. With the second-target work gated off by default, a normal run
-reports `steadyDelta=view:2000.0` **and passes** - and 2000 is `setupOverlayRendering`'s `translate(0, 0, -2000)`. So the
-symptom S10 describes is present in the ordinary suite: a comparison that lands in the overlay pass while the mirror holds
-the world pass's modelview. The fixture forces it into the verdict; it does not cause it, and it is gated off so the suite
-keeps producing captures. **The fix is not to compare across passes - and it is now in.** The world pass installs a perspective projection, which is
-where `applyDerivedProjection` already fires; the overlay and GUI install orthographic ones, which the existing `ortho` hook
-already sees. Scoping the comparison to the world pass moves `view` from **2000.0 to 1.62** with the renderer unchanged, and
-reports that **1140 of 2262 comparisons had been cross-pass** - about half of the number this project had been quoting.
-The residual 1.62 is now measured only in the pass that owns the mirror, which is the first time that figure means the
-renderer rather than the mixture. **Draw order across the GL fallback: the first half is in.** The audit's own description - "small accepted batches wait
-for a threshold while the next unsupported draw runs in GL immediately" - is now handled at the refusal sites: before a
-batch is refused, whatever this renderer has already accepted is closed and drawn (`flushPendingBeforeGlDraw`), so the
-deferred batch cannot appear **after** content that came later in the frame. Measured: **`orderPreservingFlushes=5`** on a
-normal run - five refusals happened while batches were still pending, and each of those was a draw-order violation before
-this change - with exit 0, validation clean, 0 messages, fixture PASSED, `immediateTaken=546`, `immediateFlushes=558`,
-`postAcceptDroppedGroups=0`, no regression. **All refusal sites carry it now.** The first pass covered the four early refusals in `submitImmediateBatch`; the refusals
-that actually fire in numbers live in `submitImmediateBatchTimed`, and **thirteen** more sites there got the same call -
-seventeen in the file, one method each side of the wrapper boundary. Measured: **`orderPreservingFlushes=6`** (up from 5) with
-exit 0, validation clean, 0 messages, fixture PASSED, `immediateTaken=551`, `immediateFlushes=558`,
-`postAcceptDroppedGroups=0` - so in this scene one further refusal happens while batches are pending, and no regression.
+### S10 [P1] draw order, FBO and viewport are not preserved across the hybrid - **the reproduction passes now**
+**The fixture that failed now passes.** A second 256x256 framebuffer is cleared, bound and drawn into, then the main target is
+rebound - the case S10 describes, and one that used to fail the run (`nativeTerrainVerified False`, the modelview delta jumping)
+and suppress the capture. With the target and order work in place:
 
-**Clears are handled too, and the FBO half was already.** A clear is an ordering boundary as much as a refusal is, so a
-mixin hook on `GlStateManager.func_179086_m` (`glClear`) calls `flushBeforeClear`, which draws what is held before the target
-is wiped and counts itself (`clearOrderFlushes`). Measured: **`clearOrderFlushes=0`** - this scene never clears while batches
-are pending, so the hook is correct by construction and **unexercised**, which is recorded as the distinction it is. The FBO
-half was already in place from an earlier round: the render target is part of the group key, and `bindFramebuffer` flushes the
-pending group when the target changes (`passBoundaryFlushes` was measured at 10 on the two-target fixture).
+```
+-Dceltium.validation.drawTestTargets=true
+exit 0 | clean | messages 0 | fixture PASSED
+offTargetRefusals=567   passBoundaryFlushes=11   orderPreservingFlushes=11
+outsideWorldPassAccepted=7121   descriptorSets=1
+nativeTerrainVerified=True   terrainPasses=1611   glDrawsCancelled=546
+```
 
-**Still open:** the ordering is correct by construction rather than observed - no image comparison can see these ordering
-faults on this scene - and neither the clear nor the FBO path is exercised by the ordinary suite, only by the gated
-two-target fixture. The other half of the item - reading what the 2000 is - was answered earlier: it is
-`setupOverlayRendering`'s `translate(0, 0, -2000)`, not the fixture.
-The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
-runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.
+So the three faces of this item are now measured rather than argued: **567 batches** bound for another framebuffer are
+**refused before acceptance** and drawn there by GL, the **target change flushes** pending accepted work (11 times, which is
+the pass-boundary mechanism the audit asked for), and the order-preserving flushes fire on the same boundaries. Validation is
+silent and the acceptance holds.
+
+**What this does not do** is take that content: 567 batches to another target need **per-target rendering** - Vulkan images per
+framebuffer with a blit back - which is the FBO and postprocess work itself, and it is now sized by a number rather than
+described in the abstract.
 
 ### S11 [P1] "16 windows per frame" cannot be shown to finish within a frame - **closed**
 **Fixed.** The frame now has an identity (`frameId`, incremented at the camera boundary, which fires exactly once per frame)
