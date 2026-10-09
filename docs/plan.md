@@ -40,7 +40,10 @@ nativeTerrainVerified=True  terrainPasses=1482  glDrawsCancelled=772  passes=225
 ```
 
 So the mod's own overlay is drawn by the Vulkan immediate path, with no validation messages and the descriptor cache still at
-a single set. **Still not established:** a **recipe screen** - right-clicking a recipe, which is a different and heavier draw -
+a single set. The same configuration runs on **Intel** (`jeiScreenOpenedAtTick=170`, exit 0, validation clean, 0 messages,
+fixture PASSED, `terrainPasses=723`, `glDrawsCancelled=376`, `outsideWorldPassAccepted=4425`), so the major-mod path is
+verified on **both GPUs**. Worth recording for anyone repeating it: this configuration takes roughly **twice as long on
+Intel** with JEI loaded, which is what a 300-second budget ran into - the first attempt timed out rather than hanging. **Still not established:** a **recipe screen** - right-clicking a recipe, which is a different and heavier draw -
 needs the fixture to interact further, and is named rather than implied.
 
 ## Completion condition (2), item by item, with the evidence for each state

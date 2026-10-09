@@ -6665,3 +6665,28 @@ the fixture assumes.
 
 Recorded for the next step, precisely: this covers JEI's **overlay in the inventory**. A **recipe screen** - the mod's own
 heavier draw, opened by right-clicking a recipe - is still not exercised, and it needs the fixture to interact further.
+
+---
+
+## The major-mod path on Intel as well, and a timeout that was latency rather than a hang
+
+The JEI configuration was run on the Intel UHD 630 to extend the two-GPU condition to the mod path, and the first attempt
+**timed out**: `exit 124`, no report, the fixture's verdict missing. The second attempt failed for a different and instructive
+reason - the harness refuses to reuse an isolated game directory, so it exited at once with `FileExistsError` while the report
+read back was still the first attempt's. The third, under a fresh name and a longer budget, completed:
+
+```
+Intel UHD 630 with JEI and its overlay:
+jeiScreenOpenedAtTick=170 | exit 0 | clean | messages 0 | fixture PASSED
+outsideWorldPassAccepted = 4425    immediateTaken = 376    descriptorSets = 1
+nativeTerrainVerified = True   terrainPasses=723   glDrawsCancelled=376   passes=1099
+```
+
+So **the major-mod path is verified on both GPUs**: JEI's overlay and the inventory around it are drawn by the Vulkan immediate
+path on RADV and on ANV, with no validation messages on either, and the acceptance intact on both.
+
+The timeout is worth recording as what it was: **latency, not a hang**. This configuration takes roughly twice as long on
+Intel with JEI loaded, so a 300-second budget is simply too short - and the distinction matters, because "the run did not
+finish" reads like a defect until it is measured against the machine it ran on. The second attempt's failure is worth the same
+sentence: a harness that refuses to overwrite an existing game directory is protecting the evidence, and reading a previous
+attempt's report after a failed launch is a way to mistake one run's numbers for another's.
