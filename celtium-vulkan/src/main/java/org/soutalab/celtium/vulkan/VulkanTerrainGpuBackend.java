@@ -506,6 +506,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * frame.
      */
     private boolean frameSubmitReachedQueue;
+
+    /**
+     * How many submissions to refuse, for exercising the fail-closed paths:
+     * {@code -Dceltium.vulkan.failSubmits=2}.
+     */
+    private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();
     /**
      * Whether the mid-frame window samples the game framebuffer around itself.
      * <p>
@@ -2756,6 +2762,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
                     .pCommandBuffers(commandBuffers)
                     .pSignalSemaphores(signalSemaphores);
+            if (FAIL_SUBMITS_REMAINING > 0) {
+                // Test-only injection, so the fail-closed paths can be exercised instead of merely compiled: the
+                // submission is treated as refused by the driver, which is the case the audit's E asks to be shown to
+                // end in bounded time rather than in a wait for a signal that never comes.
+                FAIL_SUBMITS_REMAINING--;
+                record("injected submit failure (" + FAIL_SUBMITS_REMAINING + " left): this submission is not sent");
+                return;
+            }
             check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
             this.submissionPending = true;
             this.frameSubmitReachedQueue = true;

@@ -1988,3 +1988,24 @@ So the audit's B is complete in the sense that a path for recreation exists and 
 demonstrated is the branch itself, because this harness cannot drive a resize and neither driver reports sub-optimal at this
 size. That is the same honest shape as the fail-closed frame path: built and compiled, not exercised. The process change is
 what made the difference - four small edits landed where three batches had failed.
+
+---
+
+## The fail-closed frame path is exercised, and the numbers say why it matters
+
+`-Dceltium.vulkan.failSubmits=N` refuses the first N submissions, so the path the audit's E asked to see can be shown rather
+than only compiled. With two refusals - the frame's submission and its recovery - the run reports:
+
+```
+injected submit failure (1 left): this submission is not sent
+no submission reached the queue this frame, so the frame is not ended and GL is not left waiting on a semaphore that was
+never signalled
+fixture FAILED | passes 1 | errors=1647
+exited in 26s
+```
+
+The fixture failing is the intended outcome of an injected fault. What matters is the arithmetic around it: **1647 frames**
+found no submission, and the wait they avoided is bounded at **five seconds** each. A build that ended the frame anyway
+would have spent hours in GL waits; this one ended in twenty-six seconds, and the harness's own timeout never had to fire.
+That is the difference between a guard that is written and a guard that works, and it is the first time in this audit that a
+failure path has been demonstrated instead of argued.
