@@ -7724,3 +7724,29 @@ Eight defects and guards were needed to get here, all on two paths, and every on
 reported rather than found by reading it: five mapping guards (a missing branch, a stale range bound, a mask that excluded the
 id, a stride table that predated the layout, and a cache that would have been shared across two strides) and three acceptance
 defects (two initialisation-order nulls and a null render pass).
+
+---
+
+## The entity/item layout observed, accepted, and the "scene dependency" explained
+
+The fixture change was not a change: the JEI run draws items, and items use exactly the layout the census named.
+
+```
+arrivals:          [0:0 1:16 2:595 3:0 4:0 5:291 6:2024 7:1434 8:128 9:12 10:0]
+acceptedByFormat = 1:15, 2:0, 3:0, 4:0, 5:314, 6:1864, 7:1098, 8:128, 9:12
+immediateTaken = 3431   glDrawsCancelled = 3431   terrainPasses=927   outsideWorldPassAccepted=3563
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+**128 arrivals and 128 acceptances** - an exact match, so not one batch of that layout was dropped between the mapping and the
+draw. That also explains the "scene dependency" precisely rather than vaguely: it was never the scene's mood, it was **which
+test path the run enabled**. The runs that showed zero were the ones without the item/JEI path; the ones that showed 128 had it.
+
+With that, every layout the game has been observed to upload is mapped, accepted and drawn: terrain, the GUI, the font, the HUD,
+the hand, block, item, particle, the sky and clouds and water surface, position-only content, the entity/item layout, and the
+composite's layout. **Zero arrivals unmapped, zero acceptances missing.**
+
+Six rounds ago the same measurement read two thousand unmapped batches per run and six candidate mapping rules had been tried
+and reverted. What changed was not a rule: it was counting what arrives and what is accepted separately, reporting the backend's
+own refusal reason, and then following the reasons - five on the mapping and three on the acceptance path - instead of reading
+the code and guessing which one it must be.
