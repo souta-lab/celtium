@@ -69,6 +69,7 @@ public final class ValidationClient {
     private boolean celtium$particlesSpawned;
     private boolean celtium$interopChecked;
     private boolean celtium$jeiScreen;
+    private boolean celtium$jeiRecipe;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -597,6 +598,19 @@ public final class ValidationClient {
             celtium$jeiScreen = true;
             mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.player));
             report.addProperty("jeiScreenOpenedAtTick", worldTicks);
+        }
+        if (worldTicks == 180 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
+            // The mod's own heavier screen, opened through its public plugin API rather than by simulating input. Guarded
+            // behind its own flag because it needs JEI present and compiled in.
+            celtium$jeiRecipe = true;
+            try {
+                Class<?> plugin = Class.forName("org.soutalab.celtium.validation.CeltiumJeiPlugin");
+                Object opened = plugin.getMethod("openFirstRecipeCategory").invoke(null);
+                report.addProperty("jeiRecipeOpened", Boolean.TRUE.equals(opened));
+            } catch (ReflectiveOperationException | LinkageError error) {
+                report.addProperty("jeiRecipeOpened", false);
+                report.addProperty("jeiRecipeError", String.valueOf(error));
+            }
         }
         if (worldTicks == 190 && celtium$jeiScreen && mc.currentScreen != null) {
             mc.displayGuiScreen(null);

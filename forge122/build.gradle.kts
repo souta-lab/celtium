@@ -220,11 +220,23 @@ publishing {
 // None of its classes or dependencies are part of Celtium's distributable.
 val validation = sourceSets.create("validation") {
     java.srcDir("../validation/client/src/main/java")
+    // JEI's recipe screen is exercised only when the mod's jar has been fetched into the work directory. The plugin source
+    // lives in its own directory, so a normal build - and every ordinary run - is unchanged by its absence.
+    val jeiJar = file("${rootProject.projectDir.parentFile}/.celtium-work/major-mods")
+        .listFiles()?.firstOrNull { it.name.startsWith("jei_") && it.name.endsWith(".jar") }
+    if (jeiJar != null) {
+        java.srcDir("../validation/client/src/jei/java")
+        logger.lifecycle("validation client: JEI plugin enabled against ${jeiJar.name}")
+    }
     compileClasspath += sourceSets.main.get().compileClasspath.filter {
         !it.name.startsWith("jabel-javac-plugin-")
     }
 }
 dependencies {
+    // Same condition as the source directory above: the fixture can reach the mod's plugin API only when the jar is present.
+    file("${rootProject.projectDir.parentFile}/.celtium-work/major-mods")
+        .listFiles()?.firstOrNull { it.name.startsWith("jei_") && it.name.endsWith(".jar") }
+        ?.let { add(validation.compileOnlyConfigurationName, files(it)) }
     add(validation.compileOnlyConfigurationName, platform("org.lwjgl:lwjgl-bom:3.4.1"))
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl")
     add(validation.compileOnlyConfigurationName, "org.lwjgl:lwjgl-opengl")

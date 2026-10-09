@@ -6690,3 +6690,29 @@ Intel with JEI loaded, so a 300-second budget is simply too short - and the dist
 finish" reads like a defect until it is measured against the machine it ran on. The second attempt's failure is worth the same
 sentence: a harness that refuses to overwrite an existing game directory is protecting the evidence, and reading a previous
 attempt's report after a failed launch is a way to mistake one run's numbers for another's.
+
+---
+
+## JEI's recipe screen opened through its own API: the last named verification gap closes
+
+The plan named one thing the major-mod work did not establish: JEI's recipe screen, the mod's own heavier draw. The fixture
+now reaches it the way the mod intends - by implementing `mezz.jei.api.IModPlugin`, being discovered through `@JEIPlugin`, and
+calling `getRecipesGui().showCategories(...)` with the first category the mod registers.
+
+```
+jeiRecipeOpened=True | exit 0 | clean | messages 0 | fixture PASSED
+outsideWorldPassAccepted = 8563    immediateTaken = 791    descriptorSets = 1
+nativeTerrainVerified = True   terrainPasses=1482   glDrawsCancelled=791   passes=2273
+```
+
+So the mod's own screen is drawn by the Vulkan immediate path, with no validation messages and the acceptance intact.
+
+The plugin source is compiled **only when the JEI jar is present** (`src/jei/java` added conditionally by the fixture's build),
+so a normal build and every ordinary run are unchanged by its absence - and that is also why the fixture finds it with a single
+`Class.forName`: the class cannot be referenced at compile time when it may not exist. The mod-facing calls after that are
+direct, which is what the project's no-reflection rule is about.
+
+Getting there took three failed compiles, and the reason is worth recording because it is the same lesson as the sky mapping
+in a smaller form: **the API's shape was assumed**. `IJeiRuntime` lives in `mezz.jei.api`, not in a `runtime` subpackage; the
+annotation is `JEIPlugin` with a capitalised name; and `IModPlugin` in this version has no plugin-uid method at all. Reading
+the two interfaces out of the jar with `javap` settled all three in one command, after three rounds of guessing.

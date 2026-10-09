@@ -43,8 +43,20 @@ So the mod's own overlay is drawn by the Vulkan immediate path, with no validati
 a single set. The same configuration runs on **Intel** (`jeiScreenOpenedAtTick=170`, exit 0, validation clean, 0 messages,
 fixture PASSED, `terrainPasses=723`, `glDrawsCancelled=376`, `outsideWorldPassAccepted=4425`), so the major-mod path is
 verified on **both GPUs**. Worth recording for anyone repeating it: this configuration takes roughly **twice as long on
-Intel** with JEI loaded, which is what a 300-second budget ran into - the first attempt timed out rather than hanging. **Still not established:** a **recipe screen** - right-clicking a recipe, which is a different and heavier draw -
-needs the fixture to interact further, and is named rather than implied.
+Intel** with JEI loaded, which is what a 300-second budget ran into - the first attempt timed out rather than hanging. **And the recipe screen itself is now opened**, through the mod's own plugin API rather than by simulating input: the fixture
+implements `mezz.jei.api.IModPlugin` (annotated `@JEIPlugin`, compiled only when the jar is present) and calls
+`getRecipesGui().showCategories(...)` with the first category the mod registers.
+
+```
+jeiRecipeOpened=True | exit 0 | clean | messages 0 | fixture PASSED
+outsideWorldPassAccepted=8563   immediateTaken=791   descriptorSets=1
+nativeTerrainVerified=True   terrainPasses=1482   glDrawsCancelled=791   passes=2273
+```
+
+The API shapes were read from the jar with `javap` rather than assumed, which is what three failed compiles were about: this
+version's runtime interface is `mezz.jei.api.IJeiRuntime`, its annotation is `JEIPlugin` with a capitalised name, and
+`IModPlugin` has no plugin-uid method. One reflection call remains and is honest to name: the fixture finds the optional plugin
+class with `Class.forName`, because that class is compiled only when JEI is present - the mod-facing calls after it are direct.
 
 ## Completion condition (2), item by item, with the evidence for each state
 
