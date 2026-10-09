@@ -81,6 +81,14 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Depth comparison cleared; the immediate draw is stable with the depth test on.** Re-enabling the depth test
+  (`LEQUAL`, writes off) leaves both measurements unchanged - 230400 pixels for the synthetic NDC quad, 25344 for the
+  fixture's batch - so the depth comparison was never the cause; the invisibility came from the flush guard and the
+  matrix grouping fixed in the previous rounds. A regression run on the normal path (no test flags) stays PASSED with
+  `nativeTerrainVerified True`, 1641 terrain passes and `immediateTaken=24` / `immediateFlushes=24`, i.e. vanilla's own
+  16-byte batches are being drawn by Vulkan every frame in a plain session, and the 24-byte formats are still refused
+  with a reason and drawn by GL. `docs/mod-compatibility.md` now records the per-mod and per-call-pattern status.
+
 - **The immediate pipeline rasterises and a real mod batch is now visible.** The isolation test draws a synthetic
   `POSITION_COLOR` quad whose vertices are already in NDC (green, so it cannot be confused with anything else) through
   the immediate pipeline, next to the UI test quad that is known to appear. Measured: **230400 green pixels**, which is
