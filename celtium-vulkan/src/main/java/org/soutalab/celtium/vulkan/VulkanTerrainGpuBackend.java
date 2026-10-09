@@ -275,6 +275,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // renderer itself provides.
         try {
             long handoffStart = System.nanoTime();
+            this.frameSubmitReachedQueue = false;
             this.frameTarget.beginFrame();
             this.windowOpen = true;
             this.frameOpens++;
@@ -321,6 +322,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         try {
+            if (!this.frameSubmitReachedQueue) {
+                // Neither the submission nor its recovery reached the queue, so nothing signalled the Vulkan-to-GL
+                // semaphore that endFrame makes GL wait on. Ending the frame would stall the render thread on that wait
+                // and hand the game a frame nobody finished; leaving it unended keeps the failure visible, which is the
+                // fail-closed behaviour the audit asks for here.
+                this.passErrors++;
+                record("no submission reached the queue this frame, so the frame is not ended and GL is not left waiting"
+                        + " on a semaphore that was never signalled");
+                return;
+            }
             long handoffStart = System.nanoTime();
             this.windowOpen = false;
             this.frameTarget.endFrame();
@@ -480,6 +491,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediatePresentedFrames;
     private int immediateTextureInvalidations;
     private int immediatePresentFailures;
+    /**
+     * Whether this frame's submission actually reached the queue.
+     * <p>
+     * Set by {@code submitCommands} on a successful {@code vkQueueSubmit} and cleared when a frame opens, so reading it
+     * before {@code endFrame} answers "did this frame hand the images over" - which is the question the audit's item E
+     * needs answered. It is deliberately not {@code submissionPending}: that flag belongs to GPU-idle bookkeeping and is
+     * cleared by the idle wait before {@code endFrame} runs, which is why using it there refused to end every healthy
+     * frame.
+     */
+    private boolean frameSubmitReachedQueue;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -727,6 +748,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // this layout on GL by default.
             try {
                 if (this.frameTarget != null && ensureSwapchain()) {
+                    this.frameSubmitReachedQueue = false;
                     this.frameTarget.beginFrameForPresent();
                     long bridgeWait = this.frameTarget.waitSemaphore();
                     long bridgeDone = this.frameTarget.doneSemaphore();
@@ -1058,6 +1080,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             before = sampleBoundFramebufferMean();
             stateBefore = snapshotGlState();
+            this.frameSubmitReachedQueue = false;
             this.frameTarget.beginFrame();
             this.windowOpen = true;
             opened = true;
@@ -1078,7 +1101,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (opened) {
                 this.windowOpen = false;
                 try {
-                    this.frameTarget.endFrame();
+                    if (this.frameSubmitReachedQueue) {
+                        this.frameTarget.endFrame();
+                    } else {
+                        this.passErrors++;
+                        record("immediate window submitted nothing, so the frame is not ended");
+                    }
                 } catch (RuntimeException | LinkageError error) {
                     record("immediate window close failed: " + describeWithStack(error));
                 }
@@ -2106,7 +2134,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("presenting the frame skipped: the default framebuffer is bound, so there is no frame content"
                         + " to present here");
             } else if (ensureFrameTarget()) {
-                this.frameTarget.beginFrame();
+                this.frameSubmitReachedQueue = false;
+            this.frameTarget.beginFrame();
                 record(this.swapchain.presentImage(this.frameTarget.colorImage(),
                         org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
                         this.targetHeight));
@@ -2692,6 +2721,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     .pSignalSemaphores(signalSemaphores);
             check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
             this.submissionPending = true;
+            this.frameSubmitReachedQueue = true;
         }
     }
 
