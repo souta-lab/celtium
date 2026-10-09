@@ -256,6 +256,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public List<String> diagnostics() {
         // takeTimingSummary() was written but never called, so every post-process investigation ran without the numbers
         // that say where the handoff time goes. Gated, because it is a per-report string rather than a per-frame cost.
+        if (Boolean.getBoolean("celtium.vulkan.handoffTimings")) {
+            // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
+            // changes which batches are taken, so a run has to say how many it refused and why.
+            this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
+                    + " shaderProgramRefusals=" + this.shaderProgramRefusals
+                    + " textureRefusals=" + this.textureRefusalsBeforeAccept
+                    + " accepted=" + this.frameAccepted);
+        }
         if (Boolean.getBoolean("celtium.vulkan.handoffTimings") && this.frameTarget != null) {
             String timings = this.frameTarget.takeTimingSummary();
             if (timings != null) {
