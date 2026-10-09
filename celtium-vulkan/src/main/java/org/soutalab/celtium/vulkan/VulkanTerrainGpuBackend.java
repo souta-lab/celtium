@@ -421,6 +421,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetRefusals;
     private int textureRefusalsBeforeAccept;
     private int postAcceptDroppedGroups;
+    /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
+    private boolean gpuStalled;
+    private int stalledStops;
+    private static final boolean FAIL_IDLE = Boolean.getBoolean("celtium.vulkan.failIdle");
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
     private String particleDescriptorFailureReason;
@@ -1026,6 +1030,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // original GL draw stays in charge. Taking it and then failing later is the failure mode the audit lists as S14.
             this.immediateLastRefusal = "outside the world pass or without a snapshot";
             this.outsideWorldPassRefusals++;
+            return false;
+        }
+        if (this.gpuStalled) {
+            this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
             return false;
         }
         if (!this.currentRenderTargetIsMain) {
@@ -1766,6 +1774,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " textureRefusalsBeforeAccept=" + this.textureRefusalsBeforeAccept
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
+                + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
@@ -2869,7 +2878,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // or re-recording a pending buffer is invalid and, on some drivers, makes the GPU execute a half-rewritten
         // command stream - which shows up as the wrong vertex data reaching the shader.
         if (this.submissionPending) {
-            waitForIdle();
+            boolean idle = waitForIdle();
+            if (!idle) {
+                // The audit's S02: a timeout here used to be logged and ignored, after which the pending command buffer
+                // was cleared, reset and re-recorded although the GPU might still be reading it. Nothing is touched in
+                // that case - the flag stays set, the buffer is not reset - and every later use is refused, so the
+                // renderer stops drawing rather than re-recording a buffer that may be in flight.
+                this.gpuStalled = true;
+                this.stalledStops++;
+                record("gpu stalled: the previous submission did not complete; drawing is refused from here");
+                return;
+            }
             this.submissionPending = false;
             // The previous frame's timestamps are complete now, which is the only moment they can be read reliably.
             updateTimings();
@@ -3332,9 +3351,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    private void waitForIdle() {
+    private boolean waitForIdle() {
+        if (FAIL_IDLE) {
+            // A documented injection for the timeout path, which no ordinary run reaches: the audit asks for a safe fake
+            // result here and a real latency test to be kept apart.
+            return false;
+        }
         if (this.fence == 0 || !this.submissionPending) {
-            return;
+            return true;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
@@ -3343,15 +3367,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
                         + "s, so the last submission is not completing; not draining the queue");
-                return;
+                return true;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 record("waitForIdle: vkWaitForFences returned " + result);
-                return;
+                return true;
             }
             this.submissionPending = false;
         }
         vkQueueWaitIdle(this.context.queue());
+        return true;
     }
 
     /** How long a wait for the GPU will be tolerated before the run ends rather than hanging. */

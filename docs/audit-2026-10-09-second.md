@@ -28,6 +28,13 @@ verdict flags are reset at entry (measured `withWait=2`, `validationClean True`)
 `GENERAL` layout, and the present's own failure handling.
 
 ### S02 [P1] a timed-out wait still lets the command buffer be reused
+**Half done, deliberately not called closed.** The recording side is guarded: the wait reports success or failure, a failure
+touches nothing, and every later batch is refused before acceptance, with a documented injection
+(`-Dceltium.vulkan.failIdle=true`) for the path no ordinary run reaches. Measured: the normal run is unchanged (exit 0,
+validation clean, 0 messages, PASSED, `gpuStalled false`), and the **injected** stall still ends in `SIGABRT` with 17
+validation messages - because the rest of the frame (`endFrame`, present, terrain passes) still assumes a recorded buffer.
+**Open:** skip those stages when stalled, with the injection as the test; the acceptance is an injected run that refuses and
+stays clean instead of aborting.
 `waitForIdle` logs `VK_TIMEOUT` and returns; `beginCommands` then proceeds, clears `submissionPending` and resets the
 command buffer although the GPU may still be reading it. `settleGpu` is described as bounded but `vkDeviceWaitIdle` has no
 timeout, and the context drains queues with `vkQueueWaitIdle` and `Long.MAX_VALUE` fences. The submit-failure injection

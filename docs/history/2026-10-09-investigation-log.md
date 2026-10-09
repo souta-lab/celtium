@@ -4453,3 +4453,30 @@ Both GPUs are clean afterwards:
 This is the value of the second GPU stated plainly: the barrier was wrong on both, one driver's validation tracked it and the
 other did not object, and without the Intel run the project would have shipped a layout bug that a stricter driver would
 report - which the audit asked for by name when it said to verify both GPUs rather than one.
+
+---
+
+## S02's recording side is guarded; the frame side is not, and the injection shows it
+
+The audit's S02 is the timeout path: a wait that times out was logged and ignored, after which the pending command buffer
+was cleared, reset and re-recorded while the GPU might still be reading it. The recording side is now guarded - the wait
+reports whether it succeeded, nothing is touched when it did not, and every later batch is refused before acceptance with a
+documented injection (`-Dceltium.vulkan.failIdle=true`) to reach the path that no ordinary run takes.
+
+Measured, both runs:
+
+| Run | Result |
+|---|---|
+| normal | exit 0, validation clean, **0 messages**, fixture PASSED, `gpuStalled false`, `stalledStops 0`, 553 accepted |
+| `failIdle` injection | **exit -6 (SIGABRT), 17 validation messages** |
+
+**The healthy path is undisturbed, and the failure path is not fixed.** With recording refused, the rest of the frame still
+runs against a command buffer that was never begun - `endFrame`, the present and the terrain passes all assume the frame's
+recording happened - so the injected stall ends in an abort rather than a refusal. That is why the change is kept and S02 is
+**not** called closed: what exists now is half of the correct behaviour (nothing invalid is reset or re-recorded) and the
+absence of the other half (the frame must stop, not continue into code that expects a recorded buffer).
+
+The next patch is therefore specific: when `gpuStalled` is set, the frame's remaining stages are skipped - `endFrame`, the
+present path and the terrain passes - so the renderer stops drawing and keeps running, which is what "fail closed" has to
+mean for a frame rather than for one buffer. The injection is the test for it, and the acceptance is that the injected run
+ends with refusals and no validation messages instead of an abort.
