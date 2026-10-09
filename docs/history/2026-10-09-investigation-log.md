@@ -2917,3 +2917,30 @@ quoted in this history were produced by inline maximum-per-channel arithmetic in
 observation about the same tool is still open: it does not consult `validation-process.json`'s failure field, so a run that
 failed for a reason outside the fixture's own status can still be reported as a match. That is the next change to this
 file.
+
+---
+
+## The comparator now refuses to call two failed runs a match
+
+The audit's second point about the comparison tool was that it ignores the harness's own verdict, so a run that failed for a
+reason outside the fixture's status could still be reported as a match. The tool now reads `validation-process.json`
+alongside each run and treats four things as disqualifying - a non-zero `validationExitCode`, `validationClean == False`
+(reported with the message count), a `fixtureStatus` other than PASSED, and the file being **absent**, which reads as "the
+run's own verdict is unknown" rather than as a pass.
+
+All five states were checked against the logic before the change was trusted:
+
+| Process state | Reported |
+|---|---|
+| clean | no problems |
+| 13 validation messages | message count and exit code 1 |
+| non-zero exit only | exit code 1 |
+| fixture FAILED | the status |
+| file absent | the run's own verdict is unknown |
+
+The consequence for this log is concrete and is recorded rather than implied: **comparisons made with runs whose process
+result records a failure are void.** Two families are known to be in that state - the reload runs taken before the
+destruction-order fix, which reported thirteen validation messages, and the frame-present runs taken before the submit-wait
+fix, which reported thirty-six. The numbers in this file that came from inline maximum-per-channel arithmetic are not
+affected by the mask defect, which is stated because it is checkable: the analysis scripts compute the per-channel maximum
+themselves rather than calling the tool.

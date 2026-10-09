@@ -92,13 +92,38 @@ def load(directory):
     for path in (report_path, image_path):
         if not path.is_file():
             raise SystemExit(f"missing {path}")
+    # The harness writes its own verdict next to the game directory it ran in, and it carries the validation layer's
+    # result. Without this the comparator could call two runs a match while the layer had reported messages or the process
+    # had failed for a reason the fixture's own status does not cover - the audit's second point about this tool.
+    process_path = directory / "validation-process.json"
+    process = json.loads(process_path.read_text()) if process_path.is_file() else None
     result = {
         "directory": str(directory),
         "report": json.loads(report_path.read_text()),
         "report_path": str(report_path),
         "image_path": str(image_path),
+        "process": process,
+        "process_path": str(process_path) if process is not None else None,
     }
     return result
+
+
+def process_problems(loaded, label):
+    """{@return the reasons a run's own process result disqualifies it}, empty when it is clean or absent."""
+    process = loaded.get("process")
+    if process is None:
+        return [f"{label}: no validation-process.json, so the run's own verdict is unknown"]
+    problems = []
+    if process.get("validationClean") is False:
+        problems.append(f"{label}: the validation layer reported "
+                        f"{process.get('validationMessageCount')} message(s)")
+    code = process.get("validationExitCode")
+    if isinstance(code, int) and code != 0:
+        problems.append(f"{label}: validationExitCode is {code}")
+    status = process.get("fixtureStatus")
+    if status not in (None, "PASSED"):
+        problems.append(f"{label}: fixtureStatus is {status}")
+    return problems
 
 
 def compare_images(reference, candidate, tolerance, max_diff_ratio):
@@ -168,6 +193,13 @@ def main():
 
     problems = []
     checks = {}
+
+    # A run the harness itself failed is not a reference and not a candidate: an image match between two failed runs is
+    # still a failed comparison.
+    for label, loaded in ((arguments.reference_label, reference), (arguments.candidate_label, candidate)):
+        run_problems = process_problems(loaded, label)
+        checks[f"process.{label}"] = {"problems": run_problems, "equal": not run_problems}
+        problems.extend(run_problems)
 
     for field in REQUIRED_EQUAL:
         left = reference["report"].get(field)
