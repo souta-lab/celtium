@@ -81,6 +81,19 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **The test quad is captured, projects on-screen, and is still invisible - so the next test isolates the pipeline.**
+  The group-bounds diagnostic identified the fixture's own geometry by its packed colour and transformed every vertex:
+  `group 4: vertices=4 indices=6 colour0=0xc84040ff proj=[m00=0.80535626 m11=1.4317445] ndc x[-0.85..0.85] y[0.57..0.57]
+  z[0.95..0.95] behind=2`. Those are the fixture's `255, 64, 64, 200` vertices under the real world perspective, and
+  they land **inside** the NDC cube (x and y within -1..1; z = 0.95 is correct for a point two blocks away with the
+  0.05 near plane Minecraft uses). Disabling the depth test changed nothing (still zero red pixels), so the depth
+  comparison is not the cause either.
+  What remains is the pipeline itself, and the next step tests it in isolation: draw one synthetic
+  `POSITION_COLOR` group with known NDC vertices through the immediate pipeline, next to the UI test quad that is
+  known to appear. If the synthetic group shows up, the immediate pipeline rasterises and the fault is in the batch
+  geometry or its transform; if it does not, the pipeline, its layout or its buffer binding is the fault. Either
+  answer is decisive and neither needs another guess.
+
 - **Grouping implemented and validation-clean; the quad is still invisible.** The immediate path now keeps one mesh
   per matrix pair, draws each with its own push constants (602 batches taken, **601 flushes**), and frees the meshes
   one full pass later - destroying them right after recording produced 18 validation messages about in-flight

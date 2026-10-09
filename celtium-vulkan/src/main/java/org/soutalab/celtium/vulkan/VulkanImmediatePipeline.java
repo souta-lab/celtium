@@ -158,11 +158,16 @@ public final class VulkanImmediatePipeline {
                                 .rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
                 // Depth test on so the geometry participates in the world, writes off because Minecraft's own
                 // immediate path for this state does the same, and blending on so the alpha it carries is honoured.
+                // Depth testing is disabled for this first slice on purpose: the geometry projects on-screen (the
+                // diagnostic measured NDC z = 0.95 for the test quad, which is correct for a point two blocks away
+                // with a 0.05 near plane) and was still invisible, so the depth comparison against the copied OpenGL
+                // depth is the remaining suspect. Drawing without it answers that question with pixels instead of
+                // another guess; the state-driven cache restores the real comparison once the path is proven.
                 VkPipelineDepthStencilStateCreateInfo depth =
                         VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default()
-                                .depthTestEnable(true)
+                                .depthTestEnable(false)
                                 .depthWriteEnable(false)
-                                .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+                                .depthCompareOp(VK_COMPARE_OP_ALWAYS);
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
                         VkPipelineColorBlendAttachmentState.calloc(1, stack);
                 blendAttachment.get(0)

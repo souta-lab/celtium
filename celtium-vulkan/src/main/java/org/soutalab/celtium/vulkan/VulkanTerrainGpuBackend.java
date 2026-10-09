@@ -358,6 +358,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
     private boolean currentGroupUsed;
+    private int immediateDiagnostics;
     /**
      * Groups whose draws are already recorded but whose command buffer may still be in flight.
      * <p>
@@ -577,6 +578,73 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             ((VulkanDynamicMesh) group[0]).delete();
         }
         this.retiredImmediateGroups.clear();
+    }
+
+    /**
+     * Reports the projected NDC bounds of a group and the colour of its first vertex.
+     * <p>
+     * This is the narrower diagnostic the previous round called for: vertex 0 alone cannot tell "projects on-screen
+     * but is rejected by the depth test" from "never enters an accepted group", while the bounds over the whole group
+     * can. The packed colour identifies the test geometry (the fixture draws with 255, 64, 64, 200).
+     */
+    private void reportGroupBounds(Object[] group) {
+        if (this.immediateDiagnostics >= 6) {
+            return;
+        }
+        this.immediateDiagnostics++;
+        try {
+            VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
+            float[] projection = (float[]) group[1];
+            float[] modelView = (float[]) group[2];
+            long base = mesh.vertexAddress();
+            int vertices = mesh.vertexCount();
+            float[] mvp = new float[16];
+            for (int column = 0; column < 4; column++) {
+                for (int row = 0; row < 4; row++) {
+                    float sum = 0.0f;
+                    for (int k = 0; k < 4; k++) {
+                        sum += projection[k * 4 + row] * modelView[column * 4 + k];
+                    }
+                    mvp[column * 4 + row] = sum;
+                }
+            }
+            float minX = Float.MAX_VALUE;
+            float maxX = -Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE;
+            float maxY = -Float.MAX_VALUE;
+            float minZ = Float.MAX_VALUE;
+            float maxZ = -Float.MAX_VALUE;
+            int behind = 0;
+            for (int vertex = 0; vertex < vertices; vertex++) {
+                long offset = base + ((long) vertex * VulkanImmediatePipeline.VERTEX_BYTES);
+                float x = MemoryUtil.memGetFloat(offset);
+                float y = MemoryUtil.memGetFloat(offset + 4);
+                float z = MemoryUtil.memGetFloat(offset + 8);
+                float cx = (mvp[0] * x) + (mvp[4] * y) + (mvp[8] * z) + mvp[12];
+                float cy = (mvp[1] * x) + (mvp[5] * y) + (mvp[9] * z) + mvp[13];
+                float cz = (mvp[2] * x) + (mvp[6] * y) + (mvp[10] * z) + mvp[14];
+                float cw = (mvp[3] * x) + (mvp[7] * y) + (mvp[11] * z) + mvp[15];
+                if (cw <= 0.0f) {
+                    behind++;
+                    continue;
+                }
+                minX = Math.min(minX, cx / cw);
+                maxX = Math.max(maxX, cx / cw);
+                minY = Math.min(minY, cy / cw);
+                maxY = Math.max(maxY, cy / cw);
+                minZ = Math.min(minZ, cz / cw);
+                maxZ = Math.max(maxZ, cz / cw);
+            }
+            String bounds = behind == vertices ? "all behind the camera"
+                    : String.format("x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f] behind=%d",
+                            minX, maxX, minY, maxY, minZ, maxZ, behind);
+            record("group " + this.immediateDiagnostics + ": vertices=" + vertices
+                    + " indices=" + mesh.indexCount() + " colour0=0x"
+                    + Integer.toHexString(MemoryUtil.memGetInt(base + 12))
+                    + " proj=[m00=" + projection[0] + " m11=" + projection[5] + "] ndc " + bounds);
+        } catch (RuntimeException | LinkageError error) {
+            record("group diagnostic failed: " + describe(error));
+        }
     }
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
@@ -1667,6 +1735,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (mesh.isEmpty()) {
                         continue;
                     }
+                    reportGroupBounds(group);
                     pushMatrixInto((float[]) group[1], push, 0);
                     pushMatrixInto((float[]) group[2], push, 64);
                     this.immediatePipeline.draw(this.commandBuffer, mesh, push);
