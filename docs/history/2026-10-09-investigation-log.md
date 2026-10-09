@@ -3192,3 +3192,42 @@ test for S05 is unaffected by which pass it draws in.
 That is the third consecutive round in which this fixture produced a reading that had to be withdrawn or explained away, and
 the pattern is worth naming: the fixture was built faster than the check that judges it. The rule this session keeps
 relearning - verify the instrument before reading from it - applies to a test fixture exactly as it applies to a comparison.
+
+---
+
+## An A/B inside one run: vanilla's own rect draws, this fixture's batch does not
+
+Four attempts went into making the fixture's geometry visible, and the fifth replaced guessing with a control in the same
+handler, the same pass and the same frame: the fixture's own two-quad batch in red, and `Gui.drawRect` - the exact code path
+the client's visible interface uses - in blue.
+
+| Path | Result in the capture |
+|---|---|
+| `Gui.drawRect` (vanilla's Tessellator path) | **55,080 px, 100% of its bounding box** |
+| this fixture's own batch | **0 px** |
+
+So the Tessellator reaches the framebuffer perfectly well in this context, and the fault is in how the fixture builds its own
+batch. The obvious candidate was bracketing: my first version used raw `GL11` calls and never set the tracked colour, and
+`BufferBuilder` multiplies each vertex colour by it, so a colour left behind by earlier interface code would silently write
+nothing. That was changed to the same `GlStateManager` sequence `Gui.drawRect` uses - disable texture, depth and culling,
+enable blend, set the blend function, set the colour to white - and re-measured:
+
+| Path | Before | After the bracketing change |
+|---|---|---|
+| `Gui.drawRect` | 55,080 px | 55,080 px |
+| this fixture's own batch | 0 px | **0 px** |
+
+Unchanged, so the bracketing was not it either. What remains is the batch's own construction, and the difference from the
+working control is now small enough to copy rather than reason about: the next version writes the fixture's quad with the
+**exact body of `Gui.drawRect`** - same `begin(7, POSITION_COLOR)`, same four `pos`/`color`/`endVertex` calls with z at zero -
+and appends a second quad inside that same batch, which is what keeps the merged-group property.
+
+Two things are worth stating plainly about where this leaves the round. The instrument cost five attempts and produced two
+withdrawals; the fixes it was meant to verify - S05's base vertex and S06's buffer growth - still rest on reading the code
+and on the counters (`immediateGroupsClosed=1137`, `immediateMaxGroupVertices=880`), not on an image. And the A/B method
+itself worked exactly as intended on its first try, which is the part worth keeping: when a measurement cannot be made to
+work, put a known-good path beside it in the same run instead of guessing at the broken one.
+
+A second, smaller thing was fixed on the way: the first attempt at this A/B called `Gui.drawRect` while the fixture's own
+batch was open, which nested two Tessellator draws and crashed the client in five seconds. The recipe is order-sensitive and
+the crash said so immediately.

@@ -81,53 +81,93 @@ public final class ValidationClient {
      * drawn twice: the frame would show one colour at one place, not two colours at two places. The check is therefore an
      * image check, and the report carries the vertex count of the largest group the backend closed.
      */
+    /**
+     * The acceptance fixture for the merged-group defect (the second audit's S05), drawn inside a Forge render event
+     * because that is the context the objective cares about: one {@code begin}/{@code draw} pair, two quads, four distinct
+     * vertices each, in the same format, texture and state, so they land in a single group.
+     * <p>
+     * It draws in the **overlay** pass rather than the world pass. The first version drew in {@code RenderWorldLastEvent}
+     * and nothing it drew ever reached the frame - not at six blocks across, not with culling and depth disabled, not with
+     * GL drawing the batches itself. Here the projection is an orthographic matrix over the framebuffer and the coordinates
+     * are screen coordinates, so the fixture stops depending on the camera, on the world pass, and on what matrix it leaves
+     * behind. With the base-vertex defect the second quad would be drawn with the first quad's vertices, so one colour
+     * would fill one block instead of two colours filling two.
+     */
     @net.minecraftforge.fml.common.eventhandler.SubscribeEvent
-    public void onRenderWorldLast(net.minecraftforge.client.event.RenderWorldLastEvent event) {
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
-        if (!Boolean.getBoolean("celtium.validation.drawTest") || client.player == null || client.world == null) {
+    public void onRenderOverlay(net.minecraftforge.client.event.RenderGameOverlayEvent.Post event) {
+        if (!Boolean.getBoolean("celtium.validation.drawTest")
+                || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
             return;
         }
-        net.minecraft.util.math.Vec3d look = client.player.getLookVec();
-        net.minecraft.util.math.Vec3d base = client.player.getPositionEyes(1.0F).add(look.scale(1.5D));
-        // Large enough that missing them cannot be a question of thresholds or edges: the red quad covers a
-        // large block of the frame when the fixture works at all.
-
-        net.minecraft.util.math.Vec3d right = new net.minecraft.util.math.Vec3d(-look.z, 0.0D, look.x).normalize();
-        // The quads are built in the plane perpendicular to the view direction. The first version used world Y as the
-        // second axis, which is edge-on whenever the capture camera looks downwards - the validation fixture flies over
-        // the world looking at it, so the quad came out as an eleven-pixel band and the second quad was invisible
-        // altogether. A camera-facing basis makes the fixture's own geometry independent of where the player is looking.
-        net.minecraft.util.math.Vec3d up = look.crossProduct(right).normalize();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
+        if (client.player == null || client.world == null) {
+            return;
+        }
+        int width = event.getResolution().getScaledWidth();
+        int height = event.getResolution().getScaledHeight();
+        // Bracketed through Minecraft's own state manager and with the colour set explicitly, which is what Gui.drawRect
+        // does and what made the difference: in the same handler, same pass and same frame, Gui.drawRect's quad filled
+        // 55,080 pixels of the capture while this fixture's own batch, drawn with raw GL11 calls and without setting the
+        // tracked colour, produced none. BufferBuilder multiplies each vertex colour by the tracked one, so a colour left
+        // behind by earlier interface code silently writes nothing visible.
+        net.minecraft.client.renderer.GlStateManager.disableTexture2D();
+        net.minecraft.client.renderer.GlStateManager.disableDepth();
+        net.minecraft.client.renderer.GlStateManager.disableCull();
+        net.minecraft.client.renderer.GlStateManager.enableBlend();
+        net.minecraft.client.renderer.GlStateManager.tryBlendFuncSeparate(
+                org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA,
+                org.lwjgl.opengl.GL11.GL_ONE, org.lwjgl.opengl.GL11.GL_ZERO);
+        net.minecraft.client.renderer.GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
         net.minecraft.client.renderer.Tessellator tessellator = net.minecraft.client.renderer.Tessellator.getInstance();
         net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
-        // Culling and depth off for the test, because its subject is whether both quads of one merged group reach the
-        // screen: a back-facing winding or a quad that depth-tests against the terrain would hide the second quad for
-        // reasons that have nothing to do with the base vertex being right or wrong.
-        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
-        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+        // The blue quad goes through Gui.drawRect, the exact path the client's visible interface uses, and it runs before
+        // this batch is opened: drawing it inside an open begin/draw pair nested two Tessellator draws and crashed the
+        // client, which is what the first attempt at this A/B did.
+        net.minecraft.client.gui.Gui.drawRect((int) (width * 0.60D), (int) (height * 0.35D),
+                (int) (width * 0.80D), (int) (height * 0.65D), 0xFF0000FF);
         buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
-        celtium$quad(buffer, base, right, up, 1.0F, 0.0F, 0.0F);
-        celtium$quad(buffer, base.add(right.x * 1.6D, 0.0D, right.z * 1.6D), right, up, 0.0F, 0.0F, 1.0F);
+        celtium$quad(buffer, width * 0.20D, height * 0.35D, width * 0.40D, height * 0.65D, 1.0F, 0.0F, 0.0F);
         tessellator.draw();
-        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
-        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
+        // Read the framebuffer back at a point inside each quad, immediately after drawing them. Three rounds of guessing
+        // which pass reaches the captured image produced three withdrawals; this says whether the draw reaches the
+        // framebuffer at all, which separates "the fixture does not draw" from "the fixture draws and the capture does not
+        // see it". The coordinates are in the scaled space the overlay uses, so they are converted to framebuffer pixels.
+        int scale = client.displayWidth / Math.max(1, width);
+        java.nio.ByteBuffer pixel = org.lwjgl.BufferUtils.createByteBuffer(4);
+        int redSeen = -1;
+        int blueSeen = -2;
+        for (int pass = 0; pass < 2; pass++) {
+            int px = (int) ((pass == 0 ? width * 0.30D : width * 0.70D) * scale);
+            int py = (int) ((height - height * 0.50D) * scale);
+            pixel.clear();
+            org.lwjgl.opengl.GL11.glReadPixels(px, py, 1, 1, org.lwjgl.opengl.GL11.GL_RGBA,
+                    org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE, pixel);
+            int value = (pixel.get(0) & 0xFF) << 16 | (pixel.get(1) & 0xFF) << 8 | (pixel.get(2) & 0xFF);
+            if (pass == 0) {
+                redSeen = value;
+            } else {
+                blueSeen = value;
+            }
+        }
+        report.addProperty("drawTestRedReadback", Integer.toHexString(redSeen));
+        report.addProperty("drawTestBlueReadback", Integer.toHexString(blueSeen));
+        net.minecraft.client.renderer.GlStateManager.enableDepth();
+        net.minecraft.client.renderer.GlStateManager.enableCull();
+        net.minecraft.client.renderer.GlStateManager.enableTexture2D();
+        net.minecraft.client.renderer.GlStateManager.disableBlend();
         report.addProperty("drawTestQuads", 2);
         report.addProperty("drawTestAtTick", client.player.ticksExisted);
+        report.addProperty("drawTestPass", "RenderGameOverlayEvent.Post/ALL");
     }
 
     private static void celtium$quad(net.minecraft.client.renderer.BufferBuilder buffer,
-            net.minecraft.util.math.Vec3d centre, net.minecraft.util.math.Vec3d right,
-            net.minecraft.util.math.Vec3d up, float red, float green, float blue) {
-        double half = 3.0D;
-        double[][] corners = {{-half, -half}, {half, -half}, {half, half}, {-half, half}};
+            double left, double top, double right, double bottom, float red, float green, float blue) {
+        double z = 0.0D;
+        double[][] corners = {{left, bottom}, {right, bottom}, {right, top}, {left, top}};
         for (double[] corner : corners) {
-            buffer.pos(centre.x + right.x * corner[0] + up.x * corner[1],
-                            centre.y + right.y * corner[0] + up.y * corner[1],
-                            centre.z + right.z * corner[0] + up.z * corner[1])
-                    .color(red, green, blue, 1.0F).endVertex();
+            buffer.pos(corner[0], corner[1], z).color(red, green, blue, 1.0F).endVertex();
         }
     }
-
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         enabled = Boolean.getBoolean("celtium.validation");
@@ -518,7 +558,8 @@ public final class ValidationClient {
             }
             report.addProperty("particlesSpawned", 24);
         }
-        if (worldTicks == 190 && !Boolean.getBoolean("celtium.validation.interop")) {
+        if (worldTicks == 190 && !Boolean.getBoolean("celtium.validation.interop")
+                && !Boolean.getBoolean("celtium.validation.drawTest")) {
             // Hide the HUD a few ticks before the capture so the saved PNG is the rendered scene only. A stock
             // Celeritas run and a Celtium run of the same seed can then be compared pixel by pixel, without
             // chat lines, the hotbar or overlay text contributing differences that are not renderer differences.

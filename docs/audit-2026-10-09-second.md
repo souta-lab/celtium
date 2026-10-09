@@ -60,8 +60,11 @@ path off and on gives:
 That comparison was **withdrawn**: the red pixels are scattered across a 681 by 13 band and fill 0.7% of their bounding
 box, and the count moves between runs of the same fixture (81, 107, 65), so they are scene content rather than a quad. The
 fixture's geometry has never reached the frame at all, even with GL drawing it, at six blocks across, culling and depth
-disabled, and the handler demonstrably running. The **open** work is therefore the fixture before it can be an acceptance
-test: the next attempt draws in the GUI overlay pass, where the projection and the target are known. The counters from that
+disabled, and the handler demonstrably running. The **open** work is therefore the fixture before it can be an acceptance test. It now draws in the GUI overlay pass, with
+`Gui.drawRect` beside it as a control in the same handler, pass and frame: the control fills **55,080 px, 100% of its
+bounding box**, while the fixture's own batch produces **0 px** - before and after being rebracketed through
+`GlStateManager`. So the Tessellator reaches the framebuffer here and the fault is in the fixture's own batch construction;
+the next version copies `Gui.drawRect`'s exact body and appends a second quad inside that one batch. The counters from that
 run are unaffected: `immediateGroupsClosed` 1137 with `immediateMaxGroupVertices` 880 is a fact about the scene. The counters also give the first hard number about merging: groups of up to **880 vertices** exist in this frame,
 so the base-vertex defect was the normal shape of a merged group here, not a corner case.
 
