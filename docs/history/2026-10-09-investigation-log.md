@@ -3007,3 +3007,26 @@ acceptance fixtures the audit asks for - ITEM with an asymmetric checker texture
 sky-only and block-only values differing per vertex - are what would show these two fixes working, and they are not built
 yet. The residual's next candidate is the audit's S13: the block and particle pipelines key their descriptor sets on the
 main texture view alone, so a rebuilt lightmap reuses the old binding.
+
+---
+
+## S20: the gate is structured on both sides, and one real-run observation is left open
+
+The callback now emits one line per message with its severity and id, newlines folded, and the harness keys on those
+fields instead of on the text's shape. Seven inputs were run through the parsing block, including the two forms the audit
+used - `Validation Error: [ VUID-... ]` and a bare `VUID-...:` prefix - which counted zero messages before and count one
+now, and a missing log now counts as a failure rather than as cleanliness.
+
+Then a real run contradicted the expectation, and it is recorded rather than smoothed over:
+
+```
+process: exit 0 | clean True | messages 0 | fixture PASSED
+validation lines in the log: 1
+   severity=WARNING id=VALIDATION-SETTINGS vkCreateInstance(): Information with the layer settings provided ...
+```
+
+By the new rules that line should have counted: it is structured, its severity is `WARNING`, and it does not contain
+`deprecated`. The harness counted zero. The candidates are that it reads a different file than the one inspected, that the
+parse block edited is not the one that ran, or that the line is written after the read - and the point of this audit item is
+precisely that a clean verdict has to be trustworthy, so **the gate is not called fixed until that is explained**. It is the
+first thing to settle next, before any measurement is quoted as validation-clean again.

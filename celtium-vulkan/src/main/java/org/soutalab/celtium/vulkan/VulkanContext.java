@@ -608,8 +608,27 @@ public final class VulkanContext {
         createInfo.ppEnabledLayerNames(stack.pointers(stack.UTF8(VALIDATION_LAYER_NAME)));
         createInfo.ppEnabledExtensionNames(stack.pointers(stack.UTF8(EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME)));
         this.validationCallback = VkDebugUtilsMessengerCallbackEXT.create((severity, types, data, user) -> {
-            String message = VkDebugUtilsMessengerCallbackDataEXT.create(data).pMessageString();
-            System.err.println("Celtium Vulkan validation: " + message);
+            VkDebugUtilsMessengerCallbackDataEXT callbackData = VkDebugUtilsMessengerCallbackDataEXT.create(data);
+            String idName = callbackData.pMessageIdNameString();
+            long idNumber = callbackData.messageIdNumber();
+            String message = callbackData.pMessageString();
+            // Structured, one line per message, because the harness has to decide from this text whether a run is clean and
+            // a free-form message is exactly what defeated the old check: it skipped anything not starting with "vk", so a
+            // line reading "Validation Error: [ VUID-... ]" counted as nothing. Severity and message id are what the gate
+            // keys on now, and newlines are folded so one message cannot look like two lines or like none.
+            String severityName;
+            if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0) {
+                severityName = "ERROR";
+            } else if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) != 0) {
+                severityName = "WARNING";
+            } else if ((severity & org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) != 0) {
+                severityName = "INFO";
+            } else {
+                severityName = "VERBOSE";
+            }
+            String identifier = idName != null && !idName.isEmpty() ? idName : Long.toString(idNumber);
+            String single = message == null ? "" : message.replace('\n', ' ').replace('\r', ' ').trim();
+            System.err.println("Celtium Vulkan validation: severity=" + severityName + " id=" + identifier + " " + single);
             return VK_FALSE;
         });
         VkDebugUtilsMessengerCreateInfoEXT messengerInfo = VkDebugUtilsMessengerCreateInfoEXT.calloc(stack).sType$Default()

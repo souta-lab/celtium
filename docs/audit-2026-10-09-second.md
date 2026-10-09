@@ -128,6 +128,29 @@ not generalise. Reference: https://docs.vulkan.org/spec/latest/chapters/limits.h
 ### S20 [P1] the validation gate misses errors by their format
 `prism_validation` skips any message not starting with `vk`, and stores no severity or message ID, so
 `Validation Error: [ VUID-... ] ...` style output counts as zero messages.
+**Fixed on both sides.** The debug callback now prints one structured line per message -
+`severity=ERROR|WARNING|INFO|VERBOSE id=<messageIdName or number> <message with newlines folded>` - and the harness keys on
+that: `INFO`/`VERBOSE` are skipped, a `WARNING` only when it says `deprecated`, and everything else counts, so an error
+phrased in any style is caught. Unstructured text (older logs, driver strings) is treated the same way - only clearly
+informational lines are skipped. A **missing log is now a failure** rather than zero messages. The parser was checked
+against seven inputs, including the audit's two forms:
+
+| Input | Messages counted |
+|---|---|
+| `severity=ERROR id=VUID-... ...` | 1 |
+| `severity=WARNING ... deprecated ...` | 0 |
+| `severity=INFO ...` | 0 |
+| `vkDestroyBuffer(): can't be called on ...` | 1 |
+| `Validation Error: [ VUID-vkCmdDrawIndexed-None-08600 ] ...` | **1** (was 0) |
+| `VUID-vkCmdDrawIndexed-None-08600: ...` | **1** (was 0) |
+| log file absent | **1** (was 0) |
+
+**Open, and honestly unexplained:** a real run with the new callback wrote exactly one structured line -
+`severity=WARNING id=VALIDATION-SETTINGS vkCreateInstance(): Information with the layer settings provided ...` - and the
+harness reported `validationMessageCount 0` with `validationClean True`. By the rules above that line should count, so
+either the harness reads a different file or a different parse path than the one edited, or the line is written after its
+read. **Until that is resolved the gate is not claimed as fixed**, because the whole point of this item is that a clean
+result must be trustworthy.
 
 ### S21 [P1] the image comparison is not max-channel
 `compare_validation` converts the RGBA difference to luminance; the auditor's one-pixel cases (red 1 / tolerance 0, blue 40

@@ -255,9 +255,27 @@ def main():
                 if marker not in line:
                     continue
                 text = line.split(marker, 1)[1].strip()
-                if not text.startswith("vk") or "Information" in text or "deprecated" in text:
-                    continue
-                messages.append(text)
+                severity = None
+                if text.startswith("severity="):
+                    head, _, rest = text.partition(" ")
+                    severity = head.split("=", 1)[1]
+                    if rest.startswith("id="):
+                        _, _, rest = rest.partition(" ")
+                    text = rest
+                    if severity in ("INFO", "VERBOSE"):
+                        continue
+                    if severity == "WARNING" and "deprecated" in text:
+                        continue
+                else:
+                    # Unstructured text, which is what older logs and driver messages look like. Only clearly
+                    # informational lines are skipped: everything else counts, so an error phrased in any style - the
+                    # "Validation Error: [ VUID-... ]" form the audit used - cannot pass as clean.
+                    if "Information" in text and "Error" not in text:
+                        continue
+                messages.append(("severity=%s " % severity if severity else "") + text)
+        else:
+            # No log at all is not a clean run: the old check treated a missing file as no messages.
+            messages.append("the game log is missing, so the validation result is unknown")
         outcome["validationMessageCount"] = len(messages)
         outcome["validationClean"] = not messages
         if messages:
