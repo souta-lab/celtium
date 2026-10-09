@@ -369,6 +369,7 @@ public final class VulkanFrameTarget {
             // measured (exit 124, report missing). The previous frame is abandoned and counted instead: the run keeps
             // going far enough to report the failure, and the counter keeps the leak visible.
             frameOpen = false;
+        org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setFrameOpen(false);
             leakedFrames++;
             lastAbandonReason = "beginFrame found the previous frame open";
         }
@@ -423,6 +424,7 @@ public final class VulkanFrameTarget {
             this.tWait += System.nanoTime() - step;
             this.tTimedFrames++;
             frameOpen = true;
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setFrameOpen(true);
         }
     }
 

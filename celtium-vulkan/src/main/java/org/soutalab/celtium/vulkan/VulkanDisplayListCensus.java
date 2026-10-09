@@ -26,8 +26,32 @@ public final class VulkanDisplayListCensus {
     }
 
     /** Records one replay of {@code list}, called from the {@code GlStateManager.callList} hook. */
+    private static volatile boolean frameOpen;
+    private static long replaysWithFrameOpen;
+    private static long replaysWithFrameClosed;
+
+    /** Called by the renderer when a frame opens or closes, so the replays can be split by phase. */
+    public static void setFrameOpen(boolean open) {
+        frameOpen = open;
+    }
+
+    /** {@return replays that happened while a frame was open}. */
+    public static synchronized long replaysWithFrameOpen() {
+        return replaysWithFrameOpen;
+    }
+
+    /** {@return replays that happened while no frame was open}. */
+    public static synchronized long replaysWithFrameClosed() {
+        return replaysWithFrameClosed;
+    }
+
     public static synchronized void replay(int list) {
         total++;
+        if (frameOpen) {
+            replaysWithFrameOpen++;
+        } else {
+            replaysWithFrameClosed++;
+        }
         // The matrix in effect at replay, next to the one captured while the list was compiled. Whether a display list
         // bakes the transform or is replayed under the current matrix decides how a native replacement has to combine
         // them, and this pair is what answers it instead of an argument about the specification.
