@@ -396,6 +396,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean mirrorSeeded;
     private int derivedProjections;
     private int derivedProjectionRefusals;
+    private boolean derivedProjectionPending;
+    private int derivedProjectionComparisons;
+    private float derivedProjectionDelta = -1.0f;
+    private String derivedProjectionWorst;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
@@ -634,6 +638,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void matrixMode(int glMode) {
+        if (glMode == 5888 && this.derivedProjectionPending) {
+            // 5888 is GL_MODELVIEW, which the world pass switches to immediately after its gluPerspective call - the
+            // first point at which GL holds the frustum and the mirror should hold the same one.
+            this.derivedProjectionPending = false;
+            java.nio.FloatBuffer live = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
+            try {
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, live);
+                float[] mirrored = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+                float delta = 0.0f;
+                for (int i = 0; i < 16; i++) {
+                    delta = Math.max(delta, Math.abs(mirrored[i] - live.get(i)));
+                }
+                this.derivedProjectionComparisons++;
+                if (delta > this.derivedProjectionDelta) {
+                    this.derivedProjectionDelta = delta;
+                    this.derivedProjectionWorst = "mirror=" + java.util.Arrays.toString(mirrored)
+                            + ";gl=" + live.toString();
+                }
+            } finally {
+                org.lwjgl.system.MemoryUtil.memFree(live);
+            }
+        }
         this.matricesDirty = true;
         // OpenGL's constants, mapped onto the three stacks the state model keeps.
         if (glMode == 5889) {
@@ -780,6 +806,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         projection[11] = -1.0F;
         projection[14] = (2.0F * far * near) / (near - far);
         this.derivedProjections++;
+        // The comparison cannot happen here: at this instant gluPerspective has not applied its result to GL yet, so GL
+        // still holds the identity and any delta would measure the wrong thing. The flag defers it to the next hookable
+        // operation after that call, which is the matrixMode(GL_MODELVIEW) that immediately follows it.
+        this.derivedProjectionPending = true;
     }
 
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
@@ -1449,6 +1479,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
+                + ",derivedCompared:" + this.derivedProjectionComparisons
+                + ",derivedDelta:" + this.derivedProjectionDelta
+                + " derivedWorst[" + (this.derivedProjectionWorst == null ? "none" : this.derivedProjectionWorst) + "]"
                 + " matrixDump[" + (this.matrixDump == null ? "none" : this.matrixDump) + "]"
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)

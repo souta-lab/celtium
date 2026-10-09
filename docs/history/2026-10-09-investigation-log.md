@@ -3596,3 +3596,38 @@ So this round produced a working derivation and a metric that cannot see it, and
 computed from Minecraft state rather than mirrored, **not yet verified against GL**, and the verification is one line in the
 right place. Saying "the projection is fixed" from `derivedProj:3409` would repeat the mistake this session has made and
 recorded four times already - a counter that rises is not a value that is right.
+
+---
+
+## The acceptance instrument is in the right place, and it says the write does not survive
+
+The comparison was moved to the instant it should be taken: `applyDerivedProjection` marks a flag, and the next hookable
+operation after the unreachable `gluPerspective` - the `matrixMode(GL_MODELVIEW)` that immediately follows it - reads GL's
+projection and compares it with the mirror's. It runs, and it reports:
+
+```
+derivedCompared:3427, derivedDelta:2.0005527
+```
+
+**The delta is the same number as before the derivation existed**, and it is recognisable: the mirror's `m[10]` is the
+identity's `1.0` and GL's is `-1.001`, a difference of `2.001`. So at the comparison the mirror's projection is **still the
+identity**, even though `applyDerivedProjection` ran 3409 times and wrote a frustum into
+`immediateState.matrix(MATRIX_MODE_PROJECTION)`.
+
+That is a sharper statement than "the derivation is wrong": the arithmetic and the write happen, and something between the
+write and the comparison puts the identity back. The candidates are narrow and testable:
+
+- `Project.gluPerspective` in this environment may itself reset the current matrix before multiplying (LWJGL's `Project`
+  is not the GLU source this project has been reasoning about, and its body has not been read);
+- the projection stack's top may not be the array the comparison reads, if `loadIdentity` or a push replaces it;
+- another `loadIdentity` on the projection may fire between the two points, which one counter per matrix mode would show.
+
+The next step is therefore a count rather than another derivation: number of `loadIdentity` calls per matrix mode, and the
+matrix identity (`System.identityHashCode`) the mirror reports at the write and at the comparison. Either the same array is
+being reset, or two different arrays are being written and read - and those two possibilities need opposite fixes. The
+instrument to distinguish them is two counters.
+
+Nothing about the rendering changed this round, and the honest summary is the same shape as the last one: the projection is
+still computed from Minecraft's state rather than mirrored, the check exists at the right moment, and it says the value is not
+arriving. The two previous rounds each ended with a counter that rose while the value was wrong; this round ends with a
+counter that rose and a delta that says so, which is the better position even though the number did not move.

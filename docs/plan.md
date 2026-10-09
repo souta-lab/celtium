@@ -187,8 +187,12 @@ content work that does not touch frame structure can proceed in parallel.
    **Implemented, not yet verified:** `func_78481_a` is hooked at its return and the backend computes `gluPerspective`
    from Minecraft's four numbers (`derivedProj:3409, refused:5`), but the worst-sample counter still reads the identity
    matrix, because it samples at a moment when another pass - the GUI or the hand - has reset the projection stack through
-   the same hooked `matrixMode` + `loadIdentity` pair. The acceptance therefore has to be taken **at the instant the
-   projection is derived**, comparing against GL there; which projection a given batch should use is the separate
+   the same hooked `matrixMode` + `loadIdentity` pair. The acceptance is now taken at the right instant - the `matrixMode(GL_MODELVIEW)` that follows the
+   unreachable `gluPerspective` - and it reports **`derivedCompared:3427, derivedDelta:2.0005527`**: the same difference as
+   before the derivation existed, and recognisably the identity's `m[10]` against GL's `-1.001`. So the write happens and
+   something between the write and the comparison restores the identity; the next step is to count `loadIdentity` calls per
+   matrix mode and the matrix identity the mirror reports at both points, which separates "one array being reset" from "two
+   arrays being written and read"; which projection a given batch should use is the separate
    pass-ownership question the audit lists as **S10**. The anchors are read from the vanilla source: the camera setup is
    `EntityRenderer.func_78479_a(float, int)` - a Minecraft class method, so a plain `@Inject` reaches it, with no accessor
    machinery of the kind that crashed the client twice - and it holds the `gluPerspective` call with its `fov`, `aspect`,
