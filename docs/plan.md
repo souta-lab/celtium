@@ -169,7 +169,12 @@ content work that does not touch frame structure can proceed in parallel.
    before the hooks were installed - and the 2.0 maximum comes from a later sample. The worst-sample dump then named the cause: the mirror's projection is the **identity** where GL holds a real frustum,
    and its modelview is the right rotation **without the camera translation**. Both operations happen where no hook reaches -
    the world projection goes through `Project.gluPerspective`, outside the transforming loader, and the camera translation is
-   applied before the backend exists - so **hooking cannot fix this**. The way forward is the one the direction states:
+   applied before the backend exists - so **hooking cannot fix this**. The anchors are now read from the vanilla source: the camera setup is
+   `EntityRenderer.func_78479_a(float, int)` - a Minecraft class method, so a plain `@Inject` reaches it, with no accessor
+   machinery of the kind that crashed the client twice - and it holds the `gluPerspective` call with its `fov`, `aspect`,
+   `near` and `renderDistanceChunks * 16 * SQRT_2` arguments, plus the translate/rotate that place the camera. The
+   acceptance is the two deltas that produced this finding: `proj max|diff|` falling from 2.0006 and `view max|diff|` from
+   1.62, measured with the same worst-sample instrument. The way forward is the one the direction states:
    **derive the projection and camera transform from Minecraft's own state** (field of view, aspect, near/far;
    `ActiveRenderInfo` position and orientation) rather than mirroring unreachable GL calls. The two `glGetFloatv` reads per
    matrix change then disappear as a consequence. A one-time seed was tried and is recorded as ineffective: at the first

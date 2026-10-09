@@ -3477,3 +3477,35 @@ reads per matrix change as a consequence rather than as a goal.
 
 One instrument note: the dump is now taken at a new maximum, and it earned its place immediately - the first-sample version
 had produced a conclusion ("nearly right") that this sample contradicts.
+
+---
+
+## Where the world projection and camera come from, read out of the vanilla source
+
+The next step named last round - derive the world projection and camera transform from Minecraft's own state - now has
+verified anchors rather than a plan:
+
+| What | Where | Detail |
+|---|---|---|
+| Camera setup | `EntityRenderer.func_78479_a(float partialTicks, int pass)` | Contains the `Project.gluPerspective` calls at 729 and 803, and the `GlStateManager.translate`/`rotate` that place the camera |
+| Called from | `EntityRenderer.func_175068_a(int pass, float partialTicks, long finishTimeNano)` at line 1276 | The world pass |
+| Projection arguments | `func_78479_a` line 729 | `gluPerspective(getFOVModifier(partialTicks, true), displayWidth / displayHeight, 0.05F, farPlaneDistance * SQRT_2)` |
+| Far plane | `func_78479_a` line 713 | `farPlaneDistance = gameSettings.renderDistanceChunks * 16` |
+
+Two things about this are worth stating because they change the shape of the work:
+
+- **`func_78479_a` is a Minecraft class method, so a plain `@Inject` reaches it.** No accessor or invoker machinery is
+  needed - which matters, because two attempts to use that machinery on texture classes crashed the client during
+  transformation. The parameters above can be reported from that hook, and the backend can compute the projection itself:
+  a few lines of `gluPerspective` arithmetic against Minecraft's numbers rather than a mirrored GL matrix.
+- **The one argument that is not directly readable is `getFOVModifier`**, a private method whose result folds in sprinting,
+  bow draw, water and flight. Either it is reached through a hook at its call site - which is inside the same method and
+  therefore reachable - or its rules are reproduced from the player's state, which is also Minecraft state. What makes this
+  tractable rather than delicate is that the delta counters will say whether the derived projection matches GL: the
+  acceptance for this change is `proj max|diff|` falling from 2.0006 to near zero, and `view max|diff|` from 1.62, with the
+  same instrument that produced those numbers.
+
+So the work has an order and a measurement: hook `func_78479_a`, report `fov`, `aspect`, `near`, `far` and the camera
+position and rotation, compute the projection in the backend, and read the two deltas. If the fov modifier is the residual,
+the number says so - which is the same measure-before-switching discipline that stopped the `glGetFloatv` removal two
+rounds ago when the mirror turned out to be empty.
