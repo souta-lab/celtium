@@ -87,7 +87,22 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **The dominant immediate layout is not the one implemented first, and its pipeline is now in place.** Reading
+- **BLOCK-family acceptance measured, then switched back off on a real validation message, and the GLU mystery is
+  closed.** The fixture now draws a `DefaultVertexFormats.BLOCK` batch (gated behind
+  `-Dceltium.validation.drawBlockQuad=true`), which made the question answerable: `modDrawBlockFrames=567`,
+  `immediateOffered` rose by ~534 and **`immediateTaken` rose from 1161 to 1709**, so those batches are accepted and
+  drawn - the layout identification and the acceptance path work. One validation message appeared, and it names the
+  remaining defect exactly: `VUID-VkGraphicsPipelineCreateInfo-Input-08733`, because the pipeline declares the lightmap
+  attribute as `VK_FORMAT_R16G16_UINT` while the vertex shader takes a float `vec2`. Acceptance is therefore off again
+  with that reason recorded in `immediateRefusal`, and the fix is to declare the attribute as `uvec2` in both shaders
+  (the fragment shader already treats it as an integer) and re-measure.
+  The same run also closed an open question from earlier rounds: the client logs
+  `@Mixin target org/lwjgl/util/glu/Project was not found` and `Error loading class: org/lwjgl/util/glu/Util`, i.e. the
+  GLU class **does not exist at runtime at all** - which is the concrete reason the projection mirror never fired
+  (`matrixChannels=persp:0`) and why the backend reads the live matrices instead. That Mixin was dead weight that
+  warned on every start, so it is removed.
+
+- **Original note on the dominant layout (the pipeline is now in place).** Reading
   `DefaultVertexFormats` in order shows what the coverage actually needs: the 24-byte `POSITION_TEX_COLOR` implemented
   earlier is a rare format, while the immediate content that dominates vanilla - blocks in the hand, items, the block
   atlas path, particles - uses **28-byte** layouts, `BLOCK` (position, colour, texture, lightmap) and its relatives.

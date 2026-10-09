@@ -67,6 +67,8 @@ public final class ValidationClient {
     private boolean flickerPinned;
     private final boolean drawTestQuad = Boolean.getBoolean("celtium.validation.drawTestQuad");
     private int testQuadFrames;
+    private final boolean drawBlockQuad = Boolean.getBoolean("celtium.validation.drawBlockQuad");
+    private int blockQuadFrames;
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
@@ -121,6 +123,44 @@ public final class ValidationClient {
         GlStateManager.enableTexture2D();
         GlStateManager.popMatrix();
         testQuadFrames++;
+    }
+
+    /**
+     * Draws one {@code DefaultVertexFormats.BLOCK} batch - the 28-byte layout with a lightmap that vanilla's blocks,
+     * items and particles use. Off unless {@code -Dceltium.validation.drawBlockQuad=true}, so reference frames are
+     * unaffected, and written the way a content mod writes it: no Celtium-specific call anywhere.
+     * <p>
+     * It exists because the fixture scene contains no hand-held or item-rendered geometry, which left the BLOCK
+     * pipeline's acceptance unverified: the counters could not tell "no such batch exists" from "the batch was
+     * refused". Drawing one here makes that distinguishable.
+     */
+    @SubscribeEvent
+    public void drawBlockQuad(RenderWorldLastEvent event) {
+        if (!enabled || !drawBlockQuad) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.player == null || mc.world == null) return;
+        double partial = event.getPartialTicks();
+        double x = mc.player.lastTickPosX + (mc.player.posX - mc.player.lastTickPosX) * partial;
+        double y = mc.player.lastTickPosY + (mc.player.posY - mc.player.lastTickPosY) * partial;
+        double z = mc.player.lastTickPosZ + (mc.player.posZ - mc.player.lastTickPosZ) * partial;
+        GlStateManager.pushMatrix();
+        GlStateManager.translate(-x, -y, -z);
+        GlStateManager.disableTexture2D();
+        GlStateManager.enableTexture2D();
+        GlStateManager.depthMask(false);
+        Tessellator tessellator = Tessellator.getInstance();
+        BufferBuilder builder = tessellator.getBuffer();
+        builder.begin(org.lwjgl.opengl.GL11.GL_QUADS, DefaultVertexFormats.BLOCK);
+        float u = 0.5f;
+        float v = 0.5f;
+        builder.pos(x - 1.0, y + 3.0, z - 1.0).color(64, 64, 255, 255).tex(u, v).lightmap(240, 240).endVertex();
+        builder.pos(x + 1.0, y + 3.0, z - 1.0).color(64, 64, 255, 255).tex(u, v).lightmap(240, 240).endVertex();
+        builder.pos(x + 1.0, y + 3.0, z + 1.0).color(64, 64, 255, 255).tex(u, v).lightmap(240, 240).endVertex();
+        builder.pos(x - 1.0, y + 3.0, z + 1.0).color(64, 64, 255, 255).tex(u, v).lightmap(240, 240).endVertex();
+        tessellator.draw();
+        GlStateManager.depthMask(true);
+        GlStateManager.popMatrix();
+        blockQuadFrames++;
     }
 
     @SubscribeEvent
@@ -451,6 +491,7 @@ public final class ValidationClient {
                 int lastDraw = Integer.parseInt(counters.group(4));
                 report.addProperty("nativeTerrainVerified", passes > 0 && skipped == 0 && errors == 0 && lastDraw > 0);
                 report.addProperty("modDrawTestFrames", testQuadFrames);
+                report.addProperty("modDrawBlockFrames", blockQuadFrames);
                 report.addProperty("vulkanPasses", passes);
                 report.addProperty("vulkanSkippedPasses", skipped);
                 report.addProperty("vulkanErrors", errors);
