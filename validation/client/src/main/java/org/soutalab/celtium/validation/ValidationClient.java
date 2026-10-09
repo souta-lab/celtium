@@ -72,6 +72,7 @@ public final class ValidationClient {
     private boolean celtium$jeiRecipe;
     private boolean celtium$compositeBlit;
     private boolean celtium$screenReadback;
+    private boolean celtium$postprocess;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -650,6 +651,35 @@ public final class ValidationClient {
             mc.renderGlobal.loadRenderers();
             mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
             report.addProperty("reloadedAtTick", worldTicks);
+        }
+        if (worldTicks == 26 && !celtium$postprocess && Boolean.getBoolean("celtium.validation.postprocess")) {
+            // The postprocess inventory: in 1.12.2 that is the shader group behind the "super secret settings", reached through
+            // this method on the entity renderer. Called reflectively, and by name list, because it is private and because the
+            // check is whether the shader path draws cleanly through the Vulkan path - not whether the name is what I think.
+            celtium$postprocess = true;
+            Object result = null;
+            try {
+                java.lang.reflect.Method method = null;
+                for (String name : new String[] {"activateNextShader", "func_175069_a"}) {
+                    try {
+                        method = mc.entityRenderer.getClass().getDeclaredMethod(name);
+                        break;
+                    } catch (NoSuchMethodException ignored) {
+                        // try the next name
+                    }
+                }
+                if (method != null) {
+                    method.setAccessible(true);
+                    method.invoke(mc.entityRenderer);
+                    result = "called " + method.getName();
+                } else {
+                    result = "no method matched by name";
+                }
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+                result = String.valueOf(error);
+            }
+            report.addProperty("postprocessAtTick", Integer.valueOf(worldTicks));
+            report.addProperty("postprocessActivated", String.valueOf(result));
         }
         if (worldTicks == 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the

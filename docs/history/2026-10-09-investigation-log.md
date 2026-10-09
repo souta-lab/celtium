@@ -8013,3 +8013,26 @@ and not about the frame.
 
 The state now answers the question itself (`blendMixes()`), with the reason written where the question is asked, so the next
 person to want this number does not have to rediscover which of the three readings is the real one.
+
+---
+
+## The postprocess inventory: what it is in 1.12.2, and a hook that has not reported yet
+
+In 1.12.2 postprocess is two things, and only one of them was outstanding:
+
+- **The framebuffer chains** - the effects that render to a target and composite it back. Those are the off-target path, and
+  they are measured: `offTargetDrawn` 273-567 with `offTargetCopiedBack` 267-554 and zero refusals on both GPUs.
+- **The shader group** behind the "super secret settings", activated through a method on the entity renderer. This is the part
+  with no measurement yet.
+
+A fixture hook was added for it: with `celtium.validation.postprocess`, at tick 26, it reflects the method by name list -
+`activateNextShader`, then the obfuscated `func_175069_a` - calls it, and records `postprocessAtTick` and
+`postprocessActivated`. The run is clean with the hook compiled in and the flag passed (`exit 0`, validation clean, 0 messages,
+fixture PASSED, the same per-format counts as an ordinary run), and **the two properties are absent from the report**, which is
+the honest state: either the hook did not run or its properties were overwritten by whatever writes the report afterwards - and
+the second is not hypothetical, because the recipe flag lost its value to exactly that earlier in this project.
+
+So the next step is the one that has worked every time on this codebase: instrument the hook itself - a line printed to stdout
+when it runs, and the name that matched - rather than reasoning about whether it did. Everything else about postprocess in this
+renderer is measured; this is the last piece of condition two, and it is one observation away rather than one implementation
+away.
