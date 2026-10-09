@@ -9130,3 +9130,23 @@ exit 0 | validationClean true | messages 0 | fixture PASSED
 **次段（1点）**: 受理ブロックで `!currentRenderTargetIsMain` のときに数えるカウンタを足す。提示された240件が
 **受理されているか**どうかが決まる。受理されていれば「groupは作られるが target が main のまま」ではなく
 「group生成に到達していない」ことになり、未受理なら offer の先の preflight で落ちていることになる。
+
+---
+
+## 受理側の計器は入ったが、報告行の挿入で3回続けてアンカーを外し、いったん巻き戻した
+
+受理点（`this.immediateTaken++;` の直後）に「`!currentRenderTargetIsMain` のとき数える」カウンタを入れる方針で進め、
+カウンタ本体の挿入は成功した。しかし**報告行への追記**で3回続けてアンカーを外した。
+
+1. `enqueuedForOtherTargets=" + this.groupsEnqueuedForOtherTargets` を探したが、**前ラウンドの同名の追記自体が失敗していた**
+   ので存在しなかった（存在しない行を探していた）。
+2. `otherTargetGroups=[" + this.otherTargetGroupsAtMainFlush` を探したが、実文は
+   `otherTargetGroups=[atMainFlush=` であり一致しなかった。
+3. 実文に合わせて行末へ追記したところ**ビルドが壊れた**（複数行にわたる文字列連結の途中に継ぎ足したため）。
+
+ツリーが赤のまま残ることを避けるため、**未コミットの編集をすべて巻き戻し**、ビルドとrunが green であることを
+確認した（exit 0 / validationClean true / messages 0 / fixture PASSED）。計器の設計は有効なので、
+次回は**挿入前に前後の行を必ず読み**、報告行は `otherTargetGroups=[atMainFlush=`（2557行）を含む文の
+**終端行**（`windowFlush="` を含む行）に追記する、と手順を固定してから当てる。
+
+判明している事実は変わらない: 提示247件に対し、非main targetのgroupはqueueに一度も入らず、受理側の数はまだ測れていない。
