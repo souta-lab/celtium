@@ -1884,7 +1884,30 @@ CELTIUM_ACCEPTED total=1500 byFormat=[0:0 1:7 2:0 3:0 4:0 5:137 6:856 7:0 8:0 9:
   **display list の経路（`GlStateManager.callList` か、`ModelRenderer` の記録時）に介入する**必要がある。
   これは作業量の見積もりが変わる発見である（「描画を1つずつ移す」のではなく「**モデル描画の入口を1つ足す**」）。
 
-**次の一手**: (1) `GlStateManager.callList` と `ModelRenderer` の記録経路を読み、**どちらに介入するのが最小か**を決める
+**display list への介入点を確定（このターン・ソースと計器で）**:
+
+- **`GlStateManager.callList(int list)` は `GL11.glCallList(list)` を呼ぶだけ**の薄いラッパである（ソース確認済み）。
+  したがって**再生（replay）は1点で捕まえられる**が、**再生時に頂点データは無い**（display list の中身は GL 側にある）。
+  → replay を差し替えるだけでは native にできない。**必要なのは記録時の頂点**である。
+- **記録時の入口は `ModelRenderer`**（`compiled` フラグと `displayList` を持ち、`GlStateManager.callList(this.displayList)`
+  で描く）。つまり **`ModelRenderer` の display list コンパイル時にクワッド（`ModelBox`/`TexturedQuad`）を捕まえる**のが
+  最小の介入点である。
+- **計器で確かめたこと（介入が「記録時」でなければならない理由の裏づけ）**: 三人称 run の format 9 の到着は
+  **4頂点・stride 24**で、拒否理由は `pipeline or descriptor preflight failed`
+  （`CELTIUM_COMPOSITE_LAYOUT_REFUSED reason=pipeline or descriptor preflight failed stride=24 vertices=4`）。
+  **4頂点のクワッド**であってモデル部品ではない＝**モデルのコンパイルはこのファネルには現れない**。
+- **併せて観測**: 三人称 run では **format 7（POSITION）の受理が 0 → 164 → 452 と増える**＝
+  位置のみの幾何（線・枠など）は native に取れている。**モデル系（format 8/9）だけが別経路**である。
+- **設計（確定）**: (1) `ModelRenderer` のコンパイル経路（`compileDisplayList`）に介入してクワッドを捕まえ、
+  **頂点を我々のバッファに写す**、(2) `GlStateManager.callList` に介入し、**捕まえた頂点を native で描いて
+  GL の再生を取り消す**、(3) 空・星（`RenderGlobal` の3つのリスト）も同じ入口で扱えるか確認する。
+  これは「**モデル描画の入口を1つ足す**」作業であり、entity/item/TESR/player/sky/star がまとめて射程に入る。
+
+**次の一手**: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
+（クワッドの4頂点・テクスチャ座標・法線・現在の行列とテクスチャ）を決める、(2) プレイヤーモデル1体だけを対象に
+native 化し、**画像と `format 9` の到着/受理**で確認する、(3) 同じ入口で空・星へ広げる。
+
+**（旧メモ）** 次の一手: (1) `GlStateManager.callList` と `ModelRenderer` の記録経路を読み、**どちらに介入するのが最小か**を決める
 （記録時に頂点を捕まえられれば、再生時の display list を native のバッファに置き換えられる）、(2) 小さな対象
 （例: プレイヤーモデル1体）で native 化を試し、`format 9` の到着と画像で確認する、(3) 空・星も同じ入口で扱えるかを見る。
 
