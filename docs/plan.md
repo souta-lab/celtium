@@ -383,7 +383,26 @@ postprocess 場面（`p89-offtarget`）でも `offTargetAccepted=0` / `offTarget
 **オフターゲットの copy-back 経路は未実行**だった。検証できない挙動変更を残さないため**その場で撤回**した
 （画像は両runとも PASSED / meanAbsDiff 0.000 で、変更が中立であることは確認できている）。
 
-- **重要な訂正**: 計画が「オフターゲット受入」として挙げてきた経路は、**いま使っている fixture では発生していない**。
+- **オフターゲット場面で経路を踏んで確定（このターン）**: fixture には `-Dceltium.validation.drawTestTargets=true`
+  があり、**セカンダリ Framebuffer を bind して赤い quad を描き、メインへ戻す**（＝まさにオフターゲット描画）。
+  AMD/Intel 両方で実行した結果:
+
+| 指標 | AMD | Intel |
+|---|---|---|
+| `offTargetOffered` | **435** | **269** |
+| `offTargetAccepted` | **0** | **0** |
+| `offTargetDrawn` / `offTargetCopiedBack` | 0 / 0 | 0 / 0 |
+| 拒否理由（`offTargetRefusals`） | `{target is outside the RGBA8/D24/full-viewport bridge contract=435}` | 同（269） |
+| `offTargetPerTarget` | `0:offered=217,atPass=0,drawnPasses=0  e7e6020:offered=218,...` | 同種 |
+| verdict | exit 0 / validationClean / PASSED | exit 0 / validationClean / PASSED |
+
+  **結論**: オフターゲットは「offer はされるが**契約外として全件拒否**される」経路である（拒否は理由つきで
+  **target別に計数**され、黙って落ちていない）。したがって
+  - 計画の「オフターゲット**受入**」という表現は誤り。正しくは「オファーされ、契約外として拒否される」。
+  - `offTargetDrawn++` が描画証拠にならないという注意は、**現在その経路が走っていない**ことの裏返しでもある。
+  - ネイティブが担うのは **RGBA8/D24/フルビューポートのブリッジ契約内**（メイン画面）だけで、それ以外は GL が描く。
+    これは scope の境界として docs に明記する（未実装ではなく**契約外**）。
+- **（旧メモ）重要な訂正**: 計画が「オフターゲット受入」として挙げてきた経路は、**いま使っている fixture では発生していない**。
   したがって `offTarget*` の受入を「確認済み」として扱わない。オフターゲットを実際に発生させる場面
   （別 target へ描くゲーム経路、例えば描画先を切り替える mod/場面）を用意するまで、この経路の受入は**未検証**とする。
 - 計器（カウンタ）だけを足して 0 のまま残すことも避けた。0 を報告し続ける計器は「使われていない」ことの
