@@ -908,3 +908,19 @@ configuration today, one flag away from the default.
 
 Nothing is flipped by default yet: the immediate path itself stays off until the composite question is settled, so the
 shipped behaviour is unchanged while that is finished.
+
+---
+
+## Both GPUs, pixel-identical
+
+The configuration that measured 0.00 on the RX 6400 was repeated on the Intel UHD 630 with an Intel reference of its
+own (same build, immediate path off) rather than against the AMD frame:
+
+| GPU | Local difference (immediate off vs on) | Batches drawn by Vulkan | Validation |
+|---|---|---|---|
+| AMD RX 6400 (RADV) | **0.00 mean, 0.0% over 8 and over 32** | 1725 | VUID 0 |
+| Intel UHD Graphics 630 (ANV) | **0.00 mean, 0.0% over 8 and over 32** | 1151 | VUID 0 |
+
+The default acceptance mask is now `1,3,4,5`, so enabling the immediate path gives the verified configuration rather
+than one that paints the composite into the game framebuffer. The path itself stays off by default until the composite
+and present ownership are settled, which is the remaining engineering task for it.

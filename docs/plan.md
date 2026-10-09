@@ -71,8 +71,9 @@ One table, no narrative: what exists, what was verified on hardware, and what is
 | Per-pass handoff, uniform pre-reservation, backend counters | **Verified** | Audit fixes P0/P1/P2 kept; handoff ~130 us measured |
 | GL state mirrored from `GlStateManager` (matrices, blend, depth, cull, alpha, texture, colour) | **Verified** capturing; **not faithful** for the world matrices | Mirror vs live measured: proj 2.0, view 2000.0 apart |
 | Immediate draw entry (`WorldVertexBufferUploader`) with `Accessor` and structural format ids | **Verified** capturing | ~10k batches offered per run, ~2.8k accepted, no refusals |
-| Immediate pipelines: `POSITION_COLOR`, `POSITION_TEX_COLOR`, `BLOCK`, `ITEM`, particle | **Implemented, accepted, validation-clean** | All five drawn; VUID 0 |
-| Immediate path end to end | **Off by default.** Not image-correct | Local comparison (same build, immediate off vs on, terrain Vulkan in both): mean 14.4/255, 34.5% of pixels over 8; noise floor measured at 0.83 |
+| Immediate pipelines: `POSITION_COLOR`, `BLOCK`, `ITEM`, particle | **Implemented and pixel-identical to GL** | Verified on both GPUs (0.00 local difference) |
+| Immediate pipeline: `POSITION_TEX_COLOR` | **Implemented; excluded by default** | In this scene it is the final full-screen composite, not content; drawing it into the game framebuffer flattens the picture |
+| Immediate path end to end | **Pixel-identical to GL on both GPUs** with the composite left to GL; **still off by default** | Local comparison (same build, immediate off vs on, terrain Vulkan in both): **mean 0.00, 0.0% over 8 and over 32 on AMD RX 6400 and on Intel UHD 630**, 1725 and 1151 batches drawn by Vulkan respectively, VUID 0. The default acceptance mask is `1,3,4,5`: the 24-byte `POSITION_TEX_COLOR` family is the final full-screen composite and is left to GL until present ownership is settled |
 | Native present: surface, swapchain, acquire/clear/present | **Verified as a probe** on both GPUs | **Not** present ownership: GL still presents the game's frames |
 | Frame ownership, draw ordering, image layouts | **Not implemented** | Two mid-frame window attempts failed; see the log |
 | Remaining content (GUI/font/HUD, sky/clouds/weather, water, FBOs, post-processing, animation, reload, resize, world switch) | **Not implemented** | - |

@@ -422,12 +422,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private VulkanImmediateTexturePipeline texturedImmediatePipeline;
     private int immediateTextureRefusals;
     /**
-     * Which immediate layouts this backend accepts, as a comma-separated list (default all).
+     * Which immediate layouts this backend accepts, as a comma-separated list.
      * <p>
-     * {@code -Dceltium.vulkan.immediateFormats=3} accepts only the BLOCK family, for instance, so the image
-     * difference can be attributed to one pipeline at a time.
+     * The default is {@code 1,3,4,5}: the three content layouts plus untextured colour geometry, which measured
+     * pixel-identical to GL (0.00 mean difference, 0.0% of pixels over 8). The 24-byte {@code POSITION_TEX_COLOR}
+     * family is excluded because in this scene it is the final full-screen composite - a 1280x720 quad with uv 0..1
+     * and white vertices drawn to the default framebuffer - and taking it covered the whole picture; where that quad
+     * belongs is the present-ownership question, not an immediate-path one.
+     * <p>
+     * The switch is also the attribution instrument: {@code -Dceltium.vulkan.immediateFormats=3} accepts only the
+     * BLOCK family, so a difference can be pinned to one pipeline at a time.
      */
-    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,2,3,4,5");
+    private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", "1,3,4,5");
 
     private static boolean celtium$formatAccepted(int formatId) {
         String accepted = ACCEPTED_FORMATS;
