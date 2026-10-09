@@ -363,6 +363,13 @@ fixture の postprocess 起動は名前ベース反射で本番SRG名と一致�
 **証拠レベルの区別**: PASSED は「その場面で破綻せず validation も clean」であり、**native描画の証拠ではない**
 （postprocess の shader group は MC 自身のGL実装で、native化は未着手）。
 
+**場面の発火を実測で確定（このターン）**: fixture に発火証明プロパティを追加して測った結果、
+postprocess（`switchUseShader` 直接呼び出し）・particles（24個）・compositeBlit（tick=185）・
+**thirdPerson（`thirdPersonView=1`）**・**emptyHand（`heldItemEmpty=True`）** の5場面は発火を確認。
+thirdPerson/emptyHand は **`-Dceltium.validation.keepGui=true` が必須**（内側の分岐にあるため）。
+**weather は `rainStrength=0.000` のまま**（`WorldInfo.setRaining(true)` を設定しても client の rainStrength が
+上がらず、雨が画面に出ていない）＝**場面として未成立**。次の課題は client 側の雷雨強度を上げる正しい入口の特定。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

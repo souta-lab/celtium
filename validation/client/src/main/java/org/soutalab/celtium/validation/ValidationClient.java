@@ -1307,6 +1307,17 @@ public final class ValidationClient {
             mc.world.getWorldInfo().setRaining(true);
             mc.world.getWorldInfo().setRainTime(6000);
             mc.world.getWorldInfo().setThunderTime(6000);
+            // Recorded, because a PASSED run on its own does not show that the scene changed: the postprocess experiment
+            // failed exactly this way (the shader was never activated and the run still passed).
+            report.addProperty("weatherSet", "raining=" + mc.world.getWorldInfo().isRaining()
+                    + " rainTime=" + mc.world.getWorldInfo().getRainTime()
+                    + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f))));
+        }
+        if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.weather")) {
+            // Read at capture time, not when the rain was requested: the client's rain strength ramps in over ticks, so
+            // the value recorded at tick 150 was still 0.000 and said nothing about whether rain was on screen.
+            report.addProperty("weatherAtCapture", "raining=" + mc.world.getWorldInfo().isRaining()
+                    + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f))));
         }
         if (worldTicks == 199 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
             celtium$particlesSpawned = true;
@@ -1341,6 +1352,7 @@ public final class ValidationClient {
                     // partial tick, which measured as a term of about 3.6 that no renderer difference could be read
                     // through. Without it the GUI-visible comparison gets a floor worth using.
                     mc.gameSettings.thirdPersonView = 1;
+                    report.addProperty("thirdPersonView", mc.gameSettings.thirdPersonView);
                 }
                 mc.player.prevSwingProgress = 0.0f;
                 mc.player.swingProgress = 0.0f;
@@ -1351,6 +1363,7 @@ public final class ValidationClient {
                     // around it": with nothing in hand the item renderer does nothing, so a difference that survives is
                     // not the item's own geometry.
                     mc.player.setHeldItem(net.minecraft.util.EnumHand.MAIN_HAND, net.minecraft.item.ItemStack.EMPTY);
+                    report.addProperty("heldItemEmpty", mc.player.getHeldItemMainhand().isEmpty());
                 }
                 // The equipped-progress fields are not public in 1.12.2, so the item-swap animation is left to the
                 // phase the run happens to capture; the swing and arm angles are the ones that move every frame.
