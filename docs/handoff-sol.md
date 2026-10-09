@@ -200,6 +200,15 @@ colorFormat=0x25`）のに、**fragmentが受ける `v_Color` は地形帯でち
 arena上のその頂点は正しい色を持つ。readbackをdraw単位に拡張中（1フレームで複数slotを読む経路が未完、
 `-Dceltium.vulkan.vertexDiagnostics=true` にゲート済み・通常runでは走らない）。
 
+**原因判明（このターン）**: mesh builderが書いた色のsection別ヒストグラム（`vertexColourSamples` の出力に
+`distinctColours`/`top=` を追加）で、**診断画像の2値 (26,26,26)/(255,255,255) は translucent pass の頂点色
+0xff1a1a1a / 0xffffffff そのもの**だと判明。translucent の alpha は255（不透明）で、**可視地面の上に不透明な
+暗灰色が描かれている**。solid pass の色 0xff59bd91 から期待される 0.83×0.35×255 ≈ 74 は通常描画の実測 79.6 と
+一致するので solid は正常。GPU readback（32slot）でも arena の色は正しい（0xff59bd91 / 0xff113e2b / 0xffffffff）。
+=> 壊れているのは shader ではなく **translucent pass に載るジオメトリとその色**。
+次の一手は (a) そのジオメトリが何のブロック/面か（UVと位置）、(b) なぜ alpha=255 の不透明色か、
+(c) pinned upstream の mesher と pass 分類・色合成の差分、を順に確認すること。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

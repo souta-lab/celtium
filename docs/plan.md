@@ -292,7 +292,27 @@ shaderが実際に受け取るバイトを正規化の曖昧さなしに確定�
 - readbackをdraw単位（最大8）に拡張したが、1フレーム内で複数slotを読む経路がまだ揃わず1件のみ。
   計器は `-Dceltium.vulkan.vertexDiagnostics=true` にゲートし、通常runでは一切走らない。
 
-**次の一手（具体・更新）**: readbackを**可視draw全て**で取り（1フレーム分をまとめて読む経路を完成させる）、
+**原因判明（このターンの核心）**: mesh builderが実際に書いた色を**section別ヒストグラム**で出したところ、
+決定的な事実が出た（`-Dceltium.vulkan.vertexColourSamples=N` の出力に `distinctColours` と `top=` を追加）。
+
+| pass | section 252 の頂点色（上位） |
+|---|---|
+| solid | **0xff59bd91**（明るい緑）x1024、0xff808080 x1024 |
+| cutout_mipped | 0xff113e2b / 0xff175239 / 0xff18563c / 0xff2fab77（緑系4種） |
+| **translucent** | **0xff1a1a1a（=26,26,26 の暗灰）x1024、0xffffffff（白）x2048** |
+
+- 診断画像で観測された2値 **(26,26,26) と (255,255,255) は translucent pass の頂点色そのもの**だった。
+- translucent pass の alpha は **255（完全不透明）**。つまり**可視地面の上に不透明な暗灰色が描かれている**。
+- 一方 solid pass の色 0x59bd91 から期待される値は `0.83(texture×lightmap) × 0.35 × 255 ≈ 74` で、
+  通常描画の実測 **79.6 とほぼ一致**する＝**solid pass は正常**。
+- GPU readback（draw別32slot）でも arena の頂点色は `0xff59bd91`（solid）/`0xff113e2b`（cutout）/
+  `0xffffffff`（translucent, section 0）で、**arenaは正しい**。壊れているのは shader ではなく
+  **translucent pass に載っているジオメトリとその色**。
+
+**次の一手（具体）**: translucent pass に「地面」が入り、色が 0x1A1A1A（ほぼ黒）になっている理由を特定する。
+(a) そのジオメトリが何のブロック/面か（UVと位置から）、(b) なぜ alpha=255 の不透明色なのか、
+(c) pinned upstream の mesher と pass 分類・色合成のどこが違うのか、を順に確認する。
+（旧メモ・切り分け:
 色が2値になる頂点の**arena上の実バイト**を確定させる。そこで初めて
 「uploadが壊れている」か「shader側の読みが壊れている」かが決まる。
 

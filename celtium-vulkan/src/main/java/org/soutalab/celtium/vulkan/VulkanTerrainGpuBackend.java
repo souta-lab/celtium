@@ -119,7 +119,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int verticesLogged;
     private boolean uniformsLogged;
     private long readbackBuffer;
-    private final long[] readbackOffsets = new long[8];
+    /** One slot per remembered draw; 32 covers a frame's visible sections at a typical render distance. */
+    private static final int READBACK_SLOTS = 32;
+    private final long[] readbackOffsets = new long[READBACK_SLOTS];
     /** The region the remembered reads come from; a frame's first draws all belong to the same one in practice. */
     private RegionResources readbackFrom;
 
@@ -2721,7 +2723,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void updateTimings() {
         // The vertex readback is read once per run, after a frame that recorded its copies: this is the frame boundary.
-        if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots > 0) readBackAndLog();
+        // Wait until at least two draws were remembered: the first frame of a session draws almost nothing, and reading
+        // then would report a single vertex and say nothing about the sections that are actually visible.
+        if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots >= READBACK_SLOTS / 2) readBackAndLog();
         // The immediate window count is per frame. The measurement that forced the limit: the first window of a frame
         // left the framebuffer at 150.46 before and after, and the second turned it to 0.0 with the GL state restored
         // unchanged, which is what blackened the captured frame.
@@ -3063,12 +3067,33 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     } finally {
                         vertices.order(uvOrder);
                     }
+                    java.util.Map<Integer, Integer> histogram = new java.util.TreeMap<>();
+                    java.nio.ByteOrder histOrder = vertices.order();
+                    try {
+                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                        for (int v = 0; v < count; v++) {
+                            int at = v * stride;
+                            int packedColour = (vertices.get(at + 12) & 0xFF) | ((vertices.get(at + 13) & 0xFF) << 8)
+                                    | ((vertices.get(at + 14) & 0xFF) << 16) | ((vertices.get(at + 15) & 0xFF) << 24);
+                            histogram.merge(Integer.valueOf(packedColour), Integer.valueOf(1), Integer::sum);
+                        }
+                    } finally {
+                        vertices.order(histOrder);
+                    }
+                    StringBuilder top = new StringBuilder();
+                    int shownColours = 0;
+                    for (var entry : histogram.entrySet()) {
+                        if (shownColours++ >= 4) break;
+                        top.append("0x").append(Integer.toHexString(entry.getKey().intValue()))
+                                .append('x').append(entry.getValue()).append(' ');
+                    }
                     System.out.println("[Celtium] CELTIUM_VERTEX_COLOUR pass=" + mesh.pass + " section=" + mesh.sectionIndex
                             + " first=0x" + Integer.toHexString(firstVertexColor(vertices))
                             + " meanRGBA=" + (sumR / sampled) + "," + (sumG / sampled) + "," + (sumB / sampled)
                             + "," + (sumA / sampled) + " alphaRange=" + minA + ".." + maxA
                             + " lightShort0=" + light0 + " lightShort1=" + light1
-                            + " uv=" + u0 + "," + v0 + " vertices=" + count);
+                            + " uv=" + u0 + "," + v0 + " vertices=" + count
+                            + " distinctColours=" + histogram.size() + " top=" + top);
                 }
                 int beforeColour = firstVertexColor(vertices);
                 long beforeAddress = MemoryUtil.memAddress(vertices);
@@ -3417,7 +3442,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
                 vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(command), 1, firstIndex,
                         batch.baseVertex(command), 0);
-                if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < 8) {
+                if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < READBACK_SLOTS) {
                     // Only the address is remembered here: a buffer copy is illegal inside a render pass, so the copies
                     // are issued after vkCmdEndRenderPass for every remembered draw.
                     this.readbackOffsets[this.readbackSlots] = (long) batch.baseVertex(command) * this.commonVertexStride;
@@ -4558,7 +4583,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkBufferCreateInfo create = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack).sType$Default()
-                    .size(8 * 64).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+                    .size(READBACK_SLOTS * 64L).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateBuffer(this.context.device(), create, null, handle), "vkCreateBuffer(readback)");
             this.readbackBuffer = handle.get(0);
@@ -4587,7 +4612,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             check(vkBindBufferMemory(this.context.device(), this.readbackBuffer, this.readbackMemory, 0),
                     "vkBindBufferMemory(readback)");
             org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
-            check(vkMapMemory(this.context.device(), this.readbackMemory, 0, 8 * 64, 0, pointer), "vkMapMemory(readback)");
+            check(vkMapMemory(this.context.device(), this.readbackMemory, 0, READBACK_SLOTS * 64L, 0, pointer), "vkMapMemory(readback)");
             this.readbackMapped = pointer.get(0);
         }
     }
@@ -4614,13 +4639,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, Math.max(64, this.readbackSlots * 64));
         view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
         StringBuilder line = new StringBuilder("gpu draws:");
+        int colourCounts = 0;
+        java.util.Map<Integer, Integer> histogram = new java.util.TreeMap<>();
         for (int slot = 0; slot < this.readbackSlots; slot++) {
             int base = slot * 64;
-            line.append(" [").append(slot).append("] colour=0x")
-                    .append(Integer.toHexString(view.getInt(base + 12)))
-                    .append(" light=0x").append(Integer.toHexString(view.getInt(base + 24)))
-                    .append(" pos=(").append(view.getFloat(base)).append(',')
-                    .append(view.getFloat(base + 4)).append(',').append(view.getFloat(base + 8)).append(')');
+            int colour = view.getInt(base + 12);
+            histogram.merge(Integer.valueOf(colour), Integer.valueOf(1), Integer::sum);
+            if (slot < 10) {
+                line.append(" [").append(slot).append("] colour=0x").append(Integer.toHexString(colour))
+                        .append(" light=0x").append(Integer.toHexString(view.getInt(base + 24)))
+                        .append(" pos=(").append(fmt(view.getFloat(base))).append(',')
+                        .append(fmt(view.getFloat(base + 4))).append(',')
+                        .append(fmt(view.getFloat(base + 8))).append(')');
+            }
+        }
+        colourCounts = histogram.size();
+        line.append(" distinctColours=").append(colourCounts).append(" histogram=");
+        int shown = 0;
+        for (var e : histogram.entrySet()) {
+            if (shown++ >= 8) break;
+            line.append('0').append(Integer.toHexString(e.getKey().intValue())).append('x').append(e.getValue()).append(' ');
         }
         record(line.toString());
         // stdout as well as the list: this is the only place that shows what the GPU holds rather than what the CPU
@@ -4628,6 +4666,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (VERTEX_DIAGNOSTICS) {
             System.out.println("[Celtium] CELTIUM_GPU_VERTEX " + line);
         }
+    }
+
+    /** Short float formatting for the readback line. */
+    private static String fmt(float value) {
+        return String.format(java.util.Locale.ROOT, "%.1f", Float.valueOf(value));
     }
 
     private void record(String diagnostic) {
