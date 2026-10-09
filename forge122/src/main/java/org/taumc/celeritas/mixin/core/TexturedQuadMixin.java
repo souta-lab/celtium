@@ -31,12 +31,24 @@ public abstract class TexturedQuadMixin {
                 return;
             }
             float[] xs = new float[positions.length];
+            float[] ys = new float[positions.length];
+            float[] zs = new float[positions.length];
             float[] us = new float[positions.length];
             for (int i = 0; i < positions.length; i++) {
                 xs[i] = (float) positions[i].vector3D.x * scale;
+                ys[i] = (float) positions[i].vector3D.y * scale;
+                zs[i] = (float) positions[i].vector3D.z * scale;
                 us[i] = positions[i].texturePositionX;
             }
-            VulkanModelQuadCapture.quad(positions.length, xs, us);
+            // The plane normal, computed the way TexturedQuad.draw computes it, so the native path can carry the same
+            // lighting input rather than inventing one.
+            net.minecraft.util.math.Vec3d edge1 =
+                    positions[1].vector3D.subtractReverse(positions[0].vector3D);
+            net.minecraft.util.math.Vec3d edge2 =
+                    positions[1].vector3D.subtractReverse(positions[2].vector3D);
+            net.minecraft.util.math.Vec3d normal = edge2.crossProduct(edge1).normalize();
+            VulkanModelQuadCapture.quad(positions.length, xs, us, ys, zs,
+                    (float) normal.x, (float) normal.y, (float) normal.z);
         } catch (RuntimeException | LinkageError ignored) {
             // A measurement must never stop the game's rendering.
         }

@@ -24,6 +24,22 @@ public final class VulkanModelQuadCapture {
         int listId;
         float[] modelView = new float[16];
         String source = "unknown";
+        /** Model-space vertex data, three floats per vertex, four vertices per quad, in submission order. */
+        float[] positions = new float[4 * 3 * 64];
+        /** Texture coordinates, two floats per vertex. */
+        float[] uvs = new float[4 * 2 * 64];
+        /** The plane normal the quad was drawn with, three floats per quad. */
+        float[] normals = new float[3 * 64];
+        int vertices;
+
+        void ensure() {
+            if (quads * 4 + 4 <= positions.length / 3) {
+                return;
+            }
+            positions = java.util.Arrays.copyOf(positions, positions.length * 2);
+            uvs = java.util.Arrays.copyOf(uvs, uvs.length * 2);
+            normals = java.util.Arrays.copyOf(normals, normals.length * 2);
+        }
     }
 
     private static long quads;
@@ -53,7 +69,8 @@ public final class VulkanModelQuadCapture {
      * the one in effect while the part is compiled - a display list stores transformed vertices, so the geometry has to
      * be paired with the transform it was compiled under. Both are read here rather than assumed.
      */
-    public static synchronized void quad(int count, float[] xs, float[] us) {
+    public static synchronized void quad(int count, float[] xs, float[] us, float[] ys, float[] zs,
+            float nx, float ny, float nz) {
         int listId = 0;
         try {
             listId = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
@@ -73,6 +90,19 @@ public final class VulkanModelQuadCapture {
             }
             LISTS.put(Integer.valueOf(listId), geometry);
         }
+        geometry.ensure();
+        int base = geometry.quads * 4;
+        for (int i = 0; i < count && i < 4; i++) {
+            geometry.positions[(base + i) * 3] = xs[i];
+            geometry.positions[(base + i) * 3 + 1] = ys[i];
+            geometry.positions[(base + i) * 3 + 2] = zs[i];
+            geometry.uvs[(base + i) * 2] = us[i];
+        }
+        int normalBase = geometry.quads * 3;
+        geometry.normals[normalBase] = nx;
+        geometry.normals[normalBase + 1] = ny;
+        geometry.normals[normalBase + 2] = nz;
+        geometry.vertices += count;
         geometry.quads++;
         quads++;
         vertices += count;
@@ -93,6 +123,32 @@ public final class VulkanModelQuadCapture {
     private static String round(float value) {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
     }
+
+    /** {@return the total number of stored vertex floats, for the native path's buffer sizing}. */
+    public static synchronized long storedFloats() {
+        long total = 0;
+        for (ListGeometry geometry : LISTS.values()) {
+            total += (long) geometry.quads * 4 * 5 + (long) geometry.quads * 3;
+        }
+        return total;
+    }
+
+    /** {@return the largest list's first stored vertex, as a shape sanity check}. */
+    public static synchronized String firstStoredVertex() {
+        ListGeometry largest = null;
+        for (ListGeometry geometry : LISTS.values()) {
+            if (largest == null || geometry.quads > largest.quads) {
+                largest = geometry;
+            }
+        }
+        if (largest == null || largest.quads == 0) {
+            return "none";
+        }
+        return "list " + largest.listId + " v0=(" + round(largest.positions[0]) + "," + round(largest.positions[1]) + ","
+                + round(largest.positions[2]) + ") uv0=(" + round(largest.uvs[0]) + ") n0=("
+                + round(largest.normals[0]) + "," + round(largest.normals[1]) + "," + round(largest.normals[2]) + ")";
+    }
+
 
     /**
      * {@return a comparison of the compile-time and replay-time modelview matrices for the captured lists}.
