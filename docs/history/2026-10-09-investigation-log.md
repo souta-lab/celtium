@@ -9295,3 +9295,30 @@ drawsWithoutCommandBuffer = 4375    offTargetPerTarget = [1649043b:offered=205,a
 Vulkanでは描かれない（GLが描く側に回る）。次段は「そのflushをフレームの記録窓の中で行う」か「GLに確実に渡す」かを
 決めて実装すること。`atPass=0` がまだ0なのは、off-targetのgroupがその拒否経路に入っているためと考えられる
 （受理は409件あるので、次は「受理された後どこで止まるか」を同じ計器で追う）。
+
+---
+
+## 記録状態の持ち主が違った: フレームは beginCommands を使わない（退行を巻き戻した）
+
+拒否されたflushの呼出し元を短いスタックで採った。
+
+```
+CELTIUM_FLUSH_NO_BUFFER stack=VulkanTerrainGpuBackend.drawPendingImmediate (4007) <- flushPendingBeforeGlDraw (2184)
+  <- flushBeforeClear (1225) <- GlStateManager…clear… (1266) <- GlStateManager.celtium$mirror (1325)
+```
+
+`glClear` のミラーが、フレームの記録窓の外で「保留内容を先に流す」ために呼んでいる。呼出し元は予想どおりだったが、
+**計器の数が大きすぎる**ことに気づくべきだった: `drawsWithoutCommandBuffer=3942`（通常run）は、拒否が
+「たまに起きる非法記録」ではなく**常時**起きていることを意味する。
+
+原因は `isRecording()` の持ち主にある。`VulkanContext.beginCommands()` の自分のドキュメントに
+「this is the bootstrap submit path, **not a reusable frame command buffer**」と書かれているとおり、
+**フレームの記録は `frameTarget`（beginFrame/endFrame）が行い、`beginCommands` は使わない**。
+したがってフレーム記録中も `isRecording()` は false であり、私のガードは**正当な3,942件のflushを拒否していた**。
+validationがcleanになったのは**描かないことでエラーを消した**だけで、退行である。
+
+**巻き戻した**: ガードの条件は元の（発火しない）`commandBuffer == null` に戻し、maskも閉じた。ツリーは退行のない
+green に戻した（exit 0 / validationClean true / messages 0 / fixture PASSED / `drawsWithoutCommandBuffer=0` /
+`acceptedByFormat=1:14,2:0,...`）。拒否時に呼出し元を印字する計器は残した（発火しない限り無害で、次に同じ問題を
+調べるときに要る）。**次段**: `VulkanFrameTarget` に `isRecording()` を足し、backendのガードをその状態で行う。
+そのうえでmaskを開け直し、`atPass`/`drawnPasses` が非0になることを確認する。
