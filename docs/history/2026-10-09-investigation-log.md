@@ -6260,3 +6260,21 @@ So S15's leak fix is no longer correct-by-construction: it runs, it releases, an
 teardowns - which is the same statement as "nothing was destroyed while a command buffer still named it", the retirement
 queue's own acceptance. Two completion-condition items, **resource reload** and **world switch**, move from untested to
 tested in the same round, and they cost the fixture two once-guards and two flags it already had.
+
+---
+
+## The tick-equality defect was in four hooks, not two, and one of them shows it in a number
+
+The audit's S22 named the reload and resize hooks; the same pattern - a bare `worldTicks == N` inside a render-tick handler,
+which is true on **every frame** of that tick - was in the weather and particle hooks as well. All four carry once-guards now.
+
+The particle hook makes the defect visible in its own output: it spawns 24 particles and reports `particlesSpawned=24`. Before
+the guard, that line ran on every frame of tick 199 and the world received hundreds of them; now the number in the report is
+the number it spawned, once. Both configurations were run and both are clean: exit 0, validation clean, 0 messages, fixture
+PASSED.
+
+Two of the four hooks the audit named are therefore verified by their runs rather than by inspection, and the remaining item
+is narrower than it looked: the interop capture gate is **not in `ValidationClient`** - the world handler adds its properties
+without an early return - so it lives in the harness or another fixture class, and the interop branch's own tick equality
+(`worldTicks == 190`, a compound condition) still needs the same guard. Recorded with that pointer rather than as "the fixture
+defects are open".

@@ -65,6 +65,9 @@ public final class ValidationClient {
     // that tick and the reload would run dozens of times instead of once (audit S22).
     private boolean celtium$reloaded;
     private boolean celtium$resized;
+    private boolean celtium$weatherShown;
+    private boolean celtium$particlesSpawned;
+    private boolean celtium$interopChecked;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -598,7 +601,8 @@ public final class ValidationClient {
             mc.resize(1024, 640);
             report.addProperty("resizedAtTick", worldTicks);
         }
-        if (worldTicks == 150 && Boolean.getBoolean("celtium.validation.weather")) {
+        if (worldTicks == 150 && !celtium$weatherShown && Boolean.getBoolean("celtium.validation.weather")) {
+            celtium$weatherShown = true;
             // Rain, saturated well before the capture so its strength has stopped changing: the renderer interpolates
             // rain strength between ticks, and a value still ramping would make two runs differ for reasons that are not
             // the renderer's.
@@ -606,7 +610,8 @@ public final class ValidationClient {
             mc.world.getWorldInfo().setRainTime(6000);
             mc.world.getWorldInfo().setThunderTime(6000);
         }
-        if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.particles")) {
+        if (worldTicks == 199 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
+            celtium$particlesSpawned = true;
             // Particles with no motion, one tick before the capture. A still particle has prev == current, so the
             // partial-tick interpolation that made the hand and the player model unusable as comparison subjects gives
             // the same answer whichever frame is captured.

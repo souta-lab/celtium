@@ -424,8 +424,14 @@ reload/resize hooks at tick 100 have no once-guard.
 **Comparator fixed; the fixture's once-guards are fixed too.** The reload and resize hooks sat in a **render-tick** handler
 behind `worldTicks == 100`, which is true on every frame of that tick - so a resource reload ran dozens of times instead of
 once. Both now carry a once-guard. Verified by running the reload: `reloadedAtTick=100`, exit 0, validation clean, 0 messages,
-fixture PASSED, `passes=1199`. **Still open:** the interop capture gate and the same tick-equality pattern in the weather,
-particle and interop hooks, which are the same defect in the same place.
+fixture PASSED, `passes=1199`. **And the same defect in the weather and particle hooks is fixed.** Both sat behind a bare tick equality in the
+render-tick handler. Verified by running each: weather and particles both report exit 0, validation clean, 0 messages,
+fixture PASSED - and `particlesSpawned=24`, which is the hook's own count, meaning it ran **once** instead of on every frame
+of tick 199 as it did before.
+
+**Still open:** the interop capture gate. It is **not in `ValidationClient`** - the world handler adds its properties without
+returning early - so the `worldTicks != 200` the audit describes lives in the harness or in another fixture class, and the
+interop branch's own tick equality (`worldTicks == 190`, a compound condition) still needs the same guard.
 
 ### S23 [P2] samplers, mips and diagnostic resources
 **The sampler half is fixed** (nearest filtering; the frame fell from 1.33% to 0.23%). **The mip half is now diagnosed at the
