@@ -1159,3 +1159,33 @@ line per present - and read the sequence. With handles in hand the error is arit
 The state is unchanged and stated plainly: the frame is presented by Vulkan (`present image: blitted 1280x720 onto image
 1 (0)`), the run is PASSED with `nativeTerrainVerified True`, and the validation output is **not** clean, so
 `presentFromComposite` stays off by default and present ownership is not ported yet.
+
+---
+
+## Present ownership works and is validation-clean; the probe was the offender
+
+The handle trace showed the mechanism is right - for every frame present, `submitWaits` is the same semaphore the
+acquire signalled and `presentWaits` is the render-finished one:
+
+```
+image=1 acquire=0x110000000011 renderFinished=0x150000000015 submitWaits=0x110000000011 presentWaits=0x150000000015
+image=2 acquire=0x120000000012 renderFinished=0x160000000016 submitWaits=0x120000000012 presentWaits=0x160000000016
+```
+
+and the semaphore the messages named, `0x100000000010`, was the *first* one - the one the **swapchain probe** consumed
+before the first frame present. Turning the probe off and presenting the frame from the composite gives:
+
+```
+status PASSED | nativeTerrainVerified True
+real validation messages WITHOUT the probe: 0
+```
+
+So the present step runs on Vulkan, presents the game's own frames, and is **validation-clean**. The 36 messages were
+coming from the one-shot diagnostic probe, whose clear-and-present pair still mismatches after being unified onto the same
+submit helper - a small, self-contained follow-up that no longer blocks anything, because the probe is off by default and
+the frame path is clean on its own.
+
+That closes the present question in the terms the plan asked for: the frame is composed by Vulkan and put on the screen by
+Vulkan, with no validation message, on the tested GPU. What is still open around it is the immediate path's default (it
+stays off until the content stage covers more scenes), the probe's own cleanup, and everything the plan lists for stages 4
+and 5 - GUI, HUD, sky, weather, entities over more than one world, and real mods.

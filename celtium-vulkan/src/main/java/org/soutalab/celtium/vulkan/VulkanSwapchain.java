@@ -69,6 +69,7 @@ public final class VulkanSwapchain {
     /** One render-finished semaphore per image, paired with the acquire ones: the presentation waits on these. */
     private long[] renderFinishedSemaphores;
     private int renderFinishedCursor;
+    private int presentTraces;
 
     private VulkanSwapchain(VulkanContext context, long surface, String platform) {
         this.context = context;
@@ -340,6 +341,17 @@ public final class VulkanSwapchain {
                     .swapchainCount(1)
                     .pSwapchains(stack.longs(this.swapchain))
                     .pImageIndices(index);
+            if (this.presentTraces < 4) {
+                // One line per present with the handles involved: the validation messages named the acquire semaphore
+                // in both a submit complaint and a present complaint, and with the handles in hand the pairing error is
+                // arithmetic instead of inference.
+                this.presentTraces++;
+                System.out.println("celtium present trace: image=" + index.get(0) + " acquire=0x"
+                        + Long.toHexString(acquire) + " renderFinished=0x" + Long.toHexString(renderFinished)
+                        + " submitWaits=0x" + Long.toHexString(acquire) + " presentWaits=0x"
+                        + Long.toHexString(renderFinished) + " acquireCursor=" + this.acquireSemaphoreCursor
+                        + " renderCursor=" + this.renderFinishedCursor);
+            }
             int presented = vkQueuePresentKHR(this.context.queue(), present);
             if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                 return "present image: vkQueuePresentKHR returned " + presented;
