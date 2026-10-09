@@ -172,16 +172,24 @@ content work that does not touch frame structure can proceed in parallel.
    per matrix change, which the measurements in this plan call the dominant per-batch cost. Replacing them needs the
    mirrored stack to be faithful, and **it is not**: 1136 comparisons produced **zero** exact matches, with a maximum
    element difference of 2.0 in the projection and 1.62 in the modelview. That is now a measured prerequisite rather than
-   an assumption. The first dump shows the mirror is **close, not broken**: at the first comparison the projection matches
-   exactly and the modelview differs only by a missing translation, so the error is a **bootstrap** one - state applied
-   before the hooks were installed - and the 2.0 maximum comes from a later sample. The worst-sample dump then named the cause: the mirror's projection is the **identity** where GL holds a real frustum,
+   an assumption. The first dump appeared to show the mirror **close, not broken** - projection matching
+   exactly, modelview missing only a translation - but that reading came from sampling the **first** comparison, where GL's
+   own matrices are also identity, and the **worst-sample** dump contradicts it: at the sample that matters the mirror's
+   projection is the identity where GL holds a real frustum. The instrument now dumps at a new maximum. The worst-sample dump then named the cause: the mirror's projection is the **identity** where GL holds a real frustum,
    and its modelview is the right rotation **without the camera translation**. Both operations happen where no hook reaches -
    the world projection goes through `Project.gluPerspective`, outside the transforming loader, and the camera translation is
    applied before the backend exists - so **hooking cannot fix this**. The mechanism is now exact: inside `func_78479_a` a **hooked** `matrixMode` + `loadIdentity` resets the mirror's projection
    to identity, an **unreachable** `Project.gluPerspective` fills GL's and not the mirror's, and the camera translation is
    applied where the mirror is not yet listening - so nothing in the hook coverage is broken, and what is missing is the
    **value**: `fov`, `aspect`, `0.05F`, `renderDistanceChunks * 16 * SQRT_2`, three of which are readable from Minecraft
-   state and the fourth a private method whose SRG name is the next lookup. The anchors are read from the vanilla source: the camera setup is
+   state and the fourth a private method whose SRG name is now known (`func_78481_a`).
+
+   **Implemented, not yet verified:** `func_78481_a` is hooked at its return and the backend computes `gluPerspective`
+   from Minecraft's four numbers (`derivedProj:3409, refused:5`), but the worst-sample counter still reads the identity
+   matrix, because it samples at a moment when another pass - the GUI or the hand - has reset the projection stack through
+   the same hooked `matrixMode` + `loadIdentity` pair. The acceptance therefore has to be taken **at the instant the
+   projection is derived**, comparing against GL there; which projection a given batch should use is the separate
+   pass-ownership question the audit lists as **S10**. The anchors are read from the vanilla source: the camera setup is
    `EntityRenderer.func_78479_a(float, int)` - a Minecraft class method, so a plain `@Inject` reaches it, with no accessor
    machinery of the kind that crashed the client twice - and it holds the `gluPerspective` call with its `fov`, `aspect`,
    `near` and `renderDistanceChunks * 16 * SQRT_2` arguments, plus the translate/rotate that place the camera. The
