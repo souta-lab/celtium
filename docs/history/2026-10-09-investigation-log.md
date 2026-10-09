@@ -2009,3 +2009,29 @@ found no submission, and the wait they avoided is bounded at **five seconds** ea
 would have spent hours in GL waits; this one ended in twenty-six seconds, and the harness's own timeout never had to fire.
 That is the difference between a guard that is written and a guard that works, and it is the first time in this audit that a
 failure path has been demonstrated instead of argued.
+
+---
+
+## Batches the frame cannot draw are refused in-frame rather than deferred
+
+The audit's D ends with a design point, not only a measurement: acceptance has to be guaranteed before GL's draw is
+cancelled, so that a batch is never cancelled and then drawn a frame late. With the window budget at sixteen that case is
+rare, but the code now handles it the way the audit asks:
+
+- when the frame's window budget is spent, **and** no group of this frame is being held, **and** no window is open, the
+  batch is **refused** - GL draws it in the frame that produced it;
+- the cost is named rather than hidden: `immediateRefusedWindowBudget` counts how often geometry was left to GL for this
+  reason, and the refusal message says so.
+
+Measured on the shipped configuration:
+
+| Check | Result |
+|---|---|
+| Fixture | **PASSED, `nativeTerrainVerified True`, 1667 passes** |
+| Validation | **0 messages, `validationClean True`** |
+| Frame against the GL reference | **0.00 mean, 0.0% of pixels over 8** |
+
+So the change does not disturb anything measured. Whether the refusal actually fires at a sixteen-window budget is **not**
+verified: the counter did not appear in the run's debug line, and that is either because it never fired or because the
+reporting line did not take the new field - the same distinction this log has had to draw before, and it is drawn here
+rather than guessed.

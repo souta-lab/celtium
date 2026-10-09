@@ -497,6 +497,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateTextureInvalidations;
     private int immediatePresentFailures;
     /**
+     * How often a batch was left to GL because the frame's window budget was already spent.
+     * <p>
+     * This is the alternative to deferring it to a later frame: the batch is drawn by GL in the frame that produced it,
+     * which keeps ordering and latency right at the cost of GL doing that draw. Named so the configuration is honest.
+     */
+    private int immediateRefusedWindowBudget;
+    /**
      * Whether this frame's submission actually reached the queue.
      * <p>
      * Set by {@code submitCommands} on a successful {@code vkQueueSubmit} and cleared when a frame opens, so reading it
@@ -820,6 +827,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     record("presenting from the composite failed: " + describe(error));
                 }
             }
+            return false;
+        }
+        if (IMMEDIATE_WINDOWS_PER_FRAME > 0 && this.immediateWindowsThisFrame >= IMMEDIATE_WINDOWS_PER_FRAME
+                && this.immediateGroups.isEmpty() && !this.windowOpen) {
+            // The frame's window budget is spent and no batch of this frame is being held. Refusing here hands the batch
+            // to GL **in this frame**, which is what the audit's D asks for: accepting it would cancel GL's draw and then
+            // defer it to a later frame. Ordering is preserved because nothing of this frame is pending, and the cost is
+            // stated rather than hidden - this geometry is GL-drawn and the counter below says how often.
+            this.immediateRefusedWindowBudget++;
+            this.immediateLastRefusal = "the frame's window budget is spent, so this batch stays with GL";
             return false;
         }
         if (!celtium$formatAccepted(formatId)) {
