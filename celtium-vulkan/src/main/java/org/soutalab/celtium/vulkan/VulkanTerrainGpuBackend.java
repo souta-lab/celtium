@@ -333,7 +333,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // descriptors were bound would leave the already recorded draws of this pass pointing at freed memory - the
         // queue wait cannot help, because those draws have not been submitted yet. One block per region draw, times
         // the number of passes a frame can have, is a cheap upper bound (a few kilobytes).
-        ensureUniformCapacity((this.regionResources.size() * MAX_UNIFORM_PASSES) + 1);
+        // A resource failure while preparing the uniforms must not take the game down: the pass is skipped and the
+        // reason recorded, which is the same shape as the missing-atlas skip just below. An injected allocation failure
+        // here used to escape into Minecraft's render loop and end the run with "Game crashed!" and no report.
+        try {
+            ensureUniformCapacity((this.regionResources.size() * MAX_UNIFORM_PASSES) + 1);
+        } catch (RuntimeException error) {
+            this.uniformPreparationFailures++;
+            this.lastUniformPreparationFailure = String.valueOf(error);
+            record("pass skipped: uniform preparation failed: " + error);
+            this.passSkips++;
+            return;
+        }
 
         refreshTextures();
         if (this.atlasTexture == null || this.lightmapTexture == null) {
@@ -2947,6 +2958,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " threadWaitedMillis=" + threadWaitedMillis()
                 + " threadBlockedMillis=" + threadBlockedMillis()
                 + " threadCpuTotalMillis=" + (threadCpuNanos() / 1000000L)
+                + " uniformPreparationFailures=" + this.uniformPreparationFailures
+                + " lastUniformPreparationFailure=" + this.lastUniformPreparationFailure
                 + " regionUploadFailures=" + this.regionUploadFailures
                 + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
                 + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
@@ -3572,6 +3585,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * only way to tell an attribute-layout problem from a transform problem, and the upload path already has the
      * bytes in hand.
      */
+    /** Passes abandoned because the uniform buffer could not be prepared. */
+    private int uniformPreparationFailures;
+    private String lastUniformPreparationFailure = "none";
     /** Regions whose upload was abandoned because a resource could not be built. */
     private int regionUploadFailures;
     private String lastRegionUploadFailure = "none";
@@ -3743,7 +3759,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
             return;
         }
-        ensureUniformCapacity(this.regionResources.size());
+        try {
+            ensureUniformCapacity(this.regionResources.size());
+        } catch (RuntimeException error) {
+            this.uniformPreparationFailures++;
+            this.lastUniformPreparationFailure = String.valueOf(error);
+            record("pass skipped: uniform preparation failed: " + error);
+            return;
+        }
         // The descriptor set points at the atlas, the lightmap and the uniform buffer for this pass. It is rewritten
         // once per pass per frame, which is a few descriptor writes and removes any staleness after a re-upload.
         if (LIGHT_BIND_DIAGNOSTICS && this.lightBindPrints < 3) {

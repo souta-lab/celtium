@@ -1532,7 +1532,32 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - 受入の意味: 失敗した region は**アップロードされない**（その分は描かれない）が、**ゲームは落ちず、レポートも出る**。
   「壊れた資源を握ったまま描く」よりは安全側である。
 
-**次の一手**: (1) immediate/descriptor 経路の確保失敗（`VulkanUniformBuffer:110`）を有界にする、(2) 3サイトとも
+**buffer系クラッシュの修正（続き・3サイトすべて有界化）**:
+
+- `ensureUniformCapacity` の**2つの呼び出し**（`render` 336行 / `recordRenderPass` 3746行）を try/catch で囲み、
+  失敗した pass は**スキップして理由を記録**する（`uniformPreparationFailures`）。これは同じ場所にある
+  `gpuStalled` の早期return・atlas欠如時のskipと**同じ形**である。
+- 併せて `VulkanUniformBuffer` の生成失敗時に**作った `VkBuffer` を破棄**するようにした（`VulkanBuffer` は既にそうしており、
+  こちらは漏れていた）。
+
+| サイト | GPU | 修正前 | **修正後** | 計器 |
+|---|---|---|---|---|
+| `VulkanBuffer:189` | AMD | exit 255 / report無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | `regionUploadFailures=1` |
+| `VulkanBuffer:189` | Intel | exit 255 / report無し / クラッシュ | **exit 0 / clean / PASSED / 307 frames** | `regionUploadFailures=1` |
+| `VulkanContext:883` | AMD | exit 255 / report無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | `regionUploadFailures=1` |
+| `VulkanUniformBuffer:110` | AMD | exit 255 / report無し / クラッシュ | **exit 1 / clean / FAILED / クラッシュ無し / 566 frames** | `uniformPreparationFailures=1` |
+| `VulkanUniformBuffer:110` | Intel | exit 255 / report無し / クラッシュ | **exit 1 / clean / FAILED / クラッシュ無し / 306 frames** | `uniformPreparationFailures=1` |
+| **通常run（回帰確認）** | AMD | — | **exit 0 / clean / PASSED / p50 16.17 ms** | 失敗0 |
+
+- **受入の意味**: 3サイトとも**クラッシュしなくなり、レポートが出る**。uniform の場合は pass をスキップするため
+  terrain フレームが描かれず **fixture は FAILED（exit 1）**になるが、これは**有界な失敗の報告**であって
+  プロセスの死ではない（以前は report すら出なかった）。
+- **通常runは無回帰**（p50 16.17 ms、失敗カウンタ 0）。
+
+**次の一手**: (1) `presentReadback=true` の run で readback サイト（`VulkanTerrainGpuBackend:5047`）も叩く、
+(2) minimize 相当（サイズ0や present 失敗）を確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) immediate/descriptor 経路の確保失敗（`VulkanUniformBuffer:110`）を有界にする、(2) 3サイトとも
 両GPUで再受入する、(3) `presentReadback=true` の run で readback サイトも叩く。
 
 **（旧メモ）** 次の一手: (1) `VulkanBuffer` / `VulkanUniformBuffer` / `VulkanContext` の確保失敗を**有界に処理**する
