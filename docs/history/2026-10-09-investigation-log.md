@@ -6874,3 +6874,36 @@ the composite - content the game draws every frame. Six rules failed to change t
 instrument itself was not trustworthy; this round adds a second, unrelated shape whose failure has the same signature. That is
 the strongest evidence yet that the problem is in the mapping's instrumentation rather than in the rules being tried against
 it, and it is the thing to examine next.
+
+---
+
+## The mapping's element comparison was wrong by any standard, and fixing it changed nothing measurable
+
+Reading the instrument instead of adding a seventh rule found a real defect, and it is worth stating plainly what it is:
+
+```java
+if (a.get(i) != b.get(i)) {      // VertexFormatElement compared by identity
+```
+
+The mapping decided whether the game's format was one it knew by comparing the **element objects** with `!=`. The game builds
+equal `VertexFormatElement` instances inline rather than reusing the constants, so **no** inline format could ever match a
+standard one - a bug by any standard, and the explanation that fit every observation: the sky, the clouds, the water surface
+and the final composite all arriving as format 0, and six candidate rules appearing not to work because the comparison in front
+of them was wrong.
+
+It is now compared by **content** - type, usage, index and component count - and misses are no longer cached either, since a
+verdict of 0 depends on the stride that upload happened to carry and storing it reused the first encounter's answer forever.
+
+**And the measurements did not move.** `acceptedByFormat` still shows `1:2, 2:0, 3:0, 4:0, 5:548, 6:0`, the null-format dump
+still fires for the stride-20 two-element shape, and the runs are otherwise unchanged: exit 0, validation clean, 0 messages,
+fixture PASSED, acceptance intact. So the defective comparison was **not** what kept those shapes at 0 - it was wrong, it is
+fixed, and it explains nothing.
+
+That is the same lesson as the withdrawn mask explanation, arriving from the other side this time. A defect that fits every
+observation is not necessarily the defect responsible for them, and the way to tell the two apart is to change it and measure -
+which is what this round did, and why the result is a correction rather than a breakthrough. Two facts remain unexplained and
+are recorded as such: both shapes satisfy the size and element-count conditions that were tried, and both still arrive as
+format 0.
+
+Three rounds have gone into this mapping. The content comparison stays, because it is right, and the investigation stops here
+with the state written down rather than with another rule.

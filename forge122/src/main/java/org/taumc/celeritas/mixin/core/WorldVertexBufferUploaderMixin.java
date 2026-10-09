@@ -213,7 +213,11 @@ public abstract class WorldVertexBufferUploaderMixin {
         } else {
             id = 0;
         }
-        celtium$formatIds.put(format, Integer.valueOf(id));
+        if (id != 0) {
+            // Only hits are cached. A miss depends on the stride this upload happens to carry, and storing it meant the
+            // first encounter's verdict was reused for every later one - the second half of why the mapping appeared deaf.
+            celtium$formatIds.put(format, Integer.valueOf(id));
+        }
         return id;
     }
 
@@ -224,7 +228,15 @@ public abstract class WorldVertexBufferUploaderMixin {
             return false;
         }
         for (int i = 0; i < a.size(); i++) {
-            if (a.get(i) != b.get(i)) {
+            VertexFormatElement expected = a.get(i);
+            VertexFormatElement actual = b.get(i);
+            // By content, not by identity. This compared `left != right`, and the game builds equal element instances rather
+            // than reusing the constants, so **no** format the game constructs inline ever matched a standard one - which is
+            // why the sky, the clouds, the water surface and the final composite all arrived as format 0, and why six
+            // candidate mapping rules appeared not to work: the element comparison in front of them was wrong.
+            if (expected.getType() != actual.getType() || expected.getUsage() != actual.getUsage()
+                    || expected.getIndex() != actual.getIndex()
+                    || expected.getElementCount() != actual.getElementCount()) {
                 return false;
             }
         }
