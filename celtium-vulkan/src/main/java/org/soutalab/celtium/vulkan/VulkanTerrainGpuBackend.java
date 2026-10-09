@@ -455,6 +455,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetTargetsCreated;
     private int offTargetReadyToTake;
     private int offTargetDrawn;
+    /** Batches offered for an off-target target, which is not the same as batches taken for one. */
+    private int offTargetOffered;
+    /** Batches accepted for an off-target target - the one that is evidence. */
+    private int offTargetAccepted;
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
     private int announcedUploads;
@@ -1384,8 +1388,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Taken. The structural obstacle is answered by recording this content in its own pass before the frame's pass
             // begins, which is the only place that can be done without interrupting one, and copying the result back into the
             // game's texture through the path the self-test proves on every run.
+            // Offered, not accepted: this runs before the target is built and before the batch reaches the acceptance point, so
+            // anything that fails in between sends the batch to GL with this counter already incremented. The audit is right
+            // that it cannot be cited as "the framebuffer is drawn by Vulkan" - the acceptance counter below is the one that can.
+            this.offTargetOffered++;
             this.offTargetReadyToTake++;
-            this.offTargetDrawn++;
             // What the per-target work would have to build: which target, how much content it receives, and how big it is.
             // The viewport is read here because at this moment it is the target's own, and the count says whether a target
             // is worth an image at all.
@@ -1791,6 +1798,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             if (formatId >= 0 && formatId < this.immediateAcceptedByFormat.length) {
                 this.immediateAcceptedByFormat[formatId]++;
+                if (!this.currentRenderTargetIsMain) {
+                    // Accepted for a framebuffer that is not the main one: this is the count that means the content is being
+                    // drawn by Vulkan into one of the game's own targets, as opposed to merely offered to it.
+                    this.offTargetAccepted++;
+                }
                 // Printed incrementally rather than only in the end-of-run report, because a run that times out has no report and
                 // still has evidence: the arrival census proved that on a partial Intel run carrying 674,500 uploads. The
                 // acceptance side needed the same treatment - a count that only exists at the end cannot answer "was this taken"
@@ -2399,6 +2411,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
+                + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetsCreated()

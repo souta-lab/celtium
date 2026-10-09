@@ -8751,3 +8751,29 @@ Both fixes are in and both runs are green. **Findings 3 and 4 are next and are n
 through the same `copyToImage` with `oldLayout=UNDEFINED` (discarding the region around the patch and the atlas's mip chain, and
 recording the patch size as the mip chain), and `offTargetDrawn` still counts offers rather than acceptances, so it must not be
 cited as framebuffer-in-Vulkan evidence.
+
+---
+
+## Audit finding four: the off-target counter was offered-count, and the acceptance count is zero
+
+The audit says `offTargetDrawn` increments when an off-target batch is **offered** and cannot be cited as evidence that the
+framebuffer is drawn by Vulkan. The sources agree with the substance: the increment sits before the target is built and before
+the batch reaches acceptance, so any failure in between leaves the count standing while the batch goes to GL. Splitting it into
+`offTargetOffered` and a real `offTargetAccepted` produced this:
+
+```
+offTargetOffered = 208     offTargetAccepted = 0     offTargetRefusals = 0
+offTargetDrawn = 0         offTargetCopiedBack = 1957   offTargetRefusals = 0
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+**The acceptance count is zero**, and the offer count is a couple of hundred, so the old counter was indeed not evidence - it
+was an intention. What *is* evidence in that same run is **`offTargetCopiedBack = 1957`**: the copy-back only runs for content
+that was recorded into an offscreen target and therefore drawn there, and it is the one number in this family that cannot be
+produced by a refusal.
+
+So the plan's framebuffer row is corrected to cite the copy-back rather than the offer count, and the three counters now mean what
+their names say: **offered** is an intention, **drawn** is a record made into the target, and **copied back** is a draw that
+produced pixels and put them into the game's texture. The middle one being zero in the same run as 1,957 copy-backs also says
+something worth keeping: the off-target acceptance counter was placed on a path these batches do not take, so it is not yet
+proving what it was added for.
