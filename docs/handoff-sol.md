@@ -238,6 +238,15 @@ MC 1.12.2 の lightmap は 16×16 で頂点値は「レベル×16」なので中
 run verdict は exit 0 / clean / fixture PASSED。**実在する修正だが残差はまだ大きい**。
 次の一手は修正後の「色乗算無効run」を取り直して現在の適用色を再測定し、packed な色（solid平均0.635）と比べること。
 
+**texture UVとshadeの検証（このターン・どちらも否定）**: texture UVを半テクセルずらしても画像はほぼ不変
+（mid 88.9→86.6、HF 6.2→6.5）。`-Dceltium.terrain.noShade=true`（diffuse項を1.0固定）では**完全に同一**で、
+`VintageDiffuseProvider` が可視地形の色に寄与していないこと（＝shadeはquad色に焼き込まれている）が分かった。
+残差の定量: 色乗算無効run = 215.7（=texture単体。lightmapはv_Color経由なので一緒に切れる）。vanilla 139.8 を
+tex×colour×lm と分解すると tex ≈ 216（我々と一致）、lmは修正後同一なので、**我々の頂点色はvanillaの一様な
+約0.58〜0.62倍**（面の明るさ別 0.57/0.61/0.62）。=> 欠陥は「色の合成」（quad色）にあり、texture・lightmap・
+diffuse provider は除外済み。次は vanilla-like 経路で quad 色を合成している箇所を特定し、余分な係数
+（AOやtint）が掛かっていないかを少数quadの値で確かめる。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

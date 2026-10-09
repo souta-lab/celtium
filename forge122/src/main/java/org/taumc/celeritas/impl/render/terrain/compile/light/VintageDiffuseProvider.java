@@ -10,9 +10,16 @@ import static org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFacing
 public enum VintageDiffuseProvider implements DiffuseProvider {
     INSTANCE;
 
+    /**
+     * Diagnostic switch: forces the face brightness to 1.0 so a run measures the frame without any diffuse term.
+     * It answers whether the sided brightness is applied once (vanilla: top 1.0, sides 0.6/0.8) or twice, which
+     * would square those factors - 0.36 for a side face against the reference's 0.6.
+     */
+    private static final boolean NO_SHADE = Boolean.getBoolean("celtium.terrain.noShade");
+
     @Override
     public float getDiffuse(float normalX, float normalY, float normalZ, boolean shade) {
-        if (!shade) {
+        if (NO_SHADE || !shade) {
             return 1.0f;
         }
         return LightUtil.diffuseLight(normalX, normalY, normalZ);
@@ -50,7 +57,7 @@ public enum VintageDiffuseProvider implements DiffuseProvider {
 
     @Override
     public float getDiffuse(ModelQuadFacing lightFace, boolean shade) {
-        if (!shade) {
+        if (NO_SHADE || !shade) {
             return 1.0f;
         }
         return LightUtil.diffuseLight(toEnumFacing(lightFace));

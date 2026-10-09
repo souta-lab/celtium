@@ -368,8 +368,21 @@ UV (0.875,0.28125) のatlas spriteを確認したところ **alpha 197 の青い
 効果は **+10〜12%**（vanilla比 0.553 → 0.606）で、**実在する修正だが残差はまだ大きい**。
 run verdict は exit 0 / validationClean / fixture PASSED。
 
-**次の一手（具体）**: 修正後の「色乗算無効run」を取り直して**現在の適用色**を再測定し、packed な色（solid平均0.635）
-と比べる（差が残れば shader 側、一致すれば packed 側）。
+**texure UVとshadeの検証（このターン・どちらも否定）**:
+
+| 実験 | 結果 |
+|---|---|
+| texture UVを半テクセルずらす（`v_TexCoord + 0.5/512`） | mid 88.9 → 86.6、near 88.9 → 88.8、HF 6.2 → 6.5 で**ほぼ不変** → UV位置は原因ではない |
+| `-Dceltium.terrain.noShade=true`（diffuse項を1.0固定） | **完全に同一**（88.9/93.3/82.7 が不変）→ `VintageDiffuseProvider` は**可視地形の色に寄与していない**（shadeはquad色に焼き込まれている）＝shade二重適用説は否定 |
+
+**残差の定量（lightmap修正後）**: vanilla 146.6 / upstream 136.8 / celtium 88.9（mid帯）。
+- 我々の「色乗算無効run」= 215.7（＝**texture単体**。lightmapは v_Color 経由なので色乗算を切ると一緒に切れる）
+- vanilla 139.8 = tex × colour × lm とすると、tex ≈ 216（我々と一致 ✅）、lm は修正後は同一 ✅
+- よって **我々の頂点色は vanilla の一様な約0.58〜0.62倍**（面の明るさ別 0.57 / 0.61 / 0.62）
+- **欠陥は「色の合成」（quad色）にあり**、texture・lightmap・diffuse provider はいずれも除外済み
+
+**次の一手（具体）**: vanilla-like 経路で quad の色を合成している箇所（model pipeline / chunk model builder）を特定し、
+そこに余分な係数（AOやtint）が掛かっていないかを、少数quadの値をdumpして確かめる。
 上面で brightness×AO が 1.0×1.0 になっているか（余分な0.6が無いか）を確かめる。
 （旧メモ:
 上面の色が「tint × shade(1.0)」になっているか（＝余分な係数が掛かっていないか）を確かめる。
