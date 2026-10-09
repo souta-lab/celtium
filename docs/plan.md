@@ -216,7 +216,29 @@
 「地形が約0.6倍暗い」は実在する差である。以後は**領域統計**で判定し、ピクセル一致は
 決定性を別途示した場合だけ使う。
 
-**次の一手（具体）**: 残る唯一の支配要因は **テクスチャサンプル**（`u_BlockTex`）。terrain が実際に bind する `this.atlasTexture` の内容を capture 時に dump し、GLの実atlasと比べる（registry mirror との比較だけでは同一性を証明できない）。
+**因子の定量（shader診断・jar内SPIR-V一致を確認済み）**:
+
+| 構成 | 地形帯 mid | near |
+|---|---|---|
+| 参照 (upstream GL) | 136.8, 146.5, 117.2 | 125.0, 135.4, 117.6 |
+| 現行（色×alpha乗算あり） | 81.0, 84.5, 74.2 | 79.6, 85.5, 75.4 |
+| **頂点色乗算を無効化** | **210.1, 209.8, 209.0** | **215.7, 216.2, 220.5** |
+| **alpha乗算を無効化** | 80.8, 84.4, 74.2 | 79.6, 85.5, 75.4 |
+
+- 「texture×lightmap」= 約212（ほぼ無彩色）。参照はその**0.61倍**、現行は**0.38倍**＝**差は頂点色の項だけ**で、現行は参照の0.62倍。
+- **alpha乗算は無効**（400セクションすべて alpha=255、無効化しても不変）✅ → AOの二重適用ではない。
+- 既存の `-Dceltium.vulkan.lightDiagnostics=true` は全書き込みの平均色を出すが、**ラベルが実際のチャンネル順と逆**（`r=`は実際にはA、`a=`は実際にはR）。集計は全パス・全フレーム混在なので地形の判断には使えない。**pass別に集計する拡張が必要**。
+- **GL地形パスは製品構成ではない**: `-Dceltium.vulkanTerrain=false`（またはVulkan bindings無し）では
+  `IllegalStateException: Celtium requires a Vulkan terrain backend, but none could be created: ...` で**明示的に停止**する
+  （旧run scriptコメントの「GLへフォールバックしてそう言う」は古い）。以降のplayer null NPEはこの停止の二次症状。
+  したがって同一buildでのGL/Vulkan A/Bは**この構成では取れない**。
+
+**次の一手（具体）**: `lightDiagnostics` の集計を **pass別（solid/cutout_mipped）**に分け、
+mesh builderが実際に詰めた色の平均を出す。それを「無効化runの212 × 詰めた色」と突き合わせ、
+描画結果（79.6/85.5/75.4）と一致するかを確認する。一致しなければ損失はshader内、一致すれば
+詰めた色自体が参照の0.62倍である（＝mesherの色合成か、VANILLA_LIKE と COMPACT の選択差）。
+`CeleritasWorldRenderer` の format 選択（VANILLA_LIKE/COMPACT）は上流checkoutに存在しない
+**Celtium側の変更**である点も確認済み。terrain が実際に bind する `this.atlasTexture` の内容を capture 時に dump し、GLの実atlasと比べる（registry mirror との比較だけでは同一性を証明できない）。
 そのうえで、同じbuildで **GL terrain にフォールバックした frame** と比べる（参照に依存せず、Vulkan地形の当否を判定できる。初回試行は起動時の `getSkyColorBody` NPE で落ちたため、その原因も見る）。（fragment shaderが `rgb *= a_Color.rgb` と
 `rgb *= a_Color.a` を行う。round 267の実測: この乗算ありで地形帯98・参照131、乗算を外すと215）。
 Vulkan側の地形頂点バッファから数点をdecodeして `a_Color` / `a_LightCoord` の実値を出し、

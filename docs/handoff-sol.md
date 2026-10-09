@@ -162,6 +162,13 @@ terrain が bind する `this.atlasTexture` が別オブジェクトである可
 帯平均は再現する（候補の複数runが79.6/85.5/75.4で一致、参照は125.0/135.4/117.6）ので明度差は実在。
 atlasは dump にオブジェクト同一性を付けて確認し、GL texture 9 の mirror は1つだけで内容もGLと一致 ✅。
 
+**因子の定量（このターン）**: shader診断で「頂点色乗算を無効化」すると地形帯は **212（ほぼ無彩色）**、
+参照は130、現行は80。つまり texture×lightmap は一致し、**差は頂点色の項だけ**で現行は参照の0.62倍。
+「alpha乗算を無効化」しても不変（400セクションすべてalpha=255）なのでAOの二重適用ではない。
+GL地形パスは製品構成ではなく（`Celtium requires a Vulkan terrain backend...` で明示停止）、
+同一buildでのGL/Vulkan A/Bは取れない。`CeleritasWorldRenderer` の VANILLA_LIKE/COMPACT 選択は
+上流checkoutに無いCeltium側の変更であることも確認した。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
