@@ -90,6 +90,14 @@ public final class VulkanGlTexture {
      * earlier attempts changed the tail barrier's range and broke exactly that agreement.
      */
     private int[] levelLayouts = new int[0];
+    /**
+     * Whether this image has ever been given its whole content.
+     * <p>
+     * A mirror created because a partial write arrived has only the patch that created it: the rest of the atlas is undefined,
+     * and the registry used to clear its stale mark anyway, which made an image of mostly-nothing drawable. Drawing from it is
+     * worse than sending the batch back to GL, so the acceptance path asks this before it builds a descriptor (audit A04).
+     */
+    private boolean fullContentArrived;
     private int currentLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
     private boolean nearestFilter;
 
@@ -282,12 +290,21 @@ public final class VulkanGlTexture {
      * @return whether the image was written, false when the content was already there
      */
     /** {@return whether a patch was written into a sub-region}, for the animated writes that cover part of a texture. */
+    /** {@return whether the image has been given its whole content at least once} (audit A04). */
+    public boolean hasFullContent() {
+        return this.fullContentArrived;
+    }
+
     public boolean uploadPatchFromPixels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer rgba) {
         requireAlive();
         if (x < 0 || y < 0 || x + pixelWidth > width || y + pixelHeight > height) {
             return false;
         }
         copyToImage(rgba, pixelWidth, pixelHeight, 0, x, y, true);
+        if (x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height) {
+            // A "patch" that covers the image is a full initialization: the light map arrives this way.
+            this.fullContentArrived = true;
+        }
         // The image no longer holds what the last full upload put there, so the hash identifying that content is stale. Without
         // this a later full upload of the same pixels is skipped as a duplicate and the patch survives in a texture that should
         // have been replaced wholesale (audit A06).
@@ -312,6 +329,7 @@ public final class VulkanGlTexture {
             recreateImageResources(pixelWidth, pixelHeight);
         }
         copyToImage(rgba, pixelWidth, pixelHeight, 0);
+        this.fullContentArrived = true;
         // Recorded only once the pixels are actually in the image: a hash written before the transfer would claim content that
         // a failed transfer never delivered, and the next retry would then be skipped as a duplicate (audit A07).
         lastPixelHash = hash;

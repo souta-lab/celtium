@@ -8882,3 +8882,26 @@ exit 0 | validationClean true | messages 0 | fixture PASSED | nativeTerrainVerif
 
 A04（初回patchだけで全面未初期化のmirrorを作る）は未解決: stitch時の全面データを保持・供給し、初期化が揃うまで
 patch-only mirrorを描画可能扱いにしないことが必要。A05のsprite単位mipも、全atlasのblitを正解としない方針で残る。
+
+---
+
+## 第3回監査 A04 の是正側（patch-only mirror を描画可能扱いしない）と、このfixtureでは未発火という実測
+
+A04の受入のうち**是正の要**は「初期化が揃うまで patch-only mirror を描画可能扱いにしない」ことなので、そこを実装した。
+
+- `VulkanGlTexture` は **全面内容を一度でも受け取ったか** を持つ（`fullContentArrived` / `hasFullContent()`）。
+  全面転送（`uploadFromImage`）で立ち、patch経路では **patchが画像を覆う場合のみ** 立つ（lightmapはこの形で届く）。
+- 受理経路の `canBuildDescriptor` は、全面内容の無いミラーでは **descriptorを作らず拒否**する。
+  理由は `immediateLastRefusal` に残り、`partialMirrorRefusals` として数える。undefined な絵を描くより、GLへ返すほうが正直である。
+
+**実測（AMD RX6400）**:
+
+```
+exit 0 | validationClean true | messages 0 | fixture PASSED | nativeTerrainVerified true | terrainPasses 717
+partialMirrorRefusals = 0    imageFilledMirrors = 115    imageUploadsSkipped = 3527
+animatedImageFills = 108     inPlaceRefreshes = 991      mirroredTextures = 11     descriptorSets = 1
+```
+
+**このfixtureではガードは一度も発火しない**。描画に使われるミラーはすべて全面画像を受け取っているためで、A04が想定する
+「patchが先、全面が後」の順序をこの場面が作らないことを意味する。ガードは存在し、その状況では拒否する側に働く。
+A04の**もう半分**（atlas stitch 時の全面データを保持・供給する）は未着手のままである。

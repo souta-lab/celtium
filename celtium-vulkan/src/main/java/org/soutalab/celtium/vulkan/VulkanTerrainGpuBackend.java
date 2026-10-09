@@ -459,6 +459,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetOffered;
     /** Batches accepted for an off-target target - the one that is evidence. */
     private int offTargetAccepted;
+    /** Batches refused because the mirror they need has only ever received a partial write. */
+    private int partialMirrorRefusals;
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
     private int announcedUploads;
@@ -1316,6 +1318,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         VulkanGlTexture texture = this.textureRegistry.get(boundTexture);
         if (texture == null || this.lightmapTexture == null) {
+            return false;
+        }
+        if (!texture.hasFullContent()) {
+            // A mirror that only ever received a partial write has undefined content outside that patch. Handing the batch to GL
+            // is the honest outcome until the atlas or texture is supplied whole (audit A04).
+            this.immediateLastRefusal = "the mirror for texture " + boundTexture
+                    + " has never received its full content";
+            this.partialMirrorRefusals++;
             return false;
         }
         try {
@@ -2411,6 +2421,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
+                + " partialMirrorRefusals=" + this.partialMirrorRefusals
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
