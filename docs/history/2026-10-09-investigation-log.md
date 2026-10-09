@@ -3362,3 +3362,39 @@ Java 21 inside the game". Until such a test exists, the honest sentence is the o
 Two smaller things were also cleared on the way: the harness's `--java` argument does reach the launch command (line 152
 into line 193), and the two earlier failures in this attempt were my own script edits breaking the invocation rather than
 anything about Java versions.
+
+---
+
+## Java 21 loads and initialises the renderer's classes, outside Cleanroom
+
+The plan promised this as a separate test from "runs inside the game", and it is now done. Using JDK 21's single-file source
+launch so that nothing but the distribution jar is on the classpath:
+
+```
+runtime: 21.0.12.1 (class 21)
+  loaded org.soutalab.celtium.vulkan.VulkanContext classfile-major 65
+  loaded org.soutalab.celtium.vulkan.VulkanSwapchain classfile-major 65
+  loaded org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend classfile-major 65
+  loaded org.soutalab.celtium.vulkan.VulkanGlState classfile-major 65
+loaded 4 Celtium class(es) with no error
+```
+
+And with `initialize = true`, so the static initialisers actually run rather than the class merely being read:
+
+```
+initialised org.soutalab.celtium.vulkan.VulkanGlState on Java 21
+initialised org.soutalab.celtium.vulkan.VulkanHostBuffer on Java 21
+```
+
+So the position is now three separate statements rather than one blurred one:
+
+| Statement | State |
+|---|---|
+| Celtium's renderer classes are class file major 65 | **Verified in the shipped jar** |
+| Java 21 accepts, links and initialises them | **Verified** outside the game |
+| Celtium renders inside Cleanroom on Java 21 | **Not verified, and not verifiable here** - Cleanroom 0.6.13-alpha's launcher is class 69, so JDK 21 cannot start the game at all |
+
+The third row is the one that must not be inferred from the first two, and it now sits in the plan beside them rather than
+being left to the reader. The first attempt at this check also failed for a mundane reason worth noting: the jar path used
+was a directory level off, so the classpath was empty and the error was `ClassNotFoundException` rather than anything about
+Java versions - the same shape of mistake as the earlier broken launcher invocation.
