@@ -1699,7 +1699,35 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - **整合する説明**: `=false` の画像が既定と 0.0180 / 1496 px 違うのは、**合成が「present される」のではなく
   「即時経路で native に描かれる」**ためで、差分の大きさも床（0.0167 / 481 px）と同水準である。
 
-**次の一手**: (1) format 2 の受け入れを**合成と手で分ける**材料を探す（呼び出し元・頂点数・バインド中テクスチャ）、
+**合成と手の区別を実装（このターン・既定のまま深度返却が不要になった）**:
+
+- **区別の材料**: 「**そのバッチがサンプルしているテクスチャが、今バインド中のフレームバッファの色アタッチメントか**」。
+  合成は自分の描き込み先を読むが、手・オーバーレイ・mod のバッチは読まない。実装は
+  `celtium$samplesBoundFramebufferColor(texture)`（`glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING)` ＋
+  `glGetNamedFramebufferAttachmentParameteri(...COLOR_ATTACHMENT0...)`。既存の `ensureFrameTarget` と同じ手順）。
+- **変更**: format 2 の分岐を「**画面宛** または **バインド中FBOの色をサンプル**」のときだけ present 経路にし、
+  それ以外は **`return false` せず受理maskへ落とす**（mask は format 2 を受理済み）＝**即時経路が描く**。
+  監査 S17 の「format だけで判定するな」を、**実際にバインドされたテクスチャ**で満たした形。
+
+| 比較（**既定のまま**、`presentFromComposite=true`） | 結果 |
+|---|---|
+| AMD: keep vs skip-depth | **0.0000 / 8 px**（床 0.0167 / 481 px より小さい） |
+| Intel: keep vs skip-depth | **0.0000 / 4 px** |
+| 変更前 vs 変更後（既定同士） | **0.0155 / 77 px**（床内） |
+| `compositePresentRefusals` | **0/フレーム**（白黒の拒否が消えた） |
+| p50 | AMD 16.13 / 16.11、**Intel 28.86（keep）/ 25.58（skip）** |
+
+- **意味**: 既定の構成で **format 2 が native に入り**、**深度の書き戻しが不要**になった（効果が床以下）。
+  さらに**深度返却を外すと Intel が 3.3 ms/frame 速くなる**（28.86 → 25.58）。
+- **それでも既定では深度返却を残す**: 実体（spider 場面で **27 px**）だけがまだ地形の深度を参照している。
+  3.3 ms と引き換えに 27 px を壊す判断はしない。**外すのは実体を native に移した後**にする。
+- 受入は4 run とも exit 0 / validationClean=true / PASSED。
+
+**次の一手**: (1) 実体（entity/TESR）を native に移し、その後に深度返却を外して **Intel 25.6 ms / AMD 16.1 ms** を
+受入にする、(2) ブリッジの残り（blit 2回・semaphore 待ち・48箇所の状態クエリ）を外す設計に入る、(3) `presentFromComposite`
+の名前が実態（present していない）と合っていないので、**名前と既定の意味を docs で正す**。
+
+**（旧メモ）** 次の一手: (1) format 2 の受け入れを**合成と手で分ける**材料を探す（呼び出し元・頂点数・バインド中テクスチャ）、
 (2) 「format 2 native ＋ 深度返却なし」を**既定にできる形**にするには、ブリッジの残りコスト（blit 2回・semaphore 待ち・
 状態クエリ）も同時に外す必要がある（そうすれば +2 ms の損を回収できる）、(3) 実体（27画素）の扱いを決める。
 
