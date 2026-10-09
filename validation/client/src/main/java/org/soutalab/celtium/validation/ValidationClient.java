@@ -435,14 +435,11 @@ public final class ValidationClient {
             // Resize the window mid-run: the renderer has to survive the framebuffer changing size, which the plan lists
             // as unported until it has been seen to work. The saved screenshot's own dimensions are the evidence that
             // the resize reached Minecraft rather than only the window manager.
-            long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-            // First attempt changed nothing: the run reported resizedAtTick=100 while displayWidth/Height stayed
-            // 1280x720, which is what a non-resizable window does with a size request. Say so explicitly and then ask.
-            report.addProperty("windowResizable", org.lwjgl.glfw.GLFW.glfwGetWindowAttrib(window,
-                    org.lwjgl.glfw.GLFW.GLFW_RESIZABLE) == org.lwjgl.glfw.GLFW.GLFW_TRUE);
-            org.lwjgl.glfw.GLFW.glfwSetWindowAttrib(window, org.lwjgl.glfw.GLFW.GLFW_RESIZABLE,
-                    org.lwjgl.glfw.GLFW.GLFW_TRUE);
-            org.lwjgl.glfw.GLFW.glfwSetWindowSize(window, 1024, 640);
+            // Minecraft's own resize entry point, which is public and does not depend on the window manager: it sets
+            // displayWidth/Height, recreates the framebuffer, resizes the shader group and notifies the screen. The
+            // earlier attempt asked GLFW to resize the window, which this harness's window does not act on - reported as
+            // windowResizable=true while the framebuffer stayed 1280x720 - so the request never reached Minecraft at all.
+            mc.resize(1024, 640);
             report.addProperty("resizedAtTick", worldTicks);
         }
         if (worldTicks == 190 && !Boolean.getBoolean("celtium.validation.interop")) {

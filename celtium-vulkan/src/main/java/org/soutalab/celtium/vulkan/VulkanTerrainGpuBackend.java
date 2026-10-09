@@ -2234,6 +2234,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.frameTarget != null && this.frameTarget.matches(width, height)) {
             return true;
         }
+        // The GPU must be finished with the old target before any of it is released: a resize recreates the game's
+        // framebuffer, and the validation layer caught the first attempt doing exactly this -
+        // "vkDestroyFramebuffer(): can't be called on VkFramebuffer ... that is currently in use by VkCommandBuffer".
+        // The same rule as delete() and region eviction, applied to the path a resize takes.
+        settleGpu("frame target recreation");
         destroyFramebuffer();
         if (this.frameTarget != null) {
             this.frameTarget.delete();
