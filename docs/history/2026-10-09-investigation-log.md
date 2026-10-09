@@ -5985,3 +5985,23 @@ stricter conditions never fire, and the run is unchanged. So the fix is **correc
 fourth in this series to carry that label (S10's clears, S12's generation keys, S15's teardown, and now S17). That is worth
 stating as a pattern rather than four coincidences: **the fixture exercises one scene and one lifecycle**, and the audit's
 remaining items live in the paths it does not walk - reloads, world-leaves, second targets, overlay blending and postprocessing.
+
+---
+
+## S19 measured down to the byte: 132 against a guaranteed 128, and the four that can move
+
+The audit's S19 is a capability question rather than a bug report - the immediate pipelines ask for more push constant space
+than Vulkan guarantees - and this round pinned it exactly rather than acting on it. The block is two `mat4` (128 bytes) plus
+`layout(offset = 128) float u_AlphaRef`, and the total is a constant named in **six** files: the five immediate pipelines and
+the UI pipeline. The submission site is uniform: `vkCmdPushConstants(commandBuffer, layout, VERTEX_BIT | FRAGMENT_BIT, 0,
+pushConstants)` in each, with the buffer built by the backend.
+
+The four bytes that break the promise are also the easiest to move, because the shaders use them for exactly one test each -
+`u_AlphaRef > 0.0 && colour.a < u_AlphaRef`, in four fragment shaders - and the immediate pipelines are **already created per
+state key**, which is how blend, depth and cull are handled today. The alpha reference belongs in the same mechanism: a
+**specialisation constant**, with `VkSpecializationInfo` on the fragment stage, which leaves the push block at exactly 128
+bytes.
+
+Recorded as the next change rather than half-done now, for a reason this project has learned twice: the push constant size is
+a **compiled artefact** since the shaders moved into the build, so a layout migrated in one place and not another would be a
+worse state than being over by four.

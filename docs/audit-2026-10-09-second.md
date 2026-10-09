@@ -287,9 +287,21 @@ The flags are not reset at the top of `presentImage`, so an early return leaves 
 present look successful; and after `swapchain = null` the next present can dereference a null image. The injection measured
 a successful acquire, not the failure path, and re-injects on every recreate.
 
-### S19 [P1] immediate push constants exceed the guaranteed minimum
-The immediate pipelines require 132 bytes; Vulkan's guaranteed minimum is 128 (256 as of 1.4). Two desktops working does
-not generalise. Reference: https://docs.vulkan.org/spec/latest/chapters/limits.html
+### S19 [P1] immediate push constants exceed the guaranteed minimum - **analysed, fix specified**
+**The violation, exactly.** Every immediate pipeline declares `PUSH_CONSTANT_BYTES = 132` - in six files: `VulkanImmediatePipeline`,
+`VulkanImmediateBlockPipeline`, `VulkanImmediateItemPipeline`, `VulkanImmediateParticlePipeline`,
+`VulkanImmediateTexturePipeline` and `VulkanUiPipeline` - and the shaders' block is two `mat4` (128 bytes) plus
+`layout(offset = 128) float u_AlphaRef` (4). Vulkan guarantees **128** bytes, so the last four are a promise the API does not
+make; two desktops rendering correctly is not evidence that a third will.
+
+**The fix, specified.** `u_AlphaRef` is used in four fragment shaders for one test each - `alphaRef > 0 && colour.a <
+alphaRef` - and the immediate pipelines are already **created per state key**, which is how blend, depth and cull are handled.
+So the alpha reference belongs in that same mechanism as a **specialisation constant** (`layout(constant_id = 0) const float
+kAlphaRef = 0.0;`), with `VkSpecializationInfo` added to the fragment stage; the push block then becomes exactly 128 bytes.
+The submission site is uniform - `vkCmdPushConstants(commandBuffer, layout, VERTEX_BIT | FRAGMENT_BIT, 0, pushConstants)` in
+each pipeline - and the buffer is built by the backend, which must stop writing at offset 128. Recorded as the next change
+rather than attempted in this round: the push-constant size is a compiled artefact now, so a half-migrated layout would be
+worse than the current over-by-four.
 
 ### S20 [P1] the validation gate misses errors by their format
 `prism_validation` skips any message not starting with `vk`, and stores no severity or message ID, so
