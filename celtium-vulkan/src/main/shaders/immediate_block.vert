@@ -38,5 +38,5 @@ void main() {
     v_Color = a_Color;
     v_TexCoord = a_TexCoord;
     v_Lightmap = (vec2(a_LightCoord) + 8.0) / 256.0;
-    gl_Position = celtium.u_ProjectionMatrix * (celtium.u_MvColumn0 * (a_Position).x + celtium.u_MvColumn1 * (a_Position).y + celtium.u_MvColumn2 * (a_Position).z + vec4(0.0, 0.0, 0.0, 1.0));
+    gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

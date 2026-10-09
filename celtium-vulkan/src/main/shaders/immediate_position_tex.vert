@@ -27,5 +27,5 @@ void main() {
     v_TexCoord = a_TexCoord;
     // No per-vertex colour in this format: the texture carries the colour, as it does in the game's own shader.
     v_Color = vec4(1.0);
-    gl_Position = celtium.u_ProjectionMatrix * (celtium.u_MvColumn0 * (a_Position).x + celtium.u_MvColumn1 * (a_Position).y + celtium.u_MvColumn2 * (a_Position).z + vec4(0.0, 0.0, 0.0, 1.0));
+    gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

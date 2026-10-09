@@ -3854,10 +3854,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                     int formatId = ((Integer) group[3]).intValue();
                     int[] state = (int[]) group[6];
-                    pushMatrixInto((float[]) group[1], push, 0);
-                    // Three affine columns only; the shader rebuilds the fourth, which is (0, 0, 0, 1) by construction
-                    // for a model view. This is what keeps the block inside the guaranteed 128 bytes.
-                    pushMatrixColumnsInto((float[]) group[2], push, 64);
+                    // One combined matrix: the projection times the model view, computed here rather than in the shader. The
+                    // shader used to rebuild the model view's fourth column as (0, 0, 0, 1), which discarded the translation -
+                    // the affine constant is the last ROW of a model view, not the last column, and the translation lives in
+                    // elements 12 to 14. Folding the two matrices together puts it back at the cost of one multiply per group.
+                    pushCombinedMatrixInto((float[]) group[1], (float[]) group[2], push, 0);
+                    // The model-view columns stay declared in the shader's block so its layout is unchanged; they are now zero.
+                    for (int i = 64; i < 112; i += 4) {
+                        push.putFloat(i, 0.0f);
+                    }
                     push.putFloat(112, Float.intBitsToFloat(state[6]));
                     float[] groupColour = group.length > 8 ? (float[]) group[8] : null;
                     push.putFloat(116, groupColour == null ? 1.0f : groupColour[0]);
@@ -4154,6 +4159,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * (0, 0, 0, 1) by construction. This is what keeps the immediate push block inside Vulkan's guaranteed 128 bytes
      * (audit S19).
      */
+    /**
+     * Writes {@code projection * modelView} into the push constants.
+     * <p>
+     * Both are column-major 4x4 arrays in OpenGL's order, so this is the ordinary column-major multiply. The shader needs one
+     * multiply afterwards, and the model view's translation - which the three-column form dropped - is carried by the product.
+     */
+    private static void pushCombinedMatrixInto(float[] projection, float[] modelView, ByteBuffer push, int base) {
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; k++) {
+                    sum += projection[k * 4 + row] * modelView[column * 4 + k];
+                }
+                push.putFloat(base + column * 16 + row * 4, sum);
+            }
+        }
+    }
+
     private static void pushMatrixColumnsInto(float[] matrix, ByteBuffer target, int offset) {
         for (int column = 0; column < 3; column++) {
             for (int row = 0; row < 4; row++) {

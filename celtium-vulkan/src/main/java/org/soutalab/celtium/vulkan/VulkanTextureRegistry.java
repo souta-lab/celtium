@@ -203,10 +203,14 @@ public final class VulkanTextureRegistry {
         }
         java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
         try {
+            // The array the animation method passes is int[mipLevel][y * width + x], not an array of rows. The first index is
+            // the mip level and the second is the flat texel index, so level 0 is the whole patch and the indexing below is
+            // one-dimensional. Treating data[row] as a row read the wrong texels for every patch of every animated sprite.
+            int[] level0 = data.length > 0 && data[0] != null ? data[0] : new int[0];
             for (int row = 0; row < height; row++) {
-                int[] source = row < data.length ? data[row] : new int[width];
                 for (int col = 0; col < width; col++) {
-                    int argb = col < source.length ? source[col] : 0;
+                    int texel = row * width + col;
+                    int argb = texel < level0.length ? level0[texel] : 0;
                     rgba.put((byte) ((argb >> 16) & 0xFF));
                     rgba.put((byte) ((argb >> 8) & 0xFF));
                     rgba.put((byte) (argb & 0xFF));

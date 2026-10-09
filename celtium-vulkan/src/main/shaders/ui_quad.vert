@@ -33,5 +33,5 @@ layout(location = 1) out vec4 v_Color;
 void main() {
     v_Uv = a_Uv;
     v_Color = a_Color;
-    gl_Position = celtium.u_ProjectionMatrix * (celtium.u_MvColumn0 * (a_Position).x + celtium.u_MvColumn1 * (a_Position).y + celtium.u_MvColumn2 * (a_Position).z + vec4(0.0, 0.0, 0.0, 1.0));
+    gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

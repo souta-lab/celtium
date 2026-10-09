@@ -8719,3 +8719,35 @@ announced, with the id and the size.
 This is the fifth hypothesis on this stream and the third to be withdrawn, and the pattern is exactly the one this project has
 recorded before: the instruments describe the state precisely, and the explanations built on top of them keep being one step
 ahead of the measurement.
+
+---
+
+## Audit findings one and two: the translation was being dropped and the animation's array read as rows
+
+**Finding 1, confirmed in the source and fixed.** The immediate vertex shaders rebuilt the model view as
+`u_MvColumn0 * x + u_MvColumn1 * y + u_MvColumn2 * z + vec4(0, 0, 0, 1)` - three columns and a hardcoded fourth - and the
+writer sent exactly those three columns. **The affine constant of a model view is its last row, not its last column**, and the
+translation lives in elements 12 to 14, which were therefore discarded for every immediate batch. The fix is to fold the two
+matrices together: the writer now computes `projection * modelView` once per group and the shader does one multiply,
+`gl_Position = u_ProjectionMatrix * vec4(a_Position, 1.0)`. Six shaders use it, the model-view columns remain declared (zeroed)
+so the block layout is unchanged, and the cost is one 4x4 multiply per group.
+
+```
+exit 0 | clean | messages 0 | fixture PASSED   terrainPasses=609   glDrawsCancelled=2138
+```
+
+The fixture's own image comparisons passing is the acceptance evidence that matters here: those batches now land where the
+reference expects them.
+
+**Finding 2, confirmed and fixed.** `TextureUtil.func_147955_a` receives `int[mipLevel][y * width + x]`, so the second index is a
+**flat texel offset**, not a row. `announceFullPixels` was treating `data[row]` as a row of pixels, which read the wrong texels
+for every patch of every animated sprite. It now reads level 0 flat, one-dimensionally:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED   imageFilledMirrors=3505   animatedImageFills=104
+```
+
+Both fixes are in and both runs are green. **Findings 3 and 4 are next and are not yet touched**: the patch path still goes
+through the same `copyToImage` with `oldLayout=UNDEFINED` (discarding the region around the patch and the atlas's mip chain, and
+recording the patch size as the mip chain), and `offTargetDrawn` still counts offers rather than acceptances, so it must not be
+cited as framebuffer-in-Vulkan evidence.
