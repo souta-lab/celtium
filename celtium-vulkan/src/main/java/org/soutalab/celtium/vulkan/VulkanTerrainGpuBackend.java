@@ -463,6 +463,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Split of the per-batch cost: time inside prepareImmediate (pipeline and descriptor preparation). */
     private long prepareImmediateNanos;
     private int prepareImmediateCalls;
+    /** Split of the batch call outside the preflight: group (mesh) creation against the vertex append. */
+    private long groupCreateNanos;
+    private int groupCreateCount;
+    private long appendNanos;
+    private int appendCount;
+    /** The GL query the custom-program shutter makes per batch, timed: it is a synchronising call on some drivers. */
+    private long programQueryNanos;
+    private int programQueryCount;
     /** Split of prepareImmediate: pipeline+texture lookup against the pipeline/descriptor branch. */
     private long prepLookupNanos;
     /** Which half of the lookup dominates: the terrain pipeline lookup or the texture registry lookup. */
@@ -820,6 +828,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     public static long batchCallNanos;
     public static int batchCallCount;
+    /**
+     * The single most expensive batch call, and the total of the first 200.
+     * <p>
+     * The per-frame mean of this counter is 2.5x higher on Intel than on AMD even though the work is the same CPU-side
+     * code and the call counts per frame match, which points at the mean being inflated by a few very slow calls - the
+     * JIT compiling the path on a GPU that produces half as many frames. The maximum and the opening window separate
+     * that from a real per-call difference.
+     */
+    public static long batchCallWorstNanos;
+    public static long batchCallOpeningNanos;
+    public static int batchCallOpeningCount;
 
     private int actualFlushes;
     private long actualFlushNanos;
@@ -1891,7 +1910,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
+                long groupCreateStart = System.nanoTime();
                 this.currentImmediateMesh = new VulkanDynamicMesh(this.context);
+                this.groupCreateNanos += System.nanoTime() - groupCreateStart;
+                this.groupCreateCount++;
                 // The target and viewport belong to the group being created, here, and not to whichever group happened to be
                 // first: they were recorded in an `if (!currentGroupUsed)` block that the creation path never reset, so every
                 // group after the first kept the first group's target - the main framebuffer - and the batches offered while a
@@ -1976,7 +1998,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // readbacks, about 15 per frame, which is what turned the spectator spider scene into ~2 s per frame and
             // left the run unable to reach its capture tick on either GPU. Refused before anything is appended, so GL
             // keeps drawing those passes with the program that is actually bound.
-            if (org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM) != 0) {
+            long programQueryStart = System.nanoTime();
+            int boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
+            this.programQueryNanos += System.nanoTime() - programQueryStart;
+            this.programQueryCount++;
+            if (boundProgram != 0) {
                 this.immediateLastRefusal = "a custom shader program is bound";
                 this.shaderProgramRefusals++;
                 this.refusedBeforeAppend++;
@@ -2004,7 +2030,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return false;
             }
 
-            if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
+            long appendStart = System.nanoTime();
+            boolean appended = this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices);
+            this.appendNanos += System.nanoTime() - appendStart;
+            this.appendCount++;
+            if (!appended) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
                 // Order (S10): what is already accepted is drawn before this batch goes to GL.
                 this.flushPendingBeforeGlDraw();
@@ -2816,8 +2846,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L)
                 + " batchCallCount=" + batchCallCount
                 + " batchCallMillis=" + (batchCallNanos / 1000000L)
+                + " batchCallWorstMillis=" + (batchCallWorstNanos / 1000000L)
+                + " batchCallOpeningMillis=" + (batchCallOpeningNanos / 1000000L)
+                + " batchCallOpeningCount=" + batchCallOpeningCount
                 + " prepareImmediateCalls=" + this.prepareImmediateCalls
                 + " prepareImmediateMillis=" + (this.prepareImmediateNanos / 1000000L)
+                + " groupCreateCount=" + this.groupCreateCount
+                + " groupCreateMillis=" + (this.groupCreateNanos / 1000000L)
+                + " appendCount=" + this.appendCount
+                + " appendMillis=" + (this.appendNanos / 1000000L)
+                + " programQueryCount=" + this.programQueryCount
+                + " programQueryMillis=" + (this.programQueryNanos / 1000000L)
                 + " prepLookupMillis=" + (this.prepLookupNanos / 1000000L)
                 + " prepTerrainPipelineMillis=" + (this.prepTerrainPipelineNanos / 1000000L)
                 + " prepRegistryMillis=" + (this.prepRegistryNanos / 1000000L)

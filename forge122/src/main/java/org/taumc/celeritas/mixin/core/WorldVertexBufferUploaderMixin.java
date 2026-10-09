@@ -200,8 +200,16 @@ public abstract class WorldVertexBufferUploaderMixin {
             try {
                 accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
             } finally {
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallNanos += System.nanoTime() - batchCallStarted;
+                long batchCallTook = System.nanoTime() - batchCallStarted;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallNanos += batchCallTook;
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount++;
+                if (batchCallTook > org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallWorstNanos) {
+                    org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallWorstNanos = batchCallTook;
+                }
+                if (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallOpeningCount < 200) {
+                    org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallOpeningCount++;
+                    org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallOpeningNanos += batchCallTook;
+                }
             }
             if (!accepted && formatId == 9 && celtium$compositeLayoutRefusals < 3) {
                 // The composite's own layout: mapped, in the mask, in range, with the right stride - so what refuses it is
