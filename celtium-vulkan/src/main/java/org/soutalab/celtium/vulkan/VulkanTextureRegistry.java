@@ -46,7 +46,15 @@ public final class VulkanTextureRegistry {
     private final java.util.Set<String> patchRejections = new java.util.HashSet<String>();
     /** The GL texture ids that reach the readback refresh, recorded once each. */
     private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
-    /** The images announced by the upload hook, waiting for the mirror that will use them. */
+    /**
+     * The last image announced for each texture.
+     * <p>
+     * Kept rather than consumed. Consuming it meant the announcement was spent by whichever refresh asked first, and every
+     * later refresh of the same texture - the ones the draw path marks stale - found nothing pending and read GL back.
+     * That was the whole of the remaining readback stream: about four thousand nine hundred refreshes for eight textures
+     * whose announcements had already been used once. The cost of keeping them is one image per mirrored texture, and the
+     * count of those has been measured at eight to eleven all along.
+     */
     private final java.util.Map<Integer, java.awt.image.BufferedImage> announcedImages =
             new java.util.HashMap<Integer, java.awt.image.BufferedImage>();
     private final java.util.Set<Integer> staleIds = new java.util.HashSet<Integer>();
@@ -240,7 +248,7 @@ public final class VulkanTextureRegistry {
      * @return whether an announced image was available and applied
      */
     public boolean applyAnnouncedTo(VulkanGlTexture target, int glTextureId) {
-        java.awt.image.BufferedImage image = this.announcedImages.remove(Integer.valueOf(glTextureId));
+        java.awt.image.BufferedImage image = this.announcedImages.get(Integer.valueOf(glTextureId));
         if (image == null || target == null) {
             return false;
         }
@@ -275,7 +283,7 @@ public final class VulkanTextureRegistry {
         // The ownership path: when the upload hook has handed over the image this texture is being filled with, and the
         // mirrors are not copying GL's mip levels (which would need the readback), the mirror is built from those pixels.
         java.awt.image.BufferedImage announced = VulkanGlTexture.mirrorsGlMips() ? null
-                : this.announcedImages.remove(Integer.valueOf(glTextureId));
+                : this.announcedImages.get(Integer.valueOf(glTextureId));
         if (announced != null) {
             return this.fromImage(glTextureId, announced, nearestFilter);
         }

@@ -8558,3 +8558,32 @@ times.
 
 So the state of this stream is precise: the **block atlas** is announcement-fed, the **light map and the numbered textures** are
 not, and the difference between them is the whole of what is left.
+
+---
+
+## One word: remembering the announcement instead of consuming it collapsed the readback by eighty per cent
+
+The queue the last round identified was the whole problem. An announced image was **removed** from the map when any refresh used
+it, so the first refresh spent it and every later refresh of the same texture - the ones the draw path marks stale - found
+nothing pending and read GL back. Keeping the last image per texture instead, replaced by the next announcement, changes it:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+imageFilledMirrors = 3643     (from 113)
+inPlaceRefreshes   = 1004     (from 4881)
+animatedImageFills = 106      directMirrorFromAnnouncement = 0      descriptorSets = 1
+acceptedByFormat = 1:17, 5:245, 6:1426, 7:890, 8:128, 9:12
+```
+
+**The readback stream is down by eighty per cent and the announcement-fed fills are up by a factor of thirty-two**, with
+validation silent, the fixture passing, the acceptance intact and descriptor sets still at one. The cost is one image per
+mirrored texture, and the number of those has been measured at eight to eleven for twenty rounds.
+
+The shape of the finding is worth keeping: **three rounds went into the patch machinery, the ordering fix and the direct-mirror
+routing, and the actual defect was a `remove` where a `get` belonged** - in a map whose lifetime assumption ("whoever asks first
+gets the image") had never been checked against how often the renderer asks. The instruments are what found it: a counter that
+said four thousand nine hundred refreshes, a second that said only a hundred and six patches were applied, and a third that
+printed the ids and proved the announcements were arriving for other textures.
+
+What is left of the stream is a thousand refreshes, and the light map is the named candidate - the one texture that never
+consulted an announcement because it is held directly.
