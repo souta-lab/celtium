@@ -108,7 +108,16 @@ def inspect(instance, java):
             "dirty": bool(dirty),
             "dirtyFiles": dirty.splitlines() if dirty else [],
         },
-        "effectiveConfig": {"jvmArgs": jvm_args, "tweakers": tweakers, "mainClass": main_class, "mainJar": str(main_jar)},
+        "effectiveConfig": {
+            # The profile's arguments and the ones the runner adds are different channels, and only the union is what
+            # actually reaches the JVM - recording just the first was the gap this field was added to close (S24).
+            "profileJvmArgs": jvm_args,
+            "runnerJvmArgs": [],
+            "jvmArgs": list(jvm_args),
+            "tweakers": tweakers,
+            "mainClass": main_class,
+            "mainJar": str(main_jar),
+        },
         "java": {"executable": str(java), "version": (java_version.stderr + java_version.stdout).strip()},
         "components": patches,
         "libraries": [],
@@ -135,6 +144,8 @@ def inspect(instance, java):
             entry["role"] = "validation-fixture"
             report["fixture"] = {"file": path.name, "sha256": entry["sha256"]}
         report["mods"].append(entry)
+    # The fixture the runner passes in is the one that produces the verdict, so it is recorded by hash even though it is
+    # copied into the isolated game directory later rather than being an instance mod (S24).
     return report, java, classpath, main_class, tweakers, jvm_args, prism / "assets", assets["id"]
 
 
@@ -204,7 +215,16 @@ def main():
             shutil.copy2(library, target)
             cp.append(str(target))
             report["extraTestLibraries"].append({"file": target.name, "sha256": digest(target)})
-    report["testMods"] = [{"file": p.name, "sha256": digest(p)} for p in sorted((game / "mods").glob("*.jar"))]
+    report["testMods"] = [{"file": p.name, "sha256": digest(p)} for p in sorted((game / "mods").glob("*.jar"))]    # The runner's own arguments are a separate channel from the profile's, and only the union reaches the JVM.
+    report["effectiveConfig"]["runnerJvmArgs"] = [str(a) for a in (args.jvm_arg or [])]
+    report["effectiveConfig"]["jvmArgs"] = (list(report["effectiveConfig"].get("profileJvmArgs", []))
+            + report["effectiveConfig"]["runnerJvmArgs"])
+    # The fixture that produces the verdict is passed in by the runner, not present as an instance mod.
+    for candidate in (args.mod or []):
+        candidate = Path(candidate)
+        if candidate.is_file() and "validation" in candidate.name:
+            report["fixture"] = {"file": candidate.name, "sha256": digest(candidate), "source": str(candidate)}
+
     report["isolatedGameDirectory"] = str(game)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if not args.run:

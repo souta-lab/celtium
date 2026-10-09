@@ -6298,3 +6298,34 @@ What S24 still lists and this round did not do: the plan rows that claim more th
 being a counter condition rather than real-path evidence, the shader-source/SPIR-V sync check (the generated-artefact problem
 the build now solves from the other side), and the driver in the lock - which the capabilities file already records, and which
 should be referenced rather than duplicated.
+
+---
+
+## The provenance field caught its own first version being wrong
+
+The lock now records the run's provenance, and the field proved itself twice in one round - once by working and once by
+being wrong in a way only its own output revealed.
+
+It works: on a real run the lock reports `head: a4d29a8f5cb8, dirty: true` with the file that was modified - my own
+uncommitted edit to the lock script - which is precisely the confusion that cost this project two rounds when shader edits
+were not in the running build. A run can no longer be attributed to a commit it did not use.
+
+And it was wrong first. The initial version recorded `effectiveConfig.jvmArgs` from the **profile**, and the run's own
+output showed `1 args, 0 celtium flags` - because the runner passes its flags through a **different channel**
+(`--jvm-arg` on the command line) that the profile knows nothing about. It also reported `fixture: null`, because the
+fixture jar is copied into the isolated game directory **after** the lock scans the instance's mods, so it was not there to
+be found. Both were found by reading the new fields rather than by trusting them, and both are fixed: the lock now records
+the profile's arguments and the runner's separately as well as their union, and identifies the fixture from the runner's own
+`--mod` argument by name and SHA-256.
+
+The verified result:
+
+```
+jvmArgs total: 8 | celtium flags: 7
+fixture: celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar  sha256 595b4d60...
+git: a4d29a8f5cb8 dirty=True
+```
+
+A measurement can now be traced to its commit, its dirty state, the flags that actually reached the JVM and the fixture that
+produced its verdict - which is most of what S24 asked for from the record, done mechanically rather than by remembering to
+write it down.
