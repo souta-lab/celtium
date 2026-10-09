@@ -345,6 +345,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateFlushes;
     private int pendingImmediateIndices;
     private VulkanDynamicMesh pendingImmediate;
+    /**
+     * Immediate geometry grouped by the projection/model-view pair it was built with.
+     * <p>
+     * A diagnostic measured why this is required: Minecraft changes those matrices several times per frame (world
+     * perspective, GUI ortho, identity), and a group whose first batch arrived under a different projection came out
+     * with an identity projection and an NDC x of -100 - geometry far off-screen. One mesh and one draw per matrix
+     * pair is a correctness requirement, not an optimisation.
+     */
+    private final java.util.List<Object[]> immediateGroups = new java.util.ArrayList<Object[]>();
+    private VulkanDynamicMesh currentImmediateMesh;
+    private final float[] currentGroupProjection = new float[16];
+    private final float[] currentGroupModelView = new float[16];
+    private boolean currentGroupUsed;
+    /**
+     * Groups whose draws are already recorded but whose command buffer may still be in flight.
+     * <p>
+     * Destroying the mesh buffers immediately after recording them is a use-after-free as far as the GPU is
+     * concerned: the handoff submits later in the same pass, so the buffers must outlive it. Keeping one frame's
+     * worth and releasing it at the next flush is enough, because a pass only starts after the previous one signalled.
+     */
+    private final java.util.List<Object[]> retiredImmediateGroups = new java.util.ArrayList<Object[]>();
     private VulkanImmediatePipeline immediatePipeline;
     /** The matrices in force when the pending batches were built; the flush runs a frame later. */
     private final float[] pendingProjection = new float[16];
@@ -520,29 +541,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         try {
-            if (this.pendingImmediate == null) {
-                this.pendingImmediate = new VulkanDynamicMesh(this.context);
+            // The matrices are read from OpenGL at the moment the batch is built: Mixins cannot see the world
+            // projection (it is installed by LWJGL 2's GLU utility class, outside the transforming loader -
+            // matrixChannels=persp:0), while reading them on the render thread with the GL context current needs no
+            // cooperation from any class and gives exactly what Minecraft is drawing with.
+            captureGlMatrices();
+            if (this.currentImmediateMesh == null
+                    || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
+                    || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)) {
+                // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
+                closeCurrentImmediateGroup();
+                this.currentImmediateMesh = new VulkanDynamicMesh(this.context);
+                System.arraycopy(this.glProjection, 0, this.currentGroupProjection, 0, 16);
+                System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
             }
-            if (!this.pendingImmediate.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
+            if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
                 return false;
             }
+            this.currentGroupUsed = true;
             this.pendingImmediateIndices += indices.length;
-            if (this.pendingGroups == 0) {
-                // The matrices are captured with the first batch of the group: by the time the flush runs, a frame
-                // later, the live state has moved on (GUI ortho, world transforms) and would place the geometry
-                // somewhere else entirely.
-                // The matrices are read from OpenGL itself at the moment the batch is built. Mirroring them through
-                // Mixins was measured to fail for the projection: the world projection is installed by LWJGL 2's GLU
-                // utility class, which the transforming loader does not own, so no injector fires there
-                // (`matrixChannels=persp:0`). Reading the live matrices on the render thread, with the GL context
-                // current, needs no cooperation from any class and is exactly what Minecraft is drawing with.
-                captureGlMatrices();
-                // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
-                remapClipDepth(this.glProjection, this.pendingProjection);
-                System.arraycopy(this.glModelView, 0, this.pendingModelView, 0, 16);
-            }
-            this.pendingGroups++;
             this.immediateTaken++;
             this.immediateLastRefusal = "none";
             return true;
@@ -551,6 +569,43 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("immediate batch refused: " + describe(error));
             return false;
         }
+    }
+
+    /** Frees the meshes of groups whose draw was recorded at least one full pass ago. */
+    private void releaseRetiredImmediateGroups() {
+        for (Object[] group : this.retiredImmediateGroups) {
+            ((VulkanDynamicMesh) group[0]).delete();
+        }
+        this.retiredImmediateGroups.clear();
+    }
+
+    /** Moves the open group into the flush list together with the matrices it was built with. */
+    private void closeCurrentImmediateGroup() {
+        if (this.currentImmediateMesh != null && this.currentGroupUsed) {
+            float[] projection = new float[16];
+            float[] modelView = new float[16];
+            // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
+            remapClipDepth(this.currentGroupProjection, projection);
+            System.arraycopy(this.currentGroupModelView, 0, modelView, 0, 16);
+            this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView});
+        } else if (this.currentImmediateMesh != null) {
+            this.currentImmediateMesh.delete();
+        }
+        this.currentImmediateMesh = null;
+        this.currentGroupUsed = false;
+    }
+
+    private void discardImmediateGroups() {
+        releaseRetiredImmediateGroups();
+        for (Object[] group : this.immediateGroups) {
+            this.retiredImmediateGroups.add(group);
+        }
+        this.immediateGroups.clear();
+        if (this.currentImmediateMesh != null) {
+            this.currentImmediateMesh.delete();
+            this.currentImmediateMesh = null;
+        }
+        this.currentGroupUsed = false;
     }
 
     /**
@@ -716,6 +771,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void delete() {
+        releaseRetiredImmediateGroups();
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
         uninstall();
         for (RegionResources resources : this.regionResources.values()) {
@@ -1133,7 +1189,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
 
-        if (this.pendingImmediate != null && !this.pendingImmediate.isEmpty()) {
+        if (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty()) {
             drawPendingImmediate();
         }
 
@@ -1592,6 +1648,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * hidden.
      */
     private void drawPendingImmediate() {
+        closeCurrentImmediateGroup();
+        if (this.immediateGroups.isEmpty()) {
+            return;
+        }
         try {
             VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
             if (terrain == null) {
@@ -1602,22 +1662,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             ByteBuffer push = MemoryUtil.memAlloc(128);
             try {
-                // joml writes column-major into the buffer at the given offset, which is the layout the push
-                // constant block declares.
-                // The mirrored matrices, not the terrain pass's: immediate geometry is drawn in the coordinate
-                // system Minecraft had when it built the batch, which is what the GlStateManager Mixin mirrors.
-                pushMatrixInto(this.pendingProjection, push, 0);
-                pushMatrixInto(this.pendingModelView, push, 64);
-                this.immediatePipeline.draw(this.commandBuffer, this.pendingImmediate, push);
-                this.immediateFlushes++;
+                for (Object[] group : this.immediateGroups) {
+                    VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
+                    if (mesh.isEmpty()) {
+                        continue;
+                    }
+                    pushMatrixInto((float[]) group[1], push, 0);
+                    pushMatrixInto((float[]) group[2], push, 64);
+                    this.immediatePipeline.draw(this.commandBuffer, mesh, push);
+                    this.immediateFlushes++;
+                }
             } finally {
                 MemoryUtil.memFree(push);
             }
-            this.pendingImmediate.begin(VulkanDynamicMesh.Layout.positionTexLightColor());
-            this.pendingImmediateIndices = 0;
-            this.pendingGroups = 0;
         } catch (RuntimeException | LinkageError error) {
             record("immediate flush failed: " + describe(error));
+        } finally {
+            discardImmediateGroups();
         }
     }
 

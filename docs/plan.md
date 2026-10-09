@@ -81,6 +81,15 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Grouping implemented and validation-clean; the quad is still invisible.** The immediate path now keeps one mesh
+  per matrix pair, draws each with its own push constants (602 batches taken, **601 flushes**), and frees the meshes
+  one full pass later - destroying them right after recording produced 18 validation messages about in-flight
+  references, which the deferred release removed (VUID 0, run PASSED, `nativeTerrainVerified True`). The viewport and
+  scissor are full-target and set once per pass, so they are not clipping it. The quad still contributes zero pixels,
+  so the next diagnostic is narrower: log the projected NDC *bounds* of each group (not just vertex 0) for the first
+  few groups, which says whether the test quad projects on-screen and is then rejected by the depth test, or whether
+  it never enters an accepted group at all.
+
 - **Root cause of the invisible immediate geometry found by measurement.** The one-shot diagnostic logged the first
   copied vertex, the captured matrices and the resulting NDC:
   `vertex0=(0.0,100.0,0.0) ndc=(-100.00,-1.62,0.52) w=1.00 proj=[m00=1.0 m11=1.0 m22=0.5] view=[tx=0.0 ty=-1.62 tz=0.05] indices=642`.
