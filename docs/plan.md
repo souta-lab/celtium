@@ -448,7 +448,35 @@ vanilla の `BlockRendererDispatcher` の両方を呼び分けるが、`writeGeo
 **一度も出ない**＝**全ジオメトリが vanilla dispatcher 経由**で作られている。したがって我々の頂点色は
 **MC自身が焼いた色**であり、`VintageBlockRenderer` の `tint × light.br` は**使われていない**。
 
-**次の一手（具体）**: 「同一データか否か」を確定させる。*vanilla参照run* の中から（= modの経路を介さずに）
+**根本原因を確定・修正（このターン・最重要）**: `ChunkBuilderMeshingTask.USE_NEW_BLOCK_RENDERER` の既定が
+
+```java
+(Boolean) Launch.blackboard.get("fml.deobfuscatedEnvironment")
+        || Boolean.getBoolean("celeritas.useVintageFastBlockRenderer");
+```
+
+で、**開発環境か明示プロパティのときだけ mod 自身の高速ブロックレンダラが有効**だった。本番jar（検証run）では
+false になり、**全地形がゲームの `BlockRendererDispatcher`（遅いモデル経路）でメッシュ化**されていた。
+その経路が焼く色は mod の `VintageBlockRenderer`（`tint × light.br`）より **約0.66倍暗い**。
+
+`-Dceleritas.useVintageFastBlockRenderer=true` を付けたA/Bで確認:
+
+| レンダラ | mid帯 | near帯 |
+|---|---|---|
+| vanilla GL | (146.6, 157.1, 132.3) | (139.8, 151.4, 131.4) |
+| upstream Celeritas GL | (136.8, 146.5, 117.2) | (125.0, 135.4, 117.6) |
+| celtium（修正前の既定） | (88.9, 93.3, 82.7) | (88.9, 95.6, 84.1) |
+| **celtium（fast renderer有効）** | **(136.5, 140.9, 130.4)** | **(133.1, 140.0, 131.2)** |
+
+**upstream の mid帯とほぼ一致（136.5 対 136.8）**。brightness ヒストグラム（0.1/0.36/0.48/0.5/1.0）も出るようになり、
+`VintageBlockRenderer` 経路が実際に使われていることを確認。**既定を「有効（プロパティで無効化可能）」に反転**した
+（`-Dceleritas.useVintageFastBlockRenderer=false` で旧経路に戻せる）。修正後の既定での再測定でも
+mid (136.5, 140.9, 130.4) / near (133.1, 140.0, 131.2)、verdict は exit 0 / validationClean / PASSED。
+
+**次の一手（具体）**: 残差（vanilla比 約0.93、upstream比 約1.00）を詰める。特に **松明の炎（アニメーションテクスチャ）**
+は依然として未描画なので、sprite animation の移植を進める。
+
+**（旧メモ）**: 「同一データか否か」を確定させる。*vanilla参照run* の中から（= modの経路を介さずに）
 実際のチャンク頂点色をdumpして、我々のrunの同じ頂点色と**数値で**比較する。差分が出ればデータ側、
 一致すれば適用側（我々のVulkan経路）に残因がある。
 

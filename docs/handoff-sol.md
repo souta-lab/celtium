@@ -286,6 +286,16 @@ brightnessヒストグラムが一度も出ない＝**全ジオメトリが vani
 `VintageBlockRenderer` の tint×light.br は使われていない。次の一手は vanilla 参照run から実際のチャンク頂点色を
 dumpし、我々の同じ頂点色と数値比較すること（差分→データ側、一致→適用側）。
 
+**根本原因の確定と修正（このターン・最重要）**: `ChunkBuilderMeshingTask.USE_NEW_BLOCK_RENDERER` の既定が
+「dev環境 or 明示プロパティ」で、**本番jarでは false** → 全地形がゲームの `BlockRendererDispatcher`（遅いモデル経路）
+でメッシュ化され、その色は mod の `VintageBlockRenderer`（`tint × light.br`）より約0.66倍暗かった。
+`-Dceleritas.useVintageFastBlockRenderer=true` のA/Bで mid帯 88.9 → **136.5**（upstream 136.8 / vanilla 146.6）、
+near帯 88.9 → **133.1**、verdict は exit 0 / validationClean / PASSED。brightness ヒストグラムも出るようになり
+`VintageBlockRenderer` 経路が実際に使われていることを確認。**既定を「有効（プロパティで旧経路に戻せる）」に反転**し、
+修正後の既定で再測定して同じ値を確認した。
+次の一手は残差（vanilla比 約0.93）を詰めること。特に**松明の炎（アニメーションテクスチャ）が未描画**なのは独立の欠陥で、
+sprite animation の移植を進める。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
