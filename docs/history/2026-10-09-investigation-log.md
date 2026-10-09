@@ -8955,3 +8955,32 @@ AMD RX6400のrunで **1件** を実測した（拒否されたバッチはGLが�
 両修正後のrun: exit 0 / validationClean true / messages 0 / fixture PASSED / nativeTerrainVerified true /
 terrainPasses 714 / glDrawsCancelled 2681 / acceptedByFormat 1:13,2:0,3:0,4:0,5:242,6:1414,7:872,8:128,9:12 /
 descriptorSets 1。
+
+---
+
+## off-targetの計器をtarget別にし、バッチの行き先が判明（A10の核心）
+
+per-target計器を足してsecond-target runを測った結果、off-targetの内容が自分のtargetへ**一度も到達していない**ことが
+分かった。
+
+```
+offTargetPerTarget = [5554d6f:offered=246, atPass=0, drawnPasses=0]
+offTargetPassesSkippedEmpty = 2336   offTargetCopiedBack = 0
+```
+
+`offered=246` に対し、**off-target passが見る時点でqueueには0件**である。したがって
+「空targetのclearを書いていた」以前の問題として、**off-targetのgroupは自分のpassへ行く前に消えている**。
+原因は計器ではなく実装で、`drawPendingImmediate(Long onlyTarget)` の **`onlyTarget == null` は「全部」を意味していた**:
+main passのflush（`drawPendingImmediate()` / `flushPendingBeforeGlDraw()` / `recordImmediateOnlyPass`）は
+フィルタ無しで呼ばれ、**他target宛のgroupまで共有imageへ描いていた**。off-target宛のgroupはそこで消費され、
+後から走るoff-target passには何も残らない。A32で直したのは「off-target passが他targetを壊す」側であり、
+**main passが他targetを描く**側は残っていた。
+
+修正の設計は明確である: main framebufferのidentityを覚え（`framebuffer(...)` の `isMain` で更新）、
+`onlyTarget == null` を「main」と解釈して `wantedTarget` でフィルタし、retireも `wantedTarget` 単位にする
+（teardown用の `discardImmediateGroups()` 呼び出しはそのまま）。
+今回のラウンドでは5箇所（main identity、フィールド、wantedTarget宣言、no-pipeline retire、finally retire）は
+適用できたが、**描画ループ内のフィルタ1行**（3965行 `if (onlyTarget != null && ((Long) group[7]).longValue() !=
+onlyTarget.longValue()) { continue; }`）が正規表現と一致せず**未適用**のままだった。その状態では測定値が動かない
+（`atPass=0` のまま）ので、**半端な変更を残さず巻き戻した**。次回はこの1行を実文どおり置換し、`atPass` が
+非0になり `drawnPasses` が増えることを受入にする。
