@@ -81,6 +81,22 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Architectural conclusion: the ~14.4 image difference cannot be removed inside the current bridge structure.**
+  The evidence that leads here: the GL reference is bit-identical between runs (0.00), the Vulkan path's own run-to-run
+  variation is 0.83, the alpha test contributes 0.11, and the remaining cross difference is a stable ~14.4 mean with
+  34.5% of pixels over 8. The immediate batches arrive *after* the frame's terrain passes, and the bridge only owns the
+  shared images inside a terrain pass - one window per frame, early in the frame - so those batches are drawn with the
+  **next** frame's colour and depth buffers while carrying the **previous** frame's matrices, colour and state. For
+  anything that moves between frames (entities, particles, clouds, the animated sky, the bobbing hand) that is wrong by
+  construction, and no amount of pipeline or state fidelity fixes it: the geometry is being composited against buffers
+  from a different instant.
+  The two ways out, both already named in the stage table: **open a window at each flush point** instead of one per
+  frame - correct ordering, at the measured cost of about 130 us per handoff, so a handful per frame - or make the
+  renderer own the frame outright (stage 7), where the batches are simply recorded into the frame's command buffer.
+  Until one of those lands, the immediate path stays **off by default** and its parity target is recorded as blocked by
+  architecture rather than by missing detail work. The alternative - continuing to tune pipelines against a difference
+  that is dominated by a timing mismatch - would be measuring the wrong thing.
+
 - **Correction: the alpha test is not what changed the difference - isolated within one build, it moves 0.11 of 255.**
   The previous round attributed the change from 11.87 to ~14 to the alpha test. Isolating it properly - same build,
   `-Dceltium.vulkan.alphaTest=false` against the default true, both against the same GL reference - gives:
