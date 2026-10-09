@@ -39,7 +39,7 @@ itself treated as a speed-up** - only a measurement makes that claim.
 | Stage | Work | Acceptance |
 |---|---|---|
 | S1 | State the target: this document, the README and any startup diagnostics say Cleanroom-only | Documents agree; no text promises plain-Forge support |
-| S2 | Retire the legacy-runtime code paths: `CeleritasVintageMixinPlugin.onLoad`'s RFB detection and `CeleritasLwjgl3ifyCompat` (which reaches into `SharedConfig.getRfbTransformers()` to add exclusions), after checking what still depends on them | Build and startup succeed without them; the client starts and renders on the pinned Cleanroom; no reflection into RFB remains |
+| S2 | **Done for the code, build dependency pending -** retire the legacy-runtime code paths: `CeleritasVintageMixinPlugin.onLoad`'s RFB detection and `CeleritasLwjgl3ifyCompat` (which reaches into `SharedConfig.getRfbTransformers()` to add exclusions), after checking what still depends on them | **Met:** the probe and the compat class are gone (dependency check showed only those two files used `SharedConfig`), the plugin logs `Loaded Celeritas mixin plugin (CleanroomMC target)`, and the pinned-environment run is PASSED with `nativeTerrainVerified True`, VUID 0 and the immediate path still working (`immediateTaken=2837`). The now-unused `compileOnly` RetroFuturaBootstrap dependency in `forge122/build.gradle.kts` is **not** removed yet: the first attempt commented out only its first line and broke the Kotlin DSL (817 script errors), so it is reverted and left for a proper multi-line removal |
 | S3 | Evaluate moving the build to Cleanroom-oriented tooling, in steps that each leave a working build behind | Each step: `packageJar` + validation run PASSED, `nativeTerrainVerified True`, VUID 0, before the next step starts |
 | S4 | Keep mod compatibility measured, not assumed: the fixture mod, then real mods, with `docs/mod-compatibility.md` recording what was actually observed | A mod from outside this repository renders through the Forge API path without modification |
 
@@ -214,6 +214,12 @@ Kept separate on purpose - terrain success and present success are different thi
   and the new path's acceptance is **unverified** - the scene apparently contains no hand-held or item-rendered
   geometry. The next step is to have the fixture draw a `BLOCK`-format batch the way it already draws a
   `POSITION_COLOR` one, so the pipeline is exercised and the lightmap path is compared against GL rather than assumed.
+
+- **S2 executed: no reflection into RetroFuturaBootstrap remains.** `CeleritasLwjgl3ifyCompat` is deleted and the
+  plugin's `onLoad` no longer probes for RFB or patches lwjgl3ify exclusions; it logs
+  `Loaded Celeritas mixin plugin (CleanroomMC target)` instead. Acceptance measured on the pinned environment: PASSED,
+  `nativeTerrainVerified True`, VUID 0, immediate path unaffected. The build file's now-unused RFB `compileOnly`
+  dependency is left in place for a staged removal, because the attempt to comment it out broke the Kotlin DSL.
 
 - **Runtime target (2026-10-09 instruction).** Celtium supports **CleanroomMC only**; plain Forge and other
   lwjgl3ify/RFB configurations are out of scope, while Forge *mod* compatibility on Cleanroom is kept. Section 0

@@ -1,13 +1,11 @@
 package org.taumc.celeritas.mixin;
 
-import com.gtnewhorizons.retrofuturabootstrap.SharedConfig;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.embeddedt.embeddium.impl.util.MixinClassValidator;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
-import org.taumc.celeritas.core.CeleritasLwjgl3ifyCompat;
 
 import java.io.IOException;
 import java.net.URI;
@@ -22,14 +20,11 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public void onLoad(String mixinPackage) {
-        LOGGER.info("Loaded Celeritas mixin plugin");
-        try {
-            Class.forName("com.gtnewhorizons.retrofuturabootstrap.SharedConfig");
-            // class exists, apply compat
-            CeleritasLwjgl3ifyCompat.apply();
-        } catch (Throwable e) {
-            LOGGER.warn("RFB class not found, hopefully we're not running with lwjgl3ify, otherwise bad things are about to happen");
-        }
+        // Celtium targets CleanroomMC only. The previous revision probed for RetroFuturaBootstrap here and, when it
+        // found it, reached into SharedConfig's transformer list to add lwjgl3ify exclusions. Both are gone: the
+        // supported runtime is pinned (see docs/plan.md section 0), so there is nothing to detect and nothing to
+        // patch, and the mod no longer reflects into another component's internals at startup.
+        LOGGER.info("Loaded Celeritas mixin plugin (CleanroomMC target)");
     }
 
     @Override
