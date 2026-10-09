@@ -612,7 +612,13 @@ public final class VulkanFrameTarget {
                 + (this.tColorIn / frames / 1000L) + " us, depth-in " + (this.tDepthIn / frames / 1000L)
                 + " us, convert-in " + (this.tConvertIn / frames / 1000L) + " us, colour-out "
                 + (this.tColorOut / frames / 1000L) + " us, convert-out " + (this.tConvertOut / frames / 1000L)
-                + " us";
+                + " us"
+                // The raw totals as well, and how many handoffs they cover: the averages cannot be turned into a
+                // per-frame cost without both, and a game frame contains several handoffs.
+                + " | totals(ms)/handoffs: wait " + (this.tWait / 1000000L) + " colour-in "
+                + (this.tColorIn / 1000000L) + " depth-in " + (this.tDepthIn / 1000000L) + " convert-in "
+                + (this.tConvertIn / 1000000L) + " colour-out " + (this.tColorOut / 1000000L) + " convert-out "
+                + (this.tConvertOut / 1000000L) + " / " + frames;
         this.tWait = 0L;
         this.tColorIn = 0L;
         this.tDepthIn = 0L;
