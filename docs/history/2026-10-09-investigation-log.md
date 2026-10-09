@@ -1189,3 +1189,28 @@ That closes the present question in the terms the plan asked for: the frame is c
 Vulkan, with no validation message, on the tested GPU. What is still open around it is the immediate path's default (it
 stays off until the content stage covers more scenes), the probe's own cleanup, and everything the plan lists for stages 4
 and 5 - GUI, HUD, sky, weather, entities over more than one world, and real mods.
+
+---
+
+## Correction: the clean run proved less than it looked, because the probe also created the swapchain
+
+Adding the presented-image readback made the gap visible. The backend's own log line for the first composite present
+never appeared in the run without the probe, and the reason is simple once seen: **the swapchain is created by the probe**.
+With `-Dceltium.vulkan.swapchainProbe=false` the object is null, so `presentFromComposite` takes the early branch, presents
+nothing, and the validation output is empty for the trivial reason that no presentation happened.
+
+So the previous entry's reading has to be corrected:
+
+- What still stands: with the probe **on**, sixty-odd frame presents ran and the handle trace showed the correct pairing -
+  each submit waiting the acquire semaphore the acquire signalled, each presentation waiting the render-finished one - and
+  every message named the semaphore the *probe* consumed first. That evidence is about the pairing and it is unaffected.
+- What does not stand: "0 validation messages without the probe therefore the frame present is clean". That run presented
+  no frames. The two facts have to be separated, and this entry is where they are.
+
+The fix is small and specific: create the swapchain lazily where it is used (the present path), rather than as a side
+effect of the diagnostic probe. Then the probe can be deleted or left off, the frame present runs on its own, and the
+question "is the frame present validation-clean" can finally be asked of a run that actually presents.
+
+The readback itself is in place (`-Dceltium.vulkan.presentReadback=true` copies a centre patch of the blitted image to a
+host buffer and reports its mean), which is what will make "the screen shows the frame" a measurement - once a run presents
+again.

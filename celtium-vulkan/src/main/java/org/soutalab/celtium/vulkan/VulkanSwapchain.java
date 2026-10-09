@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWNativeWayland;
 import org.lwjgl.glfw.GLFWNativeX11;
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.KHRWaylandSurface;
 import org.lwjgl.vulkan.KHRXlibSurface;
@@ -70,6 +71,76 @@ public final class VulkanSwapchain {
     private long[] renderFinishedSemaphores;
     private int renderFinishedCursor;
     private int presentTraces;
+    private int presentReadbacks;
+    private float lastPresentedMean = -1.0f;
+    /** {@code -Dceltium.vulkan.presentReadback=true} reads the presented image back and records its mean. */
+    private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
+
+    /** {@return the mean of a centre patch of a swapchain image}, or -1 when it cannot be read. */
+    public float lastPresentedMean() {
+        return this.lastPresentedMean;
+    }
+
+    private static float readBackMean(VulkanContext context, long image, int width, int height) {
+        long buffer = VK_NULL_HANDLE;
+        long memory = VK_NULL_HANDLE;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            int size = 8;
+            int rowBytes = size * size * 4;
+            org.lwjgl.vulkan.VkBufferCreateInfo bufferInfo = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
+                    .sType$Default().size(rowBytes).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+            LongBuffer handle = stack.mallocLong(1);
+            if (vkCreateBuffer(context.device(), bufferInfo, null, handle) != VK_SUCCESS) {
+                return -1.0f;
+            }
+            buffer = handle.get(0);
+            org.lwjgl.vulkan.VkMemoryRequirements requirements =
+                    org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
+            vkGetBufferMemoryRequirements(context.device(), buffer, requirements);
+            org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
+                    .sType$Default().allocationSize(requirements.size())
+                    .memoryTypeIndex(context.memoryTypeIndex(requirements.memoryTypeBits(),
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            "the present readback buffer"));
+            if (vkAllocateMemory(context.device(), allocate, null, handle) != VK_SUCCESS) {
+                return -1.0f;
+            }
+            memory = handle.get(0);
+            vkBindBufferMemory(context.device(), buffer, memory, 0);
+
+            VkCommandBuffer commands = context.beginCommands();
+            org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
+            copy.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                    .layerCount(1);
+            copy.get(0).imageOffset().set(Math.max(0, (width / 2) - (size / 2)),
+                    Math.max(0, (height / 2) - (size / 2)), 0);
+            copy.get(0).imageExtent().set(size, size, 1);
+            vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, copy);
+            context.endCommands(commands);
+
+            PointerBuffer mapped = stack.mallocPointer(1);
+            if (vkMapMemory(context.device(), memory, 0, rowBytes, 0, mapped) != VK_SUCCESS) {
+                return -1.0f;
+            }
+            long total = 0;
+            for (int i = 0; i < rowBytes; i++) {
+                total += org.lwjgl.system.MemoryUtil.memGetByte(mapped.get(0) + i) & 0xFF;
+            }
+            vkUnmapMemory(context.device(), memory);
+            return (float) ((double) total / rowBytes);
+        } catch (RuntimeException | LinkageError error) {
+            return -1.0f;
+        } finally {
+            if (buffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(context.device(), buffer, null);
+            }
+            if (memory != VK_NULL_HANDLE) {
+                vkFreeMemory(context.device(), memory, null);
+            }
+        }
+    }
 
     private VulkanSwapchain(VulkanContext context, long surface, String platform) {
         this.context = context;
@@ -341,6 +412,13 @@ public final class VulkanSwapchain {
                     .swapchainCount(1)
                     .pSwapchains(stack.longs(this.swapchain))
                     .pImageIndices(index);
+            // Read the blitted image back before it is presented, so "the screen shows the frame" becomes a
+            // measurement instead of an inference: the mean of a small centre patch of the presented image is compared
+            // against the same patch of the game's frame in the caller's log.
+            if (PRESENT_READBACK && this.presentReadbacks < 3) {
+                this.presentReadbacks++;
+                this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
+            }
             if (this.presentTraces < 4) {
                 // One line per present with the handles involved: the validation messages named the acquire semaphore
                 // in both a submit complaint and a present complaint, and with the handles in hand the pairing error is
