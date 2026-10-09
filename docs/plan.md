@@ -123,6 +123,14 @@ says `hasNoLightmap()`, and **this port has no such branch**. So if the fixture'
 renders without the 0.65 and the terrain difference is a missing configuration path rather than a wrong colour. **Next:**
 read the 1.12.2 pass definitions for `hasNoLightmap()`; if true, add the second vertex module and re-measure.
 
+**Refuted by reading (round 274).** `hasNoLightmap` defaults to false and the 1.12.2 pass builder never sets it, so both
+frames light the map and round 273's explanation is wrong. What the reading did establish is a genuine fidelity gap: the
+reference compiles `USE_VANILLA_COLOR_FORMAT` for this vertex format and applies `diffuseColor *= m_color` (rgb once, alpha
+into alpha), while this port always applies the **compact** format's extra `diffuseColor.rgb *= m_color.a`. That is a no-op
+for the terrain today (packed alpha 255) but wrong in general. With shaders equivalent, texture byte-identical and the light
+map in both frames, the remaining 0.69 is in the **per-draw state** - the fog uniforms first, whose `mix` scales a band's
+level while preserving its contrast, exactly the measured signature. **Next:** print the fog uniforms at the terrain draw.
+
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for
 terrain, accuracy must be compared against a renderer **outside this tree** - the pinned Celeritas/Embeddium lineage the plan

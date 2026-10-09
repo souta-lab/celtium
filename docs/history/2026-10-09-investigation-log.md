@@ -5621,3 +5621,38 @@ points at once.
 Worth stating plainly, because this thread has spent many rounds: three of its findings have been eliminated by reading
 sources rather than by running anything (the AO being upstream-identical, the shaders being faithful, and now the light map
 branch), and each elimination was cheap.
+
+---
+
+## Read again, refuted again: the passes do light the map, and the remaining candidate is the uniforms
+
+Two more source readings, both cheap, both narrowing.
+
+**The `hasNoLightmap` hypothesis is refuted.** The flag is a builder parameter on `TerrainRenderPass`, its default is false,
+and the 1.12.2 pass builder (`VintageRenderPassConfigurationBuilder`) never sets it - so this project's passes all light the
+map, and so does the reference. The 0.65 the light map applies is therefore in **both** frames, and last round's tidy
+explanation for the whole terrain difference is wrong. It is recorded as wrong rather than quietly dropped, because it was
+the fourth hypothesis in this thread to look convincing and die on a reading.
+
+**The reference's other fragment branch is the one that matters here.** The reference has two ways of applying the vertex
+colour:
+
+```glsl
+#ifdef USE_VANILLA_COLOR_FORMAT
+    diffuseColor *= m_color;            // rgb by rgb, alpha into alpha
+#else
+    diffuseColor.rgb *= m_color.rgb;
+    diffuseColor.rgb *= m_color.a;      // the AO channel, for the compact format
+#endif
+```
+
+This project's active vertex format is `VanillaLikeChunkVertex`, so the reference compiles the **first** branch - and this
+port's shader does the **second**, always. It has the compact format's occlusion multiply baked in where the reference
+applies rgb once and puts the alpha into the alpha channel. For the terrain that multiply is currently a no-op - the packed
+colour's alpha is 255, which the ABGR reading established and the occlusion experiment confirmed by measuring nothing - but
+it is a genuine fidelity gap for any vertex whose alpha is not 1, and it is now recorded as one rather than as a curiosity.
+
+With the shaders then equivalent for this scene, the texture byte-identical and the light map in both frames, what is left is
+**not the vertex path at all**: it is the per-draw state - the fog uniforms first among them, whose `mix` toward a fog colour
+would scale a band's level while preserving its contrast, which is precisely the signature the 0.69 has. Printing those
+uniforms at the terrain draw is the next step, and it is one line.
