@@ -410,6 +410,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private float traceWorstDelta;
     private float worstModelViewDelta;
     private boolean worldPassActive;
+    /** Matrices for the frame's world pass, captured once at the camera boundary and used for drawing. */
+    private final float[] worldSnapshotProjection = new float[16];
+    private final float[] worldSnapshotModelView = new float[16];
+    private boolean worldSnapshotValid;
+    private int snapshotCaptures;
+    private int snapshotServedCaptures;
+    private int outsideWorldPassRefusals;
+    /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
+    private static final boolean MATRIX_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
     private int crossPassComparisonsSkipped;
     private boolean mirrorMidSetup;
     private int midSetupComparisonsSkipped;
@@ -901,6 +911,46 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.currentViewportKey = ((long) x << 42) ^ ((long) y << 21) ^ ((long) width << 10) ^ (long) height;
     }
 
+    public void beginWorldPass() {
+        this.worldSnapshotValid = false;
+        this.worldPassActive = true;
+    }
+
+    public void endWorldPass() {
+        this.worldPassActive = false;
+    }
+
+    /**
+     * Captures the projection and camera transform for this frame, once, at the camera boundary.
+     * <p>
+     * This is the per-frame snapshot the world pass draws from: the projection is the one derived from Minecraft's own
+     * numbers, and the camera transform is the modelview as the camera setup left it. It replaces the per-batch
+     * {@code glGetFloatv} pairs that used to be read at every matrix change, and it is the read the plan records as still
+     * present - one per frame, at a boundary, rather than two per batch anywhere.
+     */
+    public void captureWorldSnapshot() {
+        if (!this.worldPassActive) {
+            return;
+        }
+        float[] derived = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        System.arraycopy(derived, 0, this.worldSnapshotProjection, 0, 16);
+        java.nio.FloatBuffer modelView = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
+        try {
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, modelView);
+            modelView.get(this.worldSnapshotModelView);
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(modelView);
+        }
+        this.worldSnapshotValid = true;
+        // Seed the mirror's base: the projection derived from Minecraft's numbers and the camera transform as the camera
+        // setup left it. Everything the pass then does through the hooked matrix calls - per-model, per-entity, per-TESR
+        // pushes, translates, rotates and pops - accumulates on top of this base. Copying the snapshot into every batch's
+        // matrices instead would throw those local transforms away and draw every model at the camera origin.
+        this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, this.worldSnapshotProjection);
+        this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW, this.worldSnapshotModelView);
+        this.snapshotCaptures++;
+    }
+
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
         if (fovDegrees <= 0.0F || aspect <= 0.0F || near <= 0.0F || far <= near) {
             this.derivedProjectionRefusals++;
@@ -927,6 +977,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
+        if (!this.worldPassActive || !this.worldSnapshotValid) {
+            // Before acceptance, and for a stated reason: this batch is not drawn from the frame's world matrices, so the
+            // original GL draw stays in charge. Taking it and then failing later is the failure mode the audit lists as S14.
+            this.immediateLastRefusal = "outside the world pass or without a snapshot";
+            this.outsideWorldPassRefusals++;
+            return false;
+        }
         this.immediateBatchesOffered++;
         if (formatId >= 0 && formatId < this.immediateOfferedByFormat.length) {
             this.immediateOfferedByFormat[formatId]++;
@@ -1634,6 +1691,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateGroupsClosed=" + this.immediateGroupsClosed
                 + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
+                + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
@@ -3054,6 +3112,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the projection is installed by a utility class outside the transforming loader.
      */
     private void captureGlMatrices() {
+        if (this.worldPassActive && this.worldSnapshotValid) {
+            // No GL read on this path. The matrices are the mirror's: the camera base seeded at the boundary plus whatever
+            // local transforms the pass applied through the hooked calls since. The GL readback that used to run here was
+            // the per-batch cost the plan calls dominant, and it is replaced rather than disabled.
+            float[] mirroredProjection = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+            float[] mirroredModelView = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            System.arraycopy(mirroredProjection, 0, this.glProjection, 0, 16);
+            System.arraycopy(mirroredModelView, 0, this.glModelView, 0, 16);
+            this.snapshotServedCaptures++;
+            return;
+        }
+        if (!MATRIX_DIAGNOSTICS) {
+            // Outside the world pass, or without a snapshot, the matrices are not this renderer's to use. The batch is
+            // refused before acceptance by submitImmediateBatch, so reaching here means a diagnostic read was requested.
+            this.outsideWorldPassRefusals++;
+            return;
+        }
         try {
             FloatBuffer projection = MemoryUtil.memAllocFloat(16);
             FloatBuffer modelView = MemoryUtil.memAllocFloat(16);

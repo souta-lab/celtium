@@ -148,6 +148,18 @@ public interface TerrainGpuBackend {
     default void seedMirrorFromCameraSetup() {
     }
 
+    /** The world pass has begun; matrices are valid for drawing from here. */
+    default void beginWorldPass() {
+    }
+
+    /** The world pass has ended; batches after this are not drawn from the world snapshot. */
+    default void endWorldPass() {
+    }
+
+    /** Captures the projection and camera transform for this frame, at the camera boundary. */
+    default void captureWorldSnapshot() {
+    }
+
     /** The render target a batch belongs to; identity only, as a pass discriminator (audit S10). */
     default void bindFramebuffer(long targetIdentity) {
     }

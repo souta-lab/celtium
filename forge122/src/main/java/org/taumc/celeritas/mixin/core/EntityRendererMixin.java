@@ -39,10 +39,44 @@ public abstract class EntityRendererMixin {
         try {
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null) {
+                // The camera transform is complete here: this is the boundary the snapshot is taken at.
                 backend.seedMirrorFromCameraSetup();
+                backend.captureWorldSnapshot();
             }
         } catch (Throwable ignored) {
             // A hint must never break the frame.
+        }
+    }
+
+    /**
+     * The world pass's explicit boundaries.
+     * <p>
+     * The pass lifecycle is what decides whether a batch may be drawn natively: matrices are valid for drawing only between
+     * these two points, and the snapshot taken at the camera boundary is what the batches inside them are drawn with. The
+     * earlier flag was inferred from which projection was installed and proved unreliable - a first-person hand pass or a
+     * custom framebuffer can install anything - so the lifecycle is stated rather than guessed.
+     */
+    @Inject(method = "func_175068_a", at = @At("HEAD"), require = 0)
+    private void celtium$worldPassBegin(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.beginWorldPass();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Inject(method = "func_175068_a", at = @At("RETURN"), require = 0)
+    private void celtium$worldPassEnd(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.endWorldPass();
+            }
+        } catch (Throwable ignored) {
         }
     }
 

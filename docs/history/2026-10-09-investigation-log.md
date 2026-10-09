@@ -4148,3 +4148,37 @@ suppositions it replaces.
 Nothing in the renderer changed, and this remains measurement work: the renderer's own pass identity is in the group key and
 draws against the matrices the batch was issued with. What is unresolved is a counter that cannot yet tell two passes apart
 without asking GL.
+
+---
+
+## The per-batch matrix readback is gone: the world pass draws from a per-frame snapshot
+
+The change the direction and the user asked for is in the drawing path, not in a counter. Three files, and what they do:
+
+| Piece | What it does |
+|---|---|
+| `EntityRendererMixin` | Hooks the world pass's **explicit boundaries** (`func_175068_a` HEAD and RETURN) and, at the camera boundary (`func_78479_a` RETURN), asks for the frame's snapshot |
+| `captureWorldSnapshot` | Takes the projection derived from Minecraft's own numbers and the camera transform as the camera setup left it - **once per frame** - and **seeds the mirror's base** with them |
+| `captureGlMatrices` | Inside the world pass with a snapshot, copies the **mirror's** matrices; no `glGetFloatv` on the path at all |
+| `submitImmediateBatch` | Refuses **before acceptance**, with a reason, any batch that is not inside a world pass with a snapshot - so the original GL draw stays in charge of everything else |
+
+Measured on hardware, one run:
+
+```
+snapshotCaptures=573   snapshotServed=578   outsideWorldPassRefusals=7164   matrixDiagnostics=false
+immediateOffered=1746  immediateTaken=578   immediateFlushes=82
+immediateRefusal=outside_the_world_pass_or_without_a_snapshot
+fixture PASSED | nativeTerrainVerified True | 2201 passes
+image against the same-fixture reference: mean 0.14 | 0.40% over 8 | 3,714 px  (unchanged)
+```
+
+Read as evidence rather than as progress:
+
+- **`snapshotServed == immediateTaken`** - every batch Vulkan accepted was drawn from the snapshot. Not one fell through to the GL readback, which is what the equality means;
+- **`matrixDiagnostics=false`** - the per-batch `glGetFloatv` pair that this plan has called the dominant per-batch cost is **no longer on the normal path**;
+- **7,164 refusals before acceptance** - the batches outside a world pass are refused with a reason and drawn by GL, which is the behaviour the user required instead of drawing them with world matrices;
+- **the frame is unchanged** - 0.40% against the same reference as before the change, so the new path draws what the old one drew on the scene that is measured.
+
+The local transforms are preserved because the snapshot **seeds the mirror** rather than replacing batch matrices: the per-model, per-entity and per-TESR pushes, translates, rotates and pops still accumulate through the hooked calls on top of the camera base. Copying the snapshot into each batch would have drawn every model at the camera origin, which is the failure the user named.
+
+**Recorded as incomplete, per the same instruction:** one `glGetFloatv` read per frame remains, at the camera boundary, and it is what the snapshot is made of. The per-batch reads are gone; the per-frame one is not, and it should be replaced by computing the camera transform from the view entity in vanilla's order before this can be called GL-free.
