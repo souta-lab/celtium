@@ -2164,3 +2164,26 @@ measurement that can be repeated, and the answer is that there *is* a difference
 Where it sits, from the same comparison: the differences are not in the HUD regions - hotbar, crosshair and the top strip
 measure at or near zero - and they concentrate in the band the first-person item occupies, which is the next thing to
 identify rather than guess at.
+
+---
+
+## The frozen comparison puts the difference in the hand, not the HUD
+
+The same comparison, region by region:
+
+| Region | Differing |
+|---|---|
+| HUD hotbar (bottom centre) | **0.00%** |
+| HUD crosshair (centre) | **0.00%** |
+| chat/overlay strip (top) | **0.00%** |
+| world, left | 0.95% |
+| **world, centre** | **5.42%** |
+| **hand and held item (lower right)** | **4.60%** |
+
+with the whole difference inside a bounding box of x 273..1114, y 387..719 - the lower two-thirds, extending from the middle
+of the frame to the right where the first-person item is drawn.
+
+So the HUD that the switch was turned on to measure is **drawn correctly**, and the difference belongs to the held item and
+the world band it overlaps. Whether that is the item itself or something its drawing changes around it is what a run with an
+empty hand answers, and that is the next measurement rather than a guess: the two candidates are separated by one fixture
+line, not by reasoning.
