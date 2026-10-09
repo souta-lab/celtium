@@ -2407,3 +2407,35 @@ can be named from them.
 
 That is the next step: read what `immediateTaken` counts and what the mask parser does with a digit that matches no
 format, then re-run the bisection with a control whose meaning is known.
+
+---
+
+## The contradiction was a script edit that silently did nothing, and everything fits once it is read
+
+Reading the code answered the two questions, and then reading the *script* answered the contradiction:
+
+- `celtium$formatAccepted` scans the mask string for a digit equal to the format id, so `immediateFormats=9` accepts
+  nothing - the parser was never the problem;
+- `immediateTaken++` sits after every refusal check, so it counts accepted batches - which meant the reported
+  `immediateTaken=29` could not belong to a run with an empty mask.
+
+It did not. `/tmp/run-nomask.sh` contains **no `immediateFormats=9`**: `grep -c` returns 0, and the run's own counters say
+`immediateRefusal=format_0_not_in_celtium.vulkan.immediateFormats` - the ordinary default behaviour of accepting 1, 3, 4
+and 5 and refusing the rest. The `replace` that was supposed to add the flag matched nothing, because the script's
+`--jvm-arg=-Dceltium.vulkan.immediate=true` line is not spelled the way the pattern assumed, and that replacement was one
+of the few in this session made **without an assertion**. So the "control" was a normal run, its 3.75 was the
+first-person scene's variation, and no contradiction about counters ever existed.
+
+With that read, the picture is consistent and the finding survives:
+
+| Scene | Noise floor | Immediate path against reference |
+|---|---|---|
+| hidden GUI | 0.00 | 0.00 |
+| **third person, GUI visible** | **0.09** | **0.95** |
+| first person, GUI visible | 0.09 to 3.7 depending on the run | not measurable |
+
+So in the GUI-visible frame, with the hand excluded and a floor of 0.09, the immediate path differs from GL by about
+**0.95 mean, 0.7% of pixels over 8** - a real, reproducible difference that the hidden-GUI comparisons do not show, and one
+whose content is not yet identified. The bisection for it has to be run with the mask flag **verified present** in the
+script before the run, which is the lesson this round cost: an unasserted replacement is indistinguishable from a
+successful one until its effect is looked for in the run's own output.
