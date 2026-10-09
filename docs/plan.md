@@ -577,6 +577,29 @@ exit 0 / mid (136.5,140.9,130.4) / PASSED / target受入 exit 0 に復帰。**�
 throw している）。正しい縮退点は**外側の GL intercept で false を返してGLに描かせる**ことで、
 `beginCommands` に boolean を返させる（5呼び出し元）か、intercept 側で捕捉して計数するのが次の一手。
 
+**カスタムシェーダ拒否の修正と再受入（このターン）**: 受理経路の preflight に
+`GL_CURRENT_PROGRAM != 0` のバッチを拒否する判定を追加した（任意の program は固定パイプラインで再現できないため、
+これは正しさの修正でもある）。修正は「受理するバッチの集合」を変えるので、shader を使う場面を取り直した:
+
+| run | 結果 |
+|---|---|
+| spider (AMD) | **exit 124（ハング）→ exit 0 / validationClean / PASSED / 24.9s**、mirror 898 → **80（−91%）**、p99 174 → 118ms |
+| spider (Intel) | **exit 124（ハング）→ exit 0 / validationClean / PASSED / 28.9s**（`shaderActive=True`） |
+| postprocess (AMD) | exit 0 / PASSED / 24.4s / p50 42.4ms / p99 47.1ms（修正前 41.6/47.3 と同等） |
+| 通常 (AMD) | exit 0 / PASSED / 24.8s / p50 42.4ms（不変） |
+| target受入 (AMD) | exit 0（clear/depth 順序とも pass） |
+
+- 拒否カウンタを `diagnostics()` に追加（`-Dceltium.vulkan.handoffTimings=true`）。**report に出ていることを確認**:
+  postprocess run の `rendererDebug` に **`refusedBeforeAppend=97`** があり、**新しい受理判定が実際に発動**している。
+  （`handoff detail` 行も同じ report に出ている。`shaderProgramRefusals=` / `accepted=` は report 側の長さで
+  切れている可能性があるため、次に確認する。）
+- 真因の記録: `mirrorRefreshFrames=8` でもハングし mirror は増えた（898回/927 invalidations）＝周期ではなく
+  **使用ごと**に発生。ShaderGroup は real program で複数パスを描くため、パスごとにフルスクリーン読み戻しが走り
+  ~15回/フレーム＝約2秒/フレームになっていた。
+
+**次の一手**: (1) `shaderProgramRefusals` / `accepted` が report に出るかの確認、(2) `switchUseShader` の各 shader
+でも受入、(3) timestamp クエリで handoff の GPU 時間を測る。
+
 **修正（submit失敗・解決済み）**: frame を開く経路は4系統（terrain render / present bridge / composite / present）あり、
 失敗時に開いたまま残っていた。`VulkanFrameTarget` を**自己修復**にした:
 
