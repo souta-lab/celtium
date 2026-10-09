@@ -324,6 +324,7 @@ public final class VulkanOffscreenTarget {
 
     private boolean selfTestPassed;
     private int glTextureId;
+    private boolean copyBackPending;
     private int selfTestTexture;
 
     /** The one memory type this target needs: device-local, since nothing reads it from the host yet. */
@@ -413,8 +414,30 @@ public final class VulkanOffscreenTarget {
             region.get(0).imageOffset().set(0, 0, 0);
             region.get(0).imageExtent().set(width, height, 1);
             vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readbackBuffer, region);
-            context.endCommands(commands);
+            // Recording only. The buffer belongs to the caller's command pool, so it must not be ended or freed here - the
+            // first attempt called the context's one-shot submission, which validation reported as freeing a command buffer
+            // from the wrong pool and which aborted the client. The upload happens after the frame has been submitted and the
+            // GPU work has certainly finished.
+            this.copyBackPending = true;
+        }
+    }
 
+    /** {@return whether a copy has been recorded and is waiting for the frame to finish} */
+    public boolean copyBackPending() {
+        return copyBackPending;
+    }
+
+    /**
+     * Uploads the pixels recorded by {@link #copyBackToGlTexture} into the game's texture.
+     * <p>
+     * Called after the frame's submission has completed, which is the only point at which the copied pixels are guaranteed
+     * to be there.
+     */
+    public void uploadCopyBack() {
+        if (!copyBackPending || glTextureId == 0) {
+            return;
+        }
+        try (MemoryStack stack = stackPush()) {
             org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
             long bytes = (long) width * height * 4L;
             if (vkMapMemory(context.device(), readbackMemory, 0L, bytes, 0, pointer) != VK_SUCCESS) {
@@ -425,6 +448,7 @@ public final class VulkanOffscreenTarget {
                     org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE,
                     org.lwjgl.system.MemoryUtil.memByteBuffer(pointer.get(0), (int) bytes));
             vkUnmapMemory(context.device(), readbackMemory);
+            this.copyBackPending = false;
         }
     }
 

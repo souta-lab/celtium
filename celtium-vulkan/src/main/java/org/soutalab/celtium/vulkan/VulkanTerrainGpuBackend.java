@@ -1265,6 +1265,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                 VulkanImmediatePipeline.create(this.context, target.renderPass(), true,
                                         org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
                                         org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false));
+                        // Resolved while the game's framebuffer is still bound: that is when its colour attachment can be
+                        // asked for, and the copy-back has nowhere to write without it.
+                        target.resolveGlTexture();
                         this.offTargetTargets.put(this.currentRenderTarget, target);
                         this.offTargetTargetsCreated++;
                     } catch (RuntimeException | LinkageError error) {
@@ -2120,7 +2123,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         target.end(this.commandBuffer);
         if (target.glTextureId() != 0) {
             target.copyBackToGlTexture(this.commandBuffer, target.glTextureId());
-            this.offTargetCopiedBack++;
         }
     }
 
@@ -2202,6 +2204,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
+                + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
@@ -3454,6 +3457,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.submissionPending = false;
             // The device is genuinely idle here - the wait above succeeded - so this is the one place where retired
             // textures can be destroyed without racing a command buffer that still names them (audit S12).
+            // The device is idle, so any off-target copy recorded for the previous frame has certainly completed: this is
+            // where its pixels go into the game's texture.
+            for (VulkanOffscreenTarget target : this.offTargetTargets.values()) {
+                if (target.copyBackPending()) {
+                    try {
+                        target.uploadCopyBack();
+                        this.offTargetCopiedBack++;
+                    } catch (RuntimeException | LinkageError error) {
+                        record("off-target copy-back failed: " + describe(error));
+                    }
+                }
+            }
             int drained = VulkanRetireQueue.flush();
             if (drained > 0) {
                 this.retiredFlushes += drained;

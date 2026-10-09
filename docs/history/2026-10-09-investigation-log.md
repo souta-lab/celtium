@@ -7160,3 +7160,41 @@ one duplicate field and one misspelled free call, and the tree never went red.
 What is still open here: the counters for the drawn and copied-back batches are not reported yet (the refusals reaching zero is
 the evidence instead), the target is created from the viewport size rather than from the framebuffer's own dimensions, and only
 format 1 is served - which is what the measurement said this scene needs.
+
+---
+
+## The off-target path complete: 567 drawn, 554 copied back, validation silent
+
+The counters added at the start of this round immediately earned their place by exposing a gap the previous round's evidence
+had not: on Intel the run reported **306 batches drawn and zero copied back**, which means the content was being rendered into
+an image that nothing ever reached the game's texture from.
+
+The cause was a one-line loss: the call that resolves the game's colour texture - while its framebuffer is still bound, which is
+the only moment it can be asked for - had been removed with the reverted attempt and not restored. Restoring it exposed the next
+problem immediately and loudly:
+
+```
+severity=ERROR vkFreeCommandBuffers(): pCommandBuffers[0] attempting to use VkCommandPool ... to free VkCommandBuffer ...,
+but the command buffer was allocated from a different pool
+exit -6
+```
+
+The copy-back was calling the context's one-shot submission helper, which ends and frees the command buffer - and the buffer it
+was handed belongs to the frame's pool. Validation said which pool, and the client aborted. The fix is the separation that
+should have been there from the start: **the recorder records, and the upload happens later**, in the one place where the
+previous frame's submission is known to have completed - right after the fence wait that already exists.
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+offTargetTargets=1   offTargetDrawn=567   offTargetCopiedBack=554   offTargetRefusals=0
+nativeTerrainVerified=True   terrainPasses=1614   glDrawsCancelled=554
+```
+
+**567 batches drawn into the offscreen target and 554 copy-backs uploaded into the game's texture**, on a run with zero
+validation messages. That is the per-target feature working end to end on AMD: the content is taken, rendered into an image
+this renderer owns, and written back into a framebuffer it does not own - which is the shape the objective asks for, reached
+without hiding any GL that remains.
+
+Recorded for the next round: Intel needs the same run with this fix (the 306/0 figures predate it), and the 13-batch
+difference between drawn and copied back is explained by the last frames' copies arriving after the final fence wait rather
+than by a defect - worth confirming rather than assuming.
