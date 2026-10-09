@@ -261,6 +261,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
                     + " shaderProgramRefusals=" + this.shaderProgramRefusals
+                + " shaderProgramRefusedIds=" + this.shaderProgramRefusedIds
                     + " textureRefusals=" + this.textureRefusalsBeforeAccept
                     + " accepted=" + this.frameAccepted);
         }
@@ -633,6 +634,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Batches refused because a custom shader program was bound (the game's post-process chain and mod shaders). */
     private int shaderProgramRefusals;
+    /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
+    private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
     private int postAcceptDroppedGroups;
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
@@ -2106,6 +2109,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.programQueryCount++;
             if (boundProgram != 0) {
                 this.immediateLastRefusal = "a custom shader program is bound";
+                // Named once per program: the spider scene refuses 1470 batches here, and which program they belong to
+                // decides whether the entity path can be supported natively at all (which is what would let the depth
+                // write-back go). The id is the only handle GL offers; the count says how dominant it is.
+                Integer seenCount = this.shaderProgramRefusedIds.get(Integer.valueOf(boundProgram));
+                this.shaderProgramRefusedIds.put(Integer.valueOf(boundProgram),
+                        Integer.valueOf(seenCount == null ? 1 : seenCount.intValue() + 1));
+                if (seenCount == null) {
+                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
+                            + " (first batch refused with this program bound)");
+                }
                 this.shaderProgramRefusals++;
                 this.refusedBeforeAppend++;
                 this.flushPendingBeforeGlDraw();

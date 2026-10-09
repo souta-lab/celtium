@@ -1771,7 +1771,31 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   それができれば実体は Vulkan の深度に対してテストされ、**書き戻しは不要**になり、Intel で **3.3 ms/frame** が戻る
   （28.86 → 25.58 は測定済み）。**それまでは深度返却を残す**（27画素を 3.3 ms と引き換えにしない）。
 
-**次の一手**: (1) 実体が使うシェーダ program を特定する（`shaderProgramRefusals` の内訳を program id / 名前で出す）、
+**深度依存の正体＝ spectator の entity outline（ShaderGroup）と特定（このターン）**:
+
+- 拒否されている program を id ごとに記録する計器を追加して spider 場面を走らせた結果:
+
+| 指標 | 実測（AMD、spider 場面、550 frames） |
+|---|---|
+| `shaderProgramRefusals` | **1450**（約 2.6/フレーム） |
+| 拒否された program id | **13, 14, 15, 16, 19, 20, …**（＝**連番の一族**） |
+| 通常場面の `shaderProgramRefusals` | **0** |
+
+- **連番の一族**であること・**通常場面では 0** であることから、これは **spectator 時のバニラ entity outline（ShaderGroup）**の
+  複数パスである（アウトライン本体・ぼかし・合成）。バニラの ShaderGroup は複数の program を作るので id が連番になる。
+- **因果の連鎖が閉じた**: spectator のアウトラインは**カスタム program なので拒否** → **GL が描く** →
+  その深度テストは **GL 側の深度バッファ**に対して行われる → **そこに地形の深度が要る**＝**深度の書き戻しが必要な理由**。
+  spider 場面だけに 27 画素の差が出て、通常場面では 0 画素だったのはこれで説明できる。
+- **これは最適化ではなく (a) の必須項目**である: goal は「**spectator の creeper/spider/enderman 視点**」と
+  「**バニラの ShaderGroup・spectator 効果・entity outline 等は本体機能であり、この延期を理由に省略しない**」を
+  明示している。つまり **entity outline を native で成立させることが本筋**で、それができれば深度返却も外れる
+  （Intel で 3.3 ms/frame が戻る）。
+
+**次の一手**: (1) spectator の entity outline が何をするか（アウトラインのマスク描画・ぼかし・合成の順序と、
+使うテクスチャ・深度・ブレンド）をコード（バニラ `ShaderGroup` と `EntityRenderer`）から読み、native で再現する範囲を
+決める、(2) 再現できたら `skipDepthReturn` を既定にし、spider 場面で差が床（0画素）以下であることを両GPUで受入する。
+
+**（旧メモ）** 次の一手: (1) 実体が使うシェーダ program を特定する（`shaderProgramRefusals` の内訳を program id / 名前で出す）、
 (2) その program が何をするか（entity の照明・outline・glint か）を確かめ、native で再現できる範囲を決める、
 (3) 再現できたら `skipDepthReturn` を既定にして Intel 25.6 ms / AMD 16.1 ms を受入にする。
 
