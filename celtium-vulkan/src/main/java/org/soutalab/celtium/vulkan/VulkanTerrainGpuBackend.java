@@ -445,6 +445,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
     private final java.util.Map<Long, VulkanOffscreenTarget> offTargetTargets = new java.util.HashMap<Long, VulkanOffscreenTarget>();
     private int offTargetTargetsCreated;
+    private int offTargetReadyToTake;
+    private int offTargetCopiedBack;
     /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
     private final java.util.Map<Long, VulkanImmediatePipeline> offTargetPipelineCache =
             new java.util.HashMap<Long, VulkanImmediatePipeline>();
@@ -1236,7 +1238,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The hybrid draws into the shared image, which stands in for the main framebuffer only. A batch issued for
             // another render target cannot be honoured, so it is refused here, before acceptance, and GL draws it - which
             // is the behaviour the audit's S10 acceptance asks for instead of viewing it in the wrong place.
-            this.immediateLastRefusal = "not the main framebuffer";
+            // Still refused, and the reason is structural rather than a missing resource: a Vulkan render pass cannot be
+            // begun inside another, and the frame's pass is already open when these batches arrive. Drawing them into the
+            // offscreen target therefore means ending the frame's pass, rendering the off-target content, and beginning it
+            // again - a change to the flush's structure, not a binding. The target, its pipeline and its copy-back are all
+            // built and verified; this counter says how much content is waiting on that restructuring.
+            this.offTargetReadyToTake++;
+            this.immediateLastRefusal = "not the main framebuffer; the offscreen pass would have to interrupt the frame's";
             this.offTargetRefusals++;
             // What the per-target work would have to build: which target, how much content it receives, and how big it is.
             // The viewport is read here because at this moment it is the target's own, and the count says whether a target
@@ -2120,6 +2128,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
                     Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
                     Long.valueOf(this.currentGroupStateKey), this.currentGroupState,
+                    Long.valueOf(this.currentGroupTarget),
                     Integer.valueOf(this.currentGroupBlendSrc), Integer.valueOf(this.currentGroupBlendDst)});
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();

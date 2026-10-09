@@ -7069,3 +7069,34 @@ offTargetTargets = 1   nativeTerrainVerified=True   terrainPasses=1623   glDraws
 The self-test still proves the chain on the same run, and the off-target batches are still GL's: what has been added is the
 pipeline those batches will be drawn with, verified, with the flush integration - which needs the group tuple to carry its
 render target - as the next step rather than this one.
+
+---
+
+## "Mechanical" was not mechanical: a render pass cannot be begun inside another
+
+The last three rounds were arranged so that this step would be assembly: the resource, its pass, the copy-back and the pipeline
+were each built and proved first, and what remained was described as mechanical - carry the render target in the group tuple,
+bind, draw, copy back, stop refusing. The tuple now carries the target and the target knows what it stands for, and then the
+step ran into a structural fact rather than a missing piece:
+
+**A Vulkan render pass cannot be begun inside another one, and the frame's pass is already open when these batches arrive.**
+
+Drawing the off-target content therefore means **ending the frame's pass, rendering the off-target content, and beginning it
+again** - a change to the flush's structure, not a binding. That is why the acceptance was **withdrawn** in the same round it
+was attempted: accepting those batches with the flush as it stands would have drawn them into the **main** pass, which is worse
+than refusing them. The refusal now carries the reason in its own text, and a counter says how much content is waiting on the
+restructuring.
+
+The tree is green and unchanged in behaviour:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED
+offTargetTargets = 1   offTargetRefusals = 574   CELTIUM_OFFTARGET_SELFTEST ... passed=true
+nativeTerrainVerified=True   terrainPasses=1650   glDrawsCancelled=569
+```
+
+Everything the off-target work needs still exists and is still verified - the image, the pass, the framebuffer, the readback,
+the copy-back and the pipeline, with validation silent. What it needs next is the flush to be willing to interrupt itself, and
+that is now a named structural change rather than a checklist item. Worth recording as the fourth time in this project that a
+step described as mechanical turned out to have a structural question inside it - the mask, the mapping, the element
+comparison, and now the pass nesting - and the first time the withdrawal happened before the tree went red.

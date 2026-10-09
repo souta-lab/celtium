@@ -87,9 +87,11 @@ content works end to end. It runs **on by default** and validation is **silent**
 exposed was solved by the validation layer's own diagnosis - the pass now ends in `COLOR_ATTACHMENT_OPTIMAL` and the barrier
 performs the only transition to `TRANSFER_SRC_OPTIMAL`, because a transition made by `vkCmdEndRenderPass` is not something a
 later barrier can synchronize. **The format-1 pipeline for that pass is now built and validated** - created with the target, before any batch is taken, which
-is how validation came to reject the first attempt for passing `GL_ONE_MINUS_SRC_ALPHA` (771) where Vulkan's enum belongs. What
-remains is mechanical: carry the render target in the group tuple, bind the pipeline with the group's mesh and push constants,
-draw, copy back through the verified path, and stop refusing those batches |
+is how validation came to reject the first attempt for passing `GL_ONE_MINUS_SRC_ALPHA` (771) where Vulkan's enum belongs. What remains is **not** mechanical, and the attempt found out why: **a Vulkan render pass cannot be begun
+inside another**, and the frame's pass is open when these batches arrive. Taking them means the flush must **end the frame's
+pass, render the off-target content and begin it again**, so the acceptance was withdrawn in the round it was attempted rather
+than drawing that content into the main pass. The tuple now carries its render target, the refusal names the reason, and a
+counter reports how much content is waiting on the restructuring |
 | **Texture animation** | **Vulkan mirror, verified** | `CELTIUM_ANIM directMirrorRefreshes=89` with `atlasGlId=9` - the animated atlas re-uploads reach the mirror the terrain samples |
 | **Resource reload** | **Verified** | `reloadedAtTick=100`, exit 0, validation clean, fixture PASSED |
 | **World switch (leave and rejoin)** | **Verified** | `leftWorldAtTick=100 rejoinedAtTick=100`, teardown releases 4 then 2 resources, validation clean |
