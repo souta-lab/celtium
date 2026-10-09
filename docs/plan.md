@@ -258,6 +258,28 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
   描画そのものは既に Vulkan 側にある**。したがって (b) の作業は「読む元を Minecraft のデータに替える」ことに集約される。
 - 既に Vulkan 側にあるもの: 地形パイプライン、immediate pipeline、descriptor/allocator、swapchain/present。
 
+## 7.8 完成条件(b) の実装第1歩: 即値パスの行列GL読み戻しを廃止（既定化・画素一致で検証）
+
+棚卸し（§7.7）の「状態ミラー」のうち **行列** を実際に置き換えた。
+
+- 既存の `MIRRORED_MATRICES`（`-Dceltium.vulkan.mirroredMatrices`）は**双方向の比較用スイッチ**で、
+  既定は GL 読み戻し側だった。ミラー側を強制して実測:
+
+| 比較 | 結果 |
+|---|---|
+| 既定（GL読み）vs ミラー強制 の**画像** | **meanAbsDiff 0.000 / HF比 1.000（画素一致）** |
+| `matrixMirrorDelta` | **proj:0.0, view:0.0**（ミラーと実GLが完全一致） |
+| verdict | exit 0 / validationClean / PASSED |
+
+- したがって**既定をミラー側に変更**した（`-Dceltium.vulkan.mirroredMatrices=false` で旧経路に戻せる）。
+  変更後の既定で再測定: 旧既定との **meanAbsDiff 0.000**、verdict PASSED、target受入 exit 0。
+- 効果: 即値パスが毎バッチ行っていた**行列の GL 読み戻し（`captureGlMatrices()` の GL 経路）が不要**になり、
+  (b) の「GL から読む元を Minecraft 側のデータに替える」の1項目が完了した。
+
+**次の一手（b の続き）**: 同じ方式で (1) `glIsEnabled`/`glGetInteger` による状態ミラー（既定で GL 読みか要確認）、
+(2) テクスチャの `glGetTexLevelParameteri`（sprite/frame データからの供給）、
+(3) 相互運用グルーの blit/semaphore（同一デバイス present への一本化）を順に潰す。
+
 ## 8. 第3回監査の最終追補
 
 32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。

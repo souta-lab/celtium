@@ -474,7 +474,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * projection was first investigated. The comparison below keeps measuring that disagreement so the switch can be
      * flipped on evidence: reading the matrices per group is the dominant cost of the whole immediate path.
      */
-    private static final boolean MIRRORED_MATRICES = Boolean.getBoolean("celtium.vulkan.mirroredMatrices");
+    /**
+     * Whether the immediate path takes the projection and model-view matrices from the state mirror instead of reading
+     * them from OpenGL. Now the default: the two were compared and agree exactly (matrixMirrorDelta proj:0.0 view:0.0)
+     * and the frames are pixel-identical (mean absolute difference 0.000 against the GL-reading path), so the GL read
+     * is one dependency the native path no longer needs. The property stays so a run can put the read back for
+     * comparison - {@code -Dceltium.vulkan.mirroredMatrices=false}.
+     */
+    private static final boolean MIRRORED_MATRICES =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.mirroredMatrices", "true"));
 
     /** Largest absolute element difference seen between the mirrored matrices and the ones read from OpenGL. */
     private float mirroredProjectionDelta = -1.0f;
