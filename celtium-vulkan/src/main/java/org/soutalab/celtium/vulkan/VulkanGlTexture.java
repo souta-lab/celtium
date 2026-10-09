@@ -471,15 +471,19 @@ public final class VulkanGlTexture {
     private void destroyImageResources() {
         VkDevice device = context.device();
         if (view != 0L) {
-            vkDestroyImageView(device, view, null);
+            // Retired rather than destroyed: a command buffer recorded earlier may still name this view (audit S12).
+            final long retiredView = view;
+            VulkanRetireQueue.retire(() -> vkDestroyImageView(device, retiredView, null));
             view = 0L;
         }
         if (image != 0L) {
-            vkDestroyImage(device, image, null);
+            final long retiredImage = image;
+            VulkanRetireQueue.retire(() -> vkDestroyImage(device, retiredImage, null));
             image = 0L;
         }
         if (memory != 0L) {
-            vkFreeMemory(device, memory, null);
+            final long retiredMemory = memory;
+            VulkanRetireQueue.retire(() -> vkFreeMemory(device, retiredMemory, null));
             memory = 0L;
         }
     }

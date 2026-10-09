@@ -181,9 +181,16 @@ figures are carried into `lastFrameAccepted` / `lastFrameDrawn` at the next boun
 instead of 570**, and the reconciliation reports the last frame as accepting and drawing one group. That is the audit's
 complaint as a number rather than as a suspicion.
 
-### S12 [P1] texture invalidation and resize destroy resources that may be in use
-`invalidate` deletes immediately, `resize` discards the old view/image/memory before any wait, and the descriptor caches
-keep sets built on stale views. No generation-carrying handles, no fence-based retirement.
+### S12 [P1] texture invalidation and resize destroy resources that may be in use - **core fixed**
+**The two paths the audit names are retired now, not destroyed.** A new `VulkanRetireQueue` collects the destruction of
+images, views and memory, and the backend drains it in the one place where a wait for device idle has **actually
+succeeded** (`beginCommands`, after its fence wait). `recreateImageResources` - which is what the per-frame mirror refresh
+(`invalidateAll`) and `resize` both run - hands its handles over instead of calling `vkDestroyImageView`,
+`vkDestroyImage` and `vkFreeMemory` immediately. Measured on a normal run: **`retired=6`, `flushed=6`**, exit 0, validation
+clean, 0 messages, fixture PASSED, `immediateTaken=551`, `postAcceptDroppedGroups=0` - the refresh cycle retires one set per
+interval and every one of them is destroyed after an idle. **Open:** the teardown path in `delete()` still destroys directly,
+and there are still no generation-carrying handles - the descriptor caches can hold sets built on views that have been
+retired, which the next round should address.
 
 ### S13 [P1] the descriptor pool accumulates and the lightmap is not part of the key
 **Partly acted on:** the three immediate pipelines' pools were raised from `maxSets(64)` to 8192, since one set is cached per

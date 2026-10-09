@@ -5745,3 +5745,29 @@ group and drew it, with the run's totals beside it.
 Worth noting for the other diagnostics: `framesSeen`, which several trace lines use as "frame N", was incrementing on
 flushes, so those labels have been off by the same factor. It is left as it is - renaming it is a change to diagnostics
 rather than to drawing - but `frameId` is now the number that means a frame.
+
+---
+
+## S12's two named paths are retired now, and the count is six
+
+The audit's S12 names two paths that destroy resources while a recorded command buffer may still name them: `invalidate`
+(which the per-frame mirror refresh calls as `invalidateAll`) and `resize`. Both go through `recreateImageResources`, which
+called `vkDestroyImageView`, `vkDestroyImage` and `vkFreeMemory` directly. Those three calls now hand the handles to a
+`VulkanRetireQueue`, and the backend drains that queue in the one place it knows the device is idle for certain - after the
+fence wait in `beginCommands` has **succeeded**, which is also where the code already concludes that the previous submission
+has finished.
+
+Measured on a normal run:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED | passes=2168 | taken=551 | dropped=0
+frameId=566  flushes=3298  retiredFlushes=6  retire=retired=6
+```
+
+Six resources retired, six flushed: the refresh cycle retires one set per interval and every one of them is destroyed after
+an idle rather than during one. No regression - the fixture passes, validation is silent, and the accepted/dropped figures
+are the ones the previous round established.
+
+Recorded as open, because the audit item is not closed: the teardown path in `delete()` still destroys directly, and there
+are still no generation-carrying handles, so a descriptor cache can hold a set built on a view that has since been retired.
+Those are the two pieces that remain of S12, and they are named rather than implied.

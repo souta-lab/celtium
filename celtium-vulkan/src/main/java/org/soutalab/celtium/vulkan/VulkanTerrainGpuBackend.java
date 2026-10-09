@@ -606,6 +606,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long frameId;
     private long countersFrameId = -1;
     private long flushCount;
+    private long retiredFlushes;
     private int frameAccepted;
     private int frameDrawn;
     private int lastFrameAccepted;
@@ -1898,6 +1899,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
+                + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateGroupsClosed=" + this.immediateGroupsClosed
@@ -3088,6 +3090,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return;
             }
             this.submissionPending = false;
+            // The device is genuinely idle here - the wait above succeeded - so this is the one place where retired
+            // textures can be destroyed without racing a command buffer that still names them (audit S12).
+            int drained = VulkanRetireQueue.flush();
+            if (drained > 0) {
+                this.retiredFlushes += drained;
+            }
             // The previous frame's timestamps are complete now, which is the only moment they can be read reliably.
             updateTimings();
         }
