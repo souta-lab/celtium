@@ -1746,7 +1746,36 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   「present が起きている証拠」と読まないよう、コードのコメントと docs に明記した（**プロパティ名は変えない**。
   変えると scripts / docs / 過去の受入コマンドと食い違うため）。
 
-**次の一手**: (1) 実体（entity/TESR）を native に移し、その後に深度返却を外して **Intel 25.6 ms / AMD 16.1 ms** を
+**残る深度依存の正体を特定（このターン・計器が答えを出した）**:
+
+- format 2 を native にした後でも、`spectator=spider` 場面には**残る深度依存**がある:
+
+| 比較 | meanAbsDiff | 差>2の画素 |
+|---|---|---|
+| AMD 床（spider keep vs keep） | **0.0000** | **0** |
+| **AMD spider: keep vs skip-depth** | 0.0118 | **27** |
+| **Intel spider: keep vs skip-depth** | 0.0079 | **3** |
+
+  床が **0画素**なので 27 は**決定論的な実差**である（雑音ではない）。ただし **AMD 27 対 Intel 3** と GPU に依存する
+  大きさで、**実体のシルエットが地形と交わる境界の画素**という形に一致する。
+- **原因は計器に出ていた**:
+
+| カウンタ | spider 場面 | 通常場面 |
+|---|---|---|
+| **`shaderProgramRefusals`** | **1470** | **0** |
+
+  **実体（spider）の描画はカスタムシェーダ program のために拒否されている**（round 471 で入れた
+  `GL_CURRENT_PROGRAM != 0` のガード）。拒否されたバッチは **GL が描く**ので、その深度テストは
+  **GL 側の深度バッファ**に対して行われ、そこに地形の深度が要る＝**深度の書き戻しが必要な理由**である。
+- **したがって深度返却を外す道は明確**: **実体が使うシェーダ program を native 側で再現する**こと。
+  それができれば実体は Vulkan の深度に対してテストされ、**書き戻しは不要**になり、Intel で **3.3 ms/frame** が戻る
+  （28.86 → 25.58 は測定済み）。**それまでは深度返却を残す**（27画素を 3.3 ms と引き換えにしない）。
+
+**次の一手**: (1) 実体が使うシェーダ program を特定する（`shaderProgramRefusals` の内訳を program id / 名前で出す）、
+(2) その program が何をするか（entity の照明・outline・glint か）を確かめ、native で再現できる範囲を決める、
+(3) 再現できたら `skipDepthReturn` を既定にして Intel 25.6 ms / AMD 16.1 ms を受入にする。
+
+**（旧メモ）** 次の一手: (1) 実体（entity/TESR）を native に移し、その後に深度返却を外して **Intel 25.6 ms / AMD 16.1 ms** を
 受入にする、(2) ブリッジの残り（blit 2回・semaphore 待ち・48箇所の状態クエリ）を外す設計に入る、(3) `presentFromComposite`
 の名前が実態（present していない）と合っていないので、**名前と既定の意味を docs で正す**。
 
