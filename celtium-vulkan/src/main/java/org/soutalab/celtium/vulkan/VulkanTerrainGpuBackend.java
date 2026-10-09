@@ -387,6 +387,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateIsolationDraws;
     private VulkanImmediateTexturePipeline texturedImmediatePipeline;
     private int immediateTextureRefusals;
+    private int immediateGroupsDrawn;
+    private int immediateGroupsDiscarded;
+    private int immediateFlushNoPipeline;
+    private String immediateLastFlushError = "none";
     /**
      * Groups whose draws are already recorded but whose command buffer may still be in flight.
      * <p>
@@ -623,6 +627,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.currentGroupUsed = true;
             this.pendingImmediateIndices += indices.length;
             this.immediateTaken++;
+            if (this.immediateTaken == 500) {
+                // One-shot snapshot of what happens to accepted batches: a batch counts as accepted only when GL's own
+                // draw was cancelled, so anything accepted and not drawn is lost geometry.
+                record("immediate flush snapshot at 500 accepted: flushes=" + this.immediateFlushes
+                        + " drawn=" + this.immediateGroupsDrawn + " discarded=" + this.immediateGroupsDiscarded
+                        + " noPipeline=" + this.immediateFlushNoPipeline
+                        + " lastError=" + this.immediateLastFlushError);
+            }
             this.immediateLastRefusal = "none";
             return true;
         } catch (RuntimeException | LinkageError error) {
@@ -1900,6 +1912,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
             if (terrain == null) {
+                // Counted rather than silently returned: an accepted batch whose GL draw was cancelled must be drawn
+                // here, so a null pipeline means geometry is being lost, not deferred.
+                this.immediateFlushNoPipeline++;
+                this.immediateGroupsDiscarded += this.immediateGroups.size();
+                discardImmediateGroups();
                 return;
             }
             if (this.immediatePipeline == null) {
@@ -1934,7 +1951,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                 this.immediateTextureRefusals++;
                                 continue;
                             }
-                            long descriptorSet = this.texturedImmediatePipeline.descriptorSetFor(texture);
+                            long descriptorSet = textured.descriptorSetFor(texture);
                             if (descriptorSet == 0L) {
                                 this.immediateTextureRefusals++;
                                 continue;
@@ -1959,11 +1976,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         plain.draw(this.commandBuffer, mesh, push);
                     }
                     this.immediateFlushes++;
+                    this.immediateGroupsDrawn++;
                 }
             } finally {
                 MemoryUtil.memFree(push);
             }
         } catch (RuntimeException | LinkageError error) {
+            this.immediateLastFlushError = describe(error);
+            this.immediateGroupsDiscarded += this.immediateGroups.size();
             record("immediate flush failed: " + describe(error));
         } finally {
             discardImmediateGroups();

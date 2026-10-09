@@ -81,7 +81,21 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **State-driven selection is wired, but the flush is dropping groups: measured, recorded, path still off.**
+- **Correction: the "identical image" measurement was invalid, and the lost-group bug is fixed.**
+  The flush snapshot (`immediate flush snapshot at 500 accepted: flushes=498 drawn=498 discarded=0 noPipeline=0`)
+  shows the dropped groups were not an early return but a stale reference: the textured branch still called a field that
+  no longer exists, so the first textured group threw a `NullPointerException`, the catch skipped the rest of the loop
+  and the pending groups were discarded. With that fixed, **every accepted batch is drawn**.
+  That also invalidates the previous round's headline result: the "mean absolute difference 0.00, 0.0% differing" was
+  measured while almost nothing was being drawn, so it said nothing about correctness. Measured properly now, with all
+  batches drawn and VUID 0: **mean absolute difference 11.87, 34.5% of pixels differing by more than 8, 23.3% by more
+  than 32** against the same configuration with the path off. So the state-driven selection is in place and the pipeline
+  count is right, but the image is still not GL's. The remaining candidates are the ones already listed - the flush
+  running a frame later than the batch, the 24-byte formats that carry a lightmap and are still refused or approximated,
+  texture mirror freshness, and alpha test, which the state records but the pipelines do not implement.
+  The path stays **off by default**; a plain session is unchanged (PASSED, `nativeTerrainVerified True`, VUID 0).
+
+- **Original note on the state wiring (superseded by the correction above).**
   The blend-factor question is settled the right way: each `GlStateManager` blend factor enum constant carries the
   real OpenGL constant (SRC_ALPHA is 770, not an ordinal), so the Mixin reads that `int` field once per constant and
   reports the GL value, and the backend maps it onto `VkBlendFactor` with the correspondence written next to the table.
