@@ -197,10 +197,15 @@ public abstract class WorldVertexBufferUploaderMixin {
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
             // backend was never called, GL drew every batch, and the counters reported zeros while the images matched.
             long batchCallStarted = System.nanoTime();
+            long batchCallCpuStarted = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
             try {
                 accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
             } finally {
                 long batchCallTook = System.nanoTime() - batchCallStarted;
+                long batchCallCpuEnded = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
+                if (batchCallCpuStarted >= 0 && batchCallCpuEnded >= 0) {
+                    org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCpuNanos += batchCallCpuEnded - batchCallCpuStarted;
+                }
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallNanos += batchCallTook;
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount++;
                 if (batchCallTook > org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallWorstNanos) {

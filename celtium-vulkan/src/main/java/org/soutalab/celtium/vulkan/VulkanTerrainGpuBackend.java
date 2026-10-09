@@ -471,6 +471,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The GL query the custom-program shutter makes per batch, timed: it is a synchronising call on some drivers. */
     private long programQueryNanos;
     private int programQueryCount;
+    /** Split of the batch call's remainder: matrices, state capture, state key, and the group's state clone. */
+    private long matrixCopyNanos;
+    private long captureStateNanos;
+    private long stateKeyNanos;
+    private long groupCloneNanos;
+    private int groupCloneCount;
     /** Split of prepareImmediate: pipeline+texture lookup against the pipeline/descriptor branch. */
     private long prepLookupNanos;
     /** Which half of the lookup dominates: the terrain pipeline lookup or the texture registry lookup. */
@@ -837,6 +843,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * that from a real per-call difference.
      */
     public static long batchCallWorstNanos;
+    /**
+     * The batch call measured as CPU time instead of wall time.
+     * <p>
+     * Every part measured inside the call adds up to ~1.1 ms/frame (AMD) and ~3.2 ms/frame (Intel), while the wall time
+     * around the same call is 3.8 / 10.2 ms/frame. If the CPU time matches the parts, the difference is time the thread
+     * spent descheduled - contention with the server thread, the upload thread or the driver - and not work this call
+     * does itself.
+     */
+    public static long batchCallCpuNanos;
+    /** Whether the JVM exposes per-thread CPU time here (it decides whether the split above means anything). */
+    public static final boolean THREAD_CPU_SUPPORTED =
+            java.lang.management.ManagementFactory.getThreadMXBean().isCurrentThreadCpuTimeSupported();
+    /** The thread's CPU time right now, or -1 when unsupported. */
+    public static long threadCpuNanos() {
+        return THREAD_CPU_SUPPORTED
+                ? java.lang.management.ManagementFactory.getThreadMXBean().getCurrentThreadCpuTime() : -1L;
+    }
     public static long batchCallOpeningNanos;
     public static int batchCallOpeningCount;
 
@@ -1873,6 +1896,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // the top third of the frame differing. A white 1x1 mirror leaves the vertex colours as they are.
                 boundTexture = whiteTextureId();
             }
+            long matrixCopyStart = System.nanoTime();
             if (MIRRORED_MATRICES) {
                 System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
                         this.glProjection, 0, 16);
@@ -1880,8 +1904,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.glModelView, 0, 16);
                 this.matricesDirty = false;
             }
+            this.matrixCopyNanos += System.nanoTime() - matrixCopyStart;
+            long captureStart = System.nanoTime();
             int[] state = celtium$captureState();
+            this.captureStateNanos += System.nanoTime() - captureStart;
+            long keyStart = System.nanoTime();
             long stateKey = celtium$stateKey(formatId, state);
+            this.stateKeyNanos += System.nanoTime() - keyStart;
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
             long preflightStart = System.nanoTime();
@@ -1935,7 +1964,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // depth test, depth write, culling and the alpha reference all off - a state-keyed pipeline cache whose
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
+                long cloneStart = System.nanoTime();
                 this.currentGroupState = state.clone();
+                this.groupCloneNanos += System.nanoTime() - cloneStart;
+                this.groupCloneCount++;
                 // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can, and it
                 // has to be counted here rather than where the flag is read for pipeline selection: at flush time the state
                 // belongs to the group being flushed and blending is on for the whole family, which made the first version of
@@ -2849,6 +2881,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " batchCallWorstMillis=" + (batchCallWorstNanos / 1000000L)
                 + " batchCallOpeningMillis=" + (batchCallOpeningNanos / 1000000L)
                 + " batchCallOpeningCount=" + batchCallOpeningCount
+                + " batchCallCpuMillis=" + (batchCallCpuNanos / 1000000L)
+                + " threadCpuSupported=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.THREAD_CPU_SUPPORTED
                 + " prepareImmediateCalls=" + this.prepareImmediateCalls
                 + " prepareImmediateMillis=" + (this.prepareImmediateNanos / 1000000L)
                 + " groupCreateCount=" + this.groupCreateCount
@@ -2857,6 +2891,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " appendMillis=" + (this.appendNanos / 1000000L)
                 + " programQueryCount=" + this.programQueryCount
                 + " programQueryMillis=" + (this.programQueryNanos / 1000000L)
+                + " matrixCopyMillis=" + (this.matrixCopyNanos / 1000000L)
+                + " captureStateMillis=" + (this.captureStateNanos / 1000000L)
+                + " stateKeyMillis=" + (this.stateKeyNanos / 1000000L)
+                + " groupCloneCount=" + this.groupCloneCount
+                + " groupCloneMillis=" + (this.groupCloneNanos / 1000000L)
                 + " prepLookupMillis=" + (this.prepLookupNanos / 1000000L)
                 + " prepTerrainPipelineMillis=" + (this.prepTerrainPipelineNanos / 1000000L)
                 + " prepRegistryMillis=" + (this.prepRegistryNanos / 1000000L)
