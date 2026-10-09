@@ -5771,3 +5771,34 @@ are the ones the previous round established.
 Recorded as open, because the audit item is not closed: the teardown path in `delete()` still destroys directly, and there
 are still no generation-carrying handles, so a descriptor cache can hold a set built on a view that has since been retired.
 Those are the two pieces that remain of S12, and they are named rather than implied.
+
+---
+
+## S12 closed: generation-carrying cache keys, a retired sampler, and nine of nine destroyed
+
+The two pieces left after the retirement queue were the teardown path and the descriptor caches' staleness, and both are
+now done.
+
+The teardown path turned out to be **already retired** - `destroyImageResources`, which `delete()` calls, is the method whose
+three destroys were moved onto the queue - so what was missing there was the **sampler**, and it now goes through the queue
+as well. The backend drains the queue once more at teardown, after `settleGpu` has ended the queue's work, and records how
+many resources that destroyed.
+
+The staleness question is the more interesting half and is the audit's own wording: the caches were keyed on the **view
+handle**, and a driver may hand back the same handle for a new view, in which case a descriptor set built on the retired
+view would be served for the new one. `VulkanGlTexture` now carries a `generation`, bumped in the one place a view is
+created, and exposes `key()` - the view combined with the generation. **Eight lookups** across the four immediate pipelines
+key on `key()`; the descriptor writes still use the real view, which is the only thing the driver accepts.
+
+Measured on a normal run:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED | passes=2173 | taken=547 | dropped=0
+retire=retired=9 flushed=9 pending=0
+```
+
+Nine resources retired, nine destroyed, nothing left pending, and no regression.
+
+Recorded as a distinction rather than as a claim: the generation fix is **correct by construction but has not been exercised**
+- no run has caught a driver reusing a view handle, so this is a fix by reasoning, not by reproduction. It is the right shape
+regardless, and if a future run does catch it, the key is what makes it harmless.

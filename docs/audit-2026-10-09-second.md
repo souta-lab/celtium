@@ -188,9 +188,18 @@ succeeded** (`beginCommands`, after its fence wait). `recreateImageResources` - 
 (`invalidateAll`) and `resize` both run - hands its handles over instead of calling `vkDestroyImageView`,
 `vkDestroyImage` and `vkFreeMemory` immediately. Measured on a normal run: **`retired=6`, `flushed=6`**, exit 0, validation
 clean, 0 messages, fixture PASSED, `immediateTaken=551`, `postAcceptDroppedGroups=0` - the refresh cycle retires one set per
-interval and every one of them is destroyed after an idle. **Open:** the teardown path in `delete()` still destroys directly,
-and there are still no generation-carrying handles - the descriptor caches can hold sets built on views that have been
-retired, which the next round should address.
+interval and every one of them is destroyed after an idle. **The remainder is done.**
+- *Teardown:* the destroys in `destroyImageResources` were already retired through the same queue, the **sampler** is now
+  retired as well, and the backend drains the queue at teardown, after `settleGpu` has ended the queue's work.
+- *Generation-carrying handles:* the texture now carries a `generation` that is bumped whenever its image and view are
+  recreated, and exposes `key()` - the view combined with the generation. The four immediate pipelines' descriptor caches
+  (**eight** lookups) key on `key()` instead of the raw view handle, so a driver that hands back the same handle for a new
+  view cannot resurrect a descriptor set built on the retired one. The descriptor writes still use the real view.
+
+Measured on a normal run: **`retired=9 flushed=9 pending=0`**, exit 0, validation clean, 0 messages, fixture PASSED,
+`immediateTaken=547`, `postAcceptDroppedGroups=0`. Recorded honestly: the generation change is correct by construction but
+**not yet exercised by a test that forces a handle reuse** - no run has observed the failure it prevents, so it is a fix by
+reasoning rather than by reproduction, and that distinction is kept.
 
 ### S13 [P1] the descriptor pool accumulates and the lightmap is not part of the key
 **Partly acted on:** the three immediate pipelines' pools were raised from `maxSets(64)` to 8192, since one set is cached per

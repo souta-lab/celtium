@@ -144,7 +144,7 @@ public final class VulkanImmediateParticlePipeline {
         if (texture.view() == VK_NULL_HANDLE || texture.sampler() == VK_NULL_HANDLE) {
             return fail("texture has no view or sampler");
         }
-        Long existing = this.setsByTextureView.get(Long.valueOf(texture.view()));
+        Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
         if (existing != null) {
             return existing.longValue();
         }
@@ -181,7 +181,7 @@ public final class VulkanImmediateParticlePipeline {
                     .descriptorCount(1)
                     .pImageInfo(image);
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            this.setsByTextureView.put(Long.valueOf(texture.view()), Long.valueOf(set));
+            this.setsByTextureView.put(Long.valueOf(texture.key()), Long.valueOf(set));
             return set;
         } catch (RuntimeException | LinkageError error) {
             return fail(error.getClass().getSimpleName() + ": " + error.getMessage());

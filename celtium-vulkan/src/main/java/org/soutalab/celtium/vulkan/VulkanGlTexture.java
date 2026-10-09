@@ -65,6 +65,14 @@ public final class VulkanGlTexture {
     private static final boolean MIRROR_GL_MIPS = false;
     /** Levels the GL texture reported on the last upload, or 0 to compute them from the size. */
     private int mirroredLevels;
+    /**
+     * Bumped whenever this mirror's image and view are recreated (audit S12).
+     * <p>
+     * A driver may hand back the same view handle for a new view, so caches keyed on the handle alone can serve a
+     * descriptor set built on a view that has been retired. The generation makes the key change even when the handle
+     * does not.
+     */
+    private long generation;
     private boolean levelZeroCompared;
     /** GL's row order is bottom-up and Vulkan's is top-down, so the mirror has to flip. */
     private static final boolean FLIP_ROWS = false;
@@ -267,6 +275,11 @@ public final class VulkanGlTexture {
      *
      * @return the sampler handle
      */
+    /** Identity for caches: the view plus the generation, so a reused handle cannot resurrect a stale entry. */
+    public long key() {
+        return (this.view * 31L) ^ this.generation;
+    }
+
     public long sampler() {
         return sampler;
     }
@@ -305,7 +318,8 @@ public final class VulkanGlTexture {
         destroyStaging();
         destroyImageResources();
         if (sampler != 0L) {
-            vkDestroySampler(context.device(), sampler, null);
+            final long retiredSampler = sampler;
+            VulkanRetireQueue.retire(() -> vkDestroySampler(context.device(), retiredSampler, null));
             sampler = 0L;
         }
         width = 0;
@@ -387,6 +401,7 @@ public final class VulkanGlTexture {
                     .image(image)
                     .viewType(VK_IMAGE_VIEW_TYPE_2D)
                     .format(IMAGE_FORMAT);
+            this.generation++;
             createView.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
             check(vkCreateImageView(device, createView, null, handle), "vkCreateImageView(mirrored texture)");
             view = handle.get(0);

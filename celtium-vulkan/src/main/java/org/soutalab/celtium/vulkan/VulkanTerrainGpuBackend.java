@@ -2129,6 +2129,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // reload and world-leave paths. Ending the queue's work first is the difference between freeing a resource and
         // pulling it out from under the GPU.
         settleGpu("backend delete");
+        // Teardown: the device has been settled above, so anything still retired can be destroyed now.
+        int drained = VulkanRetireQueue.flush();
+        if (drained > 0) {
+            record("teardown destroyed " + drained + " retired resources");
+        }
         releaseRetiredImmediateGroups();
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
         uninstall();
