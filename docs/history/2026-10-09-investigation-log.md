@@ -7873,3 +7873,16 @@ has been seen to upload is now measured **accepted**: 1, 4, 5, 6, 7, 8 and 9, wi
 
 The end-of-run count is now part of the report, so "the hook never fired" and "the run never got there" are distinguishable
 without a second run - which is exactly the ambiguity that cost two rounds of moving constants around.
+
+---
+
+## The Intel recipe configuration is borderline against the harness budget, measured twice
+
+The same configuration that completed at 720 seconds earlier timed out at 720 seconds here, so the honest statement is a
+range rather than a result: on Intel with JEI and the recipe screen, the fixture sometimes finishes inside 720 seconds and
+sometimes does not, and the difference is not in the code - the same jar completed and timed out on consecutive attempts.
+
+What a timed-out run still gives is the arrival census, because it prints every five hundred arrivals rather than at the end.
+The run reported its census before the harness cut it off, which is the whole reason the census is incremental and the fixture's
+report is not. That is now the second time a partial run has produced usable evidence, and it is a property worth keeping rather
+than a lucky accident.
