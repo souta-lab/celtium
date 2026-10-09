@@ -7886,3 +7886,26 @@ What a timed-out run still gives is the arrival census, because it prints every 
 The run reported its census before the harness cut it off, which is the whole reason the census is incremental and the fixture's
 report is not. That is now the second time a partial run has produced usable evidence, and it is a property worth keeping rather
 than a lucky accident.
+
+---
+
+## The partial run turned out to be the strongest measurement yet: 674,500 uploads, zero unmapped
+
+The census from the timed-out Intel run, printed incrementally before the harness cut it off:
+
+```
+byFormat=[0:0 1:5787 2:11555 3:0 4:431617 5:5773 6:195714 7:23896 8:128 9:30 10:0]   total=674500
+```
+
+**Six hundred and seventy-four thousand uploads, and format 0 is zero.** Not one of them was unrecognised by the mapping. That
+is two orders of magnitude more content than the ordinary runs carry - and it is the recipe screen that produces it:
+**431,617 of the item/block layout**, every item drawn by the mod's own screen, plus 195,714 of the sky layout over the frames
+the run managed.
+
+So the strongest evidence for the mapping is not from the tidy runs but from the run that timed out, because a screen full of
+items is a stress test and the census is incremental. It also closes the item layout question by volume rather than by
+presence: the layout that read zero for most of this project's runs has now been seen 431,617 times in a single partial run, all
+of it mapped.
+
+What this does not give is the acceptance counts for that run - they are in the fixture's report, which the timeout prevented -
+so the honest statement is about arrivals here and about acceptances from the ordinary runs, where the two agreed exactly.
