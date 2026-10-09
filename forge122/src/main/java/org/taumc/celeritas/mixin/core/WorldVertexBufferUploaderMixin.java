@@ -43,12 +43,17 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static final Map<VertexFormat, Integer> celtium$formatIds =
             Collections.synchronizedMap(new WeakHashMap<VertexFormat, Integer>());
 
-    @Inject(method = "func_181679_a", at = @At("HEAD"), require = 0)
+    // cancellable = true is what makes info.cancel() mean anything: with it false - the default - cancel() throws, and
+    // this injector's broad catch swallowed that exception, so the original GL draw ran for every batch the backend had
+    // already accepted. The Vulkan path and the GL path drew the same geometry, the images matched, and nothing in the
+    // comparisons could tell the difference. Counts of "accepted" batches were counts of intent, not of replacement.
+    @Inject(method = "func_181679_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$offerBatch(BufferBuilder buffer, CallbackInfo info) {
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend == null || buffer == null) {
             return;
         }
+        boolean accepted = false;
         try {
             VertexFormat format = celtium$vertexFormat(buffer);
             int stride = format == null ? 0 : format.getSize();
@@ -87,11 +92,20 @@ public abstract class WorldVertexBufferUploaderMixin {
                 }
                 System.out.println("celtium composite caller: " + trace);
             }
-            if (backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode)) {
+        } catch (Throwable ignored) {
+            // Never let the offer break the draw: the original body stays in charge when anything goes wrong. The
+            // cancellation itself is outside this catch on purpose - swallowing it was the defect this comment used to
+            // hide.
+            return;
+        }
+        if (accepted) {
+            // The original body resets the builder after uploading. Cancelling skips that, so it is done here; without
+            // it Minecraft would re-upload the same vertices on the next draw.
+            try {
+                buffer.reset();
+            } finally {
                 info.cancel();
             }
-        } catch (Throwable ignored) {
-            // Never let the offer break the draw: the original body stays in charge when anything goes wrong.
         }
     }
 

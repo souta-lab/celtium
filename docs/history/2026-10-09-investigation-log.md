@@ -2578,3 +2578,40 @@ The next step follows the pattern that has worked: bisect the particle scene by 
 in the script** before each run. Format 5 is the particle family in the acceptance mask, so a mask of 5 alone against a mask
 of 5 excluded is the comparison that names the pipeline - and the same-revision reference has to be captured for each
 configuration, since the fixture's scene is part of the instrument.
+
+---
+
+## The second audit's A: the injector was never cancellable, and the fix exposes an unexplained zero
+
+The finding is confirmed from the code and it invalidates the project's own account of what its comparisons showed:
+`WorldVertexBufferUploaderMixin`'s injector was declared without `cancellable = true`, and its `info.cancel()` sat inside a
+`catch (Throwable ignored)`. A cancel on a non-cancellable callback throws; the throw was swallowed; **the original GL draw
+ran anyway**. Vulkan and GL therefore drew the same geometry, the two images agreed to 0.00, and no measurement in this log
+distinguished "Vulkan replaced GL" from "Vulkan did nothing and GL drew everything".
+
+The fix is in: `cancellable = true`, the acceptance recorded in a flag, the broad catch returning without swallowing the
+cancellation, and - since cancelling skips the rest of the vanilla method - a `buffer.reset()` before `info.cancel()`,
+matching what the original does after its upload.
+
+The first run after the fix reports something the account has to stop and look at:
+
+```
+fixture PASSED | nativeTerrainVerified True | 1644 passes
+water scene against the same-revision reference: mean 0.00
+immediateTaken=0 | immediateFlushes=0 | immediateRefusal=none
+```
+
+**`immediateTaken=0`.** Nothing was accepted, so GL drew the frame - which explains the 0.00 without saying anything about
+the Vulkan path. Before the fix the same scene reported thousands taken, which is consistent with the batches being
+accepted and then drawn twice rather than once. Why acceptance is now zero is not established, and the possibilities are
+narrow and testable: an early return that is now reached on every batch, an exception swallowed elsewhere in the offer, or
+a counter read at a moment before acceptance.
+
+Until that is read, **no comparison in this log should be treated as evidence about the Vulkan path** - which is what the
+audit said, and it is now the project's own position too: the earlier results are experiments in which GL was drawing the
+same content, and the independent count the audit asks for (zero GL calls after an accepted batch, one after a refused one)
+is what turns the next measurement into evidence.
+
+The audit's B and C are recorded in the audit file with the code facts they rest on: the present path ignores the bridge's
+semaphores (off by default, which is why it was not visible), and the comparison tool keys on luminance rather than the
+maximum channel, so it cannot see a single-channel difference at all.
