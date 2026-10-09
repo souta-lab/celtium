@@ -630,7 +630,39 @@ Vulkan資源の生成は種別数に比例していない。ただしこれら�
 - 計器の現状: `handoff detail` は**CPU API時間**のみ（≈128 µs/handoff）で、この25 msを説明しない。
   **ブリッジのGPU時間を計時する計器が無い**ことが次の不足。
 
-**次の一手**: (1) ブリッジの色blit-in／深度変換／色blit-out にそれぞれ timestamp を打ち、1フレームあたりの
+**原因の所在を特定（このターン・既存スイッチの行列）**: 新しい計器を足す前に、既にある切り替えで25 msを分割した。
+
+| run | worldFrames | **p50** | p99 |
+|---|---|---|---|
+| native（基準） | 240 | **43.32 ms** | 48.5 |
+| **`-Dceltium.vulkan.immediate=false`** | **569** | **16.33 ms** | 22.2 |
+| `-Dceltium.vulkan.mirrorRefreshFrames=8` | 260 | 40.18 ms | 47.6 |
+| `-Dceltium.vulkan.presentFromComposite=true` | 287 | 36.30 ms | 41.1 |
+| `referenceRender=true`（同一jar・GL経路） | 580 | 16.15 ms | 17.3 |
+| celeritas 参照jar | 580 | 16.18 ms | 17.6 |
+
+- **`immediate=false` で 43.32 → 16.33 ms**＝**27 msのギャップは即値（immediate）経路に全てある**。
+  地形パス（2.2 ms）は正常で、ミラー（`mirrorRefreshFrames=8` でほぼ変わらず）も present も主因ではない。
+- **1フレームあたりの回数**（レポートから、フレーム数で割った値）:
+
+| 指標 | native | immediate=false |
+|---|---|---|
+| `flushCount` | 4.8/フレーム | 4.8/フレーム |
+| `clearOrderFlushes` | 5.8/フレーム | 5.9/フレーム |
+| `orderPreservingFlushes` | **1.8/フレーム** | **0/フレーム** |
+| `immediateSubmittedBatches` | **13.0/フレーム** | **0/フレーム** |
+
+  → **ハンドオフは約10.6回/フレーム**（4.8＋5.8、`orderPreserving` を含めると12.4）。27 ms ÷ 10.6 ≒
+  **1回あたり約2.5 ms**。これは「全画面blit＋深度変換＋同期」を毎回行っていることと整合する。
+- **注意（A/Bの限界）**: `immediate=false` は即値バッチを**GLに描かせる**（ネイティブが断る）ので、16.33 ms は
+  「地形だけネイティブ」の値であり、即値経路の**置き換えとして等価**ではない。言えるのは
+  **「我々の即値経路が、置き換えているGL描画より約27 ms/フレーム高くついている」**という点。
+
+**次の一手**: (1) ハンドオフ回数を減らす（同一フレーム内の連続パスをまとめる。`orderPreserving`/`clearOrder` の
+方針を保ったまま統合できるか）、(2) 1回のハンドオフの内訳（色blit-in／深度変換／色blit-out／同期）を timestamp で
+分けて、2.5 ms のどこが重いかを出す。
+
+**（旧メモ）** 次の一手: (1) ブリッジの色blit-in／深度変換／色blit-out にそれぞれ timestamp を打ち、1フレームあたりの
 GPU時間と待ち時間を出す（既存の timestamp 機構が使える）、(2) `referencRender` と native の中間
 （例: 深度変換だけ止める）で、どの段が25 msを占めるかを切り分ける。
 
