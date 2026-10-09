@@ -120,6 +120,9 @@ import static org.lwjgl.vulkan.VK11.*;
  * destroyed here. Everything else this class creates is destroyed by {@link #delete()}.
  */
 public final class VulkanFrameTarget {
+    /** Lab switch: leaves the terrain's depth out of the write-back to OpenGL, to measure whether GL needs it. */
+    private static final boolean SKIP_DEPTH_RETURN = Boolean.getBoolean("celtium.vulkan.skipDepthReturn");
+
     /**
      * The layout the shared colour image has while the caller renders, and therefore the {@code initialLayout} and
      * {@code finalLayout} the caller's colour attachment must declare.
@@ -681,7 +684,13 @@ public final class VulkanFrameTarget {
                     GL_NEAREST);
             long afterColor = System.nanoTime();
             this.tColorOut += afterColor - step;
-            convertDepth(depth.glTexture, gameFbo);
+            // Lab switch: does anything on the OpenGL side actually need the terrain's depth back? The handback exists
+            // so that what GL draws after this point (the hand, the GUI, entities in some orders) is depth tested
+            // against the terrain. If the image does not change without it, the depth return is one of the bridge
+            // operations that a native frame could drop - which is what completion condition (b) needs to know.
+            if (!SKIP_DEPTH_RETURN) {
+                convertDepth(depth.glTexture, gameFbo);
+            }
             this.tConvertOut += System.nanoTime() - afterColor;
             glCheck("endFrame: RGBA8 colour return and D32 to D24 depth conversion");
         }
