@@ -329,6 +329,10 @@ GL の元 draw が取り消されているため返す先が無い。catch を**
 結果: `failSubmits=2` は exit 1 / 24.2s / report あり、`failIdleAfter=60` は exit 1 / 26.8s / report あり
 （いずれも nativeTerrainVerified=false・vulkanErrors>0、validationClean は true）。
 通常run exit 0 / mid (136.5,140.9,130.4) / PASSED、AMD・Intel target受入 exit 0。
+**両GPU受入**: `failSubmits=2` は AMD exit 1/24.2s・Intel exit 1/24.6s、`failIdleAfter` は AMD exit 1/26.8s(N=60)・
+Intel exit 1/24.4s(N=20) でいずれも clean / FAILED / report あり / bounded。`failIdleAfter=60` は境界的
+（Intel は passes=59 で発火せず）なのでテストは N=20 を使う。`failImmediateSubmits=3` は注入条件が成立せず
+**未発火＝未検証**（fixture はリトライを期待しているが発生していない）。
 
 **失敗経路（submit失敗・解決済み）**: frame を開く4系統のうち失敗時に開いたまま残るものがあったため `VulkanFrameTarget` を
 自己修復にした（beginFrame は前frameを放棄して計数／endFrame は放棄済みなら no-op／abandonFrame はGPU作業なし）。
