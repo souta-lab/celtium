@@ -7799,3 +7799,22 @@ One honest gap: the report's `jeiRecipeOpened` reads `None` in this run where th
 not carry a recipe-screen field under any other name. That is a **reporting** question rather than a drawing one - the run
 completed with validation silent and the JEI screen path exercised - and it is recorded as the next thing to check rather than
 claimed as verified.
+
+---
+
+## Correction to the paragraph above: the Intel JEI screen did open
+
+The record was written before the report was read properly, and the report has the field:
+
+```
+jeiScreenOpenedAtTick = 170
+```
+
+So the **JEI screen path ran on Intel** - the mod's own screen opened at tick 170 and everything after it drew with validation
+silent and the run completing. What is genuinely absent is a field for the **recipe** screen specifically: the AMD run's
+`jeiRecipeOpened=True` came from an earlier report shape, and the current report carries only the screen tick. That is a
+reporting gap in the fixture, not a gap in the drawing, and it is the honest form of the remaining item.
+
+Two corrections in one round, then, and both of the same kind: a claim written from the earlier reading rather than from the
+current one. The habit that avoids them is the one this project keeps rediscovering - read the artefact that contains the
+answer, not the memory of a similar artefact.
