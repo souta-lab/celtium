@@ -26,7 +26,12 @@ public abstract class FramebufferMixin {
         try {
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null) {
-                backend.bindFramebuffer(System.identityHashCode(this));
+                // The main framebuffer is the only target the hybrid can honour: everything it draws goes into the shared
+                // image, so a batch issued for another target cannot be drawn correctly and must be refused before
+                // acceptance rather than taken and then dropped (audit S10/S14).
+                net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+                boolean main = mc != null && mc.getFramebuffer() == (Object) this;
+                backend.bindFramebuffer(System.identityHashCode(this), main);
             }
         } catch (Throwable ignored) {
             // A hint must never break the frame.

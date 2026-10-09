@@ -417,6 +417,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int snapshotCaptures;
     private int snapshotServedCaptures;
     private int outsideWorldPassRefusals;
+    private boolean currentRenderTargetIsMain = true;
+    private int offTargetRefusals;
+    private int passBoundaryFlushes;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
@@ -902,8 +905,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    public void bindFramebuffer(long targetIdentity) {
+    public void bindFramebuffer(long targetIdentity, boolean isMain) {
+        if (targetIdentity != this.currentRenderTarget && this.currentImmediateMesh != null) {
+            // A pass change is an ordering boundary: whatever is pending belongs to the pass that is ending, so it is closed
+            // here and drawn before the new pass's work rather than merged with it.
+            closeCurrentImmediateGroup();
+            this.passBoundaryFlushes++;
+        }
         this.currentRenderTarget = targetIdentity;
+        this.currentRenderTargetIsMain = isMain;
     }
 
     public void viewport(int x, int y, int width, int height) {
@@ -982,6 +992,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // original GL draw stays in charge. Taking it and then failing later is the failure mode the audit lists as S14.
             this.immediateLastRefusal = "outside the world pass or without a snapshot";
             this.outsideWorldPassRefusals++;
+            return false;
+        }
+        if (!this.currentRenderTargetIsMain) {
+            // The hybrid draws into the shared image, which stands in for the main framebuffer only. A batch issued for
+            // another render target cannot be honoured, so it is refused here, before acceptance, and GL draws it - which
+            // is the behaviour the audit's S10 acceptance asks for instead of viewing it in the wrong place.
+            this.immediateLastRefusal = "not the main framebuffer";
+            this.offTargetRefusals++;
             return false;
         }
         this.immediateBatchesOffered++;
@@ -1691,7 +1709,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateGroupsClosed=" + this.immediateGroupsClosed
                 + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
-                + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
+                + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals
+                + " offTargetRefusals=" + this.offTargetRefusals + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls

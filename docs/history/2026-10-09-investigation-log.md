@@ -4182,3 +4182,36 @@ Read as evidence rather than as progress:
 The local transforms are preserved because the snapshot **seeds the mirror** rather than replacing batch matrices: the per-model, per-entity and per-TESR pushes, translates, rotates and pops still accumulate through the hooked calls on top of the camera base. Copying the snapshot into each batch would have drawn every model at the camera origin, which is the failure the user named.
 
 **Recorded as incomplete, per the same instruction:** one `glGetFloatv` read per frame remains, at the camera boundary, and it is what the snapshot is made of. The per-batch reads are gone; the per-frame one is not, and it should be replaced by computing the camera transform from the view entity in vanilla's order before this can be called GL-free.
+
+---
+
+## The two-target fixture passes: off-target batches are refused before acceptance, and pass changes flush
+
+Two drawing-path changes, both in the offer/flush path rather than in an instrument:
+
+| Change | Where | What it does |
+|---|---|---|
+| The framebuffer hook reports whether the bound target is the game's **main** framebuffer | `FramebufferMixin` | The shared image stands in for the main framebuffer only, so that is the only target a batch can be drawn for |
+| Off-target batches are **refused before acceptance** | `submitImmediateBatch` | With the reason `not the main framebuffer`, so GL draws them where they belong |
+| A **pass change flushes the pending group** | `bindFramebuffer` | Whatever is pending belongs to the pass that is ending; it is closed at the boundary instead of merging into the next pass |
+
+Measured, both runs on hardware:
+
+| Run | Status | Accepted | Served by snapshot | Off-target refusals | Pass-boundary flushes | Refusals outside the pass |
+|---|---|---|---|---|---|---|
+| normal world | **PASSED** | 573 | 573 | 0 | 0 | 7,139 |
+| **two-target fixture** | **PASSED** | 564 | 564 | **564** | **10** | 8,804 |
+
+Three things this establishes, each of which was a failure before:
+
+- **the two-target fixture passes**, where two rounds ago it failed the run and suppressed the capture. It passes because its
+  second-target batches are refused instead of being drawn into the shared image as if the target did not matter;
+- **every accepted batch in both runs is served by the snapshot** (`taken == served`), so no batch anywhere fell through to
+  the per-batch `glGetFloatv` pair;
+- **the pass boundary is honoured**: ten flushes happened exactly where the target changed, which is the ordering the audit's
+  S10 acceptance asks for, demonstrated in the fixture that crosses two targets.
+
+What is still not right and is recorded as such: the two-target fixture's frame differs from the *hidden-GUI* reference by
+42.92%, which is expected rather than alarming - the draw-test runs deliberately leave the HUD visible, so the comparison is
+between two different configurations and not a regression measure. A draw-test reference with the same configuration is what
+that fixture needs before its image can be used as evidence.

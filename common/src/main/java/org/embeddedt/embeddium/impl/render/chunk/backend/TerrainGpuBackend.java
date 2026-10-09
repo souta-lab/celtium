@@ -160,8 +160,12 @@ public interface TerrainGpuBackend {
     default void captureWorldSnapshot() {
     }
 
-    /** The render target a batch belongs to; identity only, as a pass discriminator (audit S10). */
-    default void bindFramebuffer(long targetIdentity) {
+    /**
+     * The render target a batch belongs to; identity only, as a pass discriminator (audit S10).
+     *
+     * @param isMain whether this is the game's main framebuffer, the only target the shared image can honour
+     */
+    default void bindFramebuffer(long targetIdentity, boolean isMain) {
     }
 
     /** The viewport in effect, which the group key also needs (audit S10). */
