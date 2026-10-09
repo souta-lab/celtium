@@ -1816,7 +1816,36 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   **深度の書き戻しを外せる**（Intel で 3.3 ms/frame が戻る）。これは goal が名指しする本体機能
   （`ShaderGroup`・spectator 効果・entity outline）そのものである。
 
-**次の一手**: (1) `ShaderGroup`/`Shader`/`Framebuffer` を読み、パスごとに必要な状態（テクスチャ・uniform・
+**ソースと実測で前ターンの説明を否定し、深度の消費者を確定（このターン）**:
+
+- **ソースが否定したこと**: `net.minecraft.client.shader.Shader.preRender()` は
+  **`GlStateManager.disableBlend()` と `disableDepth()`** を呼び、`render()` は `depthMask(false)`→`depthMask(true)` で
+  囲む。つまり **ShaderGroup のパスは深度テストしない**。前ターンに「合成パスが GL の深度でテストする」と書いたのは
+  **誤り**で、ソースがそれを否定している（記録として残す）。
+- **27 画素の中身（既存 run の差分を画素単位で見た）**: 差は**帯状に散った単一画素**で、
+  位置は **x 245..1056 / y 509..654**、値は **±1〜3 の微小差**（例: keep=(122,104,146) 対 skip=(122,105,149)）。
+  シルエットのクリッピングではなく、**ぼかしが伝播させた線形な効果**の形である。
+- **決定的な数字は既存の計器にあった**（`acceptedByFormat`、spider 場面 562 frames）:
+
+```
+1:5, 2:0, 3:0, 4:0, 5:545, 6:3718, 7:3236, 8:0, 9:66      （通常場面も 8:0）
+```
+
+  **format 8（ENTITY）は全場面で 0**＝**実体モデルは一度も native に入っていない**。したがって実体は **GL が描き**、
+  その深度テストは GL の深度バッファ（＝書き戻した地形の深度）に対して行われる。**深度の書き戻しが要る理由はこれ**で、
+  spider 場面の 27 画素は**実体と地形の深度関係がぼかしで広がったもの**である。
+- **併せて分かったこと**: format 2 も 0（受理も拒否も 0）。つまり format 2 のバッチは**受理経路を通らず**、
+  round 524 の判定（画面宛か、バインド中 FBO の色をサンプルするか）で **present 経路側に振られている**。
+- **設計**: 深度返却を外す道は **entity（format 8）を native にすること**。実体が program 付きで描かれているなら
+  遮断に当たっているので、**entity 用の program を native で用意する**（もしくは program 遮断の条件を
+  entity 用に絞る）必要がある。ShaderGroup のパス（full-screen クワッド）は**深度テストしない**ので、
+  深度返却とは切り離して考えてよい。
+
+**次の一手**: (1) entity（format 8）のバッチが**どの理由で拒否されているか**を計器で確かめる
+（program 遮断ならその program id と format 8 の組が出るはず）、(2) entity を native にする最小の道を選ぶ、
+(3) それが通ったら `skipDepthReturn` を既定にして spider 場面の差が床（0画素）以下であることを両GPUで受入する。
+
+**（旧メモ）** 次の一手: (1) `ShaderGroup`/`Shader`/`Framebuffer` を読み、パスごとに必要な状態（テクスチャ・uniform・
 ブレンド・深度テストの有無）を表にする、(2) native パスとして `entity_outline`→`blur`×2→合成を実装し、
 spider 場面で **`shaderProgramRefusals=0`** かつ **`skipDepthReturn` の差が床（0画素）以下**を両GPUで受入する、
 (3) それが成立したら深度返却を既定で外し、Intel 25.6 ms / AMD 16.1 ms を受入にする。
