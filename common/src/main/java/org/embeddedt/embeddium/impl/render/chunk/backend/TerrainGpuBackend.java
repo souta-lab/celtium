@@ -79,6 +79,14 @@ public interface TerrainGpuBackend {
     default void multiplyMatrix(java.nio.FloatBuffer buffer) {
     }
 
+    /**
+     * Mirrors {@code Project.gluPerspective(fov, aspect, near, far)}, which builds the world's projection and
+     * installs it with {@code GL11.glFrustum} - it never passes through {@code GlStateManager}, so a Mixin on that
+     * class alone cannot see it.
+     */
+    default void perspective(float fovDegrees, float aspect, float near, float far) {
+    }
+
     default void popMatrix() {
     }
 

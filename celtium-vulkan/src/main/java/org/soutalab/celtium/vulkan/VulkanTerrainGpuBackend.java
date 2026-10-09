@@ -429,6 +429,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     @Override
+    public void perspective(float fovDegrees, float aspect, float near, float far) {
+        if (aspect == 0.0f || near == far) {
+            return;
+        }
+        double f = 1.0 / Math.tan(Math.toRadians(fovDegrees) / 2.0);
+        float[] frustum = new float[16];
+        frustum[0] = (float) (f / aspect);
+        frustum[5] = (float) f;
+        frustum[10] = (far + near) / (near - far);
+        frustum[11] = -1.0f;
+        frustum[14] = (2.0f * far * near) / (near - far);
+        // glFrustum multiplies, so the mirrored projection stack must multiply too.
+        int mode = this.immediateState.matrixMode();
+        this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        this.immediateState.multiplyMatrix(frustum);
+        this.immediateState.matrixMode(mode);
+        this.immediateStateCalls++;
+    }
+
+    @Override
     public void multiplyMatrix(java.nio.FloatBuffer buffer) {
         this.immediateState.multiplyMatrixBuffer(buffer);
         this.immediateStateCalls++;

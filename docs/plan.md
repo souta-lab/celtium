@@ -81,7 +81,19 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Immediate batches are drawn by Vulkan and still invisible: the projection is not mirrored.** Three fixes were
+- **Immediate batches are drawn by Vulkan and still invisible: the world projection is set through direct GL
+  calls.** The projection Minecraft draws the world with is built by `org.lwjgl.util.glu.Project.gluPerspective` and
+  installed with `GL11.glFrustum` - it never passes through `GlStateManager`, so the state wrapper's Mixin cannot see
+  it. A Mixin now targets that GLU class **by name** (`@Mixin(targets = "org.lwjgl.util.glu.Project")`, so no build
+  dependency on LWJGL 2's utility jar is added) and multiplies the mirrored projection stack by the same frustum
+  matrix, with `require = 0` and an exception guard. It lands cleanly (run PASSED, draws continue:
+  `immediateTaken=595`, `immediateFlushes=548`) but the quad is still not visible, which points at the same bypass one
+  level lower: `EntityRenderer` also calls `GL11.glLoadIdentity`/`glMatrixMode` directly around it, so the mirrored
+  projection is multiplied onto a stack that never saw the identity load. **This is precisely the class of call the
+  direct-GL compatibility layer (stage 6) has to cover**, and it is now the concrete next step: mirror the handful of
+  direct `GL11` matrix calls at that level (targeted, `require = 0`, no signature changes).
+
+- **Original note (superseded by the finding above).** Three fixes were
   made and measured in sequence - matrix *contents* mirrored (translate/rotate/scale/ortho/loadIdentity/matrixMode/
   multMatrix), the matrices captured at *submission* time rather than at flush time (the flush runs a frame later,
   when the live state has moved on), and OpenGL's clip-depth range remapped to Vulkan's (the same remap the terrain
