@@ -170,11 +170,21 @@
 - したがって **0.6 ≈ 朝のlightmap 0.61 × 正午の0.98** となり、**メッシュ構築時にlightmap値が頂点色 `a_Color` へ
   焼き込まれ、以後chunkが再構築されないため朝の明るさのまま固定されている**という説明が測定値と一致する。
 
-**次の一手（具体）**: fixture に「正午に固定した後で `mc.renderGlobal.loadRenderers()` を1回呼ぶ」実験を足し、
-地形が明るくなるかを測る。明るくなれば焼き込みが確定するので、mesh builder（頂点色の合成箇所）から
-lightmap/light値の乗算を取り除き、lightmapはshaderの `u_LightTex` だけで適用する。明るくならない場合は
-頂点属性 `a_LightCoord` のpackingを上流の `block_layer_opaque.vsh` と突き合わせる。この実験は
-priority 6 の reload 経路の確認も兼ねる。
+**「焼き込み」仮説は実験で反証された**（`p32-reload-r418`, `-Dceltium.validation.reloadAtTick=120`）:
+正午固定後に `renderGlobal.loadRenderers()` で全chunkメッシュを再構築しても地形の帯は
+**79.6 / 85.5 / 75.4 で完全不変**（reload無しと同一）。したがって頂点色へのlightmap焼き込みではない。
+
+追加の測定:
+
+| 指標 | 値 |
+|---|---|
+| 回帰 fit（地形帯, 緑） | `y ≈ 0.42x + 20`、残差 sd ≈ 19-20（単純な乗算ではない） |
+| 高周波エネルギー（地形帯, 緑） | 参照 7.1 / 候補 **5.5**（候補が約22%滑らか＝mip/補間の差） |
+
+**次の一手（具体・更新）**: shaderコメント（round 267）が示すとおり「mesh builderが頂点色に何を詰めるか」を
+上流checkoutと**直接**比べる。両buildで同一section・同一faceの地形頂点を数点dumpし、`a_Color` と `a_LightCoord` の
+実値をdiffする（推測をやめる）。同時に `v_MaterialMipBias` の値を確認する（候補が22%滑らかなため）。
+残っている候補は (a) 頂点色の合成（tint × shade × AO）、(b) `a_LightCoord` のpacking、(c) mip bias。
 
 ## 8. 第3回監査の最終追補
 

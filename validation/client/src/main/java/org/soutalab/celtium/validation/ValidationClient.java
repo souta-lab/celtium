@@ -81,6 +81,7 @@ public final class ValidationClient {
     private Field flickerDX;
     private boolean flickerFieldsResolved;
     private boolean flickerPinned;
+    private boolean reloadDone;
     private final boolean drawTestQuad = Boolean.getBoolean("celtium.validation.drawTestQuad");
     private int testQuadFrames;
     private final boolean drawBlockQuad = Boolean.getBoolean("celtium.validation.drawBlockQuad");
@@ -994,6 +995,15 @@ public final class ValidationClient {
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
                 flickerPinned = pinLightmapFlicker(mc);
                 mc.world.setWorldTime(PINNED_WORLD_TIME);
+                // Rebuilding every chunk mesh once, after the world time is pinned, answers a question the frame alone
+                // cannot: if the terrain brightens, the light level was baked into the per-vertex colour when the mesh was
+                // built and is never refreshed while that mesh lives, rather than the light map texture being wrong.
+                int reloadAtTick = Integer.getInteger("celtium.validation.reloadAtTick", 0).intValue();
+                if (reloadAtTick > 0 && worldTicks == reloadAtTick && !reloadDone) {
+                    reloadDone = true;
+                    mc.renderGlobal.loadRenderers();
+                    report.addProperty("renderersReloadedAtTick", worldTicks);
+                }
             }
         } catch (Throwable error) {
             fail(mc, error);

@@ -125,6 +125,10 @@ PNGは `screenshots/celtium-command-buffer-secondary-depth.png`。
 **AO表は上流と完全一致**、shaderは `a_Color * lightColor` のみ。測定値 0.6 ≈ 朝のlightmap 0.61 × 正午0.98 から、
 **メッシュ構築時にlightmapが頂点色へ焼き込まれている**可能性が高い（chunkは再構築されないので朝の明るさで固定）。
 
+**「メッシュ構築時にlightmapが焼き込まれる」仮説は実験で反証**（`-Dceltium.validation.reloadAtTick=120` で
+正午固定後に全chunkを再構築しても地形帯は 79.6/85.5/75.4 で完全不変）。回帰fitは `y ≈ 0.42x + 20`・残差sd≈19で
+単純な乗算ではなく、高周波エネルギーは参照7.1に対し候補5.5（約22%滑らか＝mip/補間の差）。
+
 診断用に追加したもの: `-Dceltium.vulkan.dumpTexturesEvery=true`（mirrorのdumpを毎回上書き＝最後のアップロードが見える）、
 fixtureの `gl-lightmap-live.png`（GLの実lightmapをcapture時に読む）、`scripts/run-gl-comparison.sh`。
 
@@ -141,9 +145,9 @@ fixtureの `gl-lightmap-live.png`（GLの実lightmapをcapture時に読む）、
    「次のwindow内で適用するイベント」として保持する、(c) main targetの受理済みgroupはフレーム自身の
    terrain pass で描く（`recordRenderPass` は既に描いている）。いずれも順序の正しさを保つ条件を
    docsへ明記してから実装する）。
-3. **地形の暗さ（優先順位3の本命）**: fixtureに「正午固定後に `renderGlobal.loadRenderers()` を1回呼ぶ」実験を足し、
-   明るくなるかで「頂点色へのlightmap焼き込み」を確定させる。確定したらmesh builderの色合成からlight乗算を外す。
-   明るくならない場合は `a_LightCoord` のpackingを上流 `block_layer_opaque.vsh` と突き合わせる。
+3. **地形の暗さ（優先順位3の本命）**: 焼き込み仮説は反証済み。次は **両buildで同一section・同一faceの地形頂点を
+   dumpして `a_Color` / `a_LightCoord` の実値を上流とdiff**する（shaderコメント round 267 が示す「mesh builderが
+   何を詰めるか」を推測ではなく実測で比べる）。あわせて `v_MaterialMipBias` を確認（候補は22%滑らか）。
 4. **submit後失敗の実機注入**を足す: `submitCommands()` 成功後・`endFrame()` 前に例外を注入する property を作り、
    「二重signalingしない・資源を壊さない・stallして可視に失敗する」ことを1 run で示す。
 3. **別FBOの depth/clear 依存**を小さな場面で確認する（depth test 有効・clear 後の上書き）。
