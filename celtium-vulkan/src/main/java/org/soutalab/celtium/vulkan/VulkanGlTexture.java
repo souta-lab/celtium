@@ -475,6 +475,11 @@ public final class VulkanGlTexture {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("mirrored texture")) {
+                // Thrown like any other failure on this path: the callers already handle a resource that could not be
+                // built, and the point of the injection is to check that they still do.
+                throw new IllegalStateException("injected allocation failure: mirrored texture");
+            }
             check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(mirrored texture)");
             memory = handle.get(0);
             check(vkBindImageMemory(device, image, memory, 0L), "vkBindImageMemory(mirrored texture)");

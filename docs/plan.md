@@ -1449,7 +1449,30 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - **計器の読み方の訂正**: `swapchainOutOfDate`（summary のフィールド）は**再作成後の新しいインスタンス**を読むため
   0 になる。0 は「out-of-date が起きていない」意味ではない。前ターンはこれを誤読した。
 
-**次の一手**: (1) texture/descriptor/allocation 失敗を両GPUで確認する、(2) minimize 相当（サイズ0や present 失敗）を
+**確保失敗の注入を実装し、受入（このターン）**: ハーネスには submit 失敗と idle 失敗しか無く、**確保失敗を作れなかった**
+（`celtium.vulkan.failImmediateSubmits` は**ソースに存在しない古い名前**で、scripts/docs にだけ残っていた。
+「発火しない」と記録していたのはこれが理由である）。
+
+- 追加: `VulkanAllocationFault`（`-Dceltium.vulkan.failAllocationAt=<n>` で **n回目の確保を失敗させる**）と、
+  **ミラーテクスチャの `vkAllocateMemory`** への適用（最も頻繁な確保＝texture 経路の代表）。失敗は
+  その経路の他の失敗と同じく例外として投げ、呼び出し側の処理をそのまま試す。
+- 受入（`failAllocationAt=3`）:
+
+| run | exit | validationClean | fixture | 注入 |
+|---|---|---|---|---|
+| AMD | **0** | **true** | **PASSED** | `mirrored texture (#3)` ×1 |
+| Intel | **0** | **true** | **PASSED** | `mirrored texture (#3)` ×1 |
+
+  **確保が実際に失敗し（ログに `CELTIUM_ALLOCATION_FAULT`）、それでも完走して exit 0 / validation 0 / PASSED**。
+  ハングもクラッシュも validation エラーも無い＝**失敗が有界に処理されている**。
+- **範囲の明記**: 注入したのは**1箇所**（ミラーテクスチャ）である。`vkAllocateMemory` は他に7箇所あり
+  （frame target / readback / staging / uniform / buffer / host buffer / context staging）、
+  **buffer と descriptor の失敗はまだ注入していない**。「確保失敗を全部確認した」とは言わない。
+
+**次の一手**: (1) `VulkanBuffer` と staging の確保にも同じ注入を入れ、**buffer/descriptor 側の失敗**を受入する、
+(2) minimize 相当（サイズ0や present 失敗）を別途確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) texture/descriptor/allocation 失敗を両GPUで確認する、(2) minimize 相当（サイズ0や present 失敗）を
 別途確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
 
 **（旧メモ）** 次の一手: (1) `forceOutOfDate` を確定的に発火させる（acquire 側と同じ直し方）、(2) その状態で
