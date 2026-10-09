@@ -43,7 +43,7 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class VulkanImmediateTexturePipeline {
     /** {@code POSITION_TEX_COLOR}: 3 floats position, 2 floats texture coordinates, 4 unsigned bytes colour. */
     public static final int VERTEX_BYTES = 24;
-    private static final int PUSH_CONSTANT_BYTES = 128;
+    private static final int PUSH_CONSTANT_BYTES = 132;
 
     private final VulkanContext context;
     private final long renderPass;
@@ -105,7 +105,10 @@ public final class VulkanImmediateTexturePipeline {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                 org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
-        vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, pushConstants);
+        // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
+        // command's stage flags have to cover every stage that reads the range.
+        vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushConstants);
         LongBuffer vertexBuffer = MemoryStack.stackGet().longs(mesh.vertexBuffer());
         vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffer, MemoryStack.stackGet().longs(0L));
         vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer(), 0L, VK_INDEX_TYPE_UINT32);
@@ -220,7 +223,10 @@ public final class VulkanImmediateTexturePipeline {
                     "vkAllocateDescriptorSets(immediate textured)");
             this.descriptorSet = setHandle.get(0);
             VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
-            range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT).offset(0).size(PUSH_CONSTANT_BYTES);
+            // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
+            // stages: declaring it for the vertex stage alone is a shader-interface mismatch.
+            range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                    .offset(0).size(PUSH_CONSTANT_BYTES);
             VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
                     .pSetLayouts(stack.longs(this.descriptorSetLayout))
                     .pPushConstantRanges(range);

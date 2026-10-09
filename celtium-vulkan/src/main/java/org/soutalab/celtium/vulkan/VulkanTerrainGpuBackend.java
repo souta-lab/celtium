@@ -374,7 +374,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final float[] currentGroupModelView = new float[16];
     private boolean currentGroupUsed;
     private int currentGroupFormatId;
-    private int[] currentGroupState = new int[6];
+    private int[] currentGroupState = new int[7];
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
@@ -730,6 +730,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         boolean blend = this.immediateState.blendEnabled();
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
+        float alphaReference = this.immediateState.alphaTestEnabled()
+                ? this.immediateState.alphaFuncReference() : 0.0f;
         return new int[] {
                 blend ? 1 : 0,
                 source < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA : source,
@@ -737,6 +739,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.immediateState.depthTestEnabled() ? 1 : 0,
                 this.immediateState.depthMask() ? 1 : 0,
                 this.immediateState.cullEnabled() ? 1 : 0,
+                Float.floatToIntBits(alphaReference),
         };
     }
 
@@ -1925,7 +1928,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.textureRegistry == null) {
                 this.textureRegistry = new VulkanTextureRegistry(this.context);
             }
-            ByteBuffer push = MemoryUtil.memAlloc(128);
+            ByteBuffer push = MemoryUtil.memAlloc(132);
             try {
                 for (Object[] group : this.immediateGroups) {
                     VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
@@ -1936,6 +1939,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     int[] state = (int[]) group[6];
                     pushMatrixInto((float[]) group[1], push, 0);
                     pushMatrixInto((float[]) group[2], push, 64);
+                    push.putFloat(128, Float.intBitsToFloat(state[6]));
                     if (formatId == 2) {
                         VulkanImmediateTexturePipeline textured =
                                 texturedPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));

@@ -81,7 +81,21 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Alpha test: implemented, measured, reverted because it introduced validation messages.** The corrected order
+- **Alpha test implemented and validation-clean; parity measurement needs repeats to be meaningful.** The four
+  validation messages of the first attempt were `VUID-vkCmdPushConstants-offset-01796`, and the cause was the push
+  constant stage coverage: the range and the `vkCmdPushConstants` call both named the vertex stage only, while the
+  fragment shader reads the alpha-test reference at offset 128. Declaring the range for
+  `VERTEX_BIT | FRAGMENT_BIT` **and** passing both stages in the command fixed it: with the alpha test in place the run
+  is PASSED, `nativeTerrainVerified True`, **VUID 0**, and every accepted batch is drawn.
+  What the measurement cannot yet say is whether it helped. Across runs with the same configuration the mean absolute
+  difference came out at 11.87, 13.79 and 13.99, so the frame is **not identical between runs** - the scene animates
+  enough that a single-run comparison cannot attribute a change of a few points to a code change. The next measurement
+  step is therefore a repeated run (or a fixed-tick capture) with the difference averaged, before any conclusion is
+  drawn about which change closes the gap; the remaining candidates are the flush running a frame later than the batch
+  and the 24-byte formats that carry a lightmap.
+  The path stays **off by default**: the image is still not GL's, so vanilla keeps its own correct output.
+
+- **Original note on the alpha test call site (superseded by the implementation above).** The corrected order
   worked this time - the boundary method was added first, the shared artifact rebuilt, and the method **verified present
   in the jar** (`setAlphaFunc` found in `TerrainGpuBackend.class`) before the Mixin was added. The reference value
   travelled as a fourth push-constant slot at offset 128 (range grown to 132) and both fragment shaders gained the

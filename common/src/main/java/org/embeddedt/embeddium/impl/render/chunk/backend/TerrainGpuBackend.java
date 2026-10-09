@@ -132,4 +132,12 @@ public interface TerrainGpuBackend {
     String getTransferQueueDebugString();
 
     void delete();
+
+    /**
+     * Mirrors {@code GlStateManager.func_179092_a(int, float)}: the alpha comparison and the reference value it is
+     * compared against. Cutout content (leaves, plants, sharp-edged particles) relies on the test, so a pipeline that
+     * ignores it draws those quads opaque.
+     */
+    default void setAlphaFunc(int glFunc, float reference) {
+    }
 }

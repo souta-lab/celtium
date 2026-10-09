@@ -42,6 +42,7 @@ public final class VulkanGlState {
     private boolean texture2dEnabled = true;
     /** The GL name of the bound texture; 0 means none, which is what the immediate path refuses to draw with. */
     private int boundTextureName;
+    private float alphaFuncReference = 0.1f;
     private int shadeModel = SHADE_SMOOTH;
     private float colorRed = 1.0f;
     private float colorGreen = 1.0f;
@@ -274,6 +275,15 @@ public final class VulkanGlState {
 
     public void depthMask(boolean mask) {
         this.depthMask = mask;
+    }
+
+    /** The reference value of the alpha test, as the fragment shader compares against it. */
+    public void alphaFuncReference(float reference) {
+        this.alphaFuncReference = reference;
+    }
+
+    public float alphaFuncReference() {
+        return this.alphaFuncReference;
     }
 
     public boolean cullEnabled() {
