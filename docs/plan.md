@@ -71,6 +71,12 @@ Kept separate on purpose - terrain success and present success are different thi
   `immediateRefusal=no_pipeline_yet_for_VertexFormat`, i.e. the batches really arrive and are refused with a stated
   reason while the original GL body stays in charge (PASSED, no validation message, frame unchanged). The buffer's
   private fields are read reflectively so no Minecraft signature changes and the byte buffer object is untouched.
+- **Stage 4/5 verification assets.** `docs/test-worlds.md` records candidate exhibit worlds for the breadth
+  checklists, with the rule that they run in isolated instances and never replace the deterministic parity fixture.
+  The first entry is QMAGNET's Test Map (shared as reference information, authored for 1.12/1.12.1, **not verified on
+  1.12.2/Cleanroom, not downloaded**), which exhibits blocks, mobs, items, particles, biomes and a day/night toggle -
+  the content classes stages 4 and 5 are about.
+
 - **Stage 5 capture evidence (mod-style drawing in a Forge event).** The validation fixture now has a
   `RenderWorldLastEvent` handler that draws through `Tessellator`/`BufferBuilder` and `GlStateManager` exactly as a
   content mod does, with no Celtium-specific call, gated behind `-Dceltium.validation.drawTestQuad=true` so reference
