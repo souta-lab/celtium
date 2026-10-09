@@ -46,6 +46,29 @@ import java.util.List;
 import java.util.Map;
 
 public class VintageBlockRenderer {
+
+    /** Diagnostic: the brightness the colour writer receives per vertex; it is folded into the vertex colour. */
+    private static final boolean BRIGHTNESS_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.terrain.brightnessDiagnostics");
+    private static final java.util.Map<Integer, Integer> BRIGHTNESS_HISTOGRAM = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile int brightnessWrites;
+
+    private static void recordBrightness(float value) {
+        if (!BRIGHTNESS_DIAGNOSTICS) {
+            return;
+        }
+        BRIGHTNESS_HISTOGRAM.merge(Integer.valueOf(Math.round(value * 100.0f)), Integer.valueOf(1), Integer::sum);
+        brightnessWrites++;
+        if (brightnessWrites == 1 || brightnessWrites % 2000 == 0) {
+            StringBuilder text = new StringBuilder("[Celtium] CELTIUM_BRIGHTNESS n=" + brightnessWrites);
+            int shown = 0;
+            for (var entry : new java.util.TreeMap<>(BRIGHTNESS_HISTOGRAM).entrySet()) {
+                if (shown++ >= 8) break;
+                text.append(' ').append(entry.getKey().intValue() / 100.0f).append('x').append(entry.getValue());
+            }
+            System.out.println(text);
+        }
+    }
     private final BlockModelShapes shapes;
     private final VintageChunkBuildContext context;
     private final VertexBufferConsumer consumer;
@@ -213,6 +236,7 @@ public class VintageBlockRenderer {
             out.z = localZ + quad.getZ(srcIndex) + (float) offset.z;
 
             out.color = ChunkColorWriter.EMBEDDIUM.writeColor(ModelQuadUtil.mixARGBColors(colors[srcIndex], quad.getColor(srcIndex)), light.br[srcIndex]);
+            recordBrightness(light.br[srcIndex]);
 
             out.u = quad.getTexU(srcIndex);
             out.v = quad.getTexV(srcIndex);

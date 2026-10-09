@@ -247,6 +247,17 @@ tex×colour×lm と分解すると tex ≈ 216（我々と一致）、lmは修�
 diffuse provider は除外済み。次は vanilla-like 経路で quad 色を合成している箇所を特定し、余分な係数
 （AOやtint）が掛かっていないかを少数quadの値で確かめる。
 
+**色の出所を確定（このターン・重要な訂正）**: pipeline経路の色合成は `VintageBlockRenderer:215` の
+`ChunkColorWriter.EMBEDDIUM.writeColor(tint, light.br)`（EMBEDDIUMはbrightnessをRGBに掛ける／SEPARATE_AOはalphaに入れる。
+実測alpha=255と整合）だが、**その経路は実際には使われていない**——`light.br` のヒストグラムを仕込んでも
+1行も出力されなかった。実際の経路は `VintageChunkBuildContext.copyBlockData` で、**バニラのBufferBuilderの頂点データを
+そのままコピー**している（color=ptr+12、light=ptr+24、無加工）。=> **我々の頂点色はvanillaの頂点色そのもの**で、
+色データは0.6倍差の原因になり得ない（前ラウンドの見立てを訂正）。lightmap修正 `(uv+8)/256` はMCの慣習
+`level/16 + 0.5/16` と一致することも確認。MC 1.12.2の地形は固定機能パイプライン（2テクスチャユニット×gl_Color）で、
+最終色 = tex × lightmap × colour という式の形は我々のshaderと同じ。
+=> 残差は「データ」ではなく「適用」側。次は**較正された単一quad実験**（既知テクスチャ・既知色のquadを
+terrainと同じpipeline/formatで描き、`texel × colour × lightmap` の期待値と実測画素を厳密に突き合わせる）。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

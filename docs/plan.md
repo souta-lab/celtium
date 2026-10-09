@@ -381,8 +381,24 @@ run verdict は exit 0 / validationClean / fixture PASSED。
 - よって **我々の頂点色は vanilla の一様な約0.58〜0.62倍**（面の明るさ別 0.57 / 0.61 / 0.62）
 - **欠陥は「色の合成」（quad色）にあり**、texture・lightmap・diffuse provider はいずれも除外済み
 
-**次の一手（具体）**: vanilla-like 経路で quad の色を合成している箇所（model pipeline / chunk model builder）を特定し、
-そこに余分な係数（AOやtint）が掛かっていないかを、少数quadの値をdumpして確かめる。
+**色の出所を確定（このターン・重要な訂正）**:
+
+1. pipeline経路の色合成は `VintageBlockRenderer:215` の
+   `ChunkColorWriter.EMBEDDIUM.writeColor(tint, light.br)` で、**EMBEDDIUM は brightness を RGB に掛け算**する
+   （`SEPARATE_AO` は alpha に入れる）。我々の実測 alpha=255 はこれと整合する。
+2. しかし **その経路は実際には使われていない**: `light.br` のヒストグラムを仕込んで1 run回したが
+   **出力が1行も出なかった**（＝`recordBrightness` が一度も呼ばれない）。
+3. 実際の経路は `VintageChunkBuildContext.copyBlockData` で、**バニラの `BufferBuilder` の頂点データを
+   そのままコピー**している（`vertex.color = memGetInt(ptr + 12)`、`vertex.light = memGetInt(ptr + 24)`、無加工）。
+   → **我々の頂点色は vanilla の頂点色そのもの**であり、**色データは0.6倍差の原因になり得ない**（前ラウンドの
+   「色の合成が原因」という見立ては誤りだったので訂正する）。
+4. lightmap修正（`(uv+8)/256`）は MC の慣習 `level/16 + 0.5/16` と**一致**する正しい式であることも確認した。
+5. Minecraft 1.12.2 の地形描画は**固定機能パイプライン**（2テクスチャユニット×`gl_Color`、shaderファイル無し）で、
+   最終色 = tex × lightmap × colour。式の形は我々の shader と同じ。
+
+**次の一手（具体）**: 残差0.6は「データ」ではなく「適用」側にある。**較正された単一quad実験**を行う:
+既知のテクスチャと既知の色を持つ1枚のquadを terrain と同じ pipeline/format で描き、期待値
+`texel × colour × lightmap` と実測画素を厳密に突き合わせる。これで 0.6 がどの段で落ちるかを1回で確定できる。
 上面で brightness×AO が 1.0×1.0 になっているか（余分な0.6が無いか）を確かめる。
 （旧メモ:
 上面の色が「tint × shade(1.0)」になっているか（＝余分な係数が掛かっていないか）を確かめる。
