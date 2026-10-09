@@ -1723,6 +1723,29 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   3.3 ms と引き換えに 27 px を壊す判断はしない。**外すのは実体を native に移した後**にする。
 - 受入は4 run とも exit 0 / validationClean=true / PASSED。
 
+**既定経路を変えた後の回帰受入（このターン・一式）**: 直前の変更（format 2 を合成判定つきで native へ）は**既定の
+挙動を変える**ので、受入を一式取り直した。
+
+| run | exit | validationClean | fixture | p50 | VUID |
+|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | 16.15 ms | **0** |
+| Intel 通常 | 0 | true | **PASSED** | 28.78 ms | **0** |
+| postprocess | 0 | true | PASSED | 16.17 ms | 0 |
+| weather | 0 | true | PASSED | 15.55 ms | 0 |
+| spectator spider | 0 | true | PASSED | 15.93 ms | 0 |
+| thirdPerson＋GUI | 0 | true | PASSED | 16.01 ms | 0 |
+| **world switch** | 0 | true | PASSED | 16.21 ms | **0**（VUID-09600 の修正が効いている） |
+| **resize 1x1** | 0 | true | PASSED | 16.19 ms | **0** |
+| submit 失敗注入 | 1 | true | FAILED（期待どおり・有界） | — | 0 |
+| command-buffer target 受入 | 0 | true | PASSED | 15.95 ms | `targets=True` |
+
+- 期待どおり PASS すべき **9 run がすべて PASSED・VUID 0**。失敗注入は exit 1 / clean（有界）。target 受入も通る。
+- **併せて `presentFromComposite` の名前の意味を正した**: プロパティ名は "present from composite" だが、
+  **今は present していない**（`compositePresentRefusals` 1/フレーム・present 0 回）。実際にこのスイッチが決めて
+  いるのは「**present 経路がどの format 2 バッチを取ってよいか**」で、残りは即時経路へ落ちる。名前を
+  「present が起きている証拠」と読まないよう、コードのコメントと docs に明記した（**プロパティ名は変えない**。
+  変えると scripts / docs / 過去の受入コマンドと食い違うため）。
+
 **次の一手**: (1) 実体（entity/TESR）を native に移し、その後に深度返却を外して **Intel 25.6 ms / AMD 16.1 ms** を
 受入にする、(2) ブリッジの残り（blit 2回・semaphore 待ち・48箇所の状態クエリ）を外す設計に入る、(3) `presentFromComposite`
 の名前が実態（present していない）と合っていないので、**名前と既定の意味を docs で正す**。

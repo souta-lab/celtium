@@ -1791,6 +1791,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 : formatId == 4 ? VulkanImmediateItemPipeline.VERTEX_BYTES
                 : formatId == 5 ? VulkanImmediateParticlePipeline.VERTEX_BYTES
                 : VulkanImmediatePipeline.VERTEX_BYTES;
+        // The property name says "present from composite", and that is what it is for - but with the check below it
+        // currently presents nothing: measured compositePresentRefusals 1/frame and no present at all, because the
+        // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
+        // controls in practice is which format-2 batches the present path may take; everything else falls through to
+        // the immediate path. Recorded so the name is not read as evidence that a present happens.
         if (formatId == 2 && PRESENT_FROM_COMPOSITE && (this.currentRenderTargetIsMain
                 || celtium$samplesBoundFramebufferColor(this.immediateState.boundTextureName()))) {
             // The audit's S17: this layout is not only the screen composite. `Framebuffer.func_178038_a` uses it to blend
