@@ -95,6 +95,13 @@ atlas's UVs being in the same OpenGL row order - so the flip is reverted and the
 light coordinates are (block 0, sky 15), so the sample must land on the full-sky corner and does not; what remains is the
 light map's own row/axis order (checkable from the existing dump, no run needed) and whether the texture bound at set 0
 binding 1 is that light map.
+**The darkness has a shape (round 270).** Row and column analysis of the two frames: the far plain matches the reference
+almost exactly (row ratio **1.03**), the near terrain is **0.65-0.75**, and columns are flat at 0.83-0.86 across the width -
+so no left-right structure, and the difference is the shading of the **side faces** that dominate near the camera. The AO
+computation (`AoFaceData`) is **byte-identical to upstream**; the port's own changes under `impl/render/chunk` are
+`SectionRenderDataStorage`, `ShaderChunkRenderer`, `RenderSectionManager`, `SectionGraph`, the `backend` package and the two
+vertex formats (the last two only by diagnostics). **Next:** how the storage path applies the colour and occlusion it is
+handed - the arithmetic matches vanilla, the wiring around it does not.
 
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for
