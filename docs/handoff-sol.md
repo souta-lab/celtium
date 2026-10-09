@@ -219,6 +219,15 @@ arena上のその頂点は正しい色を持つ。readbackをdraw単位に拡張
 次の一手は (a) そのジオメトリが何のブロック/面か（UVと位置）、(b) なぜ alpha=255 の不透明色か、
 (c) pinned upstream の mesher と pass 分類・色合成の差分、を順に確認すること。
 
+**vanilla基準（このターンの決定的evidence）**: fixtureに `-Dceltium.validation.vanillaReference=true` を足し、
+terrain mod無しで同じframeを撮影した。vanilla GL = mid (146.6,157.1,132.3) / near (139.8,151.4,131.4)、
+upstream Celeritas GL = (136.8,146.5,117.2)/(125.0,135.4,117.6)、Celtium Vulkan = (81.0,84.5,74.2)/(79.6,85.5,75.4)。
+**upstreamはvanillaの約93%で正しく、Celtiumはvanillaの約0.56倍**＝我々の欠陥と確定。
+色乗算無効runの215.7と比較するとvanillaの実効色は0.648≈solid passの詰めた色0.635なのでmesherの色は正しい。
+一方こちらの実効色は0.369で、0.6(側面shade)×0.6=0.36と一致し、比が面に依らず一様な事実とも合う。
+=> 全faceに一様な≈0.6の余分な係数（AO/brightness項）がmesher側で掛かっている可能性が高い。
+次の一手は light pipeline の br と AO を少数quadでdumpし、上面が 1.0×1.0 になっているか確認すること。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

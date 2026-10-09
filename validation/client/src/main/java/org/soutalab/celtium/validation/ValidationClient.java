@@ -1457,6 +1457,17 @@ public final class ValidationClient {
             checkVulkanBootstrap(mc, probe.getParent());
             report.addProperty("worldFrames", worldFrames);
             report.addProperty("worldTicks", worldTicks);
+            // The vanilla reference: the same fixture with no terrain mod installed still captures the same frame, which
+            // is the ground truth the mod's own colours are judged against. Only the capture matters in that mode.
+            if (Boolean.getBoolean("celtium.validation.vanillaReference")) {
+                celtium$logFrameSample(mc);
+                ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth,
+                        mc.displayHeight, mc.getFramebuffer());
+                report.addProperty("vanillaReference", true);
+                report.addProperty("status", "VANILLA_REFERENCE");
+                finish(mc);
+                return;
+            }
             Class<?> rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
             Object renderer = rendererClass.getMethod("instanceNullable").invoke(null);
             if (renderer == null) throw new IllegalStateException("Celeritas world renderer was not active");

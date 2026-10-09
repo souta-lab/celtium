@@ -330,7 +330,26 @@ UV (0.875,0.28125) のatlas spriteを確認したところ **alpha 197 の青い
   pinned upstream には存在しないため、**上流はこの色の参照にならない**（上流はcompact形式）。
   次は「vanilla GLの同じ面が出す色」と比べる必要がある。
 
-**次の一手（具体）**: mesher内で `vertex.color` を**面の向き・tintと一緒に**少数dumpし、
+**vanilla基準の測定（このターンの決定的evidence）**: fixtureに `-Dceltium.validation.vanillaReference=true` を追加し、
+**terrain modを入れずに同じfixtureで同じframeを撮影**した（Celeritasが無いため通常の判定はFAILEDになるが、
+`celtium-validation.png` は保存される）。
+
+| レンダラ | mid帯 | near帯 |
+|---|---|---|
+| **vanilla Minecraft GL（真値）** | **(146.6, 157.1, 132.3)** | **(139.8, 151.4, 131.4)** |
+| upstream Celeritas GL | (136.8, 146.5, 117.2) | (125.0, 135.4, 117.6) |
+| Celtium Vulkan | (81.0, 84.5, 74.2) | (79.6, 85.5, 75.4) |
+
+- upstream は vanilla の約93%でほぼ正しい ✅。**Celtium は vanilla の約0.56倍**で、**参照側の問題ではなく我々の欠陥**と確定。
+- 「色乗算無効run」の band 215.7 は vanilla近傍の最終値139.8と比べて明るすぎ、vanillaの実効色 =
+  139.8/215.7 = **0.648 ≈ solid passの詰めた色0.635** ✅ ＝ **mesherの色自体は正しい**。
+- 一方、我々の実効色は 0.369。`0.6(側面shade) × 0.6 = 0.36` が実測と一致し、比が面の明るさに依らず
+  一様（0.57〜0.62）である事実とも合う。**全faceに一様な≈0.6の余分な係数（AO/brightness項）が
+  mesher側で掛かっている**可能性が高い。
+
+**次の一手（具体）**: light pipeline の `br`（brightness）と AO の値を少数のquadについてdumpし、
+上面で brightness×AO が 1.0×1.0 になっているか（余分な0.6が無いか）を確かめる。
+（旧メモ:
 上面の色が「tint × shade(1.0)」になっているか（＝余分な係数が掛かっていないか）を確かめる。
 (a) そのジオメトリが何のブロック/面か（UVと位置から）、(b) なぜ alpha=255 の不透明色なのか、
 (c) pinned upstream の mesher と pass 分類・色合成のどこが違うのか、を順に確認する。
