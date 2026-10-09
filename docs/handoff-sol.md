@@ -385,8 +385,12 @@ AMD は creeper/spider/enderman の3種すべて PASSED / shaderActive=True。In
 shaderActive=True だが **spider は exit 124（ハング・report なし）**＝原因を特定: クラッシュではなく、**shader group の FBO テクスチャ
 （1280x720）を毎フレーム mirror し直すループ**（ログ末尾600行で 1280x720 の mirror が277回、atlas が144回。
 `invalidations=772`）。mirror は GPU→CPU→GPU の読み戻しなので、ポストプロセス有効時はフレームが進まない。
-AMD で PASSED なのは同経路でも回数が閾値未満のため（タイミング依存）。次の一手は shader group の framebuffer
-テクスチャの mirror をスキップ／間引きすること（`p68-spider-intel`）。
+**【訂正】「毎フレーム mirror ループ」は数値に合わない**: 277回は約120秒で毎秒2.3回。フレーム時間の比較が真因を示す
+——shader group 有効時は AMD でも **p99 46ms→174ms（約4倍）**・サンプル数 108→58、Intel は素の postprocess でも
+p50 63ms（AMDの1.5倍）。つまり **GL↔VK ハンドオフ（全画面コピー）のコストが post-process のパス数だけ増幅**される
+ことが原因で、mirror 頻度は主因ではない。次の一手は (1) 同一frame内の連続パスをまとめてハンドオフ回数を減らす、
+(2) 画面サイズテクスチャの mirror を「Vulkan側で実際にサンプルする描画がある場合」に限定する、
+(3) パスあたりのコストを測る計器を足す（budget延長で隠さない）。
 **【訂正】**以前「6 runすべて shaderActive=True」と記録したのは誤り（Intel spider はプロパティごと欠落＝場面が
 実行されていなかった。厳密一致条件 `worldTicks == 150` を tick が飛び越えたため）。試行を呼び出しの前に記録し、
 例外を `spectatorResult` に残す形に変更。spectator/weather の条件は **`>= 150`** の範囲条件にした。
