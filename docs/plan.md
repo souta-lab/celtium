@@ -71,6 +71,16 @@ Kept separate on purpose - terrain success and present success are different thi
   `immediateRefusal=no_pipeline_yet_for_VertexFormat`, i.e. the batches really arrive and are refused with a stated
   reason while the original GL body stays in charge (PASSED, no validation message, frame unchanged). The buffer's
   private fields are read reflectively so no Minecraft signature changes and the byte buffer object is untouched.
+- **Stage 5 capture evidence (mod-style drawing in a Forge event).** The validation fixture now has a
+  `RenderWorldLastEvent` handler that draws through `Tessellator`/`BufferBuilder` and `GlStateManager` exactly as a
+  content mod does, with no Celtium-specific call, gated behind `-Dceltium.validation.drawTestQuad=true` so reference
+  frames are unaffected. Verified on hardware: `modDrawTestFrames=574` while `immediateOffered` rises from 8365 (the
+  baseline run) to **9078** and `immediateState` from 103691 to 106058 - the mod-style batches and state calls really
+  reach Celtium's Vulkan entry points, are refused with a stated reason (the per-format pipelines are missing) and are
+  drawn by GL as before, with the run clean (PASSED, no validation message). This is the "(a) binary compatibility"
+  half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
+  needs the pipelines below, and real major mods come after that.
+
 - Next for stage 3: the per-vertex-format pipelines (and the frame ownership that lets a batch be recorded outside the
   terrain passes), so `immediateRefusal` disappears and those 8365 batches are drawn by Vulkan.
 

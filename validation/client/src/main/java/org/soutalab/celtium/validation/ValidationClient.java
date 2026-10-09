@@ -5,6 +5,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiMainMenu;
+import net.minecraft.client.renderer.BufferBuilder;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.util.ScreenShotHelper;
 import net.minecraft.world.GameType;
@@ -61,6 +65,8 @@ public final class ValidationClient {
     private Field flickerDX;
     private boolean flickerFieldsResolved;
     private boolean flickerPinned;
+    private final boolean drawTestQuad = Boolean.getBoolean("celtium.validation.drawTestQuad");
+    private int testQuadFrames;
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
@@ -79,6 +85,42 @@ public final class ValidationClient {
             }
         }
         if (enabled) MinecraftForge.EVENT_BUS.register(this);
+    }
+
+    /**
+     * The "unmodified mod drawing in a Forge event" case the migration plan asks for: a Forge event handler that
+     * draws through {@code Tessellator}/{@code BufferBuilder} and {@code GlStateManager} exactly as a content mod
+     * does, with no Celtium-specific call anywhere. It is off unless
+     * {@code -Dceltium.validation.drawTestQuad=true} is set, so the reference frames are unaffected.
+     * <p>
+     * What it proves when enabled: the batch reaches Celtium's Vulkan draw entry (the backend counts it and states why
+     * it is refused while the per-format pipelines are missing) and the frame is unchanged otherwise.
+     */
+    @SubscribeEvent
+    public void drawTestQuad(RenderWorldLastEvent event) {
+        if (!enabled || !drawTestQuad) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.player == null || mc.world == null) return;
+        double partial = event.getPartialTicks();
+        double x = mc.player.lastTickPosX + (mc.player.posX - mc.player.lastTickPosX) * partial;
+        double y = mc.player.lastTickPosY + (mc.player.posY - mc.player.lastTickPosY) * partial;
+        double z = mc.player.lastTickPosZ + (mc.player.posZ - mc.player.lastTickPosZ) * partial;
+        GlStateManager.pushMatrix();
+        GlStateManager.translate(-x, -y, -z);
+        GlStateManager.disableTexture2D();
+        GlStateManager.depthMask(false);
+        Tessellator tessellator = Tessellator.getInstance();
+        BufferBuilder builder = tessellator.getBuffer();
+        builder.begin(org.lwjgl.opengl.GL11.GL_QUADS, DefaultVertexFormats.POSITION_COLOR);
+        builder.pos(x - 1.0, y + 2.0, z - 1.0).color(255, 64, 64, 200).endVertex();
+        builder.pos(x + 1.0, y + 2.0, z - 1.0).color(255, 64, 64, 200).endVertex();
+        builder.pos(x + 1.0, y + 2.0, z + 1.0).color(255, 64, 64, 200).endVertex();
+        builder.pos(x - 1.0, y + 2.0, z + 1.0).color(255, 64, 64, 200).endVertex();
+        tessellator.draw();
+        GlStateManager.depthMask(true);
+        GlStateManager.enableTexture2D();
+        GlStateManager.popMatrix();
+        testQuadFrames++;
     }
 
     @SubscribeEvent
@@ -408,6 +450,7 @@ public final class ValidationClient {
                 int errors = Integer.parseInt(counters.group(3));
                 int lastDraw = Integer.parseInt(counters.group(4));
                 report.addProperty("nativeTerrainVerified", passes > 0 && skipped == 0 && errors == 0 && lastDraw > 0);
+                report.addProperty("modDrawTestFrames", testQuadFrames);
                 report.addProperty("vulkanPasses", passes);
                 report.addProperty("vulkanSkippedPasses", skipped);
                 report.addProperty("vulkanErrors", errors);
