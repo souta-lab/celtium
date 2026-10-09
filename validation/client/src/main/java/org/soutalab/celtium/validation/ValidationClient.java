@@ -78,6 +78,12 @@ public final class ValidationClient {
     private int celtium$sweepTotal;
     /** Registry index this run starts at, so several runs cover the whole registry. */
     private int celtium$sweepFrom;
+    /** Wall time spent inside setBlockState, and the single most expensive block seen. */
+    private long celtium$sweepMillis;
+    private long celtium$sweepWorstNanos;
+    private String celtium$sweepWorstBlock = "none";
+    /** World frame counter when the sweep started, so a run says how many frames it cost. */
+    private int celtium$sweepFramesAtStart = -1;
 
     private void celtium$blockSweep(Minecraft mc) {
         int wanted = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
@@ -110,7 +116,11 @@ public final class ValidationClient {
         if (worldTicks % everyTicks != 0) {
             return;
         }
-        for (int n = 0; n < 1 && celtium$sweepIndex < celtium$sweepTotal; n++, celtium$sweepIndex++) {
+        // How many blocks per tick. Placement measured at ~0.15-0.4 ms each (placeMillis=31 for 200 blocks), so the
+        // count is not what makes a run slow - the neighbour updates were, and those are off now. Two per tick is the
+        // default so that the whole 254-block registry fits inside the fixture's tick budget.
+        int perTick = Math.max(1, Integer.getInteger("celtium.validation.blockSweepPerTick", 2).intValue());
+        for (int n = 0; n < perTick && celtium$sweepIndex < celtium$sweepTotal; n++, celtium$sweepIndex++) {
             net.minecraft.block.Block block = celtium$sweepBlocks.get(celtium$sweepFrom + celtium$sweepIndex);
             int gx = celtium$sweepIndex % 16;
             int gz = celtium$sweepIndex / 16;
@@ -123,7 +133,16 @@ public final class ValidationClient {
                     // then made six neighbours react (water flowing, plants popping, fire spreading), which is what
                     // made the later slices time out while the earlier ones did not. This scene wants the blocks drawn,
                     // not simulated.
+                    long before = System.nanoTime();
                     mc.world.setBlockState(pos, state, 3);
+                    long tookNanos = System.nanoTime() - before;
+                    celtium$sweepMillis += tookNanos / 1000000L;
+                    if (tookNanos > celtium$sweepWorstNanos) {
+                        // Which block costs the most to put in the world, by name: a slice that times the fixture out can
+                        // then be compared with one that does not, instead of guessing that "later slices are worse".
+                        celtium$sweepWorstNanos = tookNanos;
+                        celtium$sweepWorstBlock = String.valueOf(block.getRegistryName());
+                    }
                     celtium$sweepPlaced++;
                 }
             } catch (Throwable error) {
@@ -135,6 +154,23 @@ public final class ValidationClient {
                 }
             }
         }
+        if (celtium$sweepFramesAtStart < 0) {
+            celtium$sweepFramesAtStart = worldFrames;
+        }
+        if (celtium$sweepIndex % 5 == 0 || celtium$sweepIndex >= celtium$sweepTotal) {
+            // To stdout as well: a run that the fixture times out writes no report at all, and that is exactly the run
+            // whose cost has to be comparable with one that finished.
+            System.out.println("celtium block sweep: index=" + celtium$sweepIndex + "/" + celtium$sweepTotal
+                    + " placed=" + celtium$sweepPlaced + " failed=" + celtium$sweepFailed
+                    + " placeMillis=" + celtium$sweepMillis + " worst=" + celtium$sweepWorstBlock + " ("
+                    + (celtium$sweepWorstNanos / 1000000L) + " ms) frames=" + (worldFrames - celtium$sweepFramesAtStart)
+                    + " tick=" + worldTicks);
+        }
+        report.addProperty("blockSweepPlaceMillis", Long.valueOf(celtium$sweepMillis));
+        report.addProperty("blockSweepWorstBlock", celtium$sweepWorstBlock);
+        report.addProperty("blockSweepWorstMillis", Long.valueOf(celtium$sweepWorstNanos / 1000000L));
+        report.addProperty("blockSweepFramesAtStart", Integer.valueOf(celtium$sweepFramesAtStart));
+        report.addProperty("blockSweepFrames", Integer.valueOf(worldFrames - celtium$sweepFramesAtStart));
         report.addProperty("blockSweepIndex", Integer.valueOf(celtium$sweepIndex));
         report.addProperty("blockSweepPlaced", Integer.valueOf(celtium$sweepPlaced));
         report.addProperty("blockSweepFailed", Integer.valueOf(celtium$sweepFailed));
