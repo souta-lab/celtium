@@ -7699,3 +7699,28 @@ now confirmed by having been written down before the second run rather than expl
 Three defects on this one acceptance path in two rounds - two initialisation-order nulls and a null pass - and all three were
 found by reading the reported reason rather than by reading the code. That is the fourth time this project's instrument has
 paid for itself, and the first time one of them was a prediction the next run confirmed.
+
+---
+
+## The immediate path on both GPUs: nothing unmapped, every layout but one taken
+
+| | format 5 | format 6 | format 7 | format 8 | format 9 | immediate taken | cancelled GL draws | terrain passes | validation |
+|---|---|---|---|---|---|---|---|---|---|
+| AMD RX 6400 | 312 | 1862 | 1097 | 128 or 0 | 12 | 3300-3430 | same | ~920 | clean |
+| Intel UHD 630 | 114 | 730 | 396 | **0** | 12 | 1265 | 1265 | 336 | clean |
+
+Both report **`byFormat=[0:0 ...]`** - format 0 is zero on both GPUs, so not one upload in either run was unrecognised - and
+both accept the composite's layout (id 9, twelve batches). The entity/TESR layout shows **zero on Intel and zero on AMD in this
+run**, having shown 128 on AMD in the run before: the scene dependency recorded as a prediction last round is therefore a
+property of **the scene and not of the GPU**, which is worth knowing precisely because it would have been easy to read the
+Intel zero as an Intel problem.
+
+What the immediate path now covers, measured on both GPUs: terrain, the GUI, the font, the HUD, the hand, the block and item
+and particle layouts, the sky and clouds and water surface, position-only content, the entity/TESR layout when the scene
+contains one, and the composite's layout. The one thing left to observe rather than to fix is id 8 in a scene that has an
+entity or a TESR in it - a fixture change, named as the next step.
+
+Eight defects and guards were needed to get here, all on two paths, and every one of them was named by a reason the code
+reported rather than found by reading it: five mapping guards (a missing branch, a stale range bound, a mask that excluded the
+id, a stride table that predated the layout, and a cache that would have been shared across two strides) and three acceptance
+defects (two initialisation-order nulls and a null render pass).
