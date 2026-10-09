@@ -2207,7 +2207,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.orderPreservingFlushes++;
         } catch (RuntimeException | LinkageError error) {
             this.gpuStalled = true;
-            throw error; // stop the ordering operation, retain accepted geometry/resources; never silent fallback
+            // The ordering operation stops here and the accepted batches cannot be drawn: the device is stalled and
+            // their original OpenGL draws were cancelled when they were accepted, so there is no fallback to hand them
+            // back to. Rethrowing reached Minecraft's render loop and killed the client on the crash screen - the
+            // injected idle failure measured exit 255 with no report at all. The loss is counted and named instead, so
+            // the run ends with a verdict that says the terrain is not verified (audit: count every drop rather than
+            // claim a draw that did not happen).
+            int dropped = 0;
+            for (Object[] group : this.immediateGroups) {
+                dropped += ((Integer) group[12]).intValue();
+            }
+            this.stalledGeometryDrops++;
+            this.stalledGeometryDroppedBatches += dropped;
+            this.immediateGroups.clear();
+            this.pendingImmediateIndices = 0;
+            record("flush refused after failure: dropped " + dropped + " accepted batches ("
+                    + this.stalledGeometryDroppedBatches + " total): " + describe(error));
         }
     }
 
