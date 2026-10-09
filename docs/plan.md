@@ -122,7 +122,12 @@ throughout - and then **cannot finish**, because without matching there is no in
 That timeout is the bridge being absent by construction, which is why it is last in the order. **Role 4 is measured and already done**: of the backend's **46 read sites**, the expensive ones
 (the per-batch `glGetFloatv` matrix pair, measured at 28 microseconds a batch) were replaced by hook-written mirrors long ago,
 the diagnostic sampler is behind a flag and off by default, and what remains is **texture and bridge queries** - roles two and
-five, which are last by design because they cannot go before the game's textures are Vulkan-owned. **Next: the bridge itself**, and it is now **sized**: the renderer
+five, which are last by design because they cannot go before the game's textures are Vulkan-owned. **Verified on both GPUs**: `mirroredTextures=8` with **`imageFilledMirrors=7`** on AMD and Intel alike, `descriptorSets=1`,
+exit 0, validation clean, fixture PASSED. **Open:** the refresh stream still reads back - 4,821 in-place refreshes on AMD and
+1,941 on Intel - so the next step is routing those through the announced image too, and one texture (the light map, probably) is
+never image-filled on either GPU.
+
+**Next: the bridge itself**, and it is now **sized**: the renderer
 mirrors **eleven** distinct GL textures across a run - the atlas, the lightmap, the item and entity sheets, the GUI sheets - with
 **4,523 in-place refreshes** of them. **And the interception already exists**: `TextureUtil`'s upload
 (`func_110989_a`) is hooked at HEAD, it distinguishes a first upload from an animation repeat, and it calls

@@ -8377,3 +8377,26 @@ matters: every other measurement in this project is taken in that configuration.
 The shape worth keeping: **a configuration that fails loudly is a diagnostic; a configuration that fails silently is a mystery.**
 Three rounds ago the flag that exercises this path was left in the run script and crashed everything; today the same flag produces
 a clean start that says what it is doing.
+
+---
+
+## The image path on both GPUs, and the refresh stream that still reads back
+
+| | mirrored | image-filled | announced | in-place refreshes | descriptor sets | validation |
+|---|---|---|---|---|---|---|
+| AMD RX 6400 | 8 | **7** | 8 | 4821 | 1 | clean |
+| Intel UHD 630 | 8 | **7** | 8 | 1941 | 1 | clean |
+
+Both: exit 0, fixture PASSED, the acceptance intact, and the per-format counts in the same shape. So the ownership path - filling
+a mirror from the image the upload hook hands over rather than from a readback of GL - works on **both GPUs**, which is the
+two-GPU condition extended to it.
+
+The numbers also say what is next, and it is the **refresh** stream rather than the initial fill: seven of eight mirrors are
+created from an image, but **four thousand eight hundred and twenty-one refreshes on AMD** (1,941 on Intel) still go through
+`uploadFromGlTexture` - the readback - because those are the in-place refreshes the `invalidate` path performs, and the announced
+image is consumed by whichever call gets there first. The plumbing for routing them through the image is already in place: the
+hook announces the image *before* it invalidates, so a refresh that arrives with one pending can take the image path; the
+question is why it does not, and the counters to answer it are already reported.
+
+One texture is announced but not filled from an image, on both GPUs - most likely the light map, whose first upload happens
+before the announcement path is wired for it. Named rather than assumed, and it is the same one-texture difference on both.
