@@ -111,7 +111,12 @@ public final class VulkanOffscreenTarget {
             attachment.get(0).format(VK_FORMAT_R8G8B8A8_UNORM).samples(VK_SAMPLE_COUNT_1_BIT)
                     .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_STORE)
                     .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE).stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
-                    .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED).finalLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                    // The pass ends in COLOR_ATTACHMENT_OPTIMAL and the explicit barrier below performs the transition to
+                    // TRANSFER_SRC_OPTIMAL. Validation named the alternative exactly: with the pass doing the transition at
+                    // vkCmdEndRenderPass, the copy that follows conflicts with "a prior layout transition", because a pass
+                    // transition is not something a later barrier can retroactively synchronize. One transition, in one
+                    // place, is what removes the hazard rather than a bigger srcStageMask.
+                    .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED).finalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             org.lwjgl.vulkan.VkAttachmentReference.Buffer reference =
                     org.lwjgl.vulkan.VkAttachmentReference.calloc(1, stack);
             reference.get(0).attachment(0).layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -161,16 +166,12 @@ public final class VulkanOffscreenTarget {
                     renderPass, framebuffer, readbackBuffer, readbackMemory);
             // Proves the whole chain - pass, framebuffer, readback - before anything draws into it. The colour is chosen so
             // the check is unambiguous, and the result is reported rather than assumed.
-            //
-            // Off by default: the check passes (differing pixels zero, the clear arriving intact), but the validation layer
-            // reports a READ_AFTER_WRITE hazard on its copy even with a barrier between the pass and the read - a
-            // synchronization question this self-test does not need to answer, and one the real copy-back must get right.
-            // Leaving it enabled would put a validation error into every run for a check that is not part of rendering.
-            if (Boolean.getBoolean("celtium.vulkan.offTargetSelfTest")) {
-                target.selfTestPassed = target.clearAndReadBack(0.25f, 0.5f, 0.75f, 1.0f);
-            } else {
-                target.selfTestPassed = true;
-            }
+            // On by default now that it is clean. It was briefly gated: the readback passed but validation reported a
+            // READ_AFTER_WRITE hazard, and the message named the cause - the image was "previously written during an image
+            // layout transition initiated by vkCmdEndRenderPass", which a later barrier cannot retroactively synchronize.
+            // The pass now ends in COLOR_ATTACHMENT_OPTIMAL and the barrier below performs the only transition, and with one
+            // transition in one place the hazard is gone and this check reports zero messages.
+            target.selfTestPassed = target.clearAndReadBack(0.25f, 0.5f, 0.75f, 1.0f);
             return target;
         } catch (RuntimeException | Error failure) {
             // Nothing half-built is left behind: what exists is retired, and destroyed once the device is idle, exactly as
@@ -213,7 +214,7 @@ public final class VulkanOffscreenTarget {
             barrier.get(0).sType$Default()
                     .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .oldLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
                     .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
@@ -254,12 +255,65 @@ public final class VulkanOffscreenTarget {
                     differing++;
                 }
             }
+            // The copy-back half: take the pixels that came back from the target and put them into a GL texture, then read
+            // that texture back. This is the mechanism per-target rendering needs - the game's framebuffer content can only
+            // be updated through GL - and proving it here means the drawing half has a verified path to write into.
+            int glError = uploadToGlTexture(address);
+            int glRed = -1;
+            int glGreen = -1;
+            int glBlue = -1;
+            if (glError == 0 && selfTestTexture != 0) {
+                java.nio.ByteBuffer pixels = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
+                try {
+                    org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, selfTestTexture);
+                    org.lwjgl.opengl.GL11C.glGetTexImage(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
+                            org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, pixels);
+                    glRed = pixels.get(0) & 0xFF;
+                    glGreen = pixels.get(1) & 0xFF;
+                    glBlue = pixels.get(2) & 0xFF;
+                } finally {
+                    org.lwjgl.system.MemoryUtil.memFree(pixels);
+                }
+            }
             vkUnmapMemory(context.device(), readbackMemory);
             System.out.println("[Celtium] CELTIUM_OFFTARGET_SELFTEST size=" + width + "x" + height
                     + " expected=" + expectedRed + "," + expectedGreen + "," + expectedBlue
-                    + " differingPixels=" + differing + " passed=" + (differing == 0));
-            return differing == 0;
+                    + " differingPixels=" + differing + " glError=" + glError
+                    + " glPixel=" + glRed + "," + glGreen + "," + glBlue
+                    + " passed=" + (differing == 0 && glError == 0 && glRed == expectedRed && glGreen == expectedGreen
+                            && glBlue == expectedBlue));
+            return differing == 0 && glError == 0 && glRed == expectedRed && glGreen == expectedGreen
+                    && glBlue == expectedBlue;
         }
+    }
+
+    /**
+     * Uploads host pixels into a GL texture of this target's size.
+     * <p>
+     * This is the copy-back the game's framebuffer needs, since nothing outside GL can write into its textures. The texture is
+     * created once and reused, and the GL error state is drained and returned so a failure is reported rather than silently
+     * leaving the game's content stale.
+     */
+    private int uploadToGlTexture(long address) {
+        if (selfTestTexture == 0) {
+            selfTestTexture = org.lwjgl.opengl.GL11C.glGenTextures();
+            org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, selfTestTexture);
+            org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL11C.GL_TEXTURE_MIN_FILTER, org.lwjgl.opengl.GL11C.GL_NEAREST);
+            org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL11C.GL_TEXTURE_MAG_FILTER, org.lwjgl.opengl.GL11C.GL_NEAREST);
+            org.lwjgl.opengl.GL11C.glTexImage2D(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
+                    org.lwjgl.opengl.GL11C.GL_RGBA8, width, height, 0, org.lwjgl.opengl.GL11C.GL_RGBA,
+                    org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+        } else {
+            org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, selfTestTexture);
+        }
+        org.lwjgl.opengl.GL11C.glTexSubImage2D(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0, 0, 0, width, height,
+                org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE,
+                org.lwjgl.system.MemoryUtil.memByteBuffer(address, width * height * 4));
+        // Drained rather than assumed: this is the step that updates the game's content, so a failure has to be visible.
+        int error = org.lwjgl.opengl.GL11C.glGetError();
+        return error;
     }
 
     /** {@return whether the clear-and-read-back check passed when this target was created} */
@@ -268,6 +322,7 @@ public final class VulkanOffscreenTarget {
     }
 
     private boolean selfTestPassed;
+    private int selfTestTexture;
 
     /** The one memory type this target needs: device-local, since nothing reads it from the host yet. */
     private static int findMemoryType(VulkanContext context, int typeBits) {

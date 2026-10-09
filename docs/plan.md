@@ -81,9 +81,12 @@ framebuffer subsystem. **The resource half is now in and validated**: for the se
 device-local image with a view (`offTargetTargets=1`), and validation is **silent** across the run - so the risky part is proved
 clean before any pixel depends on it. The batches are still GL's (`offTargetRefusals=571`), which is the honest order. **The whole resource chain is in now** -
 render pass, framebuffer and a host-visible readback - and a self-test that clears the target and reads it back confirms the
-chain works end to end (`differingPixels=0`, passed). That self-test is **off by default** for a reason worth recording: the
-validation layer reports a `READ_AFTER_WRITE` hazard on its copy even with a barrier between the pass and the read, which is a
-synchronization question the **real** copy-back has to get right rather than a defect in the resources. What remains is binding
+chain works end to end (`differingPixels=0`, passed). **The copy-back is in and verified too**: the self-test's readback is uploaded into a GL texture and read back from GL, and the
+pixels agree (`glPixel=64,128,191`, `glError=0`, `passed=true`) - so the path a per-target draw needs to update the game's
+content works end to end. It runs **on by default** and validation is **silent**: the `READ_AFTER_WRITE` hazard this check
+exposed was solved by the validation layer's own diagnosis - the pass now ends in `COLOR_ATTACHMENT_OPTIMAL` and the barrier
+performs the only transition to `TRANSFER_SRC_OPTIMAL`, because a transition made by `vkCmdEndRenderPass` is not something a
+later barrier can synchronize. What remains is binding
 the pipelines for this pass and uploading the readback into the game's texture |
 | **Texture animation** | **Vulkan mirror, verified** | `CELTIUM_ANIM directMirrorRefreshes=89` with `atlasGlId=9` - the animated atlas re-uploads reach the mirror the terrain samples |
 | **Resource reload** | **Verified** | `reloadedAtTick=100`, exit 0, validation clean, fixture PASSED |

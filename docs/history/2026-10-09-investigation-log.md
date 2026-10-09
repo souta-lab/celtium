@@ -6991,3 +6991,33 @@ exit 0, validation clean, 0 messages, fixture PASSED, `terrainPasses=1635`, `glD
 What is left of this increment is small and named: bind the existing pipelines for the offscreen pass, draw the 571 format-1
 batches into it, and upload the readback into the game's texture - with the synchronization the validation layer has already
 told us is not yet right.
+
+---
+
+## The copy-back works, and the validation layer wrote the fix
+
+The last piece the per-target work needed was a way to get its content back into the game's framebuffer, since nothing outside
+GL can write into the game's textures. It is in, and the self-test proves it end to end:
+
+```
+CELTIUM_OFFTARGET_SELFTEST size=256x256 expected=64,128,191 differingPixels=0 glError=0 glPixel=64,128,191 passed=true
+exit 0 | clean | messages 0 | fixture PASSED
+nativeTerrainVerified=True   terrainPasses=1623   glDrawsCancelled=566
+```
+
+The target is cleared to 64,128,191, copied into host-visible memory, uploaded into a GL texture with `glTexSubImage2D`, and
+read back **from GL** - and all three agree. That is the whole path a per-target draw will use, verified before any drawing
+depends on it, and it runs on every ordinary run now rather than behind a flag.
+
+**The validation layer wrote the fix.** The check first reported a `READ_AFTER_WRITE` hazard on the copy, and a barrier between
+the render pass and the copy - the textbook answer - did not remove it. The full message did: the image was *"previously written
+during an image layout transition initiated by `vkCmdEndRenderPass`"*, and *"no sufficient synchronization is present to ensure
+that a read ... does not conflict with a prior layout transition"*. A transition performed by the render pass is not something a
+later barrier can retroactively synchronize, so the fix is not a bigger `srcStageMask` but **one transition in one place**: the
+pass now ends in `COLOR_ATTACHMENT_OPTIMAL`, and the barrier performs the only transition, to `TRANSFER_SRC_OPTIMAL`. The
+hazard is gone and the messages are zero.
+
+That is worth recording as the shape of the whole round: build the resource, check it with something that can be wrong, and
+read the error message rather than the intuition. This project has spent several rounds on exactly the opposite - a mask
+explanation that was wrong, six mapping rules that did nothing, an element comparison that was right to fix and explained
+nothing - and this one took three attempts and ended with the diagnosis coming from the tool rather than from the author.
