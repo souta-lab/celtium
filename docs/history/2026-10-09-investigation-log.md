@@ -2471,3 +2471,27 @@ So the position is settled, and the two reversals before it can be closed:
 
 If the GUI-visible scene is wanted later, the animated subject has to be removed rather than frozen - the player model in
 third person, the hand in first - and that is a fixture change, not another measurement of the same scene.
+
+---
+
+## Water in the scene, measured with the sound instrument and its own floor
+
+The validation world was a flat stack of bedrock, dirt, grass, leaves and stained glass - **no water at all** - so every
+pixel-identical result in this log said nothing about translucency, which is one of the content classes the objective names.
+A water layer was added to **both** world creations (the initial one and the one the world-switch test joins, which a first
+attempt missed because the same line appears twice), and the hidden-GUI comparison was re-run - the instrument whose two
+references produce identical images - **with its own floor established first**, which is the rule this session paid for:
+
+| Comparison | mean | over 8 | over 32 |
+|---|---|---|---|
+| **reference against reference (noise floor)** | **0.01** | **0.00%** | 0.00% |
+| immediate path against a reference | **0.04** | **0.27%** | 0.03% |
+
+The floor is clean - 0.00% of pixels over 8 - and the difference is not: **0.27% of the frame differs by more than 8**
+where the terrain-only scene measured exactly 0.00. Both runs are PASSED with `nativeTerrainVerified True`.
+
+So this is the first sound content difference found in many rounds, and it is in water: translucent terrain, drawn through
+one of the pipelines the immediate path already serves. It is small in area and small in magnitude, which is exactly what a
+translucency ordering or blending difference looks like, and the next step is the one that has worked before - localise it
+by region and then bisect by format, with the mask flag **verified present in the script** before each run, since an
+unasserted replacement is what made an earlier control meaningless.
