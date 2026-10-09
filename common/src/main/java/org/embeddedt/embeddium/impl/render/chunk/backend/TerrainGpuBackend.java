@@ -58,12 +58,14 @@ public interface TerrainGpuBackend {
      * Offers a finished immediate-mode batch to this backend.
      *
      * @param vertexFormat  Minecraft's {@code VertexFormat} instance for the batch
+     * @param vertexStride  bytes per vertex of that format
      * @param vertexAddress native address of the first vertex
      * @param vertexCount   number of vertices
      * @param drawMode      Minecraft/OpenGL draw mode
      * @return {@code true} when the batch was consumed; {@code false} means the caller must draw it itself
      */
-    default boolean submitImmediateBatch(Object vertexFormat, long vertexAddress, int vertexCount, int drawMode) {
+    default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, long vertexAddress, int vertexCount,
+                                         int drawMode) {
         return false;
     }
 

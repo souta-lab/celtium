@@ -43,6 +43,12 @@ public final class SpirvShaders {
     /** Fragment module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */
     public static final String UI_FRAGMENT = "ui_quad.frag";
 
+    /** Vertex module for untextured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_COLOR}). */
+    public static final String IMMEDIATE_COLOR_VERTEX = "immediate_color.vert";
+
+    /** Fragment module for untextured immediate-mode geometry. */
+    public static final String IMMEDIATE_COLOR_FRAGMENT = "immediate_color.frag";
+
     private static final String RESOURCE_DIRECTORY = "/org/soutalab/celtium/vulkan/spirv/";
     private static final String RESOURCE_SUFFIX = ".spv";
 

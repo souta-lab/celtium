@@ -336,6 +336,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateStateCalls;
     private int immediateBatchesOffered;
     private String immediateLastRefusal = "none";
+    private int immediateTaken;
+    private int immediateFlushes;
+    private int pendingImmediateIndices;
+    private VulkanDynamicMesh pendingImmediate;
+    private VulkanImmediatePipeline immediatePipeline;
 
     @Override
     public void setBlendEnabled(boolean enabled) {
@@ -380,18 +385,42 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     @Override
-    public boolean submitImmediateBatch(Object vertexFormat, long vertexAddress, int vertexCount, int drawMode) {
+    public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, long vertexAddress, int vertexCount,
+                                        int drawMode) {
         this.immediateBatchesOffered++;
-        // Topology conversion is ready; a pipeline per Minecraft vertex format and frame ownership for a batch
-        // recorded outside the terrain passes are still missing, so the batch is refused with a reason and vanilla
-        // draws it rather than anything disappearing silently.
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
-        if (reason == null) {
-            reason = "no pipeline yet for " + (vertexFormat == null ? "an unknown vertex format"
-                    : vertexFormat.getClass().getSimpleName());
+        if (reason != null) {
+            this.immediateLastRefusal = reason;
+            return false;
         }
-        this.immediateLastRefusal = reason;
-        return false;
+        if (vertexStride != VulkanImmediatePipeline.VERTEX_BYTES) {
+            // Only the POSITION_COLOR layout has a pipeline so far. Refusing by stride - not by class name - keeps
+            // this structural: any mod format with those 16 bytes takes the same path.
+            this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex";
+            return false;
+        }
+        int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
+        if (indices == null) {
+            this.immediateLastRefusal = "topology " + drawMode + " has no expansion";
+            return false;
+        }
+        try {
+            if (this.pendingImmediate == null) {
+                this.pendingImmediate = new VulkanDynamicMesh(this.context);
+            }
+            if (!this.pendingImmediate.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
+                this.immediateLastRefusal = "the pending batch buffer refused the vertices";
+                return false;
+            }
+            this.pendingImmediateIndices += indices.length;
+            this.immediateTaken++;
+            this.immediateLastRefusal = "none";
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.immediateLastRefusal = "copy failed: " + describe(error);
+            record("immediate batch refused: " + describe(error));
+            return false;
+        }
     }
 
     /**
@@ -404,6 +433,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + this.passErrors + " lastDraw=" + this.lastDrawCommands + " lastSections=" + this.lastSectionsDrawn
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
+                + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_');
     }
 
@@ -971,6 +1001,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
 
+        if (this.pendingImmediate != null && !this.pendingImmediate.isEmpty()) {
+            drawPendingImmediate(matrices);
+        }
+
         if (this.uiTestEnabled && pass.isSorted()) {
             drawUiTestQuad(primitiveType);
         }
@@ -1413,6 +1447,43 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         this.uniformWriteCursor = 0;
+    }
+
+    /**
+     * Draws the immediate-mode batches accumulated since the last flush.
+     * <p>
+     * Timing note: the batches arrive while the frame is already past its terrain passes (entities, particles, the
+     * GUI), and the bridge only owns the shared images inside a terrain pass. They are therefore drawn with the
+     * <em>next</em> frame's first terrain pass, using that pass's own projection and model view. For content that
+     * does not move between frames this is invisible; for moving content it is one frame of latency, and the proper
+     * fix is a frame the renderer owns outright (stage 7 of the docs/plan.md stages). It is documented rather than
+     * hidden.
+     */
+    private void drawPendingImmediate(ChunkRenderMatrices matrices) {
+        try {
+            VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+            if (terrain == null) {
+                return;
+            }
+            if (this.immediatePipeline == null) {
+                this.immediatePipeline = VulkanImmediatePipeline.create(this.context, terrain.renderPass());
+            }
+            ByteBuffer push = MemoryUtil.memAlloc(128);
+            try {
+                // joml writes column-major into the buffer at the given offset, which is the layout the push
+                // constant block declares.
+                vulkanProjection(matrices.projection()).get(0, push);
+                matrices.modelView().get(64, push);
+                this.immediatePipeline.draw(this.commandBuffer, this.pendingImmediate, push);
+                this.immediateFlushes++;
+            } finally {
+                MemoryUtil.memFree(push);
+            }
+            this.pendingImmediate.begin(VulkanDynamicMesh.Layout.positionTexLightColor());
+            this.pendingImmediateIndices = 0;
+        } catch (RuntimeException | LinkageError error) {
+            record("immediate flush failed: " + describe(error));
+        }
     }
 
     /**

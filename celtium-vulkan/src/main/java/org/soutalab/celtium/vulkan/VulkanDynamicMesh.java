@@ -188,6 +188,36 @@ public final class VulkanDynamicMesh {
     }
 
     /**
+     * Copies {@code count} vertices of {@code stride} bytes each from a native address and appends triangle-list
+     * indices for {@code indices} (the expansion {@link VulkanImmediateDrawer} produces).
+     * <p>
+     * This is the path Minecraft's immediate batches take: their vertices already are in the layout a pipeline
+     * expects, so a raw copy plus generated indices is both the fastest and the least error-prone translation - no
+     * per-attribute decoding that could disagree with the format the mod used.
+     *
+     * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or no indices)
+     */
+    public boolean copyVertices(long sourceAddress, int stride, int count, int[] indices) {
+        if (sourceAddress == 0L || count <= 0 || indices == null || indices.length == 0
+                || stride < 4 || stride > 256) {
+            return false;
+        }
+        this.layout = new Layout(stride, 0, -1, -1, -1, -1);
+        long required = this.vertexBytes + ((long) stride * count);
+        if (required > this.vertices.size()) {
+            this.vertices.ensureCapacity(Math.max(required, this.vertices.size() * 2L));
+        }
+        org.lwjgl.system.MemoryUtil.memCopy(sourceAddress, this.vertices.mappedAddress() + this.vertexBytes,
+                (long) stride * count);
+        this.vertexBytes += (long) stride * count;
+        this.vertexCount += count;
+        for (int index : indices) {
+            index(index);
+        }
+        return true;
+    }
+
+    /**
      * Issues the batch with 32-bit indices and no vertex offset. The caller binds the pipeline, the descriptor sets
      * and the vertex buffer first, exactly as the terrain path does.
      */

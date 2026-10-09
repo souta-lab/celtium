@@ -81,6 +81,18 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Immediate batches are now drawn by Vulkan (transform still wrong).** The first per-format pipeline
+  (`VulkanImmediatePipeline`, untextured `POSITION_COLOR`), raw vertex copying (`VulkanDynamicMesh.copyVertices` ->
+  the topology expansion), acceptance of the batch (so GL cancels its own draw) and a flush inside the next terrain
+  pass are implemented. Verified on hardware with the mod-draw test: `immediateOffered=8881`, **`immediateTaken=588`**,
+  **`immediateFlushes=541`**, no validation message, run PASSED - Vulkan really records and submits that geometry.
+  The pixels are missing though: the test quad is not visible, because only *push/pop* of the matrix stack is mirrored
+  so far - the matrix *contents* (`loadMatrix`, `translate`, `rotate`, `scale`, `ortho`, `multMatrix`) are not, so the
+  immediate draw uses identities while Minecraft's own drawing used the camera and model transform. That is the next
+  step: mirror the matrix contents into `VulkanGlState` and have the immediate draw use them instead of the terrain
+  pass's matrices. Until then the accepted batches are drawn in the wrong place, which is honest to state: this is a
+  live pipeline, not yet a correct image.
+
 - Next for stage 3: the per-vertex-format pipelines (and the frame ownership that lets a batch be recorded outside the
   terrain passes), so `immediateRefusal` disappears and those 8365 batches are drawn by Vulkan.
 

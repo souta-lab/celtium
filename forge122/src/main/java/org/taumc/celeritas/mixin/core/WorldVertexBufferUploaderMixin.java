@@ -36,18 +36,27 @@ public abstract class WorldVertexBufferUploaderMixin {
             // Values are read from the buffer through its own public API where one exists; the vertex data address and
             // the vertex count come from the shadowed fields because Minecraft exposes no accessor for them.
             Object format = celtium$vertexFormat(buffer);
+            int stride = celtium$vertexStride(format);
             long address = celtium$vertexAddress(buffer);
             int vertices = celtium$vertexCount(buffer);
             int mode = celtium$drawMode(buffer);
             if (address == 0L || vertices <= 0) {
                 return;
             }
-            if (backend.submitImmediateBatch(format, address, vertices, mode)) {
+            if (backend.submitImmediateBatch(format, stride, address, vertices, mode)) {
                 info.cancel();
             }
         } catch (Throwable ignored) {
             // Never let the offer break the draw: the original body stays in charge when anything goes wrong.
         }
+    }
+
+    /** The stride comes from the format itself, so the backend can decide structurally rather than by class. */
+    private static int celtium$vertexStride(Object format) {
+        if (format instanceof net.minecraft.client.renderer.vertex.VertexFormat) {
+            return ((net.minecraft.client.renderer.vertex.VertexFormat) format).getSize();
+        }
+        return 0;
     }
 
     private static Object celtium$vertexFormat(BufferBuilder buffer) {
