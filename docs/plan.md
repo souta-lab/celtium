@@ -140,7 +140,24 @@ Kept separate on purpose - terrain success and present success are different thi
   geometry. The next step is to have the fixture draw a `BLOCK`-format batch the way it already draws a
   `POSITION_COLOR` one, so the pipeline is exercised and the lightmap path is compared against GL rather than assumed.
 
-- **Architectural conclusion: the ~14.4 image difference cannot be removed inside the current bridge structure.**
+- **A second window inside the GL frame breaks the submission protocol: measured, reverted, and it defines the real
+  next step.** The flush-point design was implemented as described - a window opened where the batches are produced, with
+  a flag that prevents it from opening while a terrain window owns the images, an index threshold (8192 by default)
+  before a window is opened, and a flush of the remainder from the per-frame hook. It compiles and it is the right
+  shape, but the client exits after ~15 s and the validation layer names the reason:
+  `vkQueueSubmit(): pSubmits[0] performs a layout transition on presentable VkI[mage]` - the extra submission
+  transitions the shared images while GL's own frame is still using them, because the bridge's layout transitions are
+  written for exactly one handoff per frame.
+  So the single-window structure is not just inconvenient, it is **enforced by the image-layout bookkeeping**: adding a
+  window means redesigning when the shared images change layout, which is the same work as letting the renderer own the
+  frame (stage 7). That is now recorded as the prerequisite rather than as a later optimisation, and the change is
+  reverted so the tree stays green (packaging build passes, immediate path still off by default with GL producing the
+  correct image).
+  Consequence for the ordering of work: growing coverage further (more formats, textures, animation) does not move the
+  image closer to correct while the frame ownership stays as it is; the ownership work is what unblocks both the image
+  and the remaining content classes.
+
+- **Original architectural note (superseded by the measurement above).**
   The evidence that leads here: the GL reference is bit-identical between runs (0.00), the Vulkan path's own run-to-run
   variation is 0.83, the alpha test contributes 0.11, and the remaining cross difference is a stable ~14.4 mean with
   34.5% of pixels over 8. The immediate batches arrive *after* the frame's terrain passes, and the bridge only owns the
