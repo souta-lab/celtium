@@ -4928,3 +4928,33 @@ Two things are worth keeping from this, and the second is the more important:
   validation reported **ten errors** and the atlas was never transitioned to `SHADER_READ_ONLY`. An image comparison can
   improve while the renderer is objectively invalid, and only the validation layer said so. That is the standing rule of this
   work - a number improving is not evidence of correctness - with a concrete example attached to it.
+
+---
+
+## Mirroring GL's own levels is now correct and validation-clean, and it says the difference is the shader
+
+The two items the previous attempt needed were implemented - the level count GL reports now takes part in the recreate
+decision and in the skip, and the copy loop is capped by it - and the run then reported **fifteen validation errors** naming
+a layout conflict. The cause was the same class of mistake the Intel run had caught in the mip chain: with mirroring on there
+is no blit, so the image is still in `TRANSFER_DST` when the copies finish, while the tail barrier declared
+`TRANSFER_SRC_OPTIMAL`. With the barrier declaring the tracked layout instead:
+
+```
+validation: exit 0 | clean True | messages 0 | fixture PASSED
+image: 5.60%      (the configuration it replaces: 0.21-0.28%)
+```
+
+So the mirroring is now **correct**: five levels copied from OpenGL, validation silent, the layout bookkeeping honest. And it
+measures **5.60%** against a reference that a **shallow clamp** matches at 0.21-0.28%. That is a much stronger statement than
+any of the earlier ones, because the thing that could most obviously be wrong is no longer in play: the chain's **content** is
+OpenGL's own, per-sprite averaging and all. What is left is the **LOD the renderer's shader asks for** - either its UV
+derivatives are larger than Minecraft's for the same geometry, or it lacks a bias the game applies - and that is a shader
+comparison rather than another sampler configuration.
+
+The mirroring is off again, because 5.60% is a regression against 0.21-0.28% however correct the code is, and the restored
+configuration measured **0.16%** with validation clean, the best clean number this project has recorded. It is the same
+configuration as the 0.21-0.28% runs, so the difference is run-to-run variation and not an improvement; what matters is that
+the state being kept is a **valid** one, which is the distinction the previous round's 0.20% failed.
+
+The code for mirroring stays, one flag away, with the two layout bugs it exposed fixed for both modes and the shader question
+recorded where the clamp is decided.

@@ -281,15 +281,13 @@ minFilter=9986 magFilter=9728 atlasSize=512x512` where this project's mirror has
 builds the atlas's chain **per sprite**; this project blits the **whole atlas**, so every level from 1 up averages across
 sprite borders - which is why sampling deeply measures 7.37-8.77% against the reference and why clamping to 1.0, where the
 bleeding has barely begun, measures 0.21%. The shallow clamp is a configuration that **hid** the defect, not a fix.
-**Attempted and turned off, with the reason:** mirroring GL's own levels is implemented (the reader and the copy take a
-level; the generation blit is skipped) and measured at **12.66% with 10 validation errors**. Both causes are specific: the
-image still had the size-derived chain, so levels were read that GL does not have, and the tail transition had been made
-conditional on "the last level", which in the generating mode is level 0, so images were left in a transfer layout. The
-mirroring is off behind a flag, the measured-best configuration is restored (**0.23%**, validation clean, 0 messages), and the
-tail-transition bug is **fixed** for both modes. **Next to turn it on:** create the image with exactly the count GL reports
-(recreate when the count differs, not only when the size does) and cap the copy loop by that count. **Also recorded:** the run
-with the broken tail transition measured **0.20%** - the best number this project has recorded - while validation reported ten
-errors, so an image improving is not evidence of correctness.
+**Implemented, correct, validation-clean, and it isolates the shader.** Mirroring OpenGL's levels now honours the count GL
+reports (in the recreate decision, the skip and the loop bound) and declares the layout the copies actually leave, so a run
+reports **exit 0, validation clean, 0 messages** with five levels copied from the game. It measures **5.60%** against a
+reference that a shallow clamp matches at 0.21-0.28%, so the chain's **content** is no longer a candidate - it is OpenGL's
+own, per-sprite averaging included - and the remaining difference is the **LOD the shader asks for**. Mirroring is off behind
+one flag (5.60% would be a regression); the restored configuration measured **0.16%**, the best *clean* number recorded.
+**Next:** compare this renderer's UV derivatives and LOD with Minecraft's own shader.
 
 ### S24 [P2] the record and the acceptance criteria need reworking
 Plan rows claim pixel-identical immediate rendering, removed deferral and verified cull/alpha capture, and the blockers
