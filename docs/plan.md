@@ -288,7 +288,24 @@ expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_
 | **相互運用グルー** | blit（色・深度）・semaphore・FBO/renderbuffer クエリ・深度変換プログラム | Vulkan-owned target に描き同一デバイス present へ一本化（`presentFromComposite` が既に到達） |
 | 計器・診断 | `glIsEnabled` の診断文字列、`glCheck`、行列比較 | 最終形では不要 |
 
-**次の一手（b の続き）**: 上表の順に潰す。まず **fog のミラー化**（`GlStateManagerMixin` に fog の注入を足し、
+**fog ミラー化の設計確定（このターン・実装は次）**: 実装に必要な事実がすべて判明した。
+
+- **fog の正しい供給元は Minecraft 自身のフィールド**（GL ではない）:
+  `net.minecraft.client.renderer.GlStateManager.fogState` は **public static** で、
+  `FogState { public BooleanState fog; public int mode; public float density, start, end; }`、
+  `BooleanState.currentState` も **public**。GL 側の `GLStateManagerFogService`（このプロジェクト）は既に
+  このフィールドから読んでおり、`EntityRenderer.fogColorRed/Green/Blue` も同様に取れる。
+- 置換対象は backend の `fogMode()` にある `glIsEnabled(GL_FOG)` と `glGetInteger(GL_FOG_MODE)` の2つだけ
+  （`mode` は `GL_EXP2`→1 / `GL_EXP`→2 / それ以外→3 に写像）。
+- **制約**: `celtium-vulkan` は `net.minecraft` 参照が **0件**（純 Vulkan モジュールとして設計されている）。
+  したがって backend に MC 型を持ち込まず、**mirror フィールド＋setter を backend に置き、forge 側
+  （`GLStateManagerFogService` が `GlStateManager.fogState` を読める場所）から push する**。
+- 検証は**画素一致**（fog は画面に出るので、写像や既定値を誤れば必ず差が出る）。前例: 行列ミラーは
+  meanAbsDiff 0.000 で既定化できた。
+
+**次の一手**: (1) backend に `setFogMirror(boolean enabled, int mode)` と mirror フィールドを追加し
+`fogMode()` を mirror 読みに、(2) forge 側の per-frame 経路から push、(3) 既定 run と旧実装の画素一致を確認して
+既定化、(4) `glIsEnabled`/`glGetInteger` の残り（診断以外）を同じ方式で潰す。（`GlStateManagerMixin` に fog の注入を足し、
 `fogMode()` をミラー読みにして画素一致を確認）。
 (2) テクスチャの `glGetTexLevelParameteri`（sprite/frame データからの供給）、
 (3) 相互運用グルーの blit/semaphore（同一デバイス present への一本化）を順に潰す。
