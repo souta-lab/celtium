@@ -61,6 +61,10 @@ public final class ValidationClient {
     private int framesAtInterop;
     private int fboAtInterop, colorAtInterop, depthAtInterop;
     private int worldTicks;
+    // Once-guards: these hooks live in a render-tick handler, so `worldTicks == 100` is true on every frame of
+    // that tick and the reload would run dozens of times instead of once (audit S22).
+    private boolean celtium$reloaded;
+    private boolean celtium$resized;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -573,7 +577,8 @@ public final class ValidationClient {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
         previousFrame = now;
-        if (worldTicks == 100 && Boolean.getBoolean("celtium.validation.reload")) {
+        if (worldTicks == 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
+            celtium$reloaded = true;
             // Resource reload, the way F3+T does it: every chunk renderer is rebuilt and every texture is re-stitched.
             // The plan lists reload as unported until it has been seen to work, and the texture half is what exercises
             // the upload mirror - a reloaded atlas has to be re-read rather than drawn from the first upload.
@@ -581,7 +586,8 @@ public final class ValidationClient {
             mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
             report.addProperty("reloadedAtTick", worldTicks);
         }
-        if (worldTicks == 100 && Boolean.getBoolean("celtium.validation.resize")) {
+        if (worldTicks == 100 && !celtium$resized && Boolean.getBoolean("celtium.validation.resize")) {
+            celtium$resized = true;
             // Resize the window mid-run: the renderer has to survive the framebuffer changing size, which the plan lists
             // as unported until it has been seen to work. The saved screenshot's own dimensions are the evidence that
             // the resize reached Minecraft rather than only the window manager.

@@ -6233,3 +6233,30 @@ capped diagnostics list would have dropped it.
 The number beside it matters as much: `descriptorSets` stays at **1**. The in-place refresh introduced for S13 is what makes
 this fix free - a recreated mirror would have invalidated every descriptor key on every animation frame, which is the 545-set
 path this project was on two rounds ago.
+
+---
+
+## The fixture walks the paths it never walked: reload and world switch are verified now
+
+Three fixes in this audit carried the label "unexercised" - the teardown, the retirement queue and the animation refresh -
+because the fixture stayed in one world, drew one scene and never left. This round gave it those paths.
+
+First the fixture defect the audit named: the reload and resize hooks sat in a **render-tick** handler behind
+`worldTicks == 100`, which is true on **every frame** of that tick, so a resource reload ran dozens of times instead of once.
+Both carry a once-guard now.
+
+Then the runs. With `-Dceltium.validation.reload=true`, the game re-stitches every texture and rebuilds every chunk renderer
+mid-run and the result is `reloadedAtTick=100`, exit 0, validation **clean**, 0 messages, fixture **PASSED**, `passes=1199`.
+With `-Dceltium.validation.worldSwitch=true`, the game leaves the world at tick 100 and rejoins, and the backend's teardown
+runs **twice**:
+
+```
+CELTIUM_TEARDOWN released 4 backend resources (immediate mesh, groups, pipeline caches, UI, registry, swapchain)
+CELTIUM_TEARDOWN released 2 backend resources (...)
+exit 0 | clean | messages 0 | fixture PASSED | leftWorldAtTick=100 rejoinedAtTick=100 | passes=1169
+```
+
+So S15's leak fix is no longer correct-by-construction: it runs, it releases, and validation stays silent across two
+teardowns - which is the same statement as "nothing was destroyed while a command buffer still named it", the retirement
+queue's own acceptance. Two completion-condition items, **resource reload** and **world switch**, move from untested to
+tested in the same round, and they cost the fixture two once-guards and two flags it already had.
