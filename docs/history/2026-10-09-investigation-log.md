@@ -3828,3 +3828,30 @@ switches. The projection derivation stays as it is: verified to 1.6e-4 and used 
 One instrument note worth keeping: the trace was capped at forty entries and only recorded comparisons whose delta exceeded
 1e-3, which is what made the sequence readable. An uncapped trace of everything would have buried the pattern in the GUI's
 resets, which is the same filtering lesson as before but from the other side - filter the *events*, not the *sources*.
+
+---
+
+## S10 has its anchors, and the framebuffer one is not where the audit implies
+
+Two things were located from the sources for the pass identity a batch needs:
+
+| What | Where | How it is reached |
+|---|---|---|
+| Viewport | `GlStateManager.func_179083_b(int, int, int, int)`, whose body is `GL11.glViewport(...)` | A plain `@Inject` - the class is Minecraft's, and this project already hooks five other methods on it |
+| Framebuffer | Not in `GlStateManager` at all: the SRG source contains no `glBindFramebuffer` call, so the binding bypasses the wrapper entirely | `Framebuffer`, which **is** a Minecraft class, so its bind method is mixin-able - the same route the viewport takes |
+
+That second row is the finding worth keeping: the audit's S10 describes the group key missing "FBO, viewport, scissor", and the
+natural assumption is that both come through `GlStateManager` and can be mirrored like the rest of the state. The viewport
+does. The framebuffer does not - it is bound through `Framebuffer` and the direct GL path, which is exactly the pattern the
+compatibility file records for `GL11.glMatrixMode` and for `Project.gluPerspective`. The difference is that `Framebuffer` is
+a Minecraft class, so unlike those two it can be hooked without touching LWJGL.
+
+So the pass identity is reachable, and the shape of the work is small: two hooks (`func_179083_b` and `Framebuffer`'s bind),
+two fields in the backend, and those fields in the group key beside the matrices, format, texture and state that are already
+there. The measurable consequence is a number this project does not yet have - how often a group would have merged batches
+from two different passes - and the acceptance is that this number is non-zero today and that the frames do not regress once
+the key separates them.
+
+This is also the first piece of work in several rounds that follows the direction rather than the mirror: pass ownership is
+what the renderer needs to own frames and ordering on its own side, and getting it from Minecraft's own classes is the
+meaning-based route rather than another GL read.
