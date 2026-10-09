@@ -1388,7 +1388,29 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   その場合は注入条件（SUCCESS）が偽になって**何も注入されない**。注入を「結果に関わらず発火」に変えるのが次の一歩
   だが、このターンではその編集がアンカー不一致で適用されず、**未適用のまま**である（適用できていないことを明記）。
 
-**次の一手**: (1) 注入を**結果に関わらず発火**させる（アンカーを実際のコードに合わせて適用する）、
+**修正を検証（このターン・同じ注入での前後比較）**:
+
+- **注入を確定的にした**: `FORCE_ACQUIRE_OUT_OF_DATE` は acquire の戻り値に関わらず発火する（`recordOutOfDateInjection()` で
+  ログにも出す）。以前は `result == VK_SUCCESS` が条件で、headless の acquire が自然に `OUT_OF_DATE`/`SUBOPTIMAL` を
+  返すと**何も注入されず**、その run が「経路を exercize していないのに緑」に見えていた。
+- **前後比較（同じ注入が発火していることを確認した上で）**:
+
+| run | probe の acquire | `VUID-vkAcquireNextImageKHR-semaphore-01286` | validationClean | exit |
+|---|---|---|---|---|
+| 修正前（p154, AMD） | `returned -1000001004`（注入） | **2件** | false | 1 |
+| **修正後（p157, AMD）** | `returned -1000001004`（注入） | **0件** | **true** | **0** |
+| **修正後（p157, Intel）** | `returned -1000001004`（注入） | **0件** | **true** | **0** |
+
+- probe の失敗メッセージは**ログではなく report**（`rendererDebug`）に出る。ログだけを見て「失敗していない」と
+  判断しかけたのは私の計測ミスで、report を読んで確定した。
+- これで **out-of-date を受けた acquire の後始末（semaphore の差し替え）が両GPUで通り**、
+  `forceAcquireOutOfDate` の注入も**確定的に発火する**ようになった。
+
+**次の一手**: (1) `presentImage` 側の out-of-date 復旧を別途受入する（`acquireOutOfDate>0` を証拠として要求）、
+(2) minimize/out-of-date 以外の失敗経路（texture/descriptor/allocation 失敗）を両GPUで確認する、
+(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) 注入を**結果に関わらず発火**させる（アンカーを実際のコードに合わせて適用する）、
 (2) その上で probe を両GPUで走らせ、**`injections>0` かつ `VUID=0` / `clean=true`** を確認する、
 (3) `presentImage` 側の out-of-date（`acquireOutOfDate>0`）も別途受入する。
 

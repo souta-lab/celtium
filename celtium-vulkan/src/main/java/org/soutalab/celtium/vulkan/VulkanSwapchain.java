@@ -408,7 +408,12 @@ public final class VulkanSwapchain {
                 System.out.println("celtium acquire: probe uses semaphore=0x" + Long.toHexString(acquire));
                 int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                         VK_NULL_HANDLE, index);
-                if (FORCE_ACQUIRE_OUT_OF_DATE && result == VK_SUCCESS) {
+                // Fires whatever the acquire returned. Gating it on VK_SUCCESS made the injection depend on what a
+                // headless swapchain happened to answer: it fired in one run and not in the next, and a run where it did
+                // not fire looked like an acceptance of a path nothing had exercised. An injection meant to test the
+                // rebuild has to be deterministic.
+                if (FORCE_ACQUIRE_OUT_OF_DATE) {
+                    recordOutOfDateInjection();
                     result = VK_ERROR_OUT_OF_DATE_KHR;
                 }
                 if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
