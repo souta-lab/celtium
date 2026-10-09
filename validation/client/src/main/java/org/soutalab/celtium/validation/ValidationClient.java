@@ -459,6 +459,12 @@ public final class ValidationClient {
                 mc.player.swingProgress = 0.0f;
                 mc.player.prevRenderArmPitch = mc.player.renderArmPitch = 0.0f;
                 mc.player.prevRenderArmYaw = mc.player.renderArmYaw = 0.0f;
+                if (Boolean.getBoolean("celtium.validation.emptyHand")) {
+                    // Separates "the held item is drawn differently" from "the held item's drawing changes what is drawn
+                    // around it": with nothing in hand the item renderer does nothing, so a difference that survives is
+                    // not the item's own geometry.
+                    mc.player.setHeldItem(net.minecraft.util.EnumHand.MAIN_HAND, net.minecraft.item.ItemStack.EMPTY);
+                }
                 // The equipped-progress fields are not public in 1.12.2, so the item-swap animation is left to the
                 // phase the run happens to capture; the swing and arm angles are the ones that move every frame.
             }

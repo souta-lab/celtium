@@ -2187,3 +2187,32 @@ So the HUD that the switch was turned on to measure is **drawn correctly**, and 
 the world band it overlaps. Whether that is the item itself or something its drawing changes around it is what a run with an
 empty hand answers, and that is the next measurement rather than a guess: the two candidates are separated by one fixture
 line, not by reasoning.
+
+---
+
+## Emptying the hand separates the difference: the arm and the item, not the HUD
+
+The recorded next step was one fixture line - put nothing in the main hand - and it answers the question it was written
+for:
+
+| Comparison (GUI visible, animation frozen) | mean | over 8 | over 32 |
+|---|---|---|---|
+| reference against reference, **hand empty** (noise floor) | **0.10** | 0.08% | 0.05% |
+| immediate path against a reference, **hand empty** | **0.96** | 0.78% | 0.48% |
+| immediate path against a reference, item in hand (previous round) | 1.63 | 1.29% | 0.82% |
+
+So the held item accounts for about **0.67** of the 1.63, and about **0.96 remains** - still ten times the floor - in a frame
+where the item renderer does nothing at all. What is left in that band with an empty hand is the **arm**, which Minecraft
+draws regardless of what is held.
+
+Both halves are therefore first-person hand rendering, and neither is the HUD:
+
+- the **arm** (about two thirds of the difference),
+- the **held item** (about one third),
+
+which also explains why the difference appeared only once the GUI was visible: the hand is drawn as part of the same
+frame's later passes, and it is exactly what the hidden-GUI captures excluded.
+
+The next step is to instrument those batches rather than keep bisecting by image: which format id, pipeline state and
+texture the hand and item batches carry, and whether they are accepted at all, would say which of the pipelines in the
+mask mishandles them.
