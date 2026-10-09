@@ -68,3 +68,37 @@ artifacts {
     modEmbed(tasks.named('jar'))
 }
 tasks.named('test') { useJUnitPlatform() }
+
+// ------------------------------------------------------------------------------------------------
+// Terrain shaders: GLSL -> SPIR-V, as part of the build.
+//
+// These shaders used to ship as committed .spv files that nothing regenerated, so editing the GLSL
+// changed nothing in the running game and two rounds of "measured, no change" were measuring the
+// previous build. Compiling them here - into the resources the loader already reads - makes that
+// impossible: the sources are declared inputs, and a stale artefact cannot survive a build.
+// ------------------------------------------------------------------------------------------------
+def terrainSpirvOutput = layout.buildDirectory.dir('generated/terrain-spirv')
+def compileTerrainShaders = tasks.register('compileTerrainShaders') {
+    inputs.files(fileTree('src/main/shaders'))
+    // Resolved against the workspace root, because the build runs from the composite directory (build-1122) and a
+    // relative command line is not found by the exec'ing task.
+    def workspaceRoot = rootProject.projectDir.parentFile
+    def compilerSetting = providers.gradleProperty('glslang_validator')
+            .getOrElse('.celtium-work/gpu-tools/extracted/usr/bin/glslangValidator')
+    def compiler = new File(compilerSetting).absolute ? compilerSetting
+            : new File(workspaceRoot, compilerSetting).absolutePath
+    inputs.property('compiler', compiler)
+    outputs.dir(terrainSpirvOutput)
+    doLast {
+        def directory = new File(terrainSpirvOutput.get().asFile, 'org/soutalab/celtium/vulkan/spirv')
+        directory.mkdirs()
+        fileTree('src/main/shaders').files.sort().each { shader ->
+            providers.exec {
+                commandLine compiler, '-V', '--target-env', 'vulkan1.0', shader.absolutePath,
+                        '-o', new File(directory, shader.name + '.spv').absolutePath
+            }.result.get().assertNormalExitValue()
+        }
+    }
+}
+sourceSets.main.resources.srcDir(terrainSpirvOutput)
+tasks.named('processResources') { dependsOn compileTerrainShaders }

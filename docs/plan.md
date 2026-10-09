@@ -129,7 +129,14 @@ reference compiles `USE_VANILLA_COLOR_FORMAT` for this vertex format and applies
 into alpha), while this port always applies the **compact** format's extra `diffuseColor.rgb *= m_color.a`. That is a no-op
 for the terrain today (packed alpha 255) but wrong in general. With shaders equivalent, texture byte-identical and the light
 map in both frames, the remaining 0.69 is in the **per-draw state** - the fog uniforms first, whose `mix` scales a band's
-level while preserving its contrast, exactly the measured signature. **Next:** print the fog uniforms at the terrain draw.
+level while preserving its contrast, exactly the measured signature. **Parked, with the work recorded.** The fog uniforms were printed (`fogColor` 0.514/0.596/0.735 with alpha 1, smooth fog
+from 96 to 128 blocks) and are not the cause; removing the light map multiply moved the mean from 34.08 to 26.12 but left the
+terrain at 0.70 of the reference, so the light map is excluded by measurement too. Five candidates have now been eliminated
+and the remaining 0.69 needs a **numeric** comparison - the shader's arithmetic against values computed by hand from the
+dumped texture, the packed colour and the light coordinate - rather than a sixth image ratio. Separately, the **shader trap is
+closed**: `celtium-vulkan/build.gradle` compiles `src/main/shaders` into the loaded resources as a tracked task and the
+committed `.spv` copies are deleted, verified by building and reading the jar (thirteen entries, terrain sizes 8864 / 8524 /
+7748).
 
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for

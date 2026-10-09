@@ -5690,3 +5690,31 @@ numbers computed by hand from the dumped texture, the packed colour and the ligh
 than a sixth image ratio.
 
 The light map multiply is restored to the reference's form and the SPIR-V verified again.
+
+---
+
+## The shader trap is closed: GLSL is now an input to the build
+
+The defect that cost two rounds - shader sources that no build step read, with committed `.spv` files nothing regenerated -
+is fixed at the level where it cannot recur. `celtium-vulkan/build.gradle` now declares the shaders as inputs and compiles
+them with `glslangValidator` into the resources the loader already reads:
+
+- `compileTerrainShaders` takes `src/main/shaders` as `inputs.files`, the compiler as an `inputs.property`, and the output
+  directory as `outputs.dir` - so a source edit invalidates it and a build cannot ship a stale artefact;
+- the compiler path is resolved against the **workspace root**, because the build runs from the composite directory
+  (`build-1122`) and the first attempt failed with "a problem occurred starting process 'command
+  '.celtium-work/gpu-tools/.../glslangValidator''" - a relative path the task could not find;
+- the committed `src/main/resources/org/soutalab/celtium/vulkan/spirv` directory is **deleted**, so there is no second copy
+  to go stale behind the generated one.
+
+Verified by building and opening the jar: thirteen `.spv` entries, and the three terrain shaders at sizes that match the
+manual compiles exactly (`terrain_solid.frag` 8864, `terrain_solid.vert` 8524, `terrain_solid_vanilla.vert` 7748). The
+evidence that source edits now reach the artefact is the preceding rounds themselves: each edit changed those sizes
+(8864 to 8604 to 8592 and back), which is what a compiled artefact does when its source changes and what the committed one
+never did.
+
+**The terrain-darkness thread is parked here, deliberately.** Five candidates have been eliminated - the atlas byte for
+byte, the shaders against the reference sources, the vertex colour producer against upstream, the light map by removing its
+multiply and measuring, and the fog by reading its uniforms - and the remaining 0.69 needs a numeric comparison rather than a
+sixth image ratio. It is recorded with everything needed to resume: the reference jar, the fixture flags, the measured
+ratios by band, and the list of what is already excluded.
