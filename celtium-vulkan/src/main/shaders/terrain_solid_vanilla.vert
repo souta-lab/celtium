@@ -212,8 +212,11 @@ void main() {
     gl_Position = pc.u_ProjectionMatrix * pc.u_ModelViewMatrix * vec4(worldPosition, 1.0);
 
     // Add the light color to the vertex color, and pass the texture coordinates to the fragment shader
+    // ONE VARIABLE EXPERIMENT (round 266): the light coordinate is (block 0, sky 15) for this scene, and the texel that
+    // address lands on measures 0.65 in the light map dump - which is the uniform ~40% darkness the reference comparison
+    // found, so the axes are suspected of being swapped. Swap them here and nothing else.
     v_RdhFactor = _vert_rdh_factor * 2.0;
-    vec4 lightColor = _sample_lightmap(u_LightTex, _vert_tex_light_coord);
+    vec4 lightColor = _sample_lightmap(u_LightTex, _vert_tex_light_coord.yx);
     v_Color = _vert_color * lightColor;
     v_RdhFactor.rgb *= lightColor.rgb;
 

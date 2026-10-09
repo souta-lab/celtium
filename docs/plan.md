@@ -60,7 +60,14 @@ renderer it replaced rather than with its own previous frame, and it is far larg
 (minimum at zero offset), and the terrain is **uniformly about 40% darker** than the reference (luminance 77-80 against
 129-131 in the three terrain bands). So the 68.81% is a **shading** defect rather than a geometry one. The lightmap divisor was wrong (256 where 1.12.2's 16x16
 light map needs 16, and where the shader's own clamp was already written in 16-texel terms); it is **fixed**, and the
-measurement is **unchanged** - which proves the light value reaching the shader is already at the clamp, i.e. **zero**. **Process defect found and fixed in the work, not yet in the build:** the terrain shaders ship as **checked-in SPIR-V**
+measurement is **unchanged** - which proves the light value reaching the shader is already at the clamp, i.e. **zero**. **Active shader identified and one real improvement measured.** The pipeline loads `SOLID_VERTEX_VANILLA`, so the earlier
+divisor fix went into a shader nothing runs, and both ship as checked-in SPIR-V. With the active shader's SPIR-V recompiled
+and verified in the jar, swapping the light coordinate axes (the scene's light coordinate is `(block 0, sky 15)` and the texel
+it lands on measures 0.65 against the 0.61 ratio the frame showed) moves the mean difference from 34.08 to **27.09** and the
+terrain luminance from 84.9/77.6 to **97.6/90.0**, while the count of pixels differing by more than eight rises from 68.81%
+to **70.51%** - brighter terrain stops masking the colour differences that remain. Both numbers are recorded. The terrain is
+still about 25% darker than the reference; the candidates are the divisor on the same sample and the `m_color.a` AO term.
+Earlier note: **Process defect found and fixed in the work, not yet in the build:** the terrain shaders ship as **checked-in SPIR-V**
 (`celtium-vulkan/src/main/resources/.../spirv/*.spv`) and the GLSL in `src/main/shaders/` is **not** a build input, so shader
 edits do not reach the running game unless `glslangValidator` is re-run by hand. Two rounds of shader "fixes" and their
 measurements were therefore void; the divisor change is kept as a correctness fix and its conclusion is withdrawn. With the

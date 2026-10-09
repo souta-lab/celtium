@@ -5327,3 +5327,34 @@ agree with) rather than anything on the light path.
 
 Recorded as a process rule, because this cost two rounds: **a generated artefact must be verified inside the jar - by size
 or hash - before any measurement of its effect is trusted.** The GLSL source is not the artefact; the SPIR-V is.
+
+---
+
+## The active shader is the vanilla variant, and swapping the light axes brightens the terrain
+
+Two things were wrong at once before this round's experiment could mean anything. The pipeline loads
+`SpirvShaders.SOLID_VERTEX_VANILLA` for the vertex format this tree actually uses, so the light map divisor fix of two
+rounds ago went into **`terrain_solid.vert`**, which nothing runs; and both shaders ship as checked-in SPIR-V, so even the
+right file would not have taken effect. With the active shader identified, its light path read, and its SPIR-V recompiled and
+verified in the jar by size (`7776`), the experiment finally measures the running renderer:
+
+| configuration | mean difference | terrain band luminance | >8 pixels |
+|---|---|---|---|
+| before | 34.08 | 84.9 / 77.6 | 68.81% |
+| **light coordinate axes swapped** | **27.09** | **97.6 / 90.0** | **70.51%** |
+
+The reasoning behind the swap is worth recording because it is the first time this thread has had a number to reason from:
+the scene's light coordinate is (block 0, sky 15) - measured, not assumed - and the texel that address lands on measures
+**0.65** in the light map dump, which is very nearly the **0.61** ratio (79.9 against 131.0) the frame comparison had been
+showing all along. The darkness and the sampled texel value agreed, so the axes were suspected of being transposed.
+
+The result is honest in both directions and is recorded that way: the terrain brightens by about 15% toward the reference
+and the mean difference falls by seven points, while the count of pixels differing by more than eight **rises** from 68.81% to
+70.51% - which is what happens when shading that was uniformly too dark becomes closer to correct and the remaining
+colour differences stop being masked. Neither number is picked over the other.
+
+What remains is a terrain still about 25% darker than the reference (97.6 against 131.1). With the axes now sampled the way
+the dump's bright corner suggests, the two candidates left are the divisor on that same sample (`/256` where the clamp, the
+comment and the 16x16 dump all say 16) and the ambient-occlusion term the fragment shader multiplies in as `m_color.a`. Both
+are single-variable experiments of the same kind as this one, and the compile-and-verify-the-SPIR-V step is now part of the
+loop rather than a lesson.
