@@ -47,6 +47,7 @@ import static org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL
 import static org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
 import static org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
 import static org.lwjgl.vulkan.KHRExternalMemoryFd.VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+import static org.lwjgl.vulkan.KHRSwapchain.VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 import static org.lwjgl.vulkan.KHRExternalSemaphoreFd.VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
 import static org.lwjgl.vulkan.VK10.*;
 import static org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceProperties2;
@@ -173,6 +174,21 @@ public final class VulkanContext {
      * Surface extensions such as {@code VK_KHR_wayland_surface} are instance extensions, so the swapchain asks here
      * rather than guessing from the platform name.
      */
+    /**
+     * {@return whether the logical device was created with this extension}.
+     * <p>
+     * The swapchain functions are device extensions: enabling the surface extension on the instance without this is
+     * what made the first probes fail inside LWJGL's function-pointer check.
+     */
+    public boolean hasDeviceExtension(String name) {
+        if (name == null || this.device == null || this.physicalDevice == null) {
+            return false;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return deviceExtensionNames(stack, this.physicalDevice).contains(name);
+        }
+    }
+
     public boolean hasInstanceExtension(String name) {
         if (name == null || this.instance == null) {
             return false;
@@ -592,8 +608,24 @@ public final class VulkanContext {
             queues.get(0).sType$Default()
                     .queueFamilyIndex(this.queueFamilyIndex)
                     .pQueuePriorities(stack.floats(1.0f));
-            PointerBuffer names = stack.pointers(stack.UTF8(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME),
-                    stack.UTF8(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME));
+            List<String> deviceExtensions = new ArrayList<String>();
+            deviceExtensions.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+            deviceExtensions.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+            // The swapchain functions live in a device extension, so a surface alone is not enough: without it
+            // enabled the loader table has no vkCreateSwapchainKHR and LWJGL's own capability check reports a
+            // NullPointerException on the missing function pointer, which is exactly what the first probes hit.
+            // Enabled only for the probe, and only when the device advertises it.
+            if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)) {
+                Set<String> available = deviceExtensionNames(stack, this.physicalDevice);
+                if (available.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
+                    deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+                }
+            }
+            PointerBuffer names = stack.mallocPointer(deviceExtensions.size());
+            for (String extension : deviceExtensions) {
+                names.put(stack.UTF8(extension));
+            }
+            names.flip();
             VkDeviceCreateInfo createInfo = VkDeviceCreateInfo.calloc(stack).sType$Default()
                     .pQueueCreateInfos(queues)
                     .ppEnabledExtensionNames(names);

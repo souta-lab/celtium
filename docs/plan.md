@@ -29,6 +29,11 @@ Kept separate on purpose - terrain success and present success are different thi
   scene; audit items P0-1, P1-2, P1-3, P1-4, P2-5, P2-6 fixed.
 - The first non-terrain Vulkan draw: a textured quad through `VulkanDynamicMesh` + `VulkanUiPipeline` (test flag
   only, 36864 pixels changed against the same build without the flag).
+- **Native Vulkan presentation**, as a probe (`-Dceltium.vulkan.swapchainProbe=true`): a `VkSurfaceKHR` on the real
+  window (X11/Xwayland), a swapchain (BGRA8, mailbox, 4 images, 1280x720, `VK_KHR_swapchain` enabled at device
+  creation only for the probe), and an acquire-clear-present cycle that returns `VK_SUCCESS` with **no validation
+  message** under synchronization validation and no hang. GL still presents the game's frames in this hybrid build;
+  what is verified is the Vulkan path itself.
 
 **Implemented, not yet GPU-verified:**
 - `VulkanDynamicMesh` (dynamic vertex/index streams), `VulkanTexture2D` (upload, mips, sampler),
@@ -44,15 +49,15 @@ Kept separate on purpose - terrain success and present success are different thi
   `VulkanImmediateDrawer`.
 
 **Blockers / open defects:**
-- `vkCreateSwapchainKHR` path: an argument check inside LWJGL throws `NullPointerException` after surface creation
-  and the present-support check succeed. The create-info's values are now captured and all of them are spec-valid
-  (`format=44` BGRA8, `usage=18` colour-attachment|transfer-dst, `sharing=1` concurrent with one family and a
-  non-null list, `extent=1280x720`, `minImages=4`, `transform=1`, `compositeAlpha=1`, `presentMode=1` mailbox,
-  `oldSwapchain=0`, `pNext=0`), and decompiling the LWJGL wrapper shows the failure is its
-  `Checks.check(long)` on one of the pointers it forwards to the native call, not the `(Buffer,int)` check that the
-  queue-family list and the output buffer satisfy. An explicit allocation-callbacks struct instead of a null
-  allocator did not change it. Next: find which forwarded pointer is zero, for example by calling the native
-  function directly with the same values or by reproducing the creation outside the mod.
+- Resolved: the swapchain `NullPointerException` was LWJGL's capability check on the *function pointer*, because
+  `VK_KHR_swapchain` is a **device** extension and the probe only enabled the instance surface extensions. With the
+  device extension enabled and the create-info back to spec-conformant forms (exclusive sharing, null allocator,
+  persistent acquire semaphore), the present cycle succeeds. Two of my own intermediate "fixes" were the actual
+  faults on the way: concurrent sharing with a single queue family
+  (`VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278`) and a zeroed `VkAllocationCallbacks`
+  (`VUID-VkAllocationCallbacks-pfn*`), the latter crashing the client.
+- Open: presentation is not taken over from GL yet (stage 2's real deliverable), the probe presents one cleared
+  image rather than a rendered frame, and the Intel UHD 630 has not run the probe.
 - Cutout/translucent frame difference against the OpenGL reference (mean 6.86/255, 43.7% of pixels above 8) is
   unresolved and is not evidence of correctness.
 - Compact (24-byte) vertex format renders incorrectly on Vulkan (76.8 mean difference); default is off, so users who

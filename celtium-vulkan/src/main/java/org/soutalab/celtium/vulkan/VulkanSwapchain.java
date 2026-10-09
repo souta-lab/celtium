@@ -54,6 +54,7 @@ public final class VulkanSwapchain {
     private int height;
 
     private String argumentSummary = "not attempted";
+    private long acquireSemaphore = VK_NULL_HANDLE;
 
     private VulkanSwapchain(VulkanContext context, long surface, String platform) {
         this.context = context;
@@ -72,6 +73,11 @@ public final class VulkanSwapchain {
                                          List<String> reasons) {
         if (context == null || window == 0L) {
             reasons.add("no window handle was available for a Vulkan surface");
+            return null;
+        }
+        if (!context.hasDeviceExtension("VK_KHR_swapchain")
+                || !Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)) {
+            reasons.add("the device was not created with VK_KHR_swapchain enabled (the swapchain probe enables it)");
             return null;
         }
         int platformId = GLFW.glfwGetPlatform();
@@ -213,14 +219,19 @@ public final class VulkanSwapchain {
     public String clearAndPresent(float red, float green, float blue, float alpha) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer index = stack.mallocInt(1);
-            long acquire = VK_NULL_HANDLE;
-            LongBuffer semaphore = stack.mallocLong(1);
-            if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
-                    .sType$Default(), null, semaphore) != VK_SUCCESS) {
-                return "present probe: could not create an acquire semaphore";
+            // One semaphore for the life of the swapchain, reused by every acquire: a semaphore waited by a present
+            // must not be destroyed while that present is pending, and reusing it means the next acquire also orders
+            // against the previous present.
+            if (this.acquireSemaphore == VK_NULL_HANDLE) {
+                LongBuffer semaphore = stack.mallocLong(1);
+                if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
+                        .sType$Default(), null, semaphore) != VK_SUCCESS) {
+                    return "present probe: could not create an acquire semaphore";
+                }
+                this.acquireSemaphore = semaphore.get(0);
             }
-            acquire = semaphore.get(0);
-            try {
+            long acquire = this.acquireSemaphore;
+            {
                 int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                         VK_NULL_HANDLE, index);
                 if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
@@ -253,13 +264,17 @@ public final class VulkanSwapchain {
                     return "present probe: vkQueuePresentKHR returned " + presented;
                 }
                 return "present probe: cleared and presented image " + index.get(0) + " (" + presented + ")";
-            } finally {
-                vkDestroySemaphore(this.context.device(), acquire, null);
             }
         }
     }
 
     public void delete() {
+        if (this.acquireSemaphore != VK_NULL_HANDLE) {
+            // The queue is drained first: the semaphore may still be referenced by a pending present.
+            vkQueueWaitIdle(this.context.queue());
+            vkDestroySemaphore(this.context.device(), this.acquireSemaphore, null);
+            this.acquireSemaphore = VK_NULL_HANDLE;
+        }
         for (long view : this.views) {
             if (view != VK_NULL_HANDLE) {
                 vkDestroyImageView(this.context.device(), view, null);
@@ -344,12 +359,11 @@ public final class VulkanSwapchain {
                     .imageExtent(e -> e.set(this.width, this.height))
                     .imageArrayLayers(1)
                     .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-                    // Concurrent sharing with the one queue family this backend uses: the index list is then both
-                    // required by the spec and non-null for LWJGL's generated argument checks, and no ownership
-                    // transfer between families is needed because there is only one.
-                    .imageSharingMode(VK_SHARING_MODE_CONCURRENT)
-                    .queueFamilyIndexCount(1)
-                    .pQueueFamilyIndices(stack.ints(this.context.queueFamilyIndex()))
+                    // Exclusive sharing: there is only one queue family here, and the spec requires CONCURRENT to
+                    // list at least two distinct families (VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278).
+                    .imageSharingMode(VK_SHARING_MODE_EXCLUSIVE)
+                    .queueFamilyIndexCount(0)
+                    .pQueueFamilyIndices(stack.mallocInt(1))
                     .preTransform(capabilities.currentTransform())
                     .compositeAlpha(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
                     .presentMode(this.presentMode)
@@ -372,11 +386,10 @@ public final class VulkanSwapchain {
             // The summary goes into the reason list before the call: if the call throws (or fails), the swapchain
             // object is discarded and nothing else would carry the arguments the next attempt needs.
             reasons.add("arguments: " + this.argumentSummary);
-            // An explicit (zeroed) allocation callbacks struct rather than a null pointer: LWJGL's native wrapper
-            // checks the pointer arguments it forwards, and a null allocator is one of them.
-            org.lwjgl.vulkan.VkAllocationCallbacks allocator =
-                    org.lwjgl.vulkan.VkAllocationCallbacks.calloc(stack);
-            result = vkCreateSwapchainKHR(this.context.device(), create, allocator, handle);
+            // A null allocator is the correct way to ask for the implementation's default; a zeroed
+            // VkAllocationCallbacks is invalid (its function pointers must be non-null) and the driver dereferenced
+            // them, which crashed the client.
+            result = vkCreateSwapchainKHR(this.context.device(), create, null, handle);
             if (result != VK_SUCCESS) {
                 reasons.add("vkCreateSwapchainKHR returned " + result + " (formats " + availableFormats + ") ["
                         + this.argumentSummary + "]");
