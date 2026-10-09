@@ -752,6 +752,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int groupsEnqueuedForOtherTargets;
     /** Batches accepted while a framebuffer other than the main one was bound (audit A10). */
     private int acceptedForOtherTargets;
+    /** Set while an off-target batch is inside the offer path, so a refusal can be attributed to it afterwards. */
+    private boolean offTargetBatchInFlight;
+    /** Refusal reasons seen for batches offered while a non-main framebuffer was bound (audit A10). */
+    private final java.util.Map<String, Integer> offTargetRefusalsByReason =
+            new java.util.LinkedHashMap<String, Integer>();
     /** Pending groups destined for a target that is not the main one, and where they were seen to disappear. */
     private int otherTargetGroupsAtMainFlush;
     private int otherTargetGroupsDiscarded;
@@ -1465,6 +1470,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.offTargetBatchesByTarget.put(this.currentRenderTarget, seen);
                 int[] viewport = new int[4];
                 org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
+                this.offTargetBatchInFlight = true;
                 System.out.println("[Celtium] CELTIUM_OFFTARGET target=" + this.currentRenderTarget + " viewport="
                         + viewport[2] + "x" + viewport[3] + " firstBatchFormat=" + formatId);
                 if (this.offTargetOfferDiagnostics < 4) {
@@ -1496,6 +1502,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                               int vertexCount, int drawMode) {
+    if (this.offTargetBatchInFlight) {
+        // The previous off-target batch never reached acceptance, so the reason it left behind belongs to it. This
+        // attributes a refusal to a target without touching each of the paths that can refuse.
+        this.offTargetBatchInFlight = false;
+        String reason = this.immediateLastRefusal == null ? "unset" : this.immediateLastRefusal;
+        this.offTargetRefusalsByReason.merge(reason, Integer.valueOf(1), Integer::sum);
+    }
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
@@ -1822,6 +1835,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.pendingImmediateIndices += indices.length;
 
             this.immediateTaken++;
+            this.offTargetBatchInFlight = false;
 
             if (!this.currentRenderTargetIsMain) {
                 // Offered for another framebuffer and accepted: the number that says whether these batches are taken at all,
@@ -2569,6 +2583,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
                 + ",enqueuedForOtherTargets=" + this.groupsEnqueuedForOtherTargets
                 + ",acceptedForOtherTargets=" + this.acceptedForOtherTargets + "]"
+                + " offTargetRefusals=" + (this.offTargetRefusalsByReason.isEmpty()
+                        ? "none" : this.offTargetRefusalsByReason.toString())
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals

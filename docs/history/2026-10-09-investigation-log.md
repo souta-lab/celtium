@@ -9192,3 +9192,23 @@ CELTIUM_COMPOSITE_REFUSED   reason=format 2 not in celtium.vulkan.immediateForma
 
 計器の設計は4箇所（フィールド2つ、次回offer時の事後サンプリング、受理時のクリア、offer時のフラグ立て、報告行）で、
 今回は4つ目のアンカーが一意でなかったため**書き込み前に停止**した（ツリーは green のまま）。次回は印字行を**行番号で**指定する（アンカー文字列は一致しなかった。印字は1箇所だけであり、「2箇所ある」と書いたのは誤りだったので訂正する）。
+
+---
+
+## 拒否理由の帰属計器: 仕組みは動いたが、提示がrunの最後に集中し1回しか採取できなかった
+
+`immediateLastRefusal` を off-target バッチへ紐付ける計器（フィールド2つ、次回submit時の事後サンプリング、受理時の
+クリア、offer時のフラグ立て、報告行）を入れ、行番号方式で挿入に成功した。1度だけ位置を誤ってビルドを壊したが
+（外側メソッドの内部に入れた）、本体先頭へ移して green に戻した。
+
+```
+offTargetRefusals = {none=1}
+offTargetPerTarget = [2647651d:offered=248,atPass=0,drawnPasses=0]
+otherTargetGroups = [atMainFlush=0,discarded=0,windowFlush=0,enqueuedForOtherTargets=0,acceptedForOtherTargets=0]
+exit 0 | validationClean true | messages 0 | fixture PASSED | terrainPasses 693
+```
+
+帰属は**1回しか発火していない**。これは計器の誤りではなく、**off-targetの提示がrunの最後のフレームに集中している**
+ためで、フラグを立てた後に `submitImmediateBatchTimed` が呼ばれる機会が1回しか無かったことを意味する。したがって
+理由の採取点が悪い。**次段**: 外側の `submitImmediateBatch` の入口（`immediateBatchesOffered++` の直前）で
+「前回の呼び出しが拒否を残したか」を採取する。外側は全ての提出を通るので、提示の後に必ずもう一度呼ばれる。
