@@ -8155,3 +8155,31 @@ become Vulkan-owned before the four remaining texture-facing call sites can go.
 Recorded because it is the first item in this project that was **already finished when it was measured**, and the reason is
 worth keeping: the earlier optimisation work (mirroring instead of querying, measured at 28 microseconds a batch) was the same
 work condition three needed, done for performance rather than for independence.
+
+---
+
+## The bridge sized: eleven textures, four and a half thousand refreshes
+
+Roles two, three and five are the bridge, and the first question about them is the same one that made the framebuffer item
+tractable: how big is the surface actually. The registry has been counting it all along:
+
+```
+mirroredTextures = 11     inPlaceRefreshes = 4523     descriptorSets = 1
+acceptedByFormat = 1:74, 4:420, 5:219, 6:1342, 7:1017, 8:128, 9:12
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+**Eleven distinct GL textures.** The block atlas, the lightmap, the item and entity sheets, the GUI sheets - that is the whole
+ownership surface the renderer touches, across a run that accepts three thousand batches in nine layouts. Making eleven textures
+Vulkan-owned is a bounded piece of work, which is worth stating plainly because "the game's textures have to become Vulkan-owned"
+sounds open-ended and is not.
+
+The caveat is the second number, and it is the real shape of the problem: **four and a half thousand in-place refreshes** of
+those eleven. The mirror is refreshed whenever the game writes into a texture - the atlas animation every frame, the dynamic
+texture writes, the resource reload - so ownership has to handle a **stream of GL-side writes**, not eleven one-time uploads.
+That is the direction that cannot simply be moved: the game writes with GL, so either those writes are intercepted at their call
+sites (the same hook pattern that already mirrors matrices and blend) or the textures stay half-owned.
+
+So the bridge decomposes the way the framebuffer work did: eleven textures is the resource half, and the write stream is the
+interception half - and the second is where the work is. The refresh path already exists and already works (4,523 times in this
+run without a descriptor rebuild, `descriptorSets=1`), so what is missing is not the mechanism but the ownership.
