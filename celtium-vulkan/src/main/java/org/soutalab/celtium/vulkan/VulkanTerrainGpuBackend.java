@@ -2019,6 +2019,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
+                + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
+                + " acquireOutOfDate=" + (this.swapchain != null ? this.swapchain.acquireOutOfDate() : -1)
                 + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes

@@ -6106,3 +6106,26 @@ This is written down because the number would otherwise be quoted as evidence of
 claim is that the change produced **no difference beyond the scene's noise**, and the way to know that is to have measured the
 noise. Several earlier rounds in this log compared frames across builds and read small non-zero means as noise without
 checking; this is the measurement that justifies doing so.
+
+---
+
+## S18: the flag describes this present, and an out-of-date acquire stops before submitting
+
+Two of the audit's four S18 points were real and are fixed. `presentImage` never reset `outOfDate`, so one out-of-date event
+would leave the caller rebuilding the swapchain for the rest of the session; it is now cleared at the top of the method, which
+makes it mean "the present about to happen found the swapchain out of date". And an acquire returning
+`VK_ERROR_OUT_OF_DATE_KHR` used to set the flag and **carry on** to submit and present an image the acquire had just declared
+unusable; it now returns before anything is submitted, with the caller seeing `succeeded=false` and `outOfDate=true`, and a
+counter of its own.
+
+The other two points turned out to be already sound, and saying so is as useful as fixing them: the null-image case is guarded
+by the `swapchain == VK_NULL_HANDLE` check at the top, and `lastPresentSucceeded` is only set after a successful present and
+reset at the top of the method, so it cannot mark an unsubmitted present as successful.
+
+Verified as far as the runs go: a normal run and one with `-Dceltium.vulkan.forceOutOfDate=true` are both clean - exit 0,
+validation clean, 0 messages, fixture PASSED, `passes=2185` and `2189`, `postAcceptDroppedGroups=0`.
+
+And **not** verified, which is recorded rather than glossed: the counters added for the two new paths did not appear in the
+reported debug line - the backend builds that line in more than one place and the patch landed in another - so the
+quantitative confirmation is still pending, and the acquire branch cannot be reached by the existing injection at all, which
+forces the flag after a successful acquire. Two small follow-ups, both named.

@@ -81,6 +81,7 @@ public final class VulkanSwapchain {
      * present ask for one is the whole rebuild.
      */
     private boolean outOfDate;
+    private int acquireOutOfDate;
     /** Test-only ({@code -Dceltium.vulkan.forceOutOfDate=true}): report out-of-date once so the rebuild runs. */
     private static final boolean FORCE_OUT_OF_DATE = Boolean.getBoolean("celtium.vulkan.forceOutOfDate");
     private boolean forcedOutOfDate;
@@ -91,6 +92,11 @@ public final class VulkanSwapchain {
 
     public boolean outOfDate() {
         return this.outOfDate;
+    }
+
+    /** {@return how many presents stopped at the acquire because the swapchain was out of date} */
+    public int acquireOutOfDate() {
+        return this.acquireOutOfDate;
     }
     /** Freshly created semaphores awaiting destruction with the swapchain (the {@code FRESH_SEMAPHORES} experiment). */
     private final java.util.List<Long> freshSemaphorePool = new java.util.ArrayList<Long>();
@@ -459,6 +465,9 @@ public final class VulkanSwapchain {
         // Reset per present, so a caller reading them after a failure cannot see the previous present's verdict.
         this.lastPresentSubmitDone = false;
         this.lastPresentSucceeded = false;
+        // Reset rather than accumulated (audit S18): this describes the present that is about to happen. Left set, a single
+        // out-of-date acquire would keep the caller rebuilding the swapchain for the rest of the session.
+        this.outOfDate = false;
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
             return "present image: no swapchain or no source image";
         }
@@ -495,6 +504,13 @@ public final class VulkanSwapchain {
             int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                     VK_NULL_HANDLE, index);
             if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
+                if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+                    // The image the acquire handed back cannot be used, so nothing is submitted and nothing is
+                    // presented (audit S18). The caller sees success=false and outOfDate=true and rebuilds.
+                    this.outOfDate = true;
+                    this.acquireOutOfDate++;
+                    return "present image: the swapchain is out of date at acquire";
+                }
                 // The frame can still be presented, but the swapchain no longer matches the surface; recording it lets
                 // the caller rebuild while this frame goes out.
                 this.outOfDate = true;

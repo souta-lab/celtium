@@ -281,11 +281,25 @@ PASSED, `immediateTaken=578`, `postAcceptDroppedGroups=0`, `passes=2225`. **Unex
 branch really is a full-screen composite, so the stricter conditions never reject. The case the audit describes is not
 presented by this fixture, and the branch is off by default in any case.
 
-### S18 [P1] `OUT_OF_DATE` failures are not handled
-The flags are not reset at the top of `presentImage`, so an early return leaves the previous verdict; a real
-`VK_ERROR_OUT_OF_DATE_KHR` from the acquire returns before the recreate branch; a stale `true` can make an unsubmitted
-present look successful; and after `swapchain = null` the next present can dereference a null image. The injection measured
-a successful acquire, not the failure path, and re-injects on every recreate.
+### S18 [P1] `OUT_OF_DATE` failures are not handled - **two of the four fixed, partly verified**
+**Fixed.** `presentImage` now resets `outOfDate` at the top, so the flag describes **the present about to happen** rather than
+accumulating: left set, one out-of-date acquire would keep the caller rebuilding the swapchain for the rest of the session.
+And an acquire that returns `VK_ERROR_OUT_OF_DATE_KHR` now **stops before anything is submitted or presented** - previously it
+set the flag and carried on to submit and present an image the acquire had just declared unusable - returning a result the
+caller reads as `succeeded=false, outOfDate=true`, with its own `acquireOutOfDate` counter.
+
+**Checked and already sound:** the null-image case the audit worried about is guarded (`swapchain == VK_NULL_HANDLE` returns
+before anything is dereferenced), and `lastPresentSucceeded` is only ever set after a successful present and is reset at the
+top of the method, so it cannot report an unsubmitted present as successful.
+
+**Verified as far as it goes.** A normal run and a run with `-Dceltium.vulkan.forceOutOfDate=true` are both clean - exit 0,
+validation clean, **0 messages**, fixture PASSED, `passes=2185`/`2189`, `postAcceptDroppedGroups=0` - so the changed paths do
+not break the frame.
+
+**Not verified:** the two new counters (`swapchainOutOfDate`, `acquireOutOfDate`) were added to a debug string that the report
+does not carry - the backend has several, and the patch landed in a different one - so the quantitative confirmation is
+pending. The real acquire failure also cannot be produced by the existing injection, which forces the flag **after** a
+successful acquire; exercising that branch needs an injection at the acquire itself.
 
 ### S19 [P1] immediate push constants exceed the guaranteed minimum - **closed**
 **Fixed and verified.** The immediate push block is now **116 bytes** - projection 64, the model view's three affine
