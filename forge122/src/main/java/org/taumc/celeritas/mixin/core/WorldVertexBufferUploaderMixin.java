@@ -43,6 +43,25 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$nullFormatDumps;
     private static int celtium$compositeRefusals;
 
+    /** Describes a format the same way the dump does, so an unmatched shape can be put beside a known one. */
+    private static String celtium$describe(VertexFormat format) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < format.getElementCount(); i++) {
+            text.append(format.getElement(i)).append(' ');
+        }
+        return text.toString().trim() + " size=" + format.getSize() + " count=" + format.getElementCount()
+                + " indices=" + celtium$indices(format);
+    }
+
+    /** The element indices, which the element list's text does not show and which a full comparison includes. */
+    private static String celtium$indices(VertexFormat format) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < format.getElementCount(); i++) {
+            text.append(format.getElement(i).getIndex()).append(',');
+        }
+        return text.length() == 0 ? "-" : text.substring(0, text.length() - 1);
+    }
+
     private static String celtium$stack() {
         StackTraceElement[] trace = new Throwable().getStackTrace();
         StringBuilder text = new StringBuilder();
@@ -121,9 +140,15 @@ public abstract class WorldVertexBufferUploaderMixin {
                 for (int i = 0; i < format.getElementCount(); i++) {
                     elements.append(format.getElement(i)).append(' ');
                 }
+                // Both sides, in the same shape. Six rules were tried against this shape without success, and the reason may
+                // simply be that nobody has seen the two formats side by side: the dump printed the unmatched format's
+                // elements and never a known one to compare them with.
                 System.out.println("[Celtium] CELTIUM_NULLFORMAT stride=" + stride + " vertices=" + vertices
                         + " elements=[" + elements.toString().trim() + "] formatSize=" + format.getSize()
-                        + " elementCount=" + format.getElementCount() + " stack=" + celtium$stack());
+                        + " elementCount=" + format.getElementCount()
+                        + " referencePositionTex=[" + celtium$describe(DefaultVertexFormats.POSITION_TEX) + "]"
+                        + " referenceBlock=[" + celtium$describe(DefaultVertexFormats.BLOCK) + "]"
+                        + " stack=" + celtium$stack());
             }
             int mode = celtium$drawMode(buffer);
             // The call that decides everything. It was lost when a dead branch was cleaned out of this method, and
@@ -210,6 +235,14 @@ public abstract class WorldVertexBufferUploaderMixin {
             id = 4;
         } else if (celtium$sameElements(format, DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP)) {
             id = 5;
+        } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX)
+                || format.equals(DefaultVertexFormats.POSITION_TEX)) {
+            // The branch that was missing. Position+texture is the shape the sky, the clouds and the water surface upload, it is
+            // byte-for-byte the standard POSITION_TEX format, and a pipeline for id 6 already existed in the backend - but this
+            // chain never assigned 6, so those batches fell through to "unrecognised" and went to OpenGL. Six mapping rules
+            // were tried against the shape before anyone compared it with a known format on one line and then read the chain:
+            // there was nothing wrong with the comparison, and nothing for a rule to fix.
+            id = 6;
         } else {
             id = 0;
         }

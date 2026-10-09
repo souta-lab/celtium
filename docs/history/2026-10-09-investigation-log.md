@@ -7322,3 +7322,39 @@ So the present item closes with three separate, honest statements:
 That third point is an **environment limitation, not a code defect**, and it is the first item in this project whose closure
 depends on something the machine cannot provide rather than on work not yet done. Recorded as such, with the command that
 proves it, so nobody spends a round rediscovering it.
+
+---
+
+## The mapping was missing a branch, not a rule: POSITION_TEX had no id
+
+The comparison that settled it fitted on one line, and it took one run:
+
+```
+unmatched:            elements=[3,Position,Float 2,UV,Float]  size=20  count=2
+referencePositionTex: [3,Position,Float 2,UV,Float]           size=20  count=2  indices=0,0
+```
+
+The shape the sky, the clouds and the water surface upload is **element for element, size for size** the standard
+`POSITION_TEX` format - and the id chain had **five branches** (`POSITION_COLOR`, `POSITION_TEX_COLOR`, `BLOCK`, `ITEM`,
+`PARTICLE_...`) and **none for `POSITION_TEX`**. The shape fell through to `else { id = 0; }`, which the dump reports as "no
+vertex format at all". A pipeline for id 6 had existed in the backend the whole time; nothing ever assigned 6.
+
+That is what six mapping rules were tried against. There was nothing wrong with the comparison - although comparing elements
+by content rather than identity *was* a real defect, fixed earlier and explaining nothing - and nothing for a rule to fix: the
+assignment simply was not there.
+
+With the branch added, the dump changes, and that is the evidence:
+
+```
+before: elements=[3,Position,Float 2,UV,Float] formatSize=20 elementCount=2          <- the sky shape, unmapped
+after:  elements=[3,Position,Float 2,UV,Float 3,Normal,Byte 1,Padding,Byte] size=24  <- the composite, which is a different format
+```
+
+The stride-20 shape no longer appears in the dump, so it is no longer unmapped. `acceptedByFormat` still shows `6:0`, which
+means those batches are recognised and then **refused by something downstream** - a second guard, not the same one - and that
+is the next step rather than this one. The shape that remains in the dump is the **composite batch**, `POSITION_TEX_NORMAL`,
+which has no id of its own and is the same one the present path keys on.
+
+Worth recording as the shape of the whole investigation: six rules, one identity-comparison fix, three rounds, and the answer
+was a **missing else-if**. What found it was putting the two formats side by side on one line and then reading the chain -
+neither of which had been done, because each earlier attempt started from the assumption that a rule needed to match.
