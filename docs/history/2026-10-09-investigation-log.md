@@ -2108,3 +2108,28 @@ by guessing between them.
 That is a real, located, reproducible gap in the shipped configuration - small (1.2% of pixels, none of them far off) and
 nowhere near the "no differences" the hidden-GUI runs reported, which is exactly why the difference between "measured with
 the HUD hidden" and "measured" has to be stated wherever the earlier results are quoted.
+
+---
+
+## The GUI-visible "difference" was the held item animating between runs
+
+One round after recording a 1.58 difference as a gap in the GUI path, the control that should have come first was run: the
+**same configuration twice**.
+
+```
+reference vs reference (noise floor):  mean 3.72 | 2.93% of pixels over 8 | bbox x 9..935, y 387..575
+immediate on vs reference:             mean 3.68 | 2.94% over 8            | bbox x 9..935, y 387..575
+```
+
+The difference between the immediate path and the reference is **smaller than the run-to-run variation**, with an
+**identical bounding box** - the band the first-person held item occupies, which swings between frames. So:
+
+- the earlier reading was **wrong**, and it is retracted here: with the GUI visible there is no established renderer
+  difference, and the 1.19% (then 3.68 as the runs moved) is the scene's own variation;
+- the hidden-GUI comparison keeps its 0.00 noise floor and stays the like-for-like measurement it always was;
+- any future GUI-visible claim needs the noise floor beside it, exactly as this project's measurement rules require - a
+  rule applied here only after publishing a claim without it.
+
+The cause of the variation is worth stating because it is not a defect: the held item is animated, so two runs of the same
+configuration are legitimately different images. Freezing it - an empty hand, or a fixed frame index - would make the
+GUI-visible comparison usable; until then it is a measurement of the scene, not of the renderer.
