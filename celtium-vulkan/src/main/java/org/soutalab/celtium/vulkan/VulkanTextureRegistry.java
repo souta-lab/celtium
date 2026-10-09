@@ -433,6 +433,19 @@ public final class VulkanTextureRegistry {
             VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
             texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
             this.entries.put(glTextureId, new Entry(glTextureId, width, height, texture));
+            if (width >= 512 || height >= 512) {
+                // Who asks for a screen-sized mirror: the stack is the evidence for whether the frame's own colour is
+                // being mirrored (and read back every frame) or something else is.
+                StringBuilder where = new StringBuilder("[Celtium] CELTIUM_BIG_MIRROR glTexture=" + glTextureId + " size="
+                        + width + "x" + height + " from");
+                StackTraceElement[] trace = new Throwable().getStackTrace();
+                for (int i = 0; i < Math.min(8, trace.length); i++) {
+                    String cls = trace[i].getClassName();
+                    where.append(" <- ").append(cls.substring(cls.lastIndexOf('.') + 1)).append('.')
+                            .append(trace[i].getMethodName());
+                }
+                System.out.println(where);
+            }
             this.mirrorCount++;
             return texture;
         } catch (RuntimeException | LinkageError error) {
