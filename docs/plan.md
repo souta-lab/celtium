@@ -877,7 +877,39 @@ descriptor の確保は 1.09 ms の原因ではない。
 - **撤回の検証**: 既定offに戻して target受入を再実行 → **exit 0 / validationClean / PASSED**、
   `commandBufferTargets.passed=True`。
 
-**次の一手**: (1) target fixture の描画形式を即値経路が持つ形式（例: `POSITION_COLOR`）に載せ替え、
+**target fixture を載せ替えて既定化（このターン・完了）**:
+
+1. `commandBufferQuadZ` は `POSITION_TEX_COLOR`（format 2）に**定数UV(0.5,0.5)**を付けていただけなので、
+   **`POSITION_COLOR`（format 1）**に落としても**同じ色・同じ位置**で、検査している性質（target群の受理と順序）は
+   変わらない。メタデータの `format`/`formatId` も更新した。
+2. 載せ替えた fixture は **フラグON/OFFどちらでも合格**（`targets=True`、format=POSITION_COLOR）。
+   ON: p50 15.89 ms / OFF: 18.91 ms。
+3. そこで `presentFromComposite` を**既定化**（`-Dceltium.vulkan.presentFromComposite=false` で旧経路に戻せる）。
+   理由と測定はコードにも書いた。
+
+**既定化後の受入（一式・すべて緑）**:
+
+| run | exit | validationClean | fixture | 所要 | p50 |
+|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | 24.8 s | **16.05 ms** |
+| Intel 通常 | 0 | true | **PASSED** | 24.2 s | **30.94 ms** |
+| postprocess (AMD) | 0 | true | PASSED | 25.0 s | 16.13 ms |
+| weather (AMD) | 0 | true | PASSED | 25.3 s | 15.44 ms |
+| spectator spider (AMD) | 0 | true | PASSED | 25.1 s | 17.46 ms |
+| submit失敗注入 | 1 | true | FAILED（期待どおり） | 24.2 s | — |
+| idle失敗注入 | 1 | true | FAILED（期待どおり） | 24.8 s | — |
+| **command-buffer target受入** | 0 | true | **PASSED** | 25.5 s | 15.99 ms、`targets=True` |
+
+- **AMD 16.05 ms は celeritas 参照（16.18 ms）を上回る**。Intel は 42.66 → **30.94 ms（27%改善）**。
+- 画像の差は **1 LSB 未満の丸め**（0.12% の画素、最大 7/255、空は完全一致）であることを測定済み。
+- これでフレームの色は **present 経路が所有**し、GL からの画面サイズ読み戻し（1280×720・6.2 ms/フレーム）は
+  既定で**使われない**（優先順位4の前進。ただし GL context なしの起動は依然として未達）。
+
+**次の一手**: (1) 残る `stale`（0.3 ms/フレーム）と batch call（5.4 ms/フレーム）の内訳を再取得して次のボトルネックを決める、
+(2) Intel の残差（30.94 ms）が AMD（16.05）の約2倍である理由を GPU 時間で切り分ける、
+(3) 失敗経路のうち texture/descriptor/allocation 失敗と minimize/world switch を両GPUで確認する。
+
+**（旧メモ）** 次の一手: (1) target fixture の描画形式を即値経路が持つ形式（例: `POSITION_COLOR`）に載せ替え、
 同じ性質（target群の受理と順序）を検査したまま再受入を取る、(2) それが通ったら `presentFromComposite` を既定化し、
 AMD/Intel と主要場面・失敗経路の受入を一式取り直す。速度の利得（AMD -2.4 ms/フレーム、Intel -11.8 ms/フレーム）と
 画面サイズ読み戻しの消滅（6.2 → 0.3 ms/フレーム）は測定済みで、あとは受入の付け替えだけである。

@@ -403,8 +403,8 @@ public final class ValidationClient {
         result.addProperty("passed", false);
         result.addProperty("worldTicks", worldTicks);
         result.addProperty("pass", "RenderGameOverlayEvent.Post/ALL");
-        result.addProperty("format", "POSITION_TEX_COLOR");
-        result.addProperty("formatId", 2);
+        result.addProperty("format", "POSITION_COLOR");
+        result.addProperty("formatId", 1);
         result.addProperty("batches", 4);
         result.addProperty("depthScope", "RGBA8/D24 bridge; depth test disabled, not a depth-occlusion test");
         report.add("commandBufferTargets", result);
@@ -710,11 +710,16 @@ public final class ValidationClient {
         Tessellator tessellator = Tessellator.getInstance();
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.setTranslation(0.0D, 0.0D, 0.0D);
-        buffer.begin(GL11C.GL_QUADS, DefaultVertexFormats.POSITION_TEX_COLOR);
-        buffer.pos(left, bottom, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
-        buffer.pos(right, bottom, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
-        buffer.pos(right, top, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
-        buffer.pos(left, top, z).tex(0.5D, 0.5D).color(red, green, blue, 255).endVertex();
+        // POSITION_COLOR, not POSITION_TEX_COLOR: the target-group acceptance is about which render target a batch
+        // belongs to and in what order the groups are flushed, and the UVs here were a constant (0.5, 0.5) that sampled
+        // one texel. Format 2 is the frame composite and belongs to the present path once
+        // celtium.vulkan.presentFromComposite is on, which made this fixture report passed=false while the frame itself
+        // was fine. Drawing with a format the immediate path owns keeps the property under test covered either way.
+        buffer.begin(GL11C.GL_QUADS, DefaultVertexFormats.POSITION_COLOR);
+        buffer.pos(left, bottom, z).color(red, green, blue, 255).endVertex();
+        buffer.pos(right, bottom, z).color(red, green, blue, 255).endVertex();
+        buffer.pos(right, top, z).color(red, green, blue, 255).endVertex();
+        buffer.pos(left, top, z).color(red, green, blue, 255).endVertex();
         tessellator.draw();
     }
 
