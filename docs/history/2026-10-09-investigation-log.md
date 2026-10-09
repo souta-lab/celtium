@@ -1371,3 +1371,37 @@ path is fragile enough that handle-array plumbing is better written with the sha
 
 The experiment is reverted and the tree is green. It is still the right experiment: it needs to be written in the file's
 existing idiom, and the run must be checked for `BUILD SUCCESSFUL` before its validation count is quoted.
+
+---
+
+## Fresh semaphores per present: the reuse theory is eliminated
+
+The experiment that did not run last round ran this time, written one handle per `mallocLong(1)` as the pool creation
+does, and **gated on `BUILD SUCCESSFUL`** so a failed build can no longer contaminate the reading:
+
+```
+BUILD OK - running the experiment
+status PASSED | nativeTerrainVerified True
+real validation messages (fresh semaphores): 36
+```
+
+A brand-new acquire/render-finished pair for every present, never reused, changes nothing: the same 36 messages, the same
+two leading complaints naming the acquire semaphore. So the "semaphore reused before its presentation retires" candidate is
+**eliminated**, and with it the per-image present-completion tracking that would have fixed it - that work would have been
+wasted.
+
+What that leaves is narrower than it has ever been. The submission is the one this code builds (counted), it carries a wait
+on exactly the semaphore the acquire signalled (same local, traced, and now provably a fresh handle), the wait's stage mask
+covers all commands, and the messages persist regardless. Two explanations remain, and both are about the *layer's* view
+rather than the submission:
+
+- the device is created with the external-semaphore/foreign-queue extensions this bridge needs, and the swapchain's own
+  semaphores may be classified differently by the layer than a plain `VkSemaphore` is;
+- or the complaints are about the *presentation's* view of the image - that the presentation engine has not released it -
+  which the specification orders through the acquire, and which the layer cannot observe and may be reporting
+  conservatively.
+
+Both are testable without touching the present path: a minimal Vulkan program that does exactly this sequence (acquire,
+barrier, blit, present with a fresh semaphore pair) and nothing else would show whether these messages are this code's or
+this configuration's. That is the experiment the next round should build, because continuing to vary this code has now cost
+several rounds with the messages unmoved.

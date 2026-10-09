@@ -77,6 +77,8 @@ public final class VulkanSwapchain {
     private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
     /** Bisection switch: present without recording anything, to separate the recording from the semaphores. */
     private static final boolean PRESENT_NO_RECORD = Boolean.getBoolean("celtium.vulkan.presentNoRecord");
+    /** Experiment: a fresh semaphore pair per present, to test whether reuse is what validation objects to. */
+    private static final boolean FRESH_SEMAPHORES = Boolean.getBoolean("celtium.vulkan.freshPresentSemaphores");
 
     /** {@return the mean of a centre patch of a swapchain image}, or -1 when it cannot be read. */
     public float lastPresentedMean() {
@@ -377,10 +379,30 @@ public final class VulkanSwapchain {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer index = stack.mallocInt(1);
-            long acquire = acquireSemaphore(stack);
-            long renderFinished = renderFinishedSemaphore(stack);
-            if (acquire == VK_NULL_HANDLE || renderFinished == VK_NULL_HANDLE) {
-                return "present image: could not create the semaphores";
+            long acquire;
+            long renderFinished;
+            if (FRESH_SEMAPHORES) {
+                // Experiment: a new pair per present, never reused, so that "the acquire semaphore is reused before its
+                // presentation retires" either shows up as zero messages or is eliminated. Written one handle per
+                // mallocLong(1), the idiom the pool creation already uses: the LongBuffer-with-position shape made
+                // javac itself fail under this module's -source 8.
+                org.lwjgl.vulkan.VkSemaphoreCreateInfo semaphoreInfo =
+                        org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack).sType$Default();
+                LongBuffer one = stack.mallocLong(1);
+                if (vkCreateSemaphore(this.context.device(), semaphoreInfo, null, one) != VK_SUCCESS) {
+                    return "present image: could not create the acquire semaphore";
+                }
+                acquire = one.get(0);
+                if (vkCreateSemaphore(this.context.device(), semaphoreInfo, null, one) != VK_SUCCESS) {
+                    return "present image: could not create the render-finished semaphore";
+                }
+                renderFinished = one.get(0);
+            } else {
+                acquire = acquireSemaphore(stack);
+                renderFinished = renderFinishedSemaphore(stack);
+                if (acquire == VK_NULL_HANDLE || renderFinished == VK_NULL_HANDLE) {
+                    return "present image: could not create the semaphores";
+                }
             }
             int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                     VK_NULL_HANDLE, index);
