@@ -201,6 +201,18 @@ public final class VulkanFrameTarget {
     /** Frames closed by a failure path rather than by {@link #endFrame()}; part of the failure record. */
     private int abandonedFrames;
     private String lastAbandonReason;
+    /** A frame opened while the previous one was still open - a leak that used to be a crash. */
+    private int leakedFrames;
+    /** Set by {@link #abandonFrame(String)} so the caller's later {@link #endFrame()} is a no-op. */
+    private boolean frameAbandoned;
+
+    private void recordAbandonedFrame() {
+        // Recorded once per abandoned frame so a run can say how many frames ended without a write-back.
+        this.abandonedWrites++;
+    }
+
+    /** Frames whose {@link #endFrame()} was skipped because a failure path had already abandoned them. */
+    private int abandonedWrites;
 
     /**
      * Per-step CPU time of the handoff, so the debug overlay can show where the milliseconds go instead of leaving
@@ -348,7 +360,14 @@ public final class VulkanFrameTarget {
     private void beginFrame(boolean useRememberedTarget) {
         checkAlive();
         if (frameOpen) {
-            throw new IllegalStateException("beginFrame() was called while the previous frame is still open; endFrame() is required first");
+            // A frame can be left open by a failure inside a frame - a refused submission, a stalled device, an
+            // exception thrown between begin and end. Throwing here turned that into a crash on the *next* frame and
+            // the client then sat on the crash screen instead of ending the run, which is what the failure injection
+            // measured (exit 124, report missing). The previous frame is abandoned and counted instead: the run keeps
+            // going far enough to report the failure, and the counter keeps the leak visible.
+            frameOpen = false;
+            leakedFrames++;
+            lastAbandonReason = "beginFrame found the previous frame open";
         }
         requireGlCapabilities("beginFrame");
         try (GlState state = new GlState()) {
@@ -621,6 +640,7 @@ public final class VulkanFrameTarget {
     public void abandonFrame(String reason) {
         if (frameOpen) {
             frameOpen = false;
+            frameAbandoned = true;
             abandonedFrames++;
             lastAbandonReason = reason;
         }
@@ -628,6 +648,13 @@ public final class VulkanFrameTarget {
 
     public void endFrame() {
         checkAlive();
+        if (frameAbandoned) {
+            // The failure path already closed this frame without the write-back; endFrame() from the caller that was
+            // interrupted is a no-op rather than a second failure.
+            frameAbandoned = false;
+            recordAbandonedFrame();
+            return;
+        }
         if (!frameOpen) {
             throw new IllegalStateException("endFrame() was called without a matching beginFrame()");
         }

@@ -314,7 +314,12 @@ atlas HF の差（vanilla run 34.77 vs mod導入run 32.01）は `TextureAtlasSpr
 次の優先は監査バックログ（失敗経路・coverage・texture所有）へ移す。特に**松明の炎（アニメーションテクスチャ）が未描画**なのは独立の欠陥で、
 sprite animation の移植を進める。
 
-**失敗経路の実機検証（このターン・未完）**: `-Dceltium.vulkan.failSubmits=2` で submit 失敗を注入すると
+**失敗経路（解決済み）**: frame を開く4系統のうち失敗時に開いたまま残るものがあったため `VulkanFrameTarget` を
+自己修復にした（beginFrame は前frameを放棄して計数／endFrame は放棄済みなら no-op／abandonFrame はGPU作業なし）。
+結果: 注入run が **exit 124（165s ハング）→ exit 1（24.2s、report あり）** になり、`vulkanErrors=2`・
+`nativeTerrainVerified=false` として失敗が記録され、"still open" は0件。通常run・target受入は無影響。
+
+**（旧・未完の記録）**: `-Dceltium.vulkan.failSubmits=2` で submit 失敗を注入すると
 **exit 124（duration cap）でハングし fixture report が MISSING**。ログは
 `accepted geometry retained; renderer must be rebuilt` → `beginFrame() ... previous frame is still open` →
 `Game crashed!` の連鎖で、**失敗時に frame が開いたまま残る**ため次フレームで別例外→クラッシュ→ヘッドレスが停止する。

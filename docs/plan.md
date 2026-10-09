@@ -551,10 +551,22 @@ mid (136.5, 140.9, 130.4) / near (133.1, 140.0, 131.2)、verdict は exit 0 / va
 が出ており、**失敗時に frame が開いたまま残り、次フレームで別の例外→クラッシュ→ヘッドレスはクラッシュ画面で停止**
 という連鎖だった（validationClean は true / 0 messages のまま＝validationでは検出されない）。
 
-**対処（部分的）**: `VulkanFrameTarget.abandonFrame(reason)` を追加（GPU作業を伴わずに frame を閉じる・冪等）し、
-backend の2つの失敗経路から呼ぶようにした。しかし**再実行でも exit 124 / "still open" ×2 のままで、ハングは解消していない**。
-frame を開く経路が他にもある（bridge の `beginFrameForPresent` 系の可能性）ため、**修正は未完**。
-失敗再現 `p49-failsubmit-r437`（修正前）と `p49-failsubmit2-r437`（修正後）を両方保存する。
+**修正（このターンで解決）**: frame を開く経路は4系統（terrain render / present bridge / composite / present）あり、
+失敗時に開いたまま残っていた。`VulkanFrameTarget` を**自己修復**にした:
+
+- `beginFrame()`: 前のframeが開いていたら**例外を投げずに放棄して計数**（`leakedFrames`）し、続行する。
+- `endFrame()`: 失敗経路が既に放棄したframeなら**GL書き戻しをせず no-op**（`abandonedWrites` に計数）。
+- `abandonFrame(reason)`: GPU作業なしでframeを閉じる（冪等）。
+
+| 状態 | exit | fixture | 所要 |
+|---|---|---|---|
+| 修正前 | **124（ハング）** | MISSING_REPORT | 165.2s |
+| abandonFrameのみ | **124（ハング）** | MISSING_REPORT | 165.2s |
+| **自己修復beginFrame** | **1** | **FAILED（reportあり）** | **24.2s** |
+
+修正後は `vulkanErrors=2`（注入した2回の失敗を計上）、`vulkanPasses=1406`、"still open" は**0件**、
+`nativeTerrainVerified=false` として**レポートに残る**＝「停止した device はハングせずメッセージを出して run を終える」
+という監査の要求を満たした。通常runは無影響（mid (136.5,140.9,130.4) / verdict PASSED / target受入 exit 0）。
 
 **残差の現状**: 平均 8.00/255（約3%）、HF 0.84、幾何エッジの10-90%幅は参照と同一（6.16 対 6.05）。
 画像忠実度は「構造・明るさとも一致、細部の微差のみ」の状態。次の優先は監査バックログ（失敗経路・coverage・
