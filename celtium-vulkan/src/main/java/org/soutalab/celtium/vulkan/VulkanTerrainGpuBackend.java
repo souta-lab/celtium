@@ -151,6 +151,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long timestampPool;
     private float timestampPeriod = 1.0f;
     private boolean timestampsUsable;
+    /**
+     * Forces the no-timestamp path, so the behaviour on a device whose queue cannot record timestamps can be measured
+     * on hardware that can: {@code -Dceltium.vulkan.forceNoTimestamps=true}.
+     */
+    private static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
     private final Reference2ReferenceMap<TerrainRenderPass, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
     private boolean uploadVerified;
     private int beforeAfterLogged;
@@ -2319,15 +2324,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.timestampsUsable = timestampValidBits > 0L && this.timestampPeriod > 0.0f;
             org.lwjgl.vulkan.VkQueryPoolCreateInfo queryPool = org.lwjgl.vulkan.VkQueryPoolCreateInfo.calloc(stack)
                     .sType$Default().queryType(VK_QUERY_TYPE_TIMESTAMP).queryCount(TIMESTAMP_SLOTS);
-            if (this.timestampsUsable) {
+            if (this.timestampsUsable && !FORCE_NO_TIMESTAMPS) {
                 check(vkCreateQueryPool(this.context.device(), queryPool, null, handle), "vkCreateQueryPool");
                 this.timestampPool = handle.get(0);
+            } else {
+                // Pass timing is optional; the backend is not. Registering only when a queue can record timestamps
+                // meant a device without them lost the backend entirely - the audit's item H, and a direct contradiction
+                // of choosing features by capability rather than by assumption.
+                this.timestampsUsable = false;
+                record("the queue cannot record timestamps, so pass timing is disabled; the backend registers anyway");
+            }
 
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(this);
 
             if (Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)) {
                 runSwapchainProbe();
-            }
             }
         }
     }
