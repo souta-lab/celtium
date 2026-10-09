@@ -1333,7 +1333,30 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - 併せて **`forceAcquireOutOfDate` が発火していない**ことも分かった（`acquireOutOfDate=0`）。注入の実装自体を
   確かめる必要がある（このフラグは「acquire 自体で失敗を注入する」ものとして書かれている）。
 
-**次の一手**: (1) acquire semaphore の再利用を直す（present 経路の semaphore 対の管理。ここは以前も
+**訂正と受入（このターン）**: 前ターンの `VUID-vkAcquireNextImageKHR-semaphore-01286` は**注入と併用した時だけ**出るもので、
+**present 経路そのものは綺麗**だった。
+
+| run（AMD、`swapchainProbe=true`） | exit | validationClean | fixture | p50 | present trace | VUID |
+|---|---|---|---|---|---|---|
+| **`presentNoRecord=false`（通常の記録あり経路）** | **0** | **true** | PASSED | 15.89 ms | 4 | **0** |
+| **同（Intel）** | **0** | **true** | PASSED | 35.78 ms | 4 | **0** |
+| `presentNoRecord=true`（コード自身の二分探索スイッチ） | 1 | false | PASSED | — | — | `VUID-VkPresentInfoKHR-pImageIndices-01430` ×20 |
+
+- **present 経路は両GPUで exit 0 / validationClean / VUID 0**。これは完成条件(c)に対する**新しい受入**である
+  （`celtium present trace` が出ているので、経路が実際に走っていることも確認できる）。
+- `presentNoRecord=true` の 20 件は**記録せずに present する**という意図的に壊した経路のもので、
+  「画像が present 可能なレイアウトに無い」という当然の結果。**通常経路の欠陥ではない**。
+- **前ターンの -01286 の正体**: `forceAcquireOutOfDate=true` と併用した時にだけ出た。注入は present を飛ばすため、
+  acquire semaphore が**シグナル済みのまま**次の acquire で再利用される。これは**注入経路のロバスト性の穴**であり、
+  通常経路の欠陥ではない（ただし直す価値はある）。
+- **`forceAcquireOutOfDate` 自体は発火していない**（`acquireOutOfDate=0`）。out-of-date の復旧を「受入した」と
+  言えるのは、この注入が実際に発火してからの話である。
+
+**次の一手**: (1) 注入が発火しない理由を実装から確かめる（発火しなければ out-of-date 経路は永久に未検証）、
+(2) 発火するようにした上で、present を飛ばした時に acquire semaphore を残さない処理を入れる、(3) 両GPUで
+out-of-date の復旧を受入する（`acquireOutOfDate>0` を証拠として要求する）。
+
+**（旧メモ）** 次の一手: (1) acquire semaphore の再利用を直す（present 経路の semaphore 対の管理。ここは以前も
 `freshPresentSemaphores` という実験フラグで揺れている）、(2) `forceAcquireOutOfDate` が発火しない理由を
 実装から確かめる（注入が動かなければ out-of-date 経路は永久に未検証のままになる）、(3) 直ったら
 present 経路を両GPUで受入し、`acquireOutOfDate>0` を確認してから out-of-date の復旧を受入とする。
