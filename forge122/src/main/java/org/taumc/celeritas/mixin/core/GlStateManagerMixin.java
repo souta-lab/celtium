@@ -31,6 +31,20 @@ import java.util.function.Consumer;
  */
 @Mixin(GlStateManager.class)
 public abstract class GlStateManagerMixin {
+    /**
+     * Counts one display-list replay. The geometry inside a display list never passes through the uploader the immediate
+     * path hooks, so this is the only place the size of that missing path can be measured from - and it is where a native
+     * replacement will have to draw from, once the vertices are captured at compile time.
+     */
+    @Inject(method = "callList", at = @At("HEAD"), require = 0)
+    private static void celtium$countCallList(int list, CallbackInfo info) {
+        try {
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replay(list);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Never let a measurement stop the game's rendering.
+        }
+    }
+
     @Inject(method = "func_179147_l", at = @At("HEAD"), require = 0)
     private static void celtium$enableBlend(CallbackInfo info) {
         celtium$mirror(backend -> backend.setBlendEnabled(true));
