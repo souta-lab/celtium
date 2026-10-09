@@ -2872,3 +2872,26 @@ The next attempts, in the order the evidence suggests: a minimal mixin whose onl
 clear the accessor machinery in one run; a hook on `DynamicTexture.func_110564_a` that reads no id at all and instead asks
 the backend to drop whichever texture the game has bound, which is what the animation hook already does; and, if both fail,
 invalidating every mirror on a frame counter, which is blunt but cannot be wrong about which texture changed.
+
+---
+
+## The mirror refresh costs nothing measurable, so the interval stays at every frame
+
+The refresh introduced last round happens on a frame interval, defaulting to every frame because the lightmap changes
+every frame. That default is only defensible if the cost is small, so it was measured rather than assumed:
+
+| `mirrorRefreshFrames` | p50 | p95 | p99 | difference against the reference |
+|---|---|---|---|---|
+| **1** (default) | 16.17 ms | 17.40 ms | 18.42 ms | 0.40% of pixels over 8 |
+| 4 | 16.10 ms | 17.53 ms | 18.80 ms | 0.40% |
+| 16 | 16.02 ms | 18.95 ms | 19.28 ms | 0.40% |
+
+The frame times move by less than a run-to-run spread of about 0.15 ms at p50, and the pixel difference is identical at
+all three intervals - which is expected, because a still capture taken on a frame where every interval has refreshed cannot
+distinguish them. What the numbers do settle is the cost: re-reading every mirrored texture once per frame is not
+measurable at this scene's frame rate, so the interval that keeps the mirror **never stale** is the one to keep.
+
+That is the whole reason the interval is a property rather than a constant: it was introduced so this could be measured,
+it was measured, and the measurement says the conservative value is affordable. A number that had come out the other way -
+say, a millisecond at p50 - would have forced the harder question of refreshing only the texture that changed, which needs
+the hook that crashes.
