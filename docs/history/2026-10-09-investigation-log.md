@@ -2270,3 +2270,40 @@ the budget rises - so this is not the budget being exhausted either.
 What that leaves is the same class of question the terrain work answered early on, and the instrument for it already
 exists: accept **one format at a time** across the GUI-visible scene, and the mask that creates the difference names the
 pipeline. That is four runs and a comparison each, all of it machinery this project has used before.
+
+---
+
+## The format bisection refutes the instrument, not a pipeline: the GUI-visible scene cannot support these claims
+
+The bisection was set up exactly as the terrain work did it - accept one format at a time and see which mask creates the
+difference:
+
+```
+noise floor:    mean 0.10 | >8 0.08%
+format 1 only:  mean 3.71 | >8 2.93%
+format 3 only:  mean 3.68 | >8 2.91%
+format 4 only:  mean 3.66 | >8 2.90%
+format 5 only:  mean 3.67 | >8 2.91%
+```
+
+Every configuration differs by about **3.7** - including the one where the immediate path draws almost nothing, format 1
+alone - and 3.7 is precisely the **unfrozen** floor measured three rounds ago (3.72). The frozen runs that reported a 0.10
+floor and the 0.96/1.63 differences were therefore not measuring what they appeared to: the freeze removes the swing and
+the arm angles, but the first-person view still varies with the frame's partial tick, and how much it varies depends on the
+run rather than on the configuration.
+
+So the honest position, and it is a third correction in this one area:
+
+- **the GUI-visible comparison cannot support renderer claims in this harness.** Its floor is not stable - 0.07, 0.10 and
+  3.7 across runs of the same scene - so a difference of 0.96 or 1.63 against it means nothing, and the reports that used
+  those numbers are **withdrawn**, including the arm-versus-item split;
+- what remains sound is the **hidden-GUI comparison**, whose floor is a genuine 0.00 because two runs of a static scene
+  produce identical images, and the format bisection performed there: formats 1, 3 and 5 each measured 0.00 on their own,
+  and format 2 turned out to be the final composite quad rather than content;
+- the hand's own drawing is not in question anyway, and that part came from the source rather than from images:
+  `ItemRenderer` uses `POSITION_TEX`, twenty bytes, which the mask does not accept, so GL draws the hand and the arm.
+
+The lesson is the one this log has now paid for three times: an instrument whose noise floor is not established **per
+configuration** will produce differences that look like findings. The hidden-GUI scene has that floor; the GUI-visible one
+does not, and until the hand can be frozen properly - an empty hand was not enough - it should not be used to claim
+anything about the renderer.
