@@ -4635,3 +4635,27 @@ The constants are back and the frame measures 0.24%, consistent with the 0.21-0.
 key and the per-group capture all stay - each is correct and each is a piece of the observable snapshot - and the next attempt
 takes the **triple** together (blend enable, factors, depth write) rather than one field of it, because a family-level
 assertion is only safe while every field in it is right.
+
+---
+
+## The "(6, 7)" outlier is withdrawn: the packed key was my decoding, not the data
+
+The pair distribution was read from a packed key (`src << 20 | dst`) and one entry decoded to `(6, 7)`, which was taken as a
+bogus `blendFunc` call and used to explain why the observed factors measured worse than the constants. A verbatim recorder -
+one string per non-ordinary call, no packing - says otherwise:
+
+```
+blendOutlier="none"     (no blendFunc call outside the ordinary alpha pair, in the whole run)
+image against the GL reference: 0.28%
+```
+
+So there was no bogus call: **the `(6, 7)` entry was my own packing arithmetic read back wrongly**, and the finding is
+withdrawn. What stands is narrower and more useful: **573 of 574 groups capture exactly the constants the particle family
+asserts**, so the factors are not what makes the observed-value path measure 0.32-0.33% against the constants' 0.21-0.28%.
+The remaining explanation is therefore not in the factors at all - it is in what else changes when those values are threaded
+through the key and the pipeline, and the verbatim recorder is the instrument to find it rather than another packed decode.
+
+The frame is back at 0.28%, inside the 0.21-0.28% band this configuration has shown across runs, with the observation, the
+key and the per-group capture all in place and unused by the pipeline. Three rounds of this thread have each ended with a
+withdrawn explanation and a narrower question, which is worth stating as the pattern it is: the blend state is observable, the
+values are the expected ones, and the reason using them is worse is still unexplained.

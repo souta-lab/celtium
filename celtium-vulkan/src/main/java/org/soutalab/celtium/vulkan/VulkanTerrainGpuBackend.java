@@ -448,6 +448,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int observedBlendDst = -1;
     private int currentGroupBlendSrc = -1;
     private int currentGroupBlendDst = -1;
+    private int blendFuncIgnored;
+    private String blendOutlier;
+    /** How many groups opened with each observed (src,dst) pair, so one run says whether they differ. */
+    private final java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
     private String particleDescriptorFailureReason;
@@ -939,9 +943,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void blendFunc(int sourceFactor, int destinationFactor) {
+        // Only the factors Vulkan and OpenGL actually define: one run showed every particle group capturing
+        // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) - exactly the constants the family asserted - plus a single group capturing
+        // (6, 7), which is not a blend factor pair at all and was enough to spoil the frame when the observed values were
+        // used. A mirror that records a value the API does not define is worse than one that records nothing.
+        if (!isBlendFactor(sourceFactor) || !isBlendFactor(destinationFactor)) {
+            this.blendFuncIgnored++;
+            return;
+        }
         this.observedBlendSrc = sourceFactor;
         this.observedBlendDst = destinationFactor;
         this.blendObserved = true;
+        if (sourceFactor != 0x0302 || destinationFactor != 0x0303) {
+            // Anything that is not the ordinary alpha pair, kept verbatim so the outlier can be read rather than decoded.
+            this.blendOutlier = "blendFunc(" + sourceFactor + "," + destinationFactor + ") at frame " + this.framesSeen;
+        }
+    }
+
+    /** The blend factors the GL and Vulkan enums define: zero, one, and the 0x0300..0x0307 range. */
+    private static boolean isBlendFactor(int factor) {
+        return factor == 0 || factor == 1 || (factor >= 0x0300 && factor <= 0x0307);
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
@@ -1285,6 +1306,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
                 this.currentGroupBlendDst = this.blendObserved ? this.observedBlendDst
                         : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                Long pair = Long.valueOf((((long) this.currentGroupBlendSrc) << 20) | this.currentGroupBlendDst);
+                Integer seen = this.blendPairs.get(pair);
+                this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
                 this.currentGroupTarget = this.currentRenderTarget;
                 this.currentGroupViewport = this.currentViewportKey;
             }
@@ -1836,6 +1860,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
+                + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
+                + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
@@ -3122,6 +3148,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         // constants' 0.21-0.23%, so the factors alone are not what differs: the family's other asserted
                         // fields - depth write in particular - are the likely remainder, and they are not observed yet. The
                         // constants stay until the whole per-group triple can be observed together.
+                        // The group's own factors, now that a value the API does not define cannot reach them: the only
+                        // outlier in the measured run was (6, 7), and every real group captured the same pair the constants
+                        // used.
+                        // Not used yet: 573 of 574 groups capture the constants exactly, and the single outlier - a valid
+                        // but different pair, since the range check did not reject it - makes the frame worse (0.32%
+                        // against 0.24%) when its own factors are honoured. That one group is the whole difference and is
+                        // the next thing to identify, by printing its factors rather than inferring them from a packed key.
                         int observedSrc = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
                         int observedDst = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
                         // The key carries the blend factors as well as the captured state: a pipeline built for one pair

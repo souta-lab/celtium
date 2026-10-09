@@ -107,7 +107,11 @@ family had been asserting. Using the observed factors in the pipeline is **not**
 cache key does not carry them, so the first group's factors were shared by every later group and the frame got worse (0.23%
 to 0.33%). **Keyed, and still not enough:** with the factors in the pipeline cache key the frame is **0.31%** - worse than the
 constants' 0.23% - because `blendObserved` is the **most recent `blendFunc` call anywhere**, not the factors in effect when
-the batch was offered. The constants are restored (0.21% measured, consistent with 0.23%). **Per-group capture done, and still not enough:** the group now carries the blend factors in effect when it opened
+the batch was offered. The constants are restored (0.21% measured, consistent with 0.23%). **A withdrawn explanation, and a narrower question:** the "(6,7)" outlier that was going to explain the regression is
+**withdrawn** - a verbatim recorder reports `none` for the whole run, so it was an error in reading a packed key. What stands:
+573 of 574 groups captured **exactly the constants** the family asserts, and threading the observed values through the key
+and the pipeline still measures 0.32-0.33% against the constants' 0.21-0.28%. The reason is therefore **not in the factors**.
+Earlier note: **Per-group capture done, and still not enough:** the group now carries the blend factors in effect when it opened
 (beside the state key, as the matrices are) and the frame measures **0.33%** against the constants' 0.21-0.24%. So the factors
 alone are not the difference: Minecraft sets them per particle type, and correcting them while **depth write** stays asserted
 false for the whole family produces a frame further from GL, not closer. **Next:** observe the whole triple - blend enable,
