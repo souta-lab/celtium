@@ -3889,3 +3889,41 @@ targets, demonstrated on a scene that actually crosses them.
 The mirror counters are unchanged (`proj:1.62e-4, view:1.62, exact:0`, 1192 comparisons), which is expected: the group key
 decides how batches are grouped, not what the mirror holds, and the residual modelview figure is the cross-pass sampling the
 trace identified.
+
+---
+
+## The S10 fixture exists, it exercises the key, and it fails
+
+The fixture the audit's S10 acceptance asks for is built: a second `Framebuffer` (256x256, created once), cleared and bound,
+one quad drawn into it, then the main framebuffer bound again and the two overlapping quads drawn there - same format,
+texture and state throughout, so only the render target and viewport separate them.
+
+```
+drawTestSecondTarget: true
+passSplits: 16                 (was 0 without the second target)
+immediateTaken: 1229           (was 596)
+matrixMirrorDelta=proj:1.6200542E-4, view:2000.0
+fixture FAILED | nativeTerrainVerified False | 1949 passes
+```
+
+Three things, in order of importance.
+
+**The key's new field does something measurable.** `passSplits` went from 0 to 16 the moment a second render target entered
+the frame, so the group condition is separating passes rather than merely carrying a field nobody exercises.
+
+**The fixture fails, and that is the honest state of S10.** `nativeTerrainVerified` is false and the modelview delta has gone
+from 1.62 to **2000** - a magnitude that looks like a screen coordinate rather than a world one, which is what a GUI-pass
+matrix leaking into a world-pass comparison would look like. The second target's batches are drawn in the overlay pass with
+an orthographic projection, and something about that now reaches state that the world pass depends on. This is exactly what
+the audit says S10 is: draw order, target and pass are not preserved across the hybrid, and the acceptance test for it now
+demonstrates the failure rather than the feature.
+
+**So the entry stays open, with an instrument instead of a hypothesis.** Before this round, `passSplits` was zero and the
+claim that pass identity mattered rested on the trace. Now there is a fixture that crosses two targets, a counter that shows
+the crossing, and a failure that appears when it does - which is the shape every fixed defect in this log eventually had:
+first the reproduction, then the number, then the fix.
+
+The 2000 is the next thing to read: whether it is a GUI ortho matrix reaching the world comparison, or the world matrix
+being compared against a target that has been cleared and rebound. Both are consistent with the number, and the trace
+instrument that resolved the last question - forty capped events, comparisons above a threshold - is already in place to
+distinguish them.

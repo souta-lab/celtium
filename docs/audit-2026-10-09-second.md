@@ -115,8 +115,12 @@ with differing per-vertex light values compared against GL.
 on `GlStateManager.func_179083_b` and a target hook on `Framebuffer.func_147610_a` (identity only, so no accessor
 machinery), with the result that two passes can no longer merge into one draw. **Measured: `passSplits:0` and no
 regression** - the frame is identical to its same-fixture reference at 0.40% (3,714 px) - which says this scene never
-presents the case, not that the case does not exist. **Open:** draw order across GL fallback, clears and FBO switches, and
-the fixture that crosses two targets with overlapping translucent quads, which is now the blocking item for this entry.
+presents the case, not that the case does not exist. **The fixture is built and it fails.** A second 256x256 `Framebuffer` is cleared, bound and drawn into, then the main
+target is rebound and the overlapping quads are drawn there - same format, texture and state, so only target and viewport
+separate them. `passSplits` rises from **0 to 16**, so the key's new field is exercised; and the run **FAILS**
+(`nativeTerrainVerified False`) with the modelview delta jumping from 1.62 to **2000**, a magnitude that looks like a screen
+coordinate rather than a world one. That is S10's failure demonstrated rather than described. **Open:** draw order across GL
+fallback, clears and FBO switches - the fix - and reading what the 2000 is.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.
 

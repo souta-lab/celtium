@@ -49,6 +49,7 @@ public final class ValidationClient {
     private static final String[] FLICKER_DX_NAMES = {"torchFlickerDX", "field_175075_L"};
 
     private final JsonObject report = new JsonObject();
+    private net.minecraft.client.shader.Framebuffer celtium$secondary;
     private final List<Double> frameIntervals = new ArrayList<Double>();
     private boolean enabled;
     private boolean launched;
@@ -151,6 +152,23 @@ public final class ValidationClient {
         }
         report.addProperty("drawTestRedReadback", Integer.toHexString(redSeen));
         report.addProperty("drawTestBlueReadback", Integer.toHexString(blueSeen));
+        // The S10 acceptance fixture: a batch into a second render target, then the overlapping quads into the main one,
+        // with a clear at the switch. Same format, texture and state throughout, so the only thing that separates them is
+        // the render target and viewport - which the group key now carries.
+        net.minecraft.client.shader.Framebuffer secondary = celtium$secondaryTarget(client);
+        if (secondary != null) {
+            secondary.setFramebufferColor(0.0F, 0.0F, 0.0F, 1.0F);
+            secondary.framebufferClear();
+            secondary.bindFramebuffer(true);
+            net.minecraft.client.renderer.Tessellator second = net.minecraft.client.renderer.Tessellator.getInstance();
+            net.minecraft.client.renderer.BufferBuilder secondBuffer = second.getBuffer();
+            secondBuffer.begin(org.lwjgl.opengl.GL11.GL_QUADS,
+                    net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
+            celtium$quad(secondBuffer, width * 0.20D, height * 0.35D, width * 0.40D, height * 0.65D, 1.0F, 0.0F, 0.0F);
+            second.draw();
+            client.getFramebuffer().bindFramebuffer(true);
+            report.addProperty("drawTestSecondTarget", true);
+        }
         net.minecraft.client.renderer.GlStateManager.enableDepth();
         net.minecraft.client.renderer.GlStateManager.enableCull();
         net.minecraft.client.renderer.GlStateManager.enableTexture2D();
@@ -158,6 +176,22 @@ public final class ValidationClient {
         report.addProperty("drawTestQuads", 2);
         report.addProperty("drawTestAtTick", client.player.ticksExisted);
         report.addProperty("drawTestPass", "RenderGameOverlayEvent.Post/ALL");
+    }
+
+    private net.minecraft.client.shader.Framebuffer celtium$secondaryTarget(net.minecraft.client.Minecraft client) {
+        if (this.celtium$secondary == null) {
+            try {
+                net.minecraft.client.shader.Framebuffer framebuffer =
+                        new net.minecraft.client.shader.Framebuffer(256, 256, false);
+                framebuffer.setFramebufferFilter(org.lwjgl.opengl.GL11.GL_NEAREST);
+                framebuffer.createFramebuffer(256, 256);
+                this.celtium$secondary = framebuffer;
+            } catch (Throwable error) {
+                report.addProperty("drawTestSecondTargetError", String.valueOf(error));
+                return null;
+            }
+        }
+        return this.celtium$secondary;
     }
 
     private static void celtium$quad(net.minecraft.client.renderer.BufferBuilder buffer,
