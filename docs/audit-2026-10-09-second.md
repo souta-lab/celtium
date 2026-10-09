@@ -286,7 +286,11 @@ project already uses - so the form of the original expression was right. Measure
 gives 0.21-0.28%**, 4.0 (Minecraft's count) 7.37%, 8.0 (full chain) 8.77%, 0.0 13.51%. Deeper sampling diverges and the
 shallow clamp matches, which the mip story does not explain. `maxLod` is therefore pinned at the measured-best value with the
 law in the comment, the level count is computed once and shared, and the chain is capped at vanilla's four levels.
-**Next:** the shader's own LOD usage and the GL sampler's parameters - not another frame difference.
+**Instrument in, placement pending:** a diagnostic that asks the driver for the atlas's level count,
+`GL_TEXTURE_MAX_LEVEL`, `MIN_LOD`, `MAX_LOD`, filters and bias is implemented and off by default. It does not fire, and the
+always-on debug line proves the flag reached the JVM (`textureDiagnostics=true`), so the finding is that
+**`refreshTextures()` does not run in this scene** - a fact about the renderer, not the instrument. **Next:** place the probe
+where it is certain to run (the first atlas-textured offer, or the pass entry before its early returns) and read the value.
 
 ### S24 [P2] the record and the acceptance criteria need reworking
 Plan rows claim pixel-identical immediate rendering, removed deferral and verified cull/alpha capture, and the blockers

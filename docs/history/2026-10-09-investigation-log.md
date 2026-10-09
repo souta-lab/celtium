@@ -4738,3 +4738,32 @@ fixture passing.
 The next instrument is named rather than guessed: the fragment shader's own LOD usage (`texture` with implicit derivatives
 versus `textureLod`/`textureGrad`) and, if needed, the GL sampler's parameters read once under a diagnostic flag. A frame
 difference cannot separate those, which is exactly why four of them have not.
+
+---
+
+## The instrument for the mip question is in, and it reports that it never ran
+
+The mip law left one question that four frame measurements could not answer: what OpenGL itself clamps the atlas to. That is
+a fact, not an inference, so it is now asked for directly - `-Dceltium.vulkan.textureDiagnostics=true` queries the bound
+texture's level count, `GL_TEXTURE_MAX_LEVEL`, `MIN_LOD`, `MAX_LOD`, the filters and the LOD bias, once per texture id, and
+records them. Off by default, and the array of GL calls it makes is small enough to read.
+
+Two things went wrong on the way, and both are worth keeping:
+
+- the probe was first placed inside the block that runs **when the atlas changes**, and no `block atlas` line appears in the
+  run's log at all - so that block never executes in this scene;
+- it was then moved to the entry of `refreshTextures()`, where it is certain to run **if that method runs** - and it still
+  did not fire, while the always-on debug line reports `textureDiagnostics=true`, which proves the flag reached the JVM.
+
+So the conclusion is not "the diagnostic is broken" but the concrete one: **`refreshTextures()` does not run in this scene**.
+That is a statement about the renderer, not about the instrument, and it is the kind of thing this project has repeatedly got
+wrong by inferring rather than checking - so the flag now reports its own state in the always-on debug line, and no future
+diagnostic in this code can silently not run without saying so.
+
+The next step is one line of placement rather than any new investigation: call the probe from a hook that certainly runs -
+the first atlas-textured batch offered to the immediate path, or the pass entry before its early returns - and then read what
+OpenGL says. With that number in hand the mip clamp stops being a law with an open mechanism and becomes a value the project
+copies deliberately.
+
+Nothing else changed: the frame is at the measured-best configuration, validation clean on the previous runs, fixture passing
+in every run of this round.

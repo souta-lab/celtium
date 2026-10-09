@@ -449,6 +449,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int currentGroupBlendSrc = -1;
     private int currentGroupBlendDst = -1;
     private int blendFuncIgnored;
+    private static final boolean TEXTURE_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
+    private final java.util.Set<Integer> diagnosedTextures = new java.util.HashSet<Integer>();
     private String blendOutlier;
     /** How many groups opened with each observed (src,dst) pair, so one run says whether they differ. */
     private final java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
@@ -1859,6 +1862,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
+                + " textureDiagnostics=" + TEXTURE_DIAGNOSTICS + " diagnosed=" + this.diagnosedTextures.size()
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
                 + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
@@ -2845,6 +2849,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private void refreshTextures() {
         int atlasId = boundTextureId(0);
         int lightmapId = boundTextureId(1);
+                // CELTIUM_TEXTURE_DIAG: diagnostic, off by default. The sampler parameters OpenGL is actually using are
+                // the one fact four frame measurements could not supply - deeper mip clamps diverge from the GL reference and a
+                // shallow one matches, which no reading of the mip story explains - so the reference is asked directly.
+                if (TEXTURE_DIAGNOSTICS && this.diagnosedTextures.add(Integer.valueOf(atlasId))) {
+                    int levels = 0;
+                    while (levels < 16 && org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
+                            org.lwjgl.opengl.GL11.GL_TEXTURE_2D, levels, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0) {
+                        levels++;
+                    }
+                    record("CELTIUM_TEXTURE_DIAG id=" + atlasId + " levels=" + levels
+                            + " maxLevel=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813D)
+                            + " minLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813A)
+                            + " maxLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813B)
+                            + " minFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2801)
+                            + " magFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2800)
+                            + " lodBias=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x8501));
+                }
+
 
         if (atlasId != 0 && (this.atlasTexture == null || atlasId != this.atlasGlId || this.atlasRefreshCountdown <= 0)) {
             try {
