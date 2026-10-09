@@ -793,6 +793,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         record("composite present did not reach the screen, GL's composite stays: " + result);
                         return false;
                     }
+                    if (this.swapchain.outOfDate()) {
+                        // The swapchain no longer matches the surface. Dropping it is the whole rebuild: the next
+                        // present calls ensureSwapchain(), which creates one against the surface as it is by then.
+                        record("the swapchain is out of date with the surface, rebuilding it for the next present");
+                        this.swapchain.delete();
+                        this.swapchain = null;
+                    }
                     this.immediatePresentedFrames++;
                     if (this.immediatePresentedFrames == 1) {
                         record("presented the frame from the composite: " + result);

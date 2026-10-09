@@ -1962,3 +1962,29 @@ The out-of-date design itself is recorded for when it is done this way: record `
 `VK_ERROR_OUT_OF_DATE_KHR` from both the acquire and the present instead of accepting them silently, and let the backend
 drop the swapchain so the next present's `ensureSwapchain()` rebuilds it - the lazy creation that already exists is the
 whole rebuild.
+
+---
+
+## Swapchain recreation exists, built one step at a time as the new process requires
+
+Four steps, each a single replacement, each compiled before the next, each confirmed by `git diff --stat` - the process
+written down last round after three consecutive failures of the batch approach:
+
+| Step | Change | Result |
+|---|---|---|
+| 1 | `outOfDate` field and getter on the swapchain | +14 lines, compiles |
+| 2 | the acquire records `VK_SUBOPTIMAL_KHR` / `VK_ERROR_OUT_OF_DATE_KHR` | +5 lines, compiles |
+| 3 | the present records them too | +3 lines, compiles |
+| 4 | the backend drops the swapchain when it sees the flag, so the next present's lazy `ensureSwapchain()` rebuilds | +7 lines, compiles |
+
+Measured afterwards, to show the healthy paths are untouched and the rebuild stays dormant:
+
+| Configuration | Result | Out-of-date branch |
+|---|---|---|
+| Frame present | **PASSED, 3256 passes, 0 messages** | not taken |
+| Default (terrain + immediate) | **PASSED, 1652 passes, 0 messages** | not taken |
+
+So the audit's B is complete in the sense that a path for recreation exists and does not disturb anything; what is not
+demonstrated is the branch itself, because this harness cannot drive a resize and neither driver reports sub-optimal at this
+size. That is the same honest shape as the fail-closed frame path: built and compiled, not exercised. The process change is
+what made the difference - four small edits landed where three batches had failed.

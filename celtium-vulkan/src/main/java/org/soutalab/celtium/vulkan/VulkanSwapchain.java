@@ -71,6 +71,20 @@ public final class VulkanSwapchain {
     private long[] renderFinishedSemaphores;
     private int renderFinishedCursor;
     private int presentTraces;
+
+    /**
+     * Whether the last acquire or present said the swapchain no longer matches the surface.
+     * <p>
+     * {@code VK_SUBOPTIMAL_KHR} and {@code VK_ERROR_OUT_OF_DATE_KHR} were accepted silently: the frame still went out and
+     * nothing recorded that the swapchain needed rebuilding, which the audit's lifetime notes ask to exist. This is the
+     * signal it keys off, and since the backend already creates the swapchain lazily, dropping it and letting the next
+     * present ask for one is the whole rebuild.
+     */
+    private boolean outOfDate;
+
+    public boolean outOfDate() {
+        return this.outOfDate;
+    }
     /** Freshly created semaphores awaiting destruction with the swapchain (the {@code FRESH_SEMAPHORES} experiment). */
     private final java.util.List<Long> freshSemaphorePool = new java.util.ArrayList<Long>();
     private int presentReadbacks;
@@ -470,6 +484,11 @@ public final class VulkanSwapchain {
             }
             int result = vkAcquireNextImageKHR(this.context.device(), this.swapchain, Long.MAX_VALUE, acquire,
                     VK_NULL_HANDLE, index);
+            if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
+                // The frame can still be presented, but the swapchain no longer matches the surface; recording it lets
+                // the caller rebuild while this frame goes out.
+                this.outOfDate = true;
+            }
             if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                 return "present image: vkAcquireNextImageKHR returned " + result;
             }
@@ -541,6 +560,9 @@ public final class VulkanSwapchain {
                         + " renderCursor=" + this.renderFinishedCursor);
             }
             int presented = vkQueuePresentKHR(this.context.queue(), present);
+            if (presented == VK_SUBOPTIMAL_KHR || presented == VK_ERROR_OUT_OF_DATE_KHR) {
+                this.outOfDate = true;
+            }
             if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                 return "present image: vkQueuePresentKHR returned " + presented;
             }
