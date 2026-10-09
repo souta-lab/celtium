@@ -119,8 +119,11 @@ necessary until the game's textures are Vulkan-owned. The order that follows is 
 last. **Role 1 is done and measured**: with `celtium.vulkan.withoutGlIdentity` the renderer creates its device without asking GL
 and the run reports `starting without an OpenGL device identity: no device matching, no interop` with validation clean
 throughout - and then **cannot finish**, because without matching there is no interop for the bridge to share textures through.
-That timeout is the bridge being absent by construction, which is why it is last in the order. **Next: role 4**, the remaining
-state reads in the draw path.
+That timeout is the bridge being absent by construction, which is why it is last in the order. **Role 4 is measured and already done**: of the backend's **46 read sites**, the expensive ones
+(the per-batch `glGetFloatv` matrix pair, measured at 28 microseconds a batch) were replaced by hook-written mirrors long ago,
+the diagnostic sampler is behind a flag and off by default, and what remains is **texture and bridge queries** - roles two and
+five, which are last by design because they cannot go before the game's textures are Vulkan-owned. **Next: the bridge itself**,
+which is a different piece of work rather than a list of reads.
 
 **The supported and unsupported scope is stated in one place: [`docs/scope-and-limits.md`](scope-and-limits.md)** - what is
 drawn by Vulkan with its measurements, what is still OpenGL, the environment limits on verification, what is not supported and

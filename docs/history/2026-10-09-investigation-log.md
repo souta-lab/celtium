@@ -8128,3 +8128,30 @@ So condition three now has one of its five roles done and measured, a property (
 exercises the path on a machine that does have a context, and a measured statement of what remains: **role four, the state reads
 in the draw path**, then the bridge. The next step is role four, and it is the one the inventory called avoidable in principle,
 because every read there is something a hook could have recorded.
+
+---
+
+## Role four, measured: the hot-path reads were already replaced, and what remains is the bridge
+
+The inventory called role four "avoidable in principle, because every read there is something a hook could have recorded".
+Counting them settles what is actually left: **46 read sites in the backend**, and they fall into three groups, none of which
+is a hot-path state read.
+
+- **The expensive ones are already gone.** The per-batch matrix reads - a `glGetFloatv` pair on every matrix change - were
+  replaced by mirrors, and the code records the measurement that motivated it: 28 microseconds per batch. Blend, depth and the
+  matrix mirrors are all written by hooks now, so the draw path reads **its own recorded state**, not GL's.
+- **The diagnostic sampler is behind a flag.** It is a `glReadPixels` of a centre patch plus roughly twenty `glGet` calls, and
+  it runs only when `celtium.vulkan.diagnosticSamples` is set and only for the first few frames. With the flag off - the default
+  - it does not touch GL at all.
+- **What remains is texture and bridge queries**: `glGetTexLevelParameteri`, the texture registry's lookups, and the mirror
+  uploads. Those are roles two and five, which the inventory puts **last** because they cannot be removed before the game's own
+  textures are Vulkan-owned.
+
+So role four is **done in the sense that matters** - no avoidable GL read is on the drawing path - and it was done before it was
+named, by the same mirroring work that made the immediate path affordable. What is left for condition three is not a list of
+reads to replace but the bridge itself, and that is a different piece of work: the game's textures and framebuffers have to
+become Vulkan-owned before the four remaining texture-facing call sites can go.
+
+Recorded because it is the first item in this project that was **already finished when it was measured**, and the reason is
+worth keeping: the earlier optimisation work (mirroring instead of querying, measured at 28 microseconds a batch) was the same
+work condition three needed, done for performance rather than for independence.
