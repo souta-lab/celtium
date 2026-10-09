@@ -2495,3 +2495,36 @@ one of the pipelines the immediate path already serves. It is small in area and 
 translucency ordering or blending difference looks like, and the next step is the one that has worked before - localise it
 by region and then bisect by format, with the mask flag **verified present in the script** before each run, since an
 unasserted replacement is what made an earlier control meaningless.
+
+---
+
+## The audit's P1 was real, and fixing it removed the water difference entirely
+
+The audit reported that `currentGroupState` was never assigned: the group-open block set the projection, modelview,
+format, texture and state key, but not the state array itself, so `closeCurrentImmediateGroup` stored the field's initial
+`new int[7]` and every group was drawn with blend, depth test, depth write, culling and the alpha reference all off. The
+state-keyed pipeline cache had the right keys and empty values. Reading the code confirms it exactly - lines 418, 925-935,
+1337 and the draw path - and the fix is the assignment the audit named, cloned so the snapshot cannot be overwritten:
+
+```java
+this.currentGroupState = state.clone();
+```
+
+Measured afterwards, on the water scene whose difference this log recorded one round earlier:
+
+| Comparison | mean | over 8 | over 32 |
+|---|---|---|---|
+| **reference against reference (same revision)** | **0.00** | **0.00%** | 0.00% |
+| immediate path against reference, **after the fix** | **0.00** | **0.00%** | 0.00% |
+| the same comparison **before** the fix (recorded last round) | 0.04 | 0.27% | 0.03% |
+
+The water difference is **gone**, and with it the translucency question it raised: the 0.27% of pixels that differed were
+groups drawn without blending or depth state, which is exactly what a translucency difference looks like from the outside.
+
+Two notes on method, both this project's own rules applied late:
+
+- the terrain-only default run was first compared against `p8a-off-1-amd`, a reference captured **before the water layer
+  existed**, and reported a 30.76 difference. That number is meaningless - the fixture is part of the instrument - and
+  against a same-revision reference the same run measures the 0.00 above;
+- the audit's warning is taken as written: the earlier GUI, translucency and water comparisons were made with this defect
+  present and are treated as experiments containing it, not as evidence about anything else.

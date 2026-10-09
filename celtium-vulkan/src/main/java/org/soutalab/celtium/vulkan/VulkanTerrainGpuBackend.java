@@ -933,6 +933,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupFormatId = formatId;
                 this.currentGroupTexture = boundTexture;
                 this.currentGroupStateKey = stateKey;
+                // The group's own copy of the captured state. Without this the field stayed at its initialised
+                // new int[7], closeCurrentImmediateGroup stored that zero array, and every group was drawn with blend,
+                // depth test, depth write, culling and the alpha reference all off - a state-keyed pipeline cache whose
+                // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
+                // overwritten by the next capture.
+                this.currentGroupState = state.clone();
             }
             if (!this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices)) {
                 this.immediateLastRefusal = "the pending batch buffer refused the vertices";
