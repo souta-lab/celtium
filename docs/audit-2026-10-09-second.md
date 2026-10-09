@@ -27,7 +27,14 @@ contract and the tracked value disagree.
 verdict flags are reset at entry (measured `withWait=2`, `validationClean True`). **Open:** the ownership transfer, the
 `GENERAL` layout, and the present's own failure handling.
 
-### S02 [P1] a timed-out wait still lets the command buffer be reused
+### S02 [P1] a timed-out wait still lets the command buffer be reused - **closed**
+**Fixed and verified with a documented injection** (`-Dceltium.vulkan.failIdleAfter=N`, off by default). A timed-out wait now
+propagates: nothing is cleared, reset, re-recorded or destroyed, and every entry that records, ends or submits the frame's
+commands is closed while stalled - `render`, `flushImmediateWindow`, `submitImmediateBatchTimed`, `runSwapchainProbe`,
+`ensureFrameTarget`, `delete`, `settleGpu`, `recordImmediateOnlyPass`, `recordRenderPass`, `submitCommands`. Measured with
+the injection at a steady-state wait: **0 validation messages, exit 1, fixture FAILED, `gpuStalled true`** - an explicit
+failed state - where the same injection previously ended in **SIGABRT with 17 validation errors**. The healthy run is
+unchanged (PASSED, no messages).
 **Half done, deliberately not called closed.** The recording side is guarded: the wait reports success or failure, a failure
 touches nothing, and every later batch is refused before acceptance, with a documented injection
 (`-Dceltium.vulkan.failIdle=true`) for the path no ordinary run reaches. Measured: the normal run is unchanged (exit 0,

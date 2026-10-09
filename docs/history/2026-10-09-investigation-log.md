@@ -4530,3 +4530,31 @@ wait - so the failure lands in a steady frame with a recorded, submitted predece
 is the state in which "the GPU may still be reading the buffer" is true rather than hypothetical. Start-up stalls are a
 different question and should be recorded as one rather than mixed in: the honest boundary is that this round's guards are
 correct and unverified, and the injection needs to aim at the frame it was written for.
+
+---
+
+## S02 closed: an injected stall now ends in a refused frame and zero validation messages
+
+Aiming the injection at a steady-state wait turned the abort into a trace, and the trace into a fix. Each round of the
+injection reported fewer messages, and each named the next unguarded entry:
+
+| Injection | Result |
+|---|---|
+| first wait (start-up) | **17 messages**, SIGABRT |
+| steady-state wait, frame entries guarded | **5 messages** - `vkCmdBeginRenderPass`, `vkCmdSetViewport`, `vkCmdSetScissor` recorded into a buffer never begun |
+| after guarding the pass-recording entries | **1 message** - `vkEndCommandBuffer` on a buffer not in a recording state |
+| after guarding the submit entry | **0 messages**, exit 1, fixture FAILED |
+
+So the entries that record, end and submit the frame's commands are all closed once a wait has timed out: `render`,
+`flushImmediateWindow`, `submitImmediateBatchTimed`, `runSwapchainProbe`, `ensureFrameTarget`, `delete`, `settleGpu`,
+`recordImmediateOnlyPass`, `recordRenderPass` and `submitCommands`. The stalled run now **fails the fixture and exits 1**
+with `gpuStalled true`, which is the acceptance the audit wrote - "propagate the timeout upward, stop re-recording,
+reading back and destroying, and move explicitly into a failed state" - where the same run previously aborted the process
+with seventeen validation errors.
+
+The healthy run is unchanged: fixture PASSED with the usual accepted count and `gpuStalled false`.
+
+Worth recording about method: the last three rounds each moved the injection and each narrowed the trace by naming the next
+call site, and the fix at every step was to **close an entry** rather than to add a counter. The injection is documented,
+off by default, and is the test - a safe fake result kept apart from any real latency measurement, which is what the audit
+asked for.

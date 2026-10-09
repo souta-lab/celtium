@@ -439,7 +439,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean gpuStalled;
     private int stalledStops;
     private int stalledTeardownSkips;
-    private static final boolean FAIL_IDLE = Boolean.getBoolean("celtium.vulkan.failIdle");
+    /** Inject a wait failure after this many waits; 0 disables. See the comment in waitForIdle. */
+    private static final int FAIL_IDLE_AFTER = Integer.getInteger("celtium.vulkan.failIdleAfter", 0).intValue();
+    private int idleWaits;
+    private int injectedIdleFailures;
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
     private String particleDescriptorFailureReason;
@@ -1730,6 +1733,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Records a render pass containing nothing but the pending immediate groups. */
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
+        if (this.gpuStalled) {
+            // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
+            // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
+            return;
+        }
         long renderPass = terrain.renderPass();
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                 org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack).sType$Default();
@@ -1806,6 +1814,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
+                + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
@@ -2323,6 +2332,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                   CameraTransform camera,
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
+        if (this.gpuStalled) {
+            // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
+            // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
+            return;
+        }
         ensureUniformCapacity(this.regionResources.size());
         // The descriptor set points at the atlas, the lightmap and the uniform buffer for this pass. It is rewritten
         // once per pass per frame, which is a few descriptor writes and removes any staleness after a re-upload.
@@ -3332,6 +3346,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void submitCommands() {
+        if (this.gpuStalled) {
+            // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
+            // reported, after the pass-level ones.
+            return;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             check(vkEndCommandBuffer(this.commandBuffer), "vkEndCommandBuffer");
             vkResetFences(this.context.device(), this.fence);
@@ -3406,9 +3425,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private boolean waitForIdle() {
-        if (FAIL_IDLE) {
-            // A documented injection for the timeout path, which no ordinary run reaches: the audit asks for a safe fake
-            // result here and a real latency test to be kept apart.
+        // A documented injection for the timeout path, which no ordinary run reaches: the audit asks for a safe fake
+        // result here and a real latency test to be kept apart. It fires after a configured number of waits, not on the
+        // first: failing the first wait stalls before the renderer exists, which is a start-up question rather than the
+        // steady-state one this audit item describes, and the earlier run showed exactly that as a start-up abort.
+        if (FAIL_IDLE_AFTER > 0 && ++this.idleWaits >= FAIL_IDLE_AFTER) {
+            this.injectedIdleFailures++;
             return false;
         }
         if (this.fence == 0 || !this.submissionPending) {
