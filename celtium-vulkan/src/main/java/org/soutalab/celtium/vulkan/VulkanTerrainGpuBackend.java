@@ -559,6 +559,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int boundTextureComparisons;
     /** Announces that carried the size from the game instead of asking OpenGL for it. */
     private int announcedDynamicTextures;
+    /** Whether the game has set a colour yet, i.e. whether the state mirror's colour can be trusted. */
+    private boolean colorMirrorHasValue;
+    /** Which source the format-7 colour came from, reported so a run says whether the mirror is really in use. */
+    private int colorMirrorUses;
     private int boundTextureMismatches;
 
     /**
@@ -1130,6 +1134,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void setColor(float red, float green, float blue, float alpha) {
+        // The state mirror already keeps this colour (immediateState.color); the flag only says whether the game has ever
+        // set one, which is what decides between the mirror and the GL read on the position-only path.
+        this.colorMirrorHasValue = true;
         this.immediateState.color(red, green, blue, alpha);
         this.immediateStateCalls++;
     }
@@ -1878,7 +1885,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
                 // Position-only content has no colour in its vertices: the game draws it with whatever colour it had current,
                 // so that is read here, at the moment the batch is offered, and carried with the group.
-                if (formatId == 7) {
+                if (formatId == 7 && this.colorMirrorHasValue) {
+                    // No GL query: the colour the game last set, from the same state mirror everything else uses.
+                    this.colorMirrorUses++;
+                    this.currentGroupColor = new float[] {this.immediateState.colorRed(),
+                            this.immediateState.colorGreen(), this.immediateState.colorBlue()};
+                } else if (formatId == 7) {
                     java.nio.FloatBuffer colour = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, colour);
@@ -2775,6 +2787,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " boundTextureSamples=" + this.boundTextureComparisons
                 + " boundTextureMismatches=" + this.boundTextureMismatches
                 + " announcedDynamicTextures=" + this.announcedDynamicTextures
+                + " colorMirrorUses=" + this.colorMirrorUses
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.

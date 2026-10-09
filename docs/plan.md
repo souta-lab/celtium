@@ -362,8 +362,20 @@ GL に問い合わせない経路を実装した（`common` の `TerrainGpuBacke
 | verdict | exit 0 / validationClean / PASSED、`boundTextureMismatches=0` |
 | target受入 | exit 0 |
 
-**(b) の進捗**: 行列 → fog → bound texture → テクスチャ寸法 の **4項目が完了**。残りは相互運用グルー
-（blit/semaphore/深度変換/FBOクエリ）と `GL_CURRENT_COLOR` / `GL_DRAW_FRAMEBUFFER_BINDING`。
+**current colour の GL 読みを廃止（このターン・(b) の5項目目）**: 位置のみの内容（format 7＝空など）は
+「そのときの current colour」で描かれるため、offer 時に `glGetFloatv(GL_CURRENT_COLOR)` を読んでいた。
+この色は **`GlStateManager` の `color(...)` をフックした既存ミラー（`immediateState.colorRed/Green/Blue`）**が
+既に持っているので、ミラー読みに置換した（ゲームがまだ色を設定していなければ従来の GL 読みにフォールバック）。
+
+| 指標 | 結果 |
+|---|---|
+| `colorMirrorUses` | **200**（位置のみの経路が200回ミラーを使用＝GL 読みを回避） |
+| 画像（前回標準runとの差） | **meanAbsDiff 0.011 / 上部1/3（空）は 0.000** |
+| verdict | exit 0 / validationClean / PASSED |
+| target受入 | exit 0 |
+
+**(b) の進捗**: 行列 → fog → bound texture → テクスチャ寸法 → current colour の **5項目が完了**。残りは
+**相互運用グルー**（blit/semaphore/深度変換/FBOクエリ）と `GL_DRAW_FRAMEBUFFER_BINDING` の実読み箇所。
 
 **（旧メモ）** 正しい供給元: `TextureUtil.uploadTexture(int id, int[] data, int width, int height)` の**引数**。
   このプロジェクトは既に `TextureUtil` をフックしているので、そこで寸法を受け取ればリフレクション不要で
