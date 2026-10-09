@@ -395,6 +395,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private String matrixDump;
     private boolean mirrorSeeded;
     private int cameraSetupSeeds;
+    private int framesSeen;
+    private float steadyProjectionDelta;
+    private float steadyModelViewDelta;
+    private int steadyComparisons;
+    private int translateCalls;
+    private int translateZeroCalls;
     private int derivedProjections;
     private int derivedProjectionRefusals;
     private boolean derivedProjectionPending;
@@ -713,6 +719,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void translate(double x, double y, double z) {
+        this.translateCalls++;
+        if (y == 0.0D && z == 0.0D && x == 0.0D) {
+            this.translateZeroCalls++;
+        }
         this.matricesDirty = true;
         this.immediateState.translate(x, y, z);
         this.immediateStateCalls++;
@@ -1243,6 +1253,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.mirroredProjectionDelta = Math.max(this.mirroredProjectionDelta, projectionDelta);
         this.mirroredModelViewDelta = Math.max(this.mirroredModelViewDelta, modelViewDelta);
+        // The same two numbers, ignoring the first frames. The maximum includes the warm-up frames - the ones before the
+        // backend existed, whose state the mirror cannot have - and a maximum that is dominated by warm-up says nothing
+        // about whether the mirror tracks GL once both are running. Steady state is the question the removal of the
+        // glGetFloatv reads depends on.
+        if (this.framesSeen > 10) {
+            this.steadyProjectionDelta = Math.max(this.steadyProjectionDelta, projectionDelta);
+            this.steadyModelViewDelta = Math.max(this.steadyModelViewDelta, modelViewDelta);
+            this.steadyComparisons++;
+        }
         // How many comparisons matched exactly. A maximum on its own cannot tell "1130 samples, one of them wrong
         // somewhere" from "every sample wrong", and those two need different work: the first is one uncaptured
         // operation, the second is a broken mirror.
@@ -1525,6 +1544,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
+                + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
+                + ",steadyComparisons:" + this.steadyComparisons
+                + ",steadyDelta=proj:" + this.steadyProjectionDelta + ",view:" + this.steadyModelViewDelta
                 + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
                 + ",cameraSeeds:" + this.cameraSetupSeeds
                 + ",derivedCompared:" + this.derivedProjectionComparisons
@@ -1590,6 +1612,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // left the framebuffer at 150.46 before and after, and the second turned it to 0.0 with the GL state restored
         // unchanged, which is what blackened the captured frame.
         this.immediateWindowsThisFrame = 0;
+        this.framesSeen++;
         // The lightmap is refreshed by Minecraft every frame through DynamicTexture, whose upload path no hook of this
         // project has been able to reach without crashing the client. Dropping the mirrors here makes the next use of
         // each re-read its GL texture; the interval is a property so the cost can be measured rather than assumed.

@@ -3764,3 +3764,31 @@ Worth stating plainly after three rounds on this one value: the modelview is sti
 1.6e-4, and each attempt has produced a precise negative result rather than a fix. The negative results are why the last two
 turned out to be one root cause, and this one narrows the search to the interval between the camera setup and the first
 comparison.
+
+---
+
+## Three counters narrow the missing translation to a reset
+
+Three measurements, none of which needed a hypothesis:
+
+| Counter | Value | What it rules out |
+|---|---|---|
+| `steadyComparisons` / `steadyDelta` | 1154 of 1166 comparisons, view delta still **1.62** | **warm-up.** Only twelve comparisons fall in the first frames; the missing translation is persistent, not a start-up artefact |
+| `translateCalls` | **572**, none of them zero-length | "the hook never fires." Translates do reach the mirrored stack |
+| `cameraSeeds` | **1**, delta unchanged | "the seed fixes it." The seeded matrix is lost again afterwards |
+
+Together they say something specific: operations are arriving, the seed is taken and then lost, and the loss is permanent
+rather than transitional. So the translation is being **removed after it is applied**, and the only operation in the mirror
+that removes translation is a reset - `loadIdentity` - which each pass performs when it switches the modelview stack. GL,
+at the comparison, holds a modelview with a translation; the mirror holds one without. That is what a pass looks like when
+the reset is mirrored and the operations after it are not.
+
+The instrument to confirm it is the one the plan already names, and it is now much cheaper because the candidate is single:
+record the mirror's `m[12..14]` at every `loadIdentity`, at every `translate`, and at the comparison, keeping the last few
+entries. If the trace shows a translate followed by a reset with no translate after it, the question becomes which pass does
+that and why GL's own operations in it do not reach the hooks - which is the S10 pass-ownership problem in its concrete
+form.
+
+Worth naming for the record: three rounds on one value have produced four negative results - the float overload that does not
+exist, the seed at the wrong moment, the seed at the right moment, and warm-up - and one positive one, the projection going
+from 2.0 to 1.6e-4. Every negative narrowed the interval, and this one leaves a single class of cause.
