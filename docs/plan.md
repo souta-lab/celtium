@@ -148,6 +148,23 @@ frame-time distribution, with the immediate path's counters, the validation outp
 and other optional features are never made mandatory. As the standing rule says, **no FPS claim follows from
 specialisation or from deleting compatibility code** - only from a measurement taken this way.
 
+### The flush-point window fails on its own, not because of the present probe
+
+The first failure of the mid-frame window carried the message
+`vkQueueSubmit(): pSubmits[0] performs a layout transition on presentable VkImage`, which reads like a conflict with the
+swapchain. That was a hypothesis, and it is now **disproved**: with the window re-applied and the present probe switched
+off entirely, the client still exits after ~15 s, this time with `net.minecraft.client.Minecraft: Unreported exception
+thrown!` and no Vulkan validation message at all. So the window is not fighting the probe; something in the new path
+throws in Java, and the earlier layout message was a symptom of two windows coexisting rather than the cause.
+
+Recorded for the next attempt, which is the frame-ownership design rather than another patch: the exception needs to be
+captured with its stack (the `record(...)` guards in the window did not catch it, so it is thrown outside them, most
+likely in the command-buffer lifecycle around a nested pass), and the window's render-pass and framebuffer handling has
+to be reviewed against what the terrain pass does - `ensureFramebuffer(renderPass)` is keyed by the render pass, so a
+second pass with a different pipeline can very plausibly get a framebuffer built for the wrong pass. Both are recorded
+here instead of being guessed at again, the window is reverted, and the tree is green with the immediate path off by
+default.
+
 ### The matrix mirror is measurably unfaithful, which is why the GL reads exist
 
 The immediate path pays two `glGetFloatv` calls per matrix change, and that was measured as the dominant per-batch cost
