@@ -449,6 +449,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int currentGroupBlendSrc = -1;
     private int currentGroupBlendDst = -1;
     private int blendFuncIgnored;
+    /** Set for reference captures: load the mod, run the fixture, install nothing, let OpenGL draw. */
+    private static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
     private int terrainPasses;
     private int immediateOnlyPasses;
     private static final boolean TEXTURE_DIAGNOSTICS =
@@ -2982,6 +2984,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("the queue cannot record timestamps, so pass timing is disabled; the backend registers anyway");
             }
 
+            if (REFERENCE_RENDER) {
+                // A reference render: the mod is loaded and the fixture runs, but nothing of this backend is installed, so
+                // the frame is drawn entirely by OpenGL. Measured, the run previously used as the reference had the
+                // immediate path disabled while the terrain backend was installed and drawing - 1647 passes, regions 4 -
+                // so every image percentage compared against it measured agreement with this project's own output.
+                record("reference render: the Vulkan backend is not installed, so the frame is OpenGL");
+                return;
+            }
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(this);
 
             if (Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)) {

@@ -5053,3 +5053,31 @@ captures a screenshot (`fixture FAILED`, no image), because the fixture needs th
 step is therefore a **reference switch in the backend** - a documented option that installs nothing and lets the fixture
 capture a pure OpenGL frame - after which every image number in this project needs re-baselining, starting with the particle
 and sampler results that have been quoted as improvements.
+
+---
+
+## A reference switch that installs nothing, and the fixture that will not capture without it
+
+The contaminated reference needed a way to render the same scene in pure OpenGL with the mod still loaded, because the mod
+has to be present for the fixture to run at all. That switch now exists: `-Dceltium.vulkan.referenceRender=true` stops the
+backend from installing itself at the one place it registers, records why, and leaves everything else alone.
+
+Verified both ways:
+
+| run | what it shows |
+|---|---|
+| reference with the switch | **no `Transfer Queue: vulkan` line at all**, 0 validation messages - nothing of the backend is installed - and the mod is present |
+| normal run afterwards | `exit 0`, validation clean, 0 messages, fixture PASSED, `vulkanPasses=2164`, `immediateTaken=547`, `postAcceptDroppedGroups=0` |
+
+So the switch does what it says and does not disturb the ordinary path. What it does **not** yet produce is a reference
+image: with the backend absent the fixture reports `fixture FAILED` and **captures no screenshot**, exactly as it did when
+the mod was removed entirely. The fixture's flow requires the Vulkan terrain to be reported before it will set up the scene
+and save the PNG, so a pure reference needs one more small change - a **reference mode in the validation client** that skips
+the Vulkan expectations and captures anyway - and that is the next step rather than another backend configuration.
+
+That the fixture will not capture without the backend is itself worth recording: it explains the earlier observations in this
+log where a fixture "failed the run and suppressed the capture", and it means every screenshot this project has compared was
+taken with the backend installed - which is the same fact as the contaminated reference, seen from the other side.
+
+Until the fixture change lands, the honest position on image numbers is unchanged from the previous entry: the functional
+evidence stands, and the percentages are not evidence of OpenGL agreement.

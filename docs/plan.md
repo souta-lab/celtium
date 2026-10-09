@@ -46,10 +46,12 @@ evidence is unaffected and stands on its own terms - `postAcceptDroppedGroups=0`
 sampler filters the driver reports, the layout bugs found and fixed - but no image percentage from before this note should be
 read as OpenGL agreement.
 
-A pure OpenGL reference needs a backend switch that installs nothing while leaving the mod present: removing the
-`celtium.vulkan.*` switches still left the terrain backend installed, and removing the mod entirely makes the fixture fail
-before it captures a screenshot. After that switch exists, every image number in this project needs re-baselining, starting
-with the particle and sampler results that have been quoted as improvements.
+A pure OpenGL reference needs a backend switch that installs nothing while leaving the mod present. **The switch exists** -
+`-Dceltium.vulkan.referenceRender=true`, verified to install nothing (no terrain line, no validation messages) while the
+ordinary path is unaffected - but the **fixture refuses to capture without the backend** (`fixture FAILED`, no screenshot),
+so a reference mode in the validation client that skips the Vulkan expectations is still required. After that, every image
+number in this project needs re-baselining, starting with the particle and sampler results that have been quoted as
+improvements.
 
 ## 0b. Java: compile target 21, game runtime 25 (corrected 2026-10-09 14:17)
 
