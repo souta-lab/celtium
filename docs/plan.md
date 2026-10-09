@@ -81,7 +81,19 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Direct-GL capture: what works and what does not (measured).** The `frustum` channel was added (the backend can
+- **Matrix capture switched to reading OpenGL directly (measured, still invisible).** Mixing into LWJGL's own
+  `GL11` is ruled out (client exits during startup) and the GLU `Project` Mixin never fires - the per-channel counters
+  prove it: `matrixChannels=persp:0,frustum:0,mode:25765,identity:15416`. The world projection is installed by a
+  utility class the transforming loader does not own, so no injector there can run. The backend now reads the live
+  matrices with `glGetFloatv(GL_PROJECTION_MATRIX/GL_MODELVIEW_MATRIX)` at the moment the first batch of a group
+  arrives (render thread, GL context current, about once per frame) and applies the same clip-depth remap the terrain
+  path uses; the reads succeed (no diagnostic), `immediateTaken=615`, `immediateFlushes=553`, run PASSED, and the
+  quad is still invisible.
+  Next diagnostic, specific: log the captured projection and model view once together with the batch's world-space
+  bounding box and the resulting NDC range, which separates "the geometry projects off-screen" from "the pipeline or
+  the depth test rejects it" without another guess.
+
+- **Original note (superseded by the finding above).** The `frustum` channel was added (the backend can
   now mirror `GL11.glFrustum`'s matrix as well as the GLU helper's perspective), and the GLU `Project` Mixin stays.
   The next attempt - a Mixin on **LWJGL's own `org.lwjgl.opengl.GL11`** to catch `glMatrixMode`, `glLoadIdentity`,
   `glFrustum`, `glOrtho`, `glMultMatrixf`, `glTranslatef`, `glRotatef`, `glScalef`, `glPushMatrix` and

@@ -337,6 +337,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateBatchesOffered;
     private String immediateLastRefusal = "none";
     private int immediateTaken;
+    /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
+    private int perspectiveCalls;
+    private int frustumCalls;
+    private int matrixModeCalls;
+    private int loadIdentityCalls;
     private int immediateFlushes;
     private int pendingImmediateIndices;
     private VulkanDynamicMesh pendingImmediate;
@@ -345,6 +350,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final float[] pendingProjection = new float[16];
     private final float[] pendingModelView = new float[16];
     private int pendingGroups;
+    private final float[] glProjection = new float[16];
+    private final float[] glModelView = new float[16];
 
     @Override
     public void setBlendEnabled(boolean enabled) {
@@ -387,12 +394,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_MODELVIEW);
         }
         this.immediateStateCalls++;
+        this.matrixModeCalls++;
     }
 
     @Override
     public void loadIdentity() {
         this.immediateState.loadIdentity();
         this.immediateStateCalls++;
+        this.loadIdentityCalls++;
     }
 
     @Override
@@ -469,6 +478,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateState.multiplyMatrix(matrix);
         this.immediateState.matrixMode(mode);
         this.immediateStateCalls++;
+        this.frustumCalls++;
     }
 
     @Override
@@ -522,13 +532,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The matrices are captured with the first batch of the group: by the time the flush runs, a frame
                 // later, the live state has moved on (GUI ortho, world transforms) and would place the geometry
                 // somewhere else entirely.
-                // The mirrored projection is OpenGL's, whose clip depth runs -1..1; Vulkan expects 0..1. The terrain
-                // path already remaps for this, and without the same remap an immediate draw lands at the wrong depth
-                // and is rejected by the depth test - which is what the first attempts measured as "drawn but
-                // invisible".
-                remapClipDepth(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), this.pendingProjection);
-                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
-                        this.pendingModelView, 0, 16);
+                // The matrices are read from OpenGL itself at the moment the batch is built. Mirroring them through
+                // Mixins was measured to fail for the projection: the world projection is installed by LWJGL 2's GLU
+                // utility class, which the transforming loader does not own, so no injector fires there
+                // (`matrixChannels=persp:0`). Reading the live matrices on the render thread, with the GL context
+                // current, needs no cooperation from any class and is exactly what Minecraft is drawing with.
+                captureGlMatrices();
+                // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
+                remapClipDepth(this.glProjection, this.pendingProjection);
+                System.arraycopy(this.glModelView, 0, this.pendingModelView, 0, 16);
             }
             this.pendingGroups++;
             this.immediateTaken++;
@@ -552,7 +564,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
-                + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_');
+                + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
+                + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
+                + ",mode:" + this.matrixModeCalls + ",identity:" + this.loadIdentityCalls;
     }
 
     @Override
@@ -1673,6 +1687,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
                 result[column * 4 + row] = sum;
             }
+        }
+    }
+
+    /**
+     * Reads the matrices OpenGL is currently using. Called on the render thread while the GL context is current, so
+     * the values are the ones Minecraft itself would draw with - no class needs to cooperate, which matters because
+     * the projection is installed by a utility class outside the transforming loader.
+     */
+    private void captureGlMatrices() {
+        try {
+            FloatBuffer projection = MemoryUtil.memAllocFloat(16);
+            FloatBuffer modelView = MemoryUtil.memAllocFloat(16);
+            try {
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, projection);
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, modelView);
+                projection.get(this.glProjection);
+                modelView.get(this.glModelView);
+            } finally {
+                MemoryUtil.memFree(projection);
+                MemoryUtil.memFree(modelView);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            record("could not read the OpenGL matrices for an immediate batch: " + describe(error));
         }
     }
 
