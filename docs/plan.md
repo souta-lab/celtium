@@ -1554,7 +1554,28 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   プロセスの死ではない（以前は report すら出なかった）。
 - **通常runは無回帰**（p50 16.17 ms、失敗カウンタ 0）。
 
-**次の一手**: (1) `presentReadback=true` の run で readback サイト（`VulkanTerrainGpuBackend:5047`）も叩く、
+**失敗経路の修正後の受入と、到達しないサイトの確定（このターン）**:
+
+- **両GPUの通常受入（buffer系修正の回帰確認）**:
+
+| run | exit | validationClean | fixture | p50 | 失敗カウンタ |
+|---|---|---|---|---|---|
+| AMD | **0** | **true** | **PASSED** | **15.99 ms** | `regionUploadFailures=0` / `uniformPreparationFailures=0` |
+| Intel | **0** | **true** | **PASSED** | **28.50 ms** | 同上 0 |
+
+- **`VulkanTerrainGpuBackend` の確保サイトは到達しない**: `presentReadback=true` を付けた run、さらに
+  `swapchainProbe=true` と併用した run（AMD/Intel とも exit 0 / clean / PASSED / VUID 0）でも
+  **注入が命中しなかった**。コードを読むと、そのサイトは `ensureReadback()` の中にあり、呼び出しは
+  **アップロード検証用のデバッグ経路**（`uploadVerified` を立てる箇所）からのみ。**通常の受入runでは通らない**。
+  「全サイトを確認した」とは言わず、**到達しない1サイトとして記録**する。
+- **注入が実際に命中したサイト（8種）**: `mirrored texture`、`VulkanGlTexture:483`、`VulkanGlTexture:979`（staging）、
+  `VulkanFrameTarget:927`、`VulkanHostBuffer:126`、`VulkanBuffer:189`、`VulkanUniformBuffer:110`、
+  `VulkanContext:883`。うち**クラッシュしていた3種はすべて有界化**した（前ターン）。
+
+**次の一手**: (1) minimize 相当（サイズ0や present 失敗）を確認する、(2) 完成条件(b) のブリッジ置き換え設計に入る、
+(3) 到達しないデバッグ経路のサイトは「未検証」として docs に残す（到達させる作業は優先しない）。
+
+**（旧メモ）** 次の一手: (1) `presentReadback=true` の run で readback サイト（`VulkanTerrainGpuBackend:5047`）も叩く、
 (2) minimize 相当（サイズ0や present 失敗）を確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
 
 **（旧メモ）** 次の一手: (1) immediate/descriptor 経路の確保失敗（`VulkanUniformBuffer:110`）を有界にする、(2) 3サイトとも
