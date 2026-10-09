@@ -881,3 +881,30 @@ Two facts are now established beyond argument, and they are what the next attemp
 scene is the **final full-screen composite** (white vertices, uv 0..1, screen coordinates), and it belongs to the frame's
 end, not to the game framebuffer's content. The remaining question is where in the frame it can be drawn by Vulkan - which
 is the present-ownership work, not a pipeline detail. The change is reverted and the tree is green.
+
+---
+
+## The immediate path is pixel-identical to GL once the composite is left out
+
+The composite-only refusal was neutral (13.96 against the 14.61 baseline), so the next measurement removed the layout
+entirely instead of guessing where it belongs. Same build, same scene, the backend accepting formats 1, 3, 4 and 5 and
+leaving the 24-byte family to GL:
+
+| Configuration | Local difference vs the offline reference | Batches drawn by Vulkan |
+|---|---|---|
+| All formats accepted | 14.61 mean, 34.5% over 8 | ~2800 |
+| **Formats 1, 3, 4, 5 - composite left to GL** | **0.00 mean, 0.0% over 8 and over 32** | **1725** |
+
+Pixel-identical. The Vulkan immediate path reproduces GL exactly for the three layouts that carry Minecraft's content -
+untextured colour geometry, the BLOCK family with its lightmap, and the particle family - and the *entire* difference
+that has been chased for many rounds is the final full-screen composite, which is not content at all but the frame's
+last step.
+
+That closes the question the previous entries kept circling: the immediate path is not approximately right, it is right,
+and what remains for it is a present-ownership problem - where the composite is drawn and by whom - not a pipeline
+defect. It also means the per-format acceptance switch is not a diagnostic curiosity but the mechanism that will carry
+the path in the interim: `-Dceltium.vulkan.immediateFormats=1,3,4,5` with the immediate path enabled is a pixel-correct
+configuration today, one flag away from the default.
+
+Nothing is flipped by default yet: the immediate path itself stays off until the composite question is settled, so the
+shipped behaviour is unchanged while that is finished.

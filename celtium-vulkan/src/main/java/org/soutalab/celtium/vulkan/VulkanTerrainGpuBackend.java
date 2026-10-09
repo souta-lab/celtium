@@ -451,6 +451,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateWindowsThisFrame;
     private int immediateDeferredNextFrame;
     private int whiteTextureGlId;
+    private int immediateRefusedDefaultFbo;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
