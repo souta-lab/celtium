@@ -55,7 +55,11 @@ nativeTerrainVerified=True   terrainPasses=1482   glDrawsCancelled=791   passes=
 
 The API shapes were read from the jar with `javap` rather than assumed, which is what three failed compiles were about: this
 version's runtime interface is `mezz.jei.api.IJeiRuntime`, its annotation is `JEIPlugin` with a capitalised name, and
-`IModPlugin` has no plugin-uid method. One reflection call remains and is honest to name: the fixture finds the optional plugin
+`IModPlugin` has no plugin-uid method. On **Intel** the same configuration is **measured to exceed the harness's budget**: with
+`--duration 420` it still ends at the harness timeout (`exit 124`, no report), where the AMD run of exactly this configuration
+completes with `passes=2273`. The Intel runs without the recipe screen do complete (`passes=1090`, `outsideWorldPassAccepted=4426`),
+so the gap is the mod's heavy screen on a slower GPU, not a defect - and it is recorded as a budget that does not fit rather
+than as a failure. One reflection call remains and is honest to name: the fixture finds the optional plugin
 class with `Class.forName`, because that class is compiled only when JEI is present - the mod-facing calls after it are direct.
 
 ## Completion condition (2), item by item, with the evidence for each state
@@ -332,17 +336,22 @@ One table, no narrative: what exists, what was verified on hardware, and what is
 
 ## 5. Blockers
 
-1. **Frame ownership.** The bridge owns the shared images only inside a terrain pass, one window per frame and early in
-   it, so immediate batches that arrive later are drawn against the next frame's colour and depth buffers while
-   carrying the previous frame's matrices. That is one defect with three faces: the image difference above, the ~27 us
-   spent per batch reading the live GL matrices, and the two failed attempts to open a second window mid-frame (the
-   image layouts are written for exactly one handoff per frame). It is the prerequisite for the image and for the
-   per-batch cost, not a later optimisation.
-2. **The world matrices are invisible to our Mixins.** They are set through direct GL calls: `GlStateManager` wraps only
-   `glOrtho`, the GLU helper is absent at runtime, and mixing into LWJGL's own `GL11` stops the client during startup.
-   Until the renderer supplies the matrices itself, reading them back per batch is the only correct option.
-3. **Present ownership.** The swapchain path works as a probe; making Vulkan present the game's frames is a distinct
-   piece of work that belongs with frame ownership, because both decide who owns the images at which moment.
+1. **Frame ownership.** The bridge owns the shared images for one handoff per frame. This entry used to say "one window per
+   frame and early in it, so immediate batches that arrive later are drawn against the next frame's buffers" - **both halves
+   are now measured and neither holds**: the window limit is **sixteen per frame**, measured pixel-equal on a local comparison
+   with no measurable cost (p50 16.07 ms and p99 17.90 ms at sixteen against 16.13 ms and 18.16 ms at one), and the old
+   one-window measurement that blackened the frame **predates the submit-wait fix** and had that defect as its explanation.
+   What remains is narrower: the images are handed over once per frame, and the present is still GL's.
+2. **The world matrices.** This entry used to say they are invisible to the Mixins - "`GlStateManager` wraps only `glOrtho`,
+   the GLU helper is absent at runtime, and mixing into LWJGL's own `GL11` stops the client". That was true of the attempt it
+   describes, and it is no longer the state: the projection is now **derived** and applied at the world pass, the camera
+   transform is seeded from the frame's camera setup, and the mirror-versus-live residual in the world pass is **1.62** rather
+   than the cross-pass 2000 that was quoted at the time. Reaching the matrices by reading GL state per batch is no longer the
+   only option; a snapshot read per frame remains.
+3. **Present ownership.** The swapchain path runs, and this is still the honest blocker: with `presentFromComposite` enabled
+   this scene **never presents** - it produces no format-2 batch at all, so the path is inert rather than exercised - and with
+   an out-of-date acquire forced the client used to deadlock, which the signal-only release fixed. Making Vulkan present the
+   game's frames remains distinct work, and it belongs with frame ownership because both decide who owns the images when.
 
 ## 6. Work order and dependencies
 

@@ -6769,3 +6769,30 @@ Against the pinned upstream - the only reference with terrain - the current fram
 dominated by terrain shading. That number is recorded in the same row, because a local 0.00 and a reference 34 belong next to
 each other: one says the immediate path agrees with the GL path it replaces, the other says the terrain still does not match
 the upstream renderer, and conflating them is exactly how a project talks itself into claiming more than it has.
+
+---
+
+## The blockers section corrected, and a budget that does not fit on Intel
+
+Two things this round, one a record correction and one a measurement.
+
+The plan's blockers section still described the state of several rounds ago. Its first entry said the bridge owns the images
+"one window per frame and early in it, so immediate batches that arrive later are drawn against the next frame's buffers" -
+while the same plan's claim table records the window limit as **sixteen per frame**, measured pixel-equal on a local comparison
+with no measurable cost, and records that the one-window measurement that blackened the frame **predates the submit-wait fix**.
+Its second entry said the world matrices are invisible to the Mixins and that reading them per batch "is the only correct
+option" - while the claim table records the projection as **derived and applied**, the camera transform **seeded from the frame's
+camera setup**, and the mirror-versus-live residual as **1.62** rather than the cross-pass 2000. Both entries now state the
+measured position, and both say what the old wording was and why it changed, because a reader who remembers the old blocker
+needs the correction more than the new text. The third entry - present ownership - is still a real blocker and now carries
+what is known about it: with `presentFromComposite` enabled this scene presents no format-2 batch at all, so the path is inert
+rather than exercised.
+
+Then the Intel recipe-screen run. The **AMD** run of that configuration completes with 2273 passes. On **Intel** it does not:
+with the harness's `--duration` raised from 150 to **420** it still ends at the harness timeout, `exit 124` and no report. The
+configuration without the recipe screen **does** complete on Intel (`passes=1090`, `outsideWorldPassAccepted=4426`), so the
+gap is the mod's heavy screen on a slower GPU rather than a defect - and the honest entry is "the budget does not fit", with
+the numbers, not "the test failed".
+
+Worth noting how the harness behaves here, because it is exactly right: `--duration` is documented as "maximum runtime in
+seconds; **a timeout is not success**", and it reports `validationExitCode 124` rather than a pass.
