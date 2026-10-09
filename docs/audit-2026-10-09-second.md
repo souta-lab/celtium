@@ -308,7 +308,20 @@ That is a real finding rather than a tooling artefact: the composite present pat
 configuration, where `presentImage` is never called at all. The likely cause is visible in the code: the composite branch calls
 `frameTarget.beginFrameForPresent()` **before** presenting, and ends the frame only when the submission actually happened, so
 a present that returns early leaves the frame begun and unended, and the next frame waits on a fence that will never be
-signalled. **Next:** end the frame (or do not begin it) on the out-of-date path, then re-run the injection.
+signalled. **Fixed, and the deadlock is gone - but that configuration still does not work.** `endFrame()` makes GL wait on the
+Vulkan-to-GL semaphore, and the frame target's own documentation says what that means: *"waiting for a submission that was
+never sent deadlocks the render thread"*. That is exactly what the out-of-date path produced, so the composite caller now
+submits a **signal-only release** - it waits on the frame's GL-to-Vulkan semaphore and signals the Vulkan-to-GL one, with no
+command buffers - whenever a frame was begun and no submission happened, then ends the frame normally.
+
+Re-running the configuration that hit the 300-second timeout: the game **now exits on its own** (the run script returns 0
+where it previously timed out). But the **fixture still reports `MISSING_REPORT`** in that configuration, and the report file
+read back was the previous run's, so the honest statement is narrower than "fixed": the **deadlock is gone**, and the
+composite-present path with a forced out-of-date acquire **still does not complete a verified run**. It remains off by
+default, and the ordinary paths are unaffected - exit 0, validation clean, 0 messages, fixture PASSED.
+
+**Next:** find why the fixture does not complete in that configuration (it is the same path whose capture the suite
+suppresses), and re-run the acquirer failure with a report.
 
 ### S19 [P1] immediate push constants exceed the guaranteed minimum - **closed**
 **Fixed and verified.** The immediate push block is now **116 bytes** - projection 64, the model view's three affine

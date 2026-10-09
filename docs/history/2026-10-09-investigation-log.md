@@ -6158,3 +6158,25 @@ on a fence that will never be signalled.
 
 So the honest state of S18 is: two of the four points fixed, two shown to be already sound, the failure path now **reachable**
 for the first time - and **hanging**, which is the next thing to fix rather than something to have claimed success about.
+
+---
+
+## The deadlock is gone; the configuration still does not finish a verified run
+
+The frame target documents its own trap in a comment: *"waiting for a submission that was never sent deadlocks the render
+thread"*. `endFrame()` makes GL wait on the Vulkan-to-GL semaphore, and an out-of-date acquire - now reachable for the first
+time - returned without submitting anything, so that wait had nothing to wait for. The fix is a **signal-only release**: the
+composite caller submits an operation with no command buffers that waits on the frame's GL-to-Vulkan semaphore and signals the
+Vulkan-to-GL one, which restores the pairing the frame target requires, and then ends the frame normally. It runs only on the
+path where a frame was begun and no submission happened, which is why it is a release rather than a workaround.
+
+Re-running the configuration that previously hit the three-hundred-second timeout, the game **now exits on its own** - the run
+script returns 0 - so the deadlock is gone.
+
+But the **fixture still reports a missing report** in that configuration, and the report read back was the previous run's
+file, so the honest statement is narrower than "fixed": the previously unbounded hang is now bounded, and the composite
+present with a forced out-of-date acquire still does not complete a verified capture. That is consistent with what the suite
+already said about this path - it is the one whose capture is suppressed - and it stays off by default, which is why the
+ordinary measurements are unaffected: exit 0, validation clean, 0 messages, fixture PASSED.
+
+Named for the next round: why the fixture does not complete in that configuration.

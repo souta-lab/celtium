@@ -655,6 +655,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * frame.
      */
     private boolean frameSubmitReachedQueue;
+    private int emptyFrameReleases;
 
     /**
      * How many submissions to refuse, for exercising the fail-closed paths:
@@ -1260,6 +1261,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // submitDone read false here and skipping endFrame broke the bridge's copy-back.
                     if (this.swapchain.lastPresentSubmitDone()) {
                         this.frameTarget.endFrame();
+                    } else {
+                        // The frame is open and its GL-to-Vulkan semaphore has been acquired, but nothing was submitted:
+                        // endFrame() makes GL wait on the Vulkan-to-GL semaphore, so without a submission that signals it
+                        // the render thread deadlocks - which is exactly what a forced out-of-date acquire produced when
+                        // the failure path was first made reachable (audit S18).
+                        submitSignalOnly();
+                        this.frameTarget.endFrame();
+                        this.emptyFrameReleases++;
                     }
                     if (!this.swapchain.lastPresentSucceeded()) {
                         this.immediatePresentFailures++;
@@ -3723,6 +3732,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             for (int row = 0; row < 4; row++) {
                 target.putFloat(offset + ((column * 4) + row) * 4, column == row ? 1.0f : 0.0f);
             }
+        }
+    }
+
+    /**
+     * Submits nothing but the semaphore pairing: it waits on the frame's GL-to-Vulkan semaphore and signals the
+     * Vulkan-to-GL one, so a frame that was begun can be ended even when the present never happened. Without this the
+     * GL wait inside {@code endFrame} has nothing to wait for and blocks the render thread for good (audit S18).
+     */
+    private void submitSignalOnly() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
+            LongBuffer waitSemaphores = stack.mallocLong(1);
+            waitSemaphores.put(0, this.frameTarget.waitSemaphore());
+            IntBuffer waitStages = stack.mallocInt(1);
+            waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+            LongBuffer signalSemaphores = stack.mallocLong(1);
+            signalSemaphores.put(0, this.frameTarget.doneSemaphore());
+            submit.waitSemaphoreCount(waitSemaphores.remaining());
+            submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages).pSignalSemaphores(signalSemaphores);
+            // No command buffers: the submission exists only to release the frame's synchronization.
+            check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
+            this.frameSubmitReachedQueue = true;
         }
     }
 
