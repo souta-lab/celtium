@@ -5573,3 +5573,51 @@ colour comes from code byte-identical to upstream and the light is full daylight
 with the same contrast. The remaining candidates are the **inputs** the mesh builder is handed and anything in the shader that
 the located reference sources disagree with, and those sources are now in hand for a line-by-line comparison rather than
 another experiment.
+
+---
+
+## The missing factor is the light map - and the reference may not be applying it at all
+
+Reading the located reference sources line by line, rather than experimenting, produced the whole picture in three steps.
+
+**The shaders are faithful.** `chunk_vertex.glsl` - the include the reference's terrain vertex shader calls for
+`_vert_init()` - builds the colour with `_vert_color = a_Color;` and unpacks the light coordinate with
+`ivec2((uvec2((a_LightCoord >> 16) & 0xFFFFu) >> uvec2(0, 8)) & uvec2(0xFFu))`, which is character for character what this
+port has. There is no normalisation, no divisor, no colour-space step that was missed.
+
+**The light map supplies exactly the missing factor.** The dump's alpha is 255 everywhere, so the fragment's
+`diffuseColor.rgb *= m_color.a` is a no-op and the occlusion readings were right; but the texel this scene's light coordinate
+addresses is
+
+```
+sampled texel (u=block, v=sky): x=0 y=15 -> rgba=[155 155 187 255]   luminance 166 = 0.65
+```
+
+and 0.65 is the 0.69 the frame comparison has been fitting all along. The light map is not white at this texel - it is a
+bluish 0.65 - and multiplying by it is exactly the difference.
+
+**And the reference can skip that multiply entirely.** Its vertex shader has two branches:
+
+```glsl
+#ifdef CELERITAS_NO_LIGHTMAP
+    v_Color = _vert_color;
+#else
+    vec4 lightColor = _sample_lightmap(u_LightTex, _vert_tex_light_coord);
+    v_Color = _vert_color * lightColor;
+    ...
+#endif
+```
+
+and the define is added by `ChunkShaderOptions` when the render pass says `hasNoLightmap()`. **This port has no such branch
+at all** - the Vulkan shader multiplies unconditionally. So if the pass the fixture draws declares no light map, the reference
+renders without that 0.65 while this renderer applies it, and the entire terrain difference is a **missing configuration-path
+fidelity**, not a wrong colour, not a wrong texture and not a wrong light sample.
+
+That is testable in one step and it is the next one: read the 1.12.2 pass definitions and see what `hasNoLightmap()` returns
+for the pass the fixture uses. If it is true, the fix is a second vertex module without the light map multiply - the port's
+own version of the same branch, chosen by the same condition - and the terrain baseline should then drop by most of its 34
+points at once.
+
+Worth stating plainly, because this thread has spent many rounds: three of its findings have been eliminated by reading
+sources rather than by running anything (the AO being upstream-identical, the shaders being faithful, and now the light map
+branch), and each elimination was cheap.

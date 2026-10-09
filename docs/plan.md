@@ -114,6 +114,15 @@ move the frame its way (34.08 to 26.68 mean together). Both are reverted; the fa
 68.81%**, recorded alongside the deviating numbers. **Next:** a line-by-line comparison of our shaders against those located
 sources, and the inputs the mesh builder is handed.
 
+**The light map is the missing factor, and the reference may not apply it (round 273).** The reference sources were read
+line by line instead of experimented on: `chunk_vertex.glsl` is character-for-character what this port has, so the shaders
+are faithful; the light map's alpha is 255 everywhere, so the fragment's `*= m_color.a` is a no-op; and the texel this
+scene's light coordinate addresses is **0.65** (rgb 155,155,187) - exactly the factor the frame fit has been reporting. The
+reference's vertex shader has a `CELERITAS_NO_LIGHTMAP` branch that **skips that multiply**, selected when the render pass
+says `hasNoLightmap()`, and **this port has no such branch**. So if the fixture's pass declares no light map, the reference
+renders without the 0.65 and the terrain difference is a missing configuration path rather than a wrong colour. **Next:**
+read the 1.12.2 pass definitions for `hasNoLightmap()`; if true, add the second vertex module and re-measure.
+
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for
 terrain, accuracy must be compared against a renderer **outside this tree** - the pinned Celeritas/Embeddium lineage the plan
