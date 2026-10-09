@@ -123,6 +123,9 @@ public final class VulkanHostBuffer {
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
             LongBuffer memoryHandle = stack.mallocLong(1);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanHostBuffer:126")) {
+                throw new IllegalStateException("injected allocation failure: VulkanHostBuffer:126");
+            }
             check(vkAllocateMemory(device, allocate, null, memoryHandle), "vkAllocateMemory(host buffer, "
                     + requirements.size() + " bytes, memory type " + memoryType + ")");
             this.memory = memoryHandle.get(0);

@@ -1469,7 +1469,33 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   （frame target / readback / staging / uniform / buffer / host buffer / context staging）、
   **buffer と descriptor の失敗はまだ注入していない**。「確保失敗を全部確認した」とは言わない。
 
-**次の一手**: (1) `VulkanBuffer` と staging の確保にも同じ注入を入れ、**buffer/descriptor 側の失敗**を受入する、
+**確保失敗の注入を全サイトへ展開し、掃引して受入（このターン）**:
+
+- `vkAllocateMemory` を呼ぶ**すべてのサイト**（9箇所に機械的に挿入＋既存1箇所＝10サイト）に
+  `VulkanAllocationFault.shouldFail("<file>:<line>")` を入れ、`-Dceltium.vulkan.failAllocationAt=<n>` で
+  **n回目の確保**を失敗させる（失敗は例外として投げ、各経路の既存の失敗処理をそのまま試す）。
+- **n=1..10 の掃引（AMD）**: 10連続、**10回とも exit 0 / validationClean=true / PASSED / VUID 0**。
+  実際に叩かれたサイト: `mirrored texture`、`VulkanGlTexture:483`、`VulkanGlTexture:979`（staging）、
+  **`VulkanFrameTarget:927`**（フレームターゲット）。
+- **より大きい n（後半の確保＝バッファ系）**:
+
+| n | GPU | 叩かれたサイト | exit | validationClean | fixture | VUID |
+|---|---|---|---|---|---|---|
+| 200 | AMD | `VulkanHostBuffer:126` | **0** | **true** | PASSED | **0** |
+| 2000 | AMD | `VulkanHostBuffer:126` | **0** | **true** | PASSED | **0** |
+| 800 | Intel | `VulkanHostBuffer:126` | **0** | **true** | PASSED | **0** |
+
+- **合計**: 13 run、**13 run とも exit 0 / validationClean=true / PASSED / VUID 0**、叩かれたサイトは
+  **5種類**（mirrored texture / GlTexture:483 / GlTexture:979 staging / FrameTarget:927 / HostBuffer:126）。
+- **範囲の明記**: 10サイトにガードは入ったが、**実際に失敗を注入して確認できたのは5種類**である。
+  `VulkanBuffer:189`（descriptor 用の一様バッファ）・`VulkanUniformBuffer:110`・`VulkanContext:883`（context staging）・
+  `VulkanTerrainGpuBackend:5047`（readback）は**まだ叩けていない**（大きい n でも別のサイトに当たった）。
+  「全サイトの失敗を確認した」とは言わない。
+
+**次の一手**: (1) 残り4サイトを狙って n をさらに振る（または サイト名で狙い撃ちできるようにする）、
+(2) minimize 相当（サイズ0や present 失敗）を確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) `VulkanBuffer` と staging の確保にも同じ注入を入れ、**buffer/descriptor 側の失敗**を受入する、
 (2) minimize 相当（サイズ0や present 失敗）を別途確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
 
 **（旧メモ）** 次の一手: (1) texture/descriptor/allocation 失敗を両GPUで確認する、(2) minimize 相当（サイズ0や present 失敗）を

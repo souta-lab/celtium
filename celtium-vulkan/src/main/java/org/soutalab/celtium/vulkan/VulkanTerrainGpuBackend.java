@@ -5044,6 +5044,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
                     .sType$Default().allocationSize(requirements.size()).memoryTypeIndex(type);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanTerrainGpuBackend:5047")) {
+                throw new IllegalStateException("injected allocation failure: VulkanTerrainGpuBackend:5047");
+            }
             check(vkAllocateMemory(this.context.device(), allocate, null, handle), "vkAllocateMemory(readback)");
             this.readbackMemory = handle.get(0);
             check(vkBindBufferMemory(this.context.device(), this.readbackBuffer, this.readbackMemory, 0),

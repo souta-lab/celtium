@@ -924,6 +924,9 @@ public final class VulkanFrameTarget {
                     .allocationSize(image.allocationBytes)
                     .memoryTypeIndex(memoryType(memoryProperties, requirements.memoryTypeBits(),
                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanFrameTarget:927")) {
+                throw new IllegalStateException("injected allocation failure: VulkanFrameTarget:927");
+            }
             check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(" + what + ")");
             image.memory = handle.get(0);
             check(vkBindImageMemory(device, image.image, image.memory, 0), "vkBindImageMemory(" + what + ")");

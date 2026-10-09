@@ -880,6 +880,9 @@ public final class VulkanContext {
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
             LongBuffer memoryHandle = stack.mallocLong(1);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanContext:883")) {
+                throw new IllegalStateException("injected allocation failure: VulkanContext:883");
+            }
             check(vkAllocateMemory(this.device, allocate, null, memoryHandle),
                     "vkAllocateMemory(staging, " + requirements.size() + " bytes)");
             memory = memoryHandle.get(0);

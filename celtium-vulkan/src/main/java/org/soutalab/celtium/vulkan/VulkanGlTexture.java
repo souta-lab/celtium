@@ -480,6 +480,9 @@ public final class VulkanGlTexture {
                 // built, and the point of the injection is to check that they still do.
                 throw new IllegalStateException("injected allocation failure: mirrored texture");
             }
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:483")) {
+                throw new IllegalStateException("injected allocation failure: VulkanGlTexture:483");
+            }
             check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(mirrored texture)");
             memory = handle.get(0);
             check(vkBindImageMemory(device, image, memory, 0L), "vkBindImageMemory(mirrored texture)");
@@ -976,6 +979,9 @@ public final class VulkanGlTexture {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:979")) {
+                throw new IllegalStateException("injected allocation failure: VulkanGlTexture:979");
+            }
             check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(staging)");
             stagingMemory = handle.get(0);
             check(vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0L), "vkBindBufferMemory(staging)");

@@ -186,6 +186,9 @@ public final class VulkanBuffer {
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
             LongBuffer memoryHandle = stack.mallocLong(1);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanBuffer:189")) {
+                throw new IllegalStateException("injected allocation failure: VulkanBuffer:189");
+            }
             check(vkAllocateMemory(device, allocate, null, memoryHandle), "vkAllocateMemory(" + requirements.size()
                     + " bytes, memory type " + memoryType + ")");
             createdMemory = memoryHandle.get(0);

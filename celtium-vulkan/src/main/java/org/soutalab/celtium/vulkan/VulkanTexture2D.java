@@ -147,6 +147,9 @@ public final class VulkanTexture2D {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(type);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanTexture2D:150")) {
+                throw new IllegalStateException("injected allocation failure: VulkanTexture2D:150");
+            }
             check(vkAllocateMemory(this.context.device(), allocate, null, handle), "vkAllocateMemory(texture)");
             this.memory = handle.get(0);
             check(vkBindImageMemory(this.context.device(), this.image, this.memory, 0L), "vkBindImageMemory(texture)");

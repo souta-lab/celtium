@@ -107,6 +107,9 @@ final class VulkanUniformBuffer {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(type);
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanUniformBuffer:110")) {
+                throw new IllegalStateException("injected allocation failure: VulkanUniformBuffer:110");
+            }
             check(vkAllocateMemory(this.context.device(), allocate, null, handle), "vkAllocateMemory(uniform)");
             this.memory = handle.get(0);
             check(vkBindBufferMemory(this.context.device(), this.buffer, this.memory, 0), "vkBindBufferMemory(uniform)");
