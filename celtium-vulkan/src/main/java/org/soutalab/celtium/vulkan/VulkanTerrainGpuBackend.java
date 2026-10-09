@@ -1717,6 +1717,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
                 this.currentImmediateMesh = new VulkanDynamicMesh(this.context);
+                // The target and viewport belong to the group being created, here, and not to whichever group happened to be
+                // first: they were recorded in an `if (!currentGroupUsed)` block that the creation path never reset, so every
+                // group after the first kept the first group's target - the main framebuffer - and the batches offered while a
+                // second framebuffer was bound were enqueued as main-target work. That is why the off-target pass found an
+                // empty queue every run (audit A10/A32). Resetting the flag keeps the older path consistent as well.
+                this.currentGroupTarget = this.currentRenderTarget;
+                this.currentGroupViewport = this.currentViewportKey;
+                this.currentGroupUsed = false;
                 System.arraycopy(this.glProjection, 0, this.currentGroupProjection, 0, 16);
                 System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
                 this.currentGroupFormatId = formatId;

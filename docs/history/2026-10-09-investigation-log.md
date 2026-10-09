@@ -9106,3 +9106,27 @@ meshは未生成、保留queueは空」を示す。これは**異常ではない
 次に測るべき点は**groupがqueueへ入る瞬間**、すなわち `closeCurrentImmediateGroup()` が
 `immediateGroups` に追加するときの `group[7]` である。そこで secondary の identity が入っていれば、消費は
 その後の flush 経路にあり、main の identity が入っていれば group 生成側の欠陥である。1回のrunで決まる。
+
+---
+
+## エンキュー計器は0のまま: 提示されたバッチは非main targetのgroupを一度も作らない
+
+queueへ入る瞬間に計器を付け、groupのtarget記録も生成時に移した。
+
+```
+CELTIUM_ENQUEUE_TARGET は一度も印字されない
+offTargetPerTarget = [4f4e7bab:offered=240,atPass=0,drawnPasses=0]
+offTargetCopiedBack = 0    offTargetPassesSkippedEmpty = 2278    postAcceptDroppedGroups = 0
+acceptedByFormat = 1:16,2:0,3:0,4:0,5:224,6:1326,7:801,8:0,9:12
+exit 0 | validationClean true | messages 0 | fixture PASSED
+```
+
+`currentGroupTarget` の代入は `if (!this.currentGroupUsed)` の中にあり、group生成パスはそのフラグを戻していなかった。
+最初のgroupのtarget（main）が以後のgroupにも残る、というのは実在の欠陥なので**生成時に自分のtargetを記録する**
+よう直した（`currentGroupTarget`/`currentGroupViewport` を設定し `currentGroupUsed = false`）。それでも
+**非main targetのgroupは一度もqueueに入らない**。したがって提示された240件は、groupを作る経路そのものに
+到達していない可能性が高い。
+
+**次段（1点）**: 受理ブロックで `!currentRenderTargetIsMain` のときに数えるカウンタを足す。提示された240件が
+**受理されているか**どうかが決まる。受理されていれば「groupは作られるが target が main のまま」ではなく
+「group生成に到達していない」ことになり、未受理なら offer の先の preflight で落ちていることになる。
