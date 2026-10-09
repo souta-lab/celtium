@@ -3162,3 +3162,33 @@ and then found to be edge-on, because they were built in a world-Y plane while t
 and they now use a camera-facing basis. The measurement that follows enlarges them to six blocks across so that "not visible"
 cannot be a question of thresholds, and checks whether the mask forms a dense block rather than scattered pixels - the check
 that would have caught this last round.
+
+---
+
+## The quads are simply not drawn, and the density check says so
+
+With the fixture's quads rebuilt in a camera-facing basis and enlarged to six blocks across, drawn with culling and depth
+off and with the immediate path disabled so that GL has them entirely:
+
+```
+red: 65 px, bbox fill 0.7%, x 259..939 y 485..497
+blue: 0 px
+fixture PASSED | quads 2
+```
+
+Sixty-five red pixels spread over a 681 by 13 band is not a quad - **0.7% of the bounding box is filled** - and the shape is
+the same band that produced "81 pixels" two rounds ago and "107" one round ago. The scene contains a thin reddish edge, and
+every reading of this fixture so far has been that edge. The density check added this round is what distinguishes the two,
+and it should have been in the check from the beginning: a quad fills its bounding box, scene noise does not.
+
+So the fixture's geometry never reaches the frame at all, even with GL drawing it, even at six blocks across, even with
+culling and depth disabled. Since the handler demonstrably runs (`drawTestQuads 2`), the fault is in where and how it draws:
+`RenderWorldLastEvent` runs with whatever matrix and target the world pass leaves behind, and this project has not
+established what those are. The next attempt draws in the **GUI overlay pass** instead - `RenderGameOverlayEvent.Post` -
+where the projection is an ortho matrix over the framebuffer and the coordinates are screen coordinates, so the fixture's
+geometry stops depending on the camera and on the world pass at all. The merged-group property that makes it an acceptance
+test for S05 is unaffected by which pass it draws in.
+
+That is the third consecutive round in which this fixture produced a reading that had to be withdrawn or explained away, and
+the pattern is worth naming: the fixture was built faster than the check that judges it. The rule this session keeps
+relearning - verify the instrument before reading from it - applies to a test fixture exactly as it applies to a comparison.

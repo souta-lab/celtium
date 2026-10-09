@@ -57,10 +57,12 @@ path off and on gives:
 | immediate path off (GL draws) | **81 px** | 0 |
 | immediate path on | **0** | **0** |
 
-The immediate path shows nothing where GL shows 81 pixels of the fixture's own quad: geometry accepted (`immediateTaken`
-1137, `immediateGroupsClosed` 1137) and absent from the frame, which is S14's description measured rather than argued. The
-fixture's own baseline is still incomplete - GL should show both quads and shows one - so S05's acceptance is not satisfied
-either. The counters also give the first hard number about merging: groups of up to **880 vertices** exist in this frame,
+That comparison was **withdrawn**: the red pixels are scattered across a 681 by 13 band and fill 0.7% of their bounding
+box, and the count moves between runs of the same fixture (81, 107, 65), so they are scene content rather than a quad. The
+fixture's geometry has never reached the frame at all, even with GL drawing it, at six blocks across, culling and depth
+disabled, and the handler demonstrably running. The **open** work is therefore the fixture before it can be an acceptance
+test: the next attempt draws in the GUI overlay pass, where the projection and the target are known. The counters from that
+run are unaffected: `immediateGroupsClosed` 1137 with `immediateMaxGroupVertices` 880 is a fact about the scene. The counters also give the first hard number about merging: groups of up to **880 vertices** exist in this frame,
 so the base-vertex defect was the normal shape of a merged group here, not a corner case.
 
 ### S06 [P1, certain in code] growing a dynamic buffer loses its contents
