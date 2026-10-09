@@ -81,6 +81,20 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Measured: the immediate path draws, but its image does not match GL yet, so it is off by default.**
+  The textured (24-byte) path is validation-clean and accepts over a thousand batches per run
+  (`immediateTaken=1178`, `immediateFlushes=1177`, `immediateRefusal=none`, VUID 0, PASSED). A pixel comparison
+  against the *same* configuration with the path switched off (`-Dceltium.vulkan.immediate=false`, which routes every
+  batch back to GL and yields `immediateTaken=0`) measured **mean absolute difference 12.85/255, 32.4% of pixels
+  differing by more than 8, 25.5% by more than 32**. That is not a rounding difference: the geometry is drawn through
+  the right pipeline in the right place, but the image is visibly different, because the pipeline still uses one fixed
+  blend/depth/cull state instead of what Minecraft asked for, and because the flush runs a frame later than the batch.
+  The switch therefore **defaults to off**: a plain session keeps vanilla's own correct image (verified again:
+  PASSED, `nativeTerrainVerified True`, 1653 terrain passes, VUID 0, `immediateTaken=0`), and the path is enabled
+  explicitly with `-Dceltium.vulkan.immediate=true` for measurements. Making the image match means the state-driven
+  pipeline selection (blend factors, depth test and write, culling, alpha test from `VulkanGlState`) and the flush
+  timing, which are the next tasks - not a counter.
+
 - **The textured (24-byte) path works and is validation-clean.** The abort was not an exception in the buffered code
   (the guards added to catch one never fired); the validation layer named the real cause:
   `VkDescriptorSet ... was destroyed or updated without UPDATE_AFTER_BIND`, followed by

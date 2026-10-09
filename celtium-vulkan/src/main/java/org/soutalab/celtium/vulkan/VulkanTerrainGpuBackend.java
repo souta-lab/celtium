@@ -336,6 +336,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateStateCalls;
     private int immediateBatchesOffered;
     private String immediateLastRefusal = "none";
+    /**
+     * Whether the immediate path draws, off by default.
+     * <p>
+     * The counters are clean when it is on (over a thousand batches accepted per run, no validation message) but a
+     * pixel comparison against the same run with it off measured a mean difference of 12.85/255 with 25.5% of pixels
+     * differing by more than 32: the geometry is drawn in the right place through the right pipeline, yet the image is
+     * not the same, because the pipeline still uses one fixed blend/depth/cull state instead of the state Minecraft
+     * asked for, and because the flush runs a frame later. Defaulting to off keeps vanilla's own correct image while
+     * that is finished; {@code -Dceltium.vulkan.immediate=true} turns it on for measurements.
+     */
+    private static final boolean IMMEDIATE_DRAWING_ENABLED = "true".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.immediate", "false"));
+
     private int immediateTaken;
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
@@ -540,6 +553,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
         this.immediateBatchesOffered++;
+        if (!IMMEDIATE_DRAWING_ENABLED) {
+            // Comparison switch, default on: turning it off makes every immediate batch fall back to GL, which is
+            // exactly the reference image the Vulkan path has to reproduce.
+            this.immediateLastRefusal = "immediate drawing disabled by celtium.vulkan.immediate=false";
+            return false;
+        }
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null) {
             this.immediateLastRefusal = reason;
