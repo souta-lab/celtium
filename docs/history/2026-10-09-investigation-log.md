@@ -2439,3 +2439,35 @@ So in the GUI-visible frame, with the hand excluded and a floor of 0.09, the imm
 whose content is not yet identified. The bisection for it has to be run with the mask flag **verified present** in the
 script before the run, which is the lesson this round cost: an unasserted replacement is indistinguishable from a
 successful one until its effect is looked for in the run's own output.
+
+---
+
+## The verified empty-mask control ends the question: the GUI-visible difference is not the renderer
+
+With the mask flag verified present in the script this time, and the run's own counters confirming it took effect:
+
+```
+floor (reference against reference): 0.09
+empty mask (immediateTaken=0):       1.60 | 1.20% over 8
+```
+
+`immediateTaken=0` is the whole point: no batch was accepted, so **no GL draw was cancelled** - every pixel of that frame was
+drawn by GL, exactly as in the reference - and the images still differ by **sixteen times the floor**. Whatever the
+GUI-visible comparisons have been measuring, it is not what the Vulkan path draws.
+
+What is left, and it is the same uncontrolled term in a different costume, is the **animated subject**: in third person the
+local player's model is rendered and its limbs move with the partial tick, just as the first-person hand did. The 0.09 floor
+is two references happening to land on similar partial ticks, not a stable floor, which is why it has read 0.07, 0.09, 0.10
+and 0.11 across rounds while runs of the same configuration differ by up to 3.8.
+
+So the position is settled, and the two reversals before it can be closed:
+
+- **the GUI-visible scene cannot support renderer claims in this harness.** Two controls - an empty mask and a third-person
+  camera - both show differences that do not depend on what the renderer draws;
+- **withdrawn for good:** every number in this area, including the 0.95 "ten times the floor" reading of the last round;
+- **the sound instruments** are the hidden-GUI comparison, whose two runs produce identical images (0.00), and the format
+  bisection performed there - formats 1, 3 and 5 measured 0.00 on their own, and format 2 turned out to be the final
+  composite quad rather than content.
+
+If the GUI-visible scene is wanted later, the animated subject has to be removed rather than frozen - the player model in
+third person, the hand in first - and that is a fixture change, not another measurement of the same scene.
