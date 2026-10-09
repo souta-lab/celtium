@@ -7675,3 +7675,27 @@ total, every one of them named by an instrument rather than found by reading.
 
 Three refusals remain per run, and their reason has changed again: `pass is null` inside the terrain render pass lookup,
 which is a third, separate defect on the same path and is recorded as the next step rather than folded into this one.
+
+---
+
+## The third defect on the acceptance path: a null render pass
+
+The refusals that remained after the registry fixes reported `TerrainRenderPass.name()` on a null `pass`, and the entry point
+that receives it dereferences the pass in every one of its guards. Something calls `render` with no pass at all - the terrain
+entry point, reached from the mod's own hooks - and a caller with no pass has no pass to draw, so the guard says so:
+
+```
+NPE refusals: 0
+acceptedByFormat = 1:17, 2:0, 3:0, 4:0, 5:312, 6:1862, 7:1097, 8:0, 9:12
+immediateTaken = 3300   glDrawsCancelled = 3300   terrainPasses=921
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+**Zero NPE refusals**, where the previous runs reported three. And **id 8 shows zero in this run** after showing 128 in the
+previous one, which is the scene dependency that was recorded last round as a prediction rather than as a doubt: the
+entity/TESR layout appears when an entity or a TESR is on screen, and these two runs differ in exactly that. The prediction is
+now confirmed by having been written down before the second run rather than explained after it.
+
+Three defects on this one acceptance path in two rounds - two initialisation-order nulls and a null pass - and all three were
+found by reading the reported reason rather than by reading the code. That is the fourth time this project's instrument has
+paid for itself, and the first time one of them was a prediction the next run confirmed.

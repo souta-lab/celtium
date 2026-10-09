@@ -228,6 +228,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                        CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+        if (pass == null) {
+            // Something calls this with no render pass at all. Every guard below names the pass - `pass.name()` is the first
+            // thing each of them touches - so a null one threw, was caught by the batch handler, and surfaced as
+            // "copy failed: NullPointerException ... TerrainRenderPass.name() ... pass is null". A caller with no pass has no
+            // pass to draw, so the answer is to say so rather than to dereference it.
+            this.lastSkipReason = "render was called with no render pass";
+            return;
+        }
         if (REFERENCE_RENDER) {
             // A reference render: the mod's own hooks call this instance directly, so leaving the registry empty was not
             // enough - measured, the "reference" still drew 1641 passes and reported regions=4. Nothing is drawn here, so
