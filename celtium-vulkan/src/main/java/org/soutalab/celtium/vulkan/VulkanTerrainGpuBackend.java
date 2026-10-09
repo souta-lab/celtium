@@ -457,6 +457,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetDrawn;
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
+    /** Acceptances split by whether the game had blending on, which is what translucency is here. */
+    private int immediateBlendedAccepted;
+    private int immediateOpaqueAccepted;
     /** Set while an off-target pass records, so the shared draw path binds that pass's pipeline. */
     private VulkanImmediatePipeline offscreenPipelineOverride;
     private int offTargetCopiedBack;
@@ -1679,7 +1682,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         accepted.append(i).append(':').append(this.immediateAcceptedByFormat[i]).append(' ');
                     }
                     System.out.println("[Celtium] CELTIUM_ACCEPTED total=" + this.immediateAcceptedTotal
-                            + " byFormat=[" + accepted.toString().trim() + "]");
+                            + " byFormat=[" + accepted.toString().trim() + "]"
+                            + " blended=" + this.immediateBlendedAccepted + " opaque=" + this.immediateOpaqueAccepted);
                 }
             }
             this.immediateLastRefusal = "none";
@@ -1777,6 +1781,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
+        // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can: the batches
+        // accepted with blending on are exactly the translucent content the game asked for, whatever layout carries it.
+        if (blend) {
+            this.immediateBlendedAccepted++;
+        } else {
+            this.immediateOpaqueAccepted++;
+        }
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
         // Comparison switch, default on: forcing the threshold to zero turns every discard off, which isolates the

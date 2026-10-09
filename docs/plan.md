@@ -65,7 +65,7 @@ class with `Class.forName`, because that class is compiled only when JEI is pres
 ## Completion condition (2), item by item, with the evidence for each state
 
 Required by the objective: terrain plus entity/TESR/item, hand/GUI/font/HUD, particles, sky/cloud/weather/water,
-translucency, the various FBOs, postprocess, texture animation, resource reload, resize and world switch - each stated as
+| **Translucency** | **Carried into the pipelines; the count of translucent content is sampled at the wrong moment** | Blend enable, disable and the factors are hooked in the state mirror, and the pipelines bake the factors into their state keys, so translucent content reaches Vulkan pipelines with its blending. The new blended/opaque counters were placed where the flag is read for **pipeline selection at flush time**, so they report `blended=3052, opaque=0` - always yes - instead of per-batch intent. **Open:** sample the flag where the batch is offered, where the per-batch state is already captured |
 implemented, unimplemented or verified on hardware, rather than judged by the terrain backend's name.
 
 | Item | State | Evidence |

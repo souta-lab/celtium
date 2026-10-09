@@ -7959,3 +7959,28 @@ remaining zeros being layouts whose content the scene simply did not upload, and
 
 That is the last of the counter-range defects: a fourth widening is no longer possible, because there is only one length to
 widen.
+
+---
+
+## A translucency instrument, and what its first reading actually measured
+
+Translucency is a state rather than a layout, so the per-format counters cannot see it. A pair of counters was added at the
+point where the blend flag is read, split into blended and opaque acceptances and printed with the incremental table:
+
+```
+CELTIUM_ACCEPTED total=3000 byFormat=[0:0 1:9 2:0 3:0 4:0 5:265 6:1653 7:1061 8:0 9:12] blended=3052 opaque=0
+```
+
+**Every acceptance reports blending on and none reports it off**, which is not credible as a description of the frame and is
+readily explained: the counters were placed where the blend flag is read for **pipeline selection at flush time**, not where a
+batch is offered. At flush time the game has blending enabled for this whole family of content, so the instrument is answering
+"was blending on when this group was flushed" - which is always yes - rather than "did this batch ask for translucency".
+
+That is the same failure as the earlier one where an accepted-count was read as an arrival-count, and it makes the fifth time a
+reading was right about its number and wrong about what the number was a number of. The fix is named and small: sample the flag
+at the moment the batch is offered, where the per-batch state is already being captured for the group, and count there.
+
+What is **not** in doubt from this run: the mixing fabric itself. The blend enable and disable are hooked in the state mirror
+(`setBlendEnabled(true)` and `(false)` from the two methods), the factors are hooked as well, and the pipelines bake the
+factors into their state keys - so translucency **is** carried into the Vulkan pipelines; what this instrument failed to do is
+report how much of the accepted content asked for it.
