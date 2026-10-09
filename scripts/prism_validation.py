@@ -243,6 +243,27 @@ def main():
                 code = 1
         if outcome["fixtureStatus"] != "PASSED" and code == 0:
             code = 1
+        # Validation messages are a failure, not a detail. Leaving this out is what let a run report PASSED with
+        # thirty-six validation messages inside it: the fixture's counters only see the renderer's own errors, and the
+        # layer reports through the log. The whole log is read after the process has exited, so a message emitted during
+        # shutdown still counts.
+        console = game / "logs/latest.log"
+        messages = []
+        if console.exists():
+            for line in console.read_text(errors="ignore").splitlines():
+                marker = "Celtium Vulkan validation: "
+                if marker not in line:
+                    continue
+                text = line.split(marker, 1)[1].strip()
+                if not text.startswith("vk") or "Information" in text or "deprecated" in text:
+                    continue
+                messages.append(text)
+        outcome["validationMessageCount"] = len(messages)
+        outcome["validationClean"] = not messages
+        if messages:
+            outcome["validationFirstMessages"] = messages[:3]
+            if code == 0:
+                code = 1
     outcome["validationExitCode"] = code if ended_by == "process-exit" else 124
     (game / "validation-process.json").write_text(json.dumps(outcome, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(outcome))
