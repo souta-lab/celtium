@@ -81,6 +81,19 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Root cause of the invisible immediate geometry found by measurement.** The one-shot diagnostic logged the first
+  copied vertex, the captured matrices and the resulting NDC:
+  `vertex0=(0.0,100.0,0.0) ndc=(-100.00,-1.62,0.52) w=1.00 proj=[m00=1.0 m11=1.0 m22=0.5] view=[tx=0.0 ty=-1.62 tz=0.05] indices=642`.
+  The captured projection was an **identity with the clip-depth remap** (that is what the terrain path does to an
+  identity), so the geometry was transformed into NDC x = -100, i.e. far off-screen. The cause is structural, not a
+  sign or an offset: **one frame's immediate batches do not share a matrix pair** - Minecraft switches between the
+  world perspective, the GUI ortho and identity several times per frame - and the implementation captured a single
+  pair for the whole flush, so every group whose first batch happened to arrive under a different projection was
+  drawn with the wrong transform. The fix is one mesh (and one draw with its own push constants) per matrix pair,
+  which is a correctness requirement rather than an optimisation. It was implemented this round but the module did not
+  compile in the time available, so it is reverted to keep the tree green and is the first task of the next round:
+  apply the grouping, build, and verify the quad's pixels.
+
 - **Matrix capture switched to reading OpenGL directly (measured, still invisible).** Mixing into LWJGL's own
   `GL11` is ruled out (client exits during startup) and the GLU `Project` Mixin never fires - the per-channel counters
   prove it: `matrixChannels=persp:0,frustum:0,mode:25765,identity:15416`. The world projection is installed by a

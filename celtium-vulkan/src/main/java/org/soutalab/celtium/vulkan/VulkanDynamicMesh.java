@@ -106,6 +106,11 @@ public final class VulkanDynamicMesh {
         return this.vertexCount;
     }
 
+    /** {@return the CPU-visible address of the first vertex}, for diagnostics only */
+    public long vertexAddress() {
+        return this.vertices.mappedAddress();
+    }
+
     public int indexCount() {
         return this.indexCount;
     }
