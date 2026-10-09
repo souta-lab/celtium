@@ -56,6 +56,11 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.setDepthTest(true));
     }
 
+    @Inject(method = "func_179144_i", at = @At("HEAD"), require = 0)
+    private static void celtium$bindTexture(int glTextureId, CallbackInfo info) {
+        celtium$mirror(backend -> backend.bindTexture(glTextureId));
+    }
+
     @Inject(method = "func_179131_c", at = @At("HEAD"), require = 0)
     private static void celtium$color(float red, float green, float blue, float alpha, CallbackInfo info) {
         celtium$mirror(backend -> backend.setColor(red, green, blue, alpha));

@@ -40,6 +40,8 @@ public final class VulkanGlState {
     private float alphaRef = 0.1f;
     private boolean lightingEnabled;
     private boolean texture2dEnabled = true;
+    /** The GL name of the bound texture; 0 means none, which is what the immediate path refuses to draw with. */
+    private int boundTextureName;
     private int shadeModel = SHADE_SMOOTH;
     private float colorRed = 1.0f;
     private float colorGreen = 1.0f;
@@ -317,6 +319,16 @@ public final class VulkanGlState {
 
     public void lightingEnabled(boolean enabled) {
         this.lightingEnabled = enabled;
+    }
+
+    /** Records the GL name of the bound texture, as {@code GlStateManager.func_179144_i} reports it. */
+    public void bindTexture(int glTextureId) {
+        this.boundTextureName = glTextureId;
+    }
+
+    /** {@return the GL name of the bound texture}, or 0 when nothing is bound */
+    public int boundTextureName() {
+        return this.boundTextureName;
     }
 
     public boolean texture2dEnabled() {

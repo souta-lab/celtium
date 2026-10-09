@@ -81,6 +81,17 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **Texture state is captured and arbitrary GL textures can be mirrored.** A `GlStateManager.func_179144_i` Mixin
+  reports the bound GL texture name into the state (`texture:270958` binds captured in one run, with the run still
+  PASSED and the terrain verification intact), and `VulkanTextureRegistry` turns such a name into a Vulkan image on
+  first use, reusing `VulkanGlTexture.uploadFromGlTexture` - the same level-0 readback the terrain atlas already goes
+  through. Both are prerequisites for the 24-byte formats (`POSITION_TEX_COLOR` and friends), which are what most
+  vanilla immediate content uses and which are still refused today with
+  `immediateRefusal=no_pipeline_yet_for_a_24-byte_vertex`.
+  Stated limitation: an entry is uploaded once, so a texture whose contents change afterwards (an animated atlas, a
+  dynamic framebuffer texture, a mod writing into its own texture) keeps the first mirror until `invalidate` is called;
+  the refresh policy belongs with the texture-animation stage of the plan.
+
 - **Depth comparison cleared; the immediate draw is stable with the depth test on.** Re-enabling the depth test
   (`LEQUAL`, writes off) leaves both measurements unchanged - 230400 pixels for the synthetic NDC quad, 25344 for the
   fixture's batch - so the depth comparison was never the cause; the invisibility came from the flush guard and the

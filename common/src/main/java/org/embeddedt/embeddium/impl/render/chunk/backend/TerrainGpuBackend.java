@@ -43,6 +43,10 @@ public interface TerrainGpuBackend {
     default void setDepthTest(boolean enabled) {
     }
 
+    /** Mirrors {@code GlStateManager.func_179144_i(int)}, the GL name of the texture the state has bound. */
+    default void bindTexture(int glTextureId) {
+    }
+
     /** Mirrors {@code GlStateManager.func_179131_c(float, float, float, float)}. */
     default void setColor(float red, float green, float blue, float alpha) {
     }

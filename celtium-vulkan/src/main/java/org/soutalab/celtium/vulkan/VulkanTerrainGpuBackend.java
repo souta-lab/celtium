@@ -342,6 +342,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int frustumCalls;
     private int matrixModeCalls;
     private int loadIdentityCalls;
+    private int bindTextureCalls;
+    private VulkanTextureRegistry textureRegistry;
     private int immediateFlushes;
     private int pendingImmediateIndices;
     private VulkanDynamicMesh pendingImmediate;
@@ -399,6 +401,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void setDepthTest(boolean enabled) {
         this.immediateState.depthTestEnabled(enabled);
         this.immediateStateCalls++;
+    }
+
+    @Override
+    public void bindTexture(int glTextureId) {
+        this.immediateState.bindTexture(glTextureId);
+        this.immediateStateCalls++;
+        this.bindTextureCalls++;
     }
 
     @Override
@@ -691,7 +700,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
-                + ",mode:" + this.matrixModeCalls + ",identity:" + this.loadIdentityCalls;
+                + ",mode:" + this.matrixModeCalls + ",identity:" + this.loadIdentityCalls
+                + ",texture:" + this.bindTextureCalls;
     }
 
     @Override
