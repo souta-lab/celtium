@@ -2377,3 +2377,33 @@ So the position, after two reversals in this area, is the one the control suppor
 - **and there is a way to make the GUI-visible comparison sound**: render in third person, which removes the first-person
   hand entirely. That is one setting in the fixture and it is the next measurement rather than another argument about the
   floor.
+
+---
+
+## Third person removes the hand and the difference stays: 0.95 against a floor of 0.09
+
+The recorded measurement was to render in third person, which removes the first-person hand entirely - the term the control
+identified as dominating the GUI-visible comparisons. Three runs of the frozen, tick-pinned, GUI-visible scene in third
+person:
+
+| Comparison | mean | over 8 | over 32 |
+|---|---|---|---|
+| **reference against reference (noise floor)** | **0.09** | 0.07% | 0.04% |
+| immediate path against reference | **0.95** | 0.74% | 0.47% |
+
+So the difference is **ten times the floor** with the hand gone, and it is the same 0.95-0.97 that every GUI-visible
+configuration has measured. Two things follow:
+
+- the **hand is not the term**. The control that pointed at it was reading three runs whose difference came from somewhere
+  else, and the third-person measurement excludes it directly;
+- the difference is **real, reproducible and about 1.0 mean (0.7% of pixels over 8)** in the GUI-visible frame, which the
+  hidden-GUI comparisons - identical to 0.00 - do not show at all.
+
+One contradiction has to be resolved before this is attributed to anything. The empty-mask control reported
+`immediateTaken=29` while accepting no content format, and differed by 3.75. Either the counter does not mean what the
+analysis assumed - it may count drawn batches rather than accepted ones - or the mask does not filter the way the parser is
+believed to. Until that is read from the code rather than inferred, the 3.6-3.75 numbers stay unexplained and no pipeline
+can be named from them.
+
+That is the next step: read what `immediateTaken` counts and what the mask parser does with a digit that matches no
+format, then re-run the bisection with a control whose meaning is known.

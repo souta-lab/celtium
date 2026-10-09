@@ -455,6 +455,13 @@ public final class ValidationClient {
                 // frame a run captures sits at a different partial tick each time, so the arm and the equipped progress
                 // differ between otherwise identical runs. Freezing the animation phases makes the comparison measure
                 // the renderer rather than the phase, which is what a like-for-like image comparison needs.
+                if (Boolean.getBoolean("celtium.validation.thirdPerson")) {
+                    // Third person removes the first-person hand entirely. That hand is drawn by GL - ItemRenderer uses
+                    // POSITION_TEX, which the acceptance mask does not take - and its position moves with the frame's
+                    // partial tick, which measured as a term of about 3.6 that no renderer difference could be read
+                    // through. Without it the GUI-visible comparison gets a floor worth using.
+                    mc.gameSettings.thirdPersonView = 1;
+                }
                 mc.player.prevSwingProgress = 0.0f;
                 mc.player.swingProgress = 0.0f;
                 mc.player.prevRenderArmPitch = mc.player.renderArmPitch = 0.0f;
