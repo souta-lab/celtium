@@ -46,6 +46,12 @@ public final class SpirvShaders {
     /** Vertex module for untextured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_COLOR}). */
     public static final String IMMEDIATE_COLOR_VERTEX = "immediate_color.vert";
 
+    /** Vertex module for the BLOCK-family immediate geometry (position, colour, texture, lightmap). */
+    public static final String IMMEDIATE_BLOCK_VERTEX = "immediate_block.vert";
+
+    /** Fragment module for the BLOCK-family immediate geometry, sampling both the texture and the lightmap. */
+    public static final String IMMEDIATE_BLOCK_FRAGMENT = "immediate_block.frag";
+
     /** Vertex module for textured immediate-mode geometry ({@code DefaultVertexFormats.POSITION_TEX_COLOR}). */
     public static final String IMMEDIATE_TEX_COLOR_VERTEX = "immediate_tex_color.vert";
 

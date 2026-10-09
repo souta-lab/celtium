@@ -86,6 +86,10 @@ public abstract class WorldVertexBufferUploaderMixin {
             id = 1;
         } else if (celtium$sameElements(vertexFormat, DefaultVertexFormats.POSITION_TEX_COLOR)) {
             id = 2;
+        } else if (celtium$sameElements(vertexFormat, DefaultVertexFormats.BLOCK)) {
+            // The dominant immediate layout in vanilla: blocks in the hand, items, and anything drawn through the
+            // block atlas. Identifying it by its element list is what keeps this structural rather than a guess.
+            id = 3;
         }
         celtium$formatIds.put(vertexFormat, id);
         return id;

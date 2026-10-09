@@ -385,6 +385,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             new java.util.HashMap<Long, VulkanImmediatePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    private final java.util.Map<Long, VulkanImmediateBlockPipeline> blockPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateBlockPipeline>();
     private int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
     private int immediateIsolationDraws;
@@ -579,8 +581,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         int expectedStride = formatId == 2 ? VulkanImmediateTexturePipeline.VERTEX_BYTES
+                : formatId == 3 ? VulkanImmediateBlockPipeline.VERTEX_BYTES
                 : VulkanImmediatePipeline.VERTEX_BYTES;
-        if (formatId != 1 && formatId != 2) {
+        if (formatId != 1 && formatId != 2 && formatId != 3) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices.
             this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ")";
@@ -591,8 +594,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + expectedStride;
             return false;
         }
-        if (formatId == 2 && this.immediateState.boundTextureName() == 0) {
+        if (formatId >= 2 && this.immediateState.boundTextureName() == 0) {
             this.immediateLastRefusal = "textured batch with no texture bound";
+            return false;
+        }
+        if (formatId == 3 && this.lightmapTexture == null) {
+            // The BLOCK family samples the lightmap, so a missing mirror means the batch would be lit wrongly.
+            this.immediateLastRefusal = "block batch with no lightmap texture mirrored";
             return false;
         }
         int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
@@ -1945,7 +1953,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     pushMatrixInto((float[]) group[1], push, 0);
                     pushMatrixInto((float[]) group[2], push, 64);
                     push.putFloat(128, Float.intBitsToFloat(state[6]));
-                    if (formatId == 2) {
+                    if (formatId == 3) {
+                        VulkanImmediateBlockPipeline block =
+                                blockPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
+                        if (block == null) {
+                            block = VulkanImmediateBlockPipeline.create(this.context, terrain.renderPass(),
+                                    state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                            blockPipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), block);
+                        }
+                        VulkanGlTexture texture =
+                                this.textureRegistry.get(((Integer) group[4]).intValue());
+                        long descriptorSet = texture == null ? 0L
+                                : block.descriptorSetFor(texture, this.lightmapTexture);
+                        if (descriptorSet == 0L) {
+                            this.immediateTextureRefusals++;
+                            continue;
+                        }
+                        block.draw(this.commandBuffer, mesh, push, descriptorSet);
+                    } else if (formatId == 2) {
                         VulkanImmediateTexturePipeline textured =
                                 texturedPipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
                         if (textured == null) {

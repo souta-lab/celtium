@@ -81,6 +81,21 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
+- **The dominant immediate layout is not the one implemented first, and its pipeline is now in place.** Reading
+  `DefaultVertexFormats` in order shows what the coverage actually needs: the 24-byte `POSITION_TEX_COLOR` implemented
+  earlier is a rare format, while the immediate content that dominates vanilla - blocks in the hand, items, the block
+  atlas path, particles - uses **28-byte** layouts, `BLOCK` (position, colour, texture, lightmap) and its relatives.
+  A `VulkanImmediateBlockPipeline` now exists for the `BLOCK` layout: 28-byte vertices, a vertex layout that mirrors the
+  format exactly, and two descriptor bindings so the fragment shader multiplies the sampled texture by the vertex
+  colour and the **lightmap** image the terrain path already mirrors. The Mixin identifies it structurally as format id
+  3 by comparing the element list against `DefaultVertexFormats.BLOCK`, the backend selects the new pipeline by that id
+  and refuses with a reason if the lightmap mirror is missing, and the run stays PASSED, `nativeTerrainVerified True`,
+  **VUID 0**.
+  Honest limitation: **no `BLOCK`-family batch was observed in the fixture scene**, so `immediateTaken` did not change
+  and the new path's acceptance is **unverified** - the scene apparently contains no hand-held or item-rendered
+  geometry. The next step is to have the fixture draw a `BLOCK`-format batch the way it already draws a
+  `POSITION_COLOR` one, so the pipeline is exercised and the lightmap path is compared against GL rather than assumed.
+
 - **Architectural conclusion: the ~14.4 image difference cannot be removed inside the current bridge structure.**
   The evidence that leads here: the GL reference is bit-identical between runs (0.00), the Vulkan path's own run-to-run
   variation is 0.83, the alpha test contributes 0.11, and the remaining cross difference is a stable ~14.4 mean with
