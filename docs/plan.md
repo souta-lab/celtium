@@ -1307,7 +1307,38 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
 - 切替そのものも動作（`leftWorldAtTick=100` / `rejoinedAtTick=100`）。
 - **画像の回帰なし**: 修正前後で AMD 0.0155 / Intel 0.0169 で、いずれも**測定済みの床（約0.017）と同値**。
 
-**次の一手**: (1) 残る失敗経路（texture/descriptor/allocation 失敗、minimize/out-of-date）を両GPUで確認する、
+**out-of-date 注入は「受入ではない」と判明（このターン・誤った受入を回避）**: 優先順位6の minimize/out-of-date を
+`-Dceltium.vulkan.forceAcquireOutOfDate=true` / `forceOutOfDate=true` で AMD/Intel に走らせたところ、3件とも
+**exit 0 / validationClean / PASSED** だった。**しかしこれは受入ではない**:
+
+- **present / swapchain 系のカウンタが通常runの report に一切出ていない**（`presentSucceeded` / `presentedMean` /
+  `swapchainOutOfDate` / `presentFailures` すべて not found。以前 present 実験を明示的に有効化した run では出ていた）。
+- つまり **通常runではスワップチェーンも present も存在しない**。`presentFromComposite`（既定ON）が変えるのは
+  「合成バッチを present 経路が担当するか」だけで、**フレームの swap は GL が行っている**（＝完成条件(b)の
+  「GL swap」は依然として残っている）。
+- したがって **out-of-date の注入は何もせず素通り**しており、**あの3件の緑は経路を何も検証していない**。
+
+**スワップチェーン経路を明示的に有効化すると、実バグが出た**（`-Dceltium.vulkan.swapchainProbe=true` +
+`forceAcquireOutOfDate=true`、AMD）:
+
+| 指標 | 実測 |
+|---|---|
+| verdict | exit 1 / validationClean **false** / fixture PASSED / 24.6 s |
+| present 経路 | **実行されている**（`celtium present trace` 4行、acquire/renderFinished のハンドル付き） |
+| 注入 | **`acquireOutOfDate=0`＝発火していない**（＝この注入も未検証） |
+| validation | **`VUID-vkAcquireNextImageKHR-semaphore-01286` ×2** = 「Semaphore must not be currently signaled」 |
+
+- **実バグ**: present 経路で **acquire 用 semaphore がシグナル済みのまま再利用されている**。これは
+  acquire→submit→present の semaphore 対の管理の問題で、**native present（完成条件(c)）の前提**に直結する。
+- 併せて **`forceAcquireOutOfDate` が発火していない**ことも分かった（`acquireOutOfDate=0`）。注入の実装自体を
+  確かめる必要がある（このフラグは「acquire 自体で失敗を注入する」ものとして書かれている）。
+
+**次の一手**: (1) acquire semaphore の再利用を直す（present 経路の semaphore 対の管理。ここは以前も
+`freshPresentSemaphores` という実験フラグで揺れている）、(2) `forceAcquireOutOfDate` が発火しない理由を
+実装から確かめる（注入が動かなければ out-of-date 経路は永久に未検証のままになる）、(3) 直ったら
+present 経路を両GPUで受入し、`acquireOutOfDate>0` を確認してから out-of-date の復旧を受入とする。
+
+**（旧メモ）** 次の一手: (1) 残る失敗経路（texture/descriptor/allocation 失敗、minimize/out-of-date）を両GPUで確認する、
 (2) 切替後の中身が正しいかを画像で詰める（現在は「validation が綺麗で切替が起きている」まで）、
 (3) 完成条件(b) に向けてブリッジの置き換え設計に入る。
 
