@@ -61,6 +61,16 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.setAlphaFunc(glFunc, reference));
     }
 
+    @Inject(method = "func_179098_w", at = @At("HEAD"), require = 0)
+    private static void celtium$enableTexture2d(CallbackInfo info) {
+        celtium$mirror(backend -> backend.setTexture2dEnabled(true));
+    }
+
+    @Inject(method = "func_179090_x", at = @At("HEAD"), require = 0)
+    private static void celtium$disableTexture2d(CallbackInfo info) {
+        celtium$mirror(backend -> backend.setTexture2dEnabled(false));
+    }
+
     @Inject(method = "func_179144_i", at = @At("HEAD"), require = 0)
     private static void celtium$bindTexture(int glTextureId, CallbackInfo info) {
         celtium$mirror(backend -> backend.bindTexture(glTextureId));

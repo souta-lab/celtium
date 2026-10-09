@@ -450,6 +450,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateContentSamples;
     private int immediateWindowsThisFrame;
     private int immediateDeferredNextFrame;
+    private int whiteTextureGlId;
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     private int immediateFlushNoPipeline;
@@ -491,6 +492,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void setDepthTest(boolean enabled) {
         this.immediateState.depthTestEnabled(enabled);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setTexture2dEnabled(boolean enabled) {
+        this.immediateState.texture2dEnabled(enabled);
         this.immediateStateCalls++;
     }
 
@@ -710,6 +717,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 compareMirroredAndLiveMatrices();
             }
             int boundTexture = this.immediateState.boundTextureName();
+            if (!this.immediateState.texture2dEnabled()) {
+                // Vanilla draws the sky with texturing switched off and the gradient in the vertex colours. Sampling
+                // the texture that happens to be bound then washes that out - measured as the sky going flat, 74.7% of
+                // the top third of the frame differing. A white 1x1 mirror leaves the vertex colours as they are.
+                boundTexture = whiteTextureId();
+            }
             if (MIRRORED_MATRICES) {
                 System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
                         this.glProjection, 0, 16);
@@ -1043,6 +1056,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private float sampleBoundFramebufferMean() {
         return sampleBoundFramebufferMean(this.targetWidth, this.targetHeight);
+    }
+
+    /**
+     * {@return the GL name of a 1x1 white texture}, created once.
+     * <p>
+     * It stands in for "texturing is off": every immediate pipeline samples a texture, so the cheapest faithful
+     * equivalent of no texture is a white one, which multiplies the vertex colours by one.
+     */
+    private int whiteTextureId() {
+        if (this.whiteTextureGlId == 0) {
+            int id = org.lwjgl.opengl.GL11.glGenTextures();
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, id);
+            java.nio.ByteBuffer pixel = java.nio.ByteBuffer.allocateDirect(4);
+            pixel.put((byte) 0xFF).put((byte) 0xFF).put((byte) 0xFF).put((byte) 0xFF).flip();
+            org.lwjgl.opengl.GL11.glTexImage2D(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_RGBA, 1, 1,
+                    0, org.lwjgl.opengl.GL11.GL_RGBA, org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE, pixel);
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D,
+                    this.immediateState.boundTextureName());
+            this.whiteTextureGlId = id;
+        }
+        return this.whiteTextureGlId;
     }
 
     /** Records the exception with its stack, so a failure identifies its own origin instead of being guessed at. */

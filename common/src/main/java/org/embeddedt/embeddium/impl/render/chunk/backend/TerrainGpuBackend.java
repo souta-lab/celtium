@@ -43,6 +43,13 @@ public interface TerrainGpuBackend {
     default void setDepthTest(boolean enabled) {
     }
 
+    /**
+     * Mirrors {@code GlStateManager.func_179098_w()} / {@code func_179090_x()}: whether texture sampling is on at all.
+     * Vanilla draws the sky with it off, using vertex colours only.
+     */
+    default void setTexture2dEnabled(boolean enabled) {
+    }
+
     /** Mirrors {@code GlStateManager.func_179144_i(int)}, the GL name of the texture the state has bound. */
     default void bindTexture(int glTextureId) {
     }

@@ -824,3 +824,31 @@ the 24-byte family in vanilla also includes layouts that differ only in order).
 
 The switch stays in the tree; it is the instrument that produced this, and it will be used the same way for the
 remaining formats and for any future pipeline.
+
+---
+
+## The format-2 difference is the sky, and honouring "texturing off" did not fix it
+
+The difference was rendered rather than argued about: stacking the offline reference, the format-2-only frame and their
+per-pixel difference shows the **top third** of the screen differing in **74.7%** of its pixels, the middle third in
+0.9% and the bottom in 7.2%. Looking at the crops, the reference has the sky's usual gradient while the format-2 frame
+has a **flat, slightly darker blue** over the whole sky region - the sky geometry is drawn, but without its gradient.
+
+That pointed at the state vanilla uses for the sky: texturing switched off, the gradient carried by the vertex colours,
+so the fix was to mirror `GlStateManager.func_179098_w()`/`func_179090_x()` (enable/disable texturing) and, when
+texturing is off, sample a **white 1x1 mirror** so the vertex colours pass through untouched. It is in the tree and it is
+correct in principle - and the measurement says it is not the cause:
+
+| Configuration | Local difference |
+|---|---|
+| Format 2 accepted, before the fix | 14.00 mean, 34.5% over 8 |
+| Format 2 accepted, texturing-off honoured | **13.77 mean, 34.5% over 8** |
+
+Barely a change, so the flat sky comes from somewhere else. The next candidates, in order of how cheap they are to
+check: the vertex attribute layout of the 24-byte pipeline (position at 0, texture at 12, colour at 20 - which is what
+`POSITION_TEX_COLOR` declares), whether the vertex colours themselves arrive intact through the raw vertex copy, and
+whether the format identification is putting a different 24-byte layout - vanilla has several that differ only in
+element order - through this pipeline.
+
+What this round adds permanently: the per-format acceptance switch, the texturing-off mirror (which the sky and any
+colour-only content needs regardless), and the rendered side-by-side as a way to see a difference instead of counting it.
