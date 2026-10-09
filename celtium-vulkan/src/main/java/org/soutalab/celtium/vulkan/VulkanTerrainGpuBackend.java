@@ -228,6 +228,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                        CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+        if (REFERENCE_RENDER) {
+            // A reference render: the mod's own hooks call this instance directly, so leaving the registry empty was not
+            // enough - measured, the "reference" still drew 1641 passes and reported regions=4. Nothing is drawn here, so
+            // the frame is OpenGL's.
+            return;
+        }
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
@@ -1082,6 +1088,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
+        if (REFERENCE_RENDER) {
+            // Same reason as the pass entry: this method is called by the uploader hook directly, so reference mode has to
+            // refuse it here as well.
+            this.immediateLastRefusal = "reference render";
+            return false;
+        }
         if (!this.worldPassActive || !this.worldSnapshotValid) {
             // Before acceptance, and for a stated reason: this batch is not drawn from the frame's world matrices, so the
             // original GL draw stays in charge. Taking it and then failing later is the failure mode the audit lists as S14.

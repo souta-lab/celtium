@@ -5109,3 +5109,40 @@ reference mode, exactly the shape the stalled-GPU guards already have. Then the 
 image number in this project can be re-baselined against it. Also noted for the audit: the terrain line and 1641 passes in a
 run whose registry lookup returns null is evidence that the backend's own hooks are the real entry points, which is worth
 knowing independently of this measurement question.
+
+---
+
+## The true OpenGL reference has no terrain in it, because nothing else can draw terrain any more
+
+The two guards - one at the pass entry, one at the offer, the same shape as the stalled-GPU ones - produce a run that is
+finally and demonstrably OpenGL:
+
+```
+reference: exit 0 | clean True | messages 0 | fixture PASSED
+           passes=0  skipped=0  errors=0        (Celtium draws nothing)
+           screenshot saved
+```
+
+And the screenshot shows **sky, a row of torches, and no terrain at all**. Comparing the current configuration against it
+gives 70.93% of pixels different, with the sky third matching at 12.78% - which is exactly what "one frame has terrain and
+the other does not" produces.
+
+So the number is **not** a rendering-accuracy figure and must not be quoted as one. What it establishes is architectural, and
+it reframes the measurement question that has occupied the last rounds: **this tree has no OpenGL terrain path left to
+compare against.** The terrain is drawn by this project's backend or not at all, which is why the earlier "reference" runs
+always contained this project's Vulkan terrain - not because a switch was left on by mistake, but because nothing else can
+draw the blocks. Every screenshot this project has compared was therefore necessarily produced by its own terrain renderer,
+and the percentages measured self-consistency for the simple reason that no other option existed.
+
+For terrain, an accuracy comparison needs a renderer outside this tree: the pinned Celeritas/Embeddium lineage the plan
+already names as the reference, run as a separate build of the same fixture. That is a real, available next step and it is
+different in kind from the sampler and particle questions, which live inside the immediate path and can be compared against
+OpenGL with the switch above.
+
+Two things are worth keeping from this finding beyond the measurement question. First, the asymmetry is worth stating plainly
+in the plan: terrain is Vulkan-only, everything else still has a GL path, and "hybrid" means the two halves are compared by
+different means. Second, the fixture's insistence that the backend draw before it captures is now explained - it is not a
+quirk, it is the only way the scene can be rendered at all.
+
+Recorded, not softened: the honest baseline for the current configuration is **unknown** until a proper reference exists;
+0.16-0.28% and the clamp table were self-comparisons; and 70.93% measures missing terrain rather than a rendering defect.

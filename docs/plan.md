@@ -46,12 +46,18 @@ evidence is unaffected and stands on its own terms - `postAcceptDroppedGroups=0`
 sampler filters the driver reports, the layout bugs found and fixed - but no image percentage from before this note should be
 read as OpenGL agreement.
 
-A pure OpenGL reference needs a backend switch that installs nothing while leaving the mod present. **The switch exists** -
-`-Dceltium.vulkan.referenceRender=true`, verified to install nothing (no terrain line, no validation messages) while the
-ordinary path is unaffected - but the **fixture refuses to capture without the backend** (`fixture FAILED`, no screenshot),
-so a reference mode in the validation client that skips the Vulkan expectations is still required. After that, every image
-number in this project needs re-baselining, starting with the particle and sampler results that have been quoted as
-improvements.
+**The switch exists and works** - `-Dceltium.vulkan.referenceRender=true` plus guards at the two entries the mixins call
+directly installs nothing, refuses every batch, and lets the fixture capture (`passes=0`, screenshot saved). And the frame it
+captures **has no terrain in it**: sky and torches only. This tree has **no OpenGL terrain path left** - terrain is drawn by
+this project's backend or not at all - so every earlier "reference" necessarily contained this project's own terrain, and the
+image percentages measured self-consistency because no other option existed. That is architectural, not a switched-on flag.
+
+Consequences: (a) the honest baseline for the current configuration is **unknown** until a proper reference exists; (b) for
+terrain, accuracy must be compared against a renderer **outside this tree** - the pinned Celeritas/Embeddium lineage the plan
+already names, run as a separate build of the same fixture; (c) for the immediate path (sampler, particles) the OpenGL
+reference above is valid, because those draw through GL when the backend refuses them. Also worth stating plainly in the
+architecture section: terrain is Vulkan-only while everything else still has a GL path, so "hybrid" means the two halves are
+compared by different means.
 
 ## 0b. Java: compile target 21, game runtime 25 (corrected 2026-10-09 14:17)
 
