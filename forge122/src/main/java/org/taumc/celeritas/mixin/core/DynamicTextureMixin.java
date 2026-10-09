@@ -29,25 +29,6 @@ public class DynamicTextureMixin {
     private static java.lang.reflect.Field celtium$width;
     private static java.lang.reflect.Field celtium$height;
 
-    /** Reads a private int field by name once, or null when it is not there. */
-    private static Integer celtium$intField(Object owner, java.lang.reflect.Field cached, String name) {
-        try {
-            java.lang.reflect.Field field = cached;
-            if (field == null) {
-                field = DynamicTexture.class.getDeclaredField(name);
-                field.setAccessible(true);
-                if ("width".equals(name)) {
-                    celtium$width = field;
-                } else {
-                    celtium$height = field;
-                }
-            }
-            return Integer.valueOf(field.getInt(owner));
-        } catch (ReflectiveOperationException | RuntimeException error) {
-            return null;
-        }
-    }
-
     @Inject(method = "updateDynamicTexture", at = @At("HEAD"), require = 0)
     private void celtium$announceDynamicTexture(CallbackInfo info) {
         try {
@@ -71,14 +52,11 @@ public class DynamicTextureMixin {
                 // The size rides along when the fields are readable, so the backend does not have to ask OpenGL for it
                 // (two glGetTexLevelParameteri per update, about a thousand a run on AMD). The fields are private in
                 // 1.12.2, but they are plain ints with stable names, which is the same footing as the pixel array above.
-                Integer width = celtium$intField(this, celtium$width, "width");
-                Integer height = celtium$intField(this, celtium$height, "height");
-                if (width != null && height != null && width.intValue() > 0 && height.intValue() > 0) {
-                    backend.announceDynamicTexture((int[]) celtium$pixels.get(this), width.intValue(),
-                            height.intValue());
-                } else {
-                    backend.announceDynamicTexture((int[]) celtium$pixels.get(this));
-                }
+                // The size is not read here: the fields are private and, in a production (SRG-named) jar, a lookup by the
+                // mapped name does not match - measured, the size-carrying path was never taken (announcedDynamicTextures
+                // stayed 0). The plain announce stays as the early hint; the size now comes from the TextureUtil upload
+                // hook, whose parameters carry it.
+                backend.announceDynamicTexture((int[]) celtium$pixels.get(this));
             }
         } catch (Throwable ignored) {
             // Same rule as the other texture hooks: a bookkeeping hint must never break an upload. If anything goes wrong the

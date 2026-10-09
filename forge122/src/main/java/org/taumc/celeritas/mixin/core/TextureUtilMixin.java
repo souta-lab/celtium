@@ -59,6 +59,27 @@ public class TextureUtilMixin {
         }
     }
 
+    /**
+     * The plain {@code int[]} upload, which is what {@code DynamicTexture.updateDynamicTexture} uses - the light map's
+     * path. The size comes from the parameters, so nothing has to be reflected and no {@code glGetTexLevelParameteri}
+     * is needed (completion condition (b): the value comes from Minecraft, not from a GL query).
+     * <p>
+     * The SRG name is derived rather than guessed: the mapped source's parameter names carry the SRG number
+     * ({@code p_110988_1_} and friends), which is exactly how the two hooks around this one were chosen.
+     */
+    @Inject(method = "func_110988_a", at = @At("HEAD"), require = 0)
+    private static void celtium$announceUploadedPixels(int glTextureId, int[] data, int width, int height,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (backend != null && data != null && width > 0 && height > 0) {
+                backend.announceDynamicTexture(data, width, height);
+            }
+        } catch (Throwable ignored) {
+            // Same rule as the other hooks: a bookkeeping hint must never break a texture upload.
+        }
+    }
+
     @Inject(method = "func_110989_a", at = @At("HEAD"), require = 0)
     private static void celtium$invalidateUploadedTexture(int glTextureId, java.awt.image.BufferedImage image, boolean blur,
             boolean clamp, CallbackInfoReturnable<Integer> info) {

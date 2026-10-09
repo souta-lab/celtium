@@ -350,7 +350,22 @@ GL に問い合わせない経路を実装した（`common` の `TerrainGpuBacke
   名前で探す私の実装は production では原理的に当たらない。
 - これは**計器が捕まえた**（`announcedDynamicTextures` を report に足していたので「使われていない」と分かった）。
   画像は PASSED（前回weather runとの差 0.980＝ノイズ床 1.2〜1.5 以下）なので、退行はしていない。
-- **正しい供給元**: `TextureUtil.uploadTexture(int id, int[] data, int width, int height)` の**引数**。
+- **正しい供給元に載せ替えて解決（このターン）**: `TextureUtil.uploadTexture(int id, int[] data, int width, int height)`
+  の**引数**を使う。SRG名は**推測せず導出**した: マップ済みソースの引数名 `p_110988_1_` などが SRG 番号そのものなので
+  `func_110988_a` と確定する（既存の `func_147955_a`/`func_110989_a` のフックも同じ導出で選ばれている）。
+  壊れていたサイズ反射は撤去し、`DynamicTextureMixin` は早期ヒントの announce だけを残した。
+
+| 指標 | 結果 |
+|---|---|
+| `announcedDynamicTextures` | **415**（修正前は 0）＝1 runあたり約 **830 回**の `glGetTexLevelParameteri` を回避 |
+| 画像（前回runとの差） | **meanAbsDiff 0.782**（weather のノイズ床 1.2〜1.5 以下＝変化なし） |
+| verdict | exit 0 / validationClean / PASSED、`boundTextureMismatches=0` |
+| target受入 | exit 0 |
+
+**(b) の進捗**: 行列 → fog → bound texture → テクスチャ寸法 の **4項目が完了**。残りは相互運用グルー
+（blit/semaphore/深度変換/FBOクエリ）と `GL_CURRENT_COLOR` / `GL_DRAW_FRAMEBUFFER_BINDING`。
+
+**（旧メモ）** 正しい供給元: `TextureUtil.uploadTexture(int id, int[] data, int width, int height)` の**引数**。
   このプロジェクトは既に `TextureUtil` をフックしているので、そこで寸法を受け取ればリフレクション不要で
   名前問題も起きない。次はこの経路に載せ替える（`announceDynamicTexture(pixels, width, height)` は実装済みなので
   呼び出し元だけの変更で済む）。
