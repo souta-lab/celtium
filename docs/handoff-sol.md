@@ -354,6 +354,15 @@ reload 25.1s・27.1s）。resize は `resizedAtTick=100`、reload は `reloadedA
 `settleGpu("backend delete")` と retire queue を通るため、変更の回帰確認にもなっている。
 優先順位6の残りは world switch・minimize/out-of-date・allocation/descriptor 失敗の網羅。
 
+**場面coverage（このターン）**: AMD で postprocess / particles / weather / thirdPerson / emptyHand / compositeBlit を
+実行し、**6場面すべて exit 0 / validationClean / PASSED**。ただし発火の証拠があるのは postprocess
+（`postprocessActivated=called switchUseShader directly`）・particles（`particlesSpawned=24`）・
+compositeBlit（`compositeBlitAtTick=185`）のみで、weather/thirdPerson/emptyHand は**場面が変わった証拠がない**。
+fixture の postprocess 起動は名前ベース反射で本番SRG名と一致せず**未発火**だったのを、MCソースで公開API
+（`EntityRenderer.switchUseShader()`、spectator用は `loadEntityShader(Entity)`）を確認して**直接呼び出し**に修正した。
+**証拠レベルの区別**: PASSED は「その場面で破綻せず validation も clean」であり、**native描画の証拠ではない**
+（postprocess の shader group は MC 自身のGL実装で、native化は未着手）。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

@@ -1238,36 +1238,14 @@ public final class ValidationClient {
             // check is whether the shader path draws cleanly through the Vulkan path - not whether the name is what I think.
             celtium$postprocess = true;
             Object result = null;
-            try {
-                java.lang.reflect.Method method = null;
-                for (String name : new String[] {"activateNextShader", "func_175069_a"}) {
-                    try {
-                        method = mc.entityRenderer.getClass().getDeclaredMethod(name);
-                        break;
-                    } catch (NoSuchMethodException ignored) {
-                        // try the next name
-                    }
-                }
-                if (method != null) {
-                    method.setAccessible(true);
-                    method.invoke(mc.entityRenderer);
-                    result = "called " + method.getName();
-                } else {
-                    // Not guessing a third name: list what the renderer actually offers, so the next attempt uses the real one.
-                    StringBuilder candidates = new StringBuilder();
-                    for (java.lang.reflect.Method candidate : mc.entityRenderer.getClass().getDeclaredMethods()) {
-                        if (candidate.getName().toLowerCase(java.util.Locale.ROOT).contains("shader")) {
-                            candidates.append(candidate.getName()).append('/')
-                                    .append(candidate.getParameterCount()).append(' ');
-                        }
-                    }
-                    result = "no method matched by name; shader-like methods: "
-                            + (candidates.length() == 0 ? "none" : candidates.toString().trim());
-                }
-            } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-                result = String.valueOf(error);
-            }
-            report.addProperty("postprocessAtTick", Integer.valueOf(worldTicks));
+            // Called directly rather than by name: the client runs from a production (SRG-named) jar, so a reflective
+            // lookup of the mapped name "activateNextShader" never matches and the earlier run recorded
+            // "no method matched by name" - the postprocess scene was never actually activated. This project's own jar is
+            // remapped at build time, so a compiled call is the one that works in both environments.
+            // EntityRenderer.switchUseShader() is the public entry the "super secret settings" key binding uses; it walks
+            // the same shader list the spectator effects (creeper/spider/invert) come from. Called directly, not by name.
+            mc.entityRenderer.switchUseShader();
+            result = "called switchUseShader directly";
             report.addProperty("postprocessActivated", String.valueOf(result));
             // Printed as well as reported. The report is written at the end of the run and properties added early can be
             // overwritten by it - the recipe flag lost its value exactly that way - so the observation that this hook ran, and
