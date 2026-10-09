@@ -975,3 +975,32 @@ one of the reverts this round (the pattern has been to roll back with `git check
 corrected here rather than left implied by a commit message. The next attempt is small and specific: move the dump so it runs for
 every offered composite regardless of the mask - the mixin sees the batch before the backend decides anything, which is
 exactly where an unconditional dump belongs - and then run the normal configuration and read the caller.
+
+---
+
+## The composite quad is the framebuffer-to-screen blit, so it belongs to present ownership
+
+The unconditional dump finally captured the caller, and it names the whole chain:
+
+```
+celtium composite batch: elements=[12bPOSITION 8bUV 4bCOLOR] vertices=4 mode=7 stride=24
+                         v0=(pos 0.0,720.0 uv 0.0,0.0 col 0xffffffff)
+celtium composite caller: WorldVertexBufferUploader.func_181679_a
+  <- Tessellator.func_78381_a:22
+  <- net.minecraft.client.shader.Framebuffer.func_178038_a:268
+  <- net.minecraft.client.renderer.RenderGlobal.func_174975_c:250
+  <- net.minecraft.client.renderer.EntityRenderer.func_181560_a:1135
+  <- Minecraft...Main.main
+```
+
+`Framebuffer.func_178038_a` is Minecraft's own `framebufferRender`: the blit that takes the game framebuffer and puts it
+on the screen, implemented as a shader program over a full-screen quad - which is exactly what the four white vertices
+with uv 0..1 are. It is reached from `RenderGlobal` while `EntityRenderer` is finishing the frame.
+
+So the 24-byte family in this scene is not content at all: it is the **present step**. That confirms the default
+acceptance mask (`1,3,4,5`) is not a workaround but the correct division of labour - geometry that belongs to the frame's
+content goes to Vulkan, the step that puts the frame on the screen stays with GL until present ownership is ported, and
+when it is, this is the quad Vulkan will draw.
+
+It also explains every earlier observation about this layout in one stroke: taking it drew a full-screen texture into the
+game framebuffer a frame later, which is why the sky went flat and why the measured difference was 14 points.
