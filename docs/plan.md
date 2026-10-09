@@ -56,6 +56,14 @@ Kept separate on purpose - terrain success and present success are different thi
   faults on the way: concurrent sharing with a single queue family
   (`VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278`) and a zeroed `VkAllocationCallbacks`
   (`VUID-VkAllocationCallbacks-pfn*`), the latter crashing the client.
+- **Build-infrastructure finding (blocks the Mixin wiring).** The `celtium-vulkan` module compiles against
+  `project(':common', configuration: 'downgraded')`, and that artifact is a *jar*: classes added to `common/` after it
+  was built are invisible to the module even though `:common:shadeDowngradedApi` reports success (the checked jar
+  contains zero references to the new `ImmediateDrawTarget`). Any change that adds a common class the Vulkan module
+  implements needs that artifact regenerated first, otherwise the error is a misleading "method does not override or
+  implement a method from a supertype". The state/interface groundwork (`ImmediateDrawTarget`,
+  `ImmediateDrawTargets`) is committed in `common/`; the backend implementation and the `GlStateManager` Mixin that
+  consume it are the next step once the artifact path is fixed.
 - Open: presentation is not taken over from GL yet (stage 2's real deliverable), the probe presents one cleared
   image rather than a rendered frame, and the Intel UHD 630 has not run the probe.
 - Cutout/translucent frame difference against the OpenGL reference (mean 6.86/255, 43.7% of pixels above 8) is
