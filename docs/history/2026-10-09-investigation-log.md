@@ -1281,3 +1281,35 @@ all), and log the present's, in the same run. Two lines per present, no inferenc
 Unchanged: the frame present runs and the image it presents has content; `presentFromComposite` stays off by default;
 the shipped path's validation output stays empty; the immediate path stays pixel-identical on both GPUs with the
 composite left to GL.
+
+---
+
+## The submit tracing attempt coincided with a failed run; reverted and the baseline re-verified
+
+The plan was to watch the call itself - log from inside `submitWithSemaphores` the semaphore counts and handles it
+actually sets, and that it is called at all, next to the presentation's own line. The run that carried it **failed**:
+
+```
+status = FAILED
+error = java.lang.IllegalStateException: the Vulkan terrain backend did not render cleanly:
+        passes=3 skipped=0 errors=1641 lastDraw=0
+```
+
+Twenty-four seconds instead of the usual ~150 - the same early-exit shape seen once before (the format-2-only run in an
+earlier round), and the terrain passes reporting an error on every attempt rather than drawing. The tracing is the only
+difference from a run that passed minutes earlier, so it is the plausible cause, but that is **not established**: no
+message from the terrain path was read, and the tracing code itself is a few prints around a `vkQueueSubmit`. What is
+established is the outcome, so the tracing is reverted and the state re-measured rather than assumed:
+
+```
+status PASSED | nativeTerrainVerified True | passes 1617
+presented the frame from the composite: present image: blitted 1280x720 onto image 0 (0)
+```
+
+with the frame present running again. Two things are recorded as known-unknown rather than settled: why that
+configuration exits after ~24 s with every terrain pass erroring, and what the present's 36 validation messages are
+actually caused by - the `submit` trace meant to answer the second never ran, and the first has now been seen twice.
+
+The next attempt at the trace should be smaller and independent of the frame path: the counts and handles can be logged
+from the presentation side alone (they are already known there), and the submission's own view can be inferred by
+comparing the handles in the same line rather than by adding prints inside the context.
