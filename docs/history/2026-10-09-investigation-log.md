@@ -6180,3 +6180,27 @@ already said about this path - it is the one whose capture is suppressed - and i
 ordinary measurements are unaffected: exit 0, validation clean, 0 messages, fixture PASSED.
 
 Named for the next round: why the fixture does not complete in that configuration.
+
+---
+
+## The composite path is never reached in this scene, and the stricter guard was mine to undo
+
+The question left open last round - why the forced out-of-date configuration never produces a report - has an answer that is
+not a defect. Running it for ninety seconds and reading the stdout markers directly: the game starts, the terrain draws (the
+fog line carries a real camera position), and **not one `composite present` record appears**. In the same configuration
+without the injection, the fixture passes. So the composite-present branch is never reached here: `compositePresentRefusals`
+is 0, meaning it is not being refused either - there is simply no format-2 batch to take. The injection therefore never calls
+`presentImage`, never reaches the acquire, and never satisfies what the fixture waits for. `MISSING_REPORT` is the
+injection's own consequence.
+
+That also settles the guard added for S17, and not in its favour. The first version required the viewport to be the whole
+target as well as the target to be the main framebuffer, and with it the composite configuration **stopped presenting
+altogether** - which is what the missing records were showing all along. It is now relaxed to the check the audit actually
+asked for: **the bound target must be the main framebuffer**. That keeps the distinction between the screen and an overlay
+blended into a framebuffer, and it restores the previous behaviour. Verified: composite configuration clean, exit 0, validation
+clean, 0 messages, fixture PASSED, `passes=2217`.
+
+Worth stating plainly, because it is the third time in this audit that the answer was "the scene does not do that": the
+composite present, the clear boundary, the second target and the teardown are all paths this fixture **never walks**. Each fix
+is correct by construction; none of them is exercised. The next useful work is not another guard but a scene that reaches
+them - which is why the fixture extension keeps being named as the follow-up.

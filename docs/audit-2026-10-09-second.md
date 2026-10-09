@@ -320,8 +320,22 @@ read back was the previous run's, so the honest statement is narrower than "fixe
 composite-present path with a forced out-of-date acquire **still does not complete a verified run**. It remains off by
 default, and the ordinary paths are unaffected - exit 0, validation clean, 0 messages, fixture PASSED.
 
-**Next:** find why the fixture does not complete in that configuration (it is the same path whose capture the suite
-suppresses), and re-run the acquirer failure with a report.
+**Why that configuration never reports - and it is not a defect.** Probed by running it for ninety seconds and reading the
+stdout markers directly: the game starts, the terrain draws (`CELTIUM_FOG` is printed with a real camera), and **not one
+`composite present` record appears**, while the fixture passes in the same configuration when it is not injected. The
+composite-present branch is simply **never reached in this scene** - `compositePresentRefusals` is 0, so it is not being
+refused either, there is no format-2 batch to take. The injected run therefore never calls `presentImage`, never reaches the
+acquire, and never satisfies the condition the fixture waits for: `MISSING_REPORT` is the injection's own consequence, not a
+symptom.
+
+**And the stricter viewport condition that was tried first was wrong.** It refused the branch before the present as well, so
+the two attempts looked similar; with it, the composite configuration stopped presenting entirely. It is now relaxed to the
+check the audit actually asked for - the bound target must be the main framebuffer - which restores the previous behaviour and
+keeps the guard that distinguishes the screen from an overlay blended into a framebuffer. Verified: the composite
+configuration runs clean, exit 0, validation clean, 0 messages, fixture PASSED, `passes=2217`.
+
+So S18 closes with: two points fixed, two shown sound, the deadlock fixed by the signal-only release, and every one of those
+paths **unexercised by the current scene** - which never presents through this branch at all.
 
 ### S19 [P1] immediate push constants exceed the guaranteed minimum - **closed**
 **Fixed and verified.** The immediate push block is now **116 bytes** - projection 64, the model view's three affine

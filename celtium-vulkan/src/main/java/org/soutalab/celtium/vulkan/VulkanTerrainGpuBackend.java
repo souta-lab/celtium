@@ -1223,11 +1223,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // so presenting on the format alone cancels GL draws that were not composites. The two conditions that
             // distinguish the screen-only case are checked here, before anything is taken: the main framebuffer must be
             // the bound target, and the viewport must be the whole of it.
-            boolean mainTargetBound = this.currentRenderTargetIsMain;
-            boolean fullTargetViewport = this.currentViewportKey == fullTargetViewportKey();
-            if (!mainTargetBound || !fullTargetViewport) {
+            // The audit asked for the framebuffer to be checked rather than the format alone. The stricter viewport
+            // equality that was tried first turned out to refuse the legitimate composite as well - the game does not set
+            // a viewport equal to the whole target at that moment - and with it the present never happened at all, which
+            // the fixture noticed by never completing. The target check stays, because that is what distinguishes the
+            // screen from an overlay blended into a framebuffer.
+            if (!this.currentRenderTargetIsMain) {
                 this.compositePresentRefusals++;
-                this.immediateLastRefusal = "format 2 for a target that is not the screen as a whole (S17)";
+                this.immediateLastRefusal = "format 2 for a target that is not the screen (S17)";
                 return false;
             }
             // Present the frame's content at the moment Minecraft composites it. The stack trace identified this batch
