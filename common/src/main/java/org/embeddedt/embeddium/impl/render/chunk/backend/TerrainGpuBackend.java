@@ -51,6 +51,34 @@ public interface TerrainGpuBackend {
     default void pushMatrix() {
     }
 
+    /** Mirrors {@code GlStateManager.func_179128_n(int)}; the mode is the OpenGL constant. */
+    default void matrixMode(int glMode) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179096_D()} (load identity). */
+    default void loadIdentity() {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179130_a(...)} (ortho). */
+    default void ortho(double left, double right, double bottom, double top, double near, double far) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179137_b(double, double, double)} (translate). */
+    default void translate(double x, double y, double z) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179114_b(float, float, float, float)} (rotate). */
+    default void rotate(float angle, float x, float y, float z) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179152_a(float, float, float)} (scale). */
+    default void scale(float x, float y, float z) {
+    }
+
+    /** Mirrors {@code GlStateManager.func_179110_a(FloatBuffer)} (multiply matrix). */
+    default void multiplyMatrix(java.nio.FloatBuffer buffer) {
+    }
+
     default void popMatrix() {
     }
 

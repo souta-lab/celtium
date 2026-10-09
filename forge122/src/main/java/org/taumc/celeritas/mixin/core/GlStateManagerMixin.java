@@ -84,6 +84,44 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.setBlendFunc(src, dst, srcAlpha, dstAlpha));
     }
 
+    // Matrix *contents* matter as much as the stack: without them an immediate draw uses identities and lands in
+    // the wrong place (which is exactly what the first end-to-end attempt measured).
+    @Inject(method = "func_179128_n", at = @At("HEAD"), require = 0)
+    private static void celtium$matrixMode(int mode, CallbackInfo info) {
+        celtium$mirror(backend -> backend.matrixMode(mode));
+    }
+
+    @Inject(method = "func_179096_D", at = @At("HEAD"), require = 0)
+    private static void celtium$loadIdentity(CallbackInfo info) {
+        celtium$mirror(TerrainGpuBackend::loadIdentity);
+    }
+
+    @Inject(method = "func_179130_a", at = @At("HEAD"), require = 0)
+    private static void celtium$ortho(double left, double right, double bottom, double top, double near, double far,
+                                      CallbackInfo info) {
+        celtium$mirror(backend -> backend.ortho(left, right, bottom, top, near, far));
+    }
+
+    @Inject(method = "func_179137_b", at = @At("HEAD"), require = 0)
+    private static void celtium$translate(double x, double y, double z, CallbackInfo info) {
+        celtium$mirror(backend -> backend.translate(x, y, z));
+    }
+
+    @Inject(method = "func_179114_b", at = @At("HEAD"), require = 0)
+    private static void celtium$rotate(float angle, float x, float y, float z, CallbackInfo info) {
+        celtium$mirror(backend -> backend.rotate(angle, x, y, z));
+    }
+
+    @Inject(method = "func_179152_a", at = @At("HEAD"), require = 0)
+    private static void celtium$scale(float x, float y, float z, CallbackInfo info) {
+        celtium$mirror(backend -> backend.scale(x, y, z));
+    }
+
+    @Inject(method = "func_179110_a", at = @At("HEAD"), require = 0)
+    private static void celtium$multiplyMatrix(java.nio.FloatBuffer buffer, CallbackInfo info) {
+        celtium$mirror(backend -> backend.multiplyMatrix(buffer));
+    }
+
     private static void celtium$mirror(Consumer<TerrainGpuBackend> action) {
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend == null) {

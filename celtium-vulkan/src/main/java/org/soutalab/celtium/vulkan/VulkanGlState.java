@@ -110,6 +110,84 @@ public final class VulkanGlState {
         }
     }
 
+    /** Replaces the active matrix with the identity, the {@code glLoadIdentity} case. */
+    public void loadIdentity() {
+        System.arraycopy(identity(), 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+    }
+
+    /**
+     * Applies the same transform {@code glTranslate}/{@code glRotate}/{@code glScale} would, by multiplying the
+     * active matrix in place. The argument order and the sign of the rotation follow OpenGL so a mirrored matrix is
+     * numerically what the GL call would have produced.
+     */
+    public void translate(double x, double y, double z) {
+        float[] matrix = identity();
+        matrix[12] = (float) x;
+        matrix[13] = (float) y;
+        matrix[14] = (float) z;
+        multiplyMatrix(matrix);
+    }
+
+    public void scale(double x, double y, double z) {
+        float[] matrix = identity();
+        matrix[0] = (float) x;
+        matrix[5] = (float) y;
+        matrix[10] = (float) z;
+        multiplyMatrix(matrix);
+    }
+
+    public void rotate(double angleDegrees, double x, double y, double z) {
+        double radians = Math.toRadians(angleDegrees);
+        double length = Math.sqrt((x * x) + (y * y) + (z * z));
+        if (length == 0.0) {
+            return;
+        }
+        double nx = x / length;
+        double ny = y / length;
+        double nz = z / length;
+        float c = (float) Math.cos(radians);
+        float s = (float) Math.sin(radians);
+        float t = 1.0f - c;
+        float[] matrix = identity();
+        // Column-major rotation matrix around the normalised axis, as glRotatef builds it.
+        matrix[0] = (float) ((nx * nx * t) + c);
+        matrix[1] = (float) ((ny * nx * t) + (nz * s));
+        matrix[2] = (float) ((nz * nx * t) - (ny * s));
+        matrix[4] = (float) ((nx * ny * t) - (nz * s));
+        matrix[5] = (float) ((ny * ny * t) + c);
+        matrix[6] = (float) ((nz * ny * t) + (nx * s));
+        matrix[8] = (float) ((nx * nz * t) + (ny * s));
+        matrix[9] = (float) ((ny * nz * t) - (nx * s));
+        matrix[10] = (float) ((nz * nz * t) + c);
+        multiplyMatrix(matrix);
+    }
+
+    /** Replaces the active matrix from a column-major buffer, the {@code glLoadMatrix} case. */
+    public void loadMatrixBuffer(java.nio.FloatBuffer buffer) {
+        if (buffer == null || buffer.remaining() < MATRIX_FLOATS) {
+            return;
+        }
+        float[] matrix = new float[MATRIX_FLOATS];
+        int position = buffer.position();
+        for (int i = 0; i < MATRIX_FLOATS; i++) {
+            matrix[i] = buffer.get(position + i);
+        }
+        loadMatrix(matrix);
+    }
+
+    /** Multiplies the active matrix by a column-major buffer, the {@code glMultMatrix} case. */
+    public void multiplyMatrixBuffer(java.nio.FloatBuffer buffer) {
+        if (buffer == null || buffer.remaining() < MATRIX_FLOATS) {
+            return;
+        }
+        float[] matrix = new float[MATRIX_FLOATS];
+        int position = buffer.position();
+        for (int i = 0; i < MATRIX_FLOATS; i++) {
+            matrix[i] = buffer.get(position + i);
+        }
+        multiplyMatrix(matrix);
+    }
+
     /** Replaces the active matrix; Minecraft uses this for {@code glLoadIdentity} and ortho/projection setup. */
     public void loadMatrix(float[] matrix) {
         if (matrix == null || matrix.length < MATRIX_FLOATS) {

@@ -81,7 +81,20 @@ Kept separate on purpose - terrain success and present success are different thi
   half of the stage-5 evidence: a Forge-API mod is captured without being changed; the "(b) drawn by Vulkan" half
   needs the pipelines below, and real major mods come after that.
 
-- **Immediate batches are now drawn by Vulkan (transform still wrong).** The first per-format pipeline
+- **Immediate batches are drawn by Vulkan and still invisible: the projection is not mirrored.** Three fixes were
+  made and measured in sequence - matrix *contents* mirrored (translate/rotate/scale/ortho/loadIdentity/matrixMode/
+  multMatrix), the matrices captured at *submission* time rather than at flush time (the flush runs a frame later,
+  when the live state has moved on), and OpenGL's clip-depth range remapped to Vulkan's (the same remap the terrain
+  projection uses) - and the counters confirm the draw happens: `immediateTaken=609`, `immediateFlushes=546`, run
+  PASSED with no validation message. The quad still produces zero pixels.
+  The measurement now points at one specific gap: **`GlStateManager` only wraps `glOrtho`** (the single
+  `func_179130_a` call site in `EntityRenderer` is the GUI ortho), so the *perspective* projection the world is drawn
+  with never passes through the mirrored calls and the state still holds a stale projection. Next step: find where the
+  world projection is actually set (a direct `GL11.glFrustum`/`glLoadMatrix` call site, or a matrix built and loaded by
+  the renderer) and mirror that path - if it bypasses `GlStateManager` entirely, that is exactly the class of mod/API
+  call the direct-GL compatibility layer (stage 6) has to cover, and it is recorded as such.
+
+- **Original note on the immediate draw path (superseded by the finding above).** The first per-format pipeline
   (`VulkanImmediatePipeline`, untextured `POSITION_COLOR`), raw vertex copying (`VulkanDynamicMesh.copyVertices` ->
   the topology expansion), acceptance of the batch (so GL cancels its own draw) and a flush inside the next terrain
   pass are implemented. Verified on hardware with the mod-draw test: `immediateOffered=8881`, **`immediateTaken=588`**,

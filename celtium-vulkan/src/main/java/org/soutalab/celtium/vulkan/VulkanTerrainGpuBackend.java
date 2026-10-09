@@ -341,6 +341,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int pendingImmediateIndices;
     private VulkanDynamicMesh pendingImmediate;
     private VulkanImmediatePipeline immediatePipeline;
+    /** The matrices in force when the pending batches were built; the flush runs a frame later. */
+    private final float[] pendingProjection = new float[16];
+    private final float[] pendingModelView = new float[16];
+    private int pendingGroups;
 
     @Override
     public void setBlendEnabled(boolean enabled) {
@@ -369,6 +373,64 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void setColor(float red, float green, float blue, float alpha) {
         this.immediateState.color(red, green, blue, alpha);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void matrixMode(int glMode) {
+        // OpenGL's constants, mapped onto the three stacks the state model keeps.
+        if (glMode == 5889) {
+            this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        } else if (glMode == 5890) {
+            this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_TEXTURE);
+        } else {
+            this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        }
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void loadIdentity() {
+        this.immediateState.loadIdentity();
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void ortho(double left, double right, double bottom, double top, double near, double far) {
+        float[] matrix = new float[16];
+        // The OpenGL ortho matrix, written column-major, exactly as glOrtho builds it.
+        matrix[0] = (float) (2.0 / (right - left));
+        matrix[5] = (float) (2.0 / (top - bottom));
+        matrix[10] = (float) (-2.0 / (far - near));
+        matrix[12] = (float) (-(right + left) / (right - left));
+        matrix[13] = (float) (-(top + bottom) / (top - bottom));
+        matrix[14] = (float) (-(far + near) / (far - near));
+        matrix[15] = 1.0f;
+        this.immediateState.loadMatrix(matrix);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void translate(double x, double y, double z) {
+        this.immediateState.translate(x, y, z);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void rotate(float angle, float x, float y, float z) {
+        this.immediateState.rotate(angle, x, y, z);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void scale(float x, float y, float z) {
+        this.immediateState.scale(x, y, z);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void multiplyMatrix(java.nio.FloatBuffer buffer) {
+        this.immediateState.multiplyMatrixBuffer(buffer);
         this.immediateStateCalls++;
     }
 
@@ -413,6 +475,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return false;
             }
             this.pendingImmediateIndices += indices.length;
+            if (this.pendingGroups == 0) {
+                // The matrices are captured with the first batch of the group: by the time the flush runs, a frame
+                // later, the live state has moved on (GUI ortho, world transforms) and would place the geometry
+                // somewhere else entirely.
+                // The mirrored projection is OpenGL's, whose clip depth runs -1..1; Vulkan expects 0..1. The terrain
+                // path already remaps for this, and without the same remap an immediate draw lands at the wrong depth
+                // and is rejected by the depth test - which is what the first attempts measured as "drawn but
+                // invisible".
+                remapClipDepth(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), this.pendingProjection);
+                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+                        this.pendingModelView, 0, 16);
+            }
+            this.pendingGroups++;
             this.immediateTaken++;
             this.immediateLastRefusal = "none";
             return true;
@@ -1002,7 +1077,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         if (this.pendingImmediate != null && !this.pendingImmediate.isEmpty()) {
-            drawPendingImmediate(matrices);
+            drawPendingImmediate();
         }
 
         if (this.uiTestEnabled && pass.isSorted()) {
@@ -1459,7 +1534,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * fix is a frame the renderer owns outright (stage 7 of the docs/plan.md stages). It is documented rather than
      * hidden.
      */
-    private void drawPendingImmediate(ChunkRenderMatrices matrices) {
+    private void drawPendingImmediate() {
         try {
             VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
             if (terrain == null) {
@@ -1472,8 +1547,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 // joml writes column-major into the buffer at the given offset, which is the layout the push
                 // constant block declares.
-                vulkanProjection(matrices.projection()).get(0, push);
-                matrices.modelView().get(64, push);
+                // The mirrored matrices, not the terrain pass's: immediate geometry is drawn in the coordinate
+                // system Minecraft had when it built the batch, which is what the GlStateManager Mixin mirrors.
+                pushMatrixInto(this.pendingProjection, push, 0);
+                pushMatrixInto(this.pendingModelView, push, 64);
                 this.immediatePipeline.draw(this.commandBuffer, this.pendingImmediate, push);
                 this.immediateFlushes++;
             } finally {
@@ -1481,6 +1558,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.pendingImmediate.begin(VulkanDynamicMesh.Layout.positionTexLightColor());
             this.pendingImmediateIndices = 0;
+            this.pendingGroups = 0;
         } catch (RuntimeException | LinkageError error) {
             record("immediate flush failed: " + describe(error));
         }
@@ -1530,6 +1608,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } catch (RuntimeException | LinkageError error) {
             this.passErrors++;
             record("ui test quad failed: " + describe(error));
+        }
+    }
+
+    /**
+     * Writes {@code result = clipDepthRemap * projection}, the same z remap the terrain projection goes through, so a
+     * matrix mirrored from OpenGL can be used unchanged for depth in Vulkan.
+     */
+    private static void remapClipDepth(float[] projection, float[] result) {
+        float[] remap = new float[16];
+        remap[0] = 1.0f;
+        remap[5] = 1.0f;
+        remap[10] = 0.5f;
+        remap[14] = 0.5f;
+        remap[15] = 1.0f;
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; k++) {
+                    sum += remap[k * 4 + row] * projection[column * 4 + k];
+                }
+                result[column * 4 + row] = sum;
+            }
+        }
+    }
+
+    private static void pushMatrixInto(float[] matrix, ByteBuffer target, int offset) {
+        for (int i = 0; i < 16; i++) {
+            target.putFloat(offset + (i * 4), matrix[i]);
         }
     }
 
