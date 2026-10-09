@@ -1344,3 +1344,30 @@ being reused before what it orders against has retired:
 The counters stay in the tree as the safe form of this diagnostic, and the present keeps its default: off, because the
 validation output is not empty, and `presentFromComposite` is one flag away from the verified-by-eye behaviour it already
 demonstrates (`present image: blitted 1280x720 onto image 0 (0)`, `presented image mean=118.25` in the readback run).
+
+---
+
+## The reuse experiment did not run: it made javac itself fail
+
+The plan for this round was to test the last candidate directly - a brand-new semaphore pair for every present, never
+reused, so that "the acquire semaphore is reused before its presentation retires" would either show up as zero messages
+or be eliminated. It did not run, and the reason is worth recording because it wasted a run:
+
+```
+> Task :celtium-vulkan:compileJava FAILED
+  1 error
+  at jdk.compiler/com.sun.tools.javac.comp.TransTypes.visitBinary(TransTypes.java:1023)
+```
+
+**javac crashed** on the new code rather than reporting an error in it - the `LongBuffer` allocation with
+`position(1)` for the second semaphore handle, compiled under this module's `-source 8`/`-target 8`, walks the compiler
+into a stack trace instead of a message. The run that followed used the previous jar, so its "36 messages with fresh
+semaphores" were the old pooled configuration's messages and mean nothing about the experiment.
+
+Two lessons, both concrete: a build that fails must be confirmed to have failed *before* reading any measurement from the
+run that follows it - the grep used here looked for `error:` and found nothing, which read as success. And the `-source 8`
+path is fragile enough that handle-array plumbing is better written with the shapes the rest of this file already uses
+(one `mallocLong(1)` per handle, as the pool creation does) than with buffer positions.
+
+The experiment is reverted and the tree is green. It is still the right experiment: it needs to be written in the file's
+existing idiom, and the run must be checked for `BUILD SUCCESSFUL` before its validation count is quoted.
