@@ -167,8 +167,16 @@ where `applyDerivedProjection` already fires; the overlay and GUI install orthog
 already sees. Scoping the comparison to the world pass moves `view` from **2000.0 to 1.62** with the renderer unchanged, and
 reports that **1140 of 2262 comparisons had been cross-pass** - about half of the number this project had been quoting.
 The residual 1.62 is now measured only in the pass that owns the mirror, which is the first time that figure means the
-renderer rather than the mixture. **Open:** draw order across GL
-fallback, clears and FBO switches - the fix - and reading what the 2000 is.
+renderer rather than the mixture. **Draw order across the GL fallback: the first half is in.** The audit's own description - "small accepted batches wait
+for a threshold while the next unsupported draw runs in GL immediately" - is now handled at the refusal sites: before a
+batch is refused, whatever this renderer has already accepted is closed and drawn (`flushPendingBeforeGlDraw`), so the
+deferred batch cannot appear **after** content that came later in the frame. Measured: **`orderPreservingFlushes=5`** on a
+normal run - five refusals happened while batches were still pending, and each of those was a draw-order violation before
+this change - with exit 0, validation clean, 0 messages, fixture PASSED, `immediateTaken=546`, `immediateFlushes=558`,
+`postAcceptDroppedGroups=0`, no regression. **Open:** four of the offer's refusal sites carry the flush (the ones whose shape
+matched); the rest still return immediately and need the same treatment, and the ordering is argued by construction rather
+than observed directly. The scene also never presents clears or FBO switches between accepted batches, so that half of the
+item remains unexercised.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.
 

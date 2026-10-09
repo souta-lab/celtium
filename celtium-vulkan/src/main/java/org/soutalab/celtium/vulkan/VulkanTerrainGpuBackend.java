@@ -607,6 +607,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long countersFrameId = -1;
     private long flushCount;
     private long retiredFlushes;
+    private int orderPreservingFlushes;
     private int frameAccepted;
     private int frameDrawn;
     private int lastFrameAccepted;
@@ -1122,6 +1123,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Same reason as the pass entry: this method is called by the uploader hook directly, so reference mode has to
             // refuse it here as well.
             this.immediateLastRefusal = "reference render";
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if (!this.worldPassActive || !this.worldSnapshotValid) {
@@ -1129,10 +1131,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // original GL draw stays in charge. Taking it and then failing later is the failure mode the audit lists as S14.
             this.immediateLastRefusal = "outside the world pass or without a snapshot";
             this.outsideWorldPassRefusals++;
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if (this.gpuStalled) {
             this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         if (!this.currentRenderTargetIsMain) {
@@ -1141,6 +1145,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // is the behaviour the audit's S10 acceptance asks for instead of viewing it in the wrong place.
             this.immediateLastRefusal = "not the main framebuffer";
             this.offTargetRefusals++;
+            this.flushPendingBeforeGlDraw();
             return false;
         }
         this.immediateBatchesOffered++;
@@ -1630,6 +1635,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * is 150.47656 both before and after a window - and the frame is nonetheless black at capture time in every run
      * that uses it, which is what the fixture-side sampling below is for.
      */
+
+    /**
+     * Draws what this renderer has already accepted, before the batch being refused is drawn by OpenGL (audit S10).
+     * <p>
+     * Accepted batches wait for the group to close and for a flush; a refusal returns immediately and lets the original
+     * GL draw run at once, so without this the deferred batch is drawn <em>after</em> content that came later in the
+     * frame. The audit describes exactly that: "small accepted batches wait for a threshold while the next unsupported
+     * draw runs in GL immediately". Flushing here keeps the order; with nothing pending it does nothing.
+     */
+    private void flushPendingBeforeGlDraw() {
+        if (this.immediateGroups.isEmpty()) {
+            return;
+        }
+        closeCurrentImmediateGroup();
+        drawPendingImmediate();
+        this.orderPreservingFlushes++;
+    }
+
     private void flushImmediateWindow() {
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
@@ -1899,6 +1922,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
+                + " orderPreservingFlushes=" + this.orderPreservingFlushes
                 + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes

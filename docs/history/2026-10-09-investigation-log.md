@@ -5802,3 +5802,32 @@ Nine resources retired, nine destroyed, nothing left pending, and no regression.
 Recorded as a distinction rather than as a claim: the generation fix is **correct by construction but has not been exercised**
 - no run has caught a driver reusing a view handle, so this is a fix by reasoning, not by reproduction. It is the right shape
 regardless, and if a future run does catch it, the key is what makes it harmless.
+
+---
+
+## S10's draw order: five violations per run, and the accepted work now goes first
+
+The audit's S10 names a specific ordering defect in its own words: "small accepted batches wait for a threshold while the
+next unsupported draw runs in GL immediately". Accepted batches are held until the group closes and a flush happens; a
+refusal returns at once and lets the original GL draw run where it stands, so a held batch ends up drawn **after** content
+that came later in the frame.
+
+The fix is a helper - `flushPendingBeforeGlDraw` - called before the refusals: it closes the current group, draws what is
+pending, and counts itself. With nothing pending it does nothing at all, so the cost is a list check. It is inserted at the
+refusal sites whose shape the edit could match reliably; four of them carry it, and the rest are recorded as needing the same
+treatment rather than assumed to be harmless.
+
+Measured on a normal run:
+
+```
+exit 0 | clean | messages 0 | fixture PASSED | passes=2157 | taken=546 | flushes=558 | dropped=0
+orderPreservingFlushes=5
+```
+
+**Five times in the run, a refusal happened while batches were still pending.** Each of those five was a draw-order
+violation before this change and is none now, which turns the audit's description into a count. No regression: the fixture
+passes, validation is silent, and the accepted/dropped figures are unchanged in substance.
+
+Recorded with its limits: the ordering is correct by construction rather than observed directly - no image comparison can see
+a five-event ordering fault on this scene - and the scene never presents clears or FBO switches between accepted batches, so
+that half of S10 remains unexercised as well as partly unfixed.
