@@ -2760,3 +2760,30 @@ The lesson is the third of its kind in this session and is worth stating plainly
 slice is not a measurement**. Previous rounds lost a counter to a wrong path, a comparison to a stale reference, and a
 control to an unasserted replacement; this one lost a lead to a substring. The rule that covers all four is to print the
 whole line, or read the field by name, before anything is concluded from it.
+
+---
+
+## The particle difference is format 5's pipeline: 90% of it measured with everything else on GL
+
+The bisection that has worked all session, applied to the scene where replacement is now real:
+
+| Configuration (weather + particles, hidden GUI, same revision) | mean | over 8 | pixels over 8 |
+|---|---|---|---|
+| reference against reference (floor) | 0.06 | 0.23% | - |
+| **format 5 only** - particles through Vulkan, everything else GL | **0.69** | **1.19%** | **10,973** |
+| all formats | 0.75 | 1.32% | 12,157 |
+
+With a mask that lets **only the particle family** through, the difference is 1.19% of the frame - about **ninety per cent of
+the 1.32%** measured with everything accepted. Everything else in that frame is drawn by GL and is therefore correct by
+construction, so the difference belongs to **format 5 and nothing else**, which is the same clean attribution the composite
+quad and the water scene each produced. The run also reports `taken=557 flushes=557`, consistent with the withdrawal of the
+undrawn-geometry lead.
+
+The vertex layout was checked against the source before looking further, because a mismatched stride or uv type would
+explain a particle-shaped difference exactly. Minecraft 1.12.2 declares `PARTICLE_POSITION_TEX_COLOR_LMAP` as
+`POSITION_3F` (12) + `TEX_2F` (8, **float** uv) + `COLOR_4UB` (4) + `TEX_2S` (4, the **lightmap** as two shorts) - **28
+bytes**, which is what the particle pipeline assumes. So the data's shape is right and the cause is in how that pipeline
+uses it: the lightmap values, the flat integer varying, or the shader's sampling of them.
+
+That narrows the next step to one pipeline and two candidates, and the audit's own list already names the area - lightmap
+handling - as one it is examining.
