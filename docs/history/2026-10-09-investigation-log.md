@@ -4581,3 +4581,31 @@ correct and is the raw material for the next step.
 
 That next step is small and named rather than an investigation: put the blend factors into the key, then use them. It has the
 same shape as the pass-identity work - the value a batch is drawn with has to be part of what identifies the batch.
+
+---
+
+## Keying alone was not enough: the observation is global-latest, not per batch
+
+The blend factors were put into the particle pipeline's cache key as the last round concluded they should be, and the frame
+got **worse**, not better:
+
+| Configuration | Difference from the GL reference |
+|---|---|
+| family constants (the assertion) | 0.23% |
+| observed factors, uncached | 0.33% |
+| **observed factors, keyed** | **0.31%** |
+| back on the constants (this run) | **0.21%** |
+
+So adding them to the key was necessary and not sufficient, and the numbers say why: `blendObserved` holds the factors from
+the **most recent `blendFunc` call anywhere**, not the factors that were in effect when *this* batch was offered. A group can
+be opened after some later pass has already changed the blend, so the pipeline is built for another pass's state - the same
+mistake as reading a value the key does not carry, one level further back. The observed value has to be captured **with the
+group**, at the moment the batch is offered, exactly as the matrices are.
+
+That is now written into the code where the decision is made, and the pipeline is back on the documented constants, which
+measured **0.21%** in this run - the best figure so far and consistent with the 0.23% of the same configuration, the
+difference being run-to-run variation rather than an improvement worth claiming.
+
+The hook and the key stay: the observation is correct, the key is now the right shape, and what is missing is the per-group
+capture that the audit's S07 asks for in its own words - connect every call and overload into a single snapshot - rather than
+one global field read at the wrong moment.

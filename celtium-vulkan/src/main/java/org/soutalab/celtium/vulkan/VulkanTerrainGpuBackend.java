@@ -3104,8 +3104,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     pushMatrixInto((float[]) group[2], push, 64);
                     push.putFloat(128, Float.intBitsToFloat(state[6]));
                     if (formatId == 5) {
+                        // The observation is global-latest, not per-batch: this is the factors from the most recent blendFunc call
+                        // anywhere, and using them gave 0.31% against the constants' 0.23%. Until they are captured with the
+                        // group - at the moment the batch is offered - the family's constants are the better answer.
+                        int observedSrc = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
+                        int observedDst = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                        // The key carries the blend factors as well as the captured state: a pipeline built for one pair
+                        // must not be handed to a group that set another, which is what made the frame worse when the
+                        // observed values were used without being part of the key.
+                        long particleKey = ((Long) group[5]).longValue() * 31L
+                                + (((long) observedSrc) << 20) + observedDst;
                         VulkanImmediateParticlePipeline particle =
-                                particlePipelineCache.get(Long.valueOf(((Long) group[5]).longValue()));
+                                particlePipelineCache.get(Long.valueOf(particleKey));
                         if (particle == null) {
                             // The particle family is translucent by definition: Minecraft draws its particles with source-alpha
                             // blending, depth testing on and depth writes off, whichever of those the state mirror happened to
@@ -3123,8 +3133,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             int blendSrc = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
                             int blendDst = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
                             particle = VulkanImmediateParticlePipeline.create(this.context, terrain.renderPass(),
-                                    true, blendSrc, blendDst, true, false, false);
-                            particlePipelineCache.put(Long.valueOf(((Long) group[5]).longValue()), particle);
+                                    true, observedSrc, observedDst, true, false, false);
+                            particlePipelineCache.put(Long.valueOf(particleKey), particle);
                         }
                         VulkanGlTexture texture = this.textureRegistry.get(((Integer) group[4]).intValue());
                         long descriptorSet = texture == null ? 0L
