@@ -6824,3 +6824,23 @@ Recorded as not established, because it is the next question rather than a claim
 rather than GL's blit. That needs a readback of the screen itself, and it is named here rather than implied. The branch's
 placement is also worth a follow-up in the code rather than in a run flag: a comment that says a branch runs before the mask is
 not the same as a branch that does.
+
+---
+
+## Correction: the mask was not what hid the present branch
+
+Last round ended with a tidy explanation - "the acceptance mask checked the format before the present branch, so format 2 was
+refused and the branch below it was never reached" - and it is **wrong**. Reading the line numbers settles it: the present
+branch is at **1264** and the mask check is at **1366**, inside the same method. The branch is **already before** the mask, and
+the comment that says so was true all along. What the mask flag changed must be something else, and the honest position is that
+it is not established: admitting format 2 changed which batches this renderer takes, and therefore **when** the composite batch
+arrives, which could matter to the guards that really sit in front of the branch - `reference render`, `the GPU stalled`, and
+`not the main framebuffer`, the last of which is the check S17 added.
+
+This is the fourth conclusion in this project to be withdrawn after the fact, and the pattern is consistent: each one was a
+plausible mechanism that fit the observation, written up before the code was read closely enough to confirm it. The
+countermeasure that has worked is the one applied here - **read the line numbers** - and the next step is to instrument the
+guard that actually returns, rather than to reason about which one it ought to be.
+
+What stands from the round before is unaffected and is the part that mattered: the present path **ran**, for the first time,
+with no failure reported, no out-of-date state, validation silent and the acceptance intact.
