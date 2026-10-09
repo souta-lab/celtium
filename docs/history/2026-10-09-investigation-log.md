@@ -6032,3 +6032,36 @@ obvious next change.
 
 Also recorded for the next attempt: `immediate_block.vert` and `immediate_particle.vert` already declare members of their own
 past the matrices, which is why the naive alignment broke them.
+
+---
+
+## The shader build wiring reports why now, and the API that made it necessary
+
+Last round's attempt left a gap worth closing: the build failed on a broken shader - which is the trap closed, and worth
+having - but the **reason** had to be recovered by running `glslangValidator` over every file by hand. The task used
+`providers.exec`, and the attempt to capture its streams produced:
+
+```
+InvalidUserCodeException: Standard streams cannot be configured for exec output provider
+```
+
+That API **forbids** configuring a process's standard streams by design. The supported modern way is an injected
+`ExecOperations`, so `compileTerrainShaders` is now a proper task class - `@InputFiles` for the shader sources, `@Input` for
+the compiler path, `@OutputDirectory` for the generated SPIR-V, `@TaskAction` for the loop - and it captures the compiler's
+own message and reports it on a non-zero exit.
+
+Verified by breaking a shader on purpose:
+
+```
+glslangValidator failed on immediate_color.vert (exit 2):
+ERROR: .../immediate_color.vert:22: 'this' : Reserved word.
+ERROR: 1 compilation errors.  No code generated.
+```
+
+The error was reverted, and the tree is green with the artefact verified: `BUILD SUCCESSFUL`, exit 0, validation clean, 0
+messages, fixture PASSED, `passes=2206`, `immediateTaken=568`, `postAcceptDroppedGroups=0`, `descriptorSets=1`.
+
+Worth recording as a pattern, because it is the same lesson as the shader trap itself in a different medium: **the build must
+be able to say what went wrong**. Both times this project lost rounds to a silent build step - the committed SPIR-V that
+nothing regenerated, and now the compiler whose message was discarded - and both times the fix was to make the build report,
+not to be more careful.

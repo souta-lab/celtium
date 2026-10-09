@@ -301,11 +301,21 @@ the five shaders (`immediate_block.vert` and `immediate_particle.vert` declare m
 migration was reverted rather than half-carried and the tree verified green: build successful, exit 0, validation clean, 0
 messages, fixture PASSED, `immediateTaken=565`, `postAcceptDroppedGroups=0`, `descriptorSets=1`.
 
-**Two things worth more than the aborted change.** The **shader build wiring proved itself** - a broken shader now fails the
-build, exactly the trap that cost two rounds. And it has a **gap**: the task runs the compiler through `providers.exec`
-without capturing its output, so a failure says *that* a shader failed and not *why* - the message had to be recovered by
-running `glslangValidator` over every file by hand. Capturing and printing it is the next small change, and the migration
-follows with the same-block constraint respected.
+**The gap is closed.** A broken shader failed the build but the *reason* had to be recovered by hand, because the task ran
+the compiler through `providers.exec`. That API **forbids configuring the process's standard streams** - the attempt produced
+`InvalidUserCodeException: Standard streams cannot be configured for exec output provider` - so the task is now a proper task
+class with an injected `ExecOperations`, which is the supported modern way and does allow capture. Verified with a
+deliberately broken shader, which now reports:
+
+```
+glslangValidator failed on immediate_color.vert (exit 2):
+ERROR: .../immediate_color.vert:22: 'this' : Reserved word.
+ERROR: 1 compilation errors.  No code generated.
+```
+
+and the deliberate error was reverted, with the build green afterwards: `BUILD SUCCESSFUL`, exit 0, validation clean, 0
+messages, fixture PASSED, `passes=2206`, `immediateTaken=568`, `descriptorSets=1`. The S19 migration itself follows next,
+with the same-block constraint respected.
 
 ### S20 [P1] the validation gate misses errors by their format
 `prism_validation` skips any message not starting with `vk`, and stores no severity or message ID, so
