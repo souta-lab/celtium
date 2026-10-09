@@ -15,7 +15,8 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
     private static final boolean LIGHT_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.lightDiagnostics");
     private static int lightSamplesPrinted;
-    private static int colorSamplesPrinted;
+    private static long colorCount, colorR, colorG, colorB, colorA;
+    private static int colorPrints;
 
     public static final int STRIDE = 32;
 
@@ -53,12 +54,22 @@ public class VanillaLikeChunkVertex implements ChunkVertexType {
             LWJGL.memPutFloat(ptr + 0, vertex.x);
             LWJGL.memPutFloat(ptr + 4, vertex.y);
             LWJGL.memPutFloat(ptr + 8, vertex.z);
-            if (LIGHT_DIAGNOSTICS && colorSamplesPrinted < 8) {
-                colorSamplesPrinted++;
+            if (LIGHT_DIAGNOSTICS) {
+                // Aggregate rather than the first few: the first eight writes belong to the fixture's own test quads, which
+                // is what the earlier sample printed eight times. A mean over a large window cannot be filled by them.
                 int c = vertex.color;
-                System.out.println("[Celtium] CELTIUM_VERTEX_COLOR rgba=(" + ((c >> 24) & 0xFF) + ","
-                        + ((c >> 16) & 0xFF) + "," + ((c >> 8) & 0xFF) + "," + (c & 0xFF) + ")"
-                        + " hex=" + Integer.toHexString(c) + " rdh=" + Integer.toHexString(vertex.rdhFactor));
+                colorCount++;
+                colorR += (c >> 24) & 0xFF;
+                colorG += (c >> 16) & 0xFF;
+                colorB += (c >> 8) & 0xFF;
+                colorA += c & 0xFF;
+                // Every ten thousand writes, up to five times: a scene with only a few thousand vertices still reports.
+                if (colorCount % 10000 == 0 && colorPrints < 5) {
+                    colorPrints++;
+                    System.out.println("[Celtium] CELTIUM_VERTEX_COLOR_MEAN n=" + colorCount
+                            + " r=" + (colorR / colorCount) + " g=" + (colorG / colorCount)
+                            + " b=" + (colorB / colorCount) + " a=" + (colorA / colorCount));
+                }
             }
             LWJGL.memPutInt(ptr + 12, vertex.color);
             LWJGL.memPutFloat(ptr + 16, encodeTexture(vertex.u));

@@ -5425,3 +5425,38 @@ Also unresolved and recorded: why green and blue are half while red is full. A g
 between the three channels, so this looks less like a shade factor and more like a colour that was packed from a
 half-initialised or mis-scaled value - which is a question about what feeds `ChunkVertexEncoder.Vertex.color`, not about what
 the shader does with it.
+
+---
+
+## The contradiction is resolved: the colour is packed ABGR, so alpha was 255 all along
+
+The eight identical samples of `0xFF808080` were the fixture's own test quads - the first writes of the run, printed because
+the instrument capped at eight - and the colour writer that would fold occlusion into a colour is **never called anywhere in
+this tree**. So the eight samples said nothing about the terrain. The instrument was replaced with an aggregate over every
+write, printed every ten thousand vertices so that any scene size reports:
+
+```
+CELTIUM_VERTEX_COLOR_MEAN n=10000 r=255 g=74  b=125 a=103
+CELTIUM_VERTEX_COLOR_MEAN n=50000 r=255 g=75  b=124 a=103
+```
+
+Red full, green and blue low, alpha about 0.4 - and all of it red herring, because the packing is **ABGR**, not ARGB: the
+channel my print called "r" is the alpha byte, and the channel it called "a" is red. Read the right way round:
+
+| channel | mean | as a fraction |
+|---|---|---|
+| alpha | 255 | **1.0** |
+| red | ~103 | 0.40 |
+| green | ~124 | 0.49 |
+| blue | ~74 | 0.29 |
+
+That resolves the contradiction recorded last round. The fragment shader's `diffuseColor.rgb *= m_color.a` had **no effect**
+when disabled because `m_color.a` is 1.0 - the alpha is full, the writer never runs, and there is no double application. The
+earlier reading of 128 for alpha was my own byte-order mistake, and it is the same class of mistake as the packed blend key
+two rounds before: **a packed word decoded by assumption instead of by the packing.**
+
+What the real numbers say is narrower and more useful: the terrain's vertex colour is a greenish tint with all three channels
+well under one (0.40 / 0.49 / 0.29), which is the right *shape* for a grass surface and about 60% of the brightness the
+reference implies. The Java path that produces it is byte-identical to the pinned upstream checkout, so the difference is in
+what the builder is handed - the ambient occlusion and face-shade inputs - rather than in what it does with them. That is the
+next thing to measure, and the aggregate instrument is in place to measure it.

@@ -75,8 +75,12 @@ diagnostic only), and the attribute interpretation matches the GL declaration (o
 `VK_FORMAT_R8G8B8A8_UNORM`). An instrument at the write reports the packed colour as **`0xFF808080`** - red full, green and
 blue half, alpha half - a concrete instance of the 0.46 the frame implied. Against that, disabling the fragment shader's
 alpha multiply measured **no change** (26.66 vs 26.68), and both cannot be true of one code path: the likely explanation is
-that **the fragment module the pass loads is not the file being edited**, which is a one-line check and comes first. Also
-open: why green and blue are half while red is full, which is a question about what feeds `ChunkVertexEncoder.Vertex.color`.
+that **the fragment module the pass loads is not the file being edited**, which is a one-line check and comes first. **Resolved, and the earlier reading was wrong:** the eight identical `0xFF808080` samples were the fixture's own test quads,
+and the colour is packed **ABGR** - the channel the instrument called "r" is alpha. An aggregate over every write (printed
+every ten thousand vertices) gives alpha **255**, red 0.40, green 0.49, blue 0.29, which is the right shape for grass and about
+60% of the brightness the reference implies. That explains why disabling the fragment's alpha multiply did nothing: `m_color.a`
+is 1.0. The Java path is byte-identical to upstream, so the difference is in what the builder is handed (occlusion and shade)
+rather than in what it does with them.
 Earlier note: **Process defect found and fixed in the work, not yet in the build:** the terrain shaders ship as **checked-in SPIR-V**
 (`celtium-vulkan/src/main/resources/.../spirv/*.spv`) and the GLSL in `src/main/shaders/` is **not** a build input, so shader
 edits do not reach the running game unless `glslangValidator` is re-run by hand. Two rounds of shader "fixes" and their
