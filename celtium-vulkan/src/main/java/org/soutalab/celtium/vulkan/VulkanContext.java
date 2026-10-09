@@ -317,8 +317,11 @@ public final class VulkanContext {
                         .pCommandBuffers(stack.pointers(commandBuffer));
                 if (waitSemaphore != VK_NULL_HANDLE) {
                     submit.pWaitSemaphores(stack.longs(waitSemaphore));
-                    submit.pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_TRANSFER_BIT
-                            | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT));
+                    // ALL_COMMANDS rather than just the transfer and colour-attachment stages: the command buffer
+                    // begins with a layout transition, and a wait whose stage mask does not cover the barrier does not
+                    // order against it - which is what the validation layer reported as "performs a layout transition
+                    // on presentable VkImage ... but VkSemaphore ... was not waited on".
+                    submit.pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
                 }
                 if (signalSemaphore != VK_NULL_HANDLE) {
                     submit.pSignalSemaphores(stack.longs(signalSemaphore));

@@ -603,7 +603,8 @@ public final class VulkanSwapchain {
                     .imageColorSpace(this.colorSpace)
                     .imageExtent(e -> e.set(this.width, this.height))
                     .imageArrayLayers(1)
-                    .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                    .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                            | (capabilities.supportedUsageFlags() & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
                     // Exclusive sharing: there is only one queue family here, and the spec requires CONCURRENT to
                     // list at least two distinct families (VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278).
                     .imageSharingMode(VK_SHARING_MODE_EXCLUSIVE)

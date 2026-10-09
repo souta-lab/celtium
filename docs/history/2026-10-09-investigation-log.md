@@ -1253,3 +1253,31 @@ Two defects are recorded with it rather than glossed over:
 
 `presentFromComposite` therefore stays off by default, and the honest summary is: the present runs, the image it presents
 has content, and it is not validation-clean yet.
+
+---
+
+## Two candidates eliminated, thirty-six messages unchanged, and the next step is to watch the call itself
+
+Three things were tried and measured against the standalone present (probe off, `presentFromComposite` on):
+
+| Change | Real validation messages |
+|---|---|
+| readback enabled | 42 |
+| **readback disabled** | **36** - so the readback added its own six and is not the cause of the rest |
+| readback disabled, wait stage widened from `TRANSFER|COLOR_ATTACHMENT_OUTPUT` to `ALL_COMMANDS` | **36** - unchanged |
+
+So the readback is exonerated, the stage mask is not it, and the messages are the same two that have been quoted for
+several rounds: the submission that transitions the acquired image "did not wait" the acquire semaphore, and the
+presentation's image "was acquired with" that same semaphore "and has not since been waited on". The code passes that
+semaphore as `pWaitSemaphores` and the trace printed it doing so, which means one of two things is true and neither has
+been checked: either **the submission that validation is looking at is not the one this code builds**, or the handles
+printed are not the handles the driver received.
+
+This project has been wrong twice already about *which code path runs* - the probe silently creating the swapchain, and
+the fixture sampling at a call site the run never used - so the next step is to stop reasoning about the code and watch
+it: log from inside `submitWithSemaphores` (the semaphore counts and handles it actually sets, and that it is called at
+all), and log the present's, in the same run. Two lines per present, no inference.
+
+Unchanged: the frame present runs and the image it presents has content; `presentFromComposite` stays off by default;
+the shipped path's validation output stays empty; the immediate path stays pixel-identical on both GPUs with the
+composite left to GL.
