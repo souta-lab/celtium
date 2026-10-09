@@ -6,7 +6,9 @@ group = 'org.soutalab.celtium'
 version = '0.1.0-dev.1'
 repositories { mavenCentral() }
 tasks.withType(JavaCompile).configureEach {
-    options.release = 8
+    // Minimum runtime is Java 21 (user decision, 2026-10-09 14:11). Verified builds run on JDK 25, but nothing here may use
+    // a Java 22+ API, language feature or preview: the distinction between "built on 25" and "runs on 21" is kept explicit.
+    options.release = 21
     options.encoding = 'UTF-8'
 }
 

@@ -34,6 +34,24 @@ What that means concretely:
 - **The audits and their acceptance tests continue.** This is a statement of direction, not an instruction to delete or
   rewrite what is there: the current audit P0/P1 fixes and their verification stay in the queue.
 
+## 0b. Minimum runtime: Java 21 (2026-10-09 14:11)
+
+`celtium-vulkan` and `celtium-interop` compile with `--release 21`; release 25 was considered and **not** adopted. Builds and
+verification runs use JDK 25, but nothing in these modules may use a Java 22+ API, language feature or preview - the two
+facts are kept apart deliberately.
+
+| Check | State |
+|---|---|
+| `--release 21` for the renderer modules | Done |
+| Final distribution jar's `celtium/vulkan/*` classes are major **65** | **Verified** in `celtium-forge-mc1.12.2-...jar` |
+| Mod-side `org/taumc/celeritas/*` classes stay major **52** | **Verified** - existing Forge mods are not asked to recompile, and their bytecode is not rewritten |
+| Shadow/embedding/downgrade does not return the renderer to major 8 | Verified for the embedding path in use; `common`'s `downgraded` configuration is a compile-only dependency of `celtium-vulkan` and does not rewrite its output |
+| Startup and rendering still pass after the change (JDK 25) | **Verified**: fixture PASSED, `nativeTerrainVerified True`, 2185 passes, `validation-clean` |
+| **Startup and rendering on Java 21** | **INCOMPLETE.** The launcher can be pointed at the JDK 21 build (`--java .../jdks/21/jdk-21.0.12.1+1/bin/java`) and JDK 21 is present, but that run ends `exit 1 / fixture MISSING_REPORT` and the cause has not been read yet. **A successful JDK 25 run is not Java 21 verification**, and no Java 21 claim is made until that run passes |
+
+Java 21 language or API features are adopted only where necessity, maintainability or measurement justify them, and the
+release change alone is **not** reported as a speed-up.
+
 ## 1. Purpose and completion condition
 
 Done means all three, verified on hardware:

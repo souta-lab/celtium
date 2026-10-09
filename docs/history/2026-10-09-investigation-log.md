@@ -3297,3 +3297,32 @@ Two conclusions follow, and both matter for what comes next:
 The next step is a dump rather than a guess: print the first comparison's sixteen elements from each side, which separates a
 transpose from a remap from a wrong stack in a single run. That is one run and one line of code, and it is the difference
 between fixing the mirror and re-deriving it.
+
+---
+
+## Minimum runtime set to Java 21, verified in the jar and not yet on the runtime
+
+The decision is 21 rather than 25, so `celtium-vulkan` and `celtium-interop` now compile with `--release 21` instead of 8,
+and the distinction between "built on JDK 25" and "runs on Java 21" is written into both the goal and the plan so that a
+successful 25 run can never be read as 21 verification.
+
+What is checked, in the final distribution jar rather than in a build directory:
+
+| Class | Major version |
+|---|---|
+| `celtium/vulkan/GlDeviceIdentity`, `ImmediateDrawTarget`, `ImmediateDrawTargets` | **65** (Java 21) |
+| `org/taumc/celeritas/CeleritasVintage`, `CeleritasLWJGLRelocationTransformer` | **52** (Java 8) |
+
+That is the intended split: the Vulkan renderer moves to 21, the mod-side classes existing Forge mods link against stay at
+8. The embedding path in use does not rewrite either, and `common`'s `downgraded` configuration turns out to be a
+compile-only dependency of `celtium-vulkan` rather than a recompilation of its output.
+
+A full startup and render check after the change, on the JDK the runs have been using, passes: fixture PASSED,
+`nativeTerrainVerified True`, 2185 passes, `validationClean True`, zero messages.
+
+**Java 21 startup and rendering are not verified.** JDK 21 is present
+(`.celtium-work/jdks/21/jdk-21.0.12.1+1`, `21.0.12.1+1-LTS`) and the launcher takes a `--java` argument, so the check is
+possible; the attempts so far end with `exit 1` and `fixture MISSING_REPORT`, and the cause has not been read yet. Two of
+those attempts were my own script edits breaking the invocation - a stray continuation put `--output` on its own line, and
+one launcher line ended up as `\ \` - which is worth recording because the failure looked like a runtime problem and was
+not one. Until a 21 run passes, the plan says INCOMPLETE and no Java 21 claim is made anywhere else.
