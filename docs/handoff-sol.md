@@ -347,6 +347,13 @@ Intel exit 1/24.4s(N=20) でいずれも clean / FAILED / report あり / bounde
 **再実行でも exit 124 / "still open" ×2 のままで未解決**（frame を開く経路が他にもある。bridge の beginFrameForPresent 系を疑う）。
 失敗再現は p49-failsubmit-r437（修正前）/ p49-failsubmit2-r437（修正後）に保存。
 
+**resize / reload の両GPU受入（このターン）**: fixture の `celtium.validation.resize` / `reload` を AMD/Intel で実行し、
+**4ケースすべて exit 0 / validationClean / PASSED / nativeTerrainVerified=true / errors=0**（resize 24.8s・24.3s、
+reload 25.1s・27.1s）。resize は `resizedAtTick=100`、reload は `reloadedAtTick=100`。validation 違反0＝使用中
+リソースを破壊していない。resize は今ターン変更した `settleGpu("frame target recreation")`、reload は
+`settleGpu("backend delete")` と retire queue を通るため、変更の回帰確認にもなっている。
+優先順位6の残りは world switch・minimize/out-of-date・allocation/descriptor 失敗の網羅。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の
