@@ -748,6 +748,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateGroupsOffTargetRetired;
     /** Off-target passes not begun because their target had no pending geometry. */
     private int offTargetPassesSkippedEmpty;
+    /** Groups enqueued with a target other than the main one (audit A10). */
+    private int groupsEnqueuedForOtherTargets;
+    /** Batches accepted while a framebuffer other than the main one was bound (audit A10). */
+    private int acceptedForOtherTargets;
     /** Pending groups destined for a target that is not the main one, and where they were seen to disappear. */
     private int otherTargetGroupsAtMainFlush;
     private int otherTargetGroupsDiscarded;
@@ -1819,6 +1823,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
             this.immediateTaken++;
 
+            if (!this.currentRenderTargetIsMain) {
+                // Offered for another framebuffer and accepted: the number that says whether these batches are taken at all,
+                // since the queue never sees a non-main group afterwards (audit A10).
+                this.acceptedForOtherTargets++;
+            }
+
             if (formatId >= 0 && formatId < this.acceptedByFormat.length) {
 
                 this.acceptedByFormat[formatId]++;
@@ -2556,7 +2566,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " offTargetPerTarget=[" + offTargetPerTarget() + "]"
                 + " otherTargetGroups=[atMainFlush=" + this.otherTargetGroupsAtMainFlush
                 + ",discarded=" + this.otherTargetGroupsDiscarded
-                + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow + "]"
+                + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
+                + ",enqueuedForOtherTargets=" + this.groupsEnqueuedForOtherTargets
+                + ",acceptedForOtherTargets=" + this.acceptedForOtherTargets + "]"
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals

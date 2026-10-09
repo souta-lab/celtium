@@ -9150,3 +9150,25 @@ exit 0 | validationClean true | messages 0 | fixture PASSED
 **終端行**（`windowFlush="` を含む行）に追記する、と手順を固定してから当てる。
 
 判明している事実は変わらない: 提示247件に対し、非main targetのgroupはqueueに一度も入らず、受理側の数はまだ測れていない。
+
+---
+
+## 受理側の実測: 提示259件・受理0件 — off-targetのバッチは受理されずに拒否されている
+
+受理点（`this.immediateTaken++;`）にカウンタを入れ、両方のフィールドを確実な錨（`offTargetPassesSkippedEmpty`）の
+隣に宣言して測った。
+
+```
+offTargetPerTarget = [5554d6f:offered=259,atPass=0,drawnPasses=0]
+otherTargetGroups = [atMainFlush=0,discarded=0,windowFlush=0,enqueuedForOtherTargets=0,acceptedForOtherTargets=0]
+offTargetCopiedBack = 0    postAcceptDroppedGroups = 0    refusedBeforeAppend = 0
+exit 0 | validationClean true | messages 0 | fixture PASSED | terrainPasses 714 | glDrawsCancelled 2585
+```
+
+**259件が提示され、受理は0件**である。`refusedBeforeAppend=0` と `postAcceptDroppedGroups=0` も同時に0なので、
+off-targetのバッチは**計器の付いていない拒否経路**で落ちている。したがって「off-targetの内容が自分のpassへ届かない」
+という現象の原因は、queueでもflushでもなく、**受理前のどのpreflightで落ちているか**にある。
+
+**次段（1点）**: `!currentRenderTargetIsMain` のときに `immediateLastRefusal` を理由別に数えるマップを足し、
+提示された259件が**どの理由で拒否されているか**を1回のrunで出す。拒否理由は既に文字列で設定されているので、
+新しい判定を書くのではなく既存の理由を集計するだけでよい。
