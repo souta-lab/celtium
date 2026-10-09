@@ -40,6 +40,8 @@ public final class VulkanTextureRegistry {
     private final VulkanContext context;
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
     private int mirrorCount;
+    private final java.util.Set<Integer> staleIds = new java.util.HashSet<Integer>();
+    private int inPlaceRefreshes;
     private int failureCount;
     private String lastFailure = "none";
 
@@ -70,6 +72,17 @@ public final class VulkanTextureRegistry {
         }
         Entry existing = this.entries.get(glTextureId);
         if (existing != null) {
+            if (this.staleIds.remove(Integer.valueOf(glTextureId))) {
+                // In place: same image, same view, same generation - so the descriptor keys built for this mirror stay
+                // valid and the cache keeps working (audit S13). Recreating it instead cost 545 sets for 546 batches.
+                try {
+                    existing.texture.uploadFromGlTexture(glTextureId, GL_TEXTURE_2D);
+                    this.inPlaceRefreshes++;
+                } catch (RuntimeException | LinkageError error) {
+                    this.failureCount++;
+                    this.lastFailure = "re-upload of GL texture " + glTextureId + ": " + error;
+                }
+            }
             return existing.texture;
         }
         try {
@@ -106,17 +119,23 @@ public final class VulkanTextureRegistry {
      * texture per refresh and cannot be wrong about which texture changed.
      */
     public void invalidateAll() {
-        this.entries.clear();
+        // Marked, not dropped: dropping meant the next use created a new image and view, which changed every descriptor
+        // key in the immediate path and made the cache useless. The content is re-read into the same resources instead.
+        this.staleIds.addAll(this.entries.keySet());
     }
 
     public void invalidate(int glTextureId) {
-        Entry entry = this.entries.remove(glTextureId);
-        if (entry != null) {
-            entry.texture.delete();
+        if (this.entries.containsKey(Integer.valueOf(glTextureId))) {
+            this.staleIds.add(Integer.valueOf(glTextureId));
         }
     }
 
     /** {@return how many textures have been mirrored so far}, for the verification line */
+    /** {@return how many mirrors were refreshed in place rather than recreated} */
+    public int inPlaceRefreshes() {
+        return this.inPlaceRefreshes;
+    }
+
     public int mirrorCount() {
         return this.mirrorCount;
     }

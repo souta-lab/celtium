@@ -231,9 +231,12 @@ their descriptor cache on the texture alone, so a set built for an old light map
 combine `texture.key()` with `lightmap.key()`. The measured consequence is blunt: a normal run reports **`descriptorSets=545`
 against `immediateTaken=546`** - effectively one set per accepted batch, where the cache used to be shared. The reason is
 also clear: the lightmap mirror is **recreated** on every refresh, so its view and generation change while the atlas's do not,
-and every batch misses. The fix is correct and stays; the **next step is to upload the refresh into the same image and view**
-instead of recreating them, which should bring `descriptorSets` back down to the number of distinct textures and make the
-cache work again - a measurable acceptance rather than an argument.
+and every batch misses. **And the cache works again: 545 sets became 1.** The refresh was recreating each mirror - new image, new view, new memory
+- so every descriptor key changed on every cycle. `invalidateAll` now **marks** the entries stale instead of dropping them,
+and `get` re-uploads a stale mirror **in place**, keeping its image, view and generation. Measured: **`descriptorSets=1`**
+(was 545), **`inPlaceRefreshes=1136`**, `retire=retired=6` (was 9, because the resources are no longer recreated),
+`immediateTaken=580`, `postAcceptDroppedGroups=0`, exit 0, validation clean, 0 messages, fixture PASSED. So the light map is
+both in the key **and** stable across refreshes: the cache is correct and it works.
 
 ### S14 [P1] geometry that fails after acceptance is dropped and called a GL fallback - **closed**
 **Fixed.** The failure was `vkAllocateDescriptorSets failed` for the particle family, and the cause was the descriptor pool's

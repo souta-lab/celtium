@@ -5908,3 +5908,33 @@ The cause also names the fix. The light map's **content** changes every frame, b
 mirror is being **recreated** (new image, new view, new memory) on every refresh rather than being uploaded into the same
 one. Uploading in place would leave the view and generation stable, the key constant, and the cache working again - and it
 would be measurable: `descriptorSets` should fall from 545 to roughly the number of distinct textures in the scene.
+
+---
+
+## In-place mirror refresh: 545 descriptor sets become one, with 1136 re-uploads
+
+The cost recorded last round had a single cause: `invalidateAll` **dropped** every mirror entry, so the next use created a
+new image, a new view and a new generation, which changed every descriptor key in the immediate path. The fix is to keep the
+mirror and refresh its **content**:
+
+- `invalidateAll` now **marks** the entries stale (`invalidate` does the same for one texture);
+- `get` re-uploads a stale mirror **in place** - same image, same view, same generation - and counts itself.
+
+Measured on a normal run:
+
+| | before | after |
+|---|---|---|
+| descriptor sets created | **545** | **1** |
+| in-place refreshes | - | **1136** |
+| retirements | 9 | **6** |
+| accepted / dropped | 546 / 0 | 580 / 0 |
+
+Exit 0, validation clean, 0 messages, fixture PASSED, `passes=2239`. So the light map is now both **part of the descriptor
+key** (last round) and **stable across refreshes** (this round): the cache is correct *and* it works, and the resources it
+would have churned through - 1136 re-uploads that used to be 1136 re-creations - are no longer created at all, which the
+retirement count confirms by falling.
+
+This is the first change in several rounds that is a **measured improvement rather than a defect correction**, and it came
+from following a number the previous round produced rather than from a new hypothesis. The acceptance was named before the
+change (descriptor sets should fall to roughly the number of distinct textures) and the result is better than that: one set,
+because the scene's immediate path uses one texture-and-lightmap pair.
