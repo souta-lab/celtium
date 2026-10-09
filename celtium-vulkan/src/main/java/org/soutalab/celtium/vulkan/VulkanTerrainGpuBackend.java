@@ -441,6 +441,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     private final int[] acceptedByFormat = new int[8];
     private boolean currentRenderTargetIsMain = true;
+    /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
+    private final java.util.Map<Long, java.util.concurrent.atomic.AtomicInteger> offTargetBatchesByTarget =
+            new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
     private int offTargetRefusals;
     private int textureRefusalsBeforeAccept;
     private int postAcceptDroppedGroups;
@@ -1022,6 +1025,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /** {@return one line per off-target render target that received batches}, for the per-target work's sizing. */
+    public String offTargetSummary() {
+        StringBuilder text = new StringBuilder();
+        for (java.util.Map.Entry<Long, java.util.concurrent.atomic.AtomicInteger> entry : this.offTargetBatchesByTarget.entrySet()) {
+            text.append(entry.getKey()).append(':').append(entry.getValue().get()).append(' ');
+        }
+        return text.length() == 0 ? "none" : text.toString().trim();
+    }
+
     @Override
     public String lastRefusal() {
         return this.immediateLastRefusal;
@@ -1220,6 +1232,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // is the behaviour the audit's S10 acceptance asks for instead of viewing it in the wrong place.
             this.immediateLastRefusal = "not the main framebuffer";
             this.offTargetRefusals++;
+            // What the per-target work would have to build: which target, how much content it receives, and how big it is.
+            // The viewport is read here because at this moment it is the target's own, and the count says whether a target
+            // is worth an image at all.
+            java.util.concurrent.atomic.AtomicInteger seen = this.offTargetBatchesByTarget.get(this.currentRenderTarget);
+            if (seen == null) {
+                seen = new java.util.concurrent.atomic.AtomicInteger();
+                this.offTargetBatchesByTarget.put(this.currentRenderTarget, seen);
+                int[] viewport = new int[4];
+                org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
+                System.out.println("[Celtium] CELTIUM_OFFTARGET target=" + this.currentRenderTarget + " viewport="
+                        + viewport[2] + "x" + viewport[3] + " firstBatchFormat=" + formatId);
+            }
+            seen.incrementAndGet();
             this.flushPendingBeforeGlDraw();
             return false;
         }
@@ -2099,6 +2124,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes + " clearOrderFlushes=" + this.clearOrderFlushes
+                + " offTargetByTarget=[" + this.offTargetSummary() + "]"
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)

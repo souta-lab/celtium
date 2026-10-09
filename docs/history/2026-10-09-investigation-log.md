@@ -6907,3 +6907,28 @@ format 0.
 
 Three rounds have gone into this mapping. The content comparison stays, because it is right, and the investigation stops here
 with the state written down rather than with another rule.
+
+---
+
+## The per-target work, sized: one 256x256 target, 571 batches, one format
+
+The FBO and postprocess work had a number attached to it - 567 off-target batches - but not a shape, and "per-target rendering"
+reads like a subsystem. The backend now names, counts and sizes each off-target render target, and with the second-target
+fixture enabled:
+
+```
+CELTIUM_OFFTARGET target=949054906 viewport=256x256 firstBatchFormat=1
+offTargetByTarget = 949054906:571
+exit 0 | clean | messages 0 | fixture PASSED
+nativeTerrainVerified=True   terrainPasses=1626   glDrawsCancelled=555
+```
+
+**One target.** 256x256. **571 batches**, every one of them **format 1** - `POSITION_COLOR`, for which an immediate pipeline
+already exists. That is the difference between an open-ended feature and a first increment: one small image, the pipeline that
+is already there, and a copy-back at the target switch. The instrumentation needed to know that is a map keyed by the target
+identity, a one-shot line naming it, and the viewport read at the moment of the refusal - which is also the moment the viewport
+still belongs to the target rather than to the frame.
+
+Recorded for the next step with the numbers rather than the adjective, because this project has spent three rounds on a mapping
+question that turned out to be smaller than it looked and one round on a mask explanation that was simply wrong: the size of a
+piece of work is worth measuring before it is planned, not after it is attempted.
