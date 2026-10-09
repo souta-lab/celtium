@@ -77,6 +77,9 @@ public class TextureUtilMixin {
             }
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null) {
+                // The image goes with the announcement: it is the same data GL is about to be given, so the mirror can be
+                // built from it rather than from a readback of what GL received.
+                backend.announceTextureUpload(glTextureId, image);
                 backend.invalidateTexture(glTextureId);
             }
         } catch (Throwable ignored) {

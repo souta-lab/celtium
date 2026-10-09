@@ -8269,3 +8269,32 @@ mirrored textures - but the method has to be **rewritten** rather than have its 
 
 Recorded so the next attempt starts from "rewrite these two methods" instead of "extract a shared half", which is the difference
 between the attempt that failed and the one that will not.
+
+---
+
+## The image-filled mirror path, and the disk filling up underneath it
+
+The ownership step landed in code. `VulkanGlTexture` gained an **additive** `uploadFromImage(w, h, rgba)` - additive on purpose,
+because the first attempt tried to extract a shared middle from `uploadFromGlTexture` and left the file not compiling - and the
+registry prefers it whenever the upload hook has announced an image and `celtium.vulkan.mirrorGlMips` is off, which is the
+default. The hook passes the `BufferedImage` it already receives; the backend announces it; the interface declares the
+announcement as a default no-op; and three new counters (`imageFilledMirrors`, `announcedUploads`, `mirroredTextures`) make the
+effect measurable. **The build is green.**
+
+What could not be done is the measurement, and the reason is environmental rather than in the change:
+
+```
+[FML] An error occurred extracting dependency
+java.io.IOException: No space left on device
+    at net.minecraftforge.fml.relauncher.libraries.LibraryManager.extractPacked
+```
+
+**The disk had filled.** Six hundred and twenty per-run game directories under `.celtium-work/runtime` came to **7.6 GB**;
+pruning all but the twenty most recent freed **7 GB** (86% to 78%, 14 GB to 21 GB available), and writes work again - 50 MB at
+5 GB/s. But the runs **still fail**, now silently: the harness reports `exit=1`, the run's `logs/latest.log` is empty, and the JVM
+never starts. That is the signature of the launcher's extracted-library state having been corrupted by the disk filling mid-run,
+not of anything in this change, and diagnosing it is the next step rather than something to guess at here.
+
+So this round's honest state: **the code is written, it builds, and it is unmeasured.** The counters that will measure it are in
+place, and the first run that starts will say whether the eleven mirrors are now filled from the announced images instead of
+from a readback.

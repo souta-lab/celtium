@@ -457,6 +457,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetDrawn;
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
+    private int announcedUploads;
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
@@ -764,6 +765,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void setDepthTest(boolean enabled) {
         this.immediateState.depthTestEnabled(enabled);
         this.immediateStateCalls++;
+    }
+
+    /** Called by the upload hook with the image the game is uploading, so the mirror need not read GL back. */
+    public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
+        if (this.textureRegistry == null) {
+            this.textureRegistry = new VulkanTextureRegistry(this.context);
+        }
+        this.textureRegistry.announceImage(glTextureId, image);
+        this.announcedUploads++;
     }
 
     @Override
@@ -2296,6 +2306,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
+                + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
+                + " announcedUploads=" + this.announcedUploads
                 + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
                 + " acquireOutOfDate=" + (this.swapchain != null ? this.swapchain.acquireOutOfDate() : -1)
                 + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()

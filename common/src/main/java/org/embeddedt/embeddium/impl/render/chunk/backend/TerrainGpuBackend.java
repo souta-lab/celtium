@@ -180,6 +180,15 @@ public interface TerrainGpuBackend {
     default void flushBeforeClear(int mask) {
     }
 
+    /**
+     * Announces a texture upload together with the image it is uploading.
+     * <p>
+     * The hook that watches the game's texture utility already had the image in hand; passing it on is what lets a renderer
+     * build its own copy from the same data instead of reading the pixels back out of GL afterwards.
+     */
+    default void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
+    }
+
     /** {@return the reason the backend most recently refused a batch}, for diagnostics at the call site. */
     default String lastRefusal() {
         return "unknown";

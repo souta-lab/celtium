@@ -40,6 +40,10 @@ public final class VulkanTextureRegistry {
     private final VulkanContext context;
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
     private int mirrorCount;
+    private int imageUploads;
+    /** The images announced by the upload hook, waiting for the mirror that will use them. */
+    private final java.util.Map<Integer, java.awt.image.BufferedImage> announcedImages =
+            new java.util.HashMap<Integer, java.awt.image.BufferedImage>();
     private final java.util.Set<Integer> staleIds = new java.util.HashSet<Integer>();
     private int inPlaceRefreshes;
     private int failureCount;
@@ -66,9 +70,85 @@ public final class VulkanTextureRegistry {
     }
 
     /** @param nearestFilter see {@link VulkanGlTexture#create(VulkanContext, int, int, boolean)} */
+    /**
+     * Records the image a texture is being uploaded with, so the mirror can be built from it instead of from a readback.
+     * <p>
+     * The upload hook receives this image - it is the same data GL is about to be given - which is what makes ownership of these
+     * textures a change at one hook rather than a subsystem.
+     */
+    public void announceImage(int glTextureId, java.awt.image.BufferedImage image) {
+        if (glTextureId == 0 || image == null) {
+            return;
+        }
+        this.announcedImages.put(Integer.valueOf(glTextureId), image);
+    }
+
+    /** {@return the announced images converted to RGBA bytes}, or null when this texture has none. */
+    private java.nio.ByteBuffer rgbaOf(java.awt.image.BufferedImage image) {
+        int w = image.getWidth();
+        int h = image.getHeight();
+        java.nio.ByteBuffer out = org.lwjgl.system.MemoryUtil.memAlloc(w * h * 4);
+        int[] row = new int[w];
+        for (int y = 0; y < h; y++) {
+            image.getRGB(0, y, w, 1, row, 0, w);
+            for (int x = 0; x < w; x++) {
+                int argb = row[x];
+                out.put((byte) ((argb >> 16) & 0xFF));
+                out.put((byte) ((argb >> 8) & 0xFF));
+                out.put((byte) (argb & 0xFF));
+                out.put((byte) ((argb >>> 24) & 0xFF));
+            }
+        }
+        out.flip();
+        return out;
+    }
+
+    /** Builds or refreshes a mirror from an image the upload hook handed over, without reading anything back from GL. */
+    private VulkanGlTexture fromImage(int glTextureId, java.awt.image.BufferedImage image, boolean nearestFilter) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        if (width <= 0 || height <= 0) {
+            this.failureCount++;
+            this.lastFailure = "announced image for GL texture " + glTextureId + " is " + width + "x" + height;
+            return null;
+        }
+        java.nio.ByteBuffer rgba = rgbaOf(image);
+        try {
+            Entry existing = this.entries.get(glTextureId);
+            VulkanGlTexture texture = existing != null ? existing.texture : null;
+            if (texture == null) {
+                texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
+                this.entries.put(glTextureId, new Entry(glTextureId, width, height, texture));
+                this.mirrorCount++;
+            }
+            texture.uploadFromImage(width, height, rgba);
+            this.imageUploads++;
+            this.staleIds.remove(Integer.valueOf(glTextureId));
+            return texture;
+        } catch (RuntimeException | LinkageError error) {
+            this.failureCount++;
+            this.lastFailure = "announced image for GL texture " + glTextureId + ": " + error;
+            return null;
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(rgba);
+        }
+    }
+
+    /** {@return how many mirrors were filled from an announced image rather than a readback} */
+    public int imageUploads() {
+        return this.imageUploads;
+    }
+
     public VulkanGlTexture get(int glTextureId, boolean nearestFilter) {
         if (glTextureId == 0) {
             return null;
+        }
+        // The ownership path: when the upload hook has handed over the image this texture is being filled with, and the
+        // mirrors are not copying GL's mip levels (which would need the readback), the mirror is built from those pixels.
+        java.awt.image.BufferedImage announced = VulkanGlTexture.mirrorsGlMips() ? null
+                : this.announcedImages.remove(Integer.valueOf(glTextureId));
+        if (announced != null) {
+            return this.fromImage(glTextureId, announced, nearestFilter);
         }
         Entry existing = this.entries.get(glTextureId);
         if (existing != null) {

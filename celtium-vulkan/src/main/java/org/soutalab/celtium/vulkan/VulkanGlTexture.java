@@ -62,6 +62,7 @@ public final class VulkanGlTexture {
 
     /** Number of mip levels of the current image; the OpenGL atlas is sampled with a mip chain. */
     private int mipLevels = 1;
+    private int imageUploadsSkipped;
     private static final boolean MIRROR_GL_MIPS = Boolean.getBoolean("celtium.vulkan.mirrorGlMips");
     /** Levels the GL texture reported on the last upload, or 0 to compute them from the size. */
     private int mirroredLevels;
@@ -193,6 +194,11 @@ public final class VulkanGlTexture {
      * @throws IllegalStateException    if the GL texture has no level-0 storage, a GL call fails, or this texture was
      *                                  deleted
      */
+    /** {@return whether the mirrors copy OpenGL's own mip levels}, which needs the readback path. */
+    public static boolean mirrorsGlMips() {
+        return MIRROR_GL_MIPS;
+    }
+
     public void uploadFromGlTexture(int glTextureId, int glTextureTarget) {
         requireAlive();
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
@@ -252,6 +258,40 @@ public final class VulkanGlTexture {
         } finally {
             MemoryUtil.memFree(level.pixels);
         }
+    }
+
+    /**
+     * Uploads pixels the caller already has, without reading anything back from OpenGL.
+     * <p>
+     * This is the ownership path: an upload through the game's utility arrives with its image in hand, so the mirror can be
+     * built from the same data GL is about to be given rather than from a readback of what GL received. It deliberately does
+     * **not** mirror OpenGL's mip levels - that needs the readback - so the registry uses it only when
+     * {@code celtium.vulkan.mirrorGlMips} is off, which is the default and what every run in this project has measured.
+     * <p>
+     * Additive rather than extracted on purpose: the readback path has early returns and diagnostics of its own, and pulling a
+     * shared middle out of it left the file not compiling the first time this was attempted.
+     *
+     * @return whether the image was written, false when the content was already there
+     */
+    public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
+        requireAlive();
+        requireAlive();
+        long hash = 1469598103934665603L;
+        int stride = Math.min(rgba.remaining() / Math.max(1, pixelHeight), pixelWidth * BYTES_PER_PIXEL);
+        for (int i = 0; i < stride * pixelHeight; i++) {
+            hash = (hash ^ (rgba.get(i) & 0xFF)) * 1099511628211L;
+        }
+        if (hash == lastPixelHash && pixelWidth == width && pixelHeight == height) {
+            this.imageUploadsSkipped++;
+            return false;
+        }
+        lastPixelHash = hash;
+        this.mirroredLevels = 0;
+        if (pixelWidth != width || pixelHeight != height) {
+            recreateImageResources(pixelWidth, pixelHeight);
+        }
+        copyToImage(rgba, pixelWidth, pixelHeight, 0);
+        return true;
     }
 
     /**
