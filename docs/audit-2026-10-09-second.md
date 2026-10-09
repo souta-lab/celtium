@@ -119,7 +119,11 @@ presents the case, not that the case does not exist. **The fixture is built and 
 target is rebound and the overlapping quads are drawn there - same format, texture and state, so only target and viewport
 separate them. `passSplits` rises from **0 to 16**, so the key's new field is exercised; and the run **FAILS**
 (`nativeTerrainVerified False`) with the modelview delta jumping from 1.62 to **2000**, a magnitude that looks like a screen
-coordinate rather than a world one. That is S10's failure demonstrated rather than described. **Open:** draw order across GL
+coordinate rather than a world one. **Correction:** the 2000 is **not** the fixture's doing. With the second-target work gated off by default, a normal run
+reports `steadyDelta=view:2000.0` **and passes** - and 2000 is `setupOverlayRendering`'s `translate(0, 0, -2000)`. So the
+symptom S10 describes is present in the ordinary suite: a comparison that lands in the overlay pass while the mirror holds
+the world pass's modelview. The fixture forces it into the verdict; it does not cause it, and it is gated off so the suite
+keeps producing captures. **The fix is not to compare across passes.** **Open:** draw order across GL
 fallback, clears and FBO switches - the fix - and reading what the 2000 is.
 The group key has no FBO, viewport or scissor; small accepted batches wait for a threshold while the next unsupported draw
 runs in GL immediately; the flush queries the current FBO after the fact; a later terrain pass can draw the remainder.

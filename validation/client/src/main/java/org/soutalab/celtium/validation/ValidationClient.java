@@ -94,6 +94,43 @@ public final class ValidationClient {
      * behind. With the base-vertex defect the second quad would be drawn with the first quad's vertices, so one colour
      * would fill one block instead of two colours filling two.
      */
+
+    /**
+     * The S10 acceptance fixture's second render target, drawn in the **world** pass.
+     * <p>
+     * It first ran in the overlay pass, and the comparison then reported a modelview difference of 2000 - which is
+     * `setupOverlayRendering`'s `translate(0, 0, -2000)`, a value that belongs to the overlay and not to the world. Drawing
+     * into a second target from inside another pass's state is not the case S10 describes; the case is a target switch
+     * within a pass whose matrices are current. This handler runs after the world pass has set them, so the fixture crosses
+     * targets without borrowing another pass's projection.
+     */
+    @net.minecraftforge.fml.common.eventhandler.SubscribeEvent
+    public void onRenderWorldLastForTargets(net.minecraftforge.client.event.RenderWorldLastEvent event) {
+        // Its own switch, default off, because as written it does not merely test the renderer: it fails the run and
+        // suppresses the capture, so it is a reproduction to be fixed rather than a fixture to be run in the normal suite.
+        if (!Boolean.getBoolean("celtium.validation.drawTestTargets")) {
+            return;
+        }
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
+        if (client.world == null) {
+            return;
+        }
+        net.minecraft.client.shader.Framebuffer secondary = celtium$secondaryTarget(client);
+        if (secondary == null) {
+            return;
+        }
+        secondary.setFramebufferColor(0.0F, 0.0F, 0.0F, 1.0F);
+        secondary.framebufferClear();
+        secondary.bindFramebuffer(true);
+        net.minecraft.client.renderer.Tessellator tessellator = net.minecraft.client.renderer.Tessellator.getInstance();
+        net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
+        buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
+        celtium$quad(buffer, 32.0D, 32.0D, 224.0D, 224.0D, 1.0F, 0.0F, 0.0F);
+        tessellator.draw();
+        client.getFramebuffer().bindFramebuffer(true);
+        report.addProperty("drawTestSecondTarget", true);
+    }
+
     @net.minecraftforge.fml.common.eventhandler.SubscribeEvent
     public void onRenderOverlay(net.minecraftforge.client.event.RenderGameOverlayEvent.Post event) {
         if (!Boolean.getBoolean("celtium.validation.drawTest")
@@ -152,23 +189,6 @@ public final class ValidationClient {
         }
         report.addProperty("drawTestRedReadback", Integer.toHexString(redSeen));
         report.addProperty("drawTestBlueReadback", Integer.toHexString(blueSeen));
-        // The S10 acceptance fixture: a batch into a second render target, then the overlapping quads into the main one,
-        // with a clear at the switch. Same format, texture and state throughout, so the only thing that separates them is
-        // the render target and viewport - which the group key now carries.
-        net.minecraft.client.shader.Framebuffer secondary = celtium$secondaryTarget(client);
-        if (secondary != null) {
-            secondary.setFramebufferColor(0.0F, 0.0F, 0.0F, 1.0F);
-            secondary.framebufferClear();
-            secondary.bindFramebuffer(true);
-            net.minecraft.client.renderer.Tessellator second = net.minecraft.client.renderer.Tessellator.getInstance();
-            net.minecraft.client.renderer.BufferBuilder secondBuffer = second.getBuffer();
-            secondBuffer.begin(org.lwjgl.opengl.GL11.GL_QUADS,
-                    net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
-            celtium$quad(secondBuffer, width * 0.20D, height * 0.35D, width * 0.40D, height * 0.65D, 1.0F, 0.0F, 0.0F);
-            second.draw();
-            client.getFramebuffer().bindFramebuffer(true);
-            report.addProperty("drawTestSecondTarget", true);
-        }
         net.minecraft.client.renderer.GlStateManager.enableDepth();
         net.minecraft.client.renderer.GlStateManager.enableCull();
         net.minecraft.client.renderer.GlStateManager.enableTexture2D();

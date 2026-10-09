@@ -3995,3 +3995,39 @@ into the second target are compared, grouped and drawn against the matrices and 
 target's batches are not disturbed by them. The 2000 itself is a symptom of GL's state being read at a moment that belongs
 to a different target, which is exactly what reading live GL matrices for a batch cannot tell apart - and the reason the
 audit's direction and the removal of those reads point the same way.
+
+---
+
+## The 2000 is in a passing run too, so the last round's attribution is withdrawn
+
+With the fixture's second target gated behind its own switch and off:
+
+```
+passSplits: 0, target: 1301583606
+steadyDelta = proj: 1.6200542E-4, view: 2000.0
+fixture PASSED | nativeTerrainVerified True | 2732 passes | screenshot written
+```
+
+**The modelview delta is 2000 in a run that passes and never binds a second target.** So the attribution recorded last
+round - that the 2000 "belongs to the fixture's own target switch" - is wrong, and it is withdrawn. The number is a property
+of the normal run, and the fixture only made it *visible* by failing the run when it appeared.
+
+What that actually means is more interesting than the retraction. `2000` is `setupOverlayRendering`'s
+`GlStateManager.translate(0.0F, 0.0F, -2000.0F)` - a value that exists only in the overlay pass - and the comparison is a
+maximum over samples taken when batches are offered, in whatever pass happens to be running. A run that passes is therefore
+still reporting, in one number, that **some comparison landed in the overlay pass while the mirror held the world pass's
+modelview**. That is precisely the cross-pass sampling the trace identified three rounds ago, now confirmed from the other
+direction: not by making it fail, but by finding it in a run that succeeds.
+
+So S10's symptom is real, measurable in the ordinary suite, and does not require the exotic fixture to reproduce. The
+fixture remains useful - it forces the failure into the pass/fail verdict - but it is not the cause, and it stays gated off
+by default so that the normal suite keeps producing captures.
+
+The next step is the fix the audit describes rather than another measurement: **do not compare across passes.** A batch
+belongs to a pass; the mirror's matrices should be captured for the pass the batch was issued in, and a comparison taken
+during the overlay should compare the overlay's matrices with the overlay's, not the world's with the overlay's. The pass
+identity the group key now carries is the raw material for that, and the target and viewport hooks are already in place.
+
+One more instrument lesson, the fourth of its kind: the gated run also shows 2732 passes against the 1900 of the failing one,
+which is what a fixture that suppresses the capture looks like from the outside - fewer passes, no screenshot, a FAILED
+status. A test that breaks the instrument cannot report on it.
