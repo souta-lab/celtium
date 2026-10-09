@@ -459,9 +459,21 @@ a4d29a8f5cb8, dirty true` naming the file that was dirty, `8 jvm args of which 7
 `celtium-validation-client-...jar sha256 595b4d60...`. The first version of this recorded only the **profile's** arguments -
 the run's own output showed `1 args, 0 celtium flags` - and no fixture at all, because the fixture is copied into the
 isolated game directory after the lock scans the instance's mods; both gaps were found by reading the new fields rather than
-trusting them. **Still open in S24:** the plan rows that claim more than has been verified, `nativeTerrainVerified` as a
-counter condition, the shader-source/SPIR-V sync check, and the driver (which the capabilities file already records and
-which should be referenced rather than duplicated).
+trusting them. **And the acceptance condition is real-path evidence now, not a counter.** `nativeTerrainVerified` required only
+`passes > 0 && skipped == 0 && errors == 0 && lastDraw > 0` - four numbers, none of which says the terrain was drawn by
+Vulkan or that any GL draw was actually cancelled, which is the claim the whole exercise rests on. It now also requires the
+**terrain pass count** and the **number of batches whose original GL draw was cancelled**, read from the same debug block and
+recorded beside the verdict:
+
+```
+nativeTerrainVerified = True
+vulkanTerrainPasses   = 1635     the Vulkan terrain path drew 1635 passes
+glDrawsCancelled      = 556      556 batches had their GL draw cancelled rather than merely deferred
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+**Still open in S24:** the plan rows that claim more than has been verified, the shader-source/SPIR-V sync check, and the
+driver in the lock (which the capabilities file already records and which should be referenced rather than duplicated).
 
 ## Order of work
 

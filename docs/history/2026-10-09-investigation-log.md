@@ -6329,3 +6329,31 @@ git: a4d29a8f5cb8 dirty=True
 A measurement can now be traced to its commit, its dirty state, the flags that actually reached the JVM and the fixture that
 produced its verdict - which is most of what S24 asked for from the record, done mechanically rather than by remembering to
 write it down.
+
+---
+
+## The acceptance verdict now names the evidence it rests on
+
+The audit's complaint about `nativeTerrainVerified` was that it was a **counter condition**: `passes > 0`, no skips, no
+errors, a non-zero last draw. Four numbers, and not one of them says that the terrain was drawn by the Vulkan terrain path or
+that any OpenGL draw was actually **cancelled** - which is the claim this entire project rests on and the one that must not be
+asserted from a counter being non-zero.
+
+It now requires the **terrain pass count** and the **number of batches whose original GL draw was cancelled**, both read from
+the same debug block and both recorded in the report beside the verdict:
+
+```
+nativeTerrainVerified = True
+vulkanTerrainPasses   = 1635
+glDrawsCancelled      = 556
+exit 0 | clean | messages 0 | fixture PASSED
+```
+
+So a passing verdict now means: the Vulkan terrain path drew 1635 passes **and** 556 batches had their GL draw cancelled
+rather than deferred or skipped. The distinction matters because the two failures this project spent rounds on - terrain that
+was only ever drawn by GL, and batches that were accepted but never drawn - both leave `passes > 0` intact. They do not leave
+`glDrawsCancelled` intact.
+
+What remains of S24 is smaller and named: the plan rows that still claim more than has been verified, the shader-source/SPIR-V
+sync check, and the driver in the lock - which the capabilities file already records, so the right change there is a
+reference rather than a duplicate.

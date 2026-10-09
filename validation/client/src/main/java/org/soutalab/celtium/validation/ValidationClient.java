@@ -758,7 +758,20 @@ public final class ValidationClient {
                 int skipped = Integer.parseInt(counters.group(2));
                 int errors = Integer.parseInt(counters.group(3));
                 int lastDraw = Integer.parseInt(counters.group(4));
-                report.addProperty("nativeTerrainVerified", passes > 0 && skipped == 0 && errors == 0 && lastDraw > 0);
+                // Real-path evidence rather than a counter alone (audit S24): the terrain must have been drawn by the
+                // Vulkan terrain path, and batches must actually have had their original GL draw cancelled - which is the
+                // claim this whole exercise rests on. Reading them out of the same debug block keeps the evidence in the
+                // record beside the verdict.
+                java.util.regex.Matcher terrain = java.util.regex.Pattern
+                        .compile("terrainPasses=(\\d+)").matcher(report.get("rendererDebug").toString());
+                java.util.regex.Matcher taken = java.util.regex.Pattern
+                        .compile("immediateTaken=(\\d+)").matcher(report.get("rendererDebug").toString());
+                int terrainPasses = terrain.find() ? Integer.parseInt(terrain.group(1)) : -1;
+                int glDrawsCancelled = taken.find() ? Integer.parseInt(taken.group(1)) : -1;
+                report.addProperty("vulkanTerrainPasses", terrainPasses);
+                report.addProperty("glDrawsCancelled", glDrawsCancelled);
+                report.addProperty("nativeTerrainVerified", passes > 0 && skipped == 0 && errors == 0 && lastDraw > 0
+                        && terrainPasses > 0 && glDrawsCancelled > 0);
                 report.addProperty("modDrawTestFrames", testQuadFrames);
                 report.addProperty("modDrawBlockFrames", blockQuadFrames);
                 report.addProperty("vulkanPasses", passes);
