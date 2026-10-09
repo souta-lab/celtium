@@ -7818,3 +7818,36 @@ reporting gap in the fixture, not a gap in the drawing, and it is the honest for
 Two corrections in one round, then, and both of the same kind: a claim written from the earlier reading rather than from the
 current one. The habit that avoids them is the one this project keeps rediscovering - read the artefact that contains the
 answer, not the memory of a similar artefact.
+
+---
+
+## The recipe field, and the fixture's tick hooks racing the budget on Intel
+
+The reporting gap is closed: the recipe open now records its tick as well as its boolean, and the AMD run proves the path.
+
+```
+AMD, recipe configuration: exit 0 | clean | messages 0 | fixture PASSED
+jeiScreenOpenedAtTick = 170   jeiRecipeOpened = True   jeiRecipeOpenedAtTick = 180
+```
+
+On Intel the picture is a **measurement with high variance**, and it is worth recording exactly:
+
+| Intel run | budget | screen hook (tick) | recipe hook |
+|---|---|---|---|
+| p26s | 720 s | 170 reached | not reached |
+| p26u | 720 s | 170 reached | not reached |
+| p26v | 720 s | **neither reached** | not reached (hooks at 170/172) |
+| p26w | 720 s | **neither reached** | not reached (hooks at 160/164) |
+
+Four runs, one of them reaching tick 170 and three not reaching even 160 - the same binary, the same budget, the same
+configuration. So the fixture's hooks advance with the game's ticks, the Intel path produces far fewer ticks per wall-clock
+second, and the number varies enough between runs that "did the recipe screen open" cannot be answered this way at all. The
+hooks were moved earlier twice, which addressed the symptom and not the cause.
+
+**The cause is a fixture design issue, and the fix is named rather than attempted again here**: a hook that must fire on the
+slowest GPU under a wall-clock budget has to key on something deterministic - a tick count **from the moment the world is
+loaded**, or a frame count - rather than on an absolute tick number that a fixed budget may never reach. That is a fixture
+change with its own reasoning, and it is the honest next step for this item rather than a fourth attempt at moving a constant.
+
+What is established: the recipe screen path works and is measured **on AMD** (opened at tick 180, `jeiRecipeOpened=True`), and
+the JEI screen path works on **both** (AMD and Intel at tick 170 in the runs that reached it).

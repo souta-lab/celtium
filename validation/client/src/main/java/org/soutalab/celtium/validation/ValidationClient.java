@@ -647,7 +647,7 @@ public final class ValidationClient {
             mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
             report.addProperty("reloadedAtTick", worldTicks);
         }
-        if (worldTicks == 170 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
+        if (worldTicks == 160 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
             // plan named as unestablished: JEI loading proves the mod, opening a screen proves that its own rendering goes
             // through the renderer under test. Closed again before the capture so the saved frame stays the normal scene.
@@ -655,14 +655,24 @@ public final class ValidationClient {
             mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.player));
             report.addProperty("jeiScreenOpenedAtTick", worldTicks);
         }
-        if (worldTicks == 180 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
+        if (worldTicks == 164 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
             // The mod's own heavier screen, opened through its public plugin API rather than by simulating input. Guarded
             // behind its own flag because it needs JEI present and compiled in.
+            //
+            // At 164, and the screen at 160, rather than 180 and 170: the fixture's ticks advance with the game's, so on a
+            // slower GPU a fixed wall-clock budget reaches fewer of them. Two Intel runs showed the whole range of it - one
+            // opened the screen at 170 and never reached 180, the next reached neither inside the same budget - which reads as
+            // "the recipe screen does not work there" when it means "the budget ended first". Both hooks are now early enough
+            // to fire on both GPUs and still late enough for the world to be up.
             celtium$jeiRecipe = true;
             try {
                 Class<?> plugin = Class.forName("org.soutalab.celtium.validation.CeltiumJeiPlugin");
                 Object opened = plugin.getMethod("openFirstRecipeCategory").invoke(null);
                 report.addProperty("jeiRecipeOpened", Boolean.TRUE.equals(opened));
+                // The tick as well as the boolean, mirroring the screen's field. The previous shape reported the boolean from a
+                // path that a later report overwrote, so the run looked as though the recipe screen had never opened while the
+                // screen's own tick was right there - a reporting ambiguity rather than a drawing one.
+                report.addProperty("jeiRecipeOpenedAtTick", worldTicks);
             } catch (ReflectiveOperationException | LinkageError error) {
                 report.addProperty("jeiRecipeOpened", false);
                 report.addProperty("jeiRecipeError", String.valueOf(error));
