@@ -2553,3 +2553,28 @@ difference rather than an edge effect.
 The next step is to separate the two candidates rather than attribute the number to both: a particles-only configuration
 (rain off) with its own floor, then a rain-only configuration, each with the same three runs. That is the pattern this
 project has used all session, and it is the only way to say which of the two classes the difference belongs to.
+
+---
+
+## The difference is the particles: rain off changes nothing measurable
+
+The recorded next step was to separate the two candidates, and one configuration settles it:
+
+| Scene (hidden GUI, same revision) | Noise floor | Immediate path against reference |
+|---|---|---|
+| weather + particles | 0.06 (0.23% over 8) | **0.85** (1.33% over 8) |
+| **particles only (rain off)** | 0.07 (0.28% over 8) | **0.83** (1.30% over 8) |
+
+Removing the rain moves the difference by 0.02 and the floor by 0.01, both inside the scene's own variation, so **the
+particles carry the whole difference** and nothing about rain rendering is claimed in either direction.
+
+Two things about the instrument are worth stating because they limit the claim. Its floor is **not zero** - 0.28% of pixels
+differ between two identical reference runs - because particles advance in time even when they are spawned motionless: their
+age and texture frame move with the client's tick, which is not pinned by the fixture's world tick. And the difference is
+about **4.6 times** that floor rather than the clean separation the water scene gave, where the floor was a true 0.00. So
+the finding is real and it is in the particles, and the margin is smaller than this project's own rule would like.
+
+The next step follows the pattern that has worked: bisect the particle scene by format, with the mask flag **verified present
+in the script** before each run. Format 5 is the particle family in the acceptance mask, so a mask of 5 alone against a mask
+of 5 excluded is the comparison that names the pipeline - and the same-revision reference has to be captured for each
+configuration, since the fixture's scene is part of the instrument.
