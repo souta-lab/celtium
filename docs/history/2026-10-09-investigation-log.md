@@ -5358,3 +5358,38 @@ the dump's bright corner suggests, the two candidates left are the divisor on th
 comment and the 16x16 dump all say 16) and the ambient-occlusion term the fragment shader multiplies in as `m_color.a`. Both
 are single-variable experiments of the same kind as this one, and the compile-and-verify-the-SPIR-V step is now part of the
 loop rather than a lesson.
+
+---
+
+## Two one-variable experiments: the occlusion term is not it, the vertex colour is
+
+With the active shader finally under measurement control, the two remaining candidates from the previous round were tested
+one at a time, each with its SPIR-V recompiled and verified in the jar by size.
+
+**The divisor (256 to 16)**, applied in the shader that actually runs:
+
+| configuration | mean | terrain band | >8 pixels |
+|---|---|---|---|
+| axes swapped | 27.09 | 97.6 / 90.0 | 70.51% |
+| **+ divisor 16** | **26.68** | **98.1 / 90.8** | **70.49%** |
+
+A small move in the right direction on all three, which is what a divisor that only affects the extremes of the coordinate
+range should produce.
+
+**The occlusion term** (`diffuseColor.rgb *= m_color.a`): disabled, the frame moves by **0.02** of a mean pixel value -
+26.66 against 26.68, luminance 98.2 against 98.1. So `m_color.a` is 1.0 in this tree, the writer folds occlusion into the
+colour instead, and there is **no double application**. That hypothesis is eliminated; the multiply is restored with the
+measurement beside it.
+
+**The vertex colour** (`diffuseColor.rgb *= m_color.rgb`): disabled, the terrain band jumps from 98 / 91 to **215 / 222**
+against the reference's 131, and the mean difference rises to 61.26. So this colour is where the darkness lives: it carries a
+factor of about **0.46** where the reference implies about **0.61** - which is the ~25% residual exactly. The light map, the
+divisor and the occlusion term are all now excluded by measurement, and the question is what the mesh builder packs into
+that colour: vanilla's terrain colour is the biome tint times the face shade times the occlusion, and a factor that is a
+quarter too small is what one extra multiply in that chain looks like.
+
+The next step is the same technique that finally worked here: diff our colour path against the **pinned upstream checkout**,
+which is vanilla-equivalent by construction and is sitting in the work tree.
+
+The vertex colour multiply is restored, its SPIR-V recompiled and verified (`8592`), and the tree is back at the configuration
+that measured **26.68 / 70.49%** with validation clean.

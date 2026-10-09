@@ -143,10 +143,15 @@ void main() {
     m_color += v_RdhFactor * correctionWeight;
 
 
-    // Apply per-vertex color
+    // Apply per-vertex color. Measured (round 267): with this multiply the terrain band sits at 98 against the reference's
+    // 131, and with it disabled the same band jumps to 215 - so this colour carries a factor of about 0.46 where the
+    // reference implies about 0.61, and the ~25% residual darkness is here rather than in the light map or the occlusion
+    // term. What the mesh builder packs into it is the next thing to compare against the pinned upstream checkout.
     diffuseColor.rgb *= m_color.rgb;
 
-    // Apply ambient occlusion "shade"
+    // Apply ambient occlusion "shade". Measured: disabling this changes the frame by 0.02 of a mean pixel value, so
+    // m_color.a is 1.0 in this tree - the writer folds the occlusion into the colour instead, and there is no double
+    // application here.
     diffuseColor.rgb *= m_color.a;
 
     // #ifdef USE_FOG

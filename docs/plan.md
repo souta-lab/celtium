@@ -65,8 +65,13 @@ divisor fix went into a shader nothing runs, and both ship as checked-in SPIR-V.
 and verified in the jar, swapping the light coordinate axes (the scene's light coordinate is `(block 0, sky 15)` and the texel
 it lands on measures 0.65 against the 0.61 ratio the frame showed) moves the mean difference from 34.08 to **27.09** and the
 terrain luminance from 84.9/77.6 to **97.6/90.0**, while the count of pixels differing by more than eight rises from 68.81%
-to **70.51%** - brighter terrain stops masking the colour differences that remain. Both numbers are recorded. The terrain is
-still about 25% darker than the reference; the candidates are the divisor on the same sample and the `m_color.a` AO term.
+to **70.51%** - brighter terrain stops masking the colour differences that remain. Both numbers are recorded. Both remaining candidates have now been tested one at a time. The **divisor** (256 to 16, in the shader that actually
+runs) moves the frame from 27.09 to **26.68** and the terrain band from 97.6/90.0 to **98.1/90.8** - small, as expected for
+a change that only affects the extremes of the coordinate range. The **occlusion term** moves the frame by **0.02** when
+disabled, so `m_color.a` is 1.0 and there is no double application - eliminated. The **vertex colour** is the answer: disabled,
+the terrain band jumps to **215/222** against the reference's 131, so it carries a factor of about 0.46 where the reference
+implies 0.61, which is the ~25% residual exactly. **Next:** diff what the mesh builder packs into that colour against the
+pinned upstream checkout, which is vanilla-equivalent by construction.
 Earlier note: **Process defect found and fixed in the work, not yet in the build:** the terrain shaders ship as **checked-in SPIR-V**
 (`celtium-vulkan/src/main/resources/.../spirv/*.spv`) and the GLSL in `src/main/shaders/` is **not** a build input, so shader
 edits do not reach the running game unless `glslangValidator` is re-run by hand. Two rounds of shader "fixes" and their
