@@ -64,6 +64,8 @@ public final class VulkanGlTexture {
     private int mipLevels = 1;
 
     /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
+    /** The layout the image is actually in; barriers used to declare one the image was not in. */
+    private int currentLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
     private boolean nearestFilter;
 
     /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
@@ -550,6 +552,7 @@ public final class VulkanGlTexture {
             region.get(0).imageOffset().set(0, 0, 0);
             region.get(0).imageExtent().set(pixelWidth, pixelHeight, 1);
             vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+            this.currentLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
             recordMipChain(commandBuffer, pixelWidth, pixelHeight, stack);
 
@@ -560,7 +563,7 @@ public final class VulkanGlTexture {
             barrier.get(0)
                     .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .oldLayout(this.mipLevels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : this.currentLayout)
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES,
                     0, null, null, barrier);

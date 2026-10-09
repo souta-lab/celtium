@@ -4418,3 +4418,38 @@ never matched the texture it was sampling (the sampler half of S23).
 
 The comparison is against the same-fixture reference throughout, and the runs differ only by these changes, so the
 progression is attributable rather than coincidental.
+
+---
+
+## The second GPU found a layout bug the first one tolerated
+
+Running the current build on Intel - the objective's two-GPU condition - produced the first validation message this project has
+seen in several rounds, and the harness correctly failed the run for it:
+
+```
+severity=ERROR id=VUID-VkImageMemoryBarrier-oldLayout-01197 vkCmdPipelineBarrier():
+  image ... cannot transition ... from VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL when the previous known layout is ...
+```
+
+The cause was in the texture upload's mip chain. The loop that generates mips transitions from `TRANSFER_DST` to
+`TRANSFER_SRC` **inside the loop**, and the final barrier - the one that hands the image to the shader - declared
+`oldLayout = TRANSFER_SRC_OPTIMAL` unconditionally. With a single mip level the loop never runs, so the image is not in
+`TRANSFER_SRC` at all, and the barrier declared a layout the image had never been in.
+
+The fix records what the image is actually in - `currentLayout`, set by the upload and by each transition - and uses it
+where the mip chain did not run:
+
+```java
+.oldLayout(this.mipLevels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : this.currentLayout)
+```
+
+Both GPUs are clean afterwards:
+
+| GPU | Validation | Fixture | Dropped groups |
+|---|---|---|---|
+| **AMD RX 6400** | exit 0, clean, **0 messages** | PASSED, `nativeTerrainVerified True` | 0 |
+| **Intel UHD 630** | exit 0, clean, **0 messages** | PASSED, `nativeTerrainVerified True` | 0 |
+
+This is the value of the second GPU stated plainly: the barrier was wrong on both, one driver's validation tracked it and the
+other did not object, and without the Intel run the project would have shipped a layout bug that a stricter driver would
+report - which the audit asked for by name when it said to verify both GPUs rather than one.
