@@ -40,6 +40,13 @@ public abstract class GlStateManagerMixin {
     private static void celtium$countCallList(int list, CallbackInfo info) {
         try {
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replay(list);
+            // Lab switch: cancel the replay of lists the native path already draws. The sky and the stars are drawn by
+            // the immediate path as POSITION_TEX, so their display lists are the first candidates - cancelling them is
+            // only correct if the image does not change, which is what the flag is for measuring.
+            if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancels(list)) {
+                org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
+                info.cancel();
+            }
         } catch (RuntimeException | LinkageError ignored) {
             // Never let a measurement stop the game's rendering.
         }

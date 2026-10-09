@@ -45,6 +45,43 @@ public final class VulkanDisplayListCensus {
         return replaysWithFrameClosed;
     }
 
+    private static final java.util.Set<Integer> CANCEL = cancelSet();
+    private static long cancelled;
+
+    private static java.util.Set<Integer> cancelSet() {
+        String spec = System.getProperty("celtium.vulkan.cancelDisplayLists", "");
+        java.util.Set<Integer> ids = new java.util.HashSet<Integer>();
+        for (String part : spec.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                try {
+                    ids.add(Integer.valueOf(Integer.parseInt(trimmed)));
+                } catch (NumberFormatException ignored) {
+                    // A malformed entry simply does not cancel anything.
+                }
+            }
+        }
+        return ids;
+    }
+
+    /** {@return whether this list's GL replay is being cancelled, so the native path draws it instead}. */
+    public static boolean cancels(int list) {
+        return CANCEL.contains(Integer.valueOf(list));
+    }
+
+    /** Records one cancelled replay. */
+    public static synchronized void cancelled(int list) {
+        cancelled++;
+        if (cancelled <= 3) {
+            System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_CANCELLED list=" + list);
+        }
+    }
+
+    /** {@return how many replays were cancelled}. */
+    public static synchronized long cancelled() {
+        return cancelled;
+    }
+
     public static synchronized void replay(int list) {
         total++;
         if (frameOpen) {
