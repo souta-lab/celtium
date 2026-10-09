@@ -1513,7 +1513,29 @@ expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_
   exit 0 / clean / PASSED だった。つまり**失敗の扱いはサイトごとに違い、buffer 系だけが有界でない**。
 - **これは「検出した欠陥」であって「修正済み」ではない**。次のラウンドで直す。
 
-**次の一手**: (1) `VulkanBuffer` / `VulkanUniformBuffer` / `VulkanContext` の確保失敗を**有界に処理**する
+**buffer系クラッシュの修正（このターン・2/3 が有界化）**:
+
+- **修正**: region のアップロード（`uploadRegion` の呼び出し、`VulkanTerrainGpuBackend` 3098行）を try/catch で囲み、
+  資源を作れなかった region は**その回だけ諦めて次へ進む**（`regionUploadFailures` に数え、`record(...)` に残す）。
+  `VulkanBuffer.create()` は既に自分で後始末して rethrow しているので、**抜け道は呼び出し側**だった。
+- **再測定（同じサイト名で注入）**:
+
+| サイト | GPU | 修正前 | **修正後** | regionUploadFailures |
+|---|---|---|---|---|
+| `VulkanBuffer:189`（vertex arena） | AMD | exit 255 / report 無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | **1** |
+| `VulkanBuffer:189` | **Intel** | exit 255 / report 無し / クラッシュ | **exit 0 / clean / PASSED / 307 frames** | **1** |
+| `VulkanContext:883`（context staging） | AMD | exit 255 / report 無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | **1** |
+| `VulkanUniformBuffer:110` | AMD | exit 255 / report 無し | **exit 255 / report 無し（未修正）** | — |
+
+- **未修正の1件は逃げ道が違う**: uniform buffer の確保は `uploadRegion` の外（immediate/descriptor 経路）で起きるため、
+  この try/catch では捕まらない。**次はそちらを囲む**。
+- 受入の意味: 失敗した region は**アップロードされない**（その分は描かれない）が、**ゲームは落ちず、レポートも出る**。
+  「壊れた資源を握ったまま描く」よりは安全側である。
+
+**次の一手**: (1) immediate/descriptor 経路の確保失敗（`VulkanUniformBuffer:110`）を有界にする、(2) 3サイトとも
+両GPUで再受入する、(3) `presentReadback=true` の run で readback サイトも叩く。
+
+**（旧メモ）** 次の一手: (1) `VulkanBuffer` / `VulkanUniformBuffer` / `VulkanContext` の確保失敗を**有界に処理**する
 （テクスチャ経路と同じ扱いにする。何を描かずに済ませるか、どのリソースを退役させるかを決める）、
 (2) 直したら同じサイト名で両GPUを受入し、**exit 0/1 かつ report あり**を確認する、(3) readback は
 `presentReadback=true` の run で叩く。

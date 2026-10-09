@@ -2947,6 +2947,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " threadWaitedMillis=" + threadWaitedMillis()
                 + " threadBlockedMillis=" + threadBlockedMillis()
                 + " threadCpuTotalMillis=" + (threadCpuNanos() / 1000000L)
+                + " regionUploadFailures=" + this.regionUploadFailures
+                + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
                 + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
                 + (this.preflightCpuNanos / 1000000L) + ", append " + (this.appendNanos / 1000000L) + "/"
                 + (this.appendCpuNanos / 1000000L) + ", groupCreate " + (this.groupCreateNanos / 1000000L) + "/"
@@ -3095,7 +3097,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry : queues.reference2ReferenceEntrySet()) {
-            uploadRegion(entry.getKey(), entry.getValue(), graphUpdateTrigger);
+            // A resource failure while a region is being uploaded must not take the game down. An injected allocation
+            // failure in the vertex arena, the index arena or the staging buffer used to escape through here into
+            // Minecraft's chunk loop and end the run with "Game crashed!" and no report at all (exit 255, both GPUs).
+            // The region keeps whatever it already had, the counter records the loss, and the next region is tried.
+            try {
+                uploadRegion(entry.getKey(), entry.getValue(), graphUpdateTrigger);
+            } catch (RuntimeException error) {
+                this.regionUploadFailures++;
+                this.lastRegionUploadFailure = String.valueOf(error);
+                record("region upload failed and was skipped: " + error);
+            }
         }
     }
 
@@ -3560,6 +3572,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * only way to tell an attribute-layout problem from a transform problem, and the upload path already has the
      * bytes in hand.
      */
+    /** Regions whose upload was abandoned because a resource could not be built. */
+    private int regionUploadFailures;
+    private String lastRegionUploadFailure = "none";
     private final java.util.HashMap<Integer, Integer> colourCounts = new java.util.HashMap<>();
     private int colourBatches;
 
