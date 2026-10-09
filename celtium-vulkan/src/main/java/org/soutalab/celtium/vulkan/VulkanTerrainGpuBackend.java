@@ -455,6 +455,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetTargetsCreated;
     private int offTargetReadyToTake;
     private int offTargetDrawn;
+    /** Acceptances counted across all formats, so the table can be printed incrementally. */
+    private int immediateAcceptedTotal;
     /** Set while an off-target pass records, so the shared draw path binds that pass's pipeline. */
     private VulkanImmediatePipeline offscreenPipelineOverride;
     private int offTargetCopiedBack;
@@ -690,7 +692,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Reported once, at a count a run actually crosses.
      */
     private final int[] immediateOfferedByFormat = new int[8];
-    private final int[] immediateAcceptedByFormat = new int[8];
+    private final int[] immediateAcceptedByFormat = new int[11];
     /**
      * Whether this frame's submission actually reached the queue.
      * <p>
@@ -1666,6 +1668,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             if (formatId >= 0 && formatId < this.immediateAcceptedByFormat.length) {
                 this.immediateAcceptedByFormat[formatId]++;
+                // Printed incrementally rather than only in the end-of-run report, because a run that times out has no report and
+                // still has evidence: the arrival census proved that on a partial Intel run carrying 674,500 uploads. The
+                // acceptance side needed the same treatment - a count that only exists at the end cannot answer "was this taken"
+                // for a run that never reached the end.
+                this.immediateAcceptedTotal++;
+                if (this.immediateAcceptedTotal % 500 == 0) {
+                    StringBuilder accepted = new StringBuilder();
+                    for (int i = 0; i < this.immediateAcceptedByFormat.length; i++) {
+                        accepted.append(i).append(':').append(this.immediateAcceptedByFormat[i]).append(' ');
+                    }
+                    System.out.println("[Celtium] CELTIUM_ACCEPTED total=" + this.immediateAcceptedTotal
+                            + " byFormat=[" + accepted.toString().trim() + "]");
+                }
             }
             this.immediateLastRefusal = "none";
             return true;

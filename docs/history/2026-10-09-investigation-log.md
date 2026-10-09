@@ -7909,3 +7909,28 @@ of it mapped.
 
 What this does not give is the acceptance counts for that run - they are in the fixture's report, which the timeout prevented -
 so the honest statement is about arrivals here and about acceptances from the ordinary runs, where the two agreed exactly.
+
+---
+
+## Acceptances print incrementally too, and the third counter whose range hid what it counted
+
+The arrival census proved its worth on a partial run carrying 674,500 uploads; the acceptance side only existed in the
+end-of-run report, which a timed-out run never writes. It now prints the same way:
+
+```
+CELTIUM_ACCEPTED total=3000 byFormat=[0:0 1:68 2:0 3:0 4:420 5:199 6:1277 7:1024 8:0 9:12 10:0]
+```
+
+So a run that never finishes still answers both questions - what the frame offered and what this renderer took - and the JEI
+run shows `4:420` accepted, the item layout the recipe screen produces.
+
+**And the third instance of a pattern worth naming**: the incremental table first printed ids 0 to 7, because
+`immediateAcceptedByFormat` was an eight-entry array while the report's `acceptedByFormat` held eleven. That is the third
+counter in this project whose own range hid the thing it was counting - the end-of-run acceptance report stopped at 6 and hid id
+7, the arrival census stopped at 8 and hid 9, and this one stopped at 7 and hid 8 and 9. Each was found by widening it and each
+was invisible until then.
+
+The class of defect is "a counter dimensioned from the set of ids that existed when it was written", and the fix is the obvious
+one that has not been made yet: one shared constant for the id range, referenced by every counter, the mask, the range check and
+the stride table. That is a small refactor with a clear justification, and it is the named next step rather than another
+individual widening.
