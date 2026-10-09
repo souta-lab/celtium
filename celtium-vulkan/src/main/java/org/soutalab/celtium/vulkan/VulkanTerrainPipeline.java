@@ -796,6 +796,12 @@ public final class VulkanTerrainPipeline {
                         .format(this.vertexLayout.formats[i])
                         .offset(this.vertexLayout.offsets[i]);
             }
+            // The chosen layout and shader module have to be visible: the pass's declared stride selects both, and a
+            // mismatch between the buffer the mesher filled and the offsets the shader reads shows up as terrain whose
+            // colour is unrelated to what the mesh builder packed.
+            System.out.println("[Celtium] CELTIUM_TERRAIN_LAYOUT stride=" + this.vertexLayout.stride + " module=" + this.vertexLayout.vertexModule
+                    + " colorOffset=" + this.vertexLayout.offsets[1] + " colorFormat=0x"
+                    + Integer.toHexString(this.vertexLayout.formats[1]));
             StringBuilder input = new StringBuilder("vertex input stride=" + this.vertexLayout.stride
                     + " module=" + this.vertexLayout.vertexModule);
             for (int i = 0; i < this.vertexLayout.formats.length; i++) {

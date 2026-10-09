@@ -4583,6 +4583,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     .append(view.getFloat(base + 4)).append(',').append(view.getFloat(base + 8)).append(')');
         }
         record(line.toString());
+        // stdout as well as the list: this is the only place that shows what the GPU holds rather than what the CPU
+        // wrote, and the diagnostics list is not printed by every run.
+        System.out.println("[Celtium] CELTIUM_GPU_VERTEX " + line);
     }
 
     private void record(String diagnostic) {

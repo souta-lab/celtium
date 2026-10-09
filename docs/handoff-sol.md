@@ -175,6 +175,16 @@ solidの色(0.635)なら `212×0.635≈137` で参照(125-137)と一致するが
 shader内の他項（alpha乗算・Rdh項）は無効化しても不変と確認済み。帯平均は可視geometryの混在に強く依存するため、
 **同じpipeline/formatで既知の1枚のquadを描いて厳密な画素を読み戻す**制御実験が必要（次の一手）。
 
+**矛盾の確定（このターンの核心）**: mesherがバッファに書いた色は正しく（GPU保持値を新規stdout
+`CELTIUM_GPU_VERTEX` で確認: `colour=0xff59bd91 light=0xe000fc01 pos=(0.0,4.0,0.0)`）、
+pipelineのlayoutも正しい（実行時print: `stride=32 module=terrain_solid_vanilla.vert colorOffset=12
+colorFormat=0x25`）のに、**fragmentが受ける `v_Color` は地形帯でちょうど2値 (26,26,26)/(255,255,255)**。
+`fragColor = m_color.rgb` / `= v_Color.rgb` / `v_Color = a_Color`（lightmapなし）の3通りすべてで同じ。
+各段でjar内SPIR-Vと診断ソースの手動コンパイルがバイト一致することを確認済み。
+=> 損失は**頂点バッファとvaryingの間**（入力アセンブリ／属性記述／drawのvertexOffset）。
+次の一手は (1) 5属性すべての (location,format,offset) をprint、(2) draw時の vertexOffset/firstIndex/pipeline をprint、
+(3) `v_Color = vec4(a_Color.r, a_Color.g, 0.0, 1.0)` で成分ごとの生死を見る、の順。
+
 ## 3. 残る問題と、次に実装する具体的な一手
 
 1. **Intel 受入を閉じる**（上記コマンドの完走を確認。落ちたら `logs/latest.log` の

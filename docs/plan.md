@@ -243,7 +243,27 @@
 - **注意**: 帯平均は可視geometry（solid/cutout/translucentの混在、面の向き）に強く依存するため、
   「詰めた色」と「描画値」を帯平均で直接比べるのは不適切。**制御された単一quad実験が必要**。
 
-**次の一手（具体）**: fixtureに、terrain経路と**同じpipeline/同じformat**で
+**矛盾の確定（このターンの核心）**: 3点を実測で突き合わせた結果、**矛盾**が確定した。
+
+| 層 | 実測値 | 状態 |
+|---|---|---|
+| mesher → バッファ | `colour=0xff59bd91 light=0xe000fc01 pos=(0.0,4.0,0.0)`（新規stdout `CELTIUM_GPU_VERTEX`・既存readback経路） | **正しい**（緑のtint） |
+| pipeline layout（実行時print） | `stride=32 module=terrain_solid_vanilla.vert colorOffset=12 colorFormat=0x25(R8G8B8A8_UNORM)` | **正しい** |
+| fragmentが受ける `v_Color` | 地形帯で**ちょうど2値** `(26,26,26)` と `(255,255,255)`（95%/5%） | **2値＝異常** |
+
+- 検証手順: (a) `fragColor = m_color.rgb`、(b) `fragColor = v_Color.rgb`（Rdh項の加算も排除）、
+  (c) `v_Color = a_Color`（lightmap乗算なし）の3通りすべてで同じ2値。各段で**jar内SPIR-Vが診断ソースの
+  手動コンパイルとバイト一致**することを確認済み。
+- つまり損失は **頂点バッファと varying の間**（入力アセンブリ／属性記述／drawのvertexOffset）にある。
+
+**次の一手（具体・更新）**: 順に切り分ける。
+1. pipeline作成時に**5属性すべての (location, format, offset)** と stride をprintして、宣言と実データの対応を確認。
+2. draw時の `vertexOffset` / `firstIndex` / 使用pipeline をprintし、読んでいる頂点が想定のものかを確認
+   （誤ったvertexOffsetなら「別の頂点」を読み、色が2値に見え得る）。
+3. vertex shaderで `v_Color = vec4(a_Color.r, a_Color.g, 0.0, 1.0)` のように**成分を固定**して、
+   どの成分が生きているかを1回で見る。
+
+（元の手順: fixtureに、terrain経路と**同じpipeline/同じformat**で
 「既知の1枚のquad（既知のテクスチャ・既知の頂点色）」を描いて**厳密な画素値を読み戻す**小実験を足す。
 期待値は `texel × colour × lightmap` で計算できるので、どこで0.635→0.369の損失が出るかを1回で確定できる。
 （`lightDiagnostics` の pass別集計は恒久的な計器として残す）
