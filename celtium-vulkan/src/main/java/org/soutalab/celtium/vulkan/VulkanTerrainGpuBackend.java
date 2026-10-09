@@ -752,6 +752,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int otherTargetGroupsAtMainFlush;
     private int otherTargetGroupsDiscarded;
     private int otherTargetGroupsFlushedByWindow;
+    private int offTargetOfferDiagnostics;
     /** Groups seen at pass time and drawing passes, per target; the offers come from offTargetBatchesByTarget. */
     private final java.util.Map<Long, Integer> offTargetPassGroupsByTarget = new java.util.HashMap<Long, Integer>();
     private final java.util.Map<Long, Integer> offTargetDrawnByTarget = new java.util.HashMap<Long, Integer>();
@@ -1462,6 +1463,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
                 System.out.println("[Celtium] CELTIUM_OFFTARGET target=" + this.currentRenderTarget + " viewport="
                         + viewport[2] + "x" + viewport[3] + " firstBatchFormat=" + formatId);
+                if (this.offTargetOfferDiagnostics < 4) {
+                    this.offTargetOfferDiagnostics++;
+                    System.out.println("[Celtium] CELTIUM_OFFTARGET_IDS renderTarget=" + this.currentRenderTarget
+                            + " groupTarget=" + this.currentGroupTarget + " mainTarget=" + this.mainTargetIdentity
+                            + " isMain=" + this.currentRenderTargetIsMain
+                            + " groupOpen=" + (this.currentImmediateMesh != null)
+                            + " pendingGroups=" + this.immediateGroups.size());
+                }
             }
             seen.incrementAndGet();
             this.flushPendingBeforeGlDraw();

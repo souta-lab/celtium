@@ -9084,3 +9084,25 @@ main flush時0、discard時0、window flush時0である。つまり「groupが�
 と新しい `VulkanDynamicMesh` が作られる。`currentGroupTarget` も境界ブロックで更新される。したがって次に測るべきは
 **offer時に作られたgroupの `group[7]` の実際の値**である。1行（offer直後に `currentRenderTarget` と `currentGroupTarget`
 を並べて印字）で決まる。推測を重ねず、その1行を次に行う。
+
+---
+
+## offer時の同一性診断: 期待どおりの中身で、次の測定点が「groupをqueueへ入れる瞬間」に絞られた
+
+offer時の1行診断を入れ、再現runで測った。
+
+```
+CELTIUM_OFFTARGET_IDS renderTarget=2131877082 groupTarget=968029161 mainTarget=968029161
+                      isMain=false groupOpen=false pendingGroups=0
+offTargetPerTarget = [7f11dcda:offered=251,atPass=0,drawnPasses=0]
+otherTargetGroups = [atMainFlush=0, discarded=0, windowFlush=0]
+exit 0 | validationClean true | messages 0 | fixture PASSED
+```
+
+読み方は限定的である。この印字は**group生成ブロックより前**にあるので、「offerの時点ではまだmain targetのgroupが現役で、
+meshは未生成、保留queueは空」を示す。これは**異常ではない**（境界条件 `!samePass` により、この直後に
+`closeCurrentImmediateGroup()` と新しい `VulkanDynamicMesh` が作られ、`currentGroupTarget` が secondary に更新される
+はずである）。したがって「offer時点の値」では欠陥を判定できない。私がこの印字を「矛盾の証拠」と読みかけたのは誤りで、
+次に測るべき点は**groupがqueueへ入る瞬間**、すなわち `closeCurrentImmediateGroup()` が
+`immediateGroups` に追加するときの `group[7]` である。そこで secondary の identity が入っていれば、消費は
+その後の flush 経路にあり、main の identity が入っていれば group 生成側の欠陥である。1回のrunで決まる。
