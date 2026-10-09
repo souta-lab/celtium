@@ -136,6 +136,50 @@ public final class VulkanTextureRegistry {
         }
     }
 
+    /**
+     * Replaces a mirror's content with pixels the caller already has, when the write covers the whole texture.
+     * <p>
+     * The animation path writes through {@code TextureUtil.func_147955_a}, which takes the pixels and the region and writes into
+     * whatever texture is bound. A region that covers the texture is the light map and every small dynamic texture, and for
+     * those this is a complete replacement - no readback, and the same data GL was given. A partial region is left to the
+     * readback, because a patch would need the mirror's previous content and that is what the readback is for.
+     *
+     * @return whether the mirror was updated from these pixels
+     */
+    public boolean announceFullPixels(int glTextureId, int[][] data, int width, int height, int x, int y) {
+        if (glTextureId == 0 || data == null || x != 0 || y != 0) {
+            return false;
+        }
+        Entry entry = this.entries.get(glTextureId);
+        if (entry == null || entry.width != width || entry.height != height) {
+            return false;
+        }
+        java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
+        try {
+            for (int row = 0; row < height; row++) {
+                int[] source = row < data.length ? data[row] : new int[width];
+                for (int col = 0; col < width; col++) {
+                    int argb = col < source.length ? source[col] : 0;
+                    rgba.put((byte) ((argb >> 16) & 0xFF));
+                    rgba.put((byte) ((argb >> 8) & 0xFF));
+                    rgba.put((byte) (argb & 0xFF));
+                    rgba.put((byte) ((argb >>> 24) & 0xFF));
+                }
+            }
+            rgba.flip();
+            entry.texture.uploadFromImage(width, height, rgba);
+            this.imageUploads++;
+            this.staleIds.remove(Integer.valueOf(glTextureId));
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.failureCount++;
+            this.lastFailure = "announced pixels for GL texture " + glTextureId + ": " + error;
+            return false;
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(rgba);
+        }
+    }
+
     /** {@return how many mirrors were filled from an announced image rather than a readback} */
     public int imageUploads() {
         return this.imageUploads;

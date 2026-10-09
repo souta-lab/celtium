@@ -49,6 +49,9 @@ public class TextureUtilMixin {
             }
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null) {
+                // The pixels go with the hint: this is the animation path, it has the data in hand, and a region that covers
+                // the texture is a complete replacement the mirror can take without reading GL back.
+                backend.announceAnimatedUpload(data, width, height, x, y);
                 backend.invalidateBoundTexture();
             }
         } catch (Throwable ignored) {

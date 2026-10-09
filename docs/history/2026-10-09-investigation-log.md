@@ -8431,3 +8431,29 @@ announcement is arriving, just not for the texture being refreshed. That is the 
 So the next step has a name and a mechanism: **announce from the direct texture-subimage writes as well**, where the caller
 already holds the pixels, and the readback stream shrinks to whatever remains outside both paths. The assertion that this is
 where the writes go is in the ids above rather than in a reading of the code.
+
+---
+
+## The animated writes are patches, not whole textures - and the measurement says so
+
+The animated announcement was implemented and it fired **zero** times, for a reason the logs state plainly:
+
+```
+celtium texture animation upload: hit=1 size=32x32 at 0,0
+celtium texture animation upload: hit=2 size=32x32 at 32,0
+celtium texture animation upload: hit=3 size=16x16 at 0,32
+CELTIUM_MIRROR size=256x256 ...      (the atlas)
+```
+
+The animation path writes **sub-regions of the atlas** - one sprite's frame at a time - not whole textures, so the "a region
+that covers the texture may replace it" rule correctly refuses every one of them, and `inPlaceRefreshes` stayed at 4,944. The
+guess in the previous round's write-up was that these writes were the light map; they are the **atlas's per-sprite animation**,
+and the light map is not in this stream at all.
+
+That makes the remaining step precise rather than large, because Vulkan does exactly what is needed: `vkCmdCopyBufferToImage`
+takes a **destination offset**, so a patch can be applied to the image directly. The mirror's upload path currently takes
+`(pixels, width, height, level)`; it needs `(pixels, width, height, x, y, level)`, and the registry's announcement needs to stop
+refusing partial regions and start applying them.
+
+So: **the plumbing added this round is correct and never applicable, which is a better state than incorrect and applied** - and
+the numbers say what the next change has to be rather than leaving it to be discovered.

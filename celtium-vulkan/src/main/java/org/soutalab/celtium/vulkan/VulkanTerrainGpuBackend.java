@@ -458,6 +458,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
     private int announcedUploads;
+    private int animatedImageFills;
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
@@ -774,6 +775,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.textureRegistry.announceImage(glTextureId, image);
         this.announcedUploads++;
+    }
+
+    /**
+     * Announces a whole-texture write made through the animation path, which writes into whatever texture is bound.
+     * <p>
+     * The id has to be asked of GL because the method that performs the write takes no id - it is the one place in this
+     * renderer where a GL query buys something a hook cannot supply.
+     */
+    public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
+        if (this.textureRegistry == null) {
+            this.textureRegistry = new VulkanTextureRegistry(this.context);
+        }
+        int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        if (this.textureRegistry.announceFullPixels(bound, data, width, height, x, y)) {
+            this.animatedImageFills++;
+        }
     }
 
     @Override
@@ -2307,7 +2324,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
                 + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
-                + " announcedUploads=" + this.announcedUploads
+                + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
                 + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
                 + " acquireOutOfDate=" + (this.swapchain != null ? this.swapchain.acquireOutOfDate() : -1)
                 + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()

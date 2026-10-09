@@ -189,6 +189,10 @@ public interface TerrainGpuBackend {
     default void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
     }
 
+    /** Announces a whole-texture animated write with the pixels it is writing. */
+    default void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
+    }
+
     /** {@return the reason the backend most recently refused a batch}, for diagnostics at the call site. */
     default String lastRefusal() {
         return "unknown";
