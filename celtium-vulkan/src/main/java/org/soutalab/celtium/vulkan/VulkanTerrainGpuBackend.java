@@ -438,6 +438,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
     private int stalledStops;
+    private int stalledTeardownSkips;
     private static final boolean FAIL_IDLE = Boolean.getBoolean("celtium.vulkan.failIdle");
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
@@ -1804,6 +1805,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
+                + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
                 + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
@@ -2002,6 +2004,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void delete() {
+        if (this.gpuStalled) {
+            // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
+            // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
+            // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
+            this.stalledTeardownSkips++;
+            return;
+        }
         // Nothing may be released while a submission is still reading it: the audit reproduced
         // vkDestroyBuffer/-Pipeline/-DescriptorPool/-RenderPass/-Framebuffer while a command buffer was in use, on the
         // reload and world-leave paths. Ending the queue's work first is the difference between freeing a resource and
@@ -3377,6 +3386,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the same one the frame waits use.
      */
     private void settleGpu(String reason) {
+        if (this.gpuStalled) {
+            // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
+            // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
+            // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
+            this.stalledTeardownSkips++;
+            return;
+        }
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
         if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {

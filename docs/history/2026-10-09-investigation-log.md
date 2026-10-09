@@ -4505,3 +4505,28 @@ buffer, not a drawing call.
 The guards that are in place are correct and stay: nothing invalid is reset, re-recorded or drawn through those five
 entries. **S02 is still open**, and its acceptance is unchanged - an injected run that refuses and stays clean instead of
 aborting - with the search now inside `VulkanFrameTarget` and the swapchain rather than in the backend's frame stage.
+
+---
+
+## Seven stall guards, the same two messages, and the injection's timing is the next suspect
+
+Guards are now in place at seven entries - `render`, `flushImmediateWindow`, `submitImmediateBatchTimed`,
+`runSwapchainProbe`, `ensureFrameTarget`, `delete` and `settleGpu` - each closing what a stalled GPU must not touch. The
+injected run is unchanged:
+
+```
+INJECTED: exit -6 | clean False | messages 17 | fixture MISSING_REPORT
+  * vkCmdPipelineBarrier(): was recorded, but vkBeginCommandBuffer() was not called prior to this command
+  * vkDestroyFramebuffer(): ... in use by VkCommandBuffer ...
+```
+
+Since the guards cover every backend entry that records or destroys anything, the abort is happening **before** the paths they
+close. The injection is the reason: `FAIL_IDLE` makes the *first* wait fail, which is during start-up, when the renderer has
+not been built yet - so the run is exercising a stall before the frame target exists rather than the steady-state stall S02
+describes. Nothing about the guards is wrong; the test is aimed a frame early.
+
+The fix for the test is one condition: let the injection fail a wait **after** the renderer is running - the second or third
+wait - so the failure lands in a steady frame with a recorded, submitted predecessor. That is the state S02 is about, and it
+is the state in which "the GPU may still be reading the buffer" is true rather than hypothetical. Start-up stalls are a
+different question and should be recorded as one rather than mixed in: the honest boundary is that this round's guards are
+correct and unverified, and the injection needs to aim at the frame it was written for.

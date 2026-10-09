@@ -33,7 +33,13 @@ touches nothing, and every later batch is refused before acceptance, with a docu
 (`-Dceltium.vulkan.failIdle=true`) for the path no ordinary run reaches. Measured: the normal run is unchanged (exit 0,
 validation clean, 0 messages, PASSED, `gpuStalled false`), and the **injected** stall still ends in `SIGABRT` with 17
 validation messages - because the rest of the frame (`endFrame`, present, terrain passes) still assumes a recorded buffer.
-**Open, and narrowed:** five entries that touch the frame target are now guarded (`render`, `flushImmediateWindow`,
+**Open, and the test itself is now suspect:** seven entries are guarded (`render`, `flushImmediateWindow`,
+`submitImmediateBatchTimed`, `runSwapchainProbe`, `ensureFrameTarget`, `delete`, `settleGpu`) and the injected run is still
+`SIGABRT` with the same two messages - a barrier into an un-begun buffer and a framebuffer destroyed while a command buffer
+referenced it. Because the guards cover every backend entry that records or destroys, the abort happens **before** them: the
+injection fails the *first* wait, which is during start-up rather than in a steady frame. The next step is to aim the
+injection at a later wait so it exercises the state S02 describes - a recorded, submitted predecessor - and start-up stalls
+are recorded as a separate question. **Open:** five entries that touch the frame target are now guarded (`render`, `flushImmediateWindow`,
 `submitImmediateBatchTimed`, `runSwapchainProbe`, `ensureFrameTarget`) and the injected run is unchanged - the same two
 messages, a barrier recorded into a buffer that was never begun and a framebuffer destroyed while a stale command buffer
 referenced it. So the offending path is **not** in the backend's frame stage; the candidates are `VulkanFrameTarget`'s own
