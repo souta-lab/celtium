@@ -9191,5 +9191,4 @@ CELTIUM_COMPOSITE_REFUSED   reason=format 2 not in celtium.vulkan.immediateForma
 読めない。拒否理由の集計（`immediateLastRefusal` を off-target バッチに紐付ける計器）が必要である。
 
 計器の設計は4箇所（フィールド2つ、次回offer時の事後サンプリング、受理時のクリア、offer時のフラグ立て、報告行）で、
-今回は4つ目のアンカーが一意でなかったため**書き込み前に停止**した（ツリーは green のまま）。次回は
-`CELTIUM_OFFTARGET target=` の印字が**2箇所**にあることを踏まえ、行番号で一意に指定する。
+今回は4つ目のアンカーが一意でなかったため**書き込み前に停止**した（ツリーは green のまま）。次回は印字行を**行番号で**指定する（アンカー文字列は一致しなかった。印字は1箇所だけであり、「2箇所ある」と書いたのは誤りだったので訂正する）。
