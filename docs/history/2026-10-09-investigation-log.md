@@ -3709,3 +3709,31 @@ pass like the GUI's, after that pass has reset both stacks. So the seed copies t
 next attempt derives the translation the way the projection is now derived: from `RenderManager.viewerPos` at the camera
 setup, with the bobbing question - whether vanilla applies the camera translation before or after `setupViewBobbing` -
 answered by reading `orientCamera`'s tail rather than by guessing.
+
+---
+
+## Reading the camera setup, and a fifth instance of the same reading mistake
+
+What the source does say, from `orientCamera` and its caller:
+
+- `func_78479_a` applies the nausea wobble, then calls **`orientCamera(partialTicks)`**, then the debug-view and anaglyph
+  translations. `setupViewBobbing` is **outside** this method, in the world pass that calls it.
+- Inside `orientCamera`, the **first-person** case is the final `else` branch and applies only
+  `GlStateManager.translate(0.0F, 0.0F, 0.05F)`; the third-person branches apply the entity's interpolated yaw and pitch
+  rotations and a `translate(0.0F, 0.0F, -d3)` distance. The sneak offset `translate(0.0F, 0.3F, 0.0F)` precedes them.
+- The camera translation itself - `-viewerPosX/Y/Z` - is **not in the parts that were read**, and three greps over the same
+  method each filtered out a different candidate for where it is.
+
+That last sentence is the round's real finding, and it is the fifth time in this session that a **filtered read** produced a
+conclusion the unfiltered source did not support: a truncated log line twice, a truncated counter, a stale reference, and now
+three greps that each dropped the line being looked for. The pattern is always the same shape - a filter is chosen to make the
+output small, and the answer is in what it removed - and the countermeasure that has worked is equally consistent: read the
+method whole, or ask for the field by name, before concluding anything.
+
+So the next step is not another grep. It is to dump `orientCamera` and the first thirty lines of `func_78479_a` **unfiltered**
+and read where the camera translation sits relative to the first-person branch, because the derivation that replaces it has
+to be applied at exactly that point to be correct for all three camera modes.
+
+Nothing changed in the renderer this round; what it produced is the structure of the camera setup, one located fact
+(`setupViewBobbing` is outside `func_78479_a`, so a derivation at its return cannot clobber bobbing), and the decision to
+stop filtering the source.

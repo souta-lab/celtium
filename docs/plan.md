@@ -186,8 +186,13 @@ content work that does not touch frame structure can proceed in parallel.
 
    **Verified:** the projection delta fell from **2.0005527 to 1.6200542E-4** once
    `setMatrix` wrote into the stack instead of into the copy that `matrix(mode)` returns - the same defect that made an
-   earlier seed look "ineffective for the wrong reason". The modelview remains at 1.62 (the camera translation, still to be
-   derived from `RenderManager.viewerPos` and written the same way). Earlier notes: `func_78481_a` is hooked at its return and the backend computes `gluPerspective`
+   earlier seed look "ineffective for the wrong reason". The modelview remains at 1.62. Its cause is located precisely now: the
+   translate call **is** hooked and the mirror misses it only because it was applied before the hooks existed, and the seed
+   written to repair that copies GL at the **first comparison**, which is a moment when GL itself holds the identity. The
+   camera setup's structure is read (`orientCamera` holds the per-mode translations; `setupViewBobbing` is outside
+   `func_78479_a`, so a derivation at its return cannot clobber bobbing), and the exact point of the `-viewerPos` translate
+   is to be read **unfiltered** - three greps in a row filtered out the line being looked for, the fifth time this session
+   that a filtered read produced a conclusion the whole source did not support. Earlier notes: `func_78481_a` is hooked at its return and the backend computes `gluPerspective`
    from Minecraft's four numbers (`derivedProj:3409, refused:5`), but the worst-sample counter still reads the identity
    matrix, because it samples at a moment when another pass - the GUI or the hand - has reset the projection stack through
    the same hooked `matrixMode` + `loadIdentity` pair. The acceptance is now taken at the right instant - the `matrixMode(GL_MODELVIEW)` that follows the
