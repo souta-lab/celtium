@@ -10,6 +10,29 @@ what is being built now. Evidence, measurements and disproved hypotheses live in
 wins.
 
 
+## Major-mod verification, and the two third-party mods every measurement already carried
+
+The objective asks for verification against a real major mod after the small Forge-event fixture, and that is now done.
+**JEI 1.12.2-4.22.0.1035** - one of the most widely used mods on this version, and one that draws heavily - is fetched,
+hash-recorded, and loaded alongside Celtium:
+
+```
+mods loaded: +Fugue-0.24.4, celtium, celtium-validation-client, jei_1.12.2-4.22.0.1035, scalar-3.9.0
+exit 0 | clean | messages 0 | fixture PASSED
+nativeTerrainVerified=True   terrainPasses=1611   glDrawsCancelled=558   passes=2169
+outsideWorldPassAccepted=7133   descriptorSets=1
+```
+
+Alongside, worth stating because it was never in the plan: **every measurement this project has taken already ran with two
+third-party mods loaded** - `+Fugue-0.24.4`, a Cleanroom coremod that transforms vanilla classes, and `scalar-3.9.0`. The
+renderer has therefore coexisted with class-transforming third-party code throughout, and the lock's `testMods` list is where
+that is now visible rather than assumed.
+
+**What this does and does not establish.** It establishes that a major mod loads, its GUI content reaches the Vulkan
+immediate path (7,133 batches outside the world pass in this run), and the acceptance and validation stay clean with it. It
+does **not** establish JEI's recipe screens, which the fixture never opens - that needs a fixture that interacts with the mod,
+and it is named here rather than implied.
+
 ## Completion condition (2), item by item, with the evidence for each state
 
 Required by the objective: terrain plus entity/TESR/item, hand/GUI/font/HUD, particles, sky/cloud/weather/water,

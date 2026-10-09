@@ -6612,3 +6612,32 @@ Every item of completion condition (2) has now been **exercised on hardware** at
 covered format, the GUI, the font, the HUD, the hand, particles, texture animation, resource reload, resize and world switch.
 The one that is identified but unresolved is sky, clouds and the water surface, whose mapping contradiction is recorded with
 its two halves.
+
+---
+
+## A major mod runs clean, and the two third-party mods that were always there
+
+The objective's last verification step is a real major mod rather than only the Forge-event fixture, and this round did it:
+**JEI 1.12.2-4.22.0.1035** was fetched from Modrinth (HTTP 200, 715,519 bytes, hash recorded in the lock), placed in the run's
+mod list, and the client started with it loaded.
+
+```
+mods loaded: +Fugue-0.24.4, celtium, celtium-validation-client, jei_1.12.2-4.22.0.1035, scalar-3.9.0
+exit 0 | clean | messages 0 | fixture PASSED
+nativeTerrainVerified=True  terrainPasses=1611  glDrawsCancelled=558  passes=2169  status=PASSED
+outsideWorldPassAccepted=7133   descriptorSets=1
+```
+
+JEI draws a lot and its content arrives **outside the world pass**, which is the path the GUI work opened two rounds ago - so
+this run exercises both the mod compatibility and that new path at once, with **no validation messages** on the AMD driver and
+the descriptor cache still at a single set.
+
+The run also surfaced something that should have been in the plan all along. Printing the lock's `testMods` list shows that
+**every measurement this project has taken already carried two third-party mods**: `+Fugue-0.24.4`, a Cleanroom coremod that
+transforms vanilla classes, and `scalar-3.9.0`. So the renderer has been coexisting with class-transforming third-party code
+in every run - a stronger compatibility statement than the plan made, and one that cost nothing to establish because the
+provenance field records it.
+
+Recorded honestly as well: this establishes that a major mod **loads** and that its GUI content reaches the Vulkan path. It
+does not establish JEI's recipe screens, because the fixture never opens one; that needs a fixture that interacts with the mod,
+and it is named rather than implied.
