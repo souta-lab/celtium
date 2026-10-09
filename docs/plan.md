@@ -56,8 +56,10 @@ image percentages measured self-consistency because no other option existed. Tha
 `upstream-baseline` checkout, runs the same fixture and scene flags with the pinned lineage in place of Celtium and produces a
 clean reference frame with terrain. Against it, the current Celtium terrain differs in **68.81% of pixels** (mean 34.09; sky
 third 10.38%, terrain bands 98.74% and 97.32%). That is the first number in this project that measures agreement with the
-renderer it replaced rather than with its own previous frame, and it is far larger than the self-comparisons suggested. What
-it does not yet say is *how* the terrain differs; the next step is a visual and structural comparison of the two frames.
+renderer it replaced rather than with its own previous frame, and it is far larger than the self-comparisons suggested. The structure of the difference is now known: the sky is **pixel-identical**, no pixel shift improves the match
+(minimum at zero offset), and the terrain is **uniformly about 40% darker** than the reference (luminance 77-80 against
+129-131 in the three terrain bands). So the 68.81% is a **shading** defect rather than a geometry one, and the candidates are
+the lightmap the terrain multiplies by, the brightness/colour multipliers, and the fragment shader's light arithmetic.
 
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for

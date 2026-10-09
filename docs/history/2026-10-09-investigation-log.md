@@ -5179,3 +5179,36 @@ of images that already exist, not another run.
 
 The reference itself is now a documented artefact rather than an aspiration: its exact jar, scene flags and result are
 recorded here, and it can be re-run whenever the terrain path changes.
+
+---
+
+## The terrain is 40% too dark: geometry aligned, shading wrong
+
+The 68.81% needed a structure, and the two frames give one immediately - side by side, the reference is a bright green plain
+and Celtium's is the same plain almost black, with the torches visible in both. Measured:
+
+| rows | difference >8 | Celtium luminance | reference luminance |
+|---|---|---|---|
+| 0-144 (sky) | **0.0%** | 203.9 | 203.9 |
+| 144-288 (horizon) | 50.2% | 163.0 | 174.3 |
+| 288-432 | 98.9% | **79.9** | 131.0 |
+| 432-576 | 98.4% | **76.7** | 131.1 |
+| 576-720 | 96.5% | **78.1** | 128.9 |
+
+Three things follow, and together they close the question the last round left open:
+
+- **the sky is pixel-identical** - difference 0.0 across the whole top band, the same luminance to a tenth - so the frame,
+  the camera, the partial tick and the capture are the same in both runs;
+- **no shift helps**: testing shifts of up to eight pixels in both axes, the minimum difference is at `dy=0, dx=0` with the
+  unshifted value (39.0). So it is **not** misalignment and not a scale error;
+- **the terrain is uniformly about 40% darker** than the reference (79.9 against 131.0, 76.7 against 131.1, 78.1 against
+  128.9), with the horizon band - distant terrain, mostly sky-lit - only half different.
+
+So the 68.81% has one mechanism behind it rather than several: the **shading**, not the geometry. Every candidate that would
+have made this a measurement artefact is excluded by the numbers above, and the remaining candidates are all on one path - the
+lightmap the terrain multiplies by (the likely one, since a wrong or missing lightmap darkens everything uniformly), the
+brightness and colour multipliers, and the fragment shader's light arithmetic.
+
+Also seen in the image and **not** yet quantified: a bright vertical line near the centre of Celtium's frame. A check of the
+exact centre column did not find it (118.8 against a frame mean of 120.3), so it sits at a different column and the check is
+recorded as inconclusive rather than as absent - the same distinction this log has had to make before.
