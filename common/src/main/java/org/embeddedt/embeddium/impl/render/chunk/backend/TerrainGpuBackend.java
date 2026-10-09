@@ -180,6 +180,11 @@ public interface TerrainGpuBackend {
     default void flushBeforeClear(int mask) {
     }
 
+    /** {@return the reason the backend most recently refused a batch}, for diagnostics at the call site. */
+    default String lastRefusal() {
+        return "unknown";
+    }
+
     default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                          int vertexCount, int drawMode) {
         return false;

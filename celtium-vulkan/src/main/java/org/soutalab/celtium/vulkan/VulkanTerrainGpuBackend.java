@@ -1022,6 +1022,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    @Override
+    public String lastRefusal() {
+        return this.immediateLastRefusal;
+    }
+
     public void flushBeforeClear(int mask) {
         if (this.immediateGroups.isEmpty()) {
             return;

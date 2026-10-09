@@ -6844,3 +6844,33 @@ guard that actually returns, rather than to reason about which one it ought to b
 
 What stands from the round before is unaffected and is the part that mattered: the present path **ran**, for the first time,
 with no failure reported, no out-of-date state, validation silent and the acceptance intact.
+
+---
+
+## Observed, not reasoned: the composite batch arrives as format 0
+
+The instrument this round was the one the last correction asked for - print the backend's own refusal reason - and it settled
+the present-path question in one run:
+
+```
+CELTIUM_COMPOSITE_REFUSED reason=format 0 not in celtium.vulkan.immediateFormats   stride=24 vertices=4
+CELTIUM_COMPOSITE_REFUSED reason=lightmapped batch with no lightmap texture mirrored  stride=24 vertices=4
+```
+
+**The composite batch reaches the renderer as format 0**, which is the id for "this `VertexFormat` was not recognised" - the
+same symptom, in the same mapping, that the sky, cloud and water content showed. When it does arrive as format 2, the reason
+it is refused is the light map check, because the composite is drawn outside the world pass where no light map is bound. Neither
+of those is the mask, and the mask's effect is now explainable rather than mysterious: admitting format 2 changed which batches
+the renderer takes, and with it which of them arrive at the branch first.
+
+Two things follow, and they are worth separating.
+
+The present-path question is **closed by observation** rather than by another theory: the path runs when a format-2 batch
+reaches it with a light map bound, which is what admitting 2 achieved on a run where the game's own composite came through
+recognised.
+
+And the **format mapping is now implicated twice**, independently: the sky, cloud and water shapes arrive as 0, and so does
+the composite - content the game draws every frame. Six rules failed to change that; last round's correction said the
+instrument itself was not trustworthy; this round adds a second, unrelated shape whose failure has the same signature. That is
+the strongest evidence yet that the problem is in the mapping's instrumentation rather than in the rules being tried against
+it, and it is the thing to examine next.

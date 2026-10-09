@@ -41,6 +41,7 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$compositeDumps;
 
     private static int celtium$nullFormatDumps;
+    private static int celtium$compositeRefusals;
 
     private static String celtium$stack() {
         StackTraceElement[] trace = new Throwable().getStackTrace();
@@ -129,6 +130,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
             // backend was never called, GL drew every batch, and the counters reported zeros while the images matched.
             accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+            if (!accepted && formatId == 2 && celtium$compositeRefusals < 3) {
+                // The composite batch is the one the present path keys on, and three rounds of reasoning about which guard
+                // stops it have produced one wrong answer already. Printing the backend's own reason replaces the reasoning.
+                celtium$compositeRefusals++;
+                System.out.println("[Celtium] CELTIUM_COMPOSITE_REFUSED reason=" + backend.lastRefusal()
+                        + " stride=" + stride + " vertices=" + vertices);
+            }
             if (formatId == 2 && celtium$compositeDumps < 1) {
                 // Unconditional: this runs for every offered batch, before the backend's acceptance mask decides
                 // anything, which is where a dump that must survive a mask has to live. It answers who draws the
