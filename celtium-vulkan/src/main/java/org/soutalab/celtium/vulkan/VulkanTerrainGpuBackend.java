@@ -254,6 +254,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public List<String> diagnostics() {
+        // takeTimingSummary() was written but never called, so every post-process investigation ran without the numbers
+        // that say where the handoff time goes. Gated, because it is a per-report string rather than a per-frame cost.
+        if (Boolean.getBoolean("celtium.vulkan.handoffTimings") && this.frameTarget != null) {
+            String timings = this.frameTarget.takeTimingSummary();
+            if (timings != null) {
+                this.diagnostics.add(timings);
+            }
+        }
         return this.diagnostics;
     }
 

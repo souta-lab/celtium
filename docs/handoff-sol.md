@@ -388,7 +388,12 @@ shaderActive=True だが **spider は exit 124（ハング・report なし）**�
 **【訂正】「毎フレーム mirror ループ」は数値に合わない**: 277回は約120秒で毎秒2.3回。フレーム時間の比較が真因を示す
 ——shader group 有効時は AMD でも **p99 46ms→174ms（約4倍）**・サンプル数 108→58、Intel は素の postprocess でも
 p50 63ms（AMDの1.5倍）。つまり **GL↔VK ハンドオフ（全画面コピー）のコストが post-process のパス数だけ増幅**される
-ことが原因で、mirror 頻度は主因ではない。次の一手は (1) 同一frame内の連続パスをまとめてハンドオフ回数を減らす、
+ことが原因で、mirror 頻度は主因ではない。**ハンドオフ計器を接続**: `takeTimingSummary()` は呼び出し元が無かったので `diagnostics()` から
+`-Dceltium.vulkan.handoffTimings=true` で出すようにした。実測では **handoff の CPU時間は ~135µs/handoff で
+通常と postprocess が同一**（= フレーム時間の律速ではない。ただし GPU 実行時間は含まない）。
+さらに **spider のハングは AMD でも再現**（exit 124、前回AMDは PASSED でフレーキー）＝Intel固有ではなく、
+spider.json（バニラ最重のポストプロセス）でフレーム時間が閾値を超えるため。次の計器は GPU 側の timestamp。
+次の一手は (1) timestamp クエリで handoff の GPU 時間を測る、(2) 同一frame内の連続パスをまとめてハンドオフ回数を減らす、
 (2) 画面サイズテクスチャの mirror を「Vulkan側で実際にサンプルする描画がある場合」に限定する、
 (3) パスあたりのコストを測る計器を足す（budget延長で隠さない）。
 **【訂正】**以前「6 runすべて shaderActive=True」と記録したのは誤り（Intel spider はプロパティごと欠落＝場面が
