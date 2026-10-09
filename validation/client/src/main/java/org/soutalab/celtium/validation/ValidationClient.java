@@ -446,7 +446,10 @@ public final class ValidationClient {
             // Hide the HUD a few ticks before the capture so the saved PNG is the rendered scene only. A stock
             // Celeritas run and a Celtium run of the same seed can then be compared pixel by pixel, without
             // chat lines, the hotbar or overlay text contributing differences that are not renderer differences.
-            mc.gameSettings.hideGUI = true;
+            // Hidden so a stock Celeritas run and a Celtium run can be compared on terrain alone. Keeping it makes the
+            // same comparison cover the GUI, the font and the HUD, which are Tessellator content like everything else
+            // the immediate path serves - and which the hidden-GUI frames therefore said nothing about.
+            mc.gameSettings.hideGUI = !Boolean.getBoolean("celtium.validation.keepGui");
         }
         if (worldTicks < 200) return;
         try {

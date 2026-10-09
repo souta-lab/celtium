@@ -2080,3 +2080,31 @@ deferred every excess batch, nothing is deferred at all.
 
 So D closes with its measurement, its cost named (`immediateRefusedWindowBudget`, and the geometry that goes to GL), and the
 configuration it was verified in - stated as sterner than the shipped one rather than as identical to it.
+
+---
+
+## With the GUI visible the default configuration differs from GL, and it is not the HUD
+
+Every pixel-identical result in this log was measured with the HUD hidden, because the fixture sets `hideGUI = true` a few
+ticks before the capture so that "chat lines, the hotbar or overlay text" cannot contribute differences. That made the
+comparison clean and left the HUD unmeasured - a gap that only shows when the switch is turned around
+(`-Dceltium.validation.keepGui=true`).
+
+With the GUI visible, the shipped default against a same-scene reference whose immediate path is off measures:
+
+```
+immediate on:  PASSED, nativeTerrainVerified True, 1676 passes
+immediate off: PASSED, nativeTerrainVerified True, 1662 passes
+difference:    mean 1.58 | 1.19% of pixels over 8 | 0.80% over 32
+```
+
+and the localisation says what it is not: **hotbar, crosshair, chat and the overlay region all differ by 0.00%**, while the
+whole difference sits in a world-space band at x 273..935, y 387..575 - middle and lower-middle of the frame. So the HUD
+that the switch was turned on to measure is drawn correctly, and something else in the frame changes when the GUI is
+present: the held item and the batch ordering that shifts once the GUI's own batches join the same frames are the
+candidates, and the next step is to identify which one by instrumenting which batch or pass lands in that band rather than
+by guessing between them.
+
+That is a real, located, reproducible gap in the shipped configuration - small (1.2% of pixels, none of them far off) and
+nowhere near the "no differences" the hidden-GUI runs reported, which is exactly why the difference between "measured with
+the HUD hidden" and "measured" has to be stated wherever the earlier results are quoted.
