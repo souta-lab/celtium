@@ -7392,3 +7392,28 @@ both were about *what the code did not say* rather than about what it computed w
 
 The item is the one that resisted six rules, three rounds and a fixed identity comparison - the sky, the clouds, the water
 surface - and it moved on a single character of a range check, found by printing the backend's own refusal reason.
+
+---
+
+## The sky path on Intel too, and the format-1 drop is systematic
+
+The new path verified on the second GPU:
+
+| | format 6 batches | immediate taken | cancelled GL draws | terrain passes | validation |
+|---|---|---|---|---|---|
+| AMD RX 6400 | 2374 | 2728 | 2728 | 1056 | clean |
+| Intel UHD 630 | 870 | 1000 | 1000 | 381 | clean |
+
+Both: exit 0, fixture PASSED, acceptance intact, and three position-texture refusals - the first frames, before the pipeline
+exists. The sky, the clouds and the water surface are drawn by Vulkan on both GPUs, which is the two-GPU condition extended to
+the newest drawing path.
+
+**Format 1 is zero on both.** Before the mapping fix it read `1:17` on AMD and `1:8` on Intel; now it reads `1:0` on both. A
+consistent reading across two GPUs is not a fluke, so this is systematic and the next thing to explain - and the honest state is
+that it is **measured and not understood**: the acceptance mask includes format 1, so the batches are not being declined by the
+mask, and the group key includes the format id, so they cannot be merging into the format-6 groups. What the change could have
+done is reorder what arrives where, and the way to find out is to count what arrives rather than what is accepted - which is
+the next diagnostic for this item rather than another guess at it.
+
+Recorded as the third item in this project whose change moved a counter nobody was looking at: the identity comparison, then
+the missing branch, then the range bound, and now a format that stopped being accepted while two others started.
