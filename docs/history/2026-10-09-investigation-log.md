@@ -631,3 +631,31 @@ That is a design conclusion, not a bug to patch: a bridge that merges two render
 host a window per flush point. Making the immediate path correct needs the renderer to own the frame - drawing GL's
 remaining content into Vulkan images as it is ported - which is the same conclusion the matrix measurements reached from
 the other side. The window is reverted, the tree is green, and the immediate path stays off by default.
+
+---
+
+## Correction: the window's black frame is unexplained, so the design conclusion was premature
+
+The fourth attempt concluded that "a bridge that merges two renderers by copying whole images cannot host a window per
+flush point". That conclusion was drawn from a frame that differed from the reference in 100% of its pixels, and the
+saved screenshot says something much more specific:
+
+```
+window run : mean [0. 0. 0.] std [0. 0. 0.]   - the frame is entirely black
+reference  : mean [135.9 148.6 158.2]         - the scene
+```
+
+An all-black frame is not a compositing subtlety, and two candidate explanations have now been checked in the source and
+**eliminated**:
+
+- `VulkanFrameTarget.endFrame()` **does** write the frame back: it waits on the Vulkan-to-GL semaphore, blits the shared
+  colour framebuffer into the game framebuffer with `glBlitNamedFramebuffer`, and converts the depth. So the window was
+  not missing its copy-back.
+- The terrain render pass loads rather than clears: both attachments use `VK_ATTACHMENT_LOAD_OP_LOAD`, so the
+  immediate-only pass reusing it would not wipe the shared image.
+
+So the cause is still open, and the honest statement is that the design conclusion was **premature**: it was drawn from
+a broken frame whose breakage has a cause that has not been found yet. The next diagnostic is targeted and cheap: sample
+the shared colour image right after the window's `beginFrame()` and again after its `endFrame()`, and compare both
+against what the game framebuffer holds at those moments. That says whether the content is lost on the way in, on the
+way out, or never present - instead of inferring it from a final image.
