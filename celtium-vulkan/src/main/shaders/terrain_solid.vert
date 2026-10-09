@@ -181,7 +181,12 @@ float getFragDistance(int fogShape, vec3 position) {
 // is deliberately not ported: the SOLID pass always has a light map).
 // --------------------------------------------------------------------------------------------
 vec4 _sample_lightmap(sampler2D lightMap, ivec2 uv) {
-    return texture(lightMap, clamp(vec2(uv) / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+    // Divided by 16, because Minecraft 1.12.2's light map is a 16x16 texture - the same number the clamp around it is
+    // written in (half a texel in, half a texel out). Sodium's modern light map is 256x256 with many maps packed into it,
+    // and this port kept the 256 divisor while taking the clamp from the 16-texel layout, so the two disagreed by a factor
+    // of sixteen and every sample landed near the darkest texel: the terrain rendered uniformly about 40% darker than the
+    // reference while its geometry, textures and fog all matched.
+    return texture(lightMap, clamp(vec2(uv) / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
 }
 
 void main() {

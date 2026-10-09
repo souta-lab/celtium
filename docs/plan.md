@@ -58,8 +58,11 @@ clean reference frame with terrain. Against it, the current Celtium terrain diff
 third 10.38%, terrain bands 98.74% and 97.32%). That is the first number in this project that measures agreement with the
 renderer it replaced rather than with its own previous frame, and it is far larger than the self-comparisons suggested. The structure of the difference is now known: the sky is **pixel-identical**, no pixel shift improves the match
 (minimum at zero offset), and the terrain is **uniformly about 40% darker** than the reference (luminance 77-80 against
-129-131 in the three terrain bands). So the 68.81% is a **shading** defect rather than a geometry one, and the candidates are
-the lightmap the terrain multiplies by, the brightness/colour multipliers, and the fragment shader's light arithmetic.
+129-131 in the three terrain bands). So the 68.81% is a **shading** defect rather than a geometry one. The lightmap divisor was wrong (256 where 1.12.2's 16x16
+light map needs 16, and where the shader's own clamp was already written in 16-texel terms); it is **fixed**, and the
+measurement is **unchanged** - which proves the light value reaching the shader is already at the clamp, i.e. **zero**. The
+two candidates left are `vertex.light` being zero as the mesh is built, and the light map texture the terrain pipeline binds
+not being the one the dump shows; both need one line of instrumentation each.
 
 Consequences: (a) the honest terrain baseline is **68.81%** and the immediate-path numbers still need re-baselining against
 the OpenGL reference; (b) for

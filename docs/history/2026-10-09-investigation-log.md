@@ -5212,3 +5212,39 @@ brightness and colour multipliers, and the fragment shader's light arithmetic.
 Also seen in the image and **not** yet quantified: a bright vertical line near the centre of Celtium's frame. A check of the
 exact centre column did not find it (118.8 against a frame mean of 120.3), so it sits at a different column and the check is
 recorded as inconclusive rather than as absent - the same distinction this log has had to make before.
+
+---
+
+## The lightmap divisor was wrong, and fixing it changed nothing - so the light arriving is already at the clamp
+
+The terrain shader's lightmap sampling disagreed with itself, which is the kind of thing that is worth fixing on sight:
+
+```glsl
+return texture(lightMap, clamp(vec2(uv) / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+```
+
+The divisor is **256** - Sodium's modern light map is 256x256 with many maps packed into it - while the clamp around it is
+written in **16-texel** terms, which is what Minecraft 1.12.2 actually uses (and what this project's own shader comment says,
+and what the texture dump shows: a 16x16 light map with real content, mean 135). The divisor is now 16, and the shader is
+internally consistent for the first time.
+
+Measured against the upstream reference with that fix:
+
+```
+terrain baseline: mean 34.08 | >8 68.81%      (before the fix: mean 34.09 | 68.81%)
+```
+
+**No change at all.** That is not a disappointing result, it is a measurement that rules a hypothesis out: with the light
+coordinates at zero, `/256` and `/16` both clamp to the same darkest texel - `0.5/16` - and produce an identical frame. So the
+terrain is dark because **the light value reaching the shader is zero**, not because of how it is scaled, and the divisor fix
+is correct but was never the cause.
+
+The path was then traced as far as it can be read without an instrument. `CompactChunkVertex` writes the light into the upper
+16 bits of `a_LightCoord` (`encodeDrawParameters(...) | (encodeLight(vertex.light) << 16)`), which is exactly where the shader
+reads it (`(a_LightCoord >> 16) & 0xFFFF`, then two bytes), and `encodeLight` takes block from the low byte and sky from the
+next - all consistent. So either `vertex.light` is zero as the mesh is built, or the light map texture the terrain pipeline
+binds is not the one the dump shows. Those are the two candidates left, and both are checkable with one line each: print one
+vertex's light value as it is encoded, and print the texture id bound at set 0 binding 1.
+
+Recorded with the fix kept: the divisor correction is a real correctness fix (16 is what the clamp, the comment, the dump and
+the game all say), it is simply not the defect that makes the terrain dark.
