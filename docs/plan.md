@@ -681,7 +681,27 @@ Vulkan資源の生成は種別数に比例していない。ただしこれら�
 つまり次に測るべきはハンドオフではなく、**バッチごとの処理**（offer → preflight → append）と、
 即値経路が有効なときに**Minecraft側のGL描画が受ける影響**である。
 
-**次の一手**: (1) `offerBatch` / `prepareImmediate` の wall time をバッチ単位で数える（今回と同じ計器の付け方でよい）、
+**原因を特定（このターン）**: ゲームが呼ぶ入口 `submitImmediateBatch(...)`（mixin の `celtium$offerBatch` から）を
+呼び出し側で計時し、`batchCallCount` / `batchCallMillis` として report に出す計器を入れた。
+
+| 指標 | 実測（238フレーム） |
+|---|---|
+| `batchCallCount` | **3407（14.3回/フレーム）** |
+| `batchCallMillis` | **6365 ms（26.7 ms/フレーム）** |
+| **1回あたり** | **1.87 ms** |
+| `immediateSubmittedBatches` | 3063（12.9/フレーム） |
+| `actualFlushes` / `actualFlushMillis` | 438（1.8/フレーム）/ 554 ms（2.3 ms/フレーム） |
+| フレーム | p50 **44.3 ms** |
+
+→ **27 ms のギャップは、ほぼこの「バッチ呼び出し 1.87 ms × 14.3回/フレーム = 26.7 ms」で説明できる**。
+  1フレーム予算は「地形 2.2 ms ＋ ハンドオフ 2.3 ms ＋ バッチ呼び出し 26.7 ms ＋ 残り ≈13 ms」。
+  これが `immediate=false` で 16.3 ms になる理由と一致する。
+
+**次の一手**: `submitImmediateBatch` の**中身を分割して計時**する（preflight／append／upload／submit のどこが 1.87 ms か）。
+1バッチあたり 1.87 ms は、頂点の追記とパイプライン参照だけの処理としては大きすぎるので、
+**アップロードや同期（待ち）が混ざっている**可能性が高い。
+
+**（旧メモ）** 次の一手: (1) `offerBatch` / `prepareImmediate` の wall time をバッチ単位で数える（今回と同じ計器の付け方でよい）、
 (2) 即値経路が有効なときの GL 側の描画回数・`glFlush`/同期の回数を、無効時と比べる。
 
 **（旧メモ・誤り）** 次の一手: (1) ハンドオフ回数を減らす（同一フレーム内の連続パスをまとめる。`orderPreserving`/`clearOrder` の

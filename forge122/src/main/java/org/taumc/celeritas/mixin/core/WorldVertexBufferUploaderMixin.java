@@ -196,7 +196,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             // The call that decides everything. It was lost when a dead branch was cleaned out of this method, and
             // with it went the only path by which the backend could ever accept a batch: accepted stayed false, the
             // backend was never called, GL drew every batch, and the counters reported zeros while the images matched.
-            accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+            long batchCallStarted = System.nanoTime();
+            try {
+                accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+            } finally {
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallNanos += System.nanoTime() - batchCallStarted;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount++;
+            }
             if (!accepted && formatId == 9 && celtium$compositeLayoutRefusals < 3) {
                 // The composite's own layout: mapped, in the mask, in range, with the right stride - so what refuses it is
                 // further down again, and the backend will say what.

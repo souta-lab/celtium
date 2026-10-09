@@ -787,6 +787,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int lastReportedDirectRefreshes = -1;
     private int orderPreservingFlushes;
     /** Handoffs that actually carried geometry (the counters above count calls, many of which return early). */
+    /**
+     * Wall time of the game's batch call, measured by the caller (the mixin) around {@code submitImmediateBatch}.
+     * <p>
+     * The per-frame budget after the terrain passes (2.2 ms) and the handoffs (2.3 ms) left ~38.5 ms unaccounted for,
+     * and the {@code immediate=false} A/B says it belongs to the immediate path. This is the instrument for the part of
+     * that path the game calls.
+     */
+    public static long batchCallNanos;
+    public static int batchCallCount;
+
     private int actualFlushes;
     private long actualFlushNanos;
     private long actualFlushWorstNanos;
@@ -2765,7 +2775,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes
                 + " actualFlushes=" + this.actualFlushes
                 + " actualFlushMillis=" + (this.actualFlushNanos / 1000000L)
-                + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L) + " clearOrderFlushes=" + this.clearOrderFlushes
+                + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L)
+                + " batchCallCount=" + batchCallCount
+                + " batchCallMillis=" + (batchCallNanos / 1000000L) + " clearOrderFlushes=" + this.clearOrderFlushes
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
                 + " refusedBeforeAppend=" + this.refusedBeforeAppend
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
