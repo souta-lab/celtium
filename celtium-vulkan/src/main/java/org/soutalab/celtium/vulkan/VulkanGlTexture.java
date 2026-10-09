@@ -205,12 +205,17 @@ public final class VulkanGlTexture {
             // from level 1 upward. The measured difference is 7.37-8.77% for the generated chain against better than
             // 0.21% when the sampling stays on ground the reference also uses.
             this.mirroredLevels = MIRROR_GL_MIPS ? Math.max(1, glLevels) : 0;
-            if (level.width != width || level.height != height
-                    || (MIRROR_GL_MIPS && this.mipLevels != Math.min(mipLevelsFor(level.width, level.height), glLevels))) {
+            boolean recreated = level.width != width || level.height != height
+                    || (MIRROR_GL_MIPS && this.mipLevels != Math.min(mipLevelsFor(level.width, level.height), glLevels));
+            if (recreated) {
                 // The count matters as much as the size: the previous attempt kept the size-derived chain and then read
                 // levels OpenGL does not have, which measured 12.66% with ten validation errors.
                 recreateImageResources(level.width, level.height);
             }
+            System.out.println("[Celtium] CELTIUM_MIRROR size=" + level.width + "x" + level.height
+                    + " glLevels=" + glLevels + " imageLevels=" + this.mipLevels
+                    + " view=" + Long.toHexString(this.view) + " image=" + Long.toHexString(this.image)
+                    + " recreated=" + recreated);
             copyToImage(level.pixels, level.width, level.height, 0);
             if (MIRROR_GL_MIPS) {
                 for (int l = 1; l < Math.min(this.mipLevels, glLevels); l++) {
@@ -418,6 +423,16 @@ public final class VulkanGlTexture {
                     // nothing, which rules out both the clamp and the shader's LOD as the difference and points at the
                     // recreate that mirroring performs when the level count differs - a new image and view while the
                     // descriptor may still name the old one. That is the next thing to check (audit S23).
+                    // The full table, one variable at a time, against the same reference:
+                    //   generated chain, clamp 0.0 -> 13.51%      mirrored levels, clamp 0.0 -> 13.52%
+                    //   generated chain, clamp 1.0 -> 0.16-0.28%  mirrored levels, clamp 1.0 -> 5.56-5.60%
+                    //                                             mirrored levels, clamp 4.0 -> 5.60%
+                    // Level 0 alone is far off in **both** modes, with identical texels on both sides, so the reference is
+                    // heavily mip-blurred. Blending in a level 1 brings the frame to 0.2% when that level is generated here
+                    // and only to 5.6% when it is copied from OpenGL - so the levels this project generates resemble the
+                    // reference's blur and the ones the game itself holds do not. The difference is therefore in what the
+                    // sampler reads at level 1 and above, and the next instrument is to dump one level from each side and
+                    // compare the numbers rather than the frame (audit S23).
                     .maxLod(1.0f)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false);

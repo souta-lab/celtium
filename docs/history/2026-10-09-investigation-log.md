@@ -4984,3 +4984,33 @@ suspicion about ownership rather than a sampler question, and it is where this t
 Mirroring is off again and the restored configuration is the one that measured **0.16%** with validation clean. That
 configuration is byte-for-byte the one verified two runs ago except for a fix inside the disabled path, so it was not
 re-measured this round - and the entry says so rather than implying a fresh run.
+
+---
+
+## The complete clamp table: level 0 alone is far off in both modes, and the generated level 1 is what matches
+
+The mirror report answered where the frames go - 128x128 textures with `glLevels=1`, so the image is built with one level and
+the copied texels are the same ones the generating path reads - and then one variable was moved to separate content from
+structure:
+
+| chain | clamp | difference from the reference |
+|---|---|---|
+| generated | 0.0 | 13.51% |
+| **mirrored from GL** | **0.0** | **13.52%** |
+| **generated** | **1.0** | **0.16-0.28%** |
+| mirrored from GL | 1.0 | 5.56-5.60% |
+| mirrored from GL | 4.0 | 5.60% |
+
+Two facts fall out of it. **Level 0 alone is far off in both modes** - 13.51% against 13.52% - and those two runs sample
+identical texels, because both read them with the same call. So the reference frame is heavily mip-blurred: it is not a
+level-0 image. And **blending in a level 1 fixes it only when that level is generated here**: 0.16-0.28% against 5.6% when the
+level comes from OpenGL itself. The game's own mip level is therefore *less* like the reference's blur than this project's
+blit is - which is not what per-sprite correctness would predict, and which means the difference lives in what the sampler
+reads at level 1 and above, not in the clamp, the shader's LOD, or the texels of level 0.
+
+The next instrument is accordingly a direct comparison rather than another configuration: the texture dump path already
+exists (`-Dceltium.vulkan.dumpTextures=<dir>`), so one run can write the level this project generates and the level the game
+holds, and the two can be compared numerically. A seventh frame would only re-measure the same table.
+
+Mirroring is off, the clamp is at the value the table says is best, and the configuration is the one that has measured
+0.16-0.28% with validation clean throughout.
