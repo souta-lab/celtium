@@ -28,13 +28,34 @@
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
 | **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
-| 条件 (b) の残り | **GL context と、既定フレームバッファへ描く合成** | 後者は **post-present overlay**（present の後に swapchain へ重ねる）が必要で別機能。起動直後の拒否は本質的（§0.58） |
+| 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
 
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.60 **既定フレームバッファへ描く合成も native 化**（残る最大の GL 群 902 件/run を受理）
+
+- **考え方**: MC の合成は**画面（既定フレームバッファ）へ重ねる**もの。present は「**前のフレーム**を出す」ので、
+  フレーム末尾の合成を**共有イメージへ直接描けば**、次の present で正しく画面に出る。＝ 行き先が「画面」でも
+  **共有イメージが画面そのもの**である adoption 下では native に行き先がある。
+- **実装**: `supportedImmediateTarget()` の `fbo == 0` を、**adoption が有効で共有ターゲットが使えるときは
+  その共有 FBO を使う**形に変更（`defaultFramebufferCompositesTaken` で数える）。adoption でないときは従来どおり拒否。
+- **受入（AMD、既定＝フラグなし、同一場面）**: exit 0 / **clean** / **PASSED** / **VUID 0**、frames 905、
+  `presentedFromVulkan=893`、`gameFramebufferIsShared=true`、
+
+| 計器 | 変更前 | **変更後** |
+|---|---|---|
+| **`defaultFramebufferCompositesTaken`** | （拒否 874） | **902** |
+| offers / **accepted** / **GL 本体** | 16000 / 13088 / 2939 | 16000 / **13202** / **2825** |
+| 参照フレーム vs 提示画像（反転） | 0.072・0.05 % | **0.072・0.05 %**（**見た目の差なし**） |
+
+- **意味**: **steady-state で GL が描く量はほぼ消えた**。残るのは
+  **(i) 起動直後10フレームの本質的な拒否**、**(ii) pass 選択の少数**、**(iii) GL context の生成そのもの**。
+- **正直な区別**: 「GL に渡した数」がゼロになったわけではない（起動直後と少数の pass 選択は残る）。
+  ただしそれらは**native の描画先がまだ存在しない瞬間**のもので、**欠陥ではない**（§0.41/§0.58）。
 
 ## 0.59 **adoption を既定にした**（両GPU・フラグなしで PASSED、同一vendor画像等価を確認）
 

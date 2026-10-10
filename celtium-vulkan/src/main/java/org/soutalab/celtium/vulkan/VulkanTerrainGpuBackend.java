@@ -671,6 +671,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetAccepted;
     /** Batches refused because the mirror they need has only ever received a partial write. */
     private int partialMirrorRefusals;
+    /** Composites offered while the default framebuffer was bound, taken into the shared image instead of refused. */
+    private int defaultFramebufferCompositesTaken;
     /** Mirrors that had only a partial write and were supplied whole by the offer path (audit A04). */
     private int partialMirrorsCompleted;
     /** Batches refused by a preflight that now runs before anything is appended (audit A08). */
@@ -1528,6 +1530,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " presentedFromVulkan=" + this.framePresentedFromVulkan
                     + " glCompositesSkipped=" + this.glCompositesSkipped
+                    + " defaultFramebufferCompositesTaken=" + this.defaultFramebufferCompositesTaken
+                    + " gameFramebufferIsShared=" + this.gameFramebufferIsShared
                     + " gameFramebufferAdopted=" + this.gameFramebufferAdopted
                     + " firstGlError=[" + this.firstGlErrorWhere + ":0x"
                     + Integer.toHexString(this.firstGlErrorCode) + "]"
@@ -3199,8 +3203,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // still read "unrecorded").
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         if (fbo == 0) {
-            this.immediateLastRefusal = "target: the default framebuffer is bound";
-            return false;
+            // The default framebuffer is what Minecraft's own composite draws into: it blends an overlay over the frame on
+            // the way to the screen. With the game rendering into the shared images that framebuffer is not where the
+            // picture comes from any more, and the composite's content is the same picture - so it is taken and drawn there
+            // instead, which puts the overlay into the image the next present shows. Measured: 874 such batches per run,
+            // every one of them refused before this, all of them format 2, stride 24, one quad.
+            int sharedTarget = this.gameFramebufferIsShared && this.frameTarget != null
+                    ? this.frameTarget.adoptableFramebuffer(this.targetWidth, this.targetHeight) : 0;
+            if (sharedTarget != 0) {
+                this.defaultFramebufferCompositesTaken++;
+                fbo = sharedTarget;
+                this.immediateLastRefusal = "taken: the default framebuffer composite goes into the shared image";
+            } else {
+                this.immediateLastRefusal = "target: the default framebuffer is bound";
+                return false;
+            }
         }
         int[] viewport = currentViewport();
         if (viewport[0] != 0 || viewport[1] != 0) {
