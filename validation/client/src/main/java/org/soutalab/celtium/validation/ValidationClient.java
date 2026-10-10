@@ -1473,6 +1473,15 @@ public final class ValidationClient {
                 }
             }
         }
+        // The glow outline: the glowing tag routes every kept mob through the entityOutline framebuffer and its
+        // silhouette composite, the same post-process shape the spectator effects take.
+        if (Boolean.getBoolean("celtium.validation.glowEntities") && worldTicks >= 150 && worldTicks <= 205) {
+            for (Object obj : mc.world.loadedEntityList) {
+                if (obj instanceof net.minecraft.entity.Entity && obj != mc.player) {
+                    ((net.minecraft.entity.Entity) obj).setGlowing(true);
+                }
+            }
+        }
         if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
                 // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
