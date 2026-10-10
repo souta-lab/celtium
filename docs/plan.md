@@ -1,5 +1,7 @@
 # Celtium 現状表（現在状態・優先順・受入）
 
+> **影対応の後続計画:** [shader-plan.md](shader-plan.md)。**フルVK化＋主要modのshaderless対応が完了してから着手する。** この計画を理由に現在の本体実装を中断・前倒ししない。
+
 > goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 48, phase active / activation armed）。
 > 全文は `docs/goal.md`。構造修復の方針は **`docs/handoff-structure-recovery-2026-10-10.md`**、
 > 直近の原因候補は `docs/hints-2026-10-10-nether.md`。監査起点は `docs/audit-2026-10-09-third.md`。
@@ -26,6 +28,31 @@
   **Nether は NO_CAPTURE**（`p247-nether`, `p248-trace`, `p249-early`）: tick 82 で -1 に到達後、
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
+
+## 0.49 **adoption は成立した**（計器で確定）。残るのは差し替え後に他所で出る保留 `GL error 0x502`
+
+- **前節の仮説は棄却**（レポートで確認）: `frame target recreation` は **0 回**（再生成されていない）。
+  `matches()` が adopted 状態を受け入れる形にしたうえで再測定したが、症状は同じだった。
+- **決め手は失敗メッセージへの計器**（bound / `gameFbo` / `sharedFbo` / adopted / useRemembered を埋め込んだ）:
+  ```
+  frame begin failed: beginFrame: RGBA8 colour copy and D24 to D32 depth conversion
+      [bound=7 gameFbo=7 sharedFbo=7 adopted=true]: GL error 0x502
+  ```
+  ＝ **束縛 FBO・記憶した宛先・共有 FBO がすべて一致し、adopted も true**
+  ＝ **ゲームのフレームバッファ差し替えは機能している**（blit と深度変換はスキップされている）。
+- **さらに adoption の瞬間の GL エラーを記録**（Mixin から `glGetError` を渡す計器）:
+  ```
+  gameFramebufferAdopted = 1
+  adoptionGlError        = 0x0     ← 差し替え自体はエラーを残さない
+  ```
+  ＝ **保留中の `0x502` は「差し替えの後、最初の `beginFrame` の検査まで」の間に他所で発生**している。
+- **次の一手（位置が確定している）**: その窓の中を二分する計器を置く
+  （(a) 差し替え直後の bind 完了時、(b) `beginFrame` 入り口の `GlState` 直後）。
+  これで「MC の描画か、こちらの前処理か」が一意に決まる。**仮説を増やさず、この2点だけを測る。**
+- **対応**: 差し替え（フラグ経路）は**巻き戻した**。**失敗メッセージの計器だけを残した**（フラグに依存せず、
+  診断として常に有効）。ビルド緑。
+- **註**: ここまでで (b) の**設計は完成**しており、**実装も動いている**（差し替え・深度テクスチャ・契約・記憶した宛先）。
+  残りは**この 0x502 の発生源1点**である。
 
 ## 0.48 深度のテクスチャ差し替えを実装しても残る失敗: **別の beginFrame 呼び出し／別の target 実体**が次の焦点
 
