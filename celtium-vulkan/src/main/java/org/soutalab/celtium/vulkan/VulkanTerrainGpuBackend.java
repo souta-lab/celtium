@@ -144,6 +144,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The region the remembered reads come from; a frame's first draws all belong to the same one in practice. */
     private RegionResources readbackFrom;
     /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
+    /** The diagnostic copy's size: one whole block per remembered draw, and the range the guard must cover. */
+    private static final int READBACK_COPY_BYTES = 64;
+    /** Whether the copy for each slot was actually issued; a refused slot's block is stale, not sampled data. */
+    private final boolean[] readbackValid = new boolean[READBACK_SLOTS];
     private final RegionResources[] readbackRegions = new RegionResources[READBACK_SLOTS];
     private int readbackRefusals;
     private int readbackRegionsUsed;
@@ -5276,12 +5280,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     continue;
                 }
                 if (region.vertexArena == null
-                        || this.readbackOffsets[slot] + this.commonVertexStride > region.vertexArena.deviceAllocatedMemoryL()) {
+                        || this.readbackOffsets[slot] + READBACK_COPY_BYTES > region.vertexArena.deviceAllocatedMemoryL()) {
                     // The slot names a range the arena does not hold: copying it is the validation error this used to
-                    // produce (VUID-vkCmdCopyBuffer-srcOffset-00113). Said rather than issued.
+                    // produce (VUID-vkCmdCopyBuffer-srcOffset-00113). The check is the size the copy actually asks for
+                    // - a whole diagnostic block - not one vertex stride: a slot that has a stride's worth of bytes
+                    // left but not a block's passed the old check and then read past the allocation.
                     this.readbackRefusals++;
+                    this.readbackValid[slot] = false;
                     continue;
                 }
+                this.readbackValid[slot] = true;
                 recordReadback(region, this.readbackOffsets[slot], slot);
             }
             this.readbackRegionsUsed += this.readbackSlots;
@@ -7521,7 +7529,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         ensureReadback();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkBufferCopy.Buffer region = org.lwjgl.vulkan.VkBufferCopy.calloc(1, stack);
-            region.get(0).srcOffset(sourceOffset).dstOffset((long) slot * 64L).size(64L);
+            region.get(0).srcOffset(sourceOffset).dstOffset((long) slot * READBACK_COPY_BYTES)
+                    .size(READBACK_COPY_BYTES);
             vkCmdCopyBuffer(this.commandBuffer, resources.vertexArena.buffer().buffer(), this.readbackBuffer, region);
             org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -7536,13 +7545,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.readbackPending = false;
         this.readbackDone = true;
         if (!waitForIdle()) throw new IllegalStateException("readback fence did not complete");
-        ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, Math.max(64, this.readbackSlots * 64));
+        ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped,
+                Math.max(READBACK_COPY_BYTES, this.readbackSlots * READBACK_COPY_BYTES));
         view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
         StringBuilder line = new StringBuilder("gpu draws:");
         int colourCounts = 0;
         java.util.Map<Integer, Integer> histogram = new java.util.TreeMap<>();
         for (int slot = 0; slot < this.readbackSlots; slot++) {
-            int base = slot * 64;
+            if (!this.readbackValid[slot]) {
+                // The copy for this slot was refused, so the block holds whatever was there before it. Decoding it
+                // would put a stale colour into the histogram and into the diagnostic this exists to be.
+                continue;
+            }
+            int base = slot * READBACK_COPY_BYTES;
             int colour = view.getInt(base + 12);
             histogram.merge(Integer.valueOf(colour), Integer.valueOf(1), Integer::sum);
             if (slot < 10) {

@@ -192,6 +192,9 @@ public final class VulkanPostChain {
         if (context == null || frameTarget == null) {
             throw new IllegalArgumentException("context and frame target must be set");
         }
+        System.out.println("[Celtium] CELTIUM_POSTCHAIN create: a chain reached the native executor on this backend"
+                + " (device=0x" + Long.toHexString(context.device().address()) + ", frameImage=0x"
+                + Long.toHexString(frameTarget.colorImage()) + ")");
         VkDevice device = context.device();
         try (MemoryStack stack = stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
