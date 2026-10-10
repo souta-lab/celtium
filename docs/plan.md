@@ -27,6 +27,30 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.36 **GL の最終合成を外しても提示内容は同一**（条件 (a) の「最終合成が native」に到達・フラグ付き）
+
+- **実装**: `-Dceltium.vulkan.skipGlComposite=true`（既定 off）。**提示済みフレームに対してのみ**（`framePresentedFromVulkan > 0`
+  という**記録された事実**で判定）format 2 の画面合成バッチを**飲み込む**（GL の blit を走らせない）。
+- **受入（AMD、`presentReadback`＋`dumpPresentedImage`＋`skipGlComposite`、duration 120 s）**:
+
+| 計器 | 値 |
+|---|---|
+| `validationClean` / `validationExitCode` / `validationMessageCount` | **true / 0 / 0** |
+| `fixtureStatus` / VUID / クラッシュ | **PASSED** / **0** / なし |
+| **`glCompositesSkipped`** | **717** |
+| `presentedFromVulkan` | **718** |
+| **フラグ off のスクリーンショット vs フラグ on の提示画像（上下反転）** | **平均絶対差 0.017、>8 が 0.00 %** |
+| 提示画像（off）vs 提示画像（on） | 平均絶対差 **0.001**、>8 が 0.00 % |
+
+  **GL の最終合成を毎フレーム省いても、提示される絵は変わらない**（717/718 フレームで省略）。
+- **なぜ GL 側スクリーンショットも変わらないのか（整合の説明）**: harness/ゲームのスクリーンショットが読むのは
+  **世界フレームバッファ**（`mc.getFramebuffer()`）であり、それは **`endFrame()` の copyback が埋めている**。
+  省略したのは**既定フレームバッファへの合成**であり、そちらは**もう表示に使われていない**（表示は Vulkan の present）。
+  したがって「スクリーンショットが変わらないこと」と「合成を外したこと」は矛盾しない。
+- **意味**: **条件 (a) の「最終合成・present が native」が、内容を変えずに成立した**。
+  **残る GL 依存は描画そのもの（bridge・copyback・GL call）と GL context**（条件 (b)）である。
+- **既定化はまだしない**: フラグは off のまま。次の段階で、**証拠経路を提示画像に一本化**してから既定化を判断する。
+
 ## 0.35 validation エラーの原因は**私の PNG 書き出し**だった（提示中に読む形へ修正・解消）
 
 - **原因（harness の判定を読んで確定）**: `validationMessageCount=1`、

@@ -692,6 +692,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int framePresentedFromVulkan;
     private int presentAttempts;
     private int presentFailures;
+    /** Frame composites left to the present path because Vulkan had already shown the frame. */
+    private int glCompositesSkipped;
     /** A completed frame's content is in the shared image and has not been presented yet. */
     private boolean lastFrameReachedQueue;
     private boolean presentedImageDumpRequested;
@@ -944,6 +946,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * groups are flushed, and format 2 is exactly the composite this changes. It now draws {@code POSITION_COLOR} and
      * passes with this on and off, so the property stays covered.
      */
+    /**
+     * Lab switch: let the frame's own GL composite be skipped once Vulkan has put the frame on the swapchain.
+     * <p>
+     * Off by default because the game's screenshot reads OpenGL's default framebuffer: with this on, that framebuffer keeps
+     * whatever the last GL frame left there. The evidence for the frame becomes the presented image instead
+     * ({@code -Dceltium.validation.dumpPresentedImage=true}), which is why this could only be attempted after that path
+     * existed. The condition is a recorded fact - a frame really was presented from Vulkan - not a name or a counter.
+     */
+    private static final boolean SKIP_GL_COMPOSITE =
+            Boolean.getBoolean("celtium.vulkan.skipGlComposite");
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
     /**
@@ -1495,6 +1507,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " presentHookCalls=" + this.presentHookCalls
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " presentedFromVulkan=" + this.framePresentedFromVulkan
+                    + " glCompositesSkipped=" + this.glCompositesSkipped
                     + " glSwapsSkipped=" + this.glSwapsSkipped
                     + " presentAttempts=" + this.presentAttempts
                     + " presentFailures=" + this.presentFailures
@@ -2075,6 +2088,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
         // controls in practice is which format-2 batches the present path may take; everything else falls through to
         // the immediate path. Recorded so the name is not read as evidence that a present happens.
+        if (formatId == 2 && SKIP_GL_COMPOSITE && this.framePresentedFromVulkan > 0
+                && this.currentRenderTargetIsMain) {
+            // The frame is already on the swapchain (a present really happened for it), so the game's own composite would
+            // copy the same picture into the default framebuffer a second time. Taken and drawn as nothing: this is the
+            // "another path already did this" evidence the cancellation rule asks for, and it is checked per frame.
+            this.glCompositesSkipped++;
+            return true;
+        }
         if (formatId == 2 && PRESENT_FROM_COMPOSITE && (this.currentRenderTargetIsMain
                 || celtium$samplesBoundFramebufferColor(this.immediateState.boundTextureName()))) {
             // The audit's S17: this layout is not only the screen composite. `Framebuffer.func_178038_a` uses it to blend
