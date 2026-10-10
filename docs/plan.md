@@ -39,6 +39,29 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.96 resize の機構を確定: **bind 時点で共有 image が旧サイズ**なので再 adopt が成立しない（前節の「stalled が真因」も訂正）
+
+- **前節の訂正**: `rendererDebug` を見ると resize run でも **`target=1024x640`**、地形は **`draws=62 sections=62`** で
+  plain run と同一。＝ **フレームターゲットも地形も新サイズへ追随している**（「旧サイズのまま」も「stalled で停止」も
+  説明として不十分だった）。ログの `no frame target for 1280x720`（286 件）は **resize 前（tick<100）の分**である。
+- **機構（コードとカウンタで確定）**:
+  1. MC の resize は **同じ `Framebuffer` オブジェクトのテクスチャを作り直す**（`createFramebuffer`）。
+  2. `FramebufferMixin` は `func_147610_a`（bind）の HEAD で
+     `celtium$adoptableFramebuffer(self.framebufferWidth, self.framebufferHeight)` を呼び、
+     `self.framebufferObject != adopted` なら**共有 image へ付け替える**（＝再 adopt の設計は**既にある**）。
+  3. しかし **bind の時点ではフレームターゲット（共有 color/depth）はまだ 1280x720** で、
+     新サイズへの再作成は**そのフレームの最初の offer**（＝bind より後）に行われる。
+     したがって **`adoptableFramebuffer(1024,640)` は 0 を返し、付け替えが起きない**。
+  4. 結果: `gameFramebufferAdopted=1` のまま（**一度も再 adopt されない**）、
+     以降の present は共有 image から出せず **`presentedFromVulkan` は resize 前の 265 で止まる**（plain は 785）。
+- **意味**: 欠陥は「サイズ追随の欠落」ではなく **呼び出し順**である。
+  **adoption が要求するサイズでターゲットを作り直してから判定する**必要がある
+  （＝「サイズ変更＝世代交代」を、**bind 時点**にも同じ契約で適用する）。
+- **次の一手（1点）**: `adoptableFramebuffer(w,h)` に**要求サイズを渡して、必要ならその場で共有 image を作り直す**
+  （既存の `ensureFrameTarget()` の再作成経路と同じ `settleGpu` 契約を使う）。その後に付け替える。
+- **受入（実施時）**: resize run で `gameFramebufferAdopted` が **2 以上**になり、
+  `presentedFromVulkan` が同 duration の plain 水準（700 台）に戻り、提示画像が **1024x640** で書かれること。
+
 ## 0.95 **resize の真因は「GPU stalled → 再構築されないまま描画停止」**（ログで確定）
 
 - **前節の訂正**: ターゲットが「旧サイズのまま」なのではなく、**再作成が失敗して fail-closed のまま固まる**。
