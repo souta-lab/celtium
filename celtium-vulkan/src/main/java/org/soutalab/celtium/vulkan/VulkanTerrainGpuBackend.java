@@ -2715,7 +2715,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     record("presenting from the composite failed: " + describe(error));
                 }
             }
-            return false;
+            // Under the GL-less window there is no GL composite to replace - the mid-frame present above is the
+            // bridge's, and the swap point presents the finished frame - so this branch could only ever refuse. What
+            // separates the two kinds of format-2 quad is the texture it samples: the frame's own blit samples this
+            // target's own colour image and stays refused, because presenting it again is exactly the duplicate the
+            // swap point already avoided; anything else is an overlay blended into the frame (the entity outline's
+            // composite is the case) and belongs to the acceptance mask below. The question is answered from the map
+            // the game's own framebuffer binds fill, because the stub cannot answer an attachment query.
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                    && !celtium$samplesCurrentTargetColor(this.immediateState.boundTextureName())) {
+                this.immediateLastRefusal = null;
+            } else {
+                return false;
+            }
         }
         if (this.immediateWindowBusy) {
             this.immediateLastRefusal = "reentrant upload during bridge handoff";
