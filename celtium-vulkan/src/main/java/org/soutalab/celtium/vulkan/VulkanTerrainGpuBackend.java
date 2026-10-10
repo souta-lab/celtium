@@ -5004,6 +5004,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return this.swapchain == null ? -1.0D : this.swapchain.lastPresentedMean();
     }
 
+    /**
+     * Writes the frame the swapchain last received to a PNG.
+     * <p>
+     * The GL-independent image: the game's screenshot reads OpenGL's default framebuffer, which is why the GL composite
+     * cannot be removed while that is the only picture available. Written at the capture so it belongs to the same frame.
+     */
+    public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
+        return this.swapchain != null && this.swapchain.dumpPresentedImage(path);
+    }
+
     /** {@return how many frames have been presented from Vulkan so far}. */
     public int celtium$presentedFrameCount() {
         return this.framePresentedFromVulkan;

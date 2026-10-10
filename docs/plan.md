@@ -27,6 +27,32 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.34 **提示画像は画素単位で GL のフレームと一致**（差は行の並びだけだった）
+
+- **GL に依存しない画像証拠を作った**: `VulkanSwapchain.dumpPresentedImage(Path)`（読み戻しのコピー処理を
+  **中心サンプルと全画像で共通化**。バリアの往復＝presentable→transfer source→presentable は1箇所だけが行う）。
+  backend に `celtium$dumpPresentedImage(Path)` を公開し、fixture が**捕捉時に** `screenshots/celtium-presented.png` へ書く
+  （`-Dceltium.validation.dumpPresentedImage=true`）。
+- **測定（AMD、`presentReadback`＋`dumpPresentedImage`、duration 120 s、640〜700 frames）**:
+
+| 比較 | 平均絶対差 | >8 で異なる画素 | 最大 |
+|---|---|---|---|
+| そのまま | 52.949 | 94.24 % | 178 |
+| **上下反転** | **0.000** | **0.00 %** | **0** |
+| 左右反転 | 52.956 | 94.24 % | 178 |
+| 両方反転 | 9.497 | 49.06 % | 133 |
+
+  **上下反転で完全一致（平均絶対差 0.000・最大 0）**。**native swapchain に出たフレームは、ゲームが描いたフレームそのもの**である。
+  差は**行の並びだけ**だった（ゲームのスクリーンショットは GL の読み出しを上下反転するため）。
+- **途中で確定した2つのこと**: (1) 平均が完全一致するのに画素がほぼ全部違うのは**並びの違い**の signature である
+  （並べ替えは平均を動かさない）。(2) スワップチェーンの形式は **`format=44`（B8G8R8A8 系）**で、チャンネル順は
+  B,G,R,A。**チャンネル順は平均では絶対に判別できない**（この2点は記録に値する）。
+- **意味**: 条件 (c) のうち **「native swapchain へ出した完成 frame」は画素単位で裏付けられた**。
+  残るのは**実 window/compositor 出力の到達**（この環境の `DISPLAY=:0` の root は 0×0 で未確認）である。
+- **未解決（別件として記録）**: この run は **ゲームは exit 0・fixture は PASSED** なのに
+  **harness の `validationExitCode=1` / `validationClean=false`** だった。追加した PNG がスクリーンショット欄に増えたこと等、
+  **harness 側の判定**を次に確認する（**この不一致を放置しない**）。
+
 ## 0.33 提示画像の不一致は**読み戻しの上限**が原因だった（§0.32 を撤回・提示内容は一致する）
 
 - **原因**: `VulkanSwapchain` の読み戻しは `PRESENT_READBACK && this.presentReadbacks < 3` で、

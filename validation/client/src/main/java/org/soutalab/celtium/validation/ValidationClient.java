@@ -1919,6 +1919,16 @@ public final class ValidationClient {
                                 Double.valueOf(vulkan.celtium$presentedImageMean()));
                         report.addProperty("presentedImageFramesAtCapture",
                                 Integer.valueOf(vulkan.celtium$presentedFrameCount()));
+                        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+                            // The presented frame itself, so the image evidence does not have to come from OpenGL. It is
+                            // written at the capture, next to the game's own screenshot, so the two are one frame apart at
+                            // most and can be compared directly.
+                            java.nio.file.Path presented = mc.gameDir.toPath()
+                                    .resolve("screenshots/celtium-presented.png");
+                            report.addProperty("presentedImageDumped",
+                                    Boolean.valueOf(vulkan.celtium$dumpPresentedImage(presented)));
+                            report.addProperty("presentedImagePng", "screenshots/celtium-presented.png");
+                        }
                     }
                 } catch (RuntimeException | LinkageError ignored) {
                     // A measurement must never stop the capture.

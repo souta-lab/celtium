@@ -139,22 +139,76 @@ public final class VulkanSwapchain {
         return this.lastPresentSucceeded;
     }
 
+    /** The image handle the last present used, so the frame that reached the swapchain can be written out. */
+    private long lastPresentedImage = VK_NULL_HANDLE;
+
+    /**
+     * Writes the last presented image to a PNG, and says whether it did.
+     * <p>
+     * This is the GL-independent image evidence: the game's own screenshot reads OpenGL's default framebuffer, so while
+     * that is the only image the renderer can be compared against, the GL composite has to stay. The same readback the
+     * centre sample uses is used here over the whole image.
+     */
+    public boolean dumpPresentedImage(java.nio.file.Path path) {
+        if (this.lastPresentedImage == VK_NULL_HANDLE || this.width <= 0 || this.height <= 0) {
+            return false;
+        }
+        int[] pixels = readBackBlock(this.context, this.lastPresentedImage, this.width, this.height, 0, 0, this.width,
+                this.height);
+        if (pixels == null) {
+            return false;
+        }
+        try {
+            java.awt.image.BufferedImage image =
+                    new java.awt.image.BufferedImage(this.width, this.height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            image.setRGB(0, 0, this.width, this.height, pixels, 0, this.width);
+            java.nio.file.Files.createDirectories(path.getParent());
+            return javax.imageio.ImageIO.write(image, "png", path.toFile());
+        } catch (java.io.IOException | RuntimeException | LinkageError error) {
+            return false;
+        }
+    }
+
     public float lastPresentedMean() {
         return this.lastPresentedMean;
     }
 
+    /** {@return the mean of the centre 8x8 block of this image}, or -1 when it could not be read. */
     private static float readBackMean(VulkanContext context, long image, int width, int height) {
+        int size = 8;
+        int[] pixels = readBackBlock(context, image, width, height, Math.max(0, (width / 2) - (size / 2)),
+                Math.max(0, (height / 2) - (size / 2)), size, size);
+        if (pixels == null) {
+            return -1.0f;
+        }
+        long sum = 0L;
+        for (int pixel : pixels) {
+            sum += (pixel >> 16) & 0xFF;
+            sum += (pixel >> 8) & 0xFF;
+            sum += pixel & 0xFF;
+        }
+        return pixels.length == 0 ? -1.0f : (float) ((double) sum / (pixels.length * 3));
+    }
+
+    /**
+     * Reads a block of the presented image back as ARGB pixels.
+     * <p>
+     * One copy routine serves both the centre sample and the full-image dump: the barriers are the part that has to be
+     * exactly right (presentable to transfer source and back, or the validation layer reports the present layout at the
+     * next draw), so there is one place that does them.
+     */
+    private static int[] readBackBlock(VulkanContext context, long image, int width, int height, int x, int y,
+            int blockWidth, int blockHeight) {
         long buffer = VK_NULL_HANDLE;
         long memory = VK_NULL_HANDLE;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            int size = 8;
-            int rowBytes = size * size * 4;
+            int rowBytes = blockWidth * blockHeight * 4;
             org.lwjgl.vulkan.VkBufferCreateInfo bufferInfo = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
                     .sType$Default().size(rowBytes).usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
             LongBuffer handle = stack.mallocLong(1);
             if (vkCreateBuffer(context.device(), bufferInfo, null, handle) != VK_SUCCESS) {
-                return -1.0f;
+                return null;
             }
             buffer = handle.get(0);
             org.lwjgl.vulkan.VkMemoryRequirements requirements =
@@ -166,7 +220,7 @@ public final class VulkanSwapchain {
                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                             "the present readback buffer"));
             if (vkAllocateMemory(context.device(), allocate, null, handle) != VK_SUCCESS) {
-                return -1.0f;
+                return null;
             }
             memory = handle.get(0);
             vkBindBufferMemory(context.device(), buffer, memory, 0);
@@ -176,9 +230,8 @@ public final class VulkanSwapchain {
             copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
             copy.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
                     .layerCount(1);
-            copy.get(0).imageOffset().set(Math.max(0, (width / 2) - (size / 2)),
-                    Math.max(0, (height / 2) - (size / 2)), 0);
-            copy.get(0).imageExtent().set(size, size, 1);
+            copy.get(0).imageOffset().set(x, y, 0);
+            copy.get(0).imageExtent().set(blockWidth, blockHeight, 1);
             // The image has just been presented, so it is in VK_IMAGE_LAYOUT_PRESENT_SRC_KHR. A transfer cannot read
             // it from there and the layout a descriptor was written with is checked at draw time: the validation layer
             // reported VUID-vkCmdDraw-None-09600 ("expects ... TRANSFER_SRC_OPTIMAL--instead, current layout is
@@ -209,16 +262,23 @@ public final class VulkanSwapchain {
 
             PointerBuffer mapped = stack.mallocPointer(1);
             if (vkMapMemory(context.device(), memory, 0, rowBytes, 0, mapped) != VK_SUCCESS) {
-                return -1.0f;
+                return null;
             }
-            long total = 0;
-            for (int i = 0; i < rowBytes; i++) {
-                total += org.lwjgl.system.MemoryUtil.memGetByte(mapped.get(0) + i) & 0xFF;
+            // The swapchain image is a B8G8R8A8 family format on this surface (the surface reported format 44), so the
+            // bytes are B, G, R, A. Reading them as R, G, B left the mean identical - a channel swap cannot move a mean -
+            // while 97.55% of the pixels differed from the game's screenshot, which is what named the order.
+            int[] pixels = new int[blockWidth * blockHeight];
+            for (int pixel = 0; pixel < pixels.length; pixel++) {
+                long at = mapped.get(0) + (long) pixel * 4L;
+                int b = org.lwjgl.system.MemoryUtil.memGetByte(at) & 0xFF;
+                int g = org.lwjgl.system.MemoryUtil.memGetByte(at + 1) & 0xFF;
+                int r = org.lwjgl.system.MemoryUtil.memGetByte(at + 2) & 0xFF;
+                pixels[pixel] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
             vkUnmapMemory(context.device(), memory);
-            return (float) ((double) total / rowBytes);
+            return pixels;
         } catch (RuntimeException | LinkageError error) {
-            return -1.0f;
+            return null;
         } finally {
             if (buffer != VK_NULL_HANDLE) {
                 vkDestroyBuffer(context.device(), buffer, null);
@@ -656,6 +716,7 @@ public final class VulkanSwapchain {
             if (PRESENT_READBACK && this.presentReadbacks < 100000) {
                 this.presentReadbacks++;
                 this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
+                this.lastPresentedImage = image;
             }
             if (this.presentTraces < 4) {
                 // One line per present with the handles involved: the validation messages named the acquire semaphore
