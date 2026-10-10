@@ -1499,6 +1499,14 @@ public final class ValidationClient {
     /** Puts one entity next to the player, on the client world the renderer draws from. */
     private static void celtium$spawnEntity(Minecraft mc, net.minecraft.entity.Entity entity, double dx, double dz) {
         entity.setPosition(mc.player.posX + dx, mc.player.posY, mc.player.posZ + dz);
+        if (entity instanceof net.minecraft.entity.EntityLiving) {
+            // Frozen where it is put, so two runs of the entity scene draw the same pose at the same place: without this
+            // the mobs walk and fall between the spawn tick and the capture, and a comparison of the two paths would be
+            // measuring the walk. Persistence keeps them from despawning in the meantime.
+            net.minecraft.entity.EntityLiving living = (net.minecraft.entity.EntityLiving) entity;
+            living.setNoAI(true);
+            living.enablePersistence();
+        }
         mc.world.spawnEntity(entity);
     }
 
