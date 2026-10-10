@@ -43,8 +43,9 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class VulkanImmediateItemPipeline {
     /**
      * The ITEM layout: 3 floats position, 4 unsigned bytes colour, 2 floats texture coordinates, 3 signed bytes
-     * normal and one padding byte. The normal is part of the stride but not of the vertex input description, because
-     * the shader does not read it - Vulkan only requires the attributes the shader consumes.
+     * normal and one padding byte - colour at offset 12, texture at 16, normal at 24. The normal is part of the
+     * stride but not of the vertex input description, because the shader does not read it - Vulkan only requires the
+     * attributes the shader consumes.
      */
     public static final int VERTEX_BYTES = 28;
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
@@ -281,12 +282,12 @@ public final class VulkanImmediateItemPipeline {
                 VkVertexInputAttributeDescription.Buffer attributes =
                         VkVertexInputAttributeDescription.calloc(3, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                // DefaultVertexFormats.POSITION_TEX_COLOR is POSITION_3F then TEX_2F then COLOR_4UB, and
-                // immediate_tex_color.vert declares location 1 as a_TexCoord and location 2 as a_Color. These two lines
-                // had them the other way round, so the shader read colour bytes as texture coordinates and texture
-                // coordinates as colour - a swap that no swapchain validation can see, because both are well-formed.
-                attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
-                attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(20);
+                // DefaultVertexFormats.ITEM's real order is POSITION_3F, COLOR_4UB, TEX_2F, NORMAL_3B, PADDING_1B -
+                // colour at 12 and the texture coordinates at 16, the reverse of POSITION_TEX_COLOR's tex/colour
+                // order. Earlier offsets read the colour bytes as texture coordinates; the latent bug never showed
+                // because no ITEM-format batch arrived in any measured run (acceptedByFormat has been 4:0 to 4:1).
+                attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(16);
+                attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(12);
                 VkPipelineVertexInputStateCreateInfo vertexInput =
                         VkPipelineVertexInputStateCreateInfo.calloc(stack).sType$Default()
                                 .pVertexBindingDescriptions(binding)
