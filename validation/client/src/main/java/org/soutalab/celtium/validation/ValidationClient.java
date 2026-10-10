@@ -1773,7 +1773,11 @@ public final class ValidationClient {
         // validation layer refused.
         // Two ticks before the staged capture (which happens at tick 200). The capture tick cannot be read here: it is
         // recorded when the capture happens, so at tick 198 it is still unset.
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && worldTicks == 198) {
+        // The tick is a property because the presented image belongs to the frame before the request is consumed at the
+        // next present: the capture is at 200, so 198 dumps the frame of 198 and 199 the frame of 199. Being able to move
+        // it settles whether a remaining difference is that frame gap or the picture itself.
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")
+                && worldTicks == Integer.getInteger("celtium.validation.dumpPresentedTick", 198).intValue()) {
             try {
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
