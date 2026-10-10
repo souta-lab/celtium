@@ -81,7 +81,11 @@ public abstract class FramebufferMixin {
             }
             org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
                     (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
-            boolean ensured = vulkan.celtium$ensureTargetForBoundFramebuffer();
+            // The framebuffer's own size is handed down as a fallback: the bound colour attachment can be a shared
+            // image that died with a previous backend instance (a world change recreates the backend but not this
+            // framebuffer), which reads back as 0x0 and leaves the frame target unbuildable forever otherwise.
+            boolean ensured = vulkan.celtium$ensureTargetForBoundFramebuffer(
+                    self.framebufferWidth, self.framebufferHeight);
             int adopted = ensured ? vulkan.celtium$adoptableFramebuffer(self.framebufferWidth, self.framebufferHeight) : 0;
             // Printed whenever the size changes rather than a fixed number of times: the bind runs every frame, so a
             // count is used up long before a mid-run resize, which is exactly the case being looked at.

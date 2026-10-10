@@ -4,8 +4,8 @@
 > 両者が食い違う場合は **plan.md と最新 HEAD が勝つ**。過去の経緯は `docs/history/`。
 >
 > 作業ディレクトリ：`/home/s0u7a/projects/celtium`（`main`、`origin` = https://github.com/souta-lab/celtium）
-> 引き継ぎ時 HEAD：`ab11e553a`（その後 `22cf97647` 証拠整理、`834e6ecc9` §0.103 提示 blit 契約まで進んだ。
-> `git status --short` が空であることを最初に確認する）
+> 引き継ぎ時 HEAD：`ab11e553a`（その後 `22cf97647` 証拠整理、`834e6ecc9` §0.103 提示 blit 契約、`699c8660e`
+> §0.104 format-5 残差確定、`§0.105` Nether 両GPU受入まで進んだ。`git status --short` が空であることを最初に確認する）
 
 ---
 
@@ -106,7 +106,7 @@ diff = np.abs(P-S); mask = (diff.max(axis=2) > 8)   # >8 が異なる画素の�
 | 失敗経路（fence timeout / submit 失敗） | 両方 clean・VUID 0 | `stalledStops=1` / `stalledTeardownSkips=548`、資源は解放しない設計 |
 | **entity 場面（モブあり）の残差** | **解決済み: fixture キャプチャ仕様（§0.104）** | 提示フレームの生存粒子が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレーム静止 FLAME で format 5 の色・位置は正しい（AMD 0.157 % = 経年差のみ） |
 | model 経路（表示リスト）の native 描画 | **実験フラグ側・既定 off** | `V_now × C_compile⁻¹` で 2.19 %（7通りの実測で最良）。既定 off の理由は下記 |
-| **Nether** | **未成立（旧 PASSED は無効）** | 一時的に -1 → GuiDownloadTerrain → 0 で NO_CAPTURE。根因未確定 |
+| **Nether** | **両GPU受入（§0.105）** | capture 時 -1 で native scene（AMD 967 / Intel 349 pass・skip 0）。帰還は portal AXIS 直交 step 未対応 + backend 再生成後の共有 texture 死（0x0 frame target デッドロック）の2件で、両方修正済み |
 | 条件 (b) の残り | GL context 生成そのもの＋起動直後10フレーム | native の描画先がまだ無い瞬間のもの |
 | 条件 (c) 実 window/compositor 出力 | **未確認** | `DISPLAY=:0` の root が 0×0・合成器なし。不足条件は plan §0.30 |
 | 全 entity/TESR・全 block state・全 mod・性能・配布 | 未確認 | registry 254 種掃引（AMD）と部分掃引（Intel）のみ実績 |
@@ -178,11 +178,15 @@ vs screenshot（反転なし）＝ **AMD 0.001 %・Intel 0.000 %**、退行 **0.
 `DISPLAY=:0` の root が 0×0、合成器なし。**利用可能な capture 方法を調べる**こと。
 「marker が GL framebuffer にない」だけでは完了ではない。取得不能なら**具体的な不足条件**を残す。
 
-### 5.4 Nether（項目4）
-短い trace と必要な client/server stack で、Respawn / chunk・player 位置同期 / 画面完了 / portal・cooldown / fixture 操作の
-どこで帰還・停止が起きるかを特定する。**早い転送・budget 延長だけを繰り返さない。**
-受入条件は「capture 時 player/world/provider が target で、到達後に実 native scene を描いたこと」。
-**End の局所成功を Nether に流用しない。**
+### 5.4 Nether（項目4）— **受入済み（§0.105）**
+capture 時 player/world/provider が -1 で、到着後 native scene を描いた（AMD 967 / Intel 349 pass・skip 0）。
+帰還の内訳は2件で、両方修正済み：
+1. **portal 帰還**: fixture の `+2Z` step は portal AXIS=Z で面方向に滑るだけで portal 内に残り、~80 tick で vanilla が
+   0 へ送り返していた → **portal ブロックの AXIS を読み、面に直交する方向へ step**。
+2. **frame target デッドロック**: 次元転移で backend が新インスタンスに再生成される一方、`mc.framebuffer` の色
+   texture は旧 backend の死んだ共有 texture を指して 0x0 に → `ensureFrameTarget` が永久拒否（`adoptable` は
+   target 前提・target は texture 寸法前提の鶏卵）→ **adopt 経路で framebuffer 論理サイズへフォールバック**して
+   target を復元。通常場面の退行は 0.002 % で確認済み。
 
 ### 5.5 残りの native 化（項目5）
 model/item・entity/TESR・hand、state/lighting/current RGBA/sampler、全 block 必要 state、GUI/font/HUD、

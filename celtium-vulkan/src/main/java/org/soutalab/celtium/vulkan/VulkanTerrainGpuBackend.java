@@ -5605,6 +5605,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return ready;
     }
 
+    /**
+     * Ensures the frame target, falling back to the framebuffer object's own size when the bound attachment cannot be
+     * measured.
+     * <p>
+     * The bind-returns hook has the framebuffer object, whose {@code framebufferWidth}/{@code framebufferHeight} stay
+     * correct even when the colour attachment is a shared image that was released with a previous backend instance -
+     * reading that attachment gives 0x0, and without a size no target can be built, which is the deadlock the Nether
+     * dimension transfer left behind (every pass skipped on "no frame target"). The size hint is only used for the
+     * game's main framebuffer, whose logical size is the same size the target must cover anyway.
+     */
+    public boolean celtium$ensureTargetForBoundFramebuffer(int widthHint, int heightHint) {
+        boolean ready = ensureFrameTarget();
+        if (!ready && widthHint > 0 && heightHint > 0) {
+            ready = ensureFrameTarget(widthHint, heightHint);
+        }
+        if (ready) {
+            this.framebufferReplacing = false;
+        }
+        return ready;
+    }
+
     public int celtium$adoptableFramebuffer(int width, int height) {
         if (!ADOPT_GAME_FRAMEBUFFER || this.frameTarget == null) {
             return 0;
@@ -5703,6 +5724,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("drawable size unavailable");
             return false;
         }
+        return ensureFrameTarget(width, height);
+    }
+
+    /**
+     * Ensures the frame target exists for the given size, without asking the bound framebuffer how big it is.
+     * <p>
+     * The callers that read the attachment are left on {@link #ensureFrameTarget()}; this overload is for the adoption
+     * path, where the framebuffer object's own width and height are the authoritative size. The bound colour
+     * attachment can be a shared image that died together with an earlier backend instance - a world change recreates
+     * the renderer and this backend but not the framebuffer - which reads back as 0x0 and would otherwise leave the
+     * target, and with it every draw, unrecoverable.
+     */
+    private boolean ensureFrameTarget(int width, int height) {
         if (this.frameTarget != null && this.frameTarget.matches(width, height)) {
             return true;
         }

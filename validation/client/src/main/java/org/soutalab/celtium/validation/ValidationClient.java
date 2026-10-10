@@ -1278,9 +1278,23 @@ public final class ValidationClient {
                                         // in one makes the game's own portal logic in Entity.onEntityUpdate send them back
                                         // (measured with a caller chain: changeDimension from Entity.updateEntityActionState
                                         // at tick ~96, 55 ticks after the arrival, full health, chunk loaded). Stepping out
-                                        // of the portal keeps the arrival; a portal is one block thick along its axis, so
-                                        // two blocks along Z is outside it whatever its facing.
-                                        player.setPositionAndUpdate(player.posX, player.posY, player.posZ + 2.0D);
+                                        // of the portal keeps the arrival. A portal is one block thick perpendicular to
+                                        // its plane, so the step out has to be perpendicular: the earlier +2Z always was
+                                        // wrong for a portal whose AXIS is Z (the Nether run still returned at ~148, which
+                                        // is the portal counter finishing ~80 ticks in the block). The block's AXIS says
+                                        // which way the plane runs - axis X means the plane runs along X and the thickness
+                                        // (the way out) is Z, axis Z means thickness is X.
+                                        net.minecraft.block.state.IBlockState arrival =
+                                                target.getBlockState(new net.minecraft.util.math.BlockPos(player));
+                                        double stepX = 0.0D, stepZ = 2.0D;
+                                        if (arrival.getBlock() == net.minecraft.init.Blocks.PORTAL) {
+                                            if (arrival.getValue(net.minecraft.block.BlockPortal.AXIS)
+                                                    == net.minecraft.util.EnumFacing.Axis.Z) {
+                                                stepX = 2.0D;
+                                                stepZ = 0.0D;
+                                            }
+                                        }
+                                        player.setPositionAndUpdate(player.posX + stepX, player.posY, player.posZ + stepZ);
                                         player.timeUntilPortal = 0;
                                         celtium$transfer = new TransferSnapshot("transferred", worldTicks, rotation);
                                     } catch (Throwable error) {

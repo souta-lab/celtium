@@ -30,7 +30,7 @@
 | **GUI / font / HUD** | **画像等価を受入済** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
 | **lightmap の供給漏れ（format 5）** | **解消・両GPU受入** | AMD `lightmapSuppliedOnDemand=2`・失敗なし・拒否ゼロ（§0.43）、**Intel も 2・失敗なし・拒否ゼロ・PASSED**（`p337-intel-lightmap`） |
 | End の dimension 受入 | **両GPU PASSED** | capture 時 dimension 1 |
-| **Nether の dimension 受入** | **未成立（旧 PASSED は有効な受入から外した）** | p247-nether / p248-trace / p249-early は一時的に -1 へ到達後、GuiDownloadTerrain を経て 0 へ戻り NO_CAPTURE。**地形ダウンロード画面の残留と帰還が観測事実**で、renderer・packet/portal・fixture のどこが根因かは未確定（goal の【現在の到達点と未完】と一致） |
+| **Nether の dimension 受入** | **両GPU受入** | capture 時 player/world/provider が -1 で、到着後 native scene を描いた（AMD 967 / Intel 349 pass・skip 0）。帰還の内訳は portal AXIS 直交 step 未対応と、backend 再生成後の共有 texture 死（0x0→frame target デッドロック）の2件で、両方修正済み（§0.105） |
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
 | **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
@@ -45,6 +45,30 @@
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.105 **修正・受入済み**: Nether 受入 —— portal 帰還の解消（AXIS 直交 step）と、backend 再生成後の frame target デッドロック復元
+
+- **旧 NO_CAPTURE の内訳は2つで、両方とも直した**:
+  1. **portal 帰還**: fixture は到着後 `posZ + 2.0` で portal から外していたが、**portal の AXIS が Z** の場合その step は
+     portal の面方向に滑るだけで中に残る → `portalCounter` が ~80 tick 溜まって vanilla が 0 へ送り返していた。
+     **portal ブロックの AXIS を読み、面に直交する方向へ step**（AXIS=X→Z 方向、AXIS=Z→X 方向）。AMD/Intel とも
+     到着後 -1 に留まった（p436 で帰還は消えたが描画が別原因で FAILED）。
+  2. **frame target デッドロック**: 次元転移で world renderer／backend が**新しいインスタンス**に再生成される
+     （`submitted=0`・`gameFramebufferIsShared=false`・`targetGeneration=0`）。`mc.framebuffer` の色 texture は
+     **旧 backend 所有の共有 texture を指したまま**（旧 backend と共に死んで 0x0 と読まれる）→ 新 backend の
+     `ensureFrameTarget` が bound attachment から寸法を読めず永久拒否（`no frame target for 0x0`、passes=0・
+     skipped=537）。`adoptableFramebuffer` は `frameTarget != null` 前提で鶏卵に。
+     **修正**: adopt 経路で `mc.framebuffer` の論理サイズ（正しい）へ**フォールバック**して target を復元し、
+     adoption が死んだ texture を新しい共有 texture へ差し替える（`ensureFrameTarget()` は attachment 読み、
+     新 overload は受取寸法で target を作る）。
+- **受入（両GPU・`dimensionAtTick=80`・`dimension=-1`）**:
+
+  | GPU | capture 時 dimension | passes / skipped | verdict |
+  |---|---|---|---|
+  | AMD `p437-nether` | **-1（到着後も留まる）** | **967 / 0** | PASSED・clean・VUID 0・実 Nether 画像 |
+  | Intel `p438-nether-intel` | **-1** | **349 / 0** | PASSED・clean・VUID 0 |
+- **退行確認（通常場面・AMD `p439-regress`）**: 提示 vs screenshot 0.002 %・PASSED・clean —— adopt 経路の変更は
+  通常 run を壊さない（`ensureFrameTarget()` の attachment 読み経路は不変、fallback は attachment が読めない時だけ）。
 
 ## 0.104 **確定・受入済み**: entity 場面の「format 5 残差」は描画欠陥ではなく、**fixture のキャプチャ仕様**（生存粒子 vs 除去後スクリーンショット）
 
