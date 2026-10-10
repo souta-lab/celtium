@@ -1538,6 +1538,39 @@ public final class ValidationClient {
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
             }
+            if (worldTicks == 60 && Boolean.getBoolean("celtium.validation.allBlocks")) {
+                // The registry sweep: one of every registered block, laid out as a wall the camera sees whole, so
+                // the comparison exercises every block model the terrain passes can draw rather than the handful a
+                // flat world happens to contain. Blocks that need a tile entity to show anything (the chest, the
+                // sign) draw as nothing here, which is honest - their render path is the TESR's, not the chunk's.
+                // Each test position gets a stone block under it so standing-on blocks stay placed; liquids and
+                // gravity blocks would flow or fall out of the sweep, so they are skipped.
+                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
+                int gy = mc.world.getHeight(px, pz - 30);
+                int placed = 0, index = 0;
+                net.minecraft.block.state.IBlockState support = net.minecraft.init.Blocks.STONE.getDefaultState();
+                for (net.minecraft.block.Block block : net.minecraft.block.Block.REGISTRY) {
+                    if (block == net.minecraft.init.Blocks.AIR || block == net.minecraft.init.Blocks.WATER
+                            || block == net.minecraft.init.Blocks.FLOWING_WATER || block == net.minecraft.init.Blocks.LAVA
+                            || block == net.minecraft.init.Blocks.FLOWING_LAVA || block == net.minecraft.init.Blocks.FIRE
+                            || block instanceof net.minecraft.block.BlockFalling) {
+                        continue;
+                    }
+                    int x = px - 20 + (index % 41), y = gy + 2 * (index / 41) + 1;
+                    index++;
+                    try {
+                        net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(x, y, pz - 30);
+                        mc.world.setBlockState(pos.down(), support, 3);
+                        if (mc.world.setBlockState(pos, block.getDefaultState(), 3)) {
+                            placed++;
+                        }
+                    } catch (RuntimeException | LinkageError error) {
+                        // A block whose default state cannot stand alone (a door half, a technical block) skips rather
+                        // than ending the sweep.
+                    }
+                }
+                System.out.println("[Celtium] CELTIUM_ALL_BLOCKS placed=" + placed + " tried=" + index);
+            }
             if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")
                     && !Boolean.getBoolean("celtium.validation.keepEntities")) {
                 // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
@@ -1928,6 +1961,12 @@ public final class ValidationClient {
             } catch (RuntimeException | LinkageError ignored) {
                 // A measurement must never stop the tick.
             }
+        }
+        if (Boolean.getBoolean("celtium.validation.allBlocks") && mc.player != null) {
+            // The block wall is tall enough that the default downward pitch cuts its top rows off; level view plus a
+            // little tilt keeps all of it inside the frame at the wall's distance.
+            mc.player.rotationPitch = -14.0F;
+            mc.player.prevRotationPitch = -14.0F;
         }
         if (Boolean.getBoolean("celtium.validation.lookDown") && mc.player != null) {
             mc.player.rotationPitch = 75.0F;
