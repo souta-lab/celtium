@@ -4993,6 +4993,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return pending;
     }
 
+    /**
+     * {@return the mean of the last image presented to the swapchain}, or -1 when it was not read back.
+     * <p>
+     * Exposed so the fixture can record it at the capture: an earlier comparison of this mean against the GL screenshot's
+     * was wrong because the two were taken at different moments, and a value recorded at the capture is the same frame.
+     * It is only meaningful with {@code -Dceltium.vulkan.presentReadback=true}.
+     */
+    public double celtium$presentedImageMean() {
+        return this.swapchain == null ? -1.0D : this.swapchain.lastPresentedMean();
+    }
+
+    /** {@return how many frames have been presented from Vulkan so far}. */
+    public int celtium$presentedFrameCount() {
+        return this.framePresentedFromVulkan;
+    }
+
     /** {@return whether the native model draw experiment is enabled}. */
     public static boolean modelDrawEnabled() {
         return MODEL_DRAW;

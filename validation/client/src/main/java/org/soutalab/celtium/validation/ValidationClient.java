@@ -1906,6 +1906,23 @@ public final class ValidationClient {
                 report.addProperty("lightmapFlickerPinned", flickerPinned);
                 report.addProperty("pinnedWorldTime", PINNED_WORLD_TIME);
                 report.addProperty("worldTimeAtCapture", mc.world.getWorldTime());
+                // The presented image's mean, taken at the capture so it belongs to the same frame as the screenshot. The
+                // earlier comparison against the screenshot's mean was invalid because the two were sampled at different
+                // moments; for the same reason it is not used as evidence unless the readback is on.
+                try {
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                    if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
+                                (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
+                        report.addProperty("presentedImageMeanAtCapture",
+                                Double.valueOf(vulkan.celtium$presentedImageMean()));
+                        report.addProperty("presentedImageFramesAtCapture",
+                                Integer.valueOf(vulkan.celtium$presentedFrameCount()));
+                    }
+                } catch (RuntimeException | LinkageError ignored) {
+                    // A measurement must never stop the capture.
+                }
             }
             if (Boolean.getBoolean("celtium.validation.interop")) {
                 if (!interopRun) {
