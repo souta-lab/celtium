@@ -60,6 +60,21 @@
   直列化し、VK 側の描画量に応じて frame 時間が伸びる。軽世界では VK 側が小さく全体も小さい。GL 側を消す
   （goal 項目6）方向が、この overhead の構造的な出口。
 
+## 0.112 **修正・受入済み**: texture-env の GL_COMBINE/interpolate（hurt flash・team outline）を native 化
+
+- vanilla の hurt flash と glowing/team outline は、同じモデルを **2 度目に** `glTexEnvi` の `GL_COMBINE_RGB=GL_INTERPOLATE`
+  で描く —— lightmap unit が texture 結果と env 定数（hurt=1,0,0,0.3）を定数 alpha で mix する。capture 済み list に
+  この state は入らず、native draw は落としていた。
+- 実装：`celtium$envCombineColor` が replay 時に GL の lightmap unit の `GL_COMBINE_RGB` と `GL_TEXTURE_ENV_COLOR` を読み、
+  `GL_INTERPOLATE` なら RGBA を `ImmediateGroup.combineColor` へ。push block は **128 バイト満杯**のため、alpha は
+  `u_AlphaRef` の**符号**（負=combine・絶対値=定数 alpha）に encode、定数 RGB は **未使用だった** `u_ColorR/G/B` slotへ。
+  `immediate_position_tex.frag` は負の alphaRef で `mix(colour, const, |alphaRef|)` を行い alpha はそのまま
+  （GL の COMBINE_ALPHA=REPLACE・SOURCE0=PREVIOUS と一致）。
+- 実測：hurtEntities fixture（kept mobs に `hurtTime=10`）で `CELTIUM_ENV_COMBINE rgba=1.0,0.0,0.0,0.3` が発火、
+  PASSED・clean・退行なし（p469）。**outline（`enableOutlineMode` の team 色）も同 channel で native になる**。
+  glow outline（entityOutline FBO + silhouette composite）は post-process 構造上 spectator と同じく**動作確認済み**
+  （fixture `glowEntities`、両経路で同一 silhouette+edge、残差は entity/particle のフレーム差）。
+
 ## 0.110 **修正・受入済み**: fence wait の非 TIMEOUT 失敗（DEVICE_LOST 等）でも frame を abandon —— post-submit device lost の実機注入を追加（goal 項目7）
 
 - `waitForIdle` の分岐：`VK_TIMEOUT` だけが `abandonFrame` を呼び、他の非 SUCCESS（DEVICE_LOST 等）は `noteStalled`
