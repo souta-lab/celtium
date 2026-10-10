@@ -122,6 +122,8 @@ import static org.lwjgl.vulkan.VK11.*;
 public final class VulkanFrameTarget {
     /** Lab switch: leaves the terrain's depth out of the write-back to OpenGL, to measure whether GL needs it. */
     private static final boolean SKIP_DEPTH_RETURN = Boolean.getBoolean("celtium.vulkan.skipDepthReturn");
+    /** Lab switch: leaves the frame's colour out of the write-back to OpenGL, for the frame the present path has taken. */
+    private static final boolean SKIP_COLOR_RETURN = Boolean.getBoolean("celtium.vulkan.skipColorReturn");
 
     /**
      * The layout the shared colour image has while the caller renders, and therefore the {@code initialLayout} and
@@ -682,8 +684,14 @@ public final class VulkanFrameTarget {
             this.tWait += System.nanoTime() - step;
 
             step = System.nanoTime();
-            glBlitNamedFramebuffer(sharedFbo, gameFbo, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
-                    GL_NEAREST);
+            // Lab switch, the colour counterpart of SKIP_DEPTH_RETURN: the write-back into the game's framebuffer is what
+            // keeps OpenGL's own composite and the game's screenshot valid, and once the frame is presented from Vulkan
+            // neither is needed for the picture the user sees. Off by default; measured with the presented image as the
+            // evidence, since with this on the GL framebuffer deliberately keeps whatever it had.
+            if (!SKIP_COLOR_RETURN) {
+                glBlitNamedFramebuffer(sharedFbo, gameFbo, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
+                        GL_NEAREST);
+            }
             long afterColor = System.nanoTime();
             this.tColorOut += afterColor - step;
             // Lab switch: does anything on the OpenGL side actually need the terrain's depth back? The handback exists
