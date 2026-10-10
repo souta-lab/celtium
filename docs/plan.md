@@ -113,8 +113,11 @@
 - **アウトライン**: chain が空の stand-in target を確保していた（`postChains=34, postPasses=136, postTargets=2,
   postAdopted=0`、`CELTIUM_POST_ADOPT_REPORTED ... adopted=false`）。silhouette 自体は off-target image に
   描かれている（identity 0x79D2D96A に 35 提出・34 pass 描画）。本ラウンドで chain 側の adoption を配線した
-  （`adoptChainFramebuffers`、識別子はゲームが実際に bind したものだけ）。registry への image 公開
-  （composite が texture 42 を解決できるようにする）は `VulkanGlTexture` の所有モデルを変えるため次段に分離。
+  （`adoptChainFramebuffers`、識別子はゲームが実際に bind したものだけ）。**after 実測**
+  （`.celtium-work/runtime/outline4`、fixture PASSED・clean・msgs 0）: `postChains=31 postPasses=124 postTargets=1
+  postAdopted=1 postAdoptions=1 postRunsOnStandIn=0`（before は `postTargets=2 postAdopted=0 postAdoptions=0`）——
+  chain は空の stand-in ではなく実シルエットを読む。registry への image 公開（composite が texture 42 を解決できる
+  ようにする＝画面上の glow）は `VulkanGlTexture` の所有モデルを変えるため次段に分離。**glow の可視化は未受入**。
 
 ## 0.115 **達成**: GL-less window が実 scene を描画 —— 地形の黒は lightmap の供給経路だった（goal 項目6 / 条件 (b)）
 
