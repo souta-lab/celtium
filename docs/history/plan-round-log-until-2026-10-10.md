@@ -1,0 +1,3214 @@
+# Celtium plan round log（2026-10-10 まで）
+
+> これは `docs/plan.md` の**旧版全体**（round ごとの経緯・測定・失敗証拠）である。
+> 現在状態の表は `docs/plan.md` に移した。**証拠として保存し、削除しない**。
+> 旧 plan の表題は「Celtium 現状表 — 2026-10-09 第3回監査反映」で、以下はその全文。
+
+# Celtium 現状表 — 2026-10-09 第3回監査反映
+> **構造修復フェーズ（2026-10-10〜）**: 方針は `docs/hints-2026-10-10-nether.md` と
+> **`docs/handoff-structure-recovery-2026-10-10.md`（構造修復プロンプト）** に従う。要旨は
+> (1) texture の実体・更新・寿命を**一つの契約**にまとめる、(2) frame/draw の
+> accept→submit→complete→retire と取消根拠を整合させる、(3) fixture の段階・thread 所有を一つの状態機械にする、
+> (4) plan を現状表へ戻し経緯を history へ移す。**全面書換え・汎用GLエミュレーション・flag/定数/budget での症状隠しは禁止**。
+> 短い修復フェーズのあと、全 vanilla native 化・GL なし frame と実 present へ戻る。
+
+## 構造修復 1: texture の所有契約を一つにする（このターン・実装済み／検証は一部保留）
+
+- **根因（実コードで確認）**: 同じ GL texture id に対して **Vulkan image が2つ**あった。
+  `VulkanTextureRegistry` が `entries[id].texture` を持ち、`announceFullPixels(...)` は**そちら**へ patch を書く。
+  一方 `VulkanTerrainGpuBackend` は `atlasTexture`/`lightmapTexture` を**自前で `VulkanGlTexture.create`** して保持し、
+  **descriptor が sample するのはこちら**。したがって patch はサンプルされず、`invalidateTexture` が
+  `applyAnnouncedTo`（BufferedImage 経路のみ有効）に失敗して **GL 全面 readback** に落ちていた。
+- **直した契約**:
+  - **実体の所有者を registry に一本化**した。バックエンドは `registry.imageFor(id, w, h, filter)` で
+    **同じ object** を受け取り、それを sample する（フィルタは所有者側で一度だけ決める: atlas=nearest, lightmap=linear）。
+    backend 側の `VulkanGlTexture.create` による第2の実体は**撤去**した。
+  - **初期化状態**を明示した（`fullyInitialized`）。**部分 patch だけでは未初期化 image を作らない** —
+    全面が一度も入っていないなら readback を残す。
+  - **世代の消費**を明示した（既存の `announcedGeneration`/`consumedGeneration` に統合。新しい世代カウンタを
+    増やさない）。CPU 適用（int[][] patch・BufferedImage 変換）が世代を進め、**readback を省いた事実が消費**する。
+    「無効化を起こした書き込みが既に pixels を渡していた」ことを**事実**として扱う。
+  - registry の生成が**7箇所に散っていた**のを単一アクセサ `celtium$registry()` にまとめ、
+    「2つの registry ができて実体がずれる」余地を消した。
+- **実測（AMD、溶岩世界＝既定、duration 120 s、同一条件の変更前 run と比較）**:
+
+| 指標 | 変更前（p250-upload） | 変更後（p251-owner） |
+|---|---|---|
+| verdict | exit 0 / clean / **PASSED** | exit 0 / clean / **PASSED** |
+| p50 | 40.41 ms | **25.49 ms** |
+| `directMirrorRefreshes` / `readbacksSkipped` | — | **472 / 473**（ほぼ全更新が readback 不要） |
+| `CELTIUM_PATCH_REJECTED` | — | **0** |
+| VUID / クラッシュ | 0 / なし | **0 / なし** |
+
+- **検証として言えること**: **無効化のたびに走っていた全面 readback が消えた**（473 回が skip として計上され、
+  実測 p50 が 40.41→25.49 ms に下がった）。`applyAnnouncedTo` は BufferedImage 経路として残る（dynamic texture 用）。
+- **まだ言えないこと（重要）**: **画像が同一だとは言っていない**。比較した run は**溶岩世界（アニメーションする
+  スプライトを持つ）**で、`PINNED_WORLD_TIME` は world time を固定するが **sprite の animation 位相は固定しない**
+  （handoff の指摘どおり）。実際に全画面 meanAbsDiff 6.29 / 400k 画素の差が出ており、**これが位相の違いなのか
+  patch 経路の content 差なのかは切り分けていない**。**次の検証は「アニメーションを統制した（または静止した）
+  場面」で行う**。
+- **残る具体的な確認項目**: patch 経路が **mip と全画像内容**を readback 経路と同等に保つか
+  （`MIRROR_GL_MIPS=false` なので level 0 のみを触る点は両経路で同じ、という読みまではした）。
+  **reload / GL id 再使用 / sprite 単位 mip** はまだ測っていない。
+- このターンで**ヒント1・3 の修正は維持**（capture 段階化・部分レポート・dimension fail-closed）。
+
+
+本書は **現在の到達点・優先順・受入の唯一の現状表** である。経緯と過去の測定は `docs/history/` にあり、そこにある数値や「closed」は
+現在の判定ではない。根拠は `docs/audit-2026-10-09-third.md`（第3回監査、監査開始HEAD `c89bda361`）と、監査後に取得した実測である。
+**用語**: 実装済 = コードがあり動く / 局所検証済 = 特定fixtureで確認 / 未検証 = 動く証拠がない / 未実装 = コードがない。
+カウンターの増加は描画の証拠ではない。format認識・受理・記録・submit・完了・dropを混同しない。
+
+## 1. 厳密な完成条件の現状（この表は各ラウンドの実測で更新する）
+
+| 条件 | 状態 | 欠落・根拠（現在の実測） |
+|---|---|---|
+| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分** | **nativeで動いているもの**: 地形パス（1フレーム計 約2.2 ms（AMD）/ 約6.1 ms（Intel）、`solid`/`cutout_mipped`/`translucent` の timestamp 計測）、即時系の各family（`immediateSubmittedBatches` 13.5/フレーム）、**フレーム最終合成**（`presentFromComposite` が既定ON、画面サイズの読み戻しは消えた）。**block registry は AMD で 254/254 を掃引済み・失敗0、Intel は 75/254 の抜き取り**（`blockSweep`）。**未検証**: entity/TESR、dimension、水/溶岩/火、破壊/selection overlay、item/model の掃引。 |
+| (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成（ただし欠落はブリッジに限定された）** | **前進**: 毎フレームの GL 読み戻しは **0 回/フレーム**（`regStaleCalls=0`、`inPlaceRefreshes=0`、announce 経由 16.2/フレーム）。**残る依存はブリッジ本体**（`VulkanFrameTarget`: FBO付け替え・色/深度blit・semaphore待ち・状態クエリ48箇所）で、CPUコストは **0.58 ms/フレーム（AMD）/ 0.83（Intel）**。GL context は依然として生成する。 |
+| (c) native swapchain frameが実window/compositor出力へ到達 | **前半は確認済み・後半は環境制約** | **確認済み**: `presentMarker` のマゼンタ (1,0,1,1) を提示画像から読み戻すと **mean 191.25** で、期待値 `(255+0+255+255)/4=191.25` と**完全一致**（＝提示された swapchain 画像にこの renderer の合成フレームが入っている）。**未確認**: 実画面への到達。この環境には capture 可能な表示出力が無い（X は screen 0×0、Wayland は `no wl_output`、`grim` は導入済みだが出力が無い）。不足条件は §7.6 に明記。 |
+| (d) AMD/Intelで必要場面と失敗復旧、監査P0/P1を明示受入で閉じる | **部分（受入は緑、監査項目の一部が未了）** | 既定（`presentFromComposite` ON / `mirrorRefreshFrames=0`）で **AMD exit 0・PASSED p50 16.02 ms / Intel exit 0・PASSED 28.54 ms**、postprocess / weather / spectator spider / command-buffer target 受入も PASSED、submit失敗・idle失敗は **exit 1・report あり・有界**（期待どおり）。監査項目の残りは §2 を参照。 |
+| (e) mod対応範囲・Java条件・最低VK能力・未検証GPU/OS・ライセンス/性能をdocsと配布物で一致 | **部分** | 性能は**同一fixtureで実測**（AMD 16.02 ms 対 参照 16.18 ms、Intel 28.54 ms、参照は Intel でも 16.17 ms で GPU 非依存）。画像は 参照比 **meanAbsDiff 7.78/255・HF 0.81**（統制: 参照同士 0.064 / HF 1.002）。mod 対応範囲・最低VK能力・未検証GPU/OS の記述は `docs/scope-and-limits.md` と要突き合わせ。 |
+
+## 2. 第3回監査 項目別の現在状態
+
+| # | 監査の内容 | 現在 | 根拠・残り |
+|---|---|---|---|
+| **A01** | model-viewの最初3列のみ送り平行移動が消える | **修正済・受入済** | writerが `projection*modelView` を1行列として送り、**全7即時/UIシェーダ**が `u_ProjectionMatrix * vec4(a_Position,1.0)`。列を再構築するシェーダは**0**。SPIR-Vはビルド時にGLSLから生成（committed .spvなし）のでjarと整合。`immediate_position.vert` の再構築残りも撤去（writerが列をゼロ化したため全頂点が平行移動点へ収束していた）。run: exit 0 / clean / message 0 / PASSED |
+| **A02** | `int[][]` を行配列として読む | **修正済・CPU契約受入済**（GPU画像受入は残る） | `data[level][y*levelWidth+x]` の契約に合わせ、level 0 を**平坦**に読む。level別寸法は「書き込みレベルの寸法をpatch寸法として渡す」契約に統一。動的textureの平坦 `int[]` 経路は別契約として分離 |
+| **A03** | 部分更新なのに `UNDEFINED` でatlas全体とmipを破棄 | **修正済・CPU契約受入済（GPU受入は残る）** | 全面uploadと部分更新を分離。patchは**レベル別に記録した現在layout**から遷移し、**level 0のみ**の範囲、mip chainを記録しない、patch自身が戻し遷移。**専用受入**: `scripts/cpu-contract/TextureContractCheck.java` が2つの離れたpatch（2x2@(1,2) と 3x1@(5,0)）を当て、**patch外の全byteが不変**・色順ARGB→RGBA・行順・touched=7 を検証（`CELTIUM_CPU_CONTRACT PASS`）。通常fixtureも exit 0 / clean / message 0 / PASSED |
+| **A04** | 初回patchだけで全面未初期化のmirrorを作る | **是正側は修正済・全面供給は未解決** | `hasFullContent()` を持ち、全面内容の無いミラーは受理経路がdescriptorを作らず拒否（`partialMirrorRefusals`）。AMD実測では**0件＝このfixtureはpatch先行の順序を作らない**。atlas stitch時の全面データ保持・供給は残る |
+| **A05** | patch寸法でmip chainを作り直す | **修正済** | A03の修正でpatchはmip chainを記録しない。sprite単位mipは `MIRROR_GL_MIPS` 経路がGLの各levelをコピーする（全atlas blitを正解とせず、遠景・透明境界での比較は残る） |
+| **A06** | 保持画像とpatchの競合、hash skip | **修正済** | patch成功時に `lastPixelHash` を無効化し、patch後の同一内容全面uploadが重複skipされないようにした。CPU shadowとresource generationでの全面管理は残る |
+| **A07** | metadata・転送成功の扱い | **修正済** | hashを転送**後**に確定、`imageUploads` は成功時のみ、`Entry.width/height` が画像に追随（寸法を可変に）、skipは `imageUploadsSkipped` として別計数。GL ID再使用の検証は残る |
+| **A08** | 受理前失敗でpending meshに頂点が残る | **修正済・受入済（範囲拡大）** | preflightをappend前に置く方針を維持しつつ、`prepareImmediate()` で **pipeline と descriptor を group 生成前に用意**し、format 2/3/4/5/6/7/8/9 と texture にも広げた。`VulkanDynamicMesh` は頂点・indexの容量を両方確保してから書き込む。注入run `sol-cb-final-retry-amd` で `retries=1`・最終カウンタ4/4/4/4を実測 |
+| **A09** | 受理後の消失を全形式で数えていない | **修正済** | 描画ループ内の**7つのskip地点すべて**が `postAcceptDroppedGroups` を増やす（以前はformat 5のdescriptor失敗のみ）。実測0は、実装したdrop計器が数えた消失がなかったという事実。全formatのGPU完了・見た目を証明しない。branch別の内訳とbatch ID対応付けは残る |
+| **A10** | `offTargetDrawn` は実描画ではない | **修正済・AMD受入済** | 常に `return false` していた旧 offscreen scaffold（空passをclear/copy）を削除し、off-targetの受理済みgroupは **bind切替のHEAD（旧FBOがbind中）で同期windowが描いて書き戻す**。実測 `offTargetAccepted/Recorded/Completed=2/2/2`、`mainWasPending=true`・`secondaryWasPending=true`、別FBOのPNGで赤・緑が正位置・未更新領域の不一致0。copy-back回数を描画証拠にはしない方針を維持 |
+
+| **A11** | format 2（POSITION_TEX_COLOR）は既定でGL | **修正済・AMD受入済（Intel実行中）** | 既定maskを `1,2,3,4,5,6,7,8,9` に。前提として backend 専用 `VulkanCommandBufferState`（handle別ライフサイクル）と `flushImmediateWindow()`（begin→acquire→pass→release→submit→fence→endFrame の同期window）を実装し、`flushPendingBeforeGlDraw` が pass 外で直接記録していた欠陥を除去。受入: `sol-cb-final-amd` exit 0 / clean / msgs 0 / fixture PASSED / passed=true / delta=4,4,4,4 pending0 invalid0 / off-target 2,2,2 / 4矩形と未更新領域の不一致0。再現は `sol-cb-base-amd`（70メッセージ）。**Intel**: target受入は `passed=true`（最終artifactのログ行）だが、run verdict は
+ 1回目 `worldFrames<100` の起動ゲート、2回目は480秒上限で report 未到達。**フレーム数不足が未解決**（window往復コストが最有力） |
+| **A12** | state modelとpipelineの不一致 | **未解決** | alpha enable/func、depth func、separate alpha blend、color mask、scissor、texture matrix。pipelineはLEQUAL/ADD等を固定 |
+| **A13** | current color/alphaの欠落（group keyにも無い） | **未解決** | POSITIONはRGBのみでalpha=1、POSITION_TEXは白固定。tint/alphaの再現証拠なし |
+| **A14** | normal無視のITEM対応は照明対応ではない | **未解決** | 固定lighting・normal変換・shade・fog |
+| **A15** | sampler固定値と旧比較による調整 | **未解決** | blur/clamp引数をannounceへ渡していない。filter/wrap/LOD固定 |
+| **A16** | 「hot-pathのGL読取り除去済み」は過大 | **訂正** | 通常frameのMODELVIEW/CURRENT_COLOR/fog/bound texture/FBO/viewport照会が残る。診断用readと通常readを分けて数える |
+| **A17** | `withoutGlIdentity` 成功はGLなし描画ではない | **訂正済** | GL contextを生成せず全frameをVK資源から描く経路が要る（条件(b)） |
+| **A18** | bridge presentのownership/layout契約 | **未解決** | 共有画像のbarrierは `QUEUE_FAMILY_IGNORED`、復帰先 `COLOR_ATTACHMENT_OPTIMAL`。最終native経路はbridge資源を使わない |
+| **A19** | native presentの画面到達証拠 | **未確認** | compositor/headless capture等を調査し、markerと連番で実window出力を確認。不可なら具体的不足条件を残す |
+| **A20** | wait failureを全面閉鎖したとは言えない | **部分（実機構成を追加）** | `waitForIdle()` は fence timeout/error で **false を返し `gpuStalled` を立てる**（以前は true を返し pending buffer を reset していた）。`settleGpu` は stalled で例外。submit前失敗は再試行1回・資源はqueueへ戻す。**submit成功後失敗／device lost は分岐のみ実装で実機注入は未実施** |
+| **A21** | vanilla postprocessを根拠なくscope外にした | **訂正済・未実装** | `EntityRenderer.func_175066_a` はcreeper/spider/enderman視点でShaderGroupをロードし、`func_175069_a(ResourceLocation)` は引数あり。spectator 3視点・entity outlineは**本体機能**として実装対象 |
+| **A22** | 比較worldは全vanillaのcoverageではない | **未解決** | registryから自動fixture生成、小場面分割。flat worldとlayout受付数で全制覇にしない |
+| **A23** | 古い画像差とlocal attributionの混同 | **訂正済** | 68.81%（旧baseline対地形）と 0.267/255・0.40%（同一Celtiumの描画切替）を最新版全体の一致率として使わない。pinned Celeritas対current Celtiumを同一fixture/GPU/camera/sceneで再取得する |
+| **A24** | 比較器が欠落verdictをfail-closedにしない | **未解決** | required fieldの存在・型・成功値を必須化 |
+| **A25** | counterの単位が完了主張と違う | **部分** | `imageFilledMirrors` はresource数ではなく呼出し/refresh回数。`outsideWorldPassAccepted` はaccept判定前に増える。単位（resources/calls/batches/groups/frames）を分けて文書化（本表がその記録） |
+| **A26** | S05/S06の専用受入が不十分 | **未解決** | 2つの独立batchを同groupへmergeし色・位置を画像確認。容量拡大跨ぎの保持 |
+| **A27** | 性能向上の根拠がない | **未測定** | 正しい描画成立後に元Celeritasと同条件でCPU/GPU時間・平均FPS・p95/p99・メモリ・chunk更新を比較 |
+| **A28** | 能力判定と純nativeの必須条件 | **未解決** | 現行はVulkan1.2・GL UUID・external FD・GL照会能力に依存。2GPU通過を全Vulkan GPU対応と同一視しない |
+| **A29** | 根拠なく診断し定数と文書を反復 | **規律として受領** | vanilla優先。各roundは具体実装か意思決定に必要な限定検証。同一仮説を定数変更・budget延長で反復しない |
+| **A30** | 容量と証拠保全 | **規律として受領** | pinned baseline・失敗再現・受入代表runをhash付きで保存。`.celtium-work/audit-2026-10-09-third` は監査者の再比較証拠として**削除しない** |
+| **A31** | plan/scope/旧監査の矛盾蓄積 | **本表で解消** | 現在の完了条件と優先順を本表1つに持つ。scopeは実測に限定。旧24項目は下の再判定による |
+| **A32** | off-target passが他targetのgroupまで破棄し、空targetのclearをGL FBOへ書戻す | **修正済・CPU契約受入済** | 規則を依存フリーの `ImmediateGroupQueue.retireGroupsForTarget` に抽出し、**そのtargetのgroupのみretire**・他は保持（`immediateGroupsKeptForOtherTargets`）。一致groupが0ならpassを開始しない（`offTargetPassesSkippedEmpty`）ので空clearをGL所有FBOへ書かない。copy-backはdraw記録数が増えたtargetでのみ記録する。GPU完了・GLへのupload成功の計器は別に必要。**専用受入**: CPU契約チェックが2独立target×4group＋不正groupで、A退去後は3件保持（B×2＋不正1）・B退去後は不正1件のみ残ることを検証 |
+
+## 3. 旧24項目の再判定（第3回監査による）
+
+| 項目 | 再判定 |
+|---|---|
+| S01 | bridge presentのownership/layoutを再開（A18）。最終native経路は別契約 |
+| S02 | steady-state改善は維持。startup/texture/present・無限待機は未解決（A20） |
+| S03 | cancellation修正は維持。全branchのbatch対応を追加確認（A09/A11） |
+| S04 | state clone修正は維持。state実利用不足はA12 |
+| S05/S06 | コード修正は維持。専用受入不足（A26） |
+| S07 | 未完。state/lighting/color/alphaを再開（A12–A14） |
+| S08/S09 | attribute/decode修正は維持。最終画像・照明の証明とは分ける |
+| S10 | 順序・clear・targetを再評価。FBO完了主張は撤回（A08/A10） |
+| S11 | counter単位とframe境界を再評価（A25） |
+| S12/S13 | generation/retire/cache改善は維持。新upload/resize/保持画像の整合を再開（A06/A07） |
+| S14 | 全形式のpreflight/dropを再開（A08/A09） |
+| S15 | 通常teardownは維持。失敗時部分生成・cleanupを確認 |
+| S16 | 新patch経路はA02–A06。A02/A03は修正済、A04–A06は未解決 |
+| S17/S18 | composite意味判定・out-of-date/失敗時資源・画面到達を再開（A11/A18/A19） |
+| S19 | 128 byteは満たしたがA01で変換の意味を壊していた。**A01修正で解消** |
+| S20/S21 | validation parser/画像delta改善は維持。成功field欠落拒否を追加（A24） |
+| S22 | 到達・作用・capture中の状態を確認するfixtureが必要（A21/A22/A26） |
+| S23 | sampler/mip正当性を再開（A05/A15） |
+| S24 | shader自動build/lockは維持。jar・fixture・SPIR-Vのprovenanceと主張を揃える（A23/A31） |
+
+## 4. 維持する実績（有効な局所受入）
+
+- AMD RX6400 / Intel UHD630 の通常hybrid fixtureが exit 0 / validation message 0 / fixture PASSED を記録している。これは有効な局所受入である。
+- 画像からのtexture供給（初回7/8）と、その後のimage/patch経路は実装されている。**回数をunique texture数や正確な更新保証と混同しない**。
+- A01/A02/A03の修正後も両runは green（exit 0 / clean / message 0 / PASSED）。
+
+## 5. 優先順（第3回監査とgoalに対応）
+
+1. **正当性を壊すP0**: A01–A03/A32はコード修正済。専用GPU受入の残件を閉じる。A04–A07（初回全面初期化・patch外保存・sprite単位mip・CPU shadow/generation・hash/size/descriptor）を次に閉じる。
+2. **受理からGPU実行までの欠落・二重描画**: A08–A10（preflight/rollback、全formatのdrop集計、FBOのoffer/refused/recorded/drawn/copied-back分離）。FBOをGLへfalseで返したofferをVK描画済みとしない。
+3. **pinned Celeritas GL対修正後Celtiumの再比較**（同一fixture/GPU/camera/scene）で地形の暗さ・局所変換・照明・alpha/depth/blend・current RGBA・sampler/mipを直す。巨大mod testを毎回回さず、CPU契約確認＋小GPU fixtureを使う。
+4. **texture/frame所有のnative移行**: atlas stitch・動的texture/lightmap・sprite mip/animation・lifecycle・reloadの元データ供給、camera/stateをMinecraft側から供給、GL contextなしwindowでVulkan-owned color/depth/FBOから合成→swapchain→present。
+5. **vanilla coverage**: 全block/state・item/model・entity/TESR・hand・GUI/font/HUD・粒子・sky/cloud/weather・水/溶岩/火・半透明と並び替え・破壊/selection overlay・dimension・FBO/postprocess・spectator 3視点。registryから自動fixture生成。
+6. **reload/resize/world switch・失敗復旧**を両GPUで。timeout後に使用中command bufferをreset/re-record/destroyしない。
+7. **vanilla本体成立後にmajor mod互換**（JEI先行収穫は維持、Intel JEIのbudget調整は主作業にしない）。影mod/shader packは本体のshaderless完成後。
+8. **性能・配布**: 元Celeritasと同条件の定常CPU/GPU時間・平均FPS・p95/p99・メモリ・chunk更新。Sodium上流との差分は既実装・適用条件・ライセンス・採否を記録し、独立改善のみ採用。
+
+## 6. CPU契約チェック（GPU非依存の受入）
+
+`scripts/cpu-contract/TextureContractCheck.java` はデバイスもゲームも使わず、純ロジックの契約を検証する。
+実行: `javac -cp <celtium-vulkan classes>:<lwjgl jars> -d /tmp/contract scripts/cpu-contract/TextureContractCheck.java`
+→ `java -cp <celtium-vulkan classes>:/tmp/contract:<lwjgl jars> TextureContractCheck`。合格時は `CELTIUM_CPU_CONTRACT PASS`、失敗時は非0で終了する。
+
+| 検証 | 内容 |
+|---|---|
+| A02 平坦texel契約 | `int[mipLevel][y*width+x]` として読み、行配列として読んだ場合と異なること・ARGB→RGBAの色順・行順 |
+| A03 patch外保存 | 2つの離れたpatchを順に当て、**patch外の全byteが不変**・touched texel数・各patchの位置 |
+| A32 target別retire | 2独立target×4group＋不正groupで、片方の退去後も他方が保持されること |
+
+**限界**: Vulkanのbarrier・layout・実画像内容は検証しない（validation-cleanのrunが担う）。この検査はGPU受入の代わりではない。
+
+## 7. 測定の規律（カウンターの意味）
+
+| 名前 | 意味 | 完了の証拠になるか |
+|---|---|---|
+| `offTargetOffered` | off-targetへ**提示**したbatch（target生成前） | ならない |
+| `offTargetAccepted` | 受理位置で数えたbatch（現状は0: 経路違いの計器） | 単独ではならない |
+| `offTargetCopiedBack` | draw記録数が増えたtargetにcopyを記録した回数（A32修正後） | GPU完了・GL upload成功・画像の証拠には単独でならない。修正前の1957は空targetのclear/copyも含む |
+| `imageFilledMirrors` | announced image/patchで**実際にピクセルが動いた回数**（修正後） | 単独ではならない（resource数ではない）。実測: 実転送113 + skip 3448 = 旧3629は約30倍の過大表示だった |
+| `imageUploadsSkipped` | 内容が同一で転送しなかった回数（修正後） | ならない |
+| `outsideWorldPassAccepted` | accept判定**前**に増える | ならない |
+| `offTargetPassesSkippedEmpty` | 一致groupが0でpassを開始しなかった回数（A32修正後） | ならない（空clearを書かないことの証拠） |
+| `immediateGroupsKeptForOtherTargets` | 別targetのため保持したgroup数（A32修正後） | ならない（保持の証拠） |
+| `acceptedByFormat` | format別の受理数（`2:0` = format 2は既定でGL） | 単独ではならない |
+
+## 7. コマンドバッファ受入（Sol集中修正・2026-10-10）
+
+| 種別 | 条件 | 結果 |
+|---|---|---|
+| 再現（修正前jar・SHA固定） | `.celtium-work/sol-command-buffer/base-artifacts/`＋`sol-cb-base-amd` | exit 1 / validationClean false / **70メッセージ** / fixture PASSED（70はVUID抑制上限） |
+| 受入（AMD通常） | `sol-cb-final-amd` | exit 0 / clean / msgs 0 / fixture PASSED / `passed=true` / delta accepted=recorded=submitted=completed=4 / pending0 / invalid0 / off-target 2,2,2 / 矩形・未更新領域の不一致0 |
+| 受入（AMD・submit前失敗注入） | `sol-cb-final-retry-amd` | 同上＋`retries=1`（fixture内で実際に再試行） |
+| 受入（AMD・初回修正版） | `sol-cb-fixed2-amd` | 同上（pendingImmediateIndices修正後） |
+| 純ロジック | `vulkan:test` | `VulkanCommandBufferStateTest` 4件 pass |
+| 通常fixture回帰（format 2 既定受理） | `p31a-format2-default-amd` | exit 0 / clean / msgs 0 / fixture PASSED / worldFrames 228 / `acceptedByFormat=1:0,2:217,3:0,4:0,5:214,6:1394,7:1136,8:0,9:0` / **recorded=submitted=completed=2961** / invalidImmediateRecords 0 / retries 0 |
+| 受入（Intel通常） | `sol-cb-clean-intel` | exit 0 / clean / msgs 0 / fixture PASSED / `passed=true` / 4/4/4/4 / off 2/2/2 / 不一致0 / worldFrames 155 |
+| 受入（Intel・submit前失敗注入） | `sol-cb-clean-intel-retry` | 同上＋`retries=1`（fixture内で再試行） |
+| 通常fixture（Intel・format 2既定受理） | `p31d-intel-clean` | exit 0 / clean / msgs 0 / PASSED / **worldFrames 154**（変更前は114・129）、即時2155件が記録=submit=完了、invalid 0 |
+| window数削減（1回目） | `sol-cb-windowcut-amd` / `p31c-windowcut-amd` | viewport変更のflushを削除し、テクスチャ告知は**キュー内groupが参照する場合のみ**flush。`orderPreservingFlushes` **633→388**（228→218フレームで約2.8→1.8/フレーム）、target受入 exit 0・通常fixture PASSED・記録=submit=完了=2829・invalid 0 |
+| 訂正（Intelの480秒上限） | `sol-cb-final-intel2` / `p31b-intel-normal` | どちらも480秒上限で report 未到達だったが、**同時にAMD runを走らせていた競合が原因**だった。他を止めた単独runは 24〜27秒で完走し PASSED。**Intelは退行しておらず、むしろ 114/129→154 と改善**。測定は常に単独で行う |
+| 受入（clear順序・描画→clear） | `sol-cb-clearorder-amd` / `sol-cb-clearorder-intel` | clear前に受理済みbatchが1件pending→clear境界で accepted=recorded=submitted=completed が各+1・pending 0、clear後の画像は**全ピクセルがclear色**（blue矩形も消滅・不一致0）。「描画→clear」の順序を実geometryで確認 |
+| 受入（depth順序・近傍が遠方を隠す） | `sol-cb-depth5-amd` / `sol-cb-depth-intel` | 同じ矩形に近傍batch→遠方batchの順で描き、**近傍の色だけが残る**（中心=青、rectangle不一致0、`farLeakedPixels` 0）・4段カウンタ+2一致・pending 0。D24→D32→D24の往復とGL準拠のdepth順序を実geometryで確認 |
+| 証拠 | `.celtium-work/sol-command-buffer/acceptance-summary.json` | 13 runのexit/clean/msgs/fixture/passed/delta/clearOrder/depthOrder/worldFramesとPNG 5枚のハッシュを固定 |
+| 証拠 | `.celtium-work/sol-command-buffer/acceptance-summary.json` | 各runのexit/clean/msgs/fixture/passed/deltaとPNGハッシュ |
+
+実行コマンド: `bash scripts/run-command-buffer-targets.sh amd|intel <new-run-name> [failImmediateSubmits]`
+（Python/fixture/verdict のどれかが落ちれば非0で終了し、`commandBufferTargets.passed` と3枚のPNGを必須にする）。
+
+---
+
+## 7.5 画質・失敗経路の現状（詳細な経緯は `docs/history/quality-and-failure-investigation-2026-10.md`）
+
+| 項目 | 現在の結論 | 根拠（現行artifact） |
+|---|---|---|
+| 地形の色・明るさ | **参照と一致**。本番jarで「mod自身の高速ブロックレンダラが無効」だったのが原因で、mid帯 88.9 → **136.5**（upstream 136.8 / vanilla 146.6） | `p46-default-r433` / `p73-normal` |
+| 画素対応フィット | `celtium = 1.475 × vanilla^0.915`（upstream は `1.372 × vanilla^0.916`）＝指数が一致 | `p46-default-r433` |
+| 残差 | **現在**: 平均絶対差 **7.78〜7.79/255**、HF比 **0.81〜0.82**（下の再測定を参照。旧値: 8.00/255・HF 0.84）。ノイズ床は参照同士 0.22 / 候補同士 0.13 なので**実差**。mipレベルは原因でない（LOD 0 でも 6.90 対 参照7.63）。幾何エッジ幅は同一（6.16 対 6.05） | 帯別解析 + `p44-lod0` / `p48-mips` |
+| カスタムシェーダ | **受理しない**（`GL_CURRENT_PROGRAM != 0` を preflight で拒否）。spider のハング（exit 124）解消、mirror 898 → **80**、p99 174 → 118ms | `p71-spider`（AMD）/ `p71-spider-intel`（Intel） |
+| 拒否の副作用 | 通常runでは**発動0回**（`shaderProgramRefusals=0`）。shader場面では340回 | `p73-normal` / `p73-spider` |
+| 失敗経路（submit/待機タイムアウト） | 両GPUで**bounded**（exit 1・report あり・24〜27s）。ハング/クラッシュしない | `p50-failsubmit4-r438` / `p54-failidle-r441` / `p55-submit-intel` / `p56-idle-intel` |
+| resize / reload | 両GPUで PASSED・validation違反0 | `p57-resize-amd|intel` / `p57-reload-amd|intel` |
+| 場面coverage | 6場面×両GPU＋spectator3種×両GPU が PASSED（発火の証拠付き） | `p58`〜`p66` 系、`docs/plan.md` §5 |
+| handoff費用 | CPU時間は ~135µs/handoff（通常と postprocess で同一）＝律速ではない。GPU時間は未計測 | `p69-normal` / `p69-postprocess` |
+| 未解決 | GPU側handoff時間の計測、`switchUseShader` の他shaderでの受入、残差3%の要因、GL-free frame（条件b） | — |
+
+## 7.6 native present経路の現状（完成条件 b/c に直結）
+
+`VulkanSwapchain` には present の証拠機構が既にある（`-Dceltium.vulkan.presentMarker` でマーカー色を提示、
+`-Dceltium.vulkan.presentReadback` で提示画像を読み戻して平均を記録、`lastPresentSucceeded` /
+`lastPresentedMean` を保持）。今回 `presentFromComposite` + `presentMarker` + `presentReadback` を有効にして実測:
+
+| 指標 | 結果 |
+|---|---|
+| present 自体 | **`presentFailures=0`**（提示は成功している） |
+| swapchain | `swapchainOutOfDate=0`、`presentMode=1` |
+| fixture verdict | **PASSED**（地形は正常） |
+| **validation** | **exit 1 / validationClean=false／`VUID-vkCmdDraw-None-09600` ×6** |
+
+- **新しい欠陥**: present 経路で **記述子のイメージレイアウト不一致**（`VUID-vkCmdDraw-None-09600`）が出る。
+  提示のために frame image を `PRESENT_SRC_KHR` へ遷移させる一方、サンプリング用記述子が別レイアウトを
+  宣言している疑いが強い。通常run（present無効）は clean なので、この経路固有。
+- **fixture の verdict は PASSED のまま**で、この失敗は harness の `validationClean=false` 側で捕捉された
+  （fixture の判定が validation を代替しないことの実例）。
+- 未確認のまま残る部分: **window/compositor への到達**（提示画像の読み戻しは取れるが、実際の画面出力は
+  X11/Wayland の capture が必要。方法の調査は未了）。
+
+**修正（このターン・解決）**: validation メッセージの全文で原因が確定した。
+
+```
+expects VkImage 0x12... (COLOR, mip 0, layer 0) to be in layout VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+--instead, current layout is VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+```
+
+`readBackMean()`（presentReadback の計器）が **レイアウト遷移なしで `vkCmdCopyImageToBuffer` を記録**しており、
+提示済み画像（PRESENT_SRC_KHR）をそのまま読もうとしていた。対策として **提示→TRANSFER_SRC のバリアと、
+コピー後に PRESENT_SRC へ戻すバリア**を追加した。
+
+| 指標 | 修正前 | 修正後 |
+|---|---|---|
+| `VUID-vkCmdDraw-None-09600` | 6件 | **0件** |
+| verdict | exit 1 / validationClean=false | **exit 0 / validationClean=true / msgs=0 / fixture PASSED** |
+| present | presentFailures=0 | **presentFailures=0（維持）** |
+
+- つまり**提示そのものは元から成功**しており、欠陥は計器（読み戻し）側にあった。通常runは present 無効なので影響なし。
+- 残る: `presented image mean=` の値を report に出す（提示画像にマーカー色が入った証拠）、および
+  window/compositor capture の可否調査。
+
+**window/compositor capture の可否（このターン・環境側で不可と確定）**: 実画面の capture を試みた。
+
+| 試行 | 結果 |
+|---|---|
+| `DISPLAY` / `WAYLAND_DISPLAY` | `:0` / `wayland-1` が設定されている（`/tmp/.X11-unix/X0` も存在） |
+| `ffmpeg -f x11grab -i :0` | **失敗**: `Capture area 1920x1080 ... outside the screen size 0x0`（**X screen が 0×0**） |
+| **`grim`（Wayland screencopy）** | **インストール済み**（`/usr/bin/grim`, `/usr/bin/slurp`）だが **`no wl_output`** ＝ Wayland に出力が無い |
+| `--headless` を外した実行（Wayland） | プロセスは exit 0 で終了するが **fixture FAILED / screenshotSaved=false**（`--force-x11` 時は `Too few world rendering frames for startup validation: worldFrames=20`） |
+
+**具体的な不足条件**（goal の「取得不能なら不足条件を残す」に対応し、method名ではなく**この環境で実測**）:
+1. **capturable な表示出力が存在しない**: X11 は screen 0×0（x11grab が拒否）、Wayland は `no wl_output`
+   （`grim` は導入済みだが出力が無い）。物理/仮想モニタを持つセッションが要る。
+2. 実窓を出して安定描画できる非 headless 環境（現在は fixture が `worldFrames=20` で閾値未満）。
+3. もしくは GPU 側で提示画像をファイル化する経路（`presentReadback` の拡張で可能。compositor 到達の
+   代替にはならないが、少なくとも「提示画像の中身」は既に取れている）。
+
+いずれも「method 名」ではなく、**この環境で実測して不可能と確認した**ものである。なお present 側の証拠
+（提示画像の中身＝マーカー平均 191.25）は取得済みなので、残る主張は「提示が compositor まで届いたか」に限定される。
+
+**完成条件(c)の証拠（このターン）**: 提示画像の内容を report に出して実測した（`presentMarker` は画像を
+マゼンタ (1,0,1,1) でクリアする。8bit のバイト平均は (255+0+255+255)/4 = **191.25**）。
+
+| 指標 | 実測 |
+|---|---|
+| `presentSucceeded` | **true** |
+| `presentedMean` | **191.25**（マゼンタ期待値 191.25 と**完全一致**） |
+| `presentFailures` | 0 |
+| verdict | exit 0 / validationClean / PASSED |
+
+- **提示された swapchain 画像に、このrendererが合成したフレームが入っている**ことの直接証拠が取れた
+  （前ターンまで「presentFailures=0」だけで、画像の中身は未確認だった）。
+- 残るのは **window/compositor への到達**（画面そのものの capture）。headless セッションのため
+  X11/Wayland の capture 手段が必要で、利用可否の調査は次項。
+
+**（旧メモ）** 次の一手: (1) present 経路のレイアウト遷移と記述子の宣言を突き合わせて `VUID-vkCmdDraw-None-09600` を解消する、
+(2) `presentReadback` の平均値がマーカー色と一致することを記録して「提示画像にフレームが入った」証拠を取る、
+(3) window/compositor capture の可否を調べる（取れない場合は不足条件を明記）。
+
+## 7.7 完成条件(b)（GL contextなし）の作業内訳 — フレーム経路のGL依存の実測
+
+`VulkanFrameTarget` と `VulkanTerrainGpuBackend` のフレーム経路に出てくる GL 呼び出しを数えた（grep による
+出典付きの棚卸し。**未実装の主張ではなく、いま残っている依存の一覧**）。
+
+| 分類 | 実測された呼び出し（回数） | 除去の方針 |
+|---|---|---|
+| **相互運用グルー**（bridge 本体） | `glBindFramebuffer`(5) / `glNamedFramebufferTexture`(3) / `glBlitNamedFramebuffer`(2, 色と深度) / `glWaitSemaphoreEXT` / `glDeleteSemaphoresEXT`(3) / `glFlush`(4) / `glGetNamedFramebufferAttachmentParameteri`(6) / `glGetNamedRenderbufferParameteri`(5) | Vulkan-owned の color/depth に描き、**同一デバイスの present**へ直接出す（`presentFromComposite` の経路が既に存在し、提示画像の中身はマーカー平均で確認済み）。GL の blit/semaphore は移行用 |
+| **深度変換プログラム** | `glGetUniformLocation`(3) / `glDeleteShader`(3) / `glGenerateMipmap` 系 / `glTextureParameteri`(9) | D32→D24 変換自体が不要になる（GL へ返さないため） |
+| **状態ミラー** | backend: `glGetInteger`(15) / `glGetFloatv`(8, 行列) / `glIsEnabled`(5) / `glGetIntegerv`(3) / `glGetTexParameteri`(3) / `glGetTexParameterf`(2) / `glBindTexture`(2) / `glActiveTexture`(2)。frame target: `glGetInteger`(15) | Minecraft 側から state を供給する（goal の「camera/state は Minecraft 側から供給」）。行列は `captureGlMatrices()` の置き換え |
+| **テクスチャミラー** | `glGetTexLevelParameteri`(5) / `glGetTextureLevelParameteri`(4) | MC の sprite/frame データから供給し、readback を不要にする（atlas stitch / dynamic texture / sprite mip） |
+| **計器・検証** | `glCheck`(10) / `glGetError` 系 | 計器なので最終形には不要（開発時のみ） |
+
+- 状態クエリの総数: `VulkanFrameTarget` 24箇所 / `VulkanTerrainGpuBackend` 26箇所。**どれも「GL から読む」もので、
+  描画そのものは既に Vulkan 側にある**。したがって (b) の作業は「読む元を Minecraft のデータに替える」ことに集約される。
+- 既に Vulkan 側にあるもの: 地形パイプライン、immediate pipeline、descriptor/allocator、swapchain/present。
+
+**§7.7 の棚卸しを取り直し（このターン・既定変更後）**: 実行時のカウンタで確かめると、**毎フレームの GL 読み戻しは
+消えている**（現行既定: `regStaleCalls=0`、`inPlaceRefreshes=0`、`regAnnouncedSkips=16.2/フレーム`）。残る GL 依存は
+**ブリッジ本体**に集約された。
+
+| 分類 | 現状（ソースの出現数） |
+|---|---|
+| ブリッジの FBO/blit/semaphore | `glBindFramebuffer`(5) / `glNamedFramebufferTexture`(3) / `glBlitNamedFramebuffer`(色・深度) / `glFlush`(4) / `glDeleteSemaphoresEXT` / `glWaitSemaphoreEXT` |
+| ブリッジの状態クエリ | `glGetInteger`(15) / `glGetNamedFramebufferAttachmentParameteri`(6) / `glGetNamedRenderbufferParameteri`(5) / `glActiveTexture`(5) / `glIsTexture`(3) / `glTextureParameteri`(9) |
+| 計器・検証 | `glCheck`(13) ほか |
+| **テクスチャ読み戻し** | `glGetTexImage` 4箇所・`glReadPixels` 2箇所が**コードには残る**が、**実行時は 0 回/フレーム**（更新時のみ、announce が届かない経路で使われる） |
+| フレーム経路の状態クエリ総数 | `VulkanFrameTarget` 48箇所 / `VulkanTerrainGpuBackend` 48箇所 |
+
+- つまり (b) の残りは「**フレームの受け渡し（ブリッジ）そのもの**」であり、テクスチャ側の GL 依存は片付いた
+  （atlas/lightmap は announce で供給され、読み戻しは更新時のみ）。
+**ブリッジの per-frame コストを実測（このターン）**: `handoffTimings` の生の合計とハンドオフ数を出すようにして測った。
+
+| 内訳（CPU時間） | AMD | Intel |
+|---|---|---|
+| `wait`（semaphore） | 0.559 ms/フレーム | 0.561 ms/フレーム |
+| 色 blit-in / 深度 blit-in | 0.000 / 0.000 | 0.013 / 0.003 |
+| `convert-in`（D24→D32 の GL パス） | 0.011 | 0.096 |
+| 色 blit-out / `convert-out` | 0.000 / 0.014 | 0.016 / 0.138 |
+| **合計** | **0.584 ms/フレーム（p50 の 3.6%）** | **0.827 ms/フレーム（2.9%）** |
+| ハンドオフ数 | 4.69/フレーム | 4.52/フレーム |
+
+- **ブリッジは速い**（CPU で 0.6〜0.8 ms/フレーム）。`wait` は**両GPUで 0.56 ms** と同一で、Intel 固有の待ちではない。
+- **注意（計器の意味）**: これは **CPU が GL 呼び出しに費やした時間**で、blit と深度変換の **GPU 実行時間は含まない**
+  （計器のコメントにもそう書かれている）。GPU 側のコストは未計測である。
+- **したがって**: ブリッジを Vulkan 内へ移す理由は**速度ではなく完成条件(b)**（GL context なしの起動、
+  GL call / GL-VK bridge / copyback / GL swap / GL fallback を必要としない実行）である。ここを取り違えない。
+
+**ハンドオフも wall/CPU で分けた（このターン）**: `actualFlushes` に CPU 時間の対を足した。
+
+| 指標 | AMD | Intel |
+|---|---|---|
+| ハンドオフ回数 | 0.94/フレーム | 0.96/フレーム |
+| wall | 1.285 ms/フレーム | **5.749 ms/フレーム** |
+| CPU | 0.673 | 0.958 |
+| **ネイティブでブロック** | 0.612 | **4.791（wall の83%）** |
+| 最悪の1回 | 2 ms | 7 ms |
+
+- **Intel の 4.79 ms/フレームは「自分の Vulkan 描画が終わるのを待ってから GL へ戻す」待ち**である。
+  ハンドオフは既に約1回/フレームなので、回数を減らす余地はなく、**この待ちはブリッジ構造そのもの**に由来する
+  （GL 側は画素が返るまで進めない）。**参照（純GL）にはこの待ちが無い**。
+- したがってここを消す道は**速度の調整ではなく、フレームの所有を native に移すこと**（優先順位4 / 完成条件(b)）:
+  自分で所有して present するなら、GL へ戻すための待ち自体が無くなる。
+
+**Intel の p50 28.5 ms の内訳（現時点で測れた分）**: 地形 6.1（GPU）＋ ハンドオフの待ち 4.8（native）＋
+バッチ wall 10.1（うち CPU 2.4）＋ ブリッジ 0.8（CPU）＋ ハンドオフ CPU 1.0 ≒ 22.8。残り約 5.7 ms は GL 側
+（Minecraft 自身の描画）で、**測っていないので結論にしない**。
+
+- 残る未計測は Intel で約 7 ms/フレーム（地形 6.1 ＋ ハンドオフ 4.1 ＋ バッチ wall 10.1 ＋ ブリッジ 0.8 を
+  p50 28.5 から引いた分）。これは GL 側（Minecraft 自身の描画とブリッジ越しの同期）に散っていると見られるが、
+  **測っていないので結論にしない**。
+
+**次の一手**: (1) 上記の未計測 7 ms を GL 側の計器（Minecraft の profiler かブリッジの GPU 待ち）で分ける、
+(2) 完成条件(b) に向けて、ブリッジを Vulkan 内の同一デバイス操作に置き換える設計を始める（速度のためではない）。
+
+**（旧メモ）** 次の標的は `VulkanFrameTarget` の per-frame な GL 操作（色・深度の blit、FBO の付け替え、semaphore の待ち）を
+  Vulkan 側の同一デバイス操作に置き換えること。これは完成条件(b)（GL context なしの起動）への直接の道である。
+
+## 7.8 完成条件(b) の実装第1歩: 即値パスの行列GL読み戻しを廃止（既定化・画素一致で検証）
+
+棚卸し（§7.7）の「状態ミラー」のうち **行列** を実際に置き換えた。
+
+- 既存の `MIRRORED_MATRICES`（`-Dceltium.vulkan.mirroredMatrices`）は**双方向の比較用スイッチ**で、
+  既定は GL 読み戻し側だった。ミラー側を強制して実測:
+
+| 比較 | 結果 |
+|---|---|
+| 既定（GL読み）vs ミラー強制 の**画像** | **meanAbsDiff 0.000 / HF比 1.000（画素一致）** |
+| `matrixMirrorDelta` | **proj:0.0, view:0.0**（ミラーと実GLが完全一致） |
+| verdict | exit 0 / validationClean / PASSED |
+
+- したがって**既定をミラー側に変更**した（`-Dceltium.vulkan.mirroredMatrices=false` で旧経路に戻せる）。
+  変更後の既定で再測定: 旧既定との **meanAbsDiff 0.000**、verdict PASSED、target受入 exit 0。
+- 効果: 即値パスが毎バッチ行っていた**行列の GL 読み戻し（`captureGlMatrices()` の GL 経路）が不要**になり、
+  (b) の「GL から読む元を Minecraft 側のデータに替える」の1項目が完了した。
+
+**§7.7 の棚卸しの訂正（このターン）**: 「状態ミラー」は**既にミラー側が既定**だった。
+`celtium$captureState()` は `immediateState.*`（ミラー）から読んでおり、`glIsEnabled` の出現箇所の多くは
+**診断文字列の中**（2452-2455行）で、描画経路の依存ではない。行列と同じく、grep の回数は*実際の依存*を
+過大に数えていた。**実依存として残るもの**（ソースで確認）:
+
+| 依存 | 箇所 | 置換方針 |
+|---|---|---|
+| **fog** | `fogMode()` が `glIsEnabled(GL_FOG)` と `glGetInteger(GL_FOG_MODE)` を毎回読む（3737行〜）。`VulkanGlState` に fog フィールドは無く、`GlStateManagerMixin` も fog を追跡していない | Minecraft 側の `GlStateManager.enableFog/disableFog/setFog(FogMode)`＋`setFogDensity/Start/End` を mixin（SRG名）でミラーし、`fogMode()` をミラー読みに。検証は画素一致（fog は画面に出るので差が出る） |
+| **テクスチャ寸法** | `VulkanGlTexture` のミラー作成時の level クエリ | MC の sprite/frame データ（寸法）から供給 |
+| **相互運用グルー** | blit（色・深度）・semaphore・FBO/renderbuffer クエリ・深度変換プログラム | Vulkan-owned target に描き同一デバイス present へ一本化（`presentFromComposite` が既に到達） |
+| 計器・診断 | `glIsEnabled` の診断文字列、`glCheck`、行列比較 | 最終形では不要 |
+
+**fog ミラー化の設計確定（このターン・実装は次）**: 実装に必要な事実がすべて判明した。
+
+- **fog の正しい供給元は Minecraft 自身のフィールド**（GL ではない）:
+  `net.minecraft.client.renderer.GlStateManager.fogState` は **public static** で、
+  `FogState { public BooleanState fog; public int mode; public float density, start, end; }`、
+  `BooleanState.currentState` も **public**。GL 側の `GLStateManagerFogService`（このプロジェクト）は既に
+  このフィールドから読んでおり、`EntityRenderer.fogColorRed/Green/Blue` も同様に取れる。
+- 置換対象は backend の `fogMode()` にある `glIsEnabled(GL_FOG)` と `glGetInteger(GL_FOG_MODE)` の2つだけ
+  （`mode` は `GL_EXP2`→1 / `GL_EXP`→2 / それ以外→3 に写像）。
+- **制約**: `celtium-vulkan` は `net.minecraft` 参照が **0件**（純 Vulkan モジュールとして設計されている）。
+  したがって backend に MC 型を持ち込まず、**mirror フィールド＋setter を backend に置き、forge 側
+  （`GLStateManagerFogService` が `GlStateManager.fogState` を読める場所）から push する**。
+- 検証は**画素一致**（fog は画面に出るので、写像や既定値を誤れば必ず差が出る）。前例: 行列ミラーは
+  meanAbsDiff 0.000 で既定化できた。
+
+**fog ミラー化 実装・検証済み（このターン）**: 設計どおりに実装した。
+
+- `celtium-vulkan` に **MC非依存の静的ホルダ `VulkanFogMirror`**（`set(enabled, mode)` / `hasValue()`）を追加。
+  まだ push されていなければ `fogMode()` は**従来の GL クエリにフォールバック**する（安全側）。
+- forge 側 `CeleritasWorldRenderer` の per-frame 経路で `GlStateManager.fogState.fog.currentState` と
+  `fogState.mode` を push。
+- report に `fogModeSource=mirror|gl_query` を追加して**どちらが使われたかを証拠化**。
+
+| 検証 | 結果 |
+|---|---|
+| 標準run（`p82-standard`）旧既定との**画素一致** | **meanAbsDiff 0.000**、`fogModeSource=mirror` |
+| weather（`p82-weather` vs `p82-weather2`）**同一ビルドのノイズ床** | **1.208** |
+| weather（ミラー前 `p64-weather-amd` vs 新） | **0.992（ノイズ床以下）** |
+| verdict（両run） | exit 0 / validationClean / PASSED |
+
+=> **fog の GL クエリ（`glIsEnabled(GL_FOG)` / `glGetInteger(GL_FOG_MODE)`）を廃止**し、画像が変わらないことを
+確認した。これで (b) の「GL から読む」依存は **行列 → fog** の2項目が完了。
+
+**bound texture の GL 読みを廃止（このターン・(b) の3項目目）**: `announceDynamicTexture` /
+`announceAnimatedUpload` は `glGetInteger(GL_TEXTURE_BINDING_2D)` を読んでおり、コメントには
+「このrendererで GL クエリがフックで供給できない唯一の場所」と書かれていた。しかし `bindTexture` は
+**既にミラーがフックしている**呼び出しなので、ミラーで供給できる。まず**一致を実測**した:
+
+| 指標 | 実測 |
+|---|---|
+| `boundTextureSamples` | **525** |
+| `boundTextureMismatches` | **0**（525サンプルすべて一致） |
+| verdict | exit 0 / validationClean / PASSED、`fogModeSource=mirror` |
+
+- 525/525 の一致を受けて、比較を **`-Dceltium.vulkan.compareBoundTexture=true` の opt-in** にし、
+  **announce 経路はミラーだけを読む**ようにした（既定で GL クエリを取らない）。
+- 変更後の検証: **標準runは前回との meanAbsDiff 0.000**、weather は 1.548（同一ビルドのノイズ床 1.2〜1.5 の範囲）、
+  両run exit 0 / validationClean / PASSED、target受入 exit 0。
+
+**テクスチャ寸法の供給（このターン・実装したが未使用と判明）**: `announceDynamicTexture` の寸法を
+GL に問い合わせない経路を実装した（`common` の `TerrainGpuBackend` に寸法付きオーバーロード、
+`VulkanTerrainGpuBackend` にその実装、`DynamicTextureMixin` が `DynamicTexture` の private な
+`width`/`height` を読んで渡す）。
+
+**しかし実測すると新経路は一度も使われなかった**: report の `announcedDynamicTextures=0`、
+ログは `CELTIUM_DYNAMIC_ANNOUNCE bound=28 size=1x1` で**従来の GL 経路**のままだった。
+
+- **原因**: 本番（SRG名）では `DynamicTexture.class.getDeclaredField("width")` が一致しない。
+  同じ mixin の**ピクセル配列が動いている理由は「型（`int[].class`）で探している」**ことで、
+  名前で探す私の実装は production では原理的に当たらない。
+- これは**計器が捕まえた**（`announcedDynamicTextures` を report に足していたので「使われていない」と分かった）。
+  画像は PASSED（前回weather runとの差 0.980＝ノイズ床 1.2〜1.5 以下）なので、退行はしていない。
+- **正しい供給元に載せ替えて解決（このターン）**: `TextureUtil.uploadTexture(int id, int[] data, int width, int height)`
+  の**引数**を使う。SRG名は**推測せず導出**した: マップ済みソースの引数名 `p_110988_1_` などが SRG 番号そのものなので
+  `func_110988_a` と確定する（既存の `func_147955_a`/`func_110989_a` のフックも同じ導出で選ばれている）。
+  壊れていたサイズ反射は撤去し、`DynamicTextureMixin` は早期ヒントの announce だけを残した。
+
+| 指標 | 結果 |
+|---|---|
+| `announcedDynamicTextures` | **415**（修正前は 0）＝1 runあたり約 **830 回**の `glGetTexLevelParameteri` を回避 |
+| 画像（前回runとの差） | **meanAbsDiff 0.782**（weather のノイズ床 1.2〜1.5 以下＝変化なし） |
+| verdict | exit 0 / validationClean / PASSED、`boundTextureMismatches=0` |
+| target受入 | exit 0 |
+
+**current colour の GL 読みを廃止（このターン・(b) の5項目目）**: 位置のみの内容（format 7＝空など）は
+「そのときの current colour」で描かれるため、offer 時に `glGetFloatv(GL_CURRENT_COLOR)` を読んでいた。
+この色は **`GlStateManager` の `color(...)` をフックした既存ミラー（`immediateState.colorRed/Green/Blue`）**が
+既に持っているので、ミラー読みに置換した（ゲームがまだ色を設定していなければ従来の GL 読みにフォールバック）。
+
+| 指標 | 結果 |
+|---|---|
+| `colorMirrorUses` | **200**（位置のみの経路が200回ミラーを使用＝GL 読みを回避） |
+| 画像（前回標準runとの差） | **meanAbsDiff 0.011 / 上部1/3（空）は 0.000** |
+| verdict | exit 0 / validationClean / PASSED |
+| target受入 | exit 0 |
+
+**FBO読みの置換を試みて撤回（このターン）**: `VulkanFrameTarget` は game の framebuffer 名（`gameFbo`）を
+保持しているので、ブリッジ経路の `glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING)` をそれで置き換え、
+使用元を数える計器（`drawFramebufferMirrorUses` / `drawFramebufferQueries`）を付けて実行した。
+
+**結果: 両方とも 0**＝**そのコード経路がfixtureで一度も走っていない**。標準run（`p88-fbo`）でも
+postprocess 場面（`p89-offtarget`）でも `offTargetAccepted=0` / `offTargetDrawn=0` / `offTargetCopiedBack=0` で、
+**オフターゲットの copy-back 経路は未実行**だった。検証できない挙動変更を残さないため**その場で撤回**した
+（画像は両runとも PASSED / meanAbsDiff 0.000 で、変更が中立であることは確認できている）。
+
+- **オフターゲット場面で経路を踏んで確定（このターン）**: fixture には `-Dceltium.validation.drawTestTargets=true`
+  があり、**セカンダリ Framebuffer を bind して赤い quad を描き、メインへ戻す**（＝まさにオフターゲット描画）。
+  AMD/Intel 両方で実行した結果:
+
+| 指標 | AMD | Intel |
+|---|---|---|
+| `offTargetOffered` | **435** | **269** |
+| `offTargetAccepted` | **0** | **0** |
+| `offTargetDrawn` / `offTargetCopiedBack` | 0 / 0 | 0 / 0 |
+| 拒否理由（`offTargetRefusals`） | `{target is outside the RGBA8/D24/full-viewport bridge contract=435}` | 同（269） |
+| `offTargetPerTarget` | `0:offered=217,atPass=0,drawnPasses=0  e7e6020:offered=218,...` | 同種 |
+| verdict | exit 0 / validationClean / PASSED | exit 0 / validationClean / PASSED |
+
+  **結論**: オフターゲットは「offer はされるが**契約外として全件拒否**される」経路である（拒否は理由つきで
+  **target別に計数**され、黙って落ちていない）。したがって
+  - 計画の「オフターゲット**受入**」という表現は誤り。正しくは「オファーされ、契約外として拒否される」。
+  - `offTargetDrawn++` が描画証拠にならないという注意は、**現在その経路が走っていない**ことの裏返しでもある。
+  - ネイティブが担うのは **RGBA8/D24/フルビューポートのブリッジ契約内**（メイン画面）だけで、それ以外は GL が描く。
+    これは scope の境界として docs に明記する（未実装ではなく**契約外**）。
+- **（旧メモ）重要な訂正**: 計画が「オフターゲット受入」として挙げてきた経路は、**いま使っている fixture では発生していない**。
+  したがって `offTarget*` の受入を「確認済み」として扱わない。オフターゲットを実際に発生させる場面
+  （別 target へ描くゲーム経路、例えば描画先を切り替える mod/場面）を用意するまで、この経路の受入は**未検証**とする。
+- 計器（カウンタ）だけを足して 0 のまま残すことも避けた。0 を報告し続ける計器は「使われていない」ことの
+  証拠にはなるが、そのためだけにコードを増やさない方針にした（必要になった時点で戻せる）。
+
+**(b) の進捗**: 行列 → fog → bound texture → テクスチャ寸法 → current colour の **5項目が完了**。残りは
+**相互運用グルー**（blit/semaphore/深度変換/FBOクエリ）と `GL_DRAW_FRAMEBUFFER_BINDING` の実読み箇所。
+
+**（旧メモ）** 正しい供給元: `TextureUtil.uploadTexture(int id, int[] data, int width, int height)` の**引数**。
+  このプロジェクトは既に `TextureUtil` をフックしているので、そこで寸法を受け取ればリフレクション不要で
+  名前問題も起きない。次はこの経路に載せ替える（`announceDynamicTexture(pixels, width, height)` は実装済みなので
+  呼び出し元だけの変更で済む）。
+
+**(b) の進捗**: 行列 → fog → bound texture の3項目が完了。残りは (1) テクスチャ**寸法**の
+`glGetTexLevelParameteri`、(2) 相互運用グルー（blit/semaphore/深度変換/FBO クエリ）、(3) `GL_CURRENT_COLOR` /
+`GL_DRAW_FRAMEBUFFER_BINDING` の残り。
+
+**（旧メモ）** 次の一手: (1) 残る `glIsEnabled`/`glGetInteger`（診断以外）を同方式で潰す、(2) テクスチャ寸法の level クエリを
+MC の sprite/frame データへ、(3) 相互運用グルー（blit/semaphore/深度変換）の一本化。
+`fogMode()` を mirror 読みに、(2) forge 側の per-frame 経路から push、(3) 既定 run と旧実装の画素一致を確認して
+既定化、(4) `glIsEnabled`/`glGetInteger` の残り（診断以外）を同じ方式で潰す。（`GlStateManagerMixin` に fog の注入を足し、
+`fogMode()` をミラー読みにして画素一致を確認）。
+(2) テクスチャの `glGetTexLevelParameteri`（sprite/frame データからの供給）、
+(3) 相互運用グルーの blit/semaphore（同一デバイス present への一本化）を順に潰す。
+
+## 7.9 vanilla coverage: registry駆動のブロック掃引（このターン・新規実装）
+
+優先順位5「registryから自動fixtureを生成し、小場面に分割する」に対応する場面を実装した。
+
+- fixture に `-Dceltium.validation.blockSweep=<count>` を追加。`Block.REGISTRY` を順に歩き、
+  **平坦worldの地表の1つ上（y=4）に 16×16 グリッドでブロックを設置**する。generator は数種類しか作らないので、
+  これまではその数種類でしかメッシュ経路を踏んでいなかった。
+- 設置数・失敗数・進行index・registryサイズを **fixture の report 直下**に記録（`rendererDebug` ではない）。
+
+**最初の実装は失敗し、その原因を実ログから読んだ**（2ブロック/tick・250個）:
+
+| GPU | 結果 | ログの根拠 |
+|---|---|---|
+| AMD | **fixture FAILED** | `Too few world rendering frames for startup validation: worldFrames=94 (threshold 100), worldTicks=200` |
+| Intel | **exit 124 / MISSING_REPORT** | 175秒でタイムアウト（time-limit） |
+
+→ 層を一気に埋めるとチャンク再構築が続き、**フレームループが閾値に間に合わない**。goal の「小場面に分割」に従い、
+**1ブロック/Ntick（既定4）**に間引き、既定の目標数を小さくした。
+
+**間引き後の受入（両GPU）**:
+
+| 指標 | AMD | Intel |
+|---|---|---|
+| `blockRegistrySize`（1.12.2の全ブロック） | **254** | **254** |
+| `blockSweepTotal` / `Placed` / `Failed` / `Index` | 60 / **50** / **0** / 50 | 60 / **50** / **0** / 50 |
+| `worldFrames` | 202（閾値100超） | 同 |
+| verdict | **exit 0 / validationClean / PASSED** | **exit 0 / validationClean / PASSED** |
+
+- 1ブロック/4tick×200tick＝50個になる（ペーシングどおり）。**失敗0**＝`getDefaultState()` と `setBlockState` が
+  254種のうち50種で問題を起こさず、メッシュ・native地形パスがそれらを扱えた。
+- **全254種へ広げる（このターン）**: `-Dceltium.validation.blockSweepFrom=<registry index>` を追加し、
+  スライスで覆う方式にした。**ペーシングの上限も実測**した: `blockSweepEvery=1`（1個/tick・254個）は
+  **exit 124 / MISSING_REPORT**（AMDでもタイムアウト）なので、測定済みの安全域 `every=4` を維持する。
+
+| run（AMD） | from | placed | failed | verdict |
+|---|---|---|---|---|
+| `p92-sweep-amd` | 0 | 50 | 0 | PASSED |
+| `p94-sweep50-amd` | 50 | 50 | 0 | PASSED |
+| `p94-sweep100-amd` | 100 | 50 | 0 | PASSED |
+| **累計** | — | **150 / 254** | **0** | — |
+
+- **AMD は 254 種すべてを掃引完了（このターン）**。ただし切片の大きさに測定済みの制約がある:
+
+| run（AMD） | from | count | placed | failed | verdict |
+|---|---|---|---|---|---|
+| `p95-sweep150-amd` | 150 | 254 | 50 | 0 | PASSED |
+| `p95-sweep200-amd` | 200 | 254 | — | — | **exit 124 / MISSING_REPORT**（180s） |
+| `p96-sweep200-amd`（再実行） | 200 | 254 | — | — | **exit 124**（フレークではない） |
+| `p97-bisect-200-225` | 200 | **25** | 25 | 0 | PASSED |
+| `p98-bisect-225-237` | 225 | **12** | 12 | 0 | PASSED |
+| `p98-bisect-237-250` | 237 | **13** | 13 | 0 | PASSED |
+| `p95-sweep250-amd` | 250 | 254 | 4 | 0 | PASSED |
+
+  **読み方**: 単一の「病的なブロック」ではない（前半・後半とも単独では通る）。**50個を後半の位置から置くと
+  累積コストでタイムアウトする**。したがって後半は **count=25 以下のスライス**にする（測定で決めた制約）。
+  この分割で **AMD は 0-49 / 50-99 / 100-149 / 150-199 / 200-224 / 225-236 / 237-249 / 250-253 を全て実行**し、
+  **254/254 種・失敗0** になった。
+- **Intel 側はサンプル掃引（このターン）**: Intel は AMD より遅いので、**測定済みの安全サイズ**で頭・中・尾を
+  抜き取った（全数を回す時間予算がないため。**AMD=254/254（全数）、Intel=75/254（抜き取り）**と明記する）。
+
+| run（Intel） | from | count | placed | failed | verdict |
+|---|---|---|---|---|---|
+| `p99-sweep0-intel` | 0 | 25 | 25 | 0 | PASSED |
+| `p99-sweep100-intel` | 100 | 25 | 25 | 0 | PASSED |
+| `p99-sweep225-intel` | 225 | **25** | — | — | **exit 124 / MISSING_REPORT** |
+| `p99b-sweep225-intel` | 225 | **12** | 12 | 0 | PASSED |
+| `p99b-sweep237-intel` | 237 | **13** | 13 | 0 | PASSED |
+| **Intel 累計** | — | — | **75 / 254** | **0** | — |
+
+- **「後半スライスほど高い」現象が Intel でも再現**した（AMD と**独立した2台目**での観測）。GPU 固有ではない。
+- **切片サイズの制約は GPU ごとに違う**（実測）: AMD の尾部は count=25 まで可、Intel の尾部は count=13 まで。
+  したがって掃引の既定は「前半 25〜50 / 尾部 12〜13」とし、run ごとに記録する。
+- **原因の一部を確定（このターン・制御された before/after）**: 設置を `setBlockState(pos, state, **2**)` で
+  行っていた。2 はフラグ1（隣接ブロック更新の抑止）を含まないため、**設置ごとに隣接6ブロックが反応**していた
+  （水が流れる・植物が抜ける・火が燃え広がる等）。`**3**`（=1|2: 隣接更新なし＋クライアント通知）に変更した。
+
+| run（同一スライス・同一duration） | フラグ2（修正前） | フラグ3（修正後） |
+|---|---|---|
+| **Intel** from=225 count=25 | **exit 124 / MISSING_REPORT** | **exit 0 / PASSED / placed=25 failed=0 / worldFrames=152** |
+| AMD from=200 count=254（=50個） | exit 124 | exit 124（**50個の尾部は依然不可**） |
+
+  → **Intel では隣接更新が原因だったと確定**（同じスライスが通った）。AMD の尾部は 50個では依然として不可だが、
+  25個なら通る（前ターンに実測）。つまり AMD 側には**別の律速**が残っており、それは未解明のまま残す。
+- **副次的な重要性**: この変更で場面は「ブロックを**表示**する」ものになり、**シミュレーションしなく**なった
+  （水が流れて消える・火が燃え広がる等が起きない）。coverage の場面としてはこの方が正しい。
+- **「後半ほど高い」は撤回（このターン・ノイズだった）**: フラグ3のビルドで AMD の全スライスを取り直したところ、
+  **以前は通っていたスライスが落ちた**（0..49/50..99/150..199/225..237/238..253 は PASSED、
+  **100..149 と 200..224 が exit 124**）。
+
+| スライス（AMD・現行ビルド） | count | 結果 |
+|---|---|---|
+| 0..49 | 50 | exit 0 / PASSED / placed=50 failed=0 |
+| 50..99 | 50 | exit 0 / PASSED / placed=50 failed=0 |
+| **100..149** | 50 | **exit 124 / MISSING_REPORT** |
+| 150..199 | 50 | exit 0 / PASSED / placed=50 failed=0 |
+| **200..224** | 25 | **exit 124 / MISSING_REPORT** |
+| 225..237 | 13 | exit 0 / PASSED / placed=13 failed=0 |
+| 238..253 | 16 | exit 0 / PASSED / placed=16 failed=0 |
+| 累計 | — | **179 / 254**（2run失敗） |
+
+  → **失敗は前半にも出た**ので、「後半ほど高い」「GPUごとに切片上限が違う」という前ターンの結論は
+  **ノイズへの過適合**であり**撤回**する。同じ設定が run によって通ったり落ちたりする＝
+  **180秒の fixture 予算に対してこの場面は余裕がない**。
+- **確からしい説明（ただし未検証）**: スライスごとに**メッシュ化コストが違う**（複雑なモデルのブロックが多い
+  スライスは1セクションの再構築が重い）。これは掃引の目的そのもの（重いブロックを見つける）と整合するが、
+  再構築時間を測っていないので**仮説**として置く。
+- **律速を計測で確定（このターン）**: 掃引に**設置時間と最悪ブロックの計器**を入れ、stdout にも出すようにした
+  （fixture がタイムアウトした run は report を書かないため、ログ側にも出す必要があった）。
+
+| 測定 | 結果 |
+|---|---|
+| 50個スライス（from=0） | `placeMillis=18`（0.36 ms/個）、worst=`flowing_lava` 13ms、frames=202、PASSED |
+| 50個スライス（from=100） | `placeMillis=19`（0.38 ms/個）、worst=`end_portal` 12ms、frames=149、PASSED |
+| **全254個（every=1, perTick=2）** | **placed=254 failed=0 / placeMillis=32（0.13 ms/個）**、**frames=1322 / tick=3318（約7.3 FPS）**、**exit 124 / MISSING_REPORT** |
+
+  **確定したこと**:
+  1. **設置はほぼ無料**（0.13〜0.38 ms/個。全254個でも32ms）。設置コストは律速ではない。
+  2. **律速は描画**。全254種を同時に置くと **約7.3 FPS** まで落ち、fixture の場面が時間内に終わらない。
+     50個スライスでは frames=149〜202 で収まる。
+  3. したがって**掃引はスライス必須**（25〜50個）。理由は「後半ほど高い」ではなく
+     **そのスライスに入るブロック種別の描画コスト**である（measured）。
+  4. 同じ設定が通ったり落ちたりするのは、**ブロック種別の混ざり方でフレーム数が変わる**ため。
+     落ちたスライスは同じ設定で再実行し、成功として数えない方針を維持する。
+- **当面の運用**: 実測で安定していたのは **count<=16**（13 と 16 は両ビルドで通過、25 と 50 は落ちることがある）。
+  掃引は **count 13〜16** で回し、落ちたスライスは**同じ設定で再実行して記録**する（フレークを成功として数えない）。
+- 原因（残り）は**未解明**。遠いグリッド位置はカメラ外になり、MC が描画を省く側だと考えられるが、
+  その説明は測定で裏づけていない。次に slice を 25 に固定して Intel 側を回すか、`/debug` で
+  チャンク再構築回数を数えて確かめる。
+
+**（旧メモ）** AMDで150種（59%）を失敗0で掃引。残りは from=150 / 200 の2run、Intel側は5run。
+- **残り**: 1runあたり50種なので、254種を覆うには `blockSweep` の開始位置をずらして数run回すか、
+  tick数を増やす。次は **item/model と entity/TESR** も同じ方式で registry から掃引する。
+
+## 7.10 重いcoverage場面での参照比較（このターン・優先順位3と8の交点）
+
+ブロック掃引の「254種を同時に置くと遅い」という計測を、**固定参照Celeritas**（`989ebf2e`）で同じ場面を走らせて
+切り分けた。同じ world・同じ camera・同じ fixture（検証クライアント）・同じ duration。
+
+| run | placed | elapsed | worldFrames | **p50** |
+|---|---|---|---|---|
+| celtium（every=1, 1/tick） | 200 | 24.9 s | 153 | **94.3 ms** |
+| celtium（every=1, 2/tick） | 254 | **180.3 s（exit 124）** | — | — |
+| **celeritas 参照（every=1, 2/tick）** | **254** | **24.3 s** | **580** | **16.2 ms** |
+| celtium（50個スライス） | 50 | 25.1 s | 204 | 52.0 ms |
+
+**読み取れること**:
+- **同じ254種の場面で、参照は 24.3 s / p50 16.2 ms（約62 FPS）で完走**し、**Celtium は 180 s で終わらない**。
+- Celtium は**50個（参照の1/5のブロック数）でも p50 52 ms** で、参照の254個（16.2 ms）より遅い。
+  通常場面の Celtium は p50 ≈42 ms、参照は同種の場面で約16 ms なので、**この差は掃引場面に限らない**。
+- **注意（比較の限界）**: 両者は別の描画系（Vulkan bridge と GL）で、fixture の検証内容も違う。同じなのは
+  world・camera・場面・時間だけであり、**フレーム間隔の比較として読む**。参照runは `expectVulkan*` を付けていない。
+- **次の仮説（未検証）**: 254種では**ブロック種別ごとにパイプライン/descriptorが作られ**、種別が増えるほど
+  1バッチあたりの準備コストが増える。次は `descriptorSetsCreated` / パイプライン作成数と
+  「1種別あたりの初回コスト」を測って確かめる。
+
+## 7.11 参照との定常性能比較（このターン・優先順位8の実測）
+
+§7.10 の「差は掃引場面に限らない」という読みを、**通常場面**でも確かめた。同一 world・camera・fixture・duration。
+
+| run | elapsed | worldFrames | **p50** | p99 |
+|---|---|---|---|---|
+| celtium 通常 | 24.6 s | 255 | **41.4 ms** | 46.4 ms |
+| celtium 通常（再） | 24.1 s | 247 | **42.2 ms** | 46.9 ms |
+| **celeritas 参照 通常** | 24.1 s | **580** | **16.2 ms** | 17.6 ms |
+| celtium 50ブロック | 25.1 s | 204 | 52.0 ms | 57.0 ms |
+| **celeritas 参照 254ブロック** | 24.3 s | **580** | **16.2 ms** | 22.9 ms |
+
+**確定したこと（測定・再現あり）**:
+1. **通常場面で Celtium は参照より約2.6倍遅い**（p50 41.4/42.2 ms 対 16.2 ms）。2回の再測定で一致。
+2. **参照は場面に依らず一定**（通常でも254種でも p50 16.2 ms、p99 17.6→22.9 ms）。**ブロック種別を254に増やしても
+   ほぼ無コスト**。一方 Celtium は 42 → 52 → 94 ms と劣化する。
+3. したがって優先順位8の出発点は「**重い場面**」ではなく「**通常場面の2.6倍**」である。
+
+**棄却した仮説**: 「ブロック種別ごとにパイプライン/descriptorが作られる」。
+`descriptorSets=1`（全runで一定）、`mirroredTextures` 11→12→20、`inPlaceRefreshes` 348→277→194 と、
+Vulkan資源の生成は種別数に比例していない。ただしこれらのカウンタは**run合計**なので、フレーム数が減れば
+下がる（速度の指標にはならない）。**per-frame の内訳を測る必要がある。**
+
+**次の計測（優先順）**: (1) ブリッジの1フレームあたりCPU時間（`-Dceltium.vulkan.handoffTimings=true` の
+`handoff detail` 行。色blit-in・深度変換・色blit-out の3〜4回の全画面操作がある）、(2) 地形のセクション描画の
+提出回数とバッチング、(3) frame composite と present の経路。
+
+## 7.12 性能ギャップの所在を同一jarのA/Bで確定（このターン）
+
+§7.11 の「通常場面で2.6倍」を、**同じjarの `-Dceltium.vulkan.referenceRender=true`** と比べることで
+経路そのものに帰属させた（fixture・mod・world・camera・GUI がすべて同一で、切り替わるのは地形の描画経路だけ）。
+
+| run | worldFrames | **p50** | p95 | p99 |
+|---|---|---|---|---|
+| celtium native（Vulkan地形） | 240〜255 | **41.4〜43.3 ms** | 47.3 | 48.5 |
+| **celtium + referenceRender=true**（同一jar・GL経路） | **580** | **16.15 ms** | 17.2 | 17.3 |
+| celeritas 参照jar | 580 | 16.2 ms | — | — |
+
+- `referenceRender` の run は `draws=0 sections=0 | reference render` を報告しており、native地形パスが
+  実際に何もしない状態での比較になっている（**A/Bとして成立**）。
+- さらに、**native地形パスの計時は1フレーム合計で約2.2 ms**（`translucent 62 sections 596.9 µs` ＋
+  `solid 62 sections 284.2 µs` ＋ `cutout_mipped 62 sections 1.317 ms`）。
+- **したがって 43 ms のうち約25 ms は、記録されたパス計時の外側**にある。候補は (a) ブリッジの全画面操作
+  （色blit-in・深度変換・色blit-out）と待ち合わせ、(b) ハンドオフの同期、(c) フレーム合成と present。
+- 計器の現状: `handoff detail` は**CPU API時間**のみ（≈128 µs/handoff）で、この25 msを説明しない。
+  **ブリッジのGPU時間を計時する計器が無い**ことが次の不足。
+
+**原因の所在を特定（このターン・既存スイッチの行列）**: 新しい計器を足す前に、既にある切り替えで25 msを分割した。
+
+| run | worldFrames | **p50** | p99 |
+|---|---|---|---|
+| native（基準） | 240 | **43.32 ms** | 48.5 |
+| **`-Dceltium.vulkan.immediate=false`** | **569** | **16.33 ms** | 22.2 |
+| `-Dceltium.vulkan.mirrorRefreshFrames=8` | 260 | 40.18 ms | 47.6 |
+| `-Dceltium.vulkan.presentFromComposite=true` | 287 | 36.30 ms | 41.1 |
+| `referenceRender=true`（同一jar・GL経路） | 580 | 16.15 ms | 17.3 |
+| celeritas 参照jar | 580 | 16.18 ms | 17.6 |
+
+- **`immediate=false` で 43.32 → 16.33 ms**＝**27 msのギャップは即値（immediate）経路に全てある**。
+  地形パス（2.2 ms）は正常で、ミラー（`mirrorRefreshFrames=8` でほぼ変わらず）も present も主因ではない。
+- **1フレームあたりの回数**（レポートから、フレーム数で割った値）:
+
+| 指標 | native | immediate=false |
+|---|---|---|
+| `flushCount` | 4.8/フレーム | 4.8/フレーム |
+| `clearOrderFlushes` | 5.8/フレーム | 5.9/フレーム |
+| `orderPreservingFlushes` | **1.8/フレーム** | **0/フレーム** |
+| `immediateSubmittedBatches` | **13.0/フレーム** | **0/フレーム** |
+
+  → **ハンドオフは約10.6回/フレーム**（4.8＋5.8、`orderPreserving` を含めると12.4）。27 ms ÷ 10.6 ≒
+  **1回あたり約2.5 ms**。これは「全画面blit＋深度変換＋同期」を毎回行っていることと整合する。
+- **注意（A/Bの限界）**: `immediate=false` は即値バッチを**GLに描かせる**（ネイティブが断る）ので、16.33 ms は
+  「地形だけネイティブ」の値であり、即値経路の**置き換えとして等価**ではない。言えるのは
+  **「我々の即値経路が、置き換えているGL描画より約27 ms/フレーム高くついている」**という点。
+
+**訂正（このターン・計器が前ターンの結論を否定）**: 前ターンの「ハンドオフ約10.6回/フレーム×約2.5 ms」は**誤り**だった。
+`clearOrderFlushes` は**呼び出し回数**を数えており、`flushPendingBeforeGlDraw()` は保留が無ければ即 return する。
+実際に何回ハンドオフしたかは、その emptiness チェックの**後**で数える必要がある。
+
+**実測（追加した計器: `actualFlushes` / `actualFlushMillis` / `actualFlushWorstMillis`）**:
+
+| 指標 | 実測 |
+|---|---|
+| `actualFlushes`（保留を持って実際にハンドオフした回数） | **439（1.82/フレーム）** |
+| `actualFlushMillis`（ハンドオフの合計wall time） | **553 ms（2.3 ms/フレーム）** |
+| `actualFlushWorstMillis`（最悪の1回） | **3 ms** |
+| `clearOrderFlushes`（呼び出し回数・早期returnを含む） | 1394（5.78/フレーム） |
+| `orderPreservingFlushes` | 439（1.82/フレーム） |
+| フレーム | p50 43.03 ms / 241 フレーム |
+
+→ **ハンドオフは 43 ms のうち 2.3 ms（5%）しかない**。ストールも無い（最悪3 ms）。
+  「ハンドオフを減らせば速くなる」は**この測定では支持されない**。
+
+**現時点の1フレーム予算（測定済みの部分）**: 地形パス 2.2 ms ＋ ハンドオフ 2.3 ms ＝ **4.5 ms**。
+残り **約38.5 ms は未計測**で、`immediate=false` のA/Bにより**即値経路に関係することは確定**している。
+つまり次に測るべきはハンドオフではなく、**バッチごとの処理**（offer → preflight → append）と、
+即値経路が有効なときに**Minecraft側のGL描画が受ける影響**である。
+
+**原因を特定（このターン）**: ゲームが呼ぶ入口 `submitImmediateBatch(...)`（mixin の `celtium$offerBatch` から）を
+呼び出し側で計時し、`batchCallCount` / `batchCallMillis` として report に出す計器を入れた。
+
+| 指標 | 実測（238フレーム） |
+|---|---|
+| `batchCallCount` | **3407（14.3回/フレーム）** |
+| `batchCallMillis` | **6365 ms（26.7 ms/フレーム）** |
+| **1回あたり** | **1.87 ms** |
+| `immediateSubmittedBatches` | 3063（12.9/フレーム） |
+| `actualFlushes` / `actualFlushMillis` | 438（1.8/フレーム）/ 554 ms（2.3 ms/フレーム） |
+| フレーム | p50 **44.3 ms** |
+
+→ **27 ms のギャップは、ほぼこの「バッチ呼び出し 1.87 ms × 14.3回/フレーム = 26.7 ms」で説明できる**。
+  1フレーム予算は「地形 2.2 ms ＋ ハンドオフ 2.3 ms ＋ バッチ呼び出し 26.7 ms ＋ 残り ≈13 ms」。
+  これが `immediate=false` で 16.3 ms になる理由と一致する。
+
+**内訳を分割計時（このターン）**: バッチ呼び出しの中を段階的に割った。
+
+| 区間 | 実測 |
+|---|---|
+| バッチ呼び出し全体（呼び出し側） | 3490回（14.3/フレーム）= **26.2 ms/フレーム**、1回 **1.83 ms** |
+| └ `prepareImmediate`（preflight） | 3237回（13.3/フレーム）= **15.0〜15.2 ms/フレーム**、1回 **1.09〜1.13 ms（全体の57%）** |
+| └ それ以外（本体） | 11.2 ms/フレーム |
+| メソッド内計器（既存 `immediateSubmitNanos`） | **1867 µs/バッチ** ＝ 呼び出し側の測定と一致（コストはメソッド内） |
+| フレーム | p50 42.8〜44.3 ms |
+
+**棄却した仮説**: 「`descriptorSetFor` が毎回キャッシュミスして descriptor set を確保している」。
+計器（`descriptorHits` / `descriptorMisses`）を入れて測ると **ヒット率 99.7%**（2905ヒット / 9ミス、243フレーム）。
+descriptor の確保は 1.09 ms の原因ではない。
+
+**現時点の1フレーム予算**: 地形 2.2 ms ＋ ハンドオフ 2.3 ms ＋ バッチ呼び出し 26.2 ms（うち preflight 15.2 ms ＋
+本体 11.2 ms）＋ 残り ≈12 ms。
+
+**原因を特定して修正（このターン・最大の性能改善）**: 段階的な分割計時で、1バッチ1.83 ms の内訳が
+`prepareImmediate` の**テクスチャレジストリ照会**（`VulkanTextureRegistry.get`）だと判明した（地形パイプライン照会は 0 ms）。
+
+| 経路 | 呼び出し | 時間 |
+|---|---|---|
+| **announced（BufferedImage → RGBA 変換）** | **3621回** | **4230 ms（17.6 ms/フレーム、1回1.17 ms）** |
+| stale（GL 再アップロード） | 331回 | 1480 ms（6.1 ms/フレーム、1回4.47 ms） |
+| 素のヒット | 2834回 | — |
+
+**原因**: `announceImage` で置かれた画像が**消費されずに残る**ため、**ほぼ毎バッチで同じ画像を RGBA へ再変換**していた
+（`fromImage`）。Minecraft は `DynamicTexture` を**同じオブジェクトのまま中身だけ更新**するので、画像の同一性では
+判定できない。
+
+**修正**: **announce 世代**を導入した。`announceImage` が世代を進め、`fromImage` がそれを消費する。
+**未消費の世代ならミラーは既にその画素を持っている**ので変換を省く（`regAnnouncedSkips` で数える）。
+
+| 指標 | 修正前 | 修正後 |
+|---|---|---|
+| worldFrames | 241 | **478** |
+| **p50** | **42.94 ms** | **18.07 ms** |
+| announced 変換 | 3621回 / 4230 ms | **7回 / 29 ms** |
+| announced スキップ | 0 | **7630** |
+| バッチ呼び出し | 26.6 ms/フレーム | **9.7 ms/フレーム** |
+| verdict | — | **exit 0 / validationClean / PASSED** |
+| **画像（修正前後）** | — | **meanAbsDiff 0.000（完全一致）** |
+
+- **42.94 → 18.07 ms（2.4倍）**。参照（16.2 ms）との差は **2.6倍 → 約1.1倍** になった。
+- **画像は画素一致**なので、速度のために正しさを犠牲にしていない。
+
+**両GPUでの検証と、残るコストの性格（このターン）**:
+
+| run | frames | p50 | p99 | batch | announced | skips | stale |
+|---|---|---|---|---|---|---|---|
+| **AMD 修正後** | 477 | **18.15 ms** | 23.4 | 9.7 ms/f | 0.1 ms/f | 7629 | 700（2956 ms = **6.2 ms/フレーム**） |
+| **Intel 修正後** | 215 | **42.66 ms** | 49.6 | 19.5 ms/f | 0.2 ms/f | 3336 | 302（2497 ms = 11.6 ms/フレーム） |
+| Intel 修正前 | 159 | 62.87 ms | 70.1 | — | — | — | — |
+| celeritas 参照（AMD・GL） | 580 | 16.18 ms | 17.6 | — | — | — | — |
+
+- **AMD 42.94 → 18.15 ms**（参照 16.18 の **1.12倍**）。**Intel 62.87 → 42.66 ms（32%改善）**。
+- ログは、まだ読み戻している2つのテクスチャを名指ししている:
+  `CELTIUM_READBACK_REFRESH glTexture=15` / `glTexture=21`（他は announced が pending している）。
+
+**周期 invalidate は切れない（実測）**: `invalidateAll()` は毎フレーム全ミラーを stale にする（`mirrorRefreshFrames=1`）。
+
+| 設定 | frames | p50 | stale | 画像（既定との差） |
+|---|---|---|---|---|
+| `mirrorRefreshFrames=1`（既定） | 477 | 18.15 ms | 700（6.2 ms/フレーム） | — |
+| `mirrorRefreshFrames=0`（無効化） | 563 | **15.88 ms** | 0 | **meanAbsDiff 0.016**（完全一致ではない） |
+| `mirrorRefreshFrames=4` | 472 | 18.75 ms | 686（6.2 ms/フレーム） | meanAbsDiff 0.000 |
+
+→ **0 は速いが画像が変わる**ので採らない（周期 invalidate は正しさに効いている）。4 は画像一致だが速度の利得がない。
+**残る 6.2 ms/フレーム（AMD）は「announce の無い2つのテクスチャの GL 読み戻し」**であり、
+そこを消すには (a) その2つの更新経路を announce 側に載せる（`TextureUtil` の int[] フックと同じ方法）、
+または (b) 読み戻し自体を小さくする（部分更新・ミップ単位）しかない。
+
+**残コストの正体を同定（このターン・直接証拠）**: 読み戻しログに view ハンドルを足し、`CELTIUM_MIRROR` 行と
+突き合わせて「どの id がどのサイズか」を確定した（推測ではない）。
+
+| 読み戻しされる id | view | サイズ | 正体 |
+|---|---|---|---|
+| **glTexture=15** | `0x72` | **1280×720** | **画面サイズのテクスチャ（フレームの色）** |
+| glTexture=21 | `0xbd` | 1×1 | 白テクスチャ（読み戻しは実質無料） |
+
+- したがって残る **6.2 ms/フレームは 1280×720（約3.7 MB）の読み戻し**であり、1×1 の側はコストではない。
+  `stale` の平均 4.2 ms/回は、ほぼこの画面サイズのテクスチャが占めている。
+- **なぜ毎フレーム stale か**: `invalidateAll()`（`mirrorRefreshFrames=1`）が全ミラーを stale にし、
+  画面サイズのテクスチャは**フレームごとに内容が変わる**ので、実際に毎回読み戻される。
+- **修正の方向（優先順位4そのもの）**: このテクスチャは**フレームの色そのもの**なので、GL から読み戻すのではなく
+  **Vulkan 側が持っているフレームの色をそのまま供給**できるはずである（ブリッジは既に色を GL→VK へ渡している）。
+  それができれば 6.2 ms/フレームが消え、AMD は 18.15 → 約12 ms になる見込み（**見込みであって測定ではない**）。
+- なお `mirrorRefreshFrames=0` は 15.88 ms まで下がるが**画像が 0.016 変わる**ため採らない（前ターン実測）。
+
+**1280×720 ミラーの作成元を特定（このターン・スタックで実測）**: 大きなミラーの作成時にスタックを出すと、
+`VulkanTextureRegistry.get <- VulkanTerrainGpuBackend.prepareImmediate <- submitImmediateBatchTimed` と出た。
+つまり**即値バッチ（フレーム色をサンプルする最終合成）**が作っている。
+
+- 当初は「S17で拒否されるバッチのために読んでいる無駄」と考えたが、**S17の判定は `prepareImmediate` より前**にあり、
+  実際にミラーを作った合成バッチは**受理されて Vulkan が描いている**。したがって読み戻しは無駄ではなく、
+  **フレーム色を Vulkan 側が既に持っているのに GL から読み直している**のが問題（＝優先順位4そのもの）。
+
+**`presentFromComposite` の再測定（announce 修正後は経済性が反転）**:
+
+| 設定 | frames | **p50** | stale | stale ms/フレーム | batch ms/フレーム |
+|---|---|---|---|---|---|
+| 既定（off） | 477 | 18.15 ms | 700 | 6.2 | 9.7 |
+| **`presentFromComposite=true`** | **564** | **15.88 ms** | **284** | **0.3** | **5.4** |
+| 明示 off | 475 | 18.12 ms | 694 | 6.2 | 9.6 |
+
+- **15.88 ms は celeritas 参照（16.18 ms）を下回る**。画面サイズの読み戻しは 6.2 → **0.3 ms/フレーム**に減る。
+- これは**フレームの色を native が持つ方向**（優先順位4）そのもので、合成を即値バッチとして取らず present 経路が扱う。
+- **画像は完全一致ではない**: 既定との差は **meanAbsDiff 0.0155**（最大 3.7/255、差のある画素は 1096 = 0.12%）。
+  内訳は **上部1/3（空）が 0.0000（完全一致）**、中央 0.0053（139画素）、下部 0.0413（957画素）で、
+  差は地形領域（行 348〜705）に散在する小振幅。欠落や二重描画を示す構造的な差ではない。
+- **参照との距離は変わらない**: celeritas 参照との meanAbsDiff は present 7.781 / 既定 7.791（ほぼ同一）。
+- **0.016 の原因は未確定**（候補: 読み戻し経路が1フレーム前の色を渡していたのに対し、native 経路は現在のフレームを
+  渡す、という丸め／1フレーム差）。**仮説であって結論ではない**ので、既定化する前に確かめる。
+
+**`presentFromComposite` の判定（このターン・測定で決着）**: 各設定を2回ずつ走らせ、ノイズ床と系統差を分けた。
+
+| 比較 | meanAbsDiff | 差のある画素 |
+|---|---|---|
+| 既定 vs 既定（ノイズ床） | **0.0000** | **6** |
+| present vs present（ノイズ床） | **0.0000** | **17** |
+| **既定 vs present** | **0.0155** | **1091（系統差）** |
+
+| 設定 | p50（2回） | frames |
+|---|---|---|
+| 既定 | **18.19 / 18.81 ms** | 470 / 466 |
+| `presentFromComposite=true` | **15.92 / 15.74 ms** | 560 / 559 |
+
+- **速度は再現する**（present が約 **2.4 ms/フレーム** 速い）。しかも参照 16.18 ms と同等以下。
+- **差はノイズではない**（ノイズ床は6〜17画素、差は1091画素）。
+- **どちらが参照に近いか**: 差のある1091画素で、**既定が参照に近い**（平均差 11.57 対 present 12.27）。
+  present が参照に近い画素は **26.0%** のみ。符号付きの平均差は **present が +0.62/+0.74/+0.71（R/G/B）明るい**。
+- **結論**: `presentFromComposite=true` は**速いが、合成の一段を省くため僅かに明るくなる**。既定のままにする
+  （速度のために静かに忠実さを落とさない）。参照との全体差は present 7.791 / 既定 7.781 でほぼ同じ。
+- **原因の見立て（未検証）**: MC の合成（`Framebuffer.func_178038_a`）は全画面quadを**ブレンドして**描く。
+  present 経路はそれを省いて直接提示するため、ブレンド一段分だけ明るくなる、という説明が符号と一致する。
+
+**差の中身を確定（このターン・画像と数値）**:
+
+1. **ブレンド仮説は棄却**。合成バッチの実ログは
+   `elements=[12bPOSITION 8bUV 4bCOLOR] vertices=4 mode=7 ... col=0xffffffff` で、**不透明な全画面コピー**
+   （alpha=1）。`VulkanSwapchain` にもブレンド処理は無い。したがって「ブレンド一段が抜けている」は成り立たない。
+2. **差は ±1 LSB の丸め**。差の濃い領域（y≈590, x≈633 周辺 160×110）で3者を並べると、
+   **既定と present は見た目に同一**（同じブロック・同じ色）で、**参照だけが明確に違う**（既知の残差）。
+
+| 窓内の平均RGB | R | G | B |
+|---|---|---|---|
+| 既定 | 139.72 | 145.98 | 141.71 |
+| present | **139.76** | **146.03** | **141.76** |
+| celeritas 参照 | 131.58 | 141.58 | 127.56 |
+
+   既定と present の差は **+0.04〜+0.05/255**（1 LSB 未満）。差のある画素は 0.12%、最大差でも 7/255。
+   参照との距離（約12/255）に対して、この差は**「どちらが忠実か」を決められる大きさではない**
+   （前ターンの「既定が近い」は 12.27 対 11.57 という平均の話で、±1 LSB の丸めを忠実さの差と呼ぶには小さい）。
+
+**判断**: `presentFromComposite=true` は **約2.4 ms/フレーム（13%）の再現する利得**があり、差は **1 LSB 未満の丸め**。
+ただし**既定化はまだしない**。既定化するなら Intel・全場面・失敗経路の受入を取り直す必要があり、
+この1ラウンドではそれを検証できないため（フラグは残っており、いつでも既定化できる）。
+
+**既定化を試して撤回（このターン・受入が壊れるため）**: フラグを既定化し、受入を取り直した。
+
+| run（フラグON） | exit | validationClean | fixture | p50 |
+|---|---|---|---|---|
+| AMD 通常 | 0 | true | PASSED | **15.89 ms** |
+| Intel 通常 | 0 | true | PASSED | **30.86 ms**（既定off時 42.66 → 28%改善） |
+| postprocess (AMD) | 0 | true | PASSED | 15.99 ms |
+| weather (AMD) | 0 | true | PASSED | 15.17 ms |
+| spectator spider (AMD) | 0 | true | PASSED | 17.31 ms |
+| submit失敗注入 | 1 | true | FAILED（期待どおり） | 有界・24.7s・report あり |
+| idle失敗注入 | 1 | true | FAILED（期待どおり） | 有界・24.9s・report あり |
+| **command-buffer target受入** | **1** | true | **FAILED** | — |
+
+- **受入が1つ壊れた**: `commandBufferTargets.passed=false`。この fixture は
+  `RenderGameOverlayEvent.Post/ALL` で **`POSITION_TEX_COLOR`（format 2）** のバッチを描き、
+  target 群が**受理され順序どおり flush される**ことを検査する。フラグONでは **format 2 は present 経路の担当**に
+  なるため、この検査が成立しなくなる（フレーム自体は PASSED、validation も clean）。
+- **判断**: **既定化を撤回**した（フラグは残す）。理由はコードにも書いた。P0 の受入が黙って
+  カバレッジを失うより、fixture を「即値経路が持つ形式」に載せ替えて**再検証してから**既定化するのが正しい。
+- **撤回の検証**: 既定offに戻して target受入を再実行 → **exit 0 / validationClean / PASSED**、
+  `commandBufferTargets.passed=True`。
+
+**target fixture を載せ替えて既定化（このターン・完了）**:
+
+1. `commandBufferQuadZ` は `POSITION_TEX_COLOR`（format 2）に**定数UV(0.5,0.5)**を付けていただけなので、
+   **`POSITION_COLOR`（format 1）**に落としても**同じ色・同じ位置**で、検査している性質（target群の受理と順序）は
+   変わらない。メタデータの `format`/`formatId` も更新した。
+2. 載せ替えた fixture は **フラグON/OFFどちらでも合格**（`targets=True`、format=POSITION_COLOR）。
+   ON: p50 15.89 ms / OFF: 18.91 ms。
+3. そこで `presentFromComposite` を**既定化**（`-Dceltium.vulkan.presentFromComposite=false` で旧経路に戻せる）。
+   理由と測定はコードにも書いた。
+
+**既定化後の受入（一式・すべて緑）**:
+
+| run | exit | validationClean | fixture | 所要 | p50 |
+|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | 24.8 s | **16.05 ms** |
+| Intel 通常 | 0 | true | **PASSED** | 24.2 s | **30.94 ms** |
+| postprocess (AMD) | 0 | true | PASSED | 25.0 s | 16.13 ms |
+| weather (AMD) | 0 | true | PASSED | 25.3 s | 15.44 ms |
+| spectator spider (AMD) | 0 | true | PASSED | 25.1 s | 17.46 ms |
+| submit失敗注入 | 1 | true | FAILED（期待どおり） | 24.2 s | — |
+| idle失敗注入 | 1 | true | FAILED（期待どおり） | 24.8 s | — |
+| **command-buffer target受入** | 0 | true | **PASSED** | 25.5 s | 15.99 ms、`targets=True` |
+
+- **AMD 16.05 ms は celeritas 参照（16.18 ms）を上回る**。Intel は 42.66 → **30.94 ms（27%改善）**。
+- 画像の差は **1 LSB 未満の丸め**（0.12% の画素、最大 7/255、空は完全一致）であることを測定済み。
+- これでフレームの色は **present 経路が所有**し、GL からの画面サイズ読み戻し（1280×720・6.2 ms/フレーム）は
+  既定で**使われない**（優先順位4の前進。ただし GL context なしの起動は依然として未達）。
+
+**Intel が AMD の約2倍遅い理由を切り分け（このターン・重要な訂正つき）**:
+
+| run | frames | **p50** | p99 |
+|---|---|---|---|
+| celtium AMD（既定） | 566 | **16.05 ms** | 22.0 |
+| celtium Intel（既定） | 298 | **30.94 ms** | 38.2 |
+| **celeritas 参照 AMD** | 580 | 16.18 ms | 17.6 |
+| **celeritas 参照 Intel** | **579** | **16.17 ms** | 17.2 |
+
+- **参照は Intel でも 16.17 ms**（AMD 16.18 と同一）。**GPU の性能差ではない**。
+  「Intel が遅いのは iGPU だから」という説明は**成り立たない**。差は**我々の経路**にある。
+
+**1フレームあたりの内訳（同じカウンタを両GPUで）**:
+
+| 指標（ms/フレーム） | AMD | Intel | 比 |
+|---|---|---|---|
+| p50 | 16.05 | 30.94 | 1.9× |
+| `batchCallMillis` | 3.81 | **10.20** | **2.7×** |
+| └ `prepareImmediateMillis`（lookup のみ） | 0.42 | **2.62** | **6.2×** |
+| `actualFlushMillis` | 1.14 | **4.16** | **3.6×** |
+| `regStaleMillis`（GL 読み戻し） | 0.31 | **2.37** | **7.6×** |
+| **回数/フレーム**（batch 15.9/15.2、flush 0.94/0.94、stale 0.5/0.5、passes 4.7/4.6） | 同 | 同 | **1.0×** |
+
+- **回数は同一で、時間だけが 2.7〜7.6 倍**。つまり **GPU の完了を待つ処理**が Intel で高くついている
+  （`prepareImmediate` の lookup が 6.2 倍なのは、lookup 自体が重いのではなく**別スレッドが握るロック/
+  転送キューの待ち**が混ざっているためと考えられる＝**仮説**）。
+- 地形パスも Intel で遅い（`cutout_mipped` 3.396 ms / `translucent` 2.730 ms 対 AMD 1.317 / 0.599）が、
+  これは **+4 ms 程度**で、+15 ms の残りは**待ち**の側にある。
+- したがって次の標的は「**1バッチごとのアップロードと同期**」であり、方向は優先順位2の
+  「同一フレーム内の連続パスをまとめる」と同じである。
+
+**重複 lookup の除去を試して撤回（このターン・推論の誤りも記録）**:
+
+- `submitImmediateBatchTimed` は `prepareImmediate` の中で `textureRegistry.get(boundTexture)` を呼び、**その後もう一度**
+  同じ呼び出しをしていた（`if (this.textureRegistry.get(boundTexture) == null)`）。`PreparedImmediate` に
+  **同じ lookup の結果**を持たせて2回目を消し、AMD/Intel で測った。
+
+| run | p50 | batchCall | prepareImmediate | 画像（変更前後） |
+|---|---|---|---|---|
+| AMD 変更前 → 後 | 16.05 → 15.90 ms | 3.81 → 3.94 | 0.42 → 0.56 | **0.0000** |
+| Intel 変更前 → 後 | 30.94 → 31.18 ms | 10.20 → **9.83** | 2.62 → 2.60 | 0.0169（1971画素） |
+
+- **速度の利得は無い**（AMD/Intel とも差はノイズ。Intel の batchCall がわずかに下がったが p50 は変わらない）。
+- **「7.6 ms は2回目の lookup だ」という仮説は外れ**。2回目は1回目が stale を消した後の**素のヒット**なので安い。
+
+**画像差の帰属を確かめたら、私の推論が逆だった**:
+
+| 比較 | meanAbsDiff | 差のある画素 |
+|---|---|---|
+| Intel ノイズ床（同一ビルド2回） | **0.0000** | 6〜7 |
+| 変更版 vs 変更版（別run） | 0.0000 | 5 |
+| **撤回後ビルド vs 変更版** | **0.0000** | **5** |
+| **撤回後ビルド vs 当初ビルド（p127）** | **0.0169** | **1970** |
+
+→ **撤回したビルドは「変更版」と画素一致し、「当初ビルド」とは一致しない**。したがって
+**p127 → p129 の差は私の変更が原因ではない**（run 群の違いであり、原因は未特定）。
+私が最初に「私の変更が画像を変えた」と読んだのは**誤り**だった。
+
+**結論**: 速度の利得が無く、2回目の lookup が「より新しいミラーを見る」可能性を否定しきれないため、
+**コードはコミット済みの状態のまま**（変更を入れない）。**p127 と p129 の 0.0169 は未解明**として残す
+（同一ビルド内のノイズ床は 0.0000 なので、run 群を分ける何かが存在する）。
+
+**0.0169 の正体を説明（このターン・report の差分が核心を示した）**: p127 と p129（Intel）の report を
+機械的に差分すると、画像の話以外に**経路の割り当てが違っていた**。
+
+| プロパティ | p127 | p129 |
+|---|---|---|
+| `glDrawsCancelled` | 3829 | **3790（39件少ない）** |
+| `vulkanPasses` / `vulkanTerrainPasses` | 1357 / 825 | 1349 / 831 |
+| `worldFrames` | 298 | 299 |
+| p50 / p95 / p99 | 30.94 / 37.74 / 38.20 | 31.18 / 38.02 / 38.65 |
+
+- 画像の差は **上部1/3（空）が 0.0000**、中部 0.0056（180画素）、下部 **0.0451（1791画素）**、行 324..711 に散在、
+  **最大 4.3/255**。つまり**地形の領域だけ**に、小振幅の差が出ている。
+- 参照との距離は p127 7.7645 / p129 7.7790 でほぼ同じ（どちらが「正しい」とも言えない）。
+- **説明**: `glDrawsCancelled` が 39 件違う＝**同じバッチでも Vulkan 経路に取られるか GL に残るかが run によって
+  僅かに違う**（順序・タイミング依存）。Vulkan と GL のラスタライズは同じ幾何でも厳密には一致しないので、
+  経路が入れ替わった画素に**±1〜4 LSB の差**が出る。**バグではなく、混成パイプラインの性質**である。
+- **帰結（方法論として重要）**: この fixture の画像比較には **約 0.017 の床**がある。これを下回る差を
+  「一致」「不一致」の根拠にしない。前ターンの「撤回後ビルドが p127 と一致しない」もこの床で説明できる
+  （撤回後 p131 = p129、p127 とは 0.0169 差＝39バッチの経路差）。
+
+**batchCall の内訳を追った結果（このターン・3つの仮説を棄却し、残りを数値で確定）**:
+
+| 計器（ms/フレーム、AMD / Intel） | AMD | Intel |
+|---|---|---|
+| TOTAL batchCall | 3.89 | **9.90** |
+| └ preflight（`prepareImmediate`） | 0.57 | 2.57 |
+| └ グループ生成（`new VulkanDynamicMesh`） | 0.55 | 0.54 |
+| └ 頂点追記（`copyVertices`） | 0.07 | 0.05 |
+| └ `glGetInteger(GL_CURRENT_PROGRAM)`（カスタムシェーダ遮断） | **0.00** | **0.00** |
+| **計器化できた合計** | **1.19** | **3.17** |
+| **未計測の残り** | **2.70** | **6.73** |
+
+**棄却した仮説**: (1) 2回目のレジストリ lookup（前ターン）、(2) `glGetInteger(GL_CURRENT_PROGRAM)` が
+毎バッチの同期を取っている（実測 **0.0001〜0.0003 ms/回＝無料**）、(3) Intel の平均が JIT/ウォームアップで
+膨らんでいる。
+
+**ウォームアップを否定した測定**（最悪値と序盤200回）:
+
+| | AMD | Intel |
+|---|---|---|
+| 最悪の1回 | 49 ms | 29 ms |
+| 最初の200回 | 0.33 ms/回 | 0.55 ms/回 |
+| **それ以降（定常）** | **0.24 ms/回** | **0.68 ms/回** |
+
+→ **定常状態でも Intel は 2.8 倍**。序盤より後半が高いので、平均の膨らみではない。
+**残り（未計測）は 0.12 ms/回（AMD）対 0.40 ms/回（Intel）＝1.8 対 6.0 ms/フレーム**で、
+**バッチ経路で最大のソフトウェアコスト**。しかもこれは **CPU 側の帳簿処理**（状態取り込み・state key・
+配列コピー・`state.clone()`・map 更新）であり、**GPU では説明できない**。
+
+**残りを4分割 → すべて無料。wall と CPU に分けて原因が確定（このターン）**:
+
+4分割の実測（ms/フレーム、AMD / Intel）: 行列コピー 0.004/0.003、`captureState()` 0.004/0.007、
+`stateKey()` 0.000/0.000、`state.clone()` 0.000/0.000。**どれも無料**で、8項目の合計は
+**1.07（AMD）/ 3.14（Intel）ms/フレーム**。TOTAL は 3.89 / 10.13 なので**まだ 2.8 / 7.0 が説明できない**。
+
+そこで JVM の**スレッドCPU時間**（`ThreadMXBean.getCurrentThreadCpuTime()`）で同じ呼び出しを測った:
+
+| 指標（ms/フレーム） | AMD | Intel |
+|---|---|---|
+| batchCall **wall** | 3.89 | 10.13 |
+| batchCall **CPU** | **1.90** | **2.30** |
+| 計器化した内訳の合計 | 1.07 | 3.14 |
+| **CPU上で動いていない wall 時間** | **1.99** | **7.83** |
+
+- **CPU時間はほぼ同じ**（1.90 対 2.30）。つまり**この呼び出し自身の仕事は GPU で変わらない**。
+- 差は **「スレッドが動いていない時間」**（1.99 → 7.83 ms/フレーム、**4倍**）。これは**待ち**である
+  （統合サーバースレッド・転送/アップロードスレッド・ドライバのロックとの競合）。
+- したがって **Intel が2倍遅いのは「GPUの性能」でも「コードの仕事量」でもなく、待ち時間**である。
+  参照（GL）は Intel でも 16.17 ms で**待ちが無い**ので、**待ちは我々の Vulkan ブリッジの同期が持ち込んでいる**。
+- 併せて分かったこと: 内訳の8項目は**すべて CPU 側の純粋な作業**で GPU に依存しない（だから Intel でも同じ）。
+
+**待ちの在処を特定（このターン・3段階で確定）**:
+
+1. **Javaレベルの待ちは無い**（`ThreadMXBean`）: `waitedTime=0 ms` / `blockedTime=0 ms`（AMD/Intel とも）、
+   描画スレッドの **CPU合計はほぼ同一**（AMD 15663 ms / Intel 15104 ms、いずれも経過の 60〜63%）。
+   → 待ちは **ネイティブ呼び出しの中**にある。
+2. **どの呼び出しがブロックするか**（wall と CPU を内側でも分けた、run 合計の ms）:
+
+| 内側の呼び出し | AMD wall/cpu | Intel wall/cpu | **ネイティブでブロック** |
+|---|---|---|---|
+| `prepareImmediate`（preflight） | 268 / 123 | **785 / 94** | AMD 145 / **Intel 691** |
+| `copyVertices`（追記） | 60 / 47 | 26 / 21 | 13 / 5 |
+| グループ生成 | 346 / 336 | 171 / 166 | 10 / 5 |
+
+   → **Intel の 691 ms は `prepareImmediate` の中のネイティブ呼び出し**で、CPU時間は 94 ms しかない（88% がブロック）。
+   この 691 ms は `regStaleMillis` の 691 ms と**同一**で、**GL 読み戻し**だと確定する。
+3. **どのテクスチャか**（読み戻しログに**サイズ**を出して同定）:
+   `CELTIUM_READBACK_REFRESH glTexture=21 **size=16x16**` ＝ **ライトマップ**。0.45回/フレームで **2.30 ms/フレーム**（Intel）。
+
+**棄却した仮説（このターン）**: 「読み戻しのコストはデータ量に比例する」→ **1×1 を invalidate から除外**して試したが、
+`stale` は 138 のまま（除外数=1）で**効果なし**、画像も AMD 0.0001 / Intel 0.0000 と不変。**撤回した**。
+理由: `glGetTexImage` はデータ量ではなく **GPU パイプラインの完了を待つ**ため、**16×16 のライトマップでも 2.3 ms** かかる。
+（同定に使った view ハンドルは run ごとに変わるため、前ターンの「21 = 1×1」という対応は**古い run のもので誤り**だった。
+サイズをログに出すようにして正しく同定した。）
+
+**周期 invalidate を既定で無効化（このターン・完了。毎フレームのGL読み戻しが消えた）**:
+
+`invalidateAll()` は毎フレーム**全ミラー**を stale にしていた。stale は「announce が届いたとき」に消える
+（`announceFullPixels` が `staleIds.remove` する）ので、**ライトマップが変わっていないフレーム**では stale が
+残り、次の使用で **GL 読み戻し**が走っていた。これが Intel の 2.30 ms/フレームのネイティブブロックの正体。
+
+**床と比較して再判定**（前ターンの「画像が 0.016 変わる」という反対理由を、測定した床で裁いた）:
+
+| 比較（Intel） | meanAbsDiff | 差のある画素 |
+|---|---|---|
+| 既定 vs 既定（床） | 0.0000 | 3 |
+| **既定 vs `mirrorRefreshFrames=0`** | **0.0000** | **7** ✅ |
+| `=0` vs `=0`（別run） | **0.0169** | 1979 |
+
+AMD も 既定 vs `=0` が **0.0000（5画素）**。つまり **`=0` は既定と画素一致**で、`=0` 同士の 0.0169 は
+**経路差の床**（round 496 で測定した「Vulkan経路に取られるバッチが run ごとに違う」現象）である。
+
+**利得（測定）**: `regStaleMillis` **2.30 → 0.00 ms/フレーム（Intel）** / 0.31 → 0.00（AMD）。
+
+**既定化後の受入（一式・すべて緑）**:
+
+| run | exit | validationClean | fixture | p50 | stale |
+|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | **16.02 ms** | 0.00 ms/f |
+| **Intel 通常** | 0 | true | **PASSED** | **28.54 ms** | 0.00 ms/f |
+| postprocess (AMD) | 0 | true | PASSED | 16.15 ms | 0.00 |
+| weather (AMD) | 0 | true | PASSED | 15.72 ms | 0.00 |
+| spectator spider (AMD) | 0 | true | PASSED | 16.15 ms | 0.00 |
+| submit失敗注入 | 1 | true | FAILED（期待どおり） | — | 0.00 |
+| idle失敗注入 | 1 | true | FAILED（期待どおり） | — | 0.00 |
+| command-buffer target受入 | 0 | true | **PASSED** | 16.03 ms | `targets=True` |
+
+- **AMD 16.02 ms は celeritas 参照（16.18 ms）を上回る**。Intel はこのセッションで **42.66 → 28.54 ms（33%改善）**。
+- **毎フレームの GL 読み戻しが消えた**（`stale=0.00`）。優先順位4の「GL readback を不要にする」に対する前進で、
+  残る読み戻しは**更新時のみ**（announce が届かない経路のとき）である。
+
+**次の一手**: (1) 残る `batchCall` の wall−CPU（Intel で約 5.6 ms/フレーム）の内訳を、同じ wall/CPU 計器で
+さらに割る、(2) `actualFlushMillis`（Intel 4.1 ms/フレーム）の中身を分ける、(3) GL context なしの起動
+（完成条件(b)）に向けて、まだ GL に残っている依存（ブリッジの blit/semaphore と depth 変換）を数え直す。
+
+**（旧メモ）** 次の一手: (1) **ライトマップの更新を毎回 announce に載せる**（`DynamicTexture.updateDynamicTexture` のフックはあるので、
+なぜ announce が pending でない瞬間があるのかをログで確かめる）、(2) `invalidateAll()` を「更新が届いている
+テクスチャには stale を立てない」形にする、(3) どちらも画像が不変であることを確認する（不変なテクスチャの読み戻しを
+消すのが目的なので、画像が変わったら仮定が間違っている）。
+
+**（旧メモ）** 次の一手: **待ちの在処**を特定する。(1) ブリッジの同期呼び出し（`glWaitSemaphoreEXT` / `glClientWaitSync` /
+`glFlush` / キューの待ち）を**回数とCPU時間**で計器化する、(2) `ThreadMXBean` の
+`getThreadInfo().getWaitedTime()`（別スレッド待ち）と `getBlockedTime()`（ロック待ち）を run 単位で取り、
+**待ちの種類**を分ける、(3) その上で同期の回数か粒度を減らす。
+
+**（旧メモ）** 次の一手: 残りを**さらに分割**して計時する（`celtium$captureState()` / `celtium$stateKey()` /
+グループ比較と `state.clone()` / その他）。推測を重ねず、4分割の計器で 0.40 ms/回 の中身を出す。
+
+**（旧メモ）** 次の一手: (1) `batchCall` の `prepareImmediate` 外側を分割計時する（グループ生成／アップロード／submit）、
+(2) Intel の `actualFlushMillis`（4.16 ms/フレーム）と `regStaleMillis`（2.37 ms/フレーム）を減らす、
+(3) 画像比較を使う検証では**床 0.017 を明記**して判定する。
+
+**（旧メモ）** 次の一手: (1) 未解明の 0.0169 を追う（p127 と p129 の間に何が変わったかを run ディレクトリの差分で調べる）、
+(2) `batchCall` の `prepareImmediate` 外側を分割計時する（アップロード／グループ生成／submit）、
+(3) Intel の `actualFlushMillis`（4.16 ms/フレーム）と `regStaleMillis`（2.37 ms/フレーム）を減らす。
+
+**（旧メモ）** 次の一手: (1) `batchCall` のうち `prepareImmediate` の外側（Intel で約 7.6 ms/フレーム）を分割計時し、
+アップロード／submit／待ちのどれかを確定する、(2) バッチ単位のアップロードをフレーム単位にまとめられるか調べる、
+(3) `regStale`（Intel 2.37 ms/フレーム）を announce 経路へ寄せる。
+
+**（旧メモ）** 次の一手: (1) 残る `stale`（0.3 ms/フレーム）と batch call（5.4 ms/フレーム）の内訳を再取得して次のボトルネックを決める、
+(2) Intel の残差（30.94 ms）が AMD（16.05）の約2倍である理由を GPU 時間で切り分ける、
+(3) 失敗経路のうち texture/descriptor/allocation 失敗と minimize/world switch を両GPUで確認する。
+
+**（旧メモ）** 次の一手: (1) target fixture の描画形式を即値経路が持つ形式（例: `POSITION_COLOR`）に載せ替え、
+同じ性質（target群の受理と順序）を検査したまま再受入を取る、(2) それが通ったら `presentFromComposite` を既定化し、
+AMD/Intel と主要場面・失敗経路の受入を一式取り直す。速度の利得（AMD -2.4 ms/フレーム、Intel -11.8 ms/フレーム）と
+画面サイズ読み戻しの消滅（6.2 → 0.3 ms/フレーム）は測定済みで、あとは受入の付け替えだけである。
+
+**（旧メモ）** 次の一手: (1) `presentFromComposite=true` で **Intel と主要場面の受入を取り直す**、(2) 通れば既定化して
+docs/plan の受入表を更新する、(3) 併せて残る `stale`（0.3 ms/フレームまで減っている）と
+batch call（5.4 ms/フレーム）の内訳を再取得する。
+
+**（旧メモ）** 次の一手: present 経路に**合成と同じブレンドを適用**すれば、速さ（-2.4 ms/フレーム）と忠実さを両立できる。
+まず MC の合成が使うブレンド式（`GlStateManager` の blend func と alpha）を実行ログの `observedBlend*` から読み、
+present 側のクリア/コピーにその一段を入れる。それが出来たら既定化を再判定する。
+
+**（旧メモ）** 次の一手: (1) `presentFromComposite=true` を**再実行して 15.88 ms を再現確認**し、差の分布も再確認する、
+(2) 空が完全一致で地形だけ違うことを手がかりに、1フレーム差か丸め差かを切り分ける
+（例: 静止した frameTime で2回撮る、特定 sprite の色を比べる）、(3) 差が説明できたら既定化する。
+
+**（旧メモ）** 次の一手: (1) 1280×720 のミラーを**誰がサンプルしているか**を特定する（作成元のスタックをログに出す）、
+(2) サンプル元が最終合成なら、フレームの色を native から供給する経路に置き換える、
+(3) 置き換えできない場合は、このテクスチャだけ**部分更新**（ダーティ矩形）にできないか調べる。
+
+**（旧メモ）** 次の一手: (1) glTexture=15 / 21 がどのテクスチャかを実行ログから特定し、その更新経路を announce に載せる、
+(2) Intel でも残コストの内訳を同じ計器で取る、(3) 残る batch call 9.7 ms/フレームの再内訳。
+
+**（旧メモ）** 次の一手: (1) 残る `stale`（GL再アップロード 331回・6.1 ms/フレーム）を減らす（announce 経路に寄せる）、
+(2) `batch call` の残り 9.7 ms/フレームの内訳を取り直す（今回の分割計器で再測定）、
+(3) Intel でも同じ修正の効果を確認する。
+
+**（旧メモ）** 次の一手: `prepareImmediate` の**中をもう一段分割**する（`terrain.renderPass()` / キャッシュ参照 /
+`descriptorSetFor`）。1バッチ 1.09 ms は map 参照と整数キー計算としては大きすぎるので、**ブロックしている処理
+（ロック・GL呼び出し・大きな確保・例外生成）**が混ざっている可能性を疑い、区間ごとの計時で確かめる。
+
+**（旧メモ）** 次の一手: `submitImmediateBatch` の**中身を分割して計時**する（preflight／append／upload／submit のどこが 1.87 ms か）。
+1バッチあたり 1.87 ms は、頂点の追記とパイプライン参照だけの処理としては大きすぎるので、
+**アップロードや同期（待ち）が混ざっている**可能性が高い。
+
+**（旧メモ）** 次の一手: (1) `offerBatch` / `prepareImmediate` の wall time をバッチ単位で数える（今回と同じ計器の付け方でよい）、
+(2) 即値経路が有効なときの GL 側の描画回数・`glFlush`/同期の回数を、無効時と比べる。
+
+**（旧メモ・誤り）** 次の一手: (1) ハンドオフ回数を減らす（同一フレーム内の連続パスをまとめる。`orderPreserving`/`clearOrder` の
+方針を保ったまま統合できるか）、(2) 1回のハンドオフの内訳（色blit-in／深度変換／色blit-out／同期）を timestamp で
+分けて、2.5 ms のどこが重いかを出す。
+
+**（旧メモ）** 次の一手: (1) ブリッジの色blit-in／深度変換／色blit-out にそれぞれ timestamp を打ち、1フレームあたりの
+GPU時間と待ち時間を出す（既存の timestamp 機構が使える）、(2) `referencRender` と native の中間
+（例: 深度変換だけ止める）で、どの段が25 msを占めるかを切り分ける。
+
+## 7.13 参照比較の取り直し（このターン・既定を大きく変えた後）
+
+`presentFromComposite`（既定ON）と `mirrorRefreshFrames=0`（既定）を入れた後で、画像の結論を取り直した。
+参照（pinned Celeritas 989ebf2e）は我々の既定に依存しないので、既存 run の画像で再計算できる。
+
+| 比較 | meanAbsDiff | HF比（候補/参照） |
+|---|---|---|
+| **参照 AMD vs 参照 Intel**（統制） | **0.064** | **1.002** |
+| celtium AMD（現行既定） vs 参照 | **7.791** | **0.819** |
+| celtium Intel（現行既定） vs 参照 | **7.777** | **0.811** |
+| celtium AMD（present既定直前） vs 参照 | 7.781 | 0.818 |
+
+- **統制が効いている**: 参照同士（別GPUの2 run）は **0.064 / HF 1.002** でほぼ完全一致。つまり参照は GPU に依存せず、
+  測定系も安定している。**HF 0.81 は「参照より僅かにソフト」という実差**である（1.002 の統制に対して）。
+- **べき乗フィット（地形の中央帯、n=42700）**: `cand = 1.223 × ref^0.972`。指数が **0.972**＝ほぼ線形で、
+  以前の（vanilla に対する）`1.475 × ref^0.915` より**線形に近づいた**（ただし基準が違うので直接の比較ではない）。
+- 性能も同じ run で: **AMD p50 16.02 ms**（参照 16.18）、**Intel 28.54 ms**（p50）、p99 は AMD 23.18 / Intel 36.79。
+
+## 7.14 world switch の受入（このターン・新規。validation エラーを検出）
+
+優先順位6の未消化項目である**ワールド切替**を fixture の `-Dceltium.validation.worldSwitch=true` で両GPU実行した。
+
+| run | exit | validationClean | fixture | 所要 | p50 |
+|---|---|---|---|---|---|
+| AMD | 1 | **false** | PASSED | 26.0 s | 16.13 ms |
+| Intel | 1 | **false** | PASSED | 25.9 s | **22.40 ms** |
+
+- **切替そのものは動く**: report に `leftWorldAtTick=100`、`rejoinedAtTick=100`、`worldTicksAtEnd=200`、
+  `worldFrames` 553（AMD）/343（Intel）、`regStaleMillis=0.00`。fixture は PASSED。
+- **しかし validation が汚れる**: **`VUID-vkCmdDraw-None-09600` が10件**（AMD/Intel とも）。メッセージは
+  同一 image（`0x1ad9...`）の **mipLevel 1, 2, 3 …** が、記述子が書かれたときのレイアウトと違う、というもの。
+- **原因の候補をコードで確認**: `VulkanGlTexture.transitionToShaderRead()` の barrier は
+  `subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, **0, 1**, 0, 1)` で **level 0 しか覆っていない**。
+  ワールド切替では `recreateImageResources()` が image を作り直すが、この関数は
+  `destroyImageResources(); createImageResources(...)` だけで、**全ミップを SHADER_READ_ONLY へ遷移させない**。
+  通常のアップロード経路は末尾の barrier で全ミップを遷移させるが、切替後の経路ではそれが効いていない。
+- **まだ直していない理由**: レイアウト遷移は壊すと別の VUID を生む（コードのコメントにも「fifteen errors」の記録がある）。
+  level 0 が `UNDEFINED` 前提の barrier と、全ミップを移す barrier の順序を揃えてから、**両GPUで世界切替の受入を
+  取り直して**閉じる。半端な修正を入れない。
+
+**修正（このターン・解決）**: validation メッセージの全文が答えだった。
+
+```
+expects VkImage 0x1ad9... (mipLevel = 1) to be in layout VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+--instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED      （mipLevel 2, 3 … も同様に10件）
+```
+
+- **原因**: `recreateImageResources()` が image を作り直すと**全レベルが UNDEFINED** になるが、
+  `createImageResources()` は遷移を行わず、その後の書き込みが **patch（`preserve=true`）** だと
+  **level 0 しか遷移しない**。レベル1以降は誰も遷移させないまま、記述子は view 全体をサンプルするため
+  draw 時に VUID が出ていた。
+- **修正**: (1) `transitionToShaderRead()` の barrier 範囲を `Math.max(1, this.mipLevels)` に広げ、レベルごとの
+  レイアウト記録も全レベル更新する、(2) `recreateImageResources()` の直後で `transitionToShaderRead()` を呼ぶ。
+  `oldLayout=UNDEFINED` は常に有効（内容を捨てる意味になる）なので、既存の barrier と衝突しない。
+
+**修正後の受入（両GPU）**:
+
+| run | exit | validationClean | fixture | 所要 | p50 | `VUID-vkCmdDraw-None-09600` |
+|---|---|---|---|---|---|---|
+| world switch AMD | **0** | **true** | PASSED | 26.1 s | 16.22 ms | **0**（修正前10） |
+| world switch Intel | **0** | **true** | PASSED | 25.8 s | 21.64 ms | **0**（修正前10） |
+| 通常 AMD（回帰確認） | 0 | true | PASSED | — | 16.09 ms | 0 |
+| 通常 Intel（回帰確認） | 0 | true | PASSED | — | 28.49 ms | 0 |
+| command-buffer target受入 | 0 | true | PASSED | — | 16.05 ms | `targets=True` |
+
+- 切替そのものも動作（`leftWorldAtTick=100` / `rejoinedAtTick=100`）。
+- **画像の回帰なし**: 修正前後で AMD 0.0155 / Intel 0.0169 で、いずれも**測定済みの床（約0.017）と同値**。
+
+**out-of-date 注入は「受入ではない」と判明（このターン・誤った受入を回避）**: 優先順位6の minimize/out-of-date を
+`-Dceltium.vulkan.forceAcquireOutOfDate=true` / `forceOutOfDate=true` で AMD/Intel に走らせたところ、3件とも
+**exit 0 / validationClean / PASSED** だった。**しかしこれは受入ではない**:
+
+- **present / swapchain 系のカウンタが通常runの report に一切出ていない**（`presentSucceeded` / `presentedMean` /
+  `swapchainOutOfDate` / `presentFailures` すべて not found。以前 present 実験を明示的に有効化した run では出ていた）。
+- つまり **通常runではスワップチェーンも present も存在しない**。`presentFromComposite`（既定ON）が変えるのは
+  「合成バッチを present 経路が担当するか」だけで、**フレームの swap は GL が行っている**（＝完成条件(b)の
+  「GL swap」は依然として残っている）。
+- したがって **out-of-date の注入は何もせず素通り**しており、**あの3件の緑は経路を何も検証していない**。
+
+**スワップチェーン経路を明示的に有効化すると、実バグが出た**（`-Dceltium.vulkan.swapchainProbe=true` +
+`forceAcquireOutOfDate=true`、AMD）:
+
+| 指標 | 実測 |
+|---|---|
+| verdict | exit 1 / validationClean **false** / fixture PASSED / 24.6 s |
+| present 経路 | **実行されている**（`celtium present trace` 4行、acquire/renderFinished のハンドル付き） |
+| 注入 | **`acquireOutOfDate=0`＝発火していない**（＝この注入も未検証） |
+| validation | **`VUID-vkAcquireNextImageKHR-semaphore-01286` ×2** = 「Semaphore must not be currently signaled」 |
+
+- **実バグ**: present 経路で **acquire 用 semaphore がシグナル済みのまま再利用されている**。これは
+  acquire→submit→present の semaphore 対の管理の問題で、**native present（完成条件(c)）の前提**に直結する。
+- 併せて **`forceAcquireOutOfDate` が発火していない**ことも分かった（`acquireOutOfDate=0`）。注入の実装自体を
+  確かめる必要がある（このフラグは「acquire 自体で失敗を注入する」ものとして書かれている）。
+
+**訂正と受入（このターン）**: 前ターンの `VUID-vkAcquireNextImageKHR-semaphore-01286` は**注入と併用した時だけ**出るもので、
+**present 経路そのものは綺麗**だった。
+
+| run（AMD、`swapchainProbe=true`） | exit | validationClean | fixture | p50 | present trace | VUID |
+|---|---|---|---|---|---|---|
+| **`presentNoRecord=false`（通常の記録あり経路）** | **0** | **true** | PASSED | 15.89 ms | 4 | **0** |
+| **同（Intel）** | **0** | **true** | PASSED | 35.78 ms | 4 | **0** |
+| `presentNoRecord=true`（コード自身の二分探索スイッチ） | 1 | false | PASSED | — | — | `VUID-VkPresentInfoKHR-pImageIndices-01430` ×20 |
+
+- **present 経路は両GPUで exit 0 / validationClean / VUID 0**。これは完成条件(c)に対する**新しい受入**である
+  （`celtium present trace` が出ているので、経路が実際に走っていることも確認できる）。
+- `presentNoRecord=true` の 20 件は**記録せずに present する**という意図的に壊した経路のもので、
+  「画像が present 可能なレイアウトに無い」という当然の結果。**通常経路の欠陥ではない**。
+- **前ターンの -01286 の正体**: `forceAcquireOutOfDate=true` と併用した時にだけ出た。注入は present を飛ばすため、
+  acquire semaphore が**シグナル済みのまま**次の acquire で再利用される。これは**注入経路のロバスト性の穴**であり、
+  通常経路の欠陥ではない（ただし直す価値はある）。
+- **`forceAcquireOutOfDate` 自体は発火していない**（`acquireOutOfDate=0`）。out-of-date の復旧を「受入した」と
+  言えるのは、この注入が実際に発火してからの話である。
+
+**注入を発火させた（このターン・ただし経路はまだ綺麗にならない）**:
+
+- **原因**: 注入の条件が `result == VK_SUCCESS` だったが、**headless の swapchain は `VK_SUBOPTIMAL_KHR` を返す**
+  （コードは両方を成功扱いにしている）。したがって注入は一度も発火していなかった。両方を注入対象にして、
+  **`injecting an out-of-date result` がログに出ることを確認**（AMD/Intel 各1回）。
+- **注入は経路に届いている**: report に `present probe: vkAcquireNextImageKHR returned -1000001004`
+  （= `VK_ERROR_OUT_OF_DATE_KHR`）が出る。つまり out-of-date の**分岐自体は動くようになった**。
+- **ただし両GPUで `exit 1 / validationClean=false`、`VUID-vkAcquireNextImageKHR-semaphore-01286` が2件**残る。
+  これは「acquire に渡した semaphore がシグナル済みのまま次の acquire に渡された」という意味で、
+  **失敗した acquire が semaphore をシグナル済みで残す**という筋書きと一致する。
+- **試して効かなかったこと**: 失敗した acquire の後で acquire semaphore のカーソルを回す（ローテート）。
+  VUID は 2 件のままだったので**撤回**した（効果のない変更を積まない）。したがってシグナル済みなのは
+  **ローテートで避けられる semaphore ではない**（別の semaphore か、同じ呼び出しの中で再利用されている）。
+- **次の手がかり**: `celtium present trace` が acquire / renderFinished / submitWaits / presentWaits の**ハンドルを
+  出力している**ので、VUID の発生順と突き合わせれば**どの semaphore か**を特定できる（推測しない）。
+- **受入の基準を訂正**: `acquireOutOfDate` は `presentImage` 側のカウンタで、**probe 経路では増えない**。
+  probe の受入に `acquireOutOfDate>0` を要求するのは誤りだった（前ターンの自分の基準を訂正する）。
+
+**シグナル済み semaphore を特定し、対処を入れた（ただし検証は未達）**:
+
+- **特定できた（ログの順序で）**: probe の acquire が使った **`0x10`** が失敗でシグナル済みのまま残り、
+  `presentImage` が `0x11`→`0x12`→`0x13` と巡回したあと**同じ `0x10` に戻った acquire** の直前で
+  `VUID-vkAcquireNextImageKHR-semaphore-01286` が出ていた（ログ 254行 → 274/283/285行 → 287行のVUID → 288行）。
+  つまり**ローテートは先送りにすぎない**（4枚なら4回で戻ってくる）。これが前ターンのローテートが効かなかった理由である。
+- **対処**: 失敗した acquire が渡された semaphore を**新しいものに差し替える**（`replaceAcquireSemaphore`）。
+  古いものは `VulkanRetireQueue` で**退役**させ、破棄しない（待っている wait がまだ名前を保持しうるため）。
+  probe と `presentImage` の両方の失敗分岐から呼ぶ。**この変更は木に入っている**。
+- **検証は未達**: 検証runでは probe の acquire が**成功**してしまい（`present probe:` の行が出ない＝失敗していない）、
+  失敗経路に到達しなかった。したがって**修正の効果は測れていない**。
+- **併せて判明**: 前ターンに私が入れた注入の条件変更（`SUCCESS` だけでなく `SUBOPTIMAL` でも注入）は、
+  同じファイルに対する `git checkout` で**一緒に巻き戻っていた**（訂正の記録として残す）。
+  現在の注入は元の `result == VK_SUCCESS` のままである。
+- **注入が確定的でない**ことも分かった: headless の acquire は**自然に OUT_OF_DATE を返す**ことがあり、
+  その場合は注入条件（SUCCESS）が偽になって**何も注入されない**。注入を「結果に関わらず発火」に変えるのが次の一歩
+  だが、このターンではその編集がアンカー不一致で適用されず、**未適用のまま**である（適用できていないことを明記）。
+
+**修正を検証（このターン・同じ注入での前後比較）**:
+
+- **注入を確定的にした**: `FORCE_ACQUIRE_OUT_OF_DATE` は acquire の戻り値に関わらず発火する（`recordOutOfDateInjection()` で
+  ログにも出す）。以前は `result == VK_SUCCESS` が条件で、headless の acquire が自然に `OUT_OF_DATE`/`SUBOPTIMAL` を
+  返すと**何も注入されず**、その run が「経路を exercize していないのに緑」に見えていた。
+- **前後比較（同じ注入が発火していることを確認した上で）**:
+
+| run | probe の acquire | `VUID-vkAcquireNextImageKHR-semaphore-01286` | validationClean | exit |
+|---|---|---|---|---|
+| 修正前（p154, AMD） | `returned -1000001004`（注入） | **2件** | false | 1 |
+| **修正後（p157, AMD）** | `returned -1000001004`（注入） | **0件** | **true** | **0** |
+| **修正後（p157, Intel）** | `returned -1000001004`（注入） | **0件** | **true** | **0** |
+
+- probe の失敗メッセージは**ログではなく report**（`rendererDebug`）に出る。ログだけを見て「失敗していない」と
+  判断しかけたのは私の計測ミスで、report を読んで確定した。
+- これで **out-of-date を受けた acquire の後始末（semaphore の差し替え）が両GPUで通り**、
+  `forceAcquireOutOfDate` の注入も**確定的に発火する**ようになった。
+
+**容量整理と presentImage 側の受入（このターン）**:
+
+- **整理**: `runtime/` は 403 run で **7.0 GB** あり、内訳は 1 run あたり `mods/` 22 MB ＋ `test-libraries/` 8.0 MB ＋
+  `saves/` 5.5 MB の**重複コピー**（証拠である `logs/`＋`screenshots/`＋`validation-process.json` は 1.7 MB）。
+  jar のパスは各 run の `validation-command.json` に**完全なコマンドラインとして記録**されているので再現性は保たれる。
+  パスを 1 つずつ検証して `mods` / `test-libraries` / `saves` を削除: **532 ディレクトリ・6.1 GB 解放**、
+  `runtime/` は **1020 MB** に。主要 run（p106/p142/p146/p157/sol-cb）の report・image・command が残っていることを確認。
+  **空き 13 GB → 19 GB**（88% → 81%）。
+- **自分のミスと復旧（記録）**: 削除パターンが `.celtium-work/runtime/celtium-headless-interop/test-libraries` にも
+  一致し、**テスト用の `lwjgl-vulkan-3.4.1.jar` を消してしまった**（翌runが report を出さずに失敗して気づいた）。
+  Gradle キャッシュの同一 jar を **sha256 一致（`7f39be7c…`）を確認して復元**した。以後の受入は復元後に取得している。
+- **presentImage 側の受入（`swapchainProbe=true` ＋ `forceOutOfDate=true`）**:
+
+| run | exit | validationClean | fixture | p50 | present trace | VUID |
+|---|---|---|---|---|---|---|
+| AMD | **0** | **true** | PASSED | 16.49 ms | **458回** | **0** |
+| Intel | **0** | **true** | PASSED | 39.44 ms | **210回** | **0** |
+
+  present trace が 458/210 回出ているので、**present 経路は毎フレーム実際に走っている**。VUID は 0。
+- **未了**: `forceOutOfDate`（present 後の verdict を注入する側）は**発火していない**（report に `injecting` の行が無く、
+  probe は `cleared and presented image 0 (0)` で成功している）。acquire 側の注入は「結果に関わらず発火」に直して
+  確定させたので、**verdict 側も同じ扱いにする**必要がある。したがって out-of-date の**復旧**はまだ受入できていない
+  （受入できたのは「通常の present 経路が綺麗に回る」ところまで）。
+
+**out-of-date 復旧の受入（このターン・成立）**: `forceOutOfDate` は**発火していた**。私が前ターンに見落としていた。
+
+- `recordOutOfDateInjection()` の出力は **stdout（ログ）**で、report の `rendererDebug` には出ない。前ターンは report だけを
+  見て「発火していない」と判断したが、**ログには毎フレーム出ていた**（AMD 458回 / Intel 210回）。
+- `forcedOutOfDate` は**設定されるだけで、どこでもリセットされない**（書き込みは 567 行の1箇所のみ）。それでも
+  **フレーム数と同じ回数**発火している＝**`VulkanSwapchain` インスタンスが毎フレーム作り直されている**。
+  つまり `outOfDate=true` を受けた呼び出し側（`VulkanTerrainGpuBackend` 1844行の `if (this.swapchain.outOfDate())`）が
+  **実際にドロップして再作成している**（`ensureSwapchain()` の遅延再作成）。
+
+| run | worldFrames | present trace | 注入（＝再作成） | exit | validationClean | VUID | p50 | vulkanPasses |
+|---|---|---|---|---|---|---|---|---|
+| AMD | 458 | 458 | **458** | **0** | **true** | **0** | 16.49 ms | 2143 |
+| Intel | 210 | 210 | **210** | **0** | **true** | **0** | 39.44 ms | — |
+
+- **毎フレーム・スワップチェーンを作り直しながら、validation 0・exit 0・描画継続・p50 も悪化しない**。
+  これは out-of-date からの**復旧経路の受入**である（458回ぶんの再作成を踏んでいる）。
+- **計器の読み方の訂正**: `swapchainOutOfDate`（summary のフィールド）は**再作成後の新しいインスタンス**を読むため
+  0 になる。0 は「out-of-date が起きていない」意味ではない。前ターンはこれを誤読した。
+
+**確保失敗の注入を実装し、受入（このターン）**: ハーネスには submit 失敗と idle 失敗しか無く、**確保失敗を作れなかった**
+（`celtium.vulkan.failImmediateSubmits` は**ソースに存在しない古い名前**で、scripts/docs にだけ残っていた。
+「発火しない」と記録していたのはこれが理由である）。
+
+- 追加: `VulkanAllocationFault`（`-Dceltium.vulkan.failAllocationAt=<n>` で **n回目の確保を失敗させる**）と、
+  **ミラーテクスチャの `vkAllocateMemory`** への適用（最も頻繁な確保＝texture 経路の代表）。失敗は
+  その経路の他の失敗と同じく例外として投げ、呼び出し側の処理をそのまま試す。
+- 受入（`failAllocationAt=3`）:
+
+| run | exit | validationClean | fixture | 注入 |
+|---|---|---|---|---|
+| AMD | **0** | **true** | **PASSED** | `mirrored texture (#3)` ×1 |
+| Intel | **0** | **true** | **PASSED** | `mirrored texture (#3)` ×1 |
+
+  **確保が実際に失敗し（ログに `CELTIUM_ALLOCATION_FAULT`）、それでも完走して exit 0 / validation 0 / PASSED**。
+  ハングもクラッシュも validation エラーも無い＝**失敗が有界に処理されている**。
+- **範囲の明記**: 注入したのは**1箇所**（ミラーテクスチャ）である。`vkAllocateMemory` は他に7箇所あり
+  （frame target / readback / staging / uniform / buffer / host buffer / context staging）、
+  **buffer と descriptor の失敗はまだ注入していない**。「確保失敗を全部確認した」とは言わない。
+
+**確保失敗の注入を全サイトへ展開し、掃引して受入（このターン）**:
+
+- `vkAllocateMemory` を呼ぶ**すべてのサイト**（9箇所に機械的に挿入＋既存1箇所＝10サイト）に
+  `VulkanAllocationFault.shouldFail("<file>:<line>")` を入れ、`-Dceltium.vulkan.failAllocationAt=<n>` で
+  **n回目の確保**を失敗させる（失敗は例外として投げ、各経路の既存の失敗処理をそのまま試す）。
+- **n=1..10 の掃引（AMD）**: 10連続、**10回とも exit 0 / validationClean=true / PASSED / VUID 0**。
+  実際に叩かれたサイト: `mirrored texture`、`VulkanGlTexture:483`、`VulkanGlTexture:979`（staging）、
+  **`VulkanFrameTarget:927`**（フレームターゲット）。
+- **より大きい n（後半の確保＝バッファ系）**:
+
+| n | GPU | 叩かれたサイト | exit | validationClean | fixture | VUID |
+|---|---|---|---|---|---|---|
+| 200 | AMD | `VulkanHostBuffer:126` | **0** | **true** | PASSED | **0** |
+| 2000 | AMD | `VulkanHostBuffer:126` | **0** | **true** | PASSED | **0** |
+| 800 | Intel | `VulkanHostBuffer:126` | **0** | **true** | PASSED | **0** |
+
+- **合計**: 13 run、**13 run とも exit 0 / validationClean=true / PASSED / VUID 0**、叩かれたサイトは
+  **5種類**（mirrored texture / GlTexture:483 / GlTexture:979 staging / FrameTarget:927 / HostBuffer:126）。
+- **範囲の明記**: 10サイトにガードは入ったが、**実際に失敗を注入して確認できたのは5種類**である。
+  `VulkanBuffer:189`（descriptor 用の一様バッファ）・`VulkanUniformBuffer:110`・`VulkanContext:883`（context staging）・
+  `VulkanTerrainGpuBackend:5047`（readback）は**まだ叩けていない**（大きい n でも別のサイトに当たった）。
+  「全サイトの失敗を確認した」とは言わない。
+
+**サイト名で狙い撃ちできるようにし、残りサイトを叩いた結果＝実欠陥を検出（このターン）**:
+
+- `-Dceltium.vulkan.failAllocationSite=<部分文字列>` を追加（**最初に一致した確保だけ**を失敗させる）。`failAllocationAt` の
+  数え上げでは後半のサイトに当たらなかった（n=2000 でも host buffer に当たった）ため、名前で狙えるようにした。
+- **結果**:
+
+| サイト | GPU | exit | fixture | 注入 |
+|---|---|---|---|---|
+| `VulkanBuffer:189`（descriptor 用の一様バッファ） | AMD | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#12) |
+| `VulkanUniformBuffer:110` | AMD | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#17) |
+| `VulkanContext:883`（context staging） | AMD | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#13) |
+| `VulkanBuffer:189` | **Intel** | **255** | **MISSING_REPORT（クラッシュ）** | 命中 (#12) |
+| `VulkanTerrainGpuBackend:5047`（readback） | AMD | 0 | PASSED | **未命中**（通常runでは readback を確保しない＝`presentReadback` が既定OFF） |
+
+- **原因（ログから）**: `java.lang.IllegalStateException: injected allocation failure: VulkanBuffer:189` →
+  `#@!@# Game crashed!`。**バッファ系の確保失敗はゲームループの上まで抜けてゲームを落とす**。
+  クラッシュレポートは `.celtium-work/runtime/p163-buffer/crash-reports/` に残っている（証拠）。
+- **対比**: テクスチャ／フレームターゲット／staging／host buffer の失敗（13 run）は**すべて生存**して
+  exit 0 / clean / PASSED だった。つまり**失敗の扱いはサイトごとに違い、buffer 系だけが有界でない**。
+- **これは「検出した欠陥」であって「修正済み」ではない**。次のラウンドで直す。
+
+**buffer系クラッシュの修正（このターン・2/3 が有界化）**:
+
+- **修正**: region のアップロード（`uploadRegion` の呼び出し、`VulkanTerrainGpuBackend` 3098行）を try/catch で囲み、
+  資源を作れなかった region は**その回だけ諦めて次へ進む**（`regionUploadFailures` に数え、`record(...)` に残す）。
+  `VulkanBuffer.create()` は既に自分で後始末して rethrow しているので、**抜け道は呼び出し側**だった。
+- **再測定（同じサイト名で注入）**:
+
+| サイト | GPU | 修正前 | **修正後** | regionUploadFailures |
+|---|---|---|---|---|
+| `VulkanBuffer:189`（vertex arena） | AMD | exit 255 / report 無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | **1** |
+| `VulkanBuffer:189` | **Intel** | exit 255 / report 無し / クラッシュ | **exit 0 / clean / PASSED / 307 frames** | **1** |
+| `VulkanContext:883`（context staging） | AMD | exit 255 / report 無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | **1** |
+| `VulkanUniformBuffer:110` | AMD | exit 255 / report 無し | **exit 255 / report 無し（未修正）** | — |
+
+- **未修正の1件は逃げ道が違う**: uniform buffer の確保は `uploadRegion` の外（immediate/descriptor 経路）で起きるため、
+  この try/catch では捕まらない。**次はそちらを囲む**。
+- 受入の意味: 失敗した region は**アップロードされない**（その分は描かれない）が、**ゲームは落ちず、レポートも出る**。
+  「壊れた資源を握ったまま描く」よりは安全側である。
+
+**buffer系クラッシュの修正（続き・3サイトすべて有界化）**:
+
+- `ensureUniformCapacity` の**2つの呼び出し**（`render` 336行 / `recordRenderPass` 3746行）を try/catch で囲み、
+  失敗した pass は**スキップして理由を記録**する（`uniformPreparationFailures`）。これは同じ場所にある
+  `gpuStalled` の早期return・atlas欠如時のskipと**同じ形**である。
+- 併せて `VulkanUniformBuffer` の生成失敗時に**作った `VkBuffer` を破棄**するようにした（`VulkanBuffer` は既にそうしており、
+  こちらは漏れていた）。
+
+| サイト | GPU | 修正前 | **修正後** | 計器 |
+|---|---|---|---|---|
+| `VulkanBuffer:189` | AMD | exit 255 / report無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | `regionUploadFailures=1` |
+| `VulkanBuffer:189` | Intel | exit 255 / report無し / クラッシュ | **exit 0 / clean / PASSED / 307 frames** | `regionUploadFailures=1` |
+| `VulkanContext:883` | AMD | exit 255 / report無し / クラッシュ | **exit 0 / clean / PASSED / 564 frames** | `regionUploadFailures=1` |
+| `VulkanUniformBuffer:110` | AMD | exit 255 / report無し / クラッシュ | **exit 1 / clean / FAILED / クラッシュ無し / 566 frames** | `uniformPreparationFailures=1` |
+| `VulkanUniformBuffer:110` | Intel | exit 255 / report無し / クラッシュ | **exit 1 / clean / FAILED / クラッシュ無し / 306 frames** | `uniformPreparationFailures=1` |
+| **通常run（回帰確認）** | AMD | — | **exit 0 / clean / PASSED / p50 16.17 ms** | 失敗0 |
+
+- **受入の意味**: 3サイトとも**クラッシュしなくなり、レポートが出る**。uniform の場合は pass をスキップするため
+  terrain フレームが描かれず **fixture は FAILED（exit 1）**になるが、これは**有界な失敗の報告**であって
+  プロセスの死ではない（以前は report すら出なかった）。
+- **通常runは無回帰**（p50 16.17 ms、失敗カウンタ 0）。
+
+**失敗経路の修正後の受入と、到達しないサイトの確定（このターン）**:
+
+- **両GPUの通常受入（buffer系修正の回帰確認）**:
+
+| run | exit | validationClean | fixture | p50 | 失敗カウンタ |
+|---|---|---|---|---|---|
+| AMD | **0** | **true** | **PASSED** | **15.99 ms** | `regionUploadFailures=0` / `uniformPreparationFailures=0` |
+| Intel | **0** | **true** | **PASSED** | **28.50 ms** | 同上 0 |
+
+- **`VulkanTerrainGpuBackend` の確保サイトは到達しない**: `presentReadback=true` を付けた run、さらに
+  `swapchainProbe=true` と併用した run（AMD/Intel とも exit 0 / clean / PASSED / VUID 0）でも
+  **注入が命中しなかった**。コードを読むと、そのサイトは `ensureReadback()` の中にあり、呼び出しは
+  **アップロード検証用のデバッグ経路**（`uploadVerified` を立てる箇所）からのみ。**通常の受入runでは通らない**。
+  「全サイトを確認した」とは言わず、**到達しない1サイトとして記録**する。
+- **注入が実際に命中したサイト（8種）**: `mirrored texture`、`VulkanGlTexture:483`、`VulkanGlTexture:979`（staging）、
+  `VulkanFrameTarget:927`、`VulkanHostBuffer:126`、`VulkanBuffer:189`、`VulkanUniformBuffer:110`、
+  `VulkanContext:883`。うち**クラッシュしていた3種はすべて有界化**した（前ターン）。
+
+**minimize 相当と大きなリサイズの受入（このターン）**:
+
+- `celtium.validation.resize` は**サイズ固定**（1024x640）だったので、`celtium.validation.resizeTo=WxH` を追加した
+  （**既定は従来どおり 1024x640** なので既存runの意味は変わらない）。Minecraft の公開 `resize(w,h)` を使う経路は
+  そのままで、**保存スクリーンショットの実寸がリサイズがレンダラまで届いた証拠**になる。
+
+| run | exit | validationClean | fixture | frames | `resizedTo` | **画像の実寸** | VUID | クラッシュ |
+|---|---|---|---|---|---|---|---|---|
+| AMD `1x1`（minimize 相当） | **0** | **true** | **PASSED** | 567 | 1x1 | **1x1** | **0** | 無し |
+| Intel `1x1` | **0** | **true** | **PASSED** | 452 | 1x1 | **1x1** | **0** | 無し |
+| AMD `1920x1080`（大きい側） | **0** | **true** | **PASSED** | 564 | 1920x1080 | **1920x1080** | **0** | 無し |
+
+- **両極端とも通り、frame target / swapchain が実寸で作り直されている**（画像の実寸がその証拠）。VUID もクラッシュも無い。
+- **正直な限界**: **真の 0x0** は再現できない。Minecraft 自身の resize が 0 を 1 に丸めるためで（バニラの挙動）、
+  この環境では **1x1 が minimize の等価物**である。0x0 を直接レンダラへ渡す試験はしていない。
+- これで優先順位6の「minimize/out-of-date」は、**out-of-date（458回の再作成）＋minimize相当（1x1）＋大きいリサイズ**の
+  3点で受入できた。ただし**真の 0x0** と**実際の最小化イベント**（ウィンドウマネージャ経由）は未検証である。
+
+**完成条件(b) の設計に必要な測定: 深度返却は必要か（このターン・測定で確定）**:
+
+- 実験フラグ `-Dceltium.vulkan.skipDepthReturn=true` を追加し、`endFrame` の**深度の書き戻しだけ**を止めて
+  画像を比べた（`keepGui=true` の場面、同一ビルド、AMD/Intel 各1 run＋床のための同設定2回）。
+
+| 比較 | meanAbsDiff | 差>2の画素 | 最大差 |
+|---|---|---|---|
+| **AMD 床（keep vs keep）** | **0.0563** | 448 | 192 |
+| **AMD keep vs 深度スキップ** | **1.4922** | **11682** | 192 |
+| **Intel keep vs 深度スキップ** | **1.1229** | **8838** | 192 |
+
+- **結論: 深度の書き戻しは必要である**。止めると床の **26倍（AMD）/ 20倍（Intel）**、**8.8k〜11.7k画素**が変わる。
+  つまり **GL 側は、この後ろで描くもの（手・GUI・一部の実体）を地形の深度に対して深度テストしている**。
+- **設計への含意（完成条件(b)）**: ブリッジを外すには、この深度を消費している描画を
+  **(a) native 側で描く**か、**(b) 地形より前に描く**か、**(c) 深度テストを不要にする**かのいずれかが要る。
+  「深度の返却をやめるだけ」では成立しない（測定がそう言っている）。
+- **併せて得た基準値**: `keepGui=true` の場面の**床は 0.0563**（通常場面の 0.017 より大きい。GUI が毎回わずかに違うため）。
+  この場面の比較はこの床で裁く。
+- **計測ミスの記録**: 最初の試行は**コンパイルエラー**（定数を誤ったファイルに置いた）でビルドが落ち、**古いjarで4 run**を
+  回していた。その比較結果は破棄した（フラグを検証していない）。定数を正しいクラス直後に置き直してから測り直している。
+
+**深度を消費しているのは「一人称の手（手持ちアイテム）」と特定（このターン・場面の切り替えで切り分け）**:
+
+| 場面 | keep vs skip-depth | その場面の床 | 判定 |
+|---|---|---|---|
+| `emptyHand=true`（手に何も持たない） | **0.0168** | 約 0.017 | **効果なし**（＝床と同一。手を描かなければ深度返却は不要） |
+| `particles=true` ＋ `emptyHand=true` | **0.0597** | **0.0518** | **効果なし**（床の1.15倍＝粒子は深度を消費していない） |
+| `thirdPerson=true`＋`keepGui=true` | 1.0452 | **2.6843** | **判定不能**（場面自体の変動が効果より大きい。数字を結論に使わない） |
+| `keepGui=true`（手持ちアイテムあり＝既定） | **1.4922** | 0.0563 | **効果大（床の26倍）** |
+
+- **結論**: 深度の書き戻しが要るのは **一人称の手／手持ちアイテムの描画**のためである。手を描かない場面では
+  効果が床と区別できない（0.0168 対 0.017）。粒子は効果なし。
+- **設計への含意**: ブリッジを外す道として **一人称の手の描画を native に移す**のが、測定に裏づけられた次の標的である
+  （手は地形の後・深度テスト付きで描かれるため、「地形より前に描く」では解決しない）。
+- **判定不能を判定不能と記録する**: thirdPerson は床（2.68）が効果（1.05）より大きいので、この場面では何も言えない。
+  床を取らずに「1.05 の差が出た」と書けば誤りになる。
+
+**深度を消費する描画の切り分け（完成・6場面、すべて床つき）**:
+
+| 場面 | 床（keep vs keep） | 効果（keep vs skip-depth） | 判定 |
+|---|---|---|---|
+| `keepGui=true`（手持ちアイテムあり＝既定） | 0.0563 / 448 px | **1.4922 / 11682 px** | **効果（一人称の手）** |
+| `emptyHand=true` | 約0.017 / 494 px | 0.0168 / 494 px | 効果なし |
+| `particles=true`＋`emptyHand` | 0.0518 / 2101 px | 0.0597 / 1919 px | 効果なし |
+| `spectator=spider`＋`emptyHand` | **0.0000 / 1 px** | **0.0118 / 27 px** | **効果あり（小さいが床の27倍＝実体）** |
+| `thirdPerson=true`＋`keepGui` | **2.6843 / 22371 px** | 1.0452 / 8206 px | **判定不能**（床 > 効果） |
+| `weather=true`＋`emptyHand` | **1.0114 / 59311 px** | 0.8490 / 36278 px | **判定不能**（床 > 効果。雨が毎回違う） |
+
+- **深度を消費しているのは (1) 一人称の手（支配的: 11682 px）と (2) 実体（僅か: 27 px）** の2つ。
+  粒子は効果なし（床と区別できない）。
+- **方法論上の事実**: この切り分けは**安定した場面でしか効かない**。`thirdPerson` と `weather` は**床が効果より大きい**
+  ので何も言えない（判定不能として記録する）。**床を取らずに差だけを報告すれば誤りになる**。
+  `spectator=spider` は床 0.0000（1 px）で最も安定し、27 px の差を確定できた。
+- **設計への含意**: 深度の書き戻しを外すには、**一人称の手の描画を native に移す**のが最優先（差の99%がここ）。
+  実体と地形の深度関係（27 px）は、移すか、差分として受容するかを選ぶ必要がある。
+
+**一人称の手を native に取り込むと深度の書き戻しが不要になる（このターン・測定で確定）**:
+
+- **前提の訂正**: 既定の受理maskは `DEFAULT_ACCEPTED = "1,2,3,4,5,6,7,8,9"` で、**format 2 も受理されている**。
+  format 2 が GL に残るのは `presentFromComposite`（既定ON）が 1794 行で **format 2 を合成経路へ回し、その経路が
+  拒否する**ためである（「既定maskでGLに残る」という以前の書き方は**機序を取り違えていた**。maskは受理している）。
+- **実験**: `-Dceltium.vulkan.presentFromComposite=false` にして format 2 を即時経路（native）へ入れ、深度返却の
+  有無で画像を比べた（同設定2回で床も取得）。
+
+| 比較 | meanAbsDiff | 差>2の画素 |
+|---|---|---|
+| 床（format 2 native、keep vs keep） | 0.0167 | 481 |
+| **format 2 native: keep vs skip-depth** | **0.0000** | **8** |
+| 既定（format 2 は GL） vs format 2 native | **0.0180** | 1496 |
+
+- **結果1: format 2 を native に取ると、深度の書き戻しは不要になる**（効果 0.0000・8画素で**床の481画素より小さい**）。
+  つまり **11682 画素の深度依存は一人称の手（format 2）が原因**だったことが、切り替え実験で裏づけられた。
+- **結果2: 画像は実質変わらない**（0.0180 / 1496画素で、既定同士の床 約0.017 と同程度）。
+- **設計上の論点（次に解く）**: **format 2 は「フレーム合成の全面クワッド」と「一人称の手」の両方**に使われている。
+  `presentFromComposite=true` は format 2 を丸ごと合成経路へ回すため、**手まで巻き込んで GL に落としている**。
+  正しい形は **合成クワッドとそれ以外の format 2 を区別**して、前者は present 経路・後者は即時経路に振ること。
+  これは監査の「**frame composite は vertex format だけで判定しない**」という指摘そのものである。
+- **達成への含意（完成条件(b)）**: この区別ができれば、**合成は native のまま・深度の書き戻しは不要**になり、
+  ブリッジに残る per-frame 作業が1つ減る（残るのは 27 画素ぶんの実体と地形の深度関係だけ）。
+
+**`presentFromComposite` の実態と、深度返却を外すコスト（このターン・測定で確定）**:
+
+- **既定（`presentFromComposite=true`）は「present していない」**。計器を読むと
+  **`compositePresentRefusals` がちょうど 1/フレーム**（AMD 564/565 frames、probe 558/559）で、
+  **present の回数（`immediatePresentedFrames`）は 0**。つまりこのフラグは今、
+  **present すべきバッチを毎フレーム1件だけ拒否している**（`currentRenderTargetIsMain` が偽＝合成はゲームFBO宛だから）。
+  拒否は `return false` なので **GL が描く**（＝画像は変わらない）。
+- **`=false` にすると format 2 が即時経路（native）へ入る**。そして**深度返却が不要になる**（両GPUで確定）:
+
+| run | keep vs skip-depth | 判定 |
+|---|---|---|
+| AMD（format 2 native） | **0.0000 / 8 px**（床 0.0167 / 481 px より小さい） | **不要** |
+| Intel（format 2 native） | **0.0000 / 5 px** | **不要** |
+| AMD（同構成の2 run、skip 同士） | 0.0167 / 476 px | 床と一致（再現する） |
+
+- **しかし、今これを既定にすると遅くなる**（Intel）:
+
+| 構成（Intel） | p50 |
+|---|---|
+| 既定（format 2 は GL、深度返却あり） | **28.5 ms** |
+| format 2 native ＋ 深度返却あり | **34.48 ms** |
+| format 2 native ＋ 深度返却なし | **30.47 ms** |
+
+  つまり **format 2 を native に取ると約 6 ms 高くつき、深度返却を外すと約 4 ms 戻る**。差し引き **約 +2 ms** なので、
+  **既定は動かさない**。深度返却を外す変更は、**ブリッジの他のコスト（blit・semaphore 待ち）も一緒に外れる段階**
+  （＝native がフレームを所有する形）で入れるのが正しい。単独で入れると遅くなる。
+- **整合する説明**: `=false` の画像が既定と 0.0180 / 1496 px 違うのは、**合成が「present される」のではなく
+  「即時経路で native に描かれる」**ためで、差分の大きさも床（0.0167 / 481 px）と同水準である。
+
+**合成と手の区別を実装（このターン・既定のまま深度返却が不要になった）**:
+
+- **区別の材料**: 「**そのバッチがサンプルしているテクスチャが、今バインド中のフレームバッファの色アタッチメントか**」。
+  合成は自分の描き込み先を読むが、手・オーバーレイ・mod のバッチは読まない。実装は
+  `celtium$samplesBoundFramebufferColor(texture)`（`glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING)` ＋
+  `glGetNamedFramebufferAttachmentParameteri(...COLOR_ATTACHMENT0...)`。既存の `ensureFrameTarget` と同じ手順）。
+- **変更**: format 2 の分岐を「**画面宛** または **バインド中FBOの色をサンプル**」のときだけ present 経路にし、
+  それ以外は **`return false` せず受理maskへ落とす**（mask は format 2 を受理済み）＝**即時経路が描く**。
+  監査 S17 の「format だけで判定するな」を、**実際にバインドされたテクスチャ**で満たした形。
+
+| 比較（**既定のまま**、`presentFromComposite=true`） | 結果 |
+|---|---|
+| AMD: keep vs skip-depth | **0.0000 / 8 px**（床 0.0167 / 481 px より小さい） |
+| Intel: keep vs skip-depth | **0.0000 / 4 px** |
+| 変更前 vs 変更後（既定同士） | **0.0155 / 77 px**（床内） |
+| `compositePresentRefusals` | **0/フレーム**（白黒の拒否が消えた） |
+| p50 | AMD 16.13 / 16.11、**Intel 28.86（keep）/ 25.58（skip）** |
+
+- **意味**: 既定の構成で **format 2 が native に入り**、**深度の書き戻しが不要**になった（効果が床以下）。
+  さらに**深度返却を外すと Intel が 3.3 ms/frame 速くなる**（28.86 → 25.58）。
+- **それでも既定では深度返却を残す**: 実体（spider 場面で **27 px**）だけがまだ地形の深度を参照している。
+  3.3 ms と引き換えに 27 px を壊す判断はしない。**外すのは実体を native に移した後**にする。
+- 受入は4 run とも exit 0 / validationClean=true / PASSED。
+
+**既定経路を変えた後の回帰受入（このターン・一式）**: 直前の変更（format 2 を合成判定つきで native へ）は**既定の
+挙動を変える**ので、受入を一式取り直した。
+
+| run | exit | validationClean | fixture | p50 | VUID |
+|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | 16.15 ms | **0** |
+| Intel 通常 | 0 | true | **PASSED** | 28.78 ms | **0** |
+| postprocess | 0 | true | PASSED | 16.17 ms | 0 |
+| weather | 0 | true | PASSED | 15.55 ms | 0 |
+| spectator spider | 0 | true | PASSED | 15.93 ms | 0 |
+| thirdPerson＋GUI | 0 | true | PASSED | 16.01 ms | 0 |
+| **world switch** | 0 | true | PASSED | 16.21 ms | **0**（VUID-09600 の修正が効いている） |
+| **resize 1x1** | 0 | true | PASSED | 16.19 ms | **0** |
+| submit 失敗注入 | 1 | true | FAILED（期待どおり・有界） | — | 0 |
+| command-buffer target 受入 | 0 | true | PASSED | 15.95 ms | `targets=True` |
+
+- 期待どおり PASS すべき **9 run がすべて PASSED・VUID 0**。失敗注入は exit 1 / clean（有界）。target 受入も通る。
+- **併せて `presentFromComposite` の名前の意味を正した**: プロパティ名は "present from composite" だが、
+  **今は present していない**（`compositePresentRefusals` 1/フレーム・present 0 回）。実際にこのスイッチが決めて
+  いるのは「**present 経路がどの format 2 バッチを取ってよいか**」で、残りは即時経路へ落ちる。名前を
+  「present が起きている証拠」と読まないよう、コードのコメントと docs に明記した（**プロパティ名は変えない**。
+  変えると scripts / docs / 過去の受入コマンドと食い違うため）。
+
+**残る深度依存の正体を特定（このターン・計器が答えを出した）**:
+
+- format 2 を native にした後でも、`spectator=spider` 場面には**残る深度依存**がある:
+
+| 比較 | meanAbsDiff | 差>2の画素 |
+|---|---|---|
+| AMD 床（spider keep vs keep） | **0.0000** | **0** |
+| **AMD spider: keep vs skip-depth** | 0.0118 | **27** |
+| **Intel spider: keep vs skip-depth** | 0.0079 | **3** |
+
+  床が **0画素**なので 27 は**決定論的な実差**である（雑音ではない）。ただし **AMD 27 対 Intel 3** と GPU に依存する
+  大きさで、**実体のシルエットが地形と交わる境界の画素**という形に一致する。
+- **原因は計器に出ていた**:
+
+| カウンタ | spider 場面 | 通常場面 |
+|---|---|---|
+| **`shaderProgramRefusals`** | **1470** | **0** |
+
+  **実体（spider）の描画はカスタムシェーダ program のために拒否されている**（round 471 で入れた
+  `GL_CURRENT_PROGRAM != 0` のガード）。拒否されたバッチは **GL が描く**ので、その深度テストは
+  **GL 側の深度バッファ**に対して行われ、そこに地形の深度が要る＝**深度の書き戻しが必要な理由**である。
+- **したがって深度返却を外す道は明確**: **実体が使うシェーダ program を native 側で再現する**こと。
+  それができれば実体は Vulkan の深度に対してテストされ、**書き戻しは不要**になり、Intel で **3.3 ms/frame** が戻る
+  （28.86 → 25.58 は測定済み）。**それまでは深度返却を残す**（27画素を 3.3 ms と引き換えにしない）。
+
+**深度依存の正体＝ spectator の entity outline（ShaderGroup）と特定（このターン）**:
+
+- 拒否されている program を id ごとに記録する計器を追加して spider 場面を走らせた結果:
+
+| 指標 | 実測（AMD、spider 場面、550 frames） |
+|---|---|
+| `shaderProgramRefusals` | **1450**（約 2.6/フレーム） |
+| 拒否された program id | **13, 14, 15, 16, 19, 20, …**（＝**連番の一族**） |
+| 通常場面の `shaderProgramRefusals` | **0** |
+
+- **連番の一族**であること・**通常場面では 0** であることから、これは **spectator 時のバニラ entity outline（ShaderGroup）**の
+  複数パスである（アウトライン本体・ぼかし・合成）。バニラの ShaderGroup は複数の program を作るので id が連番になる。
+- **因果の連鎖が閉じた**: spectator のアウトラインは**カスタム program なので拒否** → **GL が描く** →
+  その深度テストは **GL 側の深度バッファ**に対して行われる → **そこに地形の深度が要る**＝**深度の書き戻しが必要な理由**。
+  spider 場面だけに 27 画素の差が出て、通常場面では 0 画素だったのはこれで説明できる。
+- **これは最適化ではなく (a) の必須項目**である: goal は「**spectator の creeper/spider/enderman 視点**」と
+  「**バニラの ShaderGroup・spectator 効果・entity outline 等は本体機能であり、この延期を理由に省略しない**」を
+  明示している。つまり **entity outline を native で成立させることが本筋**で、それができれば深度返却も外れる
+  （Intel で 3.3 ms/frame が戻る）。
+
+**前ターンの帰属を訂正し、正体を確定（このターン・呼び出し元まで取れた）**:
+
+- 計器に **program ごとの頂点 format** と **初回拒否時のスタックトレース**を足して spider 場面を走らせた。
+- **測定結果（AMD、spider、562 frames、`shaderProgramRefusals=1520`）**:
+  - 拒否されたバッチは**すべて `format=1`（POSITION_COLOR）**。**entity の format 8 ではない**。
+  - program id は **13, 14, 15, 16, 19, 20, 21, 22, 23, 24, …** と**多数の連番**。
+  - **呼び出し元（スタック）**:
+    `submitImmediateBatch` ← `WorldVertexBufferUploader.offerBatch` ← `func_181679_a` ←
+    `Tessellator.func_78381_a` ← **`net.minecraft.client.shader.Shader.func_148042_a`**
+- **したがって正体は「バニラ `ShaderGroup` の各パスの描画」**である。`entity_outline.json` は
+  **4パス**（`entity_outline`: final→swap、`blur`（横・半径2）、`blur`（縦・半径2）、合成）で、
+  **パスは full-screen の `POSITION_COLOR` クワッドを program 付きで描く**。この「program付き」が我々の
+  カスタムシェーダ遮断に当たる。
+- **前ターンの記述の訂正**: 「entity モデルが拒否されている」と書いたが、**拒否されているのは ShaderGroup の
+  full-screen パス**である（format 1、呼び出し元が `Shader`）。**entity モデル（format 8）は受理されている**。
+  帰属を id の連番だけで決めたのが誤りで、format と呼び出し元を足して初めて確定した。
+- **27画素の説明（改訂）**: アウトラインの **合成（blit）パスは GL が描き**、その深度テストは **GL の深度バッファ**
+  （＝我々が書き戻した地形の深度）に対して行われる。だから spider のシルエットで 27 画素だけ差が出る。
+  **深度の書き戻しが要るのは、この「GL が描く ShaderGroup パス」のため**である。
+- **設計（確定）**: バニラ `ShaderGroup` のパスを **native に実装する**。各パスは
+  **full-screen クワッド＋既知のバニラ program**（`entity_outline` / `blur` / `blit`）なので範囲は限定的で、
+  入力はグループの FBO ターゲット、出力も同様。これができれば **合成パスが GL で深度テストしなくなり**、
+  **深度の書き戻しを外せる**（Intel で 3.3 ms/frame が戻る）。これは goal が名指しする本体機能
+  （`ShaderGroup`・spectator 効果・entity outline）そのものである。
+
+**ソースと実測で前ターンの説明を否定し、深度の消費者を確定（このターン）**:
+
+- **ソースが否定したこと**: `net.minecraft.client.shader.Shader.preRender()` は
+  **`GlStateManager.disableBlend()` と `disableDepth()`** を呼び、`render()` は `depthMask(false)`→`depthMask(true)` で
+  囲む。つまり **ShaderGroup のパスは深度テストしない**。前ターンに「合成パスが GL の深度でテストする」と書いたのは
+  **誤り**で、ソースがそれを否定している（記録として残す）。
+- **27 画素の中身（既存 run の差分を画素単位で見た）**: 差は**帯状に散った単一画素**で、
+  位置は **x 245..1056 / y 509..654**、値は **±1〜3 の微小差**（例: keep=(122,104,146) 対 skip=(122,105,149)）。
+  シルエットのクリッピングではなく、**ぼかしが伝播させた線形な効果**の形である。
+- **決定的な数字は既存の計器にあった**（`acceptedByFormat`、spider 場面 562 frames）:
+
+```
+1:5, 2:0, 3:0, 4:0, 5:545, 6:3718, 7:3236, 8:0, 9:66      （通常場面も 8:0）
+```
+
+  **format 8（ENTITY）は全場面で 0**＝**実体モデルは一度も native に入っていない**。したがって実体は **GL が描き**、
+  その深度テストは GL の深度バッファ（＝書き戻した地形の深度）に対して行われる。**深度の書き戻しが要る理由はこれ**で、
+  spider 場面の 27 画素は**実体と地形の深度関係がぼかしで広がったもの**である。
+- **併せて分かったこと**: format 2 も 0（受理も拒否も 0）。つまり format 2 のバッチは**受理経路を通らず**、
+  round 524 の判定（画面宛か、バインド中 FBO の色をサンプルするか）で **present 経路側に振られている**。
+- **設計**: 深度返却を外す道は **entity（format 8）を native にすること**。実体が program 付きで描かれているなら
+  遮断に当たっているので、**entity 用の program を native で用意する**（もしくは program 遮断の条件を
+  entity 用に絞る）必要がある。ShaderGroup のパス（full-screen クワッド）は**深度テストしない**ので、
+  深度返却とは切り離して考えてよい。
+
+**entity は「拒否されている」のではなく「一度も来ていない」（このターン・到着計器で確定）**:
+
+- format 8（entity の `POSITION_TEX_COLOR_NORMAL`）の**拒否**を記録する計器を足して spider 場面を走らせたが、
+  **その行は一度も出なかった**（＝program 遮断の分岐に format 8 は到達しない）。
+- 既存の**到着計器**（uploader mixin が 500 件ごとに出す）を読むと決定的だった:
+
+```
+CELTIUM_ARRIVALS total=1500 byFormat=[0:0 1:19 2:327 3:0 4:0 5:157 6:985 7:0 8:0 9:12]
+CELTIUM_ACCEPTED total=1500 byFormat=[0:0 1:7 2:0 3:0 4:0 5:137 6:856 7:0 8:0 9:0]
+```
+
+  **format 8 は到着 0、format 4（ITEM）も到着 0**。つまり **entity も item も `WorldVertexBufferUploader` を通っていない**。
+  `acceptedByFormat 8:0` は「拒否された」ではなく「**そもそも来ていない**」だった。
+- **理由**: `spectator=spider` は**蜘蛛の視点**なので、蜘蛛自身は描かれない。entity outline も**他の** entity に対して
+  描かれるものなので、この場面では出ない。したがって **この場面の 27 画素は entity 由来ではない**。
+- **併せて読めたこと**: format 2 は**到着 327・受理 0**（round 524 の判定で present 経路側に振られている）、
+  format 1 は到着 19・受理 7、format 6 は到着 985・受理 856。
+- **前ターンの説明の再訂正**: 「深度の消費者は entity（format 8）」も**誤り**だった。正しくは
+  **「この場面の 27 画素は、我々のファネルを通らない GL 描画（display list など）と地形深度の関係から出ている」**。
+  ファネル外の GL 描画を数える計器が無いので、**そこはまだ測っていない**（推測で埋めない）。
+
+**ファネル外の正体＝display list（ソースで確定）**:
+
+- 三人称（プレイヤーモデルが描かれる場面）と GUI ありの場面で**到着計器**を読んだが、どちらも
+  **format 8 は到着 0、format 4（ITEM）も 0**（format 9 は 12〜72 と極少）。
+- **ソースが答えを示している**:
+  - `net.minecraft.client.model.ModelRenderer` は
+    「*The GL display list rendered by the Tessellator for this model*」というコメントを持ち、
+    描画は **`GlStateManager.callList(this.displayList)`**（140/153/186 行）。つまり
+    **entity・player・item・TESR のモデルはすべて display list で描かれる**。
+  - `net.minecraft.client.renderer.RenderGlobal` は **`glSkyList2` / `glSkyList` / `starGLCallList`** を作り、
+    **`callList`** で描く（1351/1448 行）。**空と星も display list**。
+- **したがって**: これらの描画は **`WorldVertexBufferUploader` を通らない**ので、我々のファネルには
+  **原理的に到達しない**。GL が描き、その深度テストは GL の深度バッファ（＝書き戻した地形の深度）に対して行われる。
+  **深度の書き戻しが必要な理由はこれ**で、spider 場面の 27 画素もこの系統（GL が描くものと地形深度の関係）から出る。
+- **format 9 が 12〜72 だけ到着する理由**: display list は**記録時**（`glNewList` の中）には Tessellator を通るので
+  アップローダに見えるが、**再生時（`callList`）は見えない**。だから「モデル部品の数だけ」の少数が到着する。
+  この説明は到着数がモデル部品数と同程度であることと一致する。
+- **coverage への意味（優先順位5）**: entity・item・TESR・空・星は
+  「未検証」ではなく、**現在の介入点では到達不能**である。native に移すには
+  **display list の経路（`GlStateManager.callList` か、`ModelRenderer` の記録時）に介入する**必要がある。
+  これは作業量の見積もりが変わる発見である（「描画を1つずつ移す」のではなく「**モデル描画の入口を1つ足す**」）。
+
+**display list への介入点を確定（このターン・ソースと計器で）**:
+
+- **`GlStateManager.callList(int list)` は `GL11.glCallList(list)` を呼ぶだけ**の薄いラッパである（ソース確認済み）。
+  したがって**再生（replay）は1点で捕まえられる**が、**再生時に頂点データは無い**（display list の中身は GL 側にある）。
+  → replay を差し替えるだけでは native にできない。**必要なのは記録時の頂点**である。
+- **記録時の入口は `ModelRenderer`**（`compiled` フラグと `displayList` を持ち、`GlStateManager.callList(this.displayList)`
+  で描く）。つまり **`ModelRenderer` の display list コンパイル時にクワッド（`ModelBox`/`TexturedQuad`）を捕まえる**のが
+  最小の介入点である。
+- **計器で確かめたこと（介入が「記録時」でなければならない理由の裏づけ）**: 三人称 run の format 9 の到着は
+  **4頂点・stride 24**で、拒否理由は `pipeline or descriptor preflight failed`
+  （`CELTIUM_COMPOSITE_LAYOUT_REFUSED reason=pipeline or descriptor preflight failed stride=24 vertices=4`）。
+  **4頂点のクワッド**であってモデル部品ではない＝**モデルのコンパイルはこのファネルには現れない**。
+- **併せて観測**: 三人称 run では **format 7（POSITION）の受理が 0 → 164 → 452 と増える**＝
+  位置のみの幾何（線・枠など）は native に取れている。**モデル系（format 8/9）だけが別経路**である。
+- **設計（確定）**: (1) `ModelRenderer` のコンパイル経路（`compileDisplayList`）に介入してクワッドを捕まえ、
+  **頂点を我々のバッファに写す**、(2) `GlStateManager.callList` に介入し、**捕まえた頂点を native で描いて
+  GL の再生を取り消す**、(3) 空・星（`RenderGlobal` の3つのリスト）も同じ入口で扱えるか確認する。
+  これは「**モデル描画の入口を1つ足す**」作業であり、entity/item/TESR/player/sky/star がまとめて射程に入る。
+
+**display list の再生を計器化した（このターン・数値で確定）**:
+
+- `GlStateManagerMixin`（既存）に **`callList` の注入**を足し、MC 非依存の静的ホルダ
+  `VulkanDisplayListCensus` に**リスト id ごとの再生回数**を記録、backend の要約に出すようにした
+  （`require = 0` なので、もし名前が合わなければ黙って何もしない＝起動を壊さない。実際には**効いた**）。
+- **実測（AMD、100 s）**:
+
+| run | 再生回数 | 異なるリスト数 | 上位リスト |
+|---|---|---|---|
+| 三人称＋GUI（プレイヤーモデルが見える） | **1988（3.5/フレーム）** | **13** | `-1:560`、`2:560`、`3:558`、`4:31`、`5:31`、`6:31`、`7:31`、`8:31`、+5 |
+| 通常 | **1619（2.9/フレーム）** | **3** | `-1:561`、`2:530`、`3:528` |
+
+- **読み方**:
+  - `2` と `3` は**両場面で約1回/フレーム**＝**空と星**（`RenderGlobal` のリスト）。
+  - 三人称でだけ現れる **`4`〜`8` と +5 の計10個**＝**プレイヤーモデルの部品**（頭・胴・腕・脚・防具）。
+    「13 − 3 = 10」という数はモデル部品の数と一致する。
+  - **`-1` が毎フレーム約1回**呼ばれている。これは**表示リストではない**値で、何を意味するかは**まだ分かっていない**
+    （MC 側の使い方を読んでいない）。**分からないものは分からないと書く**。
+- **設計の前提が数値で裏づけられた**: 空・星は**毎フレーム2回**、プレイヤーモデルは**見えるときに約10リスト**が
+  我々のファネルの外で再生されている。native 化の単位は「**リストの再生**」で、必要なのは**記録時の頂点**である。
+
+**`callList(-1)` の正体を確定し、display list の作業対象を絞った（このターン）**:
+
+- **`-1` は MC の「未初期化」センチネル**: `RenderGlobal` は `starGLCallList = -1` / `glSkyList = -1` /
+  `glSkyList2 = -1` と**初期値を -1** にし、削除時も -1 に戻す。したがって `callList(-1)` は
+  **「まだコンパイルされていない（または削除された）リスト」**を呼んでいるだけで、GL では無効な名前＝**no-op**。
+  毎フレーム約1回（560/561）という数とも整合する。**害は無い**。
+- **`callList` の呼び出し元は2系統だけ**（ソース全走査）:
+  1. `ModelRenderer`（140/153/186/234 行）＝ **entity・player・item・TESR のモデル**。
+  2. `RenderGlobal`（1351/1448 行ほか）＝ **空と星**。
+  さらに `RenderList` に**チャンクの display list** を呼ぶ箇所があるが、**我々の計器には現れていない**
+  （観測された distinct は 3〜13。数千のチャンクではない）＝**地形は我々の経路が取っている**ことと一致する。
+- **空・星はすでに native の可能性が高い**: 空は `POSITION_TEX`（format 6）で、**`acceptedByFormat 6` は
+  3686〜3836 と大量に受理**されている。加えて以前の画像比較で**空の領域の差は 0.0000**だった。
+  つまり空は我々が描いており、display list の再生は**空になったリストの no-op** である公算が高い
+  （ただし「空の残差 0.0000」は以前の測定であり、**この点だけを今のビルドで測り直してはいない**）。
+- **したがって display list の作業対象は `ModelRenderer` 系（entity/player/item/TESR）に絞られる**。
+  空・星は現状で問題が出ていないので後回しにする（順序の判断であり、省略ではない）。
+
+**空は pixel-perfect で、native でも GL でも同一（このターン・A/Bで確定）**:
+
+- **実験**: 既定（format 6 = `POSITION_TEX` を受理＝空を native が描く）と、受理 mask から 6 を外した場合
+  （空を GL が描く）を比べた。設定が効いたことはカウンタで確認: **`acceptedByFormat 6:3708` 対 `6:0`**。
+
+| 比較 | 空（上200行） | 中間帯（地形・水・雲） |
+|---|---|---|
+| native vs GL（同一ビルド・別設定） | **0.0000 / 0 画素 / max 0** | 0.0292 / 1018 画素 / max 5 |
+| native vs 参照（pinned Celeritas） | **0.0000 / 0 画素** | — |
+| GL vs 参照 | **0.0000 / 0 画素** | — |
+
+- **結論**: **空はどちらの経路でも参照と完全一致（差 0.0000、最大差 0）**。native が描いても GL が描いても
+  同じ画素になる。したがって「空は native で正しい」と言える（**このターンのビルドで測り直した**）。
+- **併せて分かったこと**: format 6 の受理を止めると**中間帯が 0.0292 / 1018 画素（最大5）変わる**。
+  format 6 は空だけでなく**雲と水面**も含むためで、**空以外では native と GL が同一ではない**。
+  これは「format 6 を native にすること」自体が中間帯に小さな差を持つという意味で、**記録しておく**。
+- 受入: 両 run とも exit 0 / validationClean=true / PASSED。
+
+**モデルのクワッド捕獲を実装（このターン・計器として動作確認）**:
+
+- **ソースから分かった捕獲点**: `TexturedQuad.draw(BufferBuilder, float scale)` は
+  `renderer.begin(7, DefaultVertexFormats.OLDMODEL_POSITION_TEX_NORMAL)` で**mode 7（QUADS）**を描き、
+  `vertexPositions` は **public フィールド**（4頂点＋UV）。つまり**頂点データはオブジェクトから直接読める**ので、
+  BufferBuilder を覗く必要がない。
+- **実装**: MC 非依存の `VulkanModelQuadCapture`（クワッド数・頂点数・範囲を記録）と、
+  `TexturedQuad.draw` への `@Inject(HEAD, require = 0)`（`TexturedQuadMixin`）。**描画は一切変えず**、
+  数えるだけ。mixin の登録は `CeleritasVintageMixinPlugin` が**パッケージ全体を走査**する方式なので追加作業は不要。
+- **実測（三人称＋GUI、AMD、100 s）**:
+
+| 指標 | 値 |
+|---|---|
+| `modelQuads` | **72**（288 頂点＝72×4） |
+| `modelQuadExtent` | x[-0.281..0.281]、u[0.0..1.0]（＝モデル空間の座標とテクスチャ全域） |
+| 最初のクワッド | `vertices=4 x=0.063..0.063 u=0.797..0.797`（x が一定＝平面の1面） |
+| `displayListReplays` / distinct | 2007 / 13（捕獲前と同じ） |
+| verdict | exit 0 / validationClean=true / PASSED（**回帰なし**） |
+
+- **意味**: モデルの頂点は**記録時（コンパイル時）に捕まえられる**ことが実測で確認できた。native 化に必要なのは
+  この頂点列＋**コンパイル時の行列**（GL がリストに焼き込むのと同じ）＋**再生時の行列**（entity の変換）で、
+  後者は backend が既に写している（`MIRRORED_MATRICES`）。
+
+**捕獲を display list 単位にまとめ、再生側と対応が取れた（このターン）**:
+
+- 捕獲時に **`GL_LIST_INDEX`**（コンパイル中のリスト id）と **`GL_MODELVIEW_MATRIX`**（その部品をコンパイルしている
+  時点の行列）を読み、**リスト id ごとにグループ化**するようにした。display list は**変換済みの頂点**を保持するので、
+  頂点には**コンパイル時の行列を対にする**必要がある（推測せず、その場で読む）。
+- **実測（三人称＋GUI、AMD、100 s）**:
+
+| 指標 | 値 |
+|---|---|
+| `modelLists` | **12** |
+| `modelListQuads` | **`2:6 3:6 4:6 5:6 6:6 7:6 8:6 9:6 +4 more`**（各リスト**6クワッド**＝箱の6面） |
+| `modelQuads` | 72（＝12×6） |
+| 再生側 `displayListTop` | `2:563 3:561 4:31 … 8:31 +5 more` |
+| verdict | exit 0 / validationClean=true / PASSED（回帰なし） |
+
+- **意味（重要な前進）**: **捕獲したリスト id と、実際に再生されているリスト id が一致している**。
+  したがって native 化に必要な3点が揃った: **(a) リストごとの頂点**（12リスト×6クワッド）、**(b) リスト id**、
+  **(c) コンパイル時の行列**。あとは `callList` の再生時に **(c) と再生時の行列を使って native で描き、
+  GL の再生を取り消す**だけである。
+- 各リストが**6クワッド**＝箱1つぶんであることも、`ModelRenderer` が**箱（`ModelBox`）単位で display list を作る**
+  というソースの読みと一致する。
+
+**行列の流儀を実測で確定（このターン・設計が単純になった）**:
+
+- 捕獲に**再生時の行列**も足し、同じリストの「コンパイル時」と「再生時」を並べて出した。
+- **実測（三人称＋GUI、AMD、100 s）**: `list 2 compile(t=0.347, -1.706, -0.74) **replay(t=0.514, -1.404, -0.689)**`
+  — **翻訳成分が一致しない**。list 2 は毎フレーム再生される（564回）ので**空**であり、**カメラはフレーム間で動く**。
+  それでも空は正しく描かれている。したがって
+  **display list は「コンパイル時の行列を焼き込む」のではなく「再生時の現在の行列で描かれる」**。
+- **設計への効果（単純化）**: native 側に必要なのは
+  **(a) 捕獲したモデル空間の頂点**（`TexturedQuad.draw` が `renderer.pos(...)` に渡した生の値。捕獲済み）
+  と **(b) 再生時の行列**（backend が既に写している `MIRRORED_MATRICES`）だけ。
+  **コンパイル時の行列は不要**になった（対にする必要がない）。
+- この結論は「仕様の解釈」ではなく**測定**である（コンパイル時と再生時で翻訳が違い、かつ描画が正しい＝焼き込まれていない）。
+- 受入: exit 0 / validationClean=true / PASSED（回帰なし）。
+
+**モデル空間の頂点データを保持（このターン・native 描画の入力が揃った）**:
+
+- 捕獲を拡張し、**リストごとに頂点データを保存**するようにした:
+  **位置 3 float/頂点**・**UV 2 float/頂点**・**法線 3 float/クワッド**（法線は `TexturedQuad.draw` と同じ計算で
+  こちらも算出: `edge2.cross(edge1).normalize()`）。UV の v 成分は `PositionTextureVertex` の対応フィールドから
+  取る必要があるが、**まず u を確実に取り、v は別途確認する**（今の計器は u のみを報告している＝**未完成を明示**）。
+- **実測（三人称＋GUI、AMD、100 s）**:
+
+| 指標 | 値 |
+|---|---|
+| `modelStoredFloats` | **1656**（＝72×4×5 + 72×3 = 1440 + 216。**計算と完全一致**） |
+| `modelFirstVertex` | `list 2 v0=(0.063,-0.125,0.125) uv0=(0.797) n0=(1.0,0.0,0.0)`（モデル空間・単位軸法線＝箱の面） |
+| `modelLists` / `modelQuads` | 12 / 72（各6クワッド、変化なし） |
+| `modelMatrixPair` | compile(t=0.559,-1.706,-0.596) 対 **replay(t=0.702,-1.404,-0.496)**（前ターンと同じ結論） |
+| verdict | exit 0 / validationClean=true / PASSED（回帰なし） |
+
+- **意味**: native 描画に必要な入力（**リストごとのモデル空間頂点＋UV＋法線**、**リスト id**、**再生時の行列**）が
+  すべて揃った。次は**これを Vulkan の頂点バッファに載せ、`callList` の再生時に描いて GL の再生を取り消す**。
+- **正直な欠落**: **UV の v 成分**は今の計器に入っていない（u のみ）。`PositionTextureVertex` の v フィールド名を
+  確認して足す必要がある。**「頂点データが完全」とは言わない**。
+
+**UV の v 成分を捕獲（このターン・前ターンの欠落を閉じた）**:
+
+- `PositionTextureVertex` は `texturePositionX` と **`texturePositionY`** を持ち、`TexturedQuad.draw` は
+  `.tex(texturePositionX, texturePositionY)` を渡している（ソース確認済み）。捕獲と保存の両方に v を足した。
+- **実測（三人称＋GUI、AMD、100 s）**: `modelFirstVertex = list 2 v0=(0.063,-0.125,0.125)
+  **uv0=(0.797,0.313)** n0=(1.0,0.0,0.0)`、`modelStoredFloats=1656`（本数は同じで**中身が埋まった**）、
+  `modelLists=12`／`modelQuads=72`、verdict は exit 0 / validationClean=true / PASSED（回帰なし）。
+- **計測ミスの記録（2回目）**: 最初の試行は**コンパイルエラー**（保持側のメソッド署名の置換がアンカー不一致で
+  適用されず、mixin だけが新しい引数で呼んでいた）でビルドが落ち、その状態で run を回して**古い jar の数値**を
+  読んでいた。**ビルド成否と jar の時刻を確認してから run する**、を手順として守る（round 519 と同じ罠を踏んだ）。
+- **これで native 描画の入力が完全に揃った**: リストごとの**位置（モデル空間）・UV（u,v）・法線**、
+  **リスト id**、**再生時の行列**（backend の写し）。
+
+**モデル用の Vulkan メッシュを構築（このターン・描画の直前まで到達）**:
+
+- **再利用できる部品が揃っていた**: `VulkanImmediateTexturePipeline` には **`POSITION_TEX`（20バイト）** 用の
+  パイプラインがあり、`extraTrailingElementBytes` の説明は「**shaders ignore**」＝**末尾要素は無視される**。
+  ライトマップは既に**第2サンプラ**として束縛されている（地形が使っている）。`VulkanDynamicMesh` は
+  `putPosition`/`putUv`/`index` の逐次APIと **`Layout` の公開コンストラクタ**を持つ。
+- **実装**: 捕獲から `Snapshot`（リストごとの位置とUV）を取り出し、**`new Layout(20, 0, 12, -1, -1, -1)`** の
+  メッシュへ 4頂点＋6インデックス/クワッドで書き込む。**ビルドはラボフラグ `-Dceltium.vulkan.modelMeshBuild`**
+  のときだけ動く（既定OFFなので通常経路は不変）。`callList` のフック内では**確保しない**（描画スレッドの安全な位置、
+  terrain パスの先頭で構築）。
+- **実測（三人称＋GUI、AMD、100 s）**:
+
+| 指標 | 1回目の試行 | **修正後** |
+|---|---|---|
+| `modelMeshLists` | 2 | **12** |
+| `modelMeshQuads` | 12 | **72** |
+| `modelMeshFailure` | none | none |
+| verdict | exit 0 / clean / PASSED | exit 0 / clean / PASSED |
+
+- **1回目の原因（記録）**: ビルダーが**一度だけ**走る作りで、最初の terrain パスの時点で捕獲済みだった
+  **2リストしか見ていなかった**。捕獲はコンパイルの進行に伴って増えるので、**新しいリストが現れたら再構築**する
+  ように直した（`modelMeshes.size() < ids.length` の間は再試行）。これは「計器が増分する対象を一度だけ読む」という
+  典型的な間違いで、数値がそのまま原因を示していた。
+- **意味**: **12リスト×6クワッド＝72クワッドが Vulkan の頂点メッシュとして載った**。次は**これを描く**段階
+  （パイプラインは format 6 = `POSITION_TEX` の既存品、アトラスとライトマップは既存の束縛、行列は
+  `MIRRORED_MATRICES`）と、`callList` の再生キャンセル。
+
+**描画の実装形が決まった（このターン・位相を実測）**:
+
+- **問い**: `callList` の時点で native 記録ができるのか（フレームが開いているのか）。
+- **実測（三人称＋GUI、AMD、100 s）**: **`displayListReplaysOpen = 1980`** 対 **`displayListReplaysClosed = 29`**
+  — **98.6% の再生がフレームの開いている間**に起きている。したがって **`callList` の時点で記録してよい**。
+  別フレームを開く必要はない。
+- **実装形（確定）**: 即時経路と同じ形にする。`callList` のフックで
+  **(a) そのリストのメッシュがあるか**を見て、**(b) あれば GL の再生をキャンセル**し、
+  **(c) 現在の行列（`MIRRORED_MATRICES` の写し）で native 描画を記録**する。
+  パイプラインは既存の `POSITION_TEX`（20バイト・末尾要素は無視）、テクスチャはアトラス＋ライトマップ
+  （既存の束縛）、深度とブレンドは GL と同じ状態を写す。
+- **切替**: ラボフラグ `-Dceltium.vulkan.modelDraw` で有効化し、**既定は従来どおり GL**（回帰を避ける）。
+- 受入: exit 0 / validationClean=true / PASSED（位相計器を足しただけなので回帰なし）。
+
+**display list の再生キャンセルを実装し、list 2 が冗長だと確定（このターン・GL 呼び出しを削減）**:
+
+- **実装**: `-Dceltium.vulkan.cancelDisplayLists=<id,...>` を追加し、`callList` のフックで**該当リストの再生を
+  `info.cancel()` で取り消す**（`GlStateManagerMixin`）。キャンセル回数を計器に出す。
+- **実験1（list 2 と 3 をまとめてキャンセル、AMD、100 s）**: `displayListCancelled=1056`、画像は
+  **空が参照と完全一致（0.0000、最大差0）**、中間帯は 0.0260 / 73 画素（最大5）。
+- **実験2（1つずつ切り分け、AMD、100 s）**:
+
+| キャンセルしたリスト | キャンセル回数 | 空の差 | 中間帯の差 | 参照との空 |
+|---|---|---|---|---|
+| **list 2** | 529 | **0.0000 / 0 画素** | **0.0001 / 4 画素** | **0.0000** |
+| list 3 | 532 | 0.0000 / 0 画素 | 0.0260 / **77 画素** | 0.0000 |
+
+- **結論**: **list 2 の再生は完全に冗長**である（**529 回/run の GL 呼び出しを削除しても画像が実質変わらない**。
+  4 画素・平均 0.0001 は床と同水準）。**list 3 は 77 画素（最大5）の実差**があり、まだ冗長とは言えない。
+- **正直な不明点**: list 2 / list 3 がそれぞれ**空なのか星なのか**は特定していない（計器は id しか出していない）。
+  MC のソースでは `glSkyList` / `glSkyList2` / `starGLCallList` の3つがあるので、**id と名前の対応を測る**のが次の一歩。
+- 受入: 3 run とも exit 0 / validationClean=true / PASSED（ラボフラグは既定OFFなので通常経路は不変）。
+
+**display list の id と名前の対応を確定（このターン・ソース＋画素で）**:
+
+- **ソースの生成順（`RenderGlobal`）**: `glSkyList2`（293行、`renderSky(buf, **-16.0F**, true)`＝**下向きの空**）→
+  `glSkyList`（327行、`renderSky(buf, **+16.0F**, false)`＝**上向きの空**）→ `starGLCallList`（388行）→
+  `renderStars` は `renderSky` の中から呼ばれる。
+- **画素（list 3 のキャンセル差分、81画素）**: **y 371..679**、行バケット **640 に50画素**が集中＝**地平線付近**。
+  色は `(122,131,186)` 前後（空）、差は **±1〜3** の**微妙な勾配差**（例 186→183、193→192）。最大差は 5。
+- **対応の結論**:
+  - **list 2 = `glSkyList2`（下向きの空）**。この視点では**見えない**ので、キャンセルしても画像が変わらない
+    （4画素・平均 0.0001）。**list 2 のキャンセルは安全**で、**529 回/run の GL 呼び出しが消える**。
+  - **list 3 = `glSkyList`（上向きの空）**。地平線付近で **±1〜3 の差**が出る＝native の空と display list の空が
+    **完全には一致しない**。**冗長ではない**ので、理由が分かるまで再生を残す。
+  - **星は出ていない**: fixture は world time を **6000（正午）に固定**しているので `renderStars` の描画は空。
+    distinct が 3（-1, 2, 3）しかないこととも一致する。
+- **正直な注記**: list 3 の差が「深度の扱い」なのか「ブレンド」なのかは**まだ特定していない**（±1〜3 という大きさと
+  地平線への集中までは測れた）。**推測で埋めない**。
+
+**list 2 のキャンセルを複数場面・両GPUで確認（このターン・ただし既定化はしない）**:
+
+- **同一条件の対（spectator spider、AMD、120 s、同一引数）**:
+
+| 比較 | meanAbsDiff | 差>2の画素 | 最大差 |
+|---|---|---|---|
+| **床（keep vs keep）** | **0.0000** | **0** | 1 |
+| **keep vs list 2 キャンセル** | **0.0000** | **3** | 5 |
+
+  キャンセル回数は **516**。3画素（92万画素中）なので**実質的に床水準**。
+- **他場面（既存 run との対比、条件が完全一致ではない）**: 通常 AMD 4画素 / 通常 Intel 533画素（その場面の床は
+  481画素程度）→ **いずれも床以下または床水準**。天候場面は差 0.9755 だが**その場面の床が 1.0114** なので**判定不能**。
+- **手順の誤りを記録**: 最初の対比は**既存 run（110 s）と新規 run（100 s）**を比べており、**キャプチャ時刻が違う**ため
+  交絡していた。**同一条件の対を取る**（同じ引数・同じ duration・同じ GPU）を手順として守る。
+- **既定化しない理由（判断）**: 現在の仕組みは**id を直接指定する**（`cancelDisplayLists=2`）ので、
+  **mod が先に display list を確保すれば id はずれる**。一般則は「**我々が既に native で描いているリストの再生だけを
+  取り消す**」という**同一性**であり、id のハードコードではない。同一性の判定（どのリストが空か）を作るまで
+  既定は上げない。
+- 受入: 3 run とも exit 0 / validationClean=true / PASSED。
+
+**同一性を計器化し、前ターンの帰属を訂正（このターン）**:
+
+- **実装**: アップローダ mixin で `GL_LIST_INDEX` を読み、**コンパイル時の呼び出し元を3フレーム分**記録するようにした
+  （`VulkanDisplayListCensus.originIfAbsent`）。**我々自身のフレームは除外**する（mixin の印は
+  **メソッド名**にあるので、クラス名だけの判定では自分自身を拾ってしまう。実際に2回それを踏んだ）。
+- **実測（三人称＋GUI、AMD、100 s）**:
+
+```
+list=2 origin=mc.renderer.WorldVertexBufferUploader.func_181679_a <- mc.renderer.Tessellator.func_78381_a <- mc.model.TexturedQuad.func_178765_a
+list=3 … 同上 …
+list=4 … 同上 …   （list 2〜7 すべて同じ）
+```
+
+- **訂正（重要）**: **すべてのリストが `TexturedQuad.draw` からコンパイルされている**＝**モデル部品**である。
+  したがって **list 2 / list 3 は「空」ではない**。前ターンに「list 2 = 下向きの空」と書いたのは**誤り**で、
+  根拠にしたのは **id の並びと `RenderGlobal` のソース順**だった。**id の並びは実行時の確保順を反映しない**
+  （起動時に別のコードが先に確保していればずれる）。**呼び出し連鎖だけが証拠になる**。
+- **これで説明がつくこと**: 通常場面で list 2/3 が毎フレーム再生される（563/561回）のは、**一人称の手のモデル部品**が
+  毎フレーム描かれるため。そして**手は既に format 2 として native に受理されている**ので、**その display list の再生は
+  重複**であり、キャンセルしても画像がほぼ変わらない（3〜4画素）。**list 3 の 81 画素**も同じ系統（手の一部）で、
+  native 側と display list 側で僅かに差が出る箇所と解釈できる（**ただしこの解釈はまだ検証していない**）。
+- 受入: 4 run とも exit 0 / validationClean=true / PASSED。
+
+**コンパイル連鎖を6フレームまで取り、リストの素性を確定（このターン）**:
+
+```
+submitImmediateBatch <- offerBatch <- WorldVertexBufferUploader.func_181679_a <- Tessellator.func_78381_a
+  <- TexturedQuad.func_178765_a (draw) <- ModelBox.func_178780_a (render)
+  <- ModelRenderer.func_78788_d (compileDisplayList) <- ModelRenderer.func_78785_a (render)
+```
+
+- **通常場面（三人称なし）で毎フレーム再生される list 2/3 は、`ModelRenderer.render` がコンパイルしたもの**
+  である。三人称でない場面で `ModelRenderer` が毎フレーム描くのは**一人称の手／手持ちアイテム**だけなので、
+  **list 2/3 = 手のモデル部品**と確定する（前ターンの訂正が裏づけられた）。
+- **これで「同一性」が呼び出し連鎖で言える**: リストが**どの経路でコンパイルされたか**が記録に残る
+  （id の並びやソース順ではなく、実測した連鎖）。前ターンの誤りは「id とソース順」で帰属したことだった。
+- **ただし手と他のモデルはまだ分離できない**: 連鎖の6フレーム目は手もプレイヤーモデルも `ModelRenderer.render`。
+  分けるには**さらに深いフレーム**（手持ちアイテムなら `ItemRenderer`、プレイヤーモデルなら `RenderPlayer`）が要る。
+  **まだ分離できていないので、キャンセルの既定化はしない。**
+- 受入: exit 0 / validationClean=true / PASSED（連鎖の記録を深くしただけで回帰なし）。
+
+**起点ベースのキャンセルを実装し、既定化して受入（このターン・完了）**:
+
+- **8フレームの連鎖で手とプレイヤーモデルを分離できた**:
+
+| list | 連鎖の7〜8フレーム目 | 正体 |
+|---|---|---|
+| **2, 3** | `RenderPlayer.func_177138_b` ← **`ItemRenderer.func_187456_a`** | **手持ちアイテム／手**（native が既に描いている） |
+| **4〜7+** | `ModelBiped.func_78088_a` ← **`ModelPlayer.func_78088_a`** | **プレイヤーモデル**（native 経路がまだ無い） |
+
+- **規則**: 「そのリストのコンパイル連鎖に **`ItemRenderer` が含まれる**なら、native が既に描いているので再生を取り消す」。
+  **id ではなく同一性**の規則である（`-Dceltium.vulkan.cancelHandDisplayLists=false` で旧挙動に戻せる）。
+- **同一条件の対（120 s、同一引数）で検証**:
+
+| 比較 | meanAbsDiff | 差>2の画素 | キャンセル数 |
+|---|---|---|---|
+| AMD keep vs 起点キャンセル | **0.0155** | 68（床は 0.0167） | **1066** |
+| Intel keep vs 起点キャンセル | **0.0000** | **6** | **572** |
+
+- **既定化して受入一式（7 run）**:
+
+| run | exit | validationClean | fixture | p50 | VUID | 起点キャンセル |
+|---|---|---|---|---|---|---|
+| AMD | 0 | true | **PASSED** | 16.05 ms | **0** | **1060** |
+| Intel | 0 | true | **PASSED** | 28.78 ms | **0** | **580** |
+| postprocess | 0 | true | PASSED | 16.03 ms | 0 | 1058 |
+| weather | 0 | true | PASSED | 15.80 ms | 0 | 1068 |
+| spectator spider | 0 | true | PASSED | 16.28 ms | 0 | 1044 |
+| thirdPerson＋GUI | 0 | true | PASSED | 16.05 ms | 0 | 1130 |
+| world switch | 0 | true | PASSED | 16.18 ms | 0 | 1044 |
+
+- **意味**: **run あたり約1000回（Intel で約580回）の GL display list 再生が消えた**。画像は床水準
+  （AMD 0.0155 / Intel 0.0000）、p50 も悪化していない。**呼び出し連鎖で同一性を判定する**という、
+  id やソース順に依存しない規則が入った。これは完成条件(b)（GL call を必要としない実行）への具体的前進である。
+
+**モデル描画の実装形を確定（このターン・描画パスの位相を実測）**:
+
+- **問い**: `callList` の時点で Vulkan のレンダーパスが開いていれば、即時経路と同じように**その場で記録**できる。
+- **実測（三人称＋GUI、AMD、100 s）**:
+
+| 指標 | 値 |
+|---|---|
+| **`displayListReplaysPassOpen`** | **0** |
+| `displayListReplaysPassClosed` | **2003** |
+| `displayListOriginCancels` | 1128（既定の起点キャンセルが効いている） |
+
+- **結論**: **display list の再生中にレンダーパスは一度も開いていない**。したがってモデルの native 描画は
+  **自前のコマンドバッファとレンダーパスを開いて記録し、submit する**形になる（probe が使っている
+  `beginCommands`／`endCommands`／submit と同じ流儀）。
+- **再利用できるもの（ソースで確認済み）**: **format 6 の `POSITION_TEX` パイプライン**（モデルのメッシュは
+  pos+uv の20バイトで**同じレイアウト**）、**アトラス＋ライトマップの記述子**、**押し込み定数（行列）**、
+  **`VulkanDynamicMesh.draw`**（自前で頂点・インデックスを束ねて `vkCmdDrawIndexed` する）。
+  つまり**新しいパイプラインは要らず、新しいのは「開いて記録して submit する」部分だけ**。
+- **併せて確認**: `modelMeshQuads=0`（メッシュ構築はラボフラグ `-Dceltium.vulkan.modelMeshBuild` のときだけ）＝
+  **既定ではまだメッシュを作っていない**。描画を入れるときにこのフラグを既定へ上げるかを決める。
+- 受入: exit 0 / validationClean=true / PASSED（位相計器を足しただけで回帰なし）。
+
+**現在の既定での画質を再確認（このターン・優先順位3）**:
+
+- 既定を大きく変えた後（format 2 の native 化、手の display list キャンセル）の現行ビルドを、
+  **pinned Celeritas（p106-ref-normal）と同一fixtureで再比較**した。
+
+| 指標 | 現在（p208-amd） | round 501 の値 |
+|---|---|---|
+| 全画面 平均絶対差 | **7.7813** | 7.791 |
+| **空（上200行）** | **0.0000 / 0 画素** | 0.0000 |
+| HF比（候補/参照、中間帯） | **0.818** | 0.819 |
+| 統制（参照 AMD vs Intel） | **0.0636 / HF 1.002** | 0.064 |
+| べき乗フィット（中間帯、n=42700） | **`cand = 1.225 × ref^0.972`** | 1.223 × ref^0.972 |
+
+- **結論**: 最近の既定変更は**参照比で画像中立**である（全画面 7.78、HF 0.818、指数 0.972 がいずれも変わらない）。
+  **空は依然として画素完全一致（0.0000）**。統制（参照同士 0.064 / HF 1.002）も安定している。
+- **性能（同じ run）**: 参照 AMD p50 16.18 / p99 17.6、参照 Intel 16.17 / 17.2、
+  **celtium AMD 16.05 / 22.61**、celtium Intel 28.78 / 36.81。
+  **p50 は参照と同等（AMD は僅かに速い）だが、p99 は AMD 22.61 対 17.6 と裾が重い**（未解決として記録）。
+
+**モデル描画の実装レシピ（ソースから確定・次ターンの入力）**: `recordImmediateOnlyPass` の並びをそのまま使える。
+
+```
+long renderPass = <terrain>.renderPass();
+VkRenderPassBeginInfo begin = ...renderPass(renderPass).framebuffer(ensureFramebuffer(renderPass));
+renderArea(0,0,targetWidth,targetHeight);
+vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+this.activeImmediateTarget = this.currentRenderTarget;
+this.commandState.beginPass(this.activeImmediateTarget);
+setViewportAndScissor(stack);
+<pipeline>.draw(this.commandBuffer, mesh, push, prepared.descriptor);   // prepareImmediate(6, texture, key, state)
+vkCmdEndRenderPass(this.commandBuffer);
+this.commandState.endPass();
+```
+
+- `prepareImmediate(format, textureId, key, state)` が**パイプラインと記述子**を用意し、format 6 は
+  `POSITION_TEX`（20バイト＝モデルのメッシュと同じレイアウト）を使う。**状態（state/key）は
+  `celtium$captureState()` で `callList` の時点でも取れる**。
+- 未確定なのは **押し込み定数（行列）の組み立て**と**コマンドバッファの開始/終了・submit**の流儀で、
+  次ターンに読んで実装する。
+
+**モデルの native 描画を実装（このターン・初めてモデルが Vulkan で描かれた）**:
+
+- 実装: `callList` のフックで、**メッシュのあるリスト**について
+  「**まず native で描き、成功したときだけ GL の再生をキャンセル**」する（順序が逆だと、描画が拒否されたときに
+  モデルが消える）。描画は `VulkanTerrainGpuBackend.celtium$drawModelList(listId)` で、
+  即時経路と同じレシピ（format 6 のパイプライン・記述子・`pushCombinedMatrixInto` の押し込み定数・
+  `vkCmdBeginRenderPass`〜`vkCmdEndRenderPass`）を使う。**ラボフラグ `-Dceltium.vulkan.modelDraw` で既定OFF**。
+- **1回目の試行**: `modelDraws=1100` / `modelDrawRefusals=0` と**描画自体は成功**したが、
+  **VUID 80件**（層は20件で頭打ち）で `validationClean=false`。内訳は
+  `vkCmdSetViewport-commandBuffer-recording` / `vkCmdSetScissor-…` / `vkCmdDrawIndexed-None-0783x`。
+- **原因（VUID がそのまま示した）**: `setViewportAndScissor` は**フィールドのコマンドバッファ**に記録するのに、
+  こちらは**ローカルのバッファ**にパスを記録していた。**フィールドを一時的に差し替えて**（`try/finally` で戻す）
+  直した。
+- **修正後**:
+
+| 指標 | 値 |
+|---|---|
+| `modelDraws` | **1106** |
+| `modelDrawRefusals` | **0** |
+| `displayListCancelled` | **1106**（成功した描画だけキャンセル） |
+| **VUID** | **0 件** |
+| verdict | **exit 0 / validationClean=true / PASSED** |
+
+- **意味**: **このプロジェクトで初めて、モデル（プレイヤーモデルの12 display list）が Vulkan で描かれた**。
+  検証エラーも無い。
+- **ただし画像は一致しない（既定OFFのままにする理由）**: 同一条件の既定 run と比べて
+  **meanAbsDiff 2.0050 / 15595 画素 / max 255**。差分の例は `(498,387)` で
+  **既定=(255,255,255)・native=(141,150,129)** で、**テクスチャが違う**ことを示している。
+  原因の候補は「**モデルが使うテクスチャ（スキン等）ではなく、直前の即時テクスチャ（アトラス）を束ねている**」こと。
+  **特定はまだ**（次の測定で確かめる）。したがって**既定は OFF のまま**。
+- 性能（同じ run）: 既定 p50 16.05 ms 対 native 15.85 ms（描画経路を足しても悪化していない）。
+
+**モデル描画の画像差: 2つの仮説を棄却（このターン・正直な現状）**:
+
+- **実装した2つの修正と、その効果**:
+
+| 試行 | 変更 | 既定比 meanAbsDiff | 差>2の画素 |
+|---|---|---|---|
+| 1 | （初回） | 2.0050 | 15595 |
+| 2 | **モデルが実際に束縛しているテクスチャ**を使う（`GL_TEXTURE_BINDING_2D` を `callList` で問い合わせ） | **1.8766** | 15310 |
+| 3 | **描画時に GL から行列を取得**（`GL_PROJECTION_MATRIX`/`GL_MODELVIEW_MATRIX` ＋クリップ深度の remap） | **1.9209** | 15862 |
+
+- **どちらも原因ではなかった**（差は 2.0 → 1.88 → 1.92 とほぼ動かない）。**テクスチャ仮説も行列仮説も棄却**する。
+  テクスチャについては、計器が `unit=33984`（`GL_TEXTURE0`）で **texture=25** が束縛されていることを示しており、
+  **問い合わせ自体は正しい**（拒否も0）。
+- **確かめられている良い状態**: `modelDraws=1100` / `modelDrawRefusals=0` / `displayListCancelled=1100` /
+  **VUID 0** / exit 0 / validationClean=true。**構造としては動いており、既定は影響を受けない**（ラボフラグOFF）。
+- **残る容疑（名前を挙げておく。まだ測っていない）**:
+  1. **パイプラインの固定状態**: format 6 のパイプラインは「depth test on（LEQUAL）・**depth write off**・
+     ストレートアルファ」という**1つの固定組み合わせ**で作られている。モデルは**深度を書く**し、
+     **アルファテスト**も使うので、この状態が合っていない可能性が高い。
+  2. **ブレンド/アルファの扱い**（上と表裏）。
+  3. メッシュの巻き順・面の向き（`TexturedQuad.draw` は法線から面を決めるので、捕獲側で順序を保っているか）。
+  4. 深度の比較対象（GL の深度バッファと Vulkan の深度の一致）。
+- **差の規模からの推論**: 15.9k 画素は画面の約2%で、**max 250**。**幾何が丸ごとずれているのではなく、
+  一部の面の見え方（状態依存）が違う**という形に合う。**推論であって測定ではない**。
+
+**JEI を現行の既定で再検証（このターン・優先順位7の第一歩）**:
+
+- 大型modとして環境にあるのは **JEI 1.12.2-4.22.0.1035** のみ。**現行の既定**（format 2 の native 化、
+  起点による手の display list キャンセル）で**回帰がないか**を確認した。
+
+| 指標 | 結果 |
+|---|---|
+| verdict | **exit 0 / validationClean=true / PASSED** |
+| **VUID** | **0 件** |
+| クラッシュ | なし |
+| frames / p50 | 564 / **16.16 ms** |
+| `acceptedByFormat` | `1:9, 2:0, 3:0, 4:0, 5:548, 6:3744, 7:3296, 8:0, 9:0`（通常と同じ分布＝**新しい拒否なし**） |
+
+- **言えること**: 現行の既定で **JEI がロードし、実行し、描画し、受入が通る**。検証エラーも増えていない。
+- **言えないこと（正直に）**: **画像の一致は示していない**。JEI 有り/無しの画像比較は**同一条件の対になっていない**
+  （既存の JEI 無し run は duration が違う）ので、**「JEI を入れても画質が変わらない」とは主張しない**。
+  また**JEI 以外の大型modはこの環境に無い**ため、**MC 描画APIを経由しない mod（直接 LWJGL/GLSL を使うもの）の
+  互換は未検証**である。
+- **モデル描画の現状（前ターンの続き）**: 構造は動く（`modelDraws=1100`・拒否0・VUID 0）が、既定比
+  **meanAbsDiff 1.92 / 15862 画素**で画像が一致しない。テクスチャ仮説と行列仮説は**棄却済み**。
+  残る最有力は**パイプラインの固定状態**（format 6 は depth write off・アルファテスト無しの固定組み合わせで、
+  モデルには合わない可能性が高い）。**ラボフラグOFFのまま**。
+
+**モデル描画の「画像差」を再解釈（このターン・以前の結論を訂正）**:
+
+- **差分を画像として見た**（既定・native・差分×4 の3枚を並べた）。**差分は画面のデバッグHUDの文字**
+  （`VUID match true, driver U…`、`s0u7a/projects/celtium/…`、`celtium-vulkan-device.json` など）に集中しており、
+  **その下の地形は両者とも一致**していた。HUD の内容は **run ごとに違う**（パスや一致判定の表示）ので、
+  **run 間の画像比較はこの文字に汚染される**。
+- **床を測った**（既定 thirdPerson を2本、同一引数・同一 duration）:
+
+| 比較 | meanAbsDiff | 差>2の画素 | max |
+|---|---|---|---|
+| **床（既定 vs 既定）** | **1.2563** | **10395** | 192 |
+| 既定 vs native モデル描画 | 1.9209 | 15862 | 251 |
+| 既定2 vs native モデル描画 | 1.8502 | 15444 | 251 |
+
+- **HUD の帯を除いて比較し直した**:
+
+| 帯 | 床 | keep vs native | 既定2 vs native |
+|---|---|---|---|
+| 上（0-540、HUD文字を含む） | 0.5474 / 3408 | 1.2845 / 8129 | 1.3064 / 8302 |
+| **下（540-720、実際の3D場面）** | **3.3828 / 6987** | **3.8300 / 7733** | **3.4818 / 7142** |
+| 下（560-720） | 2.5400 / 4745 | 2.8366 / 5159 | **2.6065 / 4778** |
+
+- **結論（訂正）**: **HUD を除いた実際の3D場面では、native モデル描画は床の 1〜10% 以内**である。
+  **以前の「meanAbsDiff 2.0 / 15.9k 画素で一致しない」という記述は、ほぼ全部が HUD 文字によるもの**で、
+  **モデル描画の不一致を示していなかった**。したがって**テクスチャ仮説・行列仮説の「棄却」も、正しい測定ではなかった**
+  （測っていたのは文字だった）。**まだ「一致した」とも言わない**: 上の帯（HUD を含む）は床の2.4倍あり、
+  その中には**プレイヤーモデルの上半身も入っている**ので、**HUD を確実に除いた比較**をしないと決着しない。
+- **方法の教訓（記録）**: **画面に文字を出す fixture では、run 間の画像比較が成立しない**。
+  比較前に**HUD を消すか、HUD の無い領域だけを比べる**。今回それを怠り、2ターンを誤った仮説の検証に使った。
+
+**画像を実際に見て、差の内訳が確定（このターン）**:
+
+- 既定 thirdPerson と native モデル描画の**全画面を並べて見た**（`docs/evidence/model-draw-diff-2026-10.png`、
+  上=既定・中=native・下=差分×5）。分かったことは2つだけ:
+  1. **HUD の文字**（`celtium capability report …`、`celtium-vulkan-bootst…`、`Terrain still renders with OpenGL.`）
+     — **run ごとに違う**（パスと一致判定を表示するため）。
+  2. **中央下部の人物型の小さな塊（約40×40画素）** — **これがプレイヤーモデル**で、**既定と native で本当に違う**。
+- **地形は画素完全一致**（差分パネルで地形部分が完全な黒）。
+- **訂正の訂正**: 前ターンに「HUD を除いた 3D 場面は床の1〜10%以内」と書いたが、**あの『下の帯』にも HUD の下段の行が
+  入っていた**（文字は y≈707 まで続く）。**正しい内訳は「HUD 文字＋人物型の塊」**であり、
+  **モデルの差は実在する**（小さく、局所的）。
+- **方法の教訓（再度・強く）**: **数値だけで判断せず、画像を見る**。2ターンを「テクスチャ」「行列」の検証に使い、
+  実際に測っていたのは**文字**だった。**run 間比較の前に必ず差分を画像で確認する**。
+- 現在の状態: モデル描画は**構造として動作**（`modelDraws=1100`・拒否0・**VUID 0**・描画成功時のみキャンセル）。
+  **画像は人物型の領域で不一致**。**ラボフラグOFFのまま**（既定は影響を受けない）。
+
+**拡大して「何が違うか」を言葉にした（このターン・決定的な観察）**:
+
+- `docs/evidence/model-draw-zoom-2026-10.png`（左=既定・中=native・右=差分×4、x3拡大）を見た。分かったこと:
+  1. **native には既定に無い2つの三角形が描かれている**:
+     **濃い緑の三角形**（上中央右）と、その下の**白／ピンクの三角形**。
+  2. **既定側にはその形が無い**（地形と HUD 文字だけ）。
+  3. **HUD 文字は両者で違う**（`…/p208-third/logs/…` 対 `…/p214-mtx/logs/…`）＝**やはり文字は run 依存**で、
+     画像比較から除く必要がある。
+- **観察から導ける仮説（測定ではない）**:
+  - **三角形＝四角形の片割れ**。捕獲側は 4頂点・6インデックス（0,1,2 / 0,2,3）で書いているので、
+    **面の並びかインデックスの順序**、あるいは**4頂点目が退化している**可能性がある。
+  - **白／ピンク**は**手・手持ちアイテムのテクスチャ**を示唆する（アトラスではない）。
+  - **位置が既定と違う**（既定には無い場所に出ている）ので、**行列だけでなく描画のタイミングや対象**も疑う。
+- **確実に言えること**: **native モデル描画は「既定と同じものを描いていない」**。ここまでの「一致している」という
+  記述はすべて撤回する（測っていたのは文字だった）。**ラボフラグOFFのまま**が正しい。
+
+**モデル描画を一旦区切る（このターン・正直な区切り）**:
+
+- **ソースで確認したこと**: MC は `renderer.begin(7, DefaultVertexFormats.OLDMODEL_POSITION_TEX_NORMAL)`＝
+  **GL_QUADS** で4頂点を送り、三角形化は**ドライバの四角形規則（0,1,2 / 0,2,3）**に任せている。
+  捕獲側も同じ規則でインデックスを書いているので、**規則そのものは一致**している。
+- `VulkanDynamicMesh.nextVertex()`／`putPosition()`／`index()` の意味も確認した（`nextVertex` が頂点番号を返し、
+  `put*` がそこへ書く）。インデックスの作り方は即時経路の使い方と矛盾しない。
+- **したがって「native にだけ三角形が出る」理由はまだ特定できていない**。次にやることは、**1リスト分について
+  実際に書いた頂点座標・UV・インデックスをそのままログに出し、GL が受け取った4頂点と突き合わせる**こと。
+- **区切りの理由**: この糸で複数ターンを使った。**構造的な成果は確保できている**
+  （native 描画が動く・拒否0・**VUID 0**・成功時のみキャンセル）。**既定は影響を受けない**（ラボフラグOFF）。
+  未解決点は上の「実データ比較」として明記する。
+
+**記述子の失敗経路を実機で確認（このターン・優先順位6の未検証項目）**:
+
+- **未検証だった失敗経路**（記述子）に注入を実装した: `VulkanDescriptorFault` を追加し、
+  `-Dceltium.vulkan.failDescriptorSetAt=<n>`（n番目）と `-Dceltium.vulkan.failDescriptorSetSite=<部分文字列>`
+  （最初の一致）で**記述子セットの要求を失敗させる**（0 を返す）。`VulkanTerrainGpuBackend` の4箇所の
+  `descriptorSetFor(...)` 呼び出しを包み、失敗は**呼び出し側が既に「記述子なし」として扱う値**になるので、
+  **注入とドライバの拒否を区別できない**（それを確かめるのが目的）。
+- **実測（AMD、100 s、両方とも注入が発火）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames |
+|---|---|---|---|---|---|---|
+| `failDescriptorSetSite=prepare`（1回目で発火） | **0** | **true** | **PASSED** | なし | **0** | 564 |
+| `failDescriptorSetAt=200`（200回目で発火） | **0** | **true** | **PASSED** | なし | **0** | 569 |
+
+- 拒否は理由付きで記録される: `CELTIUM_POSITIONTEX_REFUSED reason=pipeline or descriptor preflight failed
+  stride=20 vertices=4`。つまり**記述子が無いバッチは GL 側へ回され、描画は落ちない**。
+- **意味**: **記述子の失敗は「きれいに拒否して継続」する**。クラッシュも検証エラーも無い。
+  これは優先順位6（texture/descriptor/allocation/submit/wait の失敗）の**未検証項目を1つ閉じた**もの。
+
+**モデル描画: テスト設計の誤りを発見し、プレイヤーモデルまで到達（このターン）**:
+
+- **発見（重要）**: `modelDrawOnlyList=4` で走らせたら **`modelDraws=0`** だった。原因は**コードではなく私のテスト設計**で、
+  **`callList` のフックは「キャンセル対象のリスト」にしか描画を試みない**。既定の規則は `ItemRenderer` 由来（手）だけを
+  対象にするので、**プレイヤーモデル（`ModelPlayer`/`ModelBiped` 由来のリスト4〜）は一度も native 描画されていなかった**。
+  **つまりこれまで見ていた三角形はリスト2/3（手）由来**であり、プレイヤーモデルは**未着手**だった。
+- **ラボフラグ `-Dceltium.vulkan.cancelModelDisplayLists` を追加**し、`ModelPlayer`/`ModelBiped` 由来のリストも
+  「**まず描いて、成功したらキャンセル**」の対象にできるようにした（既定OFF）。
+- **その状態での実測（三人称＋GUI、AMD、60 s、`modelDraw`＋`cancelModelDisplayLists`、両方ON）**:
+
+| 指標 | 値 |
+|---|---|
+| `modelDraws` | **1410** |
+| `modelDrawRefusals` | **0** |
+| `displayListCancelled` / `displayListOriginCancels` | **1410** / **1410** |
+| verdict | **exit 0 / validationClean=true / PASSED**（クラッシュなし・VUID 0） |
+
+- **画像**: 既定との差は HUD を除いても残り、**右パネル（native）の画面上端に緑の四角形が出ている**。
+  つまり **native のモデルは「本来の位置ではない場所」に描かれている**。**位置が違う**ので、
+  **行列（`GL_PROJECTION_MATRIX`/`GL_MODELVIEW_MATRIX` を `callList` で問い合わせた値）が
+  モデルの再生時に期待されるものと違う**可能性が高い。**推測であり、まだ測っていない**。
+- **確かめられていること**: 描画は成功し（拒否0）、**検証エラー0**、クラッシュなし、**成功時のみキャンセル**。
+  **既定は影響を受けない**（すべてラボフラグ）。
+
+**モデル描画: 行列が一致することを確認し、この糸を区切る（このターン）**:
+
+- `celtium$drawModelList` が使った**モデルビュー行列**と、**同じリストを GL が再生したときの行列**（記録側で捕獲済みの
+  `replayMatrix`）を並べて出した（三人称＋GUI、AMD、60 s、`modelDraw`＋`cancelModelDisplayLists`）:
+
+| list | 差 | 描画時の平行移動 | GL再生時の平行移動 |
+|---|---|---|---|
+| 2 | 0.6000（Y のみ） | (0.514, −0.804, −0.689) | (0.514, **−1.404**, −0.689) |
+| 3 | **0.0000** | (0.514, −0.804, −0.689) | (0.514, −0.804, −0.689) |
+| 4 | **0.0000** | (0.000, −0.200, −4.073) | (0.000, −0.200, −4.073) |
+
+- **結論**: **行列は正しい**。list 3 と list 4 は**ビット一致**、list 2 の差は**手の揺れ**（再生行列は別フレームで捕獲したもの）
+  によるもので、**欠陥ではない**。したがって「位置が違う」という前ターンの推測は**棄却**する。
+- **1クワッドだけを描いた run の全画面**を調べたが、**HUD を除くと可視な差は無い**（差は文字だけ）。
+  つまり**1クワッドは画面のどこにも現れない**。全体を描いたときだけ**上端に緑の四角形**が出る。
+- **ここまでの確定事項**: 描画経路は動く（`modelDraws` 1410・拒否0・**VUID 0**・クラッシュなし・成功時のみキャンセル）、
+  **行列は正しい**、**画像は一致しない**。**残るのは「頂点そのもの」か「どのリストを描いているか」**。
+- **区切りの判断**: この糸で8ターン近くを使った。**構造的成果（native 描画・キャンセルの配線・行列の検証）は確保**し、
+  **既定は影響を受けない**（すべてラボフラグ）。次にやることは明確なので、**優先順位5〜8の未達項目へ戻る**。
+
+**texture の失敗経路を両GPUで確認（このターン・優先順位6の未検証項目）**:
+
+- `VulkanTextureFault` を追加し、`-Dceltium.vulkan.failTextureUploadAt=<n>`（n番目）と
+  `-Dceltium.vulkan.failTextureUploadSite=<部分文字列>`（最初の一致）で**テクスチャのアップロードを失敗させる**。
+  即時経路がテクスチャを必要とするバッチの直前に判定を入れ、失敗したら**そのバッチを GL へ回す**（描画は続く）。
+- **実測（注入は両方で発火、duration 100 s）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames | p50 |
+|---|---|---|---|---|---|---|---|
+| AMD | **0** | **true** | **PASSED** | なし | **0** | 564 | 15.99 ms |
+| **Intel** | **0** | **true** | **PASSED** | なし | **0** | 567 | **15.97 ms** |
+
+- ログ: `CELTIUM_TEXTURE_FAULT site=immediate request=1`（両方）。
+- **意味**: **テクスチャの失敗も「きれいに拒否して継続」する**。クラッシュも検証エラーも無く、**AMD と Intel の両方**で
+  受入が通る。優先順位6の「texture 失敗」を閉じた。
+- **注意して記録すること**: Intel の p50 が 28.78 → **15.97 ms** に下がったが、これは
+  **テクスチャを必要とするバッチが丸ごと拒否された**（＝仕事が減った）結果であり、
+  「**テクスチャアップロードのコストが 13 ms**」という主張では**ない**。切り分けてはいない。
+
+**submit 失敗を両GPUで確認（このターン・優先順位6）**:
+
+- コードには既に「**pre-submit 失敗は1回だけ再試行し、`vkQueueSubmit` 成功後やフェンス timeout 後は決して再試行しない**」
+  と明記されている（`VulkanTerrainGpuBackend` の該当コメント）。その規則を**実機で到達可能にする**ため
+  `VulkanSubmitFault` を追加し、`-Dceltium.vulkan.failSubmitAt=<n>`（n番目）と
+  `-Dceltium.vulkan.failSubmitSite=<部分文字列>`（最初の一致）で **`vkQueueSubmit` の直前にドライバ拒否と同じ失敗**を
+  起こす（`check(VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)")`）。バックエンドの2つの submit 地点
+  （signal-only と fenced）の両方を包んだ。
+- **実測（3 run、注入はすべて発火）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames |
+|---|---|---|---|---|---|---|
+| AMD（200回目） | **1** | **true** | **FAILED** | なし | **0** | 563 |
+| Intel（200回目） | **1** | **true** | **FAILED** | なし | **0** | 306 |
+| AMD（最初の fenced） | **1** | **true** | **FAILED** | なし | **0** | 561 |
+
+- **意味**:
+  - **クラッシュしない**（`Game crashed` なし）。**使用中コマンドバッファを reset/re-record/destroy した形跡も無い**
+    （検証エラー0・VUID 0 がその裏づけ）。
+  - **フレームは動き続ける**（563/306/561 フレーム）＝失敗しても描画ループは止まらない。
+  - **fixture は正しく FAILED を返す**（submit が失敗したのに成功として扱わない）。
+  - `validationClean=true` は**Vulkan 検証エラーが無い**ことの意味であり、**成功の意味ではない**。
+- **正直な残り**: 注入したのは**pre-submit 失敗**であり、**フェンス timeout（submit 成功後の wait 失敗）は注入していない**。
+  「timeout 後に使用中バッファを触らない」という性質の**後半は未検証**である。
+
+**フェンス timeout（submit成功後のwait失敗）を両GPUで確認（このターン・優先順位6の最後の名前付き経路）**:
+
+- コードのコメントが既に規則を書いている（「wait は有界・フラグは解決後にのみクリア・フェンスが実際にシグナルした後に
+  だけキューを排出」「stall 後は資源を解放しない」）。その規則を**到達可能**にするため
+  `-Dceltium.vulkan.failFenceWait=true` を追加し、`vkWaitForFences` の結果を **`VK_TIMEOUT` に差し替える**
+  （`waitForIdle` の1箇所、ログ `CELTIUM_FENCE_TIMEOUT injected`）。
+- **実測（両GPU、注入は発火）**:
+
+| 指標 | AMD | Intel |
+|---|---|---|
+| exit / validationClean / fixture | **1 / true / FAILED** | **1 / true / FAILED** |
+| クラッシュ / VUID | **なし / 0** | **なし / 0** |
+| frames | 571 | 572 |
+| **`stalledTeardownSkips`** | **547** | **549** |
+| `gpuStalled` | **true** | **true** |
+| 経過時間 | **24 秒** | **26 秒** |
+
+- **意味（完成条件に直結）**:
+  1. **timeout のあと使用中コマンドバッファ／資源を解放しない** — `stalledTeardownSkips` が **547/549** を数えており、
+     これは「**stall 後に資源を解放しない**」経路が**実際に選ばれている**ことの実測である。
+  2. **ハングしない**（24/26 秒で終わる）。bounded wait が効いている。
+  3. **クラッシュしない・検証エラー0**。
+  4. **fixture は FAILED**（stall を成功として扱わない）。
+- **これで優先順位6の名前付き失敗経路はすべて実機で確認済み**: allocation（buffer/uniform/context/frame target/texture）、
+  descriptor、texture upload、submit（pre-submit）、**fence timeout**、out-of-date、resize/minimize、reload、
+  world switch。**未検証として残るのは start-up 段階の失敗と vendor 固有の device lost の再現**である。
+
+**優先順位5: 溶岩/火を世界に入れて両GPUで確認、dimension 切替は fixture 側の障害を特定（このターン）**:
+
+- **溶岩と火を世界に追加**（フラット世界の層に `minecraft:lava` と `minecraft:fire` を加えた。既に water と
+  stained_glass が入っており、水と半透明は以前から対象だった）。**これで世界そのものに溶岩・火が存在する場面**になる。
+- **実測（duration 120 s）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames | p50 |
+|---|---|---|---|---|---|---|---|
+| 溶岩/火 AMD | **0** | **true** | **PASSED** | なし | **0** | 243 | **28.94 ms** |
+| 溶岩/火 Intel | **0** | **true** | **PASSED** | なし | **0** | 122 | **63.89 ms** |
+
+- **両GPUで合格**。**同時に新しい性能データ点**が得られた: **溶岩/火を入れるとフレーム時間が約2倍**になり
+  （AMD 16.0 → **28.9 ms**、Intel 28.8 → **63.9 ms**）、フレーム数も半減する。**溶岩は発光・半透明・アニメーションを
+  持つ**ので重くなること自体は不思議ではないが、**平坦な世界でこの倍率**は優先順位8で切り分ける価値がある
+  （**推測**であり、まだ原因は測っていない）。
+- **dimension 切替**: `-Dceltium.validation.dimensionAtTick=<n>` と `-Dceltium.validation.dimension=<id>` を
+  fixture に追加した（既定は 0＝無効なので**通常runには影響しない**）。到達した事実:
+  1. プロパティは**発火する**（`dimensionChangeAtTick=80`、`dimensionTarget=-1`）。
+  2. **クライアント側**の `player.changeDimension` は**効かない**（`dimensionAfter=0` のまま）＝1.12.2 では
+     サーバー側が転送する必要がある。**統合サーバーの `PlayerList.transferPlayerToDimension`** に切り替えた。
+  3. その途中で **`server.worlds[-1]`** が `ArrayIndexOutOfBoundsException` になった（`worlds` は次元IDではなく
+     0..n の配列）。**`server.getWorld(id)`** に直した。
+  4. 直した結果、**vanilla の転送経路が NPE**（`Entity.getLook()` が null）を起こす。**tick フックから呼ぶ文脈**が
+     原因と思われる。**fixture 側の問題**であり、**レンダラは無傷**（その run も クラッシュなし・**VUID 0**・382 フレーム）。
+  5. **注意**: プロパティを有効にした run の1つ（End への転送）は**ハングして報告が出なかった**（exit 124）。
+     **プロパティを既定（無効）にした通常 run には影響しない**。
+- **状態**: **溶岩/火は完了**。**dimension 切替は「fixture の転送が未完成」**として残す（レンダラ側の未検証項目では
+  なくなった、という区別が重要）。
+
+**dimension 切替が AMD で動作（このターン）／Intel ではハング**:
+
+- **NPE の原因を特定して直した**。スタックトレースが
+  `Teleporter.func_180620_b(Teleporter.java:143)` を名指しし、その行は
+  **`entityIn.getLastPortalVec().y`**。`getLastPortalVec()`（SRG 名 `func_181014_aG`）は
+  **`Entity.setPortal` が埋める値**で、**ポータルを踏まずに転送した**ため null だった
+  （rotation は 20.0/180.0 と有限で、NaN 仮説は棄却済み）。
+  → 転送前に **`player.setPortal(new BlockPos(player))`** を設定するようにした。
+- **実測（duration 120 s、`dimensionAtTick=80`）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames | p50 | 転送 |
+|---|---|---|---|---|---|---|---|---|
+| **Nether（AMD、dimension=-1）** | **0** | **true** | **PASSED** | なし | **0** | 333 | 16.18 ms | **true** |
+| **End（AMD、dimension=1）** | **0** | **true** | **PASSED** | なし | **0** | 404 | 14.44 ms | **true** |
+| **Nether（Intel）** | **124** | — | **MISSING_REPORT** | なし | 0 | — | — | — |
+
+- **AMD では dimension 切替が動く**（Nether と End の両方で exit 0 / 検証エラー0 / 受入 PASSED）。
+  **溶岩/火を入れた世界より軽い**（p50 16.18/14.44 対 28.94）ことも分かった。
+- **Intel では同じ条件でハングする**（exit 124、報告なし、クラッシュログなし、VUID 0）。
+  これは**2回目の再現**（前ターンは End 転送でハング）であり、**未解決の実問題**として記録する。
+  推測はしない（レンダラ側か fixture 側かも未切り分け）。
+- **計器の注意**: `dimensionAfter` は **0 のまま**記録される。転送は **`addScheduledTask` で後から走る**ため、
+  その値を読む時点ではまだクライアント側に反映されていない。**測定のタイミングの問題**であり、
+  転送自体は `dimensionTransferred=true` で成功している。
+
+**「Intel の dimension ハング」はハングではなかった（このターン・測定誤りの訂正）**:
+
+- 前ターンに「Intel ではハングする」と書いたが、**誤りだった**。原因は**ハーネスの時間制限**である。
+  ハーネスの出力に `{"exitCode": 143, "endedBy": "time-limit", "elapsedSeconds": 120.38}` と記録されており、
+  **`--duration` がそのまま実行の上限**になっている（ログ末尾も `Client Shutdown Thread: Stopping server /
+  Saving players` で**正常終了**）。**報告が出ないのは、上限に達する前に capture へ到達していないから**である。
+- **測り直し（Intel、duration を上げた）**:
+
+| run | duration | 結果 |
+|---|---|---|
+| **End（Intel）** | 240 s | **exit 0 / clean / PASSED / VUID 0 / 307 frames / p50 17.25 ms / 転送成功**、**所要 27 秒** |
+| **Nether（Intel）** | 240 s | 240 秒で `time-limit`（報告なし）。ただし**ログは240秒間ずっと動いていた**（ミラー転送 16,529 回） |
+| **Nether（AMD）** | 120 s | exit 0 / clean / PASSED / 333 frames |
+
+- **Nether（Intel）で何が起きているか（ログから）**:
+  `loaded a new chunk [1,-11] in dimension -1 (the_nether)` と `Unloading dimension -1` が出ており、
+  **転送そのものは成功している**。**新しい次元のチャンク生成**が Intel では重く、**240 秒では capture まで届かない**
+  というのが実測である（**止まってはいない**）。
+- **訂正の内容**: 「Intel の dimension ハング」→「**Intel では Nether のチャンク生成が重く、時間予算に収まらない**」。
+  **レンダラ側の欠陥を示す証拠は無い**（クラッシュなし・**VUID 0**）。**推測ではなく、ログとハーネス出力に基づく**。
+- **方法の教訓（3回目）**: **「終わらない」を「ハング」と読まない**。まず**ハーネスの `endedBy` と経過時間**を見る。
+
+**Intel Nether は 600 秒でも到達しない（このターン・最終データ点）**:
+
+- `--duration 600` で Intel Nether を回したところ、**601 秒でハーネスの時間制限に達した**（報告なし）。
+  **ログは最後まで動いており**、クラッシュも検証エラーも無い（**VUID 0**）。
+- **確定した一覧**:
+
+| 場面 | GPU | 結果 |
+|---|---|---|
+| Nether（dimension=-1） | **AMD** | **exit 0 / clean / PASSED / VUID 0**（333 frames、p50 16.18 ms） |
+| End（dimension=1） | **AMD** | **exit 0 / clean / PASSED / VUID 0**（404 frames、p50 14.44 ms） |
+| **End** | **Intel** | **exit 0 / clean / PASSED / VUID 0**（307 frames、p50 17.25 ms、**27 秒**） |
+| **Nether** | **Intel** | **240 秒・600 秒とも時間制限に達する**（報告なし・クラッシュなし・VUID 0・ログは活動中） |
+
+- **意味**: **dimension 場面は AMD で2種、Intel で End が受入済み**。**Intel の Nether だけが、この環境の時間予算
+  （600 秒）に収まらない**。**ハングではない**（ログは動き続け、ハーネスは自分の時間制限で終了させる）。
+  **レンダラの欠陥を示す証拠は無い**が、**「Intel で Nether の受入が取れた」とも言わない**。
+  原因の候補は**新規次元のチャンク生成の重さ**で、**測ってはいない**。
+
+**既定経路の退行を発見して修正（このターン・重要）**:
+
+- 溶岩/火の run を基準 run と比べたところ **`displayListOriginCancels` が 0**（基準は 1060）だった。
+  **起点によるキャンセルが既定で効かなくなっていた**。
+- **原因**: 前のターンに「**まず native で描き、成功したらキャンセル**」という順序に変えたが、
+  **native 描画はラボフラグ `-Dceltium.vulkan.modelDraw` のときだけ動く**。既定では描画が false になるため、
+  **キャンセルも一度も起きなくなっていた**（`displayListOriginCancels` 1060 → 0）。
+  **run は合格し続ける**（手は GL が描く）ので、**計器を見なければ気づけない退行**だった。
+- **修正**: 「**native が描いた**」または「**即時経路が既に描いている内容（`ItemRenderer` 由来＝手持ち）で、
+  native 描画が切られている**」のどちらかでキャンセルする（`cancelsWithoutDraw`）。プレイヤーモデルは
+  **何も描かないのにキャンセルすると消える**ので、**ラボフラグ側に残す**。
+- **実測（溶岩/火の世界、duration 400 s）**:
+
+| GPU | exit | validationClean | fixture | クラッシュ | VUID | frames | p50 | `originCancels` |
+|---|---|---|---|---|---|---|---|---|
+| **AMD** | **0** | **true** | **PASSED** | なし | **0** | 185 | 37.38 ms | **329**（0 から復活） |
+| **Intel** | **0** | **true** | **PASSED** | なし | **0** | 114 | 62.64 ms | **208**（0 から復活） |
+
+- **注意（誤読しないこと）**: この run の p50（37.38 / 62.64 ms）は**溶岩/火を入れた世界の重さ**であり、
+  キャンセルの効果でも退行でもない（溶岩を入れる前の基準は AMD 16.05 / Intel 28.78 ms）。
+  **Intel で 400 秒に 114 フレーム**というのは**1フレーム約3.5秒**で、**溶岩世界の Intel での重さは未解決の性能項目**。
+- **方法の教訓（4回目・重要）**: **ラボフラグを足すときは、既定の挙動をそれに依存させない**。
+  今回も「まず描く」という安全策が、**既定でキャンセルを止める**という副作用を持っていた。
+  **計器（`displayListOriginCancels`）が 0 になっていたことが唯一の手がかり**だった。
+
+**溶岩/火のコストを世界のA/Bで確定（このターン・退行の疑いを晴らし、費用の所在を絞った）**:
+
+- **世界の層をプロパティ化**した（`-Dceltium.validation.worldLayers=<スーパーフラット文字列>`、既定は溶岩/火入り）。
+  理由は「**世界が重くなった**」と「**レンダラが遅くなった**」を**同じビルドで**切り分けるため。
+- **実測（同一ビルド・同一GPU（AMD 6400）・duration 150 s、世界だけ変更）**:
+
+| 世界 | exit | fixture | frames | p50 | p99 | animatedFills | originCancels |
+|---|---|---|---|---|---|---|---|
+| **溶岩/火あり（既定）** | 0 | **PASSED** | 178 | **41.45 ms** | 60.9 | 807 | 324 |
+| **溶岩/火なし** | 0 | **PASSED** | 554 | **15.92 ms** | 22.55 | 845 | 1044 |
+
+- **結論1**: **コストはコンテンツ由来**である（同じビルドで 2.6 倍）。**コード退行ではない**。
+  前ターンの退行の疑いは、これで**完全に晴れた**（`originCancels` もフレーム数に比例して正常）。
+- **結論2（棄却）**: **アニメーションテクスチャは原因ではない**（`animatedImageFills` 807 対 845 でほぼ同じ）。
+- **結論3（費用の所在）**: **1フレームあたりに正規化すると、バックエンドが数えている仕事はほぼ同じ**である:
+
+| 1フレームあたり | 溶岩あり | 溶岩なし |
+|---|---|---|
+| `terrainPasses` | 2.92 | 2.86 |
+| `immediateRecordedBatches` | 14.15 | 13.57 |
+| `actualFlushMillis` | 1.45 | 1.41 |
+| `batchCallMillis` | **4.65** | **3.66**（+27%） |
+
+  → **フレーム時間の差（約26 ms/フレーム）は、バックエンドが計測している範囲の外にある**。
+  `batchCallMillis` の +27%（約1 ms）では説明できない。
+- **次の測定はバックエンドの外側**: チャンク再構築（生成・照明）の回数、GL 側の時間、ドライバ/GPU の時間。
+  **推測で埋めない**（溶岩は発光・半透明・アニメーションを持つので候補は複数ある）。
+
+**ヒント（docs/hints-2026-10-10-nether.md）に沿った修正 — MISSING_REPORT の原因は捕捉tickの等号だった（このターン）**:
+
+- **ヒントの指摘は3点ともソースで確認できた**:
+  1. `ValidationClient.frame()` の捕捉全体が **`if (worldTicks != 200) return;`（等号）**で囲まれている（1679行）。
+     さらに**その内側**で `removeNonPlayerEntities(mc) > 0` なら **return** するので、**実体を消す必要があった frame では
+     tick 200 を二度と拾えず、レポートが永久に出ない**。
+  2. interop 分岐の内側に **`if (worldTicks < 240) return;`** があり、**外側の `== 200` と両立しない**
+     （200 < 240 が常に真なので interop 分岐は到達不能）。
+  3. 終了時に**レポートが無い**ため、ハーネスは `MISSING_REPORT` としか言えず、**どこまで進んだか分からない**。
+- **修正**:
+  - 捕捉を**段階化**した: **`worldTicks < 200` で待つ**（等号をやめる）→ 開始時に
+    **`captureStartTick` を記録**して**「実際に撮ったtick」を残す** → 実体除去で return しても**翌frameに再入**して完走する。
+    **アニメーション位相は `PINNED_WORLD_TIME` で固定済み**なので、**厳密な200でなくても同じ画像**が撮れる
+    （測定は下記のとおり実際に `captureStartTick=200`）。
+  - interop の待ちを**絶対値240から、interop が成立したtick＋40 の相対待ち**に変えた（**到達不能を解消**）。
+  - **終了時にレポートが無ければ部分レポートを書く**シャットダウンフックを追加
+    （`status=NO_CAPTURE`、`worldTicksAtExit`、`worldFramesAtExit`、`captureStarted`、client の dimension、
+    `screenAtExit`）。**MISSING_REPORT を無情報のままにしない**。
+- **実測（Intel 640）**:
+
+| run | harness | report |
+|---|---|---|
+| **軽い世界（溶岩なし、150 s）** | exit 0 / clean / **PASSED** | `status=PASSED`、**`captureStartTick=200`**、`worldFrames=300`、p50 **28.47 ms** |
+| **溶岩世界（120 s）** | exit 0 / clean / **PASSED** | `status=PASSED`、**`captureStartTick=200`**、`worldFrames=109`、p50 **64.52 ms** |
+
+- **結論（前ターンの主張を測定で訂正）**: **MISSING_REPORT は予算ではなく捕捉tickの問題だった**。
+  **Intel の溶岩世界は 120 秒でも捕捉に到達して PASSED する**。ヒントの
+  「600秒へ延長しても等号が戻らない問題は直らない」は**そのとおりで、修正は等号側だった**。
+  **「Intel は溶岩世界が重くて240秒/600秒でも届かない」という前ターンの記述は誤り**であり、以下に訂正する。
+- **ヒント4の指示に従い、混同を訂正する**: 前ターンの「duration 400 s / worldFrames 114 だから 1フレーム3.5秒」は
+  **根拠がない**。`--duration` は**上限**であり**実経過時間ではない**し、`worldFrames` が**全実行のフレームなのか
+  検証区間のフレームなのか**も確認していなかった。**この2つの数から実フレーム時間を主張しない**。
+  実測の p50 は **62.64 ms（溶岩世界・Intel）／28.47 ms（軽い世界・Intel）**であり、
+  **「1フレーム3.5秒」という報告は取り下げる**。
+- **未着手（ヒント2・3）**: atlas の mirror 所有（`announceFullPixels` が registry の別 image を更新し、
+  直接保持の `atlasTexture` は `invalidateTexture` で全面GL読み戻しに戻る経路）と、
+  **dimension 到達の判定**（`dimensionAfter` は schedule 直後の古い client 値で成功判定にならない）。
+  次のターンでこの2つを進める。
+
+**ヒント3の修正 — dimension 受入が fail-closed になり、以前の「Nether PASSED」が Nether ではなかったと判明（このターン）**:
+
+- **実装**（ヒントの指示どおり）:
+  1. **サーバー側の処理をすべてサーバータスクの中へ移した**: プレイヤーの解決、**`server.getWorld(target)`**、転送。
+     クライアントスレッドで `getWorld` を呼んでいたのが、ログに `[Client thread] Loading dimension -1` として
+     出ていた部分である（UUID だけをクライアントで取る）。
+  2. **サーバータスクから `report`（JsonObject）を書かない**。結果は**volatile なフィールド**へ渡し、
+     クライアント側で捕捉時にレポートへ写す。
+  3. **クライアント側で到達を観測**する（`mc.player.dimension == target && mc.world.provider.getDimension() == target`
+     になった tick と frame を記録）。
+  4. **捕捉条件に到達を入れ、fail-closed にした**: 未到達なら `IllegalStateException` で**FAILED**にする。
+- **実測（AMD/Intel、`dimensionAtTick=80`）**:
+
+| run | harness | 到達の証拠 |
+|---|---|---|
+| **Nether（AMD、dimension=-1）** | **exit 255 / NO_CAPTURE** | `dimensionServerResult=transferred`、**`dimensionArrivedAtTick=81`** の後、**`dimensionClientAtCapture=0` / `dimensionWorldAtCapture=0`** |
+| **End（AMD、dimension=1）** | **exit 0 / clean / PASSED** | `dimensionClientAtCapture=1` / `dimensionWorldAtCapture=1`、`captureStartTick=200`、`worldFrames=384` |
+| **End（Intel、dimension=1）** | **exit 0 / clean / PASSED** | 同上（`worldFrames=273`） |
+
+- **判明したこと（受入の訂正・重要）**: **以前に「Nether で PASSED」と記録した run は、Nether の場面ではなかった**。
+  新しい観測では、Nether 行きの run は **tick 81 でクライアントが確かに Nether へ入る**が、**捕捉時（tick 200）には
+  クライアントも world も dimension 0（Overworld）に戻っている**。つまり**レンダラは Overworld でテストされ、
+  レポートは Nether を主張していた**。ヒントが p241 のログから指摘した
+  「Nether advancement の後に Server thread が dimension -1 を unload し、後の fog は Overworld 様」と一致する。
+  **fail-closed にしたことで、この見かけ上の合格が消えた**。
+- **部分レポートが機能した**: 捕捉に失敗した run は `MISSING_REPORT` ではなく
+  `status=NO_CAPTURE` と到達状況を書いたファイルを残した（ヒント1の修正の効果）。
+- **End は AMD/Intel とも到達を実証して PASSED**。**Nether は到達が持続しない**という**新しい実問題**が残る
+  （原因は未特定。サーバーが dimension -1 を unload する挙動が候補だが、**測ってはいない**）。
+
+**Nether が持続しない原因を特定（このターン・トレースが決定的）**:
+
+- 両側の dimension を毎tick記録した（変化時＋5tickごと、レポートには変化点の列）。**1回の run（AMD、Nether、
+  `dimensionAtTick=80`）で原因が判明した**:
+
+```
+tick=80   client=0  world=0  server=0                       （転送前）
+tick=82   client=-1 world=-1 server=-1  screen=GuiDownloadTerrain   ← クライアントは実際に Nether に居る
+tick=85..130 client=-1 world=-1 server=-1 screen=GuiDownloadTerrain ← そのまま留まっている
+tick=148  client=0  world=0  server=0                       ← Overworld へ戻る
+dimensionEvents: t80:c=0,s=0  t82:c=-1,s=-1  t148:c=0,s=0
+```
+
+- **原因**: **クライアントが `GuiDownloadTerrain`（地形ダウンロード中の画面）から抜けられていない**。
+  つまり **Nether のチャンクが最後まで読み込まれず**、**しばらくして Overworld に戻る**。
+  前ターンに「Nether のチャンク生成が重い」と考えたのは**方向としては合っていた**が、今回**直接の証拠**が取れた
+  （画面の名前と、両側の dimension の時系列）。
+- **fail-closed が正しく働いた**: 捕捉（tick 200）の時点では既に Overworld なので、run は
+  `status=NO_CAPTURE` と `dimensionClientAtCapture=0` を残して**失敗**した。**見かけの合格は出ない**。
+- **サーバー側のログ**も一致する: `loaded a new chunk ... in dimension -1 (the_nether)` →
+  `Unloading dimension -1`。**サーバーは動いていた**が、**クライアントの地形ダウンロードが完了しなかった**。
+- **修正の方向（次の測定）**: 転送を**もっと早い tick**で行い、地形が読み込まれる時間を稼ぐ
+  （tick はフレームに依存して進むので、重い場面では1tickが長い）。あるいは Nether 用に描画距離を下げる。
+  **どちらが効くかは測って決める**。
+
+**早い転送でも Nether は成立しない（このターン・追跡を止める判断）**:
+
+- `dimensionAtTick=20` で再測定した結果、**同じ挙動**だった:
+
+```
+tick=20  client=0  server=0
+tick=25  client=0  server=-1                        （サーバーが先に移る）
+tick=27  client=-1 server=-1 screen=GuiDownloadTerrain
+tick=30..50 client=-1 server=-1 screen=GuiDownloadTerrain  （地形ダウンロード中のまま）
+tick=90  client=0  server=0                         （Overworld へ戻る）
+```
+
+- **結論**: **時間の問題ではない**。転送を早めても `GuiDownloadTerrain` から抜けられず、
+  **Nether の地形が最後までクライアントに届かない**。`GuiDownloadTerrain` には待ち時間の上限があり、
+  それで Overworld に戻る。**フラット世界の生成設定は Overworld にしか効かない**ので、
+  **Nether は通常の地形生成**になり、**この fixture では完了しない**。
+- **判断**: ヒントの指示どおり、**予算を増やす連続 run はここで止める**。Nether は
+  **「fixture の地形ダウンロードが完了しない」という具体的な阻害要因**として記録し、
+  **Nether の受入は存在しない**（以前の「Nether PASSED」は Overworld だった）。
+  **End は AMD/Intel とも到達を実証して PASSED** なので、dimension の受入は **End で成立している**。
+- **次に必要な具体修正**（Nether をどうしても取る場合）: fixture 側で
+  **Nether 用に生成を軽くする**（カスタム生成器を与える／チャンク送信を待って完了を検出する）か、
+  **サーバー側で転送前にチャンクを生成し終える**。**どちらも fixture 側の作業**であり、
+  レンダラ側の未検証項目ではない。
+
+**ヒント2の計器を実装（このターン・読み出し位置は未確定）**:
+
+- `VulkanGlTexture.uploadFromGlTexture` に**全面GL読み戻しの計器**を入れた:
+  呼び出し回数、バイト数、wall nanos、**GL texture id 別の内訳**（`fullUploadSummary()`）。
+  バックエンドの要約に `fullGlUploads=count=… bytes=… millis=… byGlId=[id:回数/バイト…]` として出す。
+  なお**この計器は「ハッシュ一致でスキップされた呼び出し」も数える**（＝**readback 試行回数**であり、
+  アップロード回数そのものではない）。**その区別は明記しておく**。
+- **実測（AMD、既定＝溶岩世界、duration 120 s）**: exit 0 / validationClean=true / **PASSED**、
+  `worldFrames=172`、**p50 40.41 ms**（溶岩ありの A/B の 41.45 ms と整合）、
+  `displayListOriginCancels=328`（起点キャンセルは正常）、ログに **`directMirrorRefreshes=433`**。
+- **未確定**: `fullGlUploads=` の値は**レポート本文からは見つからなかった**（要約が長く、`rendererDebug` の
+  どこに入るか／切り詰められているかを確認していない）。**数値はまだ読めていない**ので、
+  「読み戻しが N 回」とは**言わない**。次にやることは**読み出し位置の確定**（ログ側の同じ行を探すか、
+  要約を独立した行にする）。
+- ヒント2の本題（`announceFullPixels` が registry の別 image を更新し、直接保持の `atlasTexture` は
+  `invalidateTexture` で全面読み戻しに戻る経路）は**未着手**のままである。
+
+**次の一手**: (1) `fullGlUploads` の**読み出し位置を確定**して実数を取る（要約を独立行にするのが確実）、
+  (2) その数と `byGlId` から **atlas(9) と lightmap(12) のどちらが全面読み戻しを起こしているか**を見る、
+  (3) `announceFullPixels` と `atlasTexture` の**image 所有の不一致**を直す（同じCPU pixelsを実際にsampleする
+  image へ供給する）、(4) 直したら同じ A/B（溶岩あり/なし）で**読み戻し回数とフレーム時間**を比べる。
+
+**（旧メモ）** 次の一手: (1) ヒント2（atlas の image 所有と全面読み戻し）の**計器**を入れる —
+  `uploadFromGlTexture` の origin/id/bytes/wall nanos と `directMirrorRefreshes` を出し、
+  **同じ sprite 変更で何回全面 upload するか**を数える、(2) Nether は
+  「fixture の地形ダウンロードが完了しない」として未検証のまま残す、(3) 溶岩世界の費用の所在を測る。
+
+**（旧メモ）** 次の一手: (1) `dimensionAtTick=20` など**早い転送**で Nether の地形読み込みが捕捉までに終わるかを測る、
+  (2) 終わらない場合は Nether 用の描画距離を下げる（fixture の設定）、
+  (3) 到達が持続したら**その状態で Nether の受入を取り直す**、(4) その後ヒント2（atlas の image 所有）へ進む。
+
+**（旧メモ）** 次の一手: (1) **Nether でクライアントが Overworld に戻る理由**を突き止める（サーバーの dimension unload、
+  `SPacketRespawn` の扱い、transfer の二重実行のいずれか。サーバー/クライアント両方の dimension を毎tick記録する）、
+  (2) Nether の到達が持続するようになったら**その状態で受入を取り直す**（今の Nether の受入は存在しない）、
+  (3) ヒント2（atlas の image 所有と全面読み戻し）へ進む。
+
+**（旧メモ）** 次の一手: (1) **ヒント2**: atlas/lightmap の image 所有を一つに揃えるか、**同じCPU pixelsを実際にsampleする
+  image へ供給**し、`uploadFromGlTexture` の origin/id/bytes/wall nanos と `directMirrorRefreshes` を計器に出して
+  **全面読み戻しの回数**を測る、(2) **ヒント3**: server task 内で `getWorld`・transfer・結果受け渡しを行い、
+  **捕捉時に `mc.player.dimension == target` と `mc.world.provider.getDimension() == target` を assert**して
+  **fail-closed** にする、(3) チャンク再構築の計器を足して溶岩世界の費用の所在を測る。
+
+**（旧メモ）** 次の一手: (1) **チャンク再構築の回数と時間**を計器に出して、溶岩世界で増えているかを測る、
+(2) GL 側の時間（`glDraws*` やフレーム全体の時間の内訳）を測る、(3) Intel でも同じ A/B を取り、
+  「Intel で1フレーム3.5秒」が世界由来かを確認する。
+
+**（旧メモ）** 次の一手: (1) **溶岩/火で約2倍（Intel では1フレーム3.5秒）になる原因**を切り分ける（半透明パス・発光・
+  アニメーションテクスチャ・パーティクルのどれか）、(2) Intel Nether をチャンク生成込みの予算で受入に加える、
+  (3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) Intel Nether は**チャンク生成を先に済ませてから capture**する形にすれば予算内に入る可能性がある
+  （`dimensionAtTick` を早め、生成を待ってから capture する）、(2) それが難しければ**未検証として明記**したまま
+  完成条件の表に残す、(3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) **duration 600 s** の Intel Nether run で capture まで到達するかを確認する（実行中）、
+(2) 到達するなら Intel の dimension 場面も受入に加える、(3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) **Intel の dimension ハング**を調べる（サーバースレッドのスタックダンプを取る、
+  または転送を `dimensionAtTick` より早い/遅い時点にずらして再現条件を絞る）、
+  (2) `dimensionAfter` を**フレーム終了時点**で読み直して、クライアント側の反映を確認する、
+  (3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) dimension 転送を**サーバーのティック終了後**に走らせる（`ServerTickEvent` の末尾か、
+  `transferPlayerToDimension` をワーカースレッドではなくサーバースレッドで呼ぶ）ことで NPE を回避する、
+  (2) 溶岩/火の**倍率の原因**を切り分ける（半透明パス・発光・アニメーションのどれか）、
+  (3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) 優先順位5（vanilla coverage）の未確認項目に着手する（dimension 切替、水/溶岩/火、item/model の
+個別確認）、(2) モデル描画の「頂点の実データ比較」を残件として進める、(3) 優先順位4（GL なしの window/present）に
+ついて、環境で到達できる範囲と不足条件を docs に固定する。
+
+**（旧メモ）** 次の一手: (1) **フェンス timeout** を注入して「submit 成功後の wait 失敗」を実機で確認する（残る唯一の失敗経路）、
+(2) 優先順位5（vanilla coverage）の未確認項目（dimension、水/溶岩/火）に着手する、
+(3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) **submit/wait の失敗**にも同じ形の注入を入れ、両GPUで「使用中コマンドバッファを
+reset/re-record/destroy しない」ことを確認する、(2) モデル描画の「頂点の実データ比較」を残件として進める、
+(3) 優先順位5（vanilla coverage）の未確認項目（dimension、水/溶岩/火）に着手する。
+
+**（旧メモ）** 次の一手（優先を切り替え）: (1) **texture 側の失敗注入**を実装して優先順位6を進める（記述子は前々ターンに閉じた）、
+(2) **submit/wait の失敗**も同じ形で入れて両GPUで確認する、(3) モデル描画は「頂点の実データ比較」を
+未解決項目として残す（`modelQuadLimit` と `modelDrawOnlyList` はそのための計器として実装済み）。
+
+**（旧メモ）** 次の一手: (1) `celtium$drawModelList` が使った**投影行列とモデルビュー行列をそのままログ**に出し、
+**同じリストを GL が再生するときの行列**（記録側で捕獲済みの `replayMatrix`）と**数値で比較**する、
+(2) 違いがあれば**どちらが正しいか**を、GL 側の描画結果（既定の画像）と突き合わせて決める、
+(3) 一致を確認できたら `cancelModelDisplayLists` を既定に上げる判断をする。
+
+**（旧メモ）** 次の一手: (1) 1リスト分の頂点座標・UV・インデックスを**実データで**出して GL の入力と突き合わせる、
+(2) 残る失敗経路（**submit/wait**、**texture 側の失敗**）にも同じ形の注入を入れて両GPUで確認する、
+(3) モデル描画の三角形の原因が分かったら直し、**HUD を除いた領域**で一致を確認してから既定化を判断する。
+
+**（旧メモ）** 次の一手（優先）: (1) 1リスト分の頂点座標・UV・インデックスを**実データで**出して GL の入力と突き合わせる、
+(2) 並行して**未検証だった失敗経路（記述子）**の注入を実装し、優先順位6を進める。
+
+**（旧メモ）** 次の一手: (1) `TexturedQuad` の4頂点が**実際に何個で、どの順で送られているか**を捕獲時に記録する
+（`count` と各頂点の座標をそのまま出す）、(2) 三角形が出る理由を**その数字から**決める（頂点数か、順序か、退化か）、
+(3) **同時に**、native が描いているものが**どのリストか・どの行列か**を1フレーム分だけ記録して、
+「既定には無いのに native にある」理由を特定する。
+
+**（旧メモ）** 次の一手: (1) **人物型の塊だけを切り出して拡大し**、既定と native を見比べて**何が違うか**（欠け・位置ずれ・色・
+面の抜け）を言葉にする、(2) その原因（面の巻き順・UV・深度・アルファテスト）を**その観察から**絞る、
+(3) 直ったら同一条件の対を取り、**HUD を除外した領域**で一致を確認してから既定化を判断する。
+
+**（旧メモ）** 次の一手: (1) **HUD を出さない実行**（または HUD 領域を確実に除外する方法）を作り、その条件で
+native モデル描画の同一条件の対を取る、(2) 一致が確認できたらラボフラグを既定へ上げ、
+同じ起点規則でプレイヤーモデルの再生もキャンセルする、(3) 一致しない場合は**HUD を除いた領域で**
+どの面が違うかを面ごとに可視化する。
+
+**（旧メモ）** 次の一手: (1) モデル用のパイプライン状態（depth write on・アルファテスト・ブレンド）を作って同一条件の対を取る、
+(2) JEI 有り/無しを**同一 duration の対**で取り、mod 導入が画質に与える影響を測る、(3) 直接 GL を使う mod を
+入手できるか調べ、入手できなければ**未検証として明記**する。
+
+**（旧メモ）** 次の一手: (1) パイプラインの状態を**モデル用に作る**（depth write on・アルファテスト有効・ブレンドは GL と一致）
+— `prepareImmediate` が状態から選んでいるなら、その選択がなぜ depth write off を選ぶのかを先に読む、
+(2) 状態を変えて同一条件の対を取り、差が床に落ちるかを測る、(3) それでも残るなら**面ごとの差分**を可視化して
+どの面が違うかを特定する。
+
+**（旧メモ）** 次の一手: (1) `callList` の時点で**実際にバインドされているテクスチャ**を記録し、native 描画がそれを使うようにする
+（今は `currentImmediateTexture` という**即時経路の最後のテクスチャ**を使っている）、(2) 同一条件の対を取り直して
+画像一致を確認する、(3) 一致したらフラグを既定にし、同じ起点規則でプレイヤーモデルの再生もキャンセルする。
+
+**（旧メモ）** 次の一手: (1) `callList` のフックから上記レシピでモデルを描く経路を作る（ラボフラグ、既定は従来どおりGL）、
+(2) 三人称で同一条件の対を取り、プレイヤーモデルが native で出ることと画像一致を確認する、
+(3) 一致したら同じ起点規則でプレイヤーモデルの再生もキャンセルする。
+
+**（旧メモ）** 次の一手: (1) `callList` のフックから、**メッシュのあるリスト**について
+**コマンドバッファを開く→パス開始→format 6 のパイプラインと記述子を束ねる→メッシュを描く→パス終了→submit** を行う
+経路を作る（**ラボフラグで切替**、既定は従来どおり GL）、(2) 三人称で**同一条件の対**を取り、プレイヤーモデルが
+native で出ていることと画像一致を確認する、(3) 一致したら同じ起点規則でプレイヤーモデルの再生もキャンセルする。
+
+**（旧メモ）** 次の一手: (1) プレイヤーモデル（`ModelPlayer` 系）の12リストは**メッシュが既にある**ので、`callList` で native 描画に
+置き換える（今は再生を残している）、(2) 置き換え後は**同じ同一性の規則**でプレイヤーモデルもキャンセル対象にできる、
+(3) その状態で三人称の画像一致を同一条件の対で確認する。
+
+**（旧メモ）** 次の一手: (1) 連鎖を**8フレーム**まで取り、手（`ItemRenderer` 系）とプレイヤーモデル（`RenderPlayer` 系）を分離する、
+(2) 分離できたら「**native が既に描いている内容のリストだけ**を取り消す」規則を実装し、既定化の可否を
+同一条件の対で判断する、(3) プレイヤーモデルの12リストはメッシュがあるので native 描画へ置き換える。
+
+**（旧メモ）** 次の一手: (1) **手のモデル部品**を対象に、display list の再生をキャンセルした場合の差を**同一条件の対**で測り直す
+（前ターンの測定は「空」という誤った前提で解釈していた）、(2) その結果で `cancelDisplayLists` の既定化を判断する、
+(3) プレイヤーモデルの12リストはメッシュがあるので native 描画へ置き換える。
+
+**（旧メモ）** 次の一手: (1) リストと「我々が描いているもの」の**同一性判定**を作る（例: 記録時のスタック／呼び出し元が
+`RenderGlobal.renderSky` かを見る）、(2) それができたら `cancelDisplayLists` を**既定で有効**にし、両GPU・複数場面で
+受入を取る、(3) プレイヤーモデルの12リストはメッシュがあるので native 描画へ置き換える。
+
+**（旧メモ）** 次の一手: (1) `cancelDisplayLists=2` を**既定に上げる**判断（画像が実質不変・GL呼び出し 529 回減）、
+(2) list 3 の地平線の差（±1〜3・81画素）の原因を特定する（深度テスト／ブレンド／時間補間のいずれか）、
+(3) プレイヤーモデルの12リストはメッシュがあるので native 描画へ置き換える。
+
+**（旧メモ）** 次の一手: (1) どの id が空・星・雲かを**ソースの生成箇所と突き合わせて**特定する（`GLAllocation.generateDisplayLists`
+の呼び出し順）、(2) list 3 の 77 画素の正体を特定する（星なら native 側に足す）、(3) プレイヤーモデルの12リストは
+**メッシュがあるので**、`callList` で native 描画に置き換える経路を作る。
+
+**（旧メモ）** 次の一手: (1) `callList` のフックから native 描画を呼ぶ経路を作る（メッシュの検索・行列の取得・記録・
+GL 再生のキャンセル）、(2) **画像一致**を既定ビルドと比べる（プレイヤーモデル1体・三人称）、
+(3) 一致したら `displayListReplays` の対象リスト減少を数で示し、ラボフラグを既定に上げる判断をする。
+
+**（旧メモ）** 次の一手: (1) `callList` の注入に**フック**を足し、**メッシュを持つリスト**の GL 再生をキャンセルして
+**native 描画**に置き換える（ラボフラグで切替可能にし、既定は従来どおり GL）、(2) **画像一致**を確認する、
+(3) 一致したら `displayListReplays` の対象リスト減少を数で示す。
+
+**（旧メモ）** 次の一手: (1) 12リスト分の頂点を **Vulkan の頂点バッファ**へ載せ、**再生時の行列**で描く最小のパイプライン
+（アトラステクスチャ・深度テスト・アルファ）を用意する、(2) `callList` の注入で**対象リストの GL 再生をキャンセル**し、
+(3) **画像一致**と `displayListReplays` の対象リスト減少で確認する。
+
+**（旧メモ）** 次の一手: (1) `PositionTextureVertex` の v 成分を捕獲に足す、(2) 12リスト分の頂点を **Vulkan の頂点バッファ**へ
+載せ、**再生時の行列**で描くための最小のパイプライン（アトラステクスチャ・深度テスト・アルファ）を用意する、
+(3) `callList` の注入で**対象リストの GL 再生をキャンセル**し、**画像一致**と `displayListReplays` の減少で確認する。
+
+**（旧メモ）** 次の一手: (1) 捕獲した72クワッド（12リスト×6）を**モデル空間の頂点バッファ**にし、
+**再生時の行列**で native 描画する（まずプレイヤーモデルの12リストだけを対象にし、`callList` の再生はキャンセルする）、
+(2) テクスチャは現在バインド中のアトラス（`boundTexture`）を使い、深度・ブレンドは GL と同じ状態を写す、
+(3) **画像一致**と、`displayListReplays` のうち**対象リストが減ったこと**で確認する。
+
+**（旧メモ）** 次の一手: (1) `callList` の注入で、対象リスト（まずはプレイヤーモデルの12リスト）を**native 描画に置き換える**
+（GL の再生はキャンセル）、(2) 行列は「コンパイル時 × 再生時」で合成する（どちらの流儀かを**画像で決める**。
+display list が変換済み頂点を持つなら再生時行列は掛けない）、(3) 画像一致と `displayListReplays` の対象リスト減少で確認する。
+
+**（旧メモ）** 次の一手: (1) 捕獲したクワッドを**永続バッファに保存**し、`callList` の再生時に**native で描いて GL の再生を
+取り消す**（最初はプレイヤーモデル1体だけを対象にする）、(2) コンパイル時の行列を捕獲に含める（backend の写しを使う）、
+(3) 画像で一致を確認し、`displayListReplays` のうち対象リストが native に置き換わったことを数で示す。
+
+**（旧メモ）** 次の一手: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
+（4頂点・UV・法線・現在の行列・テクスチャ）を決める、(2) プレイヤーモデル1体を native 化し、画像と `format 9` の
+受理で確認する、(3) 中間帯の 1018 画素（format 6 の雲・水面）を詰めるかは、entity の後で判断する。
+
+**（旧メモ）** 次の一手: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
+（4頂点・UV・法線・現在の行列・テクスチャ）を決める、(2) **プレイヤーモデル1体**を native 化して画像と
+`format 9` の受理で確認する、(3) 空の残差 0.0000 を**現在のビルドで**測り直して「空は native」を確定させる。
+
+**（旧メモ）** 次の一手: (1) `-1` の意味を MC のソースで確かめる（`callList(-1)` を探す）、(2) `ModelRenderer.compileDisplayList` と
+`ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形を決める、(3) 空・星（`2`/`3`）を最初の native 対象にする
+（TOFU ではなく**毎フレーム必ず出る**ので受入が安定する）。
+
+**（旧メモ）** 次の一手: (1) `ModelRenderer.compileDisplayList` と `ModelBox`/`TexturedQuad` を読み、捕まえられる最小の形
+（クワッドの4頂点・テクスチャ座標・法線・現在の行列とテクスチャ）を決める、(2) プレイヤーモデル1体だけを対象に
+native 化し、**画像と `format 9` の到着/受理**で確認する、(3) 同じ入口で空・星へ広げる。
+
+**（旧メモ）** 次の一手: (1) `GlStateManager.callList` と `ModelRenderer` の記録経路を読み、**どちらに介入するのが最小か**を決める
+（記録時に頂点を捕まえられれば、再生時の display list を native のバッファに置き換えられる）、(2) 小さな対象
+（例: プレイヤーモデル1体）で native 化を試し、`format 9` の到着と画像で確認する、(3) 空・星も同じ入口で扱えるかを見る。
+
+**（旧メモ）** 次の一手: (1) **ファネル外の GL 描画**を数える/特定する（例: `GlStateManager.callList` による display list 描画、
+`RenderGlobal` の sky/cloud/star 経路）— これが 27 画素の出所の候補、(2) 実際に entity が出る場面
+（蜘蛛を**外から**見る三人称など）を用意して format 8 の到着を確認する、(3) それでも 27 画素が説明できない場合は、
+深度返却を残したまま「未説明」として記録する。
+
+**（旧メモ）** 次の一手: (1) entity（format 8）のバッチが**どの理由で拒否されているか**を計器で確かめる
+（program 遮断ならその program id と format 8 の組が出るはず）、(2) entity を native にする最小の道を選ぶ、
+(3) それが通ったら `skipDepthReturn` を既定にして spider 場面の差が床（0画素）以下であることを両GPUで受入する。
+
+**（旧メモ）** 次の一手: (1) `ShaderGroup`/`Shader`/`Framebuffer` を読み、パスごとに必要な状態（テクスチャ・uniform・
+ブレンド・深度テストの有無）を表にする、(2) native パスとして `entity_outline`→`blur`×2→合成を実装し、
+spider 場面で **`shaderProgramRefusals=0`** かつ **`skipDepthReturn` の差が床（0画素）以下**を両GPUで受入する、
+(3) それが成立したら深度返却を既定で外し、Intel 25.6 ms / AMD 16.1 ms を受入にする。
+
+**（旧メモ）** 次の一手: (1) spectator の entity outline が何をするか（アウトラインのマスク描画・ぼかし・合成の順序と、
+使うテクスチャ・深度・ブレンド）をコード（バニラ `ShaderGroup` と `EntityRenderer`）から読み、native で再現する範囲を
+決める、(2) 再現できたら `skipDepthReturn` を既定にし、spider 場面で差が床（0画素）以下であることを両GPUで受入する。
+
+**（旧メモ）** 次の一手: (1) 実体が使うシェーダ program を特定する（`shaderProgramRefusals` の内訳を program id / 名前で出す）、
+(2) その program が何をするか（entity の照明・outline・glint か）を確かめ、native で再現できる範囲を決める、
+(3) 再現できたら `skipDepthReturn` を既定にして Intel 25.6 ms / AMD 16.1 ms を受入にする。
+
+**（旧メモ）** 次の一手: (1) 実体（entity/TESR）を native に移し、その後に深度返却を外して **Intel 25.6 ms / AMD 16.1 ms** を
+受入にする、(2) ブリッジの残り（blit 2回・semaphore 待ち・48箇所の状態クエリ）を外す設計に入る、(3) `presentFromComposite`
+の名前が実態（present していない）と合っていないので、**名前と既定の意味を docs で正す**。
+
+**（旧メモ）** 次の一手: (1) format 2 の受け入れを**合成と手で分ける**材料を探す（呼び出し元・頂点数・バインド中テクスチャ）、
+(2) 「format 2 native ＋ 深度返却なし」を**既定にできる形**にするには、ブリッジの残りコスト（blit 2回・semaphore 待ち・
+状態クエリ）も同時に外す必要がある（そうすれば +2 ms の損を回収できる）、(3) 実体（27画素）の扱いを決める。
+
+**（旧メモ）** 次の一手: (1) 合成クワッドと他の format 2 を区別する材料を探す（バインド中のシェーダ・テクスチャ・頂点数・
+呼び出し元のいずれで判定できるか）、(2) 区別ができたら既定で「合成=present経路／手=即時経路」にし、
+**その状態で `skipDepthReturn` の差が床以下**であることを両GPUで受入する、(3) 実体（27画素）の扱いを決める。
+
+**（旧メモ）** 次の一手: (1) 一人称の手を native パスへ移す設計（何を描き、どの状態・深度・テクスチャを要るか）を書く、
+(2) 移した後に `keepGui` 場面で `skipDepthReturn` の差が床（0.0563）と区別できなくなることを受入にする、
+(3) entity/TESR の native 移行は spider（27 px）を基準に進める。
+
+**（旧メモ）** 次の一手: (1) 一人称の手を native パスへ移す設計（何を描き、どの状態・深度・テクスチャを要るか）を書く、
+(2) 移したら `skipDepthReturn` の差が**手ありでも床と区別できなくなる**ことを受入にする、(3) entity/TESR も
+同じ切り分け（emptyHand と同様に、その描画を切った場面で測る）に掛ける。
+
+**（旧メモ）** 次の一手: (1) 深度を消費する GL 描画が**具体的に何か**を特定する（手・GUI・entity のどれが深度を要るか。
+`keepGui` を切った場面との比較で切り分けられる）、(2) 特定できたら、その描画を native に移す順序を設計に入れる、
+(3) 到達しないデバッグ経路のサイトは「未検証」として残す。
+
+**（旧メモ）** 次の一手: (1) 完成条件(b) のブリッジ置き換え設計に入る（今ターンの受入で残る唯一の大きな構造課題）、
+(2) 到達しないデバッグ経路のサイトは「未検証」として残す、(3) 画像の系統差（HF 0.81）を詰める。
+
+**（旧メモ）** 次の一手: (1) minimize 相当（サイズ0や present 失敗）を確認する、(2) 完成条件(b) のブリッジ置き換え設計に入る、
+(3) 到達しないデバッグ経路のサイトは「未検証」として docs に残す（到達させる作業は優先しない）。
+
+**（旧メモ）** 次の一手: (1) `presentReadback=true` の run で readback サイト（`VulkanTerrainGpuBackend:5047`）も叩く、
+(2) minimize 相当（サイズ0や present 失敗）を確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) immediate/descriptor 経路の確保失敗（`VulkanUniformBuffer:110`）を有界にする、(2) 3サイトとも
+両GPUで再受入する、(3) `presentReadback=true` の run で readback サイトも叩く。
+
+**（旧メモ）** 次の一手: (1) `VulkanBuffer` / `VulkanUniformBuffer` / `VulkanContext` の確保失敗を**有界に処理**する
+（テクスチャ経路と同じ扱いにする。何を描かずに済ませるか、どのリソースを退役させるかを決める）、
+(2) 直したら同じサイト名で両GPUを受入し、**exit 0/1 かつ report あり**を確認する、(3) readback は
+`presentReadback=true` の run で叩く。
+
+**（旧メモ）** 次の一手: (1) 残り4サイトを狙って n をさらに振る（または サイト名で狙い撃ちできるようにする）、
+(2) minimize 相当（サイズ0や present 失敗）を確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) `VulkanBuffer` と staging の確保にも同じ注入を入れ、**buffer/descriptor 側の失敗**を受入する、
+(2) minimize 相当（サイズ0や present 失敗）を別途確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) texture/descriptor/allocation 失敗を両GPUで確認する、(2) minimize 相当（サイズ0や present 失敗）を
+別途確認する、(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) `forceOutOfDate` を確定的に発火させる（acquire 側と同じ直し方）、(2) その状態で
+`presentImage` の out-of-date 復旧（verdict が OUT_OF_DATE のときの再作成）を受入する、(3) texture/descriptor/
+allocation 失敗を両GPUで確認する。
+
+**（旧メモ）** 次の一手: (1) `presentImage` 側の out-of-date 復旧を別途受入する（`acquireOutOfDate>0` を証拠として要求）、
+(2) minimize/out-of-date 以外の失敗経路（texture/descriptor/allocation 失敗）を両GPUで確認する、
+(3) 完成条件(b) のブリッジ置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) 注入を**結果に関わらず発火**させる（アンカーを実際のコードに合わせて適用する）、
+(2) その上で probe を両GPUで走らせ、**`injections>0` かつ `VUID=0` / `clean=true`** を確認する、
+(3) `presentImage` 側の out-of-date（`acquireOutOfDate>0`）も別途受入する。
+
+**（旧メモ）** 次の一手: (1) present trace と VUID の発生順から**シグナル済みの semaphore を特定**する、(2) 特定できたら
+その semaphore の扱い（失敗経路での wait/再作成）を直す、(3) 直ったら probe を両GPUで受入し、そのうえで
+`presentImage` 側の out-of-date（`acquireOutOfDate>0`）も別途受入する。
+
+**（旧メモ）** 次の一手: (1) 注入が発火しない理由を実装から確かめる（発火しなければ out-of-date 経路は永久に未検証）、
+(2) 発火するようにした上で、present を飛ばした時に acquire semaphore を残さない処理を入れる、(3) 両GPUで
+out-of-date の復旧を受入する（`acquireOutOfDate>0` を証拠として要求する）。
+
+**（旧メモ）** 次の一手: (1) acquire semaphore の再利用を直す（present 経路の semaphore 対の管理。ここは以前も
+`freshPresentSemaphores` という実験フラグで揺れている）、(2) `forceAcquireOutOfDate` が発火しない理由を
+実装から確かめる（注入が動かなければ out-of-date 経路は永久に未検証のままになる）、(3) 直ったら
+present 経路を両GPUで受入し、`acquireOutOfDate>0` を確認してから out-of-date の復旧を受入とする。
+
+**（旧メモ）** 次の一手: (1) 残る失敗経路（texture/descriptor/allocation 失敗、minimize/out-of-date）を両GPUで確認する、
+(2) 切替後の中身が正しいかを画像で詰める（現在は「validation が綺麗で切替が起きている」まで）、
+(3) 完成条件(b) に向けてブリッジの置き換え設計に入る。
+
+**（旧メモ）** 次の一手: (1) `transitionToShaderRead()` を全 `mipLevels` に広げ、`recreateImageResources()` の直後で
+呼ぶ経路を整える（level 0 の `oldLayout` 前提と衝突しないように）、(2) world switch を AMD/Intel で再受入し、
+`validationClean=true` と `exit 0` を確認する、(3) 同様に「切替後」の描画が正しいかを画像で確かめる。
+
+## 8. 第3回監査の最終追補
+
+32項目と修正後の境界は `docs/audit-2026-10-09-third.md` の「監査後の修正・検証状況」に集約する。
+元Celeritasとの修正前固定比較はvalidationが両方cleanでも大きな画像差あり。GUI差が混ざるため最新版一致率として採用しない。
+修正後の独立runはcapture前に終了し、一致率未取得。成功fixtureと独立再現失敗の両方を残す。
+DSHのgoalは同じIDでobjectiveを更新、末尾指示を完全一致で維持。23:18前後にClinePassのprovider検証（許可deepseek、応答fireworks、strict）で自動継続がdisarmedになり、resume後も停止した。goal完了による停止ではない。
