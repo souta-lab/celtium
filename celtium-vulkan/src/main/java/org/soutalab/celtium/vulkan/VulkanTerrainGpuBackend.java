@@ -294,9 +294,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public List<String> diagnostics() {
         // takeTimingSummary() was written but never called, so every post-process investigation ran without the numbers
         // that say where the handoff time goes. Gated, because it is a per-report string rather than a per-frame cost.
+        // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
+        this.diagnostics.add("stateMirror: mirrorMisses="
+                + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge"));
         if (Boolean.getBoolean("celtium.vulkan.handoffTimings")) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
+            // Whether the transform hooks actually ran. A transform that reached the stub was not mirrored, and with
+            // no context nothing else applies it - so this is the difference between "the mirror is complete" and
+            // "every model is at the camera origin", said as a number in every report rather than inferred later.
+            this.diagnostics.add("stateMirror: mirrorMisses="
+                    + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge"));
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
                     + " fullGlUploads=" + VulkanGlTexture.fullUploadSummary()
                 + " submitFaultInjections=" + VulkanSubmitFault.injections()
@@ -308,7 +318,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " descriptorRequests=" + VulkanDescriptorFault.requests()
                 + " modelDraws=" + this.modelDraws
                 + " texMatrixGroups=" + this.texMatrixGroups
-                + " modelDrawRefusals=" + this.modelDrawRefusals + " modelMissingMeshes=" + this.modelMissingMeshes
+                + " modelDrawRefusals=" + this.modelDrawRefusals
+                + " mirrorMisses=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge")
+                + " mirrorMisses=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge")
+                + " mirrorMisses=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge") + " modelMissingMeshes=" + this.modelMissingMeshes
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                 + " modelMeshQuads=" + this.modelMeshQuads

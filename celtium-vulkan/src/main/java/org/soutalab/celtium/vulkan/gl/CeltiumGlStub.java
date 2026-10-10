@@ -1034,8 +1034,60 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_NOOP:
             default:
+                // A no-op is only safe for state the Vulkan side owns. For the transforms the state mirror is
+                // supposed to follow, a no-op means the hook that should have mirrored the call never ran - which is
+                // the silent fallback this class cannot afford, because without a context nothing else applies the
+                // transform either. Counted per name so a run can say which one got through.
+                celtium$noteMirrorMiss(fn.name);
                 return 0L;
         }
+    }
+
+    /**
+     * The transform calls the state mirror must see. Reaching this class means the corresponding hook did not run:
+     * {@code glTranslatef} arriving here is exactly how every model came to be drawn at the camera origin before the
+     * float translate was hooked, and the count is what turned that from an inference into a number.
+     */
+    private static final java.util.Set<String> MIRROR_REQUIRED = new java.util.HashSet<String>(java.util.Arrays.asList(
+            "glTranslatef", "glTranslated", "glRotatef", "glRotated", "glScalef", "glScaled", "glOrtho",
+            "glFrustum", "glLoadIdentity", "glLoadMatrixf", "glLoadMatrixd", "glMultMatrixf", "glMultMatrixd",
+            "glPushMatrix", "glPopMatrix", "glMatrixMode"));
+
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> MIRROR_MISSES =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    private static void celtium$noteMirrorMiss(String name) {
+        if (!MIRROR_REQUIRED.contains(name)) {
+            return;
+        }
+        java.util.concurrent.atomic.AtomicLong counter = MIRROR_MISSES.get(name);
+        if (counter == null) {
+            counter = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong existing = MIRROR_MISSES.putIfAbsent(name, counter);
+            if (existing != null) {
+                counter = existing;
+            }
+        }
+        counter.incrementAndGet();
+    }
+
+    /**
+     * {@return a one-line census of the transform calls that reached the stub}, i.e. the hooks that did not run.
+     * Empty when every hooked transform was mirrored, which is the state a correct GL-less run is in.
+     */
+    public static String mirrorMissSummary() {
+        if (MIRROR_MISSES.isEmpty()) {
+            return "none";
+        }
+        StringBuilder line = new StringBuilder();
+        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
+                : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(MIRROR_MISSES).entrySet()) {
+            if (line.length() > 0) {
+                line.append(' ');
+            }
+            line.append(entry.getKey()).append('=').append(entry.getValue().get());
+        }
+        return line.toString();
     }
 
     private long generate(Fn fn, long[] c) {

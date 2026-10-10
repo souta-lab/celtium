@@ -7,6 +7,7 @@ import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
 
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.glGetTexLevelParameteri;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
 
 /**
  * Mirrors the OpenGL textures Minecraft binds into Vulkan images, keyed by their GL name.
@@ -54,6 +55,24 @@ public final class VulkanTextureRegistry {
 
     private final VulkanContext context;
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
+    /**
+     * Images this registry does not own, published under a GL name so the immediate path can sample them.
+     * <p>
+     * Kept apart from {@link #entries} on purpose: an entry there is a mirror this registry created and may resize,
+     * write, invalidate and destroy, while a published image belongs to the renderer that handed it over - the
+     * GL-less off-target colour image the outline chain writes and the game's composite samples by name. Everything
+     * that treats an entry as a resource of this class (the uploads, the readback skips, {@code invalidate}, the
+     * announce paths, {@code delete()}) must not see these ids, and everything that resolves a bound texture
+     * ({@link #get}) must see them first. One map, checked first, is that split.
+     */
+    private final Map<Integer, VulkanGlTexture> externalImages = new HashMap<Integer, VulkanGlTexture>();
+    private int externalPublished;
+    private int externalRepublishes;
+    private int externalUnpublished;
+    private int externalSupersededMirrors;
+    private int externalRetireLogs;
+    /** GL names whose publication has been named in the log, so a per-frame publish cannot flood it. */
+    private final java.util.Set<Integer> externalLogged = new java.util.HashSet<Integer>();
     private int mirrorCount;
     private int imageUploads;
     /** Transfers the image refused because the content was already there. */
@@ -103,6 +122,161 @@ public final class VulkanTextureRegistry {
             throw new NullPointerException("context");
         }
         this.context = context;
+    }
+
+    /**
+     * Publishes an image this registry does not own under a GL texture name, and returns the wrapper the immediate
+     * path resolves that name through.
+     * <p>
+     * The case this exists for: under the GL-less window the entity-outline chain runs natively on the renderer's
+     * own off-target colour image (see {@code GllessFrameTarget}), and the game's composite then binds that image by
+     * the GL name the outline framebuffer's colour texture has - which, with no OpenGL context, has no storage of
+     * its own. Without this the bound texture has no mirror, the batch is refused, and the glow never reaches the
+     * screen.
+     * <p>
+     * <b>The contract, which the ownership split enforces.</b> This class creates nothing, resizes nothing,
+     * transitions nothing on the caller's behalf at destroy time, and frees nothing: the image, its memory and its
+     * view stay the caller's, and the wrapper's {@link VulkanGlTexture#delete()} releases only the sampler the
+     * wrapper itself created. {@link #invalidate(int)} leaves a published image alone (its content is live - it is
+     * whatever the owner rendered into it - so there is nothing a re-read could supply), {@link #forgetTexture(int)}
+     * drops the entry without touching the image, and no upload or announce path may write it. The entry counts as
+     * fully initialized because the owner declares the content live, which is also why the wrapper reports
+     * {@link VulkanGlTexture#hasFullContent()} true immediately.
+     * <p>
+     * <b>The layout.</b> The published image is in {@code VK_IMAGE_LAYOUT_GENERAL} when it arrives - the off-target
+     * pass attaches it in that layout - while the immediate pipelines declare
+     * {@code VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}. The owner moves it with
+     * {@link VulkanGlTexture#ensureSampledLayout(VkCommandBuffer)} before the composite samples it and back with
+     * {@link VulkanGlTexture#ensureGeneralLayout(VkCommandBuffer)} before the next off-target pass attaches it; the
+     * wrapper records that handshake so a repeated call records no second barrier.
+     * <p>
+     * Idempotent for the same handles: re-publishing the same image, view and size returns the same wrapper, so a
+     * per-frame call site does not churn samplers and does not invalidate the descriptor keys the immediate path
+     * cached. Different handles under the same name are a replacement (the owner recreated its image): the old
+     * wrapper is retired and a new one built.
+     *
+     * @param glTextureId the GL name the game will bind for this image
+     * @param image       the caller's {@code VkImage}; never destroyed or written here
+     * @param view        the caller's {@code VkImageView}; never destroyed here
+     * @param width       the image width in pixels
+     * @param height      the image height in pixels
+     * @return the wrapper for that name, or {@code null} when the arguments are incomplete or the wrapper could not
+     *         be built - the immediate path then refuses the batch exactly as it did before
+     */
+    public VulkanGlTexture publishExternalImage(int glTextureId, long image, long view, int width, int height) {
+        if (glTextureId == 0 || image == 0L || view == 0L || width <= 0 || height <= 0) {
+            this.failureCount++;
+            this.lastFailure = "an external image for GL texture " + glTextureId + " (image=0x"
+                    + Long.toHexString(image) + " view=0x" + Long.toHexString(view) + " " + width + "x" + height
+                    + ") is incomplete";
+            this.rejectPatch("external image for GL texture " + glTextureId + " was not published: "
+                    + (glTextureId == 0 ? "no GL name to publish it under"
+                            : image == 0L || view == 0L ? "no image or view handle" : "no usable size"));
+            return null;
+        }
+        Integer id = Integer.valueOf(glTextureId);
+        VulkanGlTexture existing = this.externalImages.get(id);
+        if (existing != null && existing.standsFor(image, view, width, height)) {
+            this.externalRepublishes++;
+            return existing;
+        }
+        if (existing != null) {
+            // Same name, different handles: the owner replaced its image, so this wrapper stands for a resource that
+            // no longer exists. Dropped (the image itself is the owner's) rather than kept as a stale view.
+            this.externalImages.remove(id);
+            retireExternal(existing, "GL texture " + glTextureId + " was published with new handles");
+        }
+        Entry superseded = this.entries.remove(id);
+        if (superseded != null) {
+            // A mirror this registry created for the same name is superseded by the renderer's own live image. It is
+            // this registry's object, so it is destroyed - through the retire queue, because a recorded frame may
+            // still name its view. Without this the sampling side could keep resolving the empty mirror.
+            final VulkanGlTexture retiredMirror = superseded.texture;
+            VulkanRetireQueue.retire(new Runnable() {
+                @Override
+                public void run() {
+                    retiredMirror.delete();
+                }
+            });
+            this.externalSupersededMirrors++;
+        }
+        VulkanGlTexture shared;
+        try {
+            shared = VulkanGlTexture.shareExternal(this.context, image, view, width, height, VK_IMAGE_LAYOUT_GENERAL);
+        } catch (RuntimeException | LinkageError error) {
+            this.failureCount++;
+            this.lastFailure = "external image for GL texture " + glTextureId + ": " + error;
+            this.rejectPatch("external image for GL texture " + glTextureId + " could not be published: " + error);
+            return null;
+        }
+        this.externalImages.put(id, shared);
+        this.fullyInitialized.add(id);
+        this.staleIds.remove(id);
+        this.externalPublished++;
+        if (this.externalLogged.size() < 8 && this.externalLogged.add(id)) {
+            System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE published glTexture=" + glTextureId
+                    + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view)
+                    + " size=" + width + "x" + height + " layout=GENERAL owner=renderer"
+                    + " (the immediate path resolves this name through the wrapper; nothing here creates,"
+                    + " resizes or frees the image)");
+        }
+        return shared;
+    }
+
+    /**
+     * Drops a published image, without touching the image.
+     * <p>
+     * Needed when the owner replaces or destroys the image behind the name (a resize recreates the off-target pair):
+     * the wrapper's handles would name a retired image, and a batch sampling it would be a validation error rather
+     * than a missing glow. The wrapper's sampler is retired; the image, its memory and its view are the owner's and
+     * are left exactly as they were.
+     *
+     * @return whether an entry was dropped
+     */
+    public boolean unpublishExternalImage(int glTextureId) {
+        Integer id = Integer.valueOf(glTextureId);
+        VulkanGlTexture existing = this.externalImages.remove(id);
+        if (existing == null) {
+            return false;
+        }
+        this.externalUnpublished++;
+        this.fullyInitialized.remove(id);
+        retireExternal(existing, "GL texture " + glTextureId + " was unpublished");
+        return true;
+    }
+
+    /**
+     * Retires one external wrapper. Only the sampler it created is released: the image, its memory and its view
+     * belong to the caller, and {@link VulkanGlTexture#delete()} knows that for a wrapper built by
+     * {@code shareExternal}.
+     */
+    private void retireExternal(final VulkanGlTexture wrapper, String why) {
+        if (this.externalRetireLogs < 8) {
+            this.externalRetireLogs++;
+            System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE dropped: " + why
+                    + " (the image is the owner's; only this wrapper's sampler is released)");
+        }
+        VulkanRetireQueue.retire(new Runnable() {
+            @Override
+            public void run() {
+                wrapper.delete();
+            }
+        });
+    }
+
+    /** {@return how many external images are published right now}. */
+    public int externalCount() {
+        return this.externalImages.size();
+    }
+
+    /**
+     * {@return one line describing the published images}, so a run's report says whether the owner's publish arrived
+     * and whether the layout handshake ran.
+     */
+    public String externalSummary() {
+        return "published=" + this.externalPublished + " republished=" + this.externalRepublishes
+                + " unpublished=" + this.externalUnpublished + " supersededMirrors=" + this.externalSupersededMirrors
+                + " live=" + this.externalImages.size() + " layout[" + VulkanGlTexture.foreignLayoutSummary() + "]";
     }
 
     /**
@@ -878,6 +1052,14 @@ public final class VulkanTextureRegistry {
     public VulkanGlTexture get(int glTextureId, boolean nearestFilter) {
         if (glTextureId == 0) {
             return null;
+        }
+        // Published images are resolved before every other source: their content is live (the renderer is writing
+        // that image right now), so no announcement and no captured upload could describe it, and a mirror built
+        // from either would be a second image under a name that already stands for the frame's own.
+        VulkanGlTexture external = this.externalImages.get(Integer.valueOf(glTextureId));
+        if (external != null) {
+            HIT_CALLS++;
+            return external;
         }
         // The ownership path: when the upload hook has handed over the image this texture is being filled with, and the
         // mirrors are not copying GL's mip levels (which would need the readback), the mirror is built from those pixels.

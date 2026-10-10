@@ -240,7 +240,61 @@ public final class VulkanGlTexture {
     private static final int SAMPLING_STAGES =
             VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 
+    /**
+     * The stages and accesses a shared (foreign) image is known to be used by, on both sides of the handshake.
+     * <p>
+     * The owner's window into the image is not visible here - the off-target colour image is cleared by a transfer,
+     * drawn into as a colour attachment and sampled or written by the post chain's fragment shaders - so the barrier
+     * that moves it names all of them. Both masks are the same set because either direction can follow any of those
+     * uses. Every access flag below is supported by at least one of the named stages, which is what validation
+     * checks (VUID-VkImageMemoryBarrier-srcAccessMask-02815 and its destination twin).
+     */
+    private static final int WORKING_STAGES = VK_PIPELINE_STAGE_TRANSFER_BIT
+            | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    private static final int WORKING_ACCESS = VK_ACCESS_TRANSFER_WRITE_BIT
+            | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+    /** Layout handshakes recorded and skipped for shared images, so a run says whether the caller's calls arrived. */
+    private static long foreignLayoutTransitions;
+    private static long foreignLayoutSkips;
+
+    /** {@return one line with the shared-image layout handshake counters}, for the run's report. */
+    public static String foreignLayoutSummary() {
+        synchronized (VulkanGlTexture.class) {
+            return "transitions=" + foreignLayoutTransitions + " skips=" + foreignLayoutSkips;
+        }
+    }
+
     private final VulkanContext context;
+
+    /**
+     * Whether the image, its memory and its view were created by this class and may therefore be destroyed by it.
+     * <p>
+     * False for a wrapper built by {@link #shareExternal}: the renderer's own image (the GL-less off-target pair the
+     * post chain adopts) is handed over so the immediate path can sample it by GL name, and the wrapper must never
+     * destroy, resize or write it. One ownership flag rather than a second class: the sampling, sampler, layout and
+     * handle logic is the same object either way, and only the three places that treat the image as a resource of
+     * their own - destroy, recreate and the uploads - have to know the difference.
+     */
+    private boolean ownsImage = true;
+
+    /**
+     * The layout a foreign image is known to be in, tracked by {@link #ensureSampledLayout} and
+     * {@link #ensureGeneralLayout}. Only meaningful while {@link #ownsImage} is false; an owned mirror keeps its
+     * per-level bookkeeping in {@link #levelLayouts} instead.
+     */
+    private int foreignLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    /**
+     * Generations for wrappers built by {@link #shareExternal}, from one counter.
+     * <p>
+     * The generation exists so a cache keyed on a view handle cannot serve a descriptor built on a retired view when
+     * a driver hands the same handle back (audit S12). An owned mirror bumps its instance field on every recreate;
+     * a foreign wrapper is never recreated in place, so a fresh wrapper - the only thing a re-publish produces -
+     * takes the next value of this counter and the key changes even if every handle is reused.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong SHARED_GENERATIONS =
+            new java.util.concurrent.atomic.AtomicLong();
 
     private int width;
     private int height;
@@ -317,6 +371,193 @@ public final class VulkanGlTexture {
             // Release whatever was already created so a failed create() cannot leak device objects.
             result.delete();
             throw error;
+        }
+    }
+
+    /**
+     * Wraps an image the caller already owns under this class's sampling surface, so the immediate path can resolve
+     * it like any other mirrored texture.
+     * <p>
+     * This is the shape the GL-less outline chain needs: the chain's output lives in the renderer's own off-target
+     * colour image, and the game's composite binds it by GL texture name. The registry stores this wrapper under that
+     * name, the batch's bound texture resolves it, and the wrapper supplies the one thing the descriptor needs - a
+     * view and a sampler.
+     * <p>
+     * <b>Ownership.</b> The wrapper creates the sampler (and nothing else) and owns only that. The image, its memory
+     * and its view belong to the caller: {@link #delete()} does not destroy them, no upload path may write them, and
+     * no resize may replace them. The content is declared live by the caller, so the wrapper reports
+     * {@link #hasFullContent()} true immediately - the sampling side refuses a mirror that never held whole content,
+     * and for a foreign image the owner has just said the content is the frame that was rendered into it.
+     * <p>
+     * <b>Layout.</b> A foreign image is not at rest in {@code SHADER_READ_ONLY_OPTIMAL}: the off-target image is the
+     * render pass's colour attachment in {@code GENERAL} (and the next frame's pass attaches it again), while the
+     * immediate pipelines declare {@code SHADER_READ_ONLY_OPTIMAL} in their descriptors. The caller moves it with
+     * {@link #ensureSampledLayout} before it is sampled and back with {@link #ensureGeneralLayout} before it is
+     * attached again; the wrapper records what it has done so a repeated call records no second barrier.
+     *
+     * @param context        the live Vulkan device wrapper, used for the sampler this wrapper creates
+     * @param image          the caller's {@code VkImage}; never destroyed here
+     * @param view           the caller's {@code VkImageView}; never destroyed here
+     * @param width          the image width in pixels
+     * @param height         the image height in pixels
+     * @param declaredLayout the layout the caller promises the image is in right now; the first transition uses it
+     *                       as its {@code oldLayout}, so a wrong promise is a validation error rather than a silent
+     *                       layout mismatch. The GL-less off-target image is published in
+     *                       {@code VK_IMAGE_LAYOUT_GENERAL}.
+     * @return the wrapper; drop it with {@link #delete()}, which releases the sampler and touches nothing of the image
+     * @throws IllegalArgumentException if a handle is 0, the size is not positive, or the declared layout is
+     *                                  {@code UNDEFINED} (an undefined foreign image has no live content to publish)
+     */
+    public static VulkanGlTexture shareExternal(VulkanContext context, long image, long view, int width, int height,
+            int declaredLayout) {
+        if (context == null) {
+            throw new NullPointerException("context");
+        }
+        if (image == 0L || view == 0L) {
+            throw new IllegalArgumentException("A shared external image needs a live image and view, got image=0x"
+                    + Long.toHexString(image) + " view=0x" + Long.toHexString(view));
+        }
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("A shared external image of " + width + "x" + height
+                    + " pixels is not usable");
+        }
+        if (declaredLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            // Publishing an image whose content the caller has not established would sample undefined texels; the
+            // first transition could not name a preserving oldLayout either, and declaring UNDEFINED would discard
+            // whatever the frame drew. Refused rather than guessed.
+            throw new IllegalArgumentException("A shared external image cannot be published in UNDEFINED: its owner"
+                    + " declares the content live in the layout it was left in");
+        }
+        VulkanGlTexture result = new VulkanGlTexture(context);
+        result.ownsImage = false;
+        result.image = image;
+        result.view = view;
+        result.memory = 0L;
+        result.width = width;
+        result.height = height;
+        // One level: the off-target image is created with mipLevels 1 and its view covers exactly that. The sampler
+        // is told the same number, so its LOD clamp cannot reach a level the view does not have.
+        result.mipLevels = 1;
+        result.foreignLayout = declaredLayout;
+        result.fullContentArrived = true;
+        result.generation = SHARED_GENERATIONS.incrementAndGet();
+        // Linear and clamp-to-edge, the state a game framebuffer texture is created with: the composite is a
+        // full-screen quad whose texture coordinates span 0..1 exactly, so filtering and wrapping only matter at the
+        // edges - and there clamping is what the reference does.
+        result.nearestFilter = false;
+        result.wrapRepeatU = false;
+        result.wrapRepeatV = false;
+        try {
+            result.createSampler();
+        } catch (RuntimeException | LinkageError error) {
+            // The image is the caller's; only a half-created wrapper is dropped here.
+            result.delete();
+            throw error;
+        }
+        return result;
+    }
+
+    /**
+     * {@return whether this wrapper stands for exactly this image, view and size}.
+     * <p>
+     * The registry's publish is idempotent through this: re-publishing the same handles returns the same wrapper, so
+     * the sampler is created once and the descriptor keys the immediate path cached stay valid. A different handle or
+     * size is a different image and gets a new wrapper.
+     */
+    boolean standsFor(long image, long view, int width, int height) {
+        return !this.ownsImage && this.image == image && this.view == view && this.width == width
+                && this.height == height;
+    }
+
+    /** {@return whether the image is owned by the caller of {@link #shareExternal} rather than by this wrapper}. */
+    public boolean isExternal() {
+        return !this.ownsImage;
+    }
+
+    /**
+     * Records the transition that makes a foreign image samplable, if it is not already in that layout.
+     * <p>
+     * Called by the owner (the backend) at a point it controls, in the command buffer that will do the sampling and
+     * before the sampling command is recorded. Idempotent: a second call in the same layout records nothing, so a
+     * call site may be reached once per frame without a barrier per frame.
+     *
+     * @param commandBuffer the command buffer the sampling draw is recorded into
+     * @throws IllegalStateException if this is an owned mirror (its layout is this class's own bookkeeping), if the
+     *                               wrapper was deleted, or if the image was never given a known layout
+     */
+    public void ensureSampledLayout(VkCommandBuffer commandBuffer) {
+        requireForeign("ensureSampledLayout");
+        transitionForeignLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    /**
+     * Records the transition that hands a foreign image back to the layout its owner attaches it in, if it is not
+     * already there.
+     * <p>
+     * The counterpart of {@link #ensureSampledLayout}: the off-target image is a render pass colour attachment in
+     * {@code GENERAL} and the next frame's pass attaches it again, so a frame that sampled it must say so before the
+     * pass begins. Called by the owner in the command buffer that is about to attach the image (or to sample/attach
+     * it through the post chain, which assumes {@code GENERAL} for an adopted target).
+     */
+    public void ensureGeneralLayout(VkCommandBuffer commandBuffer) {
+        requireForeign("ensureGeneralLayout");
+        transitionForeignLayout(commandBuffer, VK_IMAGE_LAYOUT_GENERAL);
+    }
+
+    /** {@return the layout this wrapper last recorded for a foreign image}, for reports and tests. */
+    public int foreignLayout() {
+        return this.foreignLayout;
+    }
+
+    private void requireForeign(String what) {
+        requireAlive();
+        if (this.ownsImage) {
+            throw new IllegalStateException(what + " is for an image this class does not own; a mirrored texture's"
+                    + " layouts are recorded by its own upload path");
+        }
+        if (this.foreignLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            throw new IllegalStateException(what + ": the shared image's layout was never declared");
+        }
+    }
+
+    /**
+     * Records one barrier moving a foreign image between the two layouts this handshake knows.
+     * <p>
+     * The access masks cover every way the owner uses the image, because the wrapper cannot see the owner's
+     * recording: the off-target colour image is cleared ({@code TRANSFER_WRITE}), drawn into as a colour attachment
+     * ({@code COLOR_ATTACHMENT_WRITE}) and sampled or written by the post chain's fragment shaders
+     * ({@code SHADER_READ} / {@code SHADER_WRITE}). Naming a stage or access that the image does not actually see is
+     * harmless; leaving out one it does see is the missing-dependency bug this exists to prevent.
+     */
+    private void transitionForeignLayout(VkCommandBuffer commandBuffer, int newLayout) {
+        if (this.foreignLayout == newLayout) {
+            synchronized (VulkanGlTexture.class) {
+                foreignLayoutSkips++;
+            }
+            return;
+        }
+        if (commandBuffer == null || commandBuffer.address() == 0L) {
+            throw new IllegalArgumentException("A shared image layout transition needs a command buffer");
+        }
+        final int oldLayout = this.foreignLayout;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .srcAccessMask(WORKING_ACCESS)
+                    .dstAccessMask(WORKING_ACCESS)
+                    .oldLayout(oldLayout)
+                    .newLayout(newLayout)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(this.image);
+            // One level, one layer: the off-target image has no chain, and a range that named levels the view does
+            // not cover would be the same class of error the mirror's own layout bookkeeping was written to avoid.
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, WORKING_STAGES, WORKING_STAGES, 0, null, null, barrier);
+        }
+        this.foreignLayout = newLayout;
+        synchronized (VulkanGlTexture.class) {
+            foreignLayoutTransitions++;
         }
     }
 
@@ -483,7 +724,7 @@ public final class VulkanGlTexture {
             return;
         }
         try {
-        requireAlive();
+        requireOwned("an upload from a GL texture");
         // Where the pixels come from. With an OpenGL context they come from the readback, exactly as they always have -
         // this flag is false there and nothing below changes. Without one there is nothing to read back, so they come
         // from the upload the game itself made, which the stub kept; the fallback is inside readGlLevel0 so that both
@@ -590,7 +831,7 @@ public final class VulkanGlTexture {
     }
 
     public boolean uploadPatchFromPixels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer rgba) {
-        requireAlive();
+        requireOwned("a patch upload");
         // Sticky, like uploadFromImage: a patch over a poisoned mirror is poisoned as well.
         if (x < 0 || y < 0 || x + pixelWidth > width || y + pixelHeight > height) {
             return false;
@@ -611,7 +852,7 @@ public final class VulkanGlTexture {
     }
 
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
-        requireAlive();
+        requireOwned("a whole-image upload");
         // The poisons are STICKY: they are set by the GL-name entry point and never cleared, so a later write through
         // this path - the announced image, the captured surface - cannot put the real pixels back and make a poisoned
         // run look like a run that never sampled this image. Measured at draw time is the only measurement that counts.
@@ -722,6 +963,9 @@ public final class VulkanGlTexture {
         }
         deleted = true;
         destroyStaging();
+        // An image this wrapper does not own is dropped, not destroyed: the renderer's off-target pair outlives this
+        // wrapper (the next publish builds a new one for the same image), and destroying it here would take the
+        // silhouette with it. The handles are cleared so nothing can reach the retired image through this object.
         destroyImageResources();
         if (sampler != 0L) {
             final long retiredSampler = sampler;
@@ -749,6 +993,7 @@ public final class VulkanGlTexture {
     }
 
     private void createImageResources(int newWidth, int newHeight) {
+        requireOwned("creating an image");
         this.mipLevels = mipLevelsFor(newWidth, newHeight);
         if (newWidth <= 0 || newHeight <= 0) {
             throw new IllegalArgumentException("A mirrored texture size of " + newWidth + "x" + newHeight
@@ -893,6 +1138,7 @@ public final class VulkanGlTexture {
     }
 
     private void recreateImageResources(int newWidth, int newHeight) {
+        requireOwned("resizing the image");
         destroyImageResources();
         createImageResources(newWidth, newHeight);
         // The new image is in VK_IMAGE_LAYOUT_UNDEFINED for every level, and the next write may be a patch, which only
@@ -904,6 +1150,13 @@ public final class VulkanGlTexture {
     }
 
     private void destroyImageResources() {
+        if (!this.ownsImage) {
+            // A foreign image and its view belong to whoever published them. Only the wrapper's references go.
+            view = 0L;
+            image = 0L;
+            memory = 0L;
+            return;
+        }
         VkDevice device = context.device();
         if (view != 0L) {
             // Retired rather than destroyed: a command buffer recorded earlier may still name this view (audit S12).
@@ -1498,6 +1751,7 @@ public final class VulkanGlTexture {
      * coordinates; this compares the two images themselves.
      */
     public void compareLevelZeroWithGl(int glTextureId) {
+        requireOwned("a level-0 comparison");
         int w = this.width;
         int h = this.height;
         if (w <= 0 || h <= 0) {
@@ -1835,6 +2089,22 @@ public final class VulkanGlTexture {
     private void requireAlive() {
         if (deleted) {
             throw new IllegalStateException("The mirrored texture was deleted");
+        }
+    }
+
+    /**
+     * Refuses a write, a resize or a diagnostic copy on a wrapper whose image belongs to someone else.
+     * <p>
+     * A shared image is handed over for sampling only. Writing it would overwrite the frame the owner rendered into
+     * it, resizing it would replace a resource the owner still holds, and reading it through the mirror dump would
+     * transition it out of the layout the handshake promised. All three are refused with the reason rather than
+     * silently doing the wrong thing to another owner's image.
+     */
+    private void requireOwned(String what) {
+        requireAlive();
+        if (!this.ownsImage) {
+            throw new IllegalStateException("This wrapper shares an image the renderer owns, so it cannot be used for "
+                    + what + "; the content of a shared image is what its owner rendered into it");
         }
     }
 
