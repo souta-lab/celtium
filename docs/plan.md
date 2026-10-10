@@ -2630,7 +2630,32 @@ this.commandState.endPass();
   その値を読む時点ではまだクライアント側に反映されていない。**測定のタイミングの問題**であり、
   転送自体は `dimensionTransferred=true` で成功している。
 
-**次の一手**: (1) **Intel の dimension ハング**を調べる（サーバースレッドのスタックダンプを取る、
+**「Intel の dimension ハング」はハングではなかった（このターン・測定誤りの訂正）**:
+
+- 前ターンに「Intel ではハングする」と書いたが、**誤りだった**。原因は**ハーネスの時間制限**である。
+  ハーネスの出力に `{"exitCode": 143, "endedBy": "time-limit", "elapsedSeconds": 120.38}` と記録されており、
+  **`--duration` がそのまま実行の上限**になっている（ログ末尾も `Client Shutdown Thread: Stopping server /
+  Saving players` で**正常終了**）。**報告が出ないのは、上限に達する前に capture へ到達していないから**である。
+- **測り直し（Intel、duration を上げた）**:
+
+| run | duration | 結果 |
+|---|---|---|
+| **End（Intel）** | 240 s | **exit 0 / clean / PASSED / VUID 0 / 307 frames / p50 17.25 ms / 転送成功**、**所要 27 秒** |
+| **Nether（Intel）** | 240 s | 240 秒で `time-limit`（報告なし）。ただし**ログは240秒間ずっと動いていた**（ミラー転送 16,529 回） |
+| **Nether（AMD）** | 120 s | exit 0 / clean / PASSED / 333 frames |
+
+- **Nether（Intel）で何が起きているか（ログから）**:
+  `loaded a new chunk [1,-11] in dimension -1 (the_nether)` と `Unloading dimension -1` が出ており、
+  **転送そのものは成功している**。**新しい次元のチャンク生成**が Intel では重く、**240 秒では capture まで届かない**
+  というのが実測である（**止まってはいない**）。
+- **訂正の内容**: 「Intel の dimension ハング」→「**Intel では Nether のチャンク生成が重く、時間予算に収まらない**」。
+  **レンダラ側の欠陥を示す証拠は無い**（クラッシュなし・**VUID 0**）。**推測ではなく、ログとハーネス出力に基づく**。
+- **方法の教訓（3回目）**: **「終わらない」を「ハング」と読まない**。まず**ハーネスの `endedBy` と経過時間**を見る。
+
+**次の一手**: (1) **duration 600 s** の Intel Nether run で capture まで到達するかを確認する（実行中）、
+(2) 到達するなら Intel の dimension 場面も受入に加える、(3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) **Intel の dimension ハング**を調べる（サーバースレッドのスタックダンプを取る、
   または転送を `dimensionAtTick` より早い/遅い時点にずらして再現条件を絞る）、
   (2) `dimensionAfter` を**フレーム終了時点**で読み直して、クライアント側の反映を確認する、
   (3) モデル描画の「頂点の実データ比較」を残件として進める。
