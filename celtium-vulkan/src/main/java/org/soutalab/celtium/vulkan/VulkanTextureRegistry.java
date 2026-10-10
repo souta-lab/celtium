@@ -31,6 +31,10 @@ import static org.lwjgl.opengl.GL11.glGetTexLevelParameteri;
  * Threading: render thread only, which is where both the GL binds and the uploads happen.
  */
 public final class VulkanTextureRegistry {
+
+    /** Whether the skip decision above is logged; set with the mirror dump, which asks the same question of pixels. */
+    private static final String MIRROR_DUMP = System.getProperty("celtium.vulkan.mirrorDump");
+    private static int skipDecisionLogs;
     /** One mirrored texture: the Vulkan image plus the GL name and size it was created from. */
     private static final class Entry {
         final int glId;
@@ -174,20 +178,45 @@ public final class VulkanTextureRegistry {
     public boolean canSkipReadback(int glTextureId) {
         Integer id = Integer.valueOf(glTextureId);
         if (!this.fullyInitialized.contains(id)) {
+            skipDecisionLog(glTextureId, "not fully initialized", false);
             return false;
         }
         if (CeltiumGlStub.isInstalled()) {
             Entry entry = this.entries.get(id);
             if (entry != null && entry.texture.hasFullContent()) {
+                skipDecisionLog(glTextureId, "stub mirror holds whole content", true);
                 return true;
             }
         }
         Integer applied = this.announcedGeneration.get(id);
         if (applied == null) {
+            skipDecisionLog(glTextureId, "no announced application", false);
             return false;
         }
         Integer consumed = this.consumedGeneration.get(id);
-        return consumed == null || applied.intValue() > consumed.intValue();
+        boolean skip = consumed == null || applied.intValue() > consumed.intValue();
+        skipDecisionLog(glTextureId, "applied=" + applied + " consumed=" + consumed, skip);
+        return skip;
+    }
+
+    /**
+     * Names the decision above when {@code -Dceltium.vulkan.mirrorDump} is set.
+     * <p>
+     * This method is the gate every directly held texture's readback passes: a "true" here with an image whose whole
+     * content never arrived is the defect that draws patches over undefined texels, and a "false" here is the defect
+     * that re-reads a texture every frame. The two are one boolean apart in the log, so the boolean is logged with the
+     * facts it was made from.
+     */
+    private void skipDecisionLog(int glTextureId, String why, boolean decision) {
+        if (MIRROR_DUMP == null || skipDecisionLogs >= 200) {
+            return;
+        }
+        skipDecisionLogs++;
+        Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+        System.out.println("[Celtium] CELTIUM_SKIP_DECISION glTexture=" + glTextureId + " skip=" + decision
+                + " because " + why + " entry=" + (entry == null ? "none"
+                        : entry.width + "x" + entry.height + " full=" + entry.texture.hasFullContent())
+                + " fullyInitialized=" + this.fullyInitialized.contains(Integer.valueOf(glTextureId)));
     }
 
     /** Consumes the CPU application that made a readback unnecessary, so the next write is judged on its own. */

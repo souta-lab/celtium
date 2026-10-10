@@ -34,7 +34,8 @@
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
 | **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
-| 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの |
+| **GL-context-less window（goal 項目6 / 条件 (b)）** | **部分達成: 起動・提示・terrain pass 開始は実測済／窓の絵が未解決なので未受入** | GL context なしで world まで起動し、Vulkan が毎フレーム提示して GL swap を1対1で飛ばす（`p548-glless`: `presentedFromVulkan=287`＝`glSwapsSkipped=287`・`presentFailures=0`・VUID 0）。`p549/p550-glless` で game の clear 色（sky 色 `#B3CFFF`）が届き、`logs/celtium-validation.json` に `pipeline for solid created`・`firstDraw region=8 pass=solid ... elements=16896`。**未解決**: 窓の絵はまだ絵ではない（`p559-glless`: `presentedDistinctColours=2`・`presentedNonBackgroundFraction=0.0`・`presentedVerticalBands=15`・fixture `FAILED_PRESENTED_IMAGE`）。GL-bridge 既定経路は退行なし（`reg-bridge3`: PASSED・clean・msgs 0・worldFrames 142・`validationExitCode=0`）。§0.114 |
+| 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの。**GL-less flag 経路（`-Dceltium.vulkan.glless=true`）は §0.114 で起動・提示まで実測したが、窓の絵が未解決なので既定は bridge のまま** |
 | **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | **model 経路（表示リスト）の native 描画** | **実験フラグ側・既定 off／変換は特定済み** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、さらにモデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りの実測で最良）。既定は off のまま（§0.69〜§0.74） |
@@ -45,6 +46,65 @@
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.114 **部分達成**: GL-context-less window が起動・提示・terrain pass 開始まで到達（goal 項目6 / 条件 (b)）—— 窓の絵は未解決なので受入ではない
+
+- 対象は commit `4bcff8de7`（owned frame target・float marshalling・texture capture・presented-image 主張）。
+  引用する GL-less run はすべて AMD RX 6400（`logs/celtium-capabilities.json` の `vulkanDevices`）・flag 付き
+  （`-Dceltium.vulkan.glless=true`）・headless。**既定は従来どおり GL-bridge**。
+  詳細・再現コマンド・計測で見つけた5欠陥は `docs/history/2026-10-10-gl-less-bring-up.md`。
+- **起動（実測）**: `logs/debug.log` に `CELTIUM_GLLESS stub GL provider installed`・`window hinted GLFW_NO_API`・
+  `splash progress skipped (no shared GL context)` の3行（`p548-glless`〜`p559-glless` すべて）。fixture は loaded
+  world まで到達し（`logs/celtium-validation.json` の `worldFrames`: `p549` 282・`p550` 191・`p559` 192）、
+  `validationClean=true`・`validationMessageCount=0`（`validation-process.json`）。
+- **GL 実体が無い（実測）**: `logs/celtium-capabilities.json` は `glRenderer="Celtium stub GL"`・`deviceUuids=[]`、
+  `logs/celtium-vulkan-device.json` は `status=UNSUPPORTED_OR_UNAVAILABLE`・`logicalDeviceCreated=false`・
+  `reasons=["The current OpenGL context does not expose device UUIDs ..."]`。bridge の前提（GL device UUID と
+  external memory/semaphore FD）はこの経路には無い。`CELTIUM_GROUPS` も `gameFramebufferIsShared=false`・
+  `gameFramebufferAdopted=0`・`glless target: no handoff` で、フレームに shared image が入っていない
+  （GL-bridge の `reg-bridge3` は `gameFramebufferIsShared=true`・`adopted=1`）。
+- **1フレーム1提示・GL swap は1対1で skip（実測）**: `p548-glless` の `CELTIUM_GROUPS` 行（21:51:13）で
+  `presentedFromVulkan=287`・`glSwapsSkipped=287`・`presentFailures=0`（最終行は 288/288。commit message が引く 287 は
+  その1つ前の行）。`p549` 281/281・`p550` 190/190・`p551` 275/275・`p558` 167/167・`p559` 191/191 も同値。
+  提示先は `rendererDebug` の `swapchain: platform=x11 format=44 colourSpace=0 presentMode=1 images=4
+  size=1280x720`、結果は `presentResult=[present image: blitted 1280x720 onto image N (0)]`。
+- **clear が game の空の色として届く（実測）**: `p548-glless/screenshots/celtium-presented.png` は `#FFFF00`
+  62.5 % + 黒 37.5 %（float の取り違えが残っていた run。その次の `p549-glless` で色が変わる）。`p549-glless`/`p550-glless`
+  は `#B3CFFF` 62.5 % + 黒 37.5 %。`#B3CFFF` は game が `glClearColor` に渡す fog/sky 色（`EntityRenderer.updateFogColor`
+  の最後の `GlStateManager.clearColor(fogColorRed, fogColorGreen, fogColorBlue, 0.0F)`）。修正は `CeltiumGlStub` の
+  per-signature CIF（旧: 8 pointer の CIF が全関数を兼ね、float が SSE ではなく general-purpose から読まれていた）。
+- **driver 無しの texture 供給（実測）**: `CELTIUM_GROUPS` の `lightmapSuppliedOnDemand=1`・
+  `lightmapSupplyFailure=[none]`、`rendererDebug` の `block atlas: gl texture 12 512x512`・
+  `lightmap: gl texture 15 16x16`・`pipeline for solid created [vertex input stride=32
+  module=terrain_solid_vanilla.vert ...]`・`firstDraw region=8 pass=solid stride=32 ... elements=16896 ...`。
+  読み戻しは無い（`readbackByOrigin=none`・`partialMirrorRefusals=0`）—— mirror は stub が保持した upload と
+  game の announce から埋まる（`p549`: `imageFilledMirrors=1360`・`directMirrorFromAnnouncement=633`・
+  `announcedUploads=8`・`dynamicTextureFills=886`）。geometry は record=submit=complete で閉じる
+  （`p549`: `immediateRecordedBatches=7403`＝`immediateSubmittedBatches`・`immediateCompletedBatches=7402`・
+  `invalidImmediateRecords=0`・`celtium/vulkan-check passes=1759 skipped=0 errors=0`）。
+- **fixture が fail-closed（実測）**: GL-less のときだけ `celtium$checkPresentedImage` が提示画像
+  （distinct colours・non-background fraction・vertical bands）と frame 数を検査し、絵でなければ PASSED にしない
+  （`validation-process.json` の `fixtureStatus=FAILED_PRESENTED_IMAGE`）。
+- **未解決（受入ではない）**: **窓の絵はまだ絵ではない**。`p559-glless` は `presentedDistinctColours=2`・
+  `presentedNonBackgroundFraction=0.0`・`presentedVerticalBands=15`・`presentedBackgroundColour=0x9DB5E0`・
+  `presentedImageAssertions=FAILED: ... the window is a clear colour plus at most a quad or two, not a frame`・
+  `fixtureStatus=FAILED_PRESENTED_IMAGE`（`p558-glless` も FAILED、distinct=2・bands=17・bg `0x96ADD6`）。
+  capture 時の `presentedImageMeanAtCapture=213.6666717529297` は sky 色 `#B3CFFF` の RGB 平均そのもので、
+  一様な空色フレームと一致する。`p559-glless/screenshots/frame-120.png`（owned target の dump）は空色の上に
+  大きな灰色 wedge と**全幅の黒帯（rows 366-635）**で、地形は連続した面ではない。同じ world の GL-bridge 参照
+  `p530-tp/screenshots/celtium-validation.png` は連続した checkerboard の地形面。commit message は
+  「terrain は fragments と wedges・void plane が全幅の帯として透ける」と記録する。
+- **証拠の限界（隠さない）**: 提示 PNG は tick 20 で要求した one-shot の dump なので capture 時点のフレームではない
+  （`p559` の `presentedImagePngAgeMs=8566`）。色統計はその早期フレームのもので、capture 時の状態は mean
+  （一様 sky 色の平均と一致）と owned target の frame dump が示す。
+- **harness verdict は PASSED ではない**: GL-less run は `exitCode=0` だが `validationExitCode=1`・
+  `gpuRequirementMet=false`（run 時に `--require-gpu 'RX 6400'` を渡しており、GL renderer が stub なので harness は
+  GPU を確認できない。`p557-glless` だけは timeout で `exitCode=143`・`validationExitCode=124`・`fixtureStatus=NO_CAPTURE`）。
+  fixture が `PASSED`・clean の `p548`〜`p551` でも harness は 1 を返す。対照の `reg-bridge3` は
+  fixture `PASSED`・`validationClean=true`・msgs 0・`worldFrames=142`・`validationExitCode=0`・
+  `gpuRequirementMet=true` で、GL-bridge 既定経路の退行がないことを示す。
+- **未検証のまま残るもの**: post chain はこの fixture で発火していない（`postChains=0`）ので seeded post chain の
+  GL readback 経路は GL-less で未検証。Intel GPU での GL-less は未計測（引用 run はすべて AMD）。
 
 ## 0.111 **計測**: pinned Celeritas（989ebf2e）対 current Celtium の frame 時間（goal 項目8）
 
@@ -2592,10 +2652,7 @@ frame target が作り直された後（resize / teardown）に古い group が�
   動作確認済み**（AMD：creeper 緑・spider 5眼モザイク・enderman 反転、いずれも presented=screenshot
   0.000 %・PASSED —— post chain は GL 実行だが出力は shared FBO 経由で提示へ届く）。残る厳密な未了は
   **post-process 自体の native 化**（shader chain は GL のまま —— 出力は正しいが native Vulkan ではない）。 |
-| (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成（ただし欠落はブリッジに限定された）** | **前進**: 当時の計器で `regStaleCalls=0`・`inPlaceRefreshes=0`・announce 経由 16.2/フレーム を観測した。
-  **ただしこれは通常fixtureの範囲の話であり「全sceneで readback が無い」意味ではない**。構造修復1（`297ce5caa`）で
-  atlas/lightmap の**無効化ごとの全面 readback を廃止**し、`readbacksSkipped=473` 対 `directMirrorRefreshes=472` を
-  実測した（=ほぼ全ての更新が CPU 供給で閉じる）。**残る依存はブリッジ本体**（`VulkanFrameTarget`: FBO付け替え・色/深度blit・semaphore待ち・状態クエリ48箇所）で、CPUコストは **0.58 ms/フレーム（AMD）/ 0.83（Intel）**。GL context は依然として生成する。 |
+| (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **部分達成（GL-less 起動は実測・窓の絵が未解決なので未受入）** | **実測（`-Dceltium.vulkan.glless=true`、AMD）**: GL context なしで world まで起動し、Vulkan が毎フレーム提示して GL swap を1対1で飛ばす（`p548-glless`: `presentedFromVulkan=287`＝`glSwapsSkipped=287`・`presentFailures=0`・`validationMessageCount=0`）。GL 実体は stub（`glRenderer="Celtium stub GL"`・`deviceUuids=[]`）で、bridge も shared image もフレームに無い（`gameFramebufferIsShared=false`・`glless target: no handoff`）。**未受入の理由**: 提示画像がまだ絵ではない（`p559-glless`: `presentedDistinctColours=2`・`presentedNonBackgroundFraction=0.0`・`presentedVerticalBands=15`・fixture `FAILED_PRESENTED_IMAGE`）。GL-less run の harness verdict は `validationExitCode=1`・`gpuRequirementMet=false` で、PASSED ではない。**既定経路の bridge 側計器は従来どおり**: `regStaleCalls=0`・`inPlaceRefreshes=0`・announce 経由 16.2/フレーム（**ただしこれは通常fixtureの範囲の話であり「全sceneで readback が無い」意味ではない**）、構造修復1（`297ce5caa`）で atlas/lightmap の**無効化ごとの全面 readback を廃止**し `readbacksSkipped=473` 対 `directMirrorRefreshes=472` を実測（=ほぼ全ての更新が CPU 供給で閉じる）、**残る依存はブリッジ本体**（`VulkanFrameTarget`: FBO付け替え・色/深度blit・semaphore待ち・状態クエリ48箇所）で CPUコスト **0.58 ms/フレーム（AMD）/ 0.83（Intel）**、GL context は依然として生成する。§0.114 に全測定 |
 | (c) native swapchain frameが実window/compositor出力へ到達 | **前半は確認済み・後半は環境制約** | **確認済み**: `presentMarker` のマゼンタ (1,0,1,1) を提示画像から読み戻すと **mean 191.25** で、期待値 `(255+0+255+255)/4=191.25` と**完全一致**（＝提示された swapchain 画像にこの renderer の合成フレームが入っている）。**未確認**: 実画面への到達。この環境には capture 可能な表示出力が無い（X は screen 0×0、Wayland は `no wl_output`、`grim` は導入済みだが出力が無い）。不足条件は §7.6 に明記。 |
 | (d) AMD/Intelで必要場面と失敗復旧、監査P0/P1を明示受入で閉じる | **部分（受入は緑、監査項目の一部が未了）** | **既定の世界は溶岩/火入り**（`worldLayers` で差し替え可）で、**AMD p50 25.49 ms（修復1後）/ Intel 軽い世界 28.47 ms・溶岩世界 64.52 ms**、
   いずれも exit 0 / clean / PASSED。**dimension は End が AMD/Intel とも capture 時 dimension 1 で PASSED、
@@ -2639,7 +2696,7 @@ frame target が作り直された後（resize / teardown）に古い group が�
 | **A25** | counterの単位が完了主張と違う | **記録済** | 単位の区別は §7 のcounter表と各行の実測欄で記録済：`imageFilledMirrors`=呼出し/refresh回数（resource数でない）、`outsideWorldPassAccepted`=accept判定前増加、`offTargetCopiedBack`=draw記録数増targetのcopy回数、postChains/postPasses/postTargets/postPipelines=実行chain・記録pass・生成target・生成pipeline数。counter単位をcompletion主張として読む規則は維持 |
 | **A26** | S05/S06の専用受入が不十分 | **機構は実contentで検証済・画像受入はheadless計測限界で閉じる** | merge/growth機構は実contentで実働：HUDのformat-2 quadは毎frame同groupへmerge（baseVertex実働→HUD帯0.000一致）、`immediateMaxGroupVertices=68008`でarena成長も実働。専用fixture（`drawMergedQuads`：2独立batch+22002 quad、受理/記録/提出確認）はoverlay event → target 0（default FB）経路で、presented/screenshotのgame FBOには写らない —— auditの「0px」は可視性問題でrenderer欠陥ではなかった。**GL_BACK readback試行も失敗**：headless環境ではpresentedはVulkan swapchain経由でGL default FBはstale buffer（全pixel uniform 179,207,255）。fixtureのdraw自体は受理・記録・提出される（accepted+drawn確認）ので機構正しさは実contentのmerge証拠で担保 —— 専用画像受入はheadless計測限界として閉じる |
 | **A27** | 性能向上の根拠がない | **計測済・比較は正直に記録** | pinned Celeritas対同一fixture・AMD。`frameIntervalP50Ms`：既定世界 28.28 vs 16.32 ms、軽世界 6.84 vs 16.05 ms。**tail**（今回計測・既定世界）: 現行 p95=48.63/p99=62.56 vs baseline p95=31.70/p99=39.11 —— p50比1.88x・p99比1.60x、tailはmedianより相対的に健全（dual-render syncは全frame均等に乗る構造）。backend CPU計器: batchCall ~0.3ms・flush ~1ms・handoff 185us —— frame時間の大半はGL側draw+present sync。残: memory・chunk更新の計測 |
-| **A28** | 能力判定と純nativeの必須条件 | **文書化済** | **現行 native 実行が要求する実 capability**（codeから洗い出し、fail-closed確認済）：(1) Vulkan loader ≥1.2（`VK.getInstanceVersionSupported`）(2) 物理deviceが Vulkan1.2＋・非CPU・**GL device UUIDと一致**（`GL_EXT_memory_object`でGL側がdevice UUIDを返せること —— 無ければ明示errorで中断、別GPUへのfallback無し）(3) device拡張 `VK_KHR_external_memory_fd`＋`VK_KHR_external_semaphore_fd`（dual-render構造がGL-FBO↔VKをexternal-memory interopで橋接するため必須、欠如はthrow）(4) GRAPHICS+TRANSFER queue family。(5) GL側 `GL_EXT_memory_object`＋`GL_EXT_memory_object_fd`（bridge作成時に確認、欠如はbridge非成立）。optional: `VK_KHR_swapchain`・`EXT_debug_utils`（有れば有効化、必須ではない）。**2GPU受入はこれら要件を満たすGPUでの実測であり、全Vulkan GPUを主張しない**。完全なGL-context-less実行（item 6達成後）は (2)(5)のGL依存が外れることになるが未実装 |
+| **A28** | 能力判定と純nativeの必須条件 | **文書化済** | **現行 native 実行が要求する実 capability**（codeから洗い出し、fail-closed確認済）：(1) Vulkan loader ≥1.2（`VK.getInstanceVersionSupported`）(2) 物理deviceが Vulkan1.2＋・非CPU・**GL device UUIDと一致**（`GL_EXT_memory_object`でGL側がdevice UUIDを返せること —— 無ければ明示errorで中断、別GPUへのfallback無し）(3) device拡張 `VK_KHR_external_memory_fd`＋`VK_KHR_external_semaphore_fd`（dual-render構造がGL-FBO↔VKをexternal-memory interopで橋接するため必須、欠如はthrow）(4) GRAPHICS+TRANSFER queue family。(5) GL側 `GL_EXT_memory_object`＋`GL_EXT_memory_object_fd`（bridge作成時に確認、欠如はbridge非成立）。optional: `VK_KHR_swapchain`・`EXT_debug_utils`（有れば有効化、必須ではない）。**2GPU受入はこれら要件を満たすGPUでの実測であり、全Vulkan GPUを主張しない**。完全なGL-context-less実行（item 6達成後）は (2)(5)のGL依存が外れることになるが未実装。**2026-10-10 更新（§0.114）**: GL-less flag 経路は `deviceUuids=[]`・`memoryObjectFd=false` のまま起動・提示まで走った（`p548-glless`〜`p559-glless`。capability は `status=UNSUPPORTED_OR_UNAVAILABLE`・`logicalDeviceCreated=false`）—— (2)(5) はこの経路の実行には不要だった。ただし**窓の絵が未解決なので item 6 の達成ではなく**、(1)(3)(4) は引き続き native 実行の要件である |
 | **A29** | 根拠なく診断し定数と文書を反復 | **規律として受領** | vanilla優先。各roundは具体実装か意思決定に必要な限定検証。同一仮説を定数変更・budget延長で反復しない |
 | **A30** | 容量と証拠保全 | **規律として受領** | pinned baseline・失敗再現・受入代表runをhash付きで保存。`.celtium-work/audit-2026-10-09-third` は監査者の再比較証拠として**削除しない** |
 | **A31** | plan/scope/旧監査の矛盾蓄積 | **本表で解消** | 現在の完了条件と優先順を本表1つに持つ。scopeは実測に限定。旧24項目は下の再判定による |
@@ -2679,7 +2736,11 @@ frame target が作り直された後（resize / teardown）に古い group が�
 
 **item 6（GL-context-less window）の残依存棚卸（実測）**: 残るGL使用は(a) **context生成自体**（LWJGL Display.create+OpenGlHelper caps+GlStateManager init — contextなしではGL11.*の任意callが死ぬ）、(b) **per-frame少数のGL draw**（refused batch 59/run・起動直後10 frameの本質的拒否・offTarget copy-back blit 202/run）、(c) **seeded post chainのglGetTexImage/glTexSubImage2D**（off-target imageをchain sourceに直結すれば不要 — silhouette drawは既にnative経由offTarget 145 pass/run）、(d) **screenshot等のGL read**、(e) **engine自身のGlStateManager state call**（数百call site — context除去は全call siteのdivertかstub GLが必要で、LWJGLの`GL.createCapabilities`はpublic FunctionProvider入口を持たない）。**実行順**: (c)を最初に（chain target直結でreadback/copy-back両方消える）→(b)のrefusal 59件の内訳→(a/e)はcontext生成を除去する最終段。
 
+**item 6 更新（2026-10-10・§0.114 / `4bcff8de7`）**: この棚卸しは上の実測時点のもので、いまは次の状態にある。(a)(e) は **stub GL provider + GLFW_NO_API window** に置き換わり、GL context なしで起動・提示まで到達した（`p548`〜`p559`: `CELTIUM_GLLESS stub GL provider installed`・`presentFailures=0`・`validationMessageCount=0`）。(b) の per-frame GL draw は owned image へ行き、shared image はフレームに無い（`gameFramebufferIsShared=false`・`gameFramebufferAdopted=0`・`glless target: no handoff`）。(d) の game screenshot は GL-less では全画素 0 になる（各 run の `screenshots/celtium-validation.png`）ため、fixture は提示画像側で判定するようにした。(c) の seeded post chain はこの fixture では発火していない（`postChains=0`・`postPasses=0`）ので **GL-less では未検証のまま**。中心の残件は提示画像の欠陥で、順序・clear・texture の修正後も `p558`〜`p560` は `FAILED_PRESENTED_IMAGE` のままである。
+
 **item 6 architecture（調査確定・着手済）**: LWJGL 3.4.1の`GL.create(FunctionProvider)`はpublic — context不要でGL capabilitiesをstub providerから作れる（`GL.create(provider)`→`createCapabilities(true)`）。GL-less bootに必要な事前条件と状態: **chain keyをobject identityへ**＝**済**（d65e1ad1b — `inFbId`/`outFbId`/`auxFbIds`/`groupMainFbId`を全て`System.identityHashCode`へ、glow fixtureで56 chain描画確認）。残り: (c) silhouette drawをchain targetへ直結（readback/copy-back消失——但しoff-targetの共有image semantics=scene上へsilhouette描画+compositeの全画面blitで覆い隠し、直結はsilhouette用depth付きtargetが別途必要で、seeded pathのglGetTexImageはrare）、**texture/fbo name生成のstub化**（`glGenTextures`/`glGenFramebuffers`が全て0を返すとtexture registryとchain keyが潰れる — per-name increment idを返すdispatch関数表が必要）、残call site (GlStateManager unmirrored/OpenGlHelper/screenshot/Display/Framebuffer GL ops) のenumerated divert。refusal実測: refusedBeforeAppend 185/run（≈起動直後のみ、format-2 quad主体、0.09/frame）。
+
+**item 6 architecture 更新（2026-10-10・§0.114）**: `GL.create(FunctionProvider)` の stub が入り（`bb271a660` + `4bcff8de7`）、**texture/fbo の name 生成は stub 側の dispatch 表が per-name increment id を返す**ようになった（`nextName`）。`glGetTexImage` は stub が何も書かないため、mirror は stub が保持した upload と game の announce から供給し、内容の無い mirror は uninitialized memory で埋めず拒否する（`readbackByOrigin=none`・`partialMirrorRefusals=0`）。screenshot（(d)）は提示画像の dump に置き換わり、GL-less の run では game screenshot が全画素 0 になることを実測した。残る中心は (c) silhouette 直結ではなく **提示画像の欠陥**（§0.114）。refusal実測は `p559` で refusedBeforeAppend 3/run。
 
 1. **正当性を壊すP0**: A01–A03/A32はコード修正済。専用GPU受入の残件を閉じる。A04–A07（初回全面初期化・patch外保存・sprite単位mip・CPU shadow/generation・hash/size/descriptor）を次に閉じる。
 2. **受理からGPU実行までの欠落・二重描画**: A08–A10（preflight/rollback、全formatのdrop集計、FBOのoffer/refused/recorded/drawn/copied-back分離）。FBOをGLへfalseで返したofferをVK描画済みとしない。
@@ -2745,5 +2806,6 @@ frame target が作り直された後（resize / teardown）に古い group が�
 
 round ごとの経緯・旧測定・失敗証拠は **`docs/history/plan-round-log-until-2026-10-10.md`** にある
 （この文書の旧版全体。削除していない）。画質・失敗経路の詳細な経緯は
-`docs/history/quality-and-failure-investigation-2026-10.md`、goal の旧版は
+`docs/history/quality-and-failure-investigation-2026-10.md`、**GL-context-less bring-up（§0.114・commit `4bcff8de7`）の
+証拠と再現コマンドは `docs/history/2026-10-10-gl-less-bring-up.md`**、goal の旧版は
 `docs/history/goal-r46-before-2026-10-10.md`。

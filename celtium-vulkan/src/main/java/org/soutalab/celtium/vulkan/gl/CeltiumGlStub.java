@@ -1285,8 +1285,16 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0BA6: // GL_MODELVIEW_MATRIX
             case 0x0BA7: // GL_PROJECTION_MATRIX
             case 0x0BA8: // GL_TEXTURE_MATRIX
+                // The renderer's own mirror when it has one. Vanilla reads the terrain's projection and model-view
+                // through exactly this call (ActiveRenderInfo.updateRenderInfo -> GlStateManager.getFloat), and it
+                // builds the frustum the chunk traversal culls with from the same two reads (ClippingHelperImpl). An
+                // identity here therefore does two things at once: every section but the camera's own is culled, and
+                // the surviving geometry is drawn with clip coordinates equal to camera-relative world coordinates -
+                // measured as 1-2 sections instead of 13-17, and as a two-block window of stretched atlas instead of a
+                // terrain plane.
+                float[] mirrored = mirroredMatrix(pname);
                 for (int i = 0; i < 16; i++) {
-                    putFloatOrDouble(out, i, i % 5 == 0 ? 1.0f : 0.0f, asDouble);
+                    putFloatOrDouble(out, i, mirrored != null ? mirrored[i] : (i % 5 == 0 ? 1.0f : 0.0f), asDouble);
                 }
                 return;
             case 0x0B00: // GL_CURRENT_COLOR
@@ -1311,6 +1319,32 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             default:
                 putFloatOrDouble(out, 0, 0.0f, asDouble);
+        }
+    }
+
+    /**
+     * The matrix the renderer's mirror holds for a GL matrix pname, or null when no mirror is published.
+     * <p>
+     * The stub is the only thing that can answer these reads, and answering the identity is not a neutral choice -
+     * it is a culling frustum and a camera transform. The backend publishes what its own hooks observed, so the two
+     * agree on what the frame's matrices are.
+     */
+    private static float[] mirroredMatrix(int pname) {
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
+            return null;
+        }
+        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
+                (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend;
+        switch (pname) {
+            case 0x0BA6:
+                return vulkan.celtium$mirroredModelView();
+            case 0x0BA7:
+                return vulkan.celtium$mirroredProjection();
+            case 0x0BA8:
+                return vulkan.celtium$mirroredTexture();
+            default:
+                return null;
         }
     }
 
@@ -1751,13 +1785,26 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (name == 0 || size <= 0 || size > Integer.MAX_VALUE) {
             return;
         }
-        ByteBuffer storage = ByteBuffer.allocateDirect((int) size);
+        // The storage is reused whenever it is already large enough, rather than replaced. The game's staging buffers
+        // are mapped persistently - the mirror this renderer reads its meshes from is one - and a new allocation moves
+        // the address the caller is still writing to, which shows up as geometry built from whatever the old storage
+        // happened to hold. Keeping the block makes the address a buffer name returns stable for the name's lifetime,
+        // which is the property a persistent mapping needs; a larger request still has to move it.
+        ByteBuffer storage = this.bufferStore.get(Integer.valueOf(name));
+        if (storage == null || storage.capacity() < size) {
+            storage = ByteBuffer.allocateDirect((int) size);
+            this.bufferStore.put(Integer.valueOf(name), storage);
+        }
         if (data != 0L) {
             ByteBuffer source = MemoryUtil.memByteBuffer(data, (int) size);
+            int position = storage.position();
+            storage.clear();
             storage.put(source);
             storage.clear();
+            storage.position(position);
+        } else {
+            storage.clear();
         }
-        this.bufferStore.put(Integer.valueOf(name), storage);
     }
 
     private long mapBuffer(Fn fn, long[] c) {

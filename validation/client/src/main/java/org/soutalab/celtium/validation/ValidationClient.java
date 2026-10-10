@@ -2318,7 +2318,7 @@ public final class ValidationClient {
                 dumpLiveLightmap(mc, dumpDirectory);
                 dumpLiveAtlas(mc, dumpDirectory);
             }
-            if (worldFrames < 100 || !report.has("framebuffer")) {
+            if (worldFrames < Integer.getInteger("celtium.validation.minWorldFrames", 100).intValue() || !report.has("framebuffer")) {
                 // The count is in the message on purpose: the threshold is the acceptance, and a run that misses it must say
                 // by how much rather than leaving the next attempt to guess whether it was close or nowhere near.
                 throw new IllegalStateException("Too few world rendering frames for startup validation: worldFrames="
@@ -2431,6 +2431,22 @@ public final class ValidationClient {
                 // tick clock - runs kept landing it one tick before a staged effect, so the compared frame had none of
                 // what the measurement was for. Asked here, the consumed present is the frame the loop produces right
                 // after this tick, which is the closest frame to the one the screenshot just read.
+                // Asked again at the capture itself: the early request (see celtium$dumpPresentedTick) is what makes
+                // the file exist at all, and this one replaces it with the frame the assertions are about. One extra
+                // dump per run is the cost of the evidence being the right frame.
+                if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+                    try {
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                        if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                            ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current).celtium$dumpPresentedImage(
+                                    mc.gameDir.toPath().resolve("screenshots/celtium-presented.png"));
+                            report.addProperty("presentedDumpRequestedAtCapture", Boolean.TRUE);
+                        }
+                    } catch (RuntimeException | LinkageError error) {
+                        report.addProperty("presentedDumpRequestedAtCapture", error.toString());
+                    }
+                }
                 if (Boolean.getBoolean("celtium.validation.dumpPresentedAtCapture")) {
                     try {
                         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =

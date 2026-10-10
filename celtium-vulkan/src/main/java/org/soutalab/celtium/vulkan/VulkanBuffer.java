@@ -85,6 +85,53 @@ public final class VulkanBuffer {
     }
 
     /**
+     * Copies a byte range of this buffer into a host-visible buffer and makes it readable by the host.
+     * <p>
+     * This exists for one question that cannot be answered from the CPU side: whether the device-local bytes are the
+     * bytes the upload was given. The copy is recorded with the barrier a host read requires
+     * ({@code TRANSFER_WRITE} to {@code HOST_READ}), and the queue is drained before this returns, so a caller can
+     * compare {@link VulkanHostBuffer#mappedAddress()} against its own source immediately. Diagnostic path only: it
+     * submits and waits per call.
+     * <p>
+     * Render thread only. The destination must be at least {@code length} bytes.
+     *
+     * @throws IllegalArgumentException when the range is outside this buffer or does not fit the destination
+     */
+    public void readInto(VulkanHostBuffer destination, long offsetBytes, long length) {
+        requireLive();
+        if (destination == null) {
+            throw new IllegalArgumentException("destination must not be null");
+        }
+        requireRange(offsetBytes, length);
+        if (length == 0L) {
+            return;
+        }
+        if (length > destination.size()) {
+            throw new IllegalArgumentException("A read of " + length + " bytes does not fit the destination buffer of "
+                    + destination.size() + " bytes.");
+        }
+        VkCommandBuffer commandBuffer = this.context.beginCommands();
+        try {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
+                copy.get(0).srcOffset(offsetBytes).dstOffset(0L).size(length);
+                vkCmdCopyBuffer(commandBuffer, this.handle, destination.buffer(), copy);
+                // A copy is a transfer write; without this the host read below may see the bytes the copy replaced.
+                org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+                barrier.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_HOST_READ_BIT);
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                        0, barrier, null, null);
+            }
+        } finally {
+            // Same shape as the backend's own readback: whatever was recorded is submitted and waited for, and the
+            // command buffer is freed, even when recording threw halfway through.
+            this.context.endCommands(commandBuffer);
+        }
+    }
+
+    /**
      * Grows the buffer to at least {@code requiredBytes} and keeps its contents: the smaller requested size is a
      * no-op, otherwise a new buffer of exactly {@code requiredBytes} (rounded up to 4) is created, the old contents
      * are copied with a {@code vkCmdCopyBuffer} through {@link VulkanContext}, and only then are the old buffer and

@@ -104,6 +104,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int targetHeight;
     private long framebuffer;
     private long framebufferRenderPass;
+    /** The framebuffer over the owned off-target images, and the render pass it was built for. */
+    private long offTargetFramebuffer;
+    private long offTargetFramebufferRenderPass;
+    private int offTargetFramebufferCreations;
+    /** The frame whose off-target images have been cleared, so the clear happens once per frame and not per window. */
+    private long offTargetClearedFrame = -1L;
+    private int offTargetClears;
+    private int offTargetPassFailures;
+    private String lastOffTargetFailure = "none";
 
     private VulkanGlTexture atlasTexture;
     private VulkanGlTexture lightmapTexture;
@@ -719,6 +728,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     private int presentHookCalls;
+    /** How often the camera seed was skipped because there is no context to read it from. */
+    private int cameraSetupSeedsSkipped;
     /** identity -> {colour texture name, texture width, texture height}, reported at each framebuffer bind. */
     private final java.util.Map<Long, long[]> framebufferColorTextures = new java.util.concurrent.ConcurrentHashMap<>();
     private int framebufferColorTextureReports;
@@ -2057,6 +2068,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         this.mirrorSeeded = true;
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            // Nothing to seed from: the matrices this would read belong to a context that does not exist, and the
+            // stub answers both queries with the identity. Seeding the mirror from that would replace a camera
+            // transform the hooks did observe with the identity - measured, the world then draws from the origin as
+            // a wedge instead of a plane. The mirror already holds what the hooked GlStateManager calls produced,
+            // and the projection comes from applyDerivedProjection, so the honest answer is to leave it alone.
+            this.cameraSetupSeedsSkipped++;
+            return;
+        }
         java.nio.FloatBuffer projection = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
         java.nio.FloatBuffer modelView = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
         try {
@@ -2326,6 +2346,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } catch (Throwable error) {
             return false;
         }
+    }
+
+    /**
+     * The mirrored matrices, for the GL reads the stub has to answer: vanilla reads the terrain's projection and
+     * model-view through {@code glGetFloatv} ({@code ActiveRenderInfo.updateRenderInfo}), and it builds the frustum
+     * the chunk traversal culls with from the same two reads ({@code ClippingHelperImpl}). {@code VulkanGlState.matrix}
+     * returns a copy, so a caller cannot write into the mirror through this.
+     */
+    public float[] celtium$mirroredModelView() {
+        return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+    }
+
+    /** The mirrored projection; see {@link #celtium$mirroredModelView()}. */
+    public float[] celtium$mirroredProjection() {
+        return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+    }
+
+    /** The mirrored texture matrix of the active unit, which is what the mirror's texture mode addresses. */
+    public float[] celtium$mirroredTexture() {
+        return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_TEXTURE);
     }
 
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
@@ -3984,10 +4024,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         long renderPass = terrain != null ? terrain.renderPass() : uiRenderPass();
+        // Which image this pass draws into: the frame's, or - for a framebuffer the game bound that is not the main
+        // one - the renderer's own off-target pair. Without this the silhouette is painted onto the scene.
+        long framebuffer;
+        GllessFrameTarget offTarget = this.currentRenderTargetIsMain ? null : offTargetTarget();
+        if (offTarget != null) {
+            try {
+                offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
+                if (this.offTargetClearedFrame != this.frameId) {
+                    // Outside the pass, which is where the clear and its first-use barrier belong, and once per frame:
+                    // the game clears a framebuffer when it binds it, and clearing per window would erase what an
+                    // earlier window of the same frame already drew there.
+                    offTarget.clearOffTarget(this.commandBuffer);
+                    this.offTargetClearedFrame = this.frameId;
+                    this.offTargetClears++;
+                }
+                framebuffer = ensureOffTargetFramebuffer(renderPass);
+            } catch (RuntimeException | LinkageError error) {
+                this.offTargetPassFailures++;
+                this.lastOffTargetFailure = describe(error);
+                record("off-target pass refused, drawing into the frame image instead: " + describe(error));
+                framebuffer = ensureFramebuffer(renderPass);
+            }
+        } else {
+            framebuffer = ensureFramebuffer(renderPass);
+        }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                 org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack).sType$Default();
         begin.renderPass(renderPass);
-        begin.framebuffer(ensureFramebuffer(renderPass));
+        begin.framebuffer(framebuffer);
         org.lwjgl.vulkan.VkRect2D.Buffer area = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
         area.get(0).offset().set(0, 0);
         area.get(0).extent().set(this.targetWidth, this.targetHeight);
@@ -5203,14 +5268,69 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * render pass the pipeline built, and one framebuffer serves every pass that is compatible with it.
      */
     private long ensureFramebuffer(long renderPass) {
+        return ensureFramebuffer(renderPass, this.frameTarget.colorView(), this.frameTarget.depthView());
+    }
+
+    /**
+     * The framebuffer for a pass that draws into the target's own off-target images rather than the frame's.
+     * <p>
+     * The game's framebuffers are not the frame image: the entity outline draws its silhouette into
+     * {@code entityOutlineFramebuffer} before the chain that turns it into a glow, and drawing that into the frame
+     * image instead paints the silhouette flat onto the scene with the scene's depth buffer. With no OpenGL context
+     * there is no such framebuffer to bind, so the renderer keeps one image of its own for these draws.
+     */
+    private long ensureOffTargetFramebuffer(long renderPass) {
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null) {
+            return 0L;
+        }
+        if (this.offTargetFramebuffer != 0 && this.offTargetFramebufferRenderPass == renderPass
+                && glless.offTargetMatches(this.targetWidth, this.targetHeight)) {
+            return this.offTargetFramebuffer;
+        }
+        destroyOffTargetFramebuffer();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer attachments = stack.mallocLong(2);
+            attachments.put(0, glless.offTargetColorView());
+            attachments.put(1, glless.offTargetDepthView());
+            org.lwjgl.vulkan.VkFramebufferCreateInfo create = org.lwjgl.vulkan.VkFramebufferCreateInfo.calloc(stack)
+                    .sType$Default()
+                    .renderPass(renderPass)
+                    .pAttachments(attachments)
+                    .width(this.targetWidth)
+                    .height(this.targetHeight)
+                    .layers(1);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateFramebuffer(this.context.device(), create, null, handle), "vkCreateFramebuffer(off-target)");
+            this.offTargetFramebuffer = handle.get(0);
+            this.offTargetFramebufferRenderPass = renderPass;
+            this.offTargetFramebufferCreations++;
+            return this.offTargetFramebuffer;
+        }
+    }
+
+    /** The owned off-target image pair, or null when this configuration has none (the GL bridge has real ones). */
+    private GllessFrameTarget offTargetTarget() {
+        return this.frameTarget instanceof GllessFrameTarget ? (GllessFrameTarget) this.frameTarget : null;
+    }
+
+    private void destroyOffTargetFramebuffer() {
+        if (this.offTargetFramebuffer != 0) {
+            vkDestroyFramebuffer(this.context.device(), this.offTargetFramebuffer, null);
+            this.offTargetFramebuffer = 0;
+            this.offTargetFramebufferRenderPass = 0;
+        }
+    }
+
+    private long ensureFramebuffer(long renderPass, long colorView, long depthView) {
         if (this.framebuffer != 0 && this.framebufferRenderPass == renderPass) {
             return this.framebuffer;
         }
         destroyFramebuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer attachments = stack.mallocLong(2);
-            attachments.put(0, this.frameTarget.colorView());
-            attachments.put(1, this.frameTarget.depthView());
+            attachments.put(0, colorView);
+            attachments.put(1, depthView);
             org.lwjgl.vulkan.VkFramebufferCreateInfo create = org.lwjgl.vulkan.VkFramebufferCreateInfo.calloc(stack)
                     .sType$Default()
                     .renderPass(renderPass)
@@ -5227,6 +5347,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void destroyFramebuffer() {
+        destroyOffTargetFramebuffer();
         if (this.framebuffer != 0) {
             vkDestroyFramebuffer(this.context.device(), this.framebuffer, null);
             this.framebuffer = 0;
@@ -6332,6 +6453,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 if (this.atlasTexture == null) {
                     int[] size = textureSize(atlasId);
+                    if (size[0] <= 0 || size[1] <= 0) {
+                        // No storage to mirror yet. Creating an image of an unknown size is what produced a 1x1
+                        // mirror that the upload then had to replace, so the frame is skipped and the question is
+                        // asked again when the atlas exists.
+                        this.atlasRefreshCountdown = 0;
+                        return;
+                    }
                     // The registry owns the image; the backend samples that same object, so an announced patch and the
                     // descriptor look at one image instead of two.
                     this.atlasTexture = celtium$registry().imageFor(atlasId, size[0], size[1], true);
@@ -6380,10 +6508,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return texture;
     }
 
+    /**
+     * The size of a GL texture's level 0, asked through the binding rather than through direct state access.
+     * <p>
+     * {@code glGetTextureLevelParameteri} needs GL 4.5 or {@code ARB_direct_state_access}, and when the context does
+     * not have it the query answers 0 - which the {@code Math.max(1, ...)} here turned into a 1x1 image. The mirror
+     * was then created at 1x1 and the upload had to replace it, so every descriptor built in between pointed at an
+     * image that no longer existed: the atlas sampled as black while the registry's current image held the real
+     * pixels. The bound form works wherever a texture can be bound at all, and under the GL-less stub it answers from
+     * the extents the stub recorded. The binding is restored, so the game sees no state change.
+     */
     private static int[] textureSize(int texture) {
-        int width = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_WIDTH);
-        int height = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_HEIGHT);
-        return new int[] { Math.max(1, width), Math.max(1, height) };
+        if (texture == 0) {
+            return new int[] { 0, 0 };
+        }
+        int previous = org.lwjgl.opengl.GL11C.glGetInteger(org.lwjgl.opengl.GL11C.GL_TEXTURE_BINDING_2D);
+        try {
+            if (previous != texture) {
+                org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, texture);
+            }
+            int width = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
+                    org.lwjgl.opengl.GL11C.GL_TEXTURE_WIDTH);
+            int height = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
+                    org.lwjgl.opengl.GL11C.GL_TEXTURE_HEIGHT);
+            return new int[] { width, height };
+        } finally {
+            if (previous != texture) {
+                org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, previous);
+            }
+        }
     }
 
     // ------------------------------------------------------------------ command resources

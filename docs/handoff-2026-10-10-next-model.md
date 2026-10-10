@@ -71,7 +71,7 @@ timeout 900 python3 scripts/prism_validation.py \
 
 主な fixture スイッチ（`--jvm-arg=-D...`）：
 `celtium.validation.keepEntities=true`（モブを出す）／`celtium.validation.resize=true`（tick 100 でウィンドウを 1024x640 へ）／
-`celtium.validation.particles=false`／`celtium.validation.dumpPresentedTick=N`（既定 198）／`celtium.validation.jei` ほか。
+`celtium.validation.particles=false`／`celtium.validation.dumpPresentedTick=N`（既定 20）／`celtium.validation.jei` ほか。
 
 ### 2.3 判定の読み方
 

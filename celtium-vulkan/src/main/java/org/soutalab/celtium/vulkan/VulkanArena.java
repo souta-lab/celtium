@@ -1,9 +1,14 @@
 package org.soutalab.celtium.vulkan;
 
 import org.embeddedt.embeddium.impl.render.chunk.data.MeshBufferSegment;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 import java.util.Collection;
+
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 
 /**
  * Segment allocator over one device-local {@link VulkanBuffer}, mirroring the OpenGL arena
@@ -31,14 +36,53 @@ import java.util.Collection;
  * <p>
  * <b>Threading:</b> every method must be called on the render thread that owns the {@link VulkanContext}, and
  * {@link #delete()} must happen while the context is still alive.
+ * <p>
+ * <b>Upload census and content check.</b> Whether a mesh reaches the arena whole or only in part cannot be read off
+ * the caller's buffers: those are CPU memory the game wrote, and the defect that reaches the frame is the transfer or
+ * the offsets. Every {@link #write(int, long, int)} therefore accumulates what it wrote, and the next
+ * {@link #buffer()} - the call the draw path makes right before it binds this arena - prints one line with the bytes,
+ * the elements and this buffer's size, which is the pair of numbers that separates "the upload was complete" from
+ * "the upload was short". With {@code -Dceltium.vulkan.arenaVerify=true} each write additionally copies its own
+ * range back from the arena into host memory and compares it byte for byte with what it was given, so a partial or
+ * stale transfer is reported as the offset and the byte that differ rather than inferred from the picture. Both are
+ * diagnostics: the census costs a counter, and the check is off unless it is asked for.
  */
 public final class VulkanArena {
     /** Growth never asks for less than this, so small arenas do not grow on every other allocation. */
     private static final int MINIMUM_GROWTH_BYTES = 512 * 1024;
 
+    /** One census line per upload burst (one frame), on by default because it costs a counter and says the numbers. */
+    private static final boolean CENSUS_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.arenaCensus", "true"));
+    /** Off by default: the check drains the queue per write, which is a diagnostic cost, not a frame cost. */
+    private static final boolean VERIFY_ENABLED = Boolean.getBoolean("celtium.vulkan.arenaVerify");
+    /** Bytes of one write the check compares; a mesh is compared up to this prefix. */
+    private static final int VERIFY_MAX_BYTES = Math.max(4, Integer.getInteger("celtium.vulkan.arenaVerifyBytes",
+            64 * 1024).intValue());
+    /** How many successful checks print a line before only failures speak. */
+    private static final int VERIFY_OK_REPORTS = Integer.getInteger("celtium.vulkan.arenaVerifyOkReports", 8).intValue();
+
     private final VulkanContext context;
+    /** {@code VK_BUFFER_USAGE_*} flags, kept so a census line can name what the arena holds. */
+    private final int usageFlags;
     private VulkanBuffer buffer;
     private Segment head;
+
+    // Upload census: totals for the run, and the slice since the last report.
+    private long uploads;
+    private long uploadedBytes;
+    private long writesSinceReport;
+    private long bytesSinceReport;
+    private long elementsSinceReport;
+    private long firstReportedOffset = -1L;
+    private int firstReportedLength;
+
+    // Content check: the host-visible landing buffer, what has been compared and what disagreed.
+    private VulkanHostBuffer verifyBuffer;
+    private long verifyChecks;
+    private long verifiedBytes;
+    private long verifyFailures;
+    private boolean verifyReported;
 
     /**
      * Bytes per allocated element. Segment offsets and lengths are reported in these units, matching the OpenGL
@@ -73,6 +117,7 @@ public final class VulkanArena {
             throw new IllegalArgumentException("initialCapacityBytes must be positive, was " + initialCapacityBytes);
         }
         this.context = context;
+        this.usageFlags = usageFlags;
         this.stride = stride;
         this.capacity = alignUp4Int(initialCapacityBytes);
         this.buffer = new VulkanBuffer(context, this.capacity, usageFlags);
@@ -131,7 +176,9 @@ public final class VulkanArena {
 
     /**
      * Uploads one native byte range into arena memory at a byte offset.
-     * Render thread only.
+     * <p>
+     * Counted for the census, and - when {@code -Dceltium.vulkan.arenaVerify=true} - copied back and compared with the
+     * source bytes before this returns. Render thread only.
      */
     public void write(int offsetBytes, long sourceAddress, int length) {
         requireLive();
@@ -140,11 +187,18 @@ public final class VulkanArena {
             return;
         }
         this.buffer.write(offsetBytes, sourceAddress, length);
+        recordUpload(offsetBytes, length);
+        if (VERIFY_ENABLED) {
+            verifyRange(offsetBytes, sourceAddress, length);
+        }
     }
 
     /**
      * Uploads the remaining bytes of a heap buffer into arena memory at a byte offset. The source buffer's position
      * is left untouched. Render thread only.
+     * <p>
+     * Counted like {@link #write(int, long, int)}; the content check needs a native source address and stays with the
+     * address form, which is the one the terrain upload uses.
      */
     public void write(int offsetBytes, ByteBuffer source) {
         requireLive();
@@ -157,6 +211,7 @@ public final class VulkanArena {
             return;
         }
         this.context.uploadToBuffer(this.buffer.buffer(), offsetBytes, source);
+        recordUpload(offsetBytes, length);
     }
 
     /**
@@ -198,6 +253,10 @@ public final class VulkanArena {
                         + " bytes does not fit its segment of " + segment.length + " bytes.");
             }
             this.buffer.write(segment.offset, upload.sourceAddress, upload.length);
+            recordUpload(segment.offset, upload.length);
+            if (VERIFY_ENABLED) {
+                verifyRange(segment.offset, upload.sourceAddress, upload.length);
+            }
         }
         return this.buffer != beforeBuffer || this.buffer.buffer() != beforeHandle;
     }
@@ -225,12 +284,157 @@ public final class VulkanArena {
     /**
      * The buffer the segments live in. Its handle changes on every growth, so callers that cache it must compare it
      * across allocations.
+     * <p>
+     * This is the call the draw path makes immediately before it binds the arena, so it is also where the upload
+     * census is reported: whatever was written since the previous bind belongs to the frame that is starting, and the
+     * one line it prints is what says whether that frame's terrain upload was complete.
      *
      * @throws IllegalStateException when the arena has been deleted
      */
     public VulkanBuffer buffer() {
         requireLive();
+        reportUploadCensus();
         return this.buffer;
+    }
+
+    /** Writes uploaded since this arena was created. */
+    public long uploadCount() {
+        return this.uploads;
+    }
+
+    /** Bytes uploaded since this arena was created. */
+    public long uploadedBytes() {
+        return this.uploadedBytes;
+    }
+
+    /** Bytes the content check has compared, and the writes it found disagreeing. Zero while the check is off. */
+    public long verifiedBytes() {
+        return this.verifiedBytes;
+    }
+
+    public long verifyFailures() {
+        return this.verifyFailures;
+    }
+
+    /**
+     * Counts one write into this arena and remembers the first range of the current burst, so the census line can be
+     * paired with the {@code firstDraw} line the backend prints for the same frame.
+     */
+    private void recordUpload(int offsetBytes, int length) {
+        long elements = length / (long) this.stride;
+        this.uploads++;
+        this.uploadedBytes += length;
+        this.writesSinceReport++;
+        this.bytesSinceReport += length;
+        this.elementsSinceReport += elements;
+        if (this.firstReportedOffset < 0L) {
+            this.firstReportedOffset = offsetBytes;
+            this.firstReportedLength = length;
+        }
+    }
+
+    /**
+     * Prints one line per upload burst - in practice one per frame - with the numbers that separate a complete upload
+     * from a partial one: how many bytes and elements went in since the last bind, the first range they went to, and
+     * how big this arena is now. Silence when nothing was written, because then there is nothing to say.
+     */
+    private void reportUploadCensus() {
+        if (!CENSUS_ENABLED || this.writesSinceReport == 0L) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_ARENA_UPLOAD kind=" + kind() + " stride=" + this.stride
+                + " writes=" + this.writesSinceReport + " bytes=" + this.bytesSinceReport
+                + (isVertexArena() ? " vertices=" : " indices=") + this.elementsSinceReport
+                + " first=[offset=" + this.firstReportedOffset + " bytes=" + this.firstReportedLength + "]"
+                + " arenaBytes=" + this.capacity + " used=" + this.used + " segments=" + liveSegments()
+                + " totalWrites=" + this.uploads + " totalBytes=" + this.uploadedBytes
+                + (VERIFY_ENABLED ? " verified=" + this.verifiedBytes + " verifyFailures=" + this.verifyFailures : ""));
+        this.writesSinceReport = 0L;
+        this.bytesSinceReport = 0L;
+        this.elementsSinceReport = 0L;
+        this.firstReportedOffset = -1L;
+        this.firstReportedLength = 0;
+    }
+
+    /**
+     * Copies the just-written range back out of the arena and compares it with the bytes the caller handed in.
+     * <p>
+     * This is the one measurement that separates the two ways a mesh can arrive incomplete: the arena holds what the
+     * upload was given (the defect is elsewhere, in an offset or in the draw) or it does not (the transfer is the
+     * defect, and the first differing byte says where). Gated by {@code -Dceltium.vulkan.arenaVerify=true} because it
+     * drains the queue per write.
+     */
+    private void verifyRange(int offsetBytes, long sourceAddress, int length) {
+        int checked = Math.min(length, VERIFY_MAX_BYTES);
+        try {
+            ensureVerifyBuffer(checked);
+            this.buffer.readInto(this.verifyBuffer, offsetBytes, checked);
+            long mapped = this.verifyBuffer.mappedAddress();
+            int firstDifference = -1;
+            for (int i = 0; i < checked; i++) {
+                if (MemoryUtil.memGetByte(mapped + i) != MemoryUtil.memGetByte(sourceAddress + i)) {
+                    firstDifference = i;
+                    break;
+                }
+            }
+            this.verifyChecks++;
+            this.verifiedBytes += checked;
+            if (firstDifference < 0) {
+                if (this.verifyChecks <= VERIFY_OK_REPORTS) {
+                    System.out.println("[Celtium] CELTIUM_ARENA_VERIFY ok offset=" + offsetBytes + " checked=" + checked
+                            + " of=" + length + " matches checks=" + this.verifyChecks
+                            + " bytes=" + this.verifiedBytes + " arenaBytes=" + this.capacity);
+                }
+                return;
+            }
+            this.verifyFailures++;
+            if (!this.verifyReported) {
+                this.verifyReported = true;
+                System.out.println("[Celtium] CELTIUM_ARENA_VERIFY MISMATCH offset=" + offsetBytes
+                        + " firstDifference=" + firstDifference + " of=" + checked
+                        + " expected=0x" + Integer.toHexString(MemoryUtil.memGetByte(sourceAddress + firstDifference) & 0xFF)
+                        + " arena=0x" + Integer.toHexString(MemoryUtil.memGetByte(mapped + firstDifference) & 0xFF)
+                        + " checked=" + checked + " of=" + length + " writes=" + this.uploads
+                        + " arenaBytes=" + this.capacity);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            // A diagnostic that throws must not take the frame down; the census above still reports the sizes.
+            if (!this.verifyReported) {
+                this.verifyReported = true;
+                System.out.println("[Celtium] CELTIUM_ARENA_VERIFY UNAVAILABLE offset=" + offsetBytes + " bytes=" + length
+                        + " error=" + error);
+            }
+        }
+    }
+
+    private void ensureVerifyBuffer(int bytes) {
+        if (this.verifyBuffer == null) {
+            this.verifyBuffer = new VulkanHostBuffer(this.context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        } else if (this.verifyBuffer.size() < bytes) {
+            this.verifyBuffer.ensureCapacity(bytes);
+        }
+    }
+
+    /** How many segments are handed out right now, walked from the free list so it cannot disagree with it. */
+    private int liveSegments() {
+        int live = 0;
+        for (Segment segment = this.head; segment != null; segment = segment.next) {
+            if (!segment.free) {
+                live++;
+            }
+        }
+        return live;
+    }
+
+    private boolean isVertexArena() {
+        return (this.usageFlags & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0;
+    }
+
+    private String kind() {
+        if (isVertexArena()) {
+            return "vertex";
+        }
+        return (this.usageFlags & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0 ? "index" : "buffer";
     }
 
     /**
@@ -256,6 +460,10 @@ public final class VulkanArena {
         this.head = null;
         this.used = 0;
         this.capacity = 0;
+        if (this.verifyBuffer != null) {
+            this.verifyBuffer.delete();
+            this.verifyBuffer = null;
+        }
         this.buffer.delete();
     }
 

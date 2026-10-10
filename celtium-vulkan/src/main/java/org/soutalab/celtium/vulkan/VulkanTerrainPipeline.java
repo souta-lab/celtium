@@ -263,6 +263,49 @@ public final class VulkanTerrainPipeline {
     private boolean descriptorsWritten;
     private boolean deleted;
 
+    /**
+     * The atlas binding as the last {@link #bindTextures} wrote it into the descriptor set.
+     * <p>
+     * The descriptor stores handles, not objects: once {@code vkUpdateDescriptorSets} returns, the set names whatever
+     * {@code atlas.view()} was at that instant and nothing re-reads it. If the mirror's image is recreated afterwards -
+     * a resize rebuilds image, memory and view - the set keeps the retired view until it is written again. These four
+     * fields are the only record of what was written, and {@link #auditAtlasDraw} compares them against the live
+     * texture, which is what turns "the terrain samples a stale image" from a hypothesis into a number.
+     */
+    private VulkanGlTexture boundAtlas;
+    private long boundAtlasView;
+    private long boundAtlasKey;
+    private int boundAtlasIdentity;
+
+    /**
+     * Whether the bounded atlas-binding audit prints; on by default and one property away from off
+     * ({@code -Dceltium.vulkan.atlasAudit=false}).
+     * <p>
+     * The budget below is what keeps it cheap: at most {@link #ATLAS_AUDIT_LINES} lines for a whole run, a handful of
+     * long comparisons per terrain pass, and nothing at all once the budget is spent. It is kept (rather than removed
+     * after the question was answered) because the question - "does the descriptor name the image the mirror is
+     * currently using" - is a property of every future change to texture ownership, and a run that answers it in ten
+     * lines is cheaper than the next investigation.
+     */
+    private static final boolean ATLAS_AUDIT = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.atlasAudit", "true"));
+    /** Lines the audit may print in one process, so no run can flood the log. */
+    private static final int ATLAS_AUDIT_LINES = 16;
+    /** Draws whose binding is verified against the descriptor, and writes whose binding is printed. */
+    private static final int ATLAS_AUDIT_DRAWS = 4;
+    private static final int ATLAS_AUDIT_WRITES = 3;
+    private static final int ATLAS_AUDIT_CHANGES = 3;
+    private static int atlasAuditLines;
+    private static int atlasAuditWrites;
+    private static int atlasAuditDrawChecks;
+    private static int atlasAuditChanges;
+    private static int atlasAuditStaleAtDraw;
+    private static int atlasAuditDeadAtDraw;
+    private static int atlasAuditSummaries;
+    private static long atlasAuditPrevView;
+    private static int atlasAuditPrevIdentity;
+    private static boolean atlasAuditHasPrev;
+
     private VulkanTerrainPipeline(VulkanContext context, TerrainRenderPass pass, boolean blockFaceCulling, int frontFace) {
         this.context = context;
         this.passName = pass.name();
@@ -512,6 +555,122 @@ public final class VulkanTerrainPipeline {
             vkUpdateDescriptorSets(context.device(), writes, null);
         }
         descriptorsWritten = true;
+        auditAtlasWrite(atlas);
+    }
+
+    /**
+     * Records the atlas binding the descriptor set was just written with, and reports the identity transitions.
+     * <p>
+     * A transition is the interesting event: the terrain binds one image for the whole session in the healthy case, so
+     * a second distinct (object, view) pair means the mirror was recreated and every earlier descriptor named a
+     * retired view. The line carries the size and {@code hasFullContent()} as well, because a live descriptor bound to
+     * a placeholder-sized or never-filled image draws black just as convincingly as a stale one.
+     */
+    private void auditAtlasWrite(VulkanGlTexture atlas) {
+        this.boundAtlas = atlas;
+        this.boundAtlasView = atlas.view();
+        this.boundAtlasKey = atlas.key();
+        this.boundAtlasIdentity = System.identityHashCode(atlas);
+        if (!ATLAS_AUDIT) {
+            return;
+        }
+        atlasAuditWrites++;
+        boolean changed = atlasAuditHasPrev
+                && (this.boundAtlasView != atlasAuditPrevView || this.boundAtlasIdentity != atlasAuditPrevIdentity);
+        if (changed) {
+            atlasAuditChanges++;
+        }
+        if (atlasAuditLines < ATLAS_AUDIT_LINES && (!atlasAuditHasPrev || atlasAuditWrites <= ATLAS_AUDIT_WRITES
+                || (changed && atlasAuditChanges <= ATLAS_AUDIT_CHANGES))) {
+            atlasAuditLines++;
+            System.out.println("[Celtium] CELTIUM_ATLAS_DESCRIPTOR phase=write pass=" + passName + " write#"
+                    + atlasAuditWrites + (atlasAuditHasPrev ? changed ? " CHANGED" : " unchanged" : " first")
+                    + (atlasAuditHasPrev ? " prevView=0x" + Long.toHexString(atlasAuditPrevView) + " prevObj="
+                            + Integer.toHexString(atlasAuditPrevIdentity) : "")
+                    + " " + describeBinding(atlas));
+        }
+        atlasAuditPrevView = this.boundAtlasView;
+        atlasAuditPrevIdentity = this.boundAtlasIdentity;
+        atlasAuditHasPrev = true;
+        // The summary lands a few hundred writes in - a few seconds of terrain at this pass count - so it is in the log
+        // even for a run that is killed rather than shut down.
+        if (atlasAuditWrites == 300) {
+            auditSummary("write#300");
+        }
+    }
+
+    /**
+     * Verifies, at the first few draws, that the descriptor still names the image the texture is currently using.
+     * <p>
+     * This is the check the audit exists for: {@link #bindDescriptors} is the last point before the draw command is
+     * recorded, so a mismatch here means the recorded draw samples a view the mirror has already replaced - the
+     * "stale descriptor" failure - and a live view of 0 means the mirror was deleted while the descriptor still
+     * referenced it.
+     */
+    private void auditAtlasDraw(long uniformBufferOffset) {
+        if (!ATLAS_AUDIT || this.boundAtlas == null || atlasAuditDrawChecks >= ATLAS_AUDIT_DRAWS) {
+            return;
+        }
+        atlasAuditDrawChecks++;
+        long liveView = this.boundAtlas.view();
+        long liveKey = this.boundAtlas.key();
+        boolean stale = liveView != this.boundAtlasView || liveKey != this.boundAtlasKey;
+        boolean dead = liveView == 0L;
+        if (stale) {
+            atlasAuditStaleAtDraw++;
+        }
+        if (dead) {
+            atlasAuditDeadAtDraw++;
+        }
+        if (atlasAuditLines < ATLAS_AUDIT_LINES) {
+            atlasAuditLines++;
+            System.out.println("[Celtium] CELTIUM_ATLAS_DESCRIPTOR phase=draw pass=" + passName + " draw#"
+                    + atlasAuditDrawChecks + " uniformOffset=" + uniformBufferOffset
+                    + " writtenView=0x" + Long.toHexString(this.boundAtlasView)
+                    + " writtenKey=0x" + Long.toHexString(this.boundAtlasKey)
+                    + " liveView=0x" + Long.toHexString(liveView) + " liveKey=0x" + Long.toHexString(liveKey)
+                    + " liveGen=" + generationOf(this.boundAtlas) + " liveSize=" + this.boundAtlas.width() + "x"
+                    + this.boundAtlas.height() + " liveFull=" + this.boundAtlas.hasFullContent()
+                    + " registryOfSameSize=" + VulkanImmediateTexturePipeline.registryImageOfSize(
+                            this.boundAtlas.width(), this.boundAtlas.height())
+                    + " verdict=" + (dead ? "DEAD_IMAGE" : stale ? "STALE_BINDING" : "fresh"));
+        }
+    }
+
+    /** Prints the audit counters once, so a run's log ends with the totals rather than only the sampled lines. */
+    private void auditSummary(String where) {
+        if (!ATLAS_AUDIT || atlasAuditSummaries >= 2 || atlasAuditLines >= ATLAS_AUDIT_LINES) {
+            return;
+        }
+        atlasAuditSummaries++;
+        atlasAuditLines++;
+        System.out.println("[Celtium] CELTIUM_ATLAS_DESCRIPTOR phase=summary at=" + where + " writes="
+                + atlasAuditWrites + " bindingChanges=" + atlasAuditChanges + " drawChecks=" + atlasAuditDrawChecks
+                + " staleAtDraw=" + atlasAuditStaleAtDraw + " deadAtDraw=" + atlasAuditDeadAtDraw
+                + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
+                + " retired=" + VulkanRetireQueue.describe());
+    }
+
+    /**
+     * The identity a descriptor's image view and sampler form, as one line.
+     * <p>
+     * {@code VulkanGlTexture} exposes its view, sampler, size and content flag but not its image handle, and this class
+     * may not add one; the view is what the descriptor actually stores, so the view plus the generation - read back out
+     * of {@link VulkanGlTexture#key()} - is the complete identity of the binding.
+     */
+    private static String describeBinding(VulkanGlTexture texture) {
+        return "obj=" + Integer.toHexString(System.identityHashCode(texture))
+                + " view=0x" + Long.toHexString(texture.view())
+                + " gen=" + generationOf(texture)
+                + " key=0x" + Long.toHexString(texture.key())
+                + " size=" + texture.width() + "x" + texture.height()
+                + " full=" + texture.hasFullContent()
+                + " sampler=0x" + Long.toHexString(texture.sampler());
+    }
+
+    /** {@return the generation folded into {@link VulkanGlTexture#key()}}, recovered by inverting the fold. */
+    private static long generationOf(VulkanGlTexture texture) {
+        return texture.key() ^ (texture.view() * 31L);
     }
 
     /**
@@ -552,6 +711,7 @@ public final class VulkanTerrainPipeline {
                     + uniformsRange + " reaches past the " + uniformsSize + " byte buffer of terrain pass '"
                     + passName + "'; the uniform blocks of this buffer must be " + UNIFORM_BLOCK_SIZE + " bytes");
         }
+        auditAtlasDraw(uniformBufferOffset);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0,
                     stack.longs(descriptorSet), stack.ints((int) uniformBufferOffset));
@@ -629,6 +789,8 @@ public final class VulkanTerrainPipeline {
         uniformsSize = 0L;
         uniformsRange = 0;
         descriptorsWritten = false;
+        auditSummary("delete(" + passName + ")");
+        this.boundAtlas = null;
     }
 
     private void createResources() {

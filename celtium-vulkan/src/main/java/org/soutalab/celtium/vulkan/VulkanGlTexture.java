@@ -85,6 +85,65 @@ public final class VulkanGlTexture {
     private static final boolean FLIP_ROWS = false;
     private static final boolean SAMPLER_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
+    /**
+     * Where the mirror-content dump writes, or {@code null} when it is off.
+     * <p>
+     * The question this answers is "what does the shader actually sample", which the source-side dump cannot: the pixels a
+     * readback handed over and the pixels that ended up in the device image are two different facts, and a black frame can
+     * come from either. One PNG per upload per level, plus one line of numbers per upload, so a run's log alone says
+     * whether the readback was empty and whether the image that received it was empty too.
+     */
+    private static final String MIRROR_DUMP_DIR = System.getProperty("celtium.vulkan.mirrorDump");
+    /** GL names to dump; empty means every texture, which a per-frame light map would flood. */
+    private static final String MIRROR_DUMP_IDS = System.getProperty("celtium.vulkan.mirrorDumpIds", "");
+    /** Dumps written so far, so a long run cannot fill the disk with the same 16x16 light map. */
+    private static long mirrorDumpsWritten;
+    /** Distinct images dumped; the dump runs inside the frame, so its cost has to stay out of the fixture's timing. */
+    private static final long MIRROR_DUMP_LIMIT = 40;
+    /** Dumps per image: the first upload and the one that follows a refresh, which is the pair worth comparing. */
+    private static final int MIRROR_DUMPS_PER_OBJECT = 2;
+    /**
+     * The largest image the dump writes as a PNG. The frame-sized textures the immediate path mirrors are megabytes
+     * each and encode slowly enough to change the frame being measured, so their numbers are logged and their pixels
+     * are not written; the atlas is a quarter of a megapixel and stays inside this.
+     */
+    private static final int MIRROR_DUMP_MAX_PIXELS = 300000;
+    /** Mip levels written per upload: level 0 is what a correct frame samples, level 1 is what a broken chain would not. */
+    private static final int MIRROR_DUMP_LEVELS = 2;
+
+    /**
+     * GL names whose mirrored pixels are replaced by a flat colour, as {@code id=AARRGGBB,id=AARRGGBB}.
+     * <p>
+     * The one question the frame cannot otherwise answer: whether a draw samples <em>this</em> image. The content of the
+     * mirror is proven by the dump above, so if the terrain is still black while this image holds the atlas, either the
+     * descriptor names another image or the black comes from what multiplies the sample. Painting the mirror magenta and
+     * looking at the frame separates those two, which no amount of reading the code can.
+     */
+    private static final String MIRROR_POISON = System.getProperty("celtium.vulkan.mirrorPoison");
+
+    /** {@return the flat colour to write instead of this texture's pixels, or 0 to write the real ones}. */
+    private static int poisonFor(int glTextureId) {
+        if (MIRROR_POISON == null || MIRROR_POISON.isEmpty()) {
+            return 0;
+        }
+        for (String part : MIRROR_POISON.split(",")) {
+            int equals = part.indexOf('=');
+            if (equals <= 0) {
+                continue;
+            }
+            try {
+                if (Integer.parseInt(part.substring(0, equals).trim()) == glTextureId) {
+                    return (int) Long.parseLong(part.substring(equals + 1).trim(), 16);
+                }
+            } catch (NumberFormatException ignored) {
+                // A malformed entry names no texture; the real pixels are written.
+            }
+        }
+        return 0;
+    }
+
+    /** The flat colour the last upload of this object was told to write, or 0 for the real pixels. */
+    private int poisonColour;
 
     /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
     /** The layout the image is actually in; barriers used to declare one the image was not in. */
@@ -260,6 +319,10 @@ public final class VulkanGlTexture {
     private static long capturedUploads;
     private static long capturedUploadBytes;
     private static long capturedUploadMisses;
+    /** Whether a descriptor read of a null view/sampler handle is reported; see {@link #logZeroHandle}. */
+    private static final boolean HANDLE_LOG = Boolean.getBoolean("celtium.vulkan.handleLog");
+    private static int zeroHandleLogs;
+
     /** The GL names each capture diagnostic has already named, so a per-frame light map cannot flood the log. */
     private static final java.util.Set<Integer> capturedUploadIdsLogged = new java.util.HashSet<Integer>();
     private static final java.util.Set<Integer> capturedUploadMissIdsLogged = new java.util.HashSet<Integer>();
@@ -358,6 +421,7 @@ public final class VulkanGlTexture {
         // from the upload the game itself made, which the stub kept; the fallback is inside readGlLevel0 so that both
         // sources return the same GlLevel and every line after this one is shared rather than duplicated.
         final boolean fromCapture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
+        this.poisonColour = poisonFor(glTextureId);
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
             long hash = 1469598103934665603L;
@@ -372,6 +436,7 @@ public final class VulkanGlTexture {
             }
             lastPixelHash = hash;
             dumpForDebugging(glTextureId, level);
+            dumpSourcePixels(glTextureId, level);
             // The chain is generated here rather than copied from OpenGL. Copying GL's own levels needs the readback path
             // and measured 5.60%, against 0.16-0.28% for this generated chain with the sampler clamped at 1.0 - five
             // configurations were measured and this is the best, so the copying path is gone rather than kept behind a flag.
@@ -386,6 +451,7 @@ public final class VulkanGlTexture {
                     + " view=" + Long.toHexString(this.view) + " image=" + Long.toHexString(this.image)
                     + " recreated=" + recreated);
             copyToImage(level.pixels, level.width, level.height, 0);
+            dumpMirrorPixels(glTextureId);
             if (!level.owned) {
                 // A captured upload is the one source whose arrival is worth counting separately: it says the mirror
                 // holds the pixels the game uploaded rather than bytes nothing ever wrote.
@@ -455,6 +521,7 @@ public final class VulkanGlTexture {
 
     public boolean uploadPatchFromPixels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer rgba) {
         requireAlive();
+        // Sticky, like uploadFromImage: a patch over a poisoned mirror is poisoned as well.
         if (x < 0 || y < 0 || x + pixelWidth > width || y + pixelHeight > height) {
             return false;
         }
@@ -462,6 +529,9 @@ public final class VulkanGlTexture {
         if (x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height) {
             // A "patch" that covers the image is a full initialization: the light map arrives this way.
             this.fullContentArrived = true;
+            // A whole-texture write is what the light map is made of, so a dump here names its content: black light
+            // map in, black terrain and black GUI text out.
+            dumpMirrorPixels(-1);
         }
         // The image no longer holds what the last full upload put there, so the hash identifying that content is stale. Without
         // this a later full upload of the same pixels is skipped as a duplicate and the patch survives in a texture that should
@@ -472,6 +542,9 @@ public final class VulkanGlTexture {
 
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
         requireAlive();
+        // The poison is STICKY: it is set by the GL-name entry point and never cleared, so a later write through this
+        // path - the announced image, the captured surface - cannot put the real pixels back and make a poisoned run
+        // look like a run that never sampled this image. Measured at draw time is the only measurement that counts.
         requireAlive();
         long hash = 1469598103934665603L;
         int stride = Math.min(rgba.remaining() / Math.max(1, pixelHeight), pixelWidth * BYTES_PER_PIXEL);
@@ -490,6 +563,9 @@ public final class VulkanGlTexture {
         // Recorded only once the pixels are actually in the image: a hash written before the transfer would claim content that
         // a failed transfer never delivered, and the next retry would then be skipped as a duplicate (audit A07).
         lastPixelHash = hash;
+        // The announcement path: this is where the light map and the direct-held textures arrive whole, so a dump here
+        // says whether the image the descriptors sample got those pixels.
+        dumpMirrorPixels(-1);
         return true;
     }
 
@@ -505,7 +581,27 @@ public final class VulkanGlTexture {
      * @return the image view handle
      */
     public long view() {
+        logZeroHandle("view");
         return view;
+    }
+
+    /**
+     * Reports a mirror whose view or sampler is null at the moment a descriptor reads it.
+     * <p>
+     * Only the pathological case is printed: a descriptor built from handle 0 samples as nothing at all, which is what a
+     * black texture looks like from the frame while the image itself holds the right pixels - the one combination the
+     * mirror dump and the poison test cannot see. Silent while {@code celtium.vulkan.handleLog} is unset.
+     */
+    private void logZeroHandle(String what) {
+        if (!HANDLE_LOG || (view != 0L && sampler != 0L) || zeroHandleLogs >= 40) {
+            return;
+        }
+        zeroHandleLogs++;
+        System.out.println("[Celtium] CELTIUM_ZERO_HANDLE read=" + what
+                + " obj=" + Integer.toHexString(System.identityHashCode(this))
+                + " size=" + this.width + "x" + this.height
+                + " view=" + Long.toHexString(this.view) + " sampler=" + Long.toHexString(this.sampler)
+                + " deleted=" + this.deleted + " full=" + this.fullContentArrived);
     }
 
     /**
@@ -520,6 +616,7 @@ public final class VulkanGlTexture {
     }
 
     public long sampler() {
+        logZeroHandle("sampler");
         return sampler;
     }
 
@@ -785,6 +882,220 @@ public final class VulkanGlTexture {
         }
     }
 
+    /** {@return whether this GL name is one the dump was asked for}, so a per-frame light map cannot flood the log. */
+    private static boolean mirrorDumpWanted(int glTextureId) {
+        if (MIRROR_DUMP_DIR == null || MIRROR_DUMP_DIR.isEmpty()) {
+            return false;
+        }
+        if (MIRROR_DUMP_IDS.isEmpty() || glTextureId < 0) {
+            // A negative id is a caller that has no GL name to give (the announcement and patch paths); those are the
+            // directly held textures, which is exactly where a black light map would come from.
+            return true;
+        }
+        for (String part : MIRROR_DUMP_IDS.split(",")) {
+            if (part.trim().equals(Integer.toString(glTextureId))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Writes one line of numbers describing a pixel buffer: how much of it is not zero, the byte sum and the extremes.
+     * <p>
+     * The count of non-zero bytes is the fact a black frame is made of: a readback of an all-zero surface and an image
+     * that received one both report zero here, and a texture of real content cannot. The byte sum distinguishes
+     * "black" from "empty" when alpha is the only non-zero channel, which is exactly the difference between a mirror a
+     * shader draws as transparent and one it draws as black.
+     */
+    private static String pixelSummary(java.nio.ByteBuffer pixels, int width, int height) {
+        long nonZero = 0;
+        long sum = 0;
+        int min = 255;
+        int max = 0;
+        long count = Math.min((long) width * height * BYTES_PER_PIXEL, pixels.capacity());
+        for (int i = 0; i < count; i++) {
+            int value = pixels.get(i) & 0xFF;
+            if (value != 0) {
+                nonZero++;
+            }
+            sum += value;
+            if (value < min) {
+                min = value;
+            }
+            if (value > max) {
+                max = value;
+            }
+        }
+        return "bytes=" + count + " nonZero=" + nonZero + " sum=" + sum + " min=" + min + " max=" + max;
+    }
+
+    /**
+     * Writes the pixels that arrived from the source, before the copy, when the mirror dump is on.
+     * <p>
+     * This is the half that says whether the readback (or the capture) delivered content at all; the device-side half
+     * below says whether the image received it. Both are written for the same upload so the two can be compared.
+     */
+    private void dumpSourcePixels(int glTextureId, GlLevel level) {
+        if (!mirrorDumpWanted(glTextureId)) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_SRC glTexture=" + glTextureId + " owned=" + level.owned + " size="
+                + level.width + "x" + level.height + " " + pixelSummary(level.pixels, level.width, level.height));
+        if ((long) level.width * level.height > MIRROR_DUMP_MAX_PIXELS) {
+            return;
+        }
+        writePng(level.pixels, level.width, level.height,
+                new java.io.File(MIRROR_DUMP_DIR, "src-gl" + glTextureId + "-" + level.width + "x" + level.height
+                        + "-n" + this.mirrorDumps + "-obj" + Integer.toHexString(System.identityHashCode(this))
+                        + ".png"));
+    }
+
+    /** How many times this object's image has been dumped; part of the file name so successive uploads are kept apart. */
+    private int mirrorDumps;
+
+    /**
+     * Reads this mirror's mip levels back from the device and writes them as PNGs, with one line of numbers each.
+     * <p>
+     * This is the measurement the frame cannot make: it separates "the mirror holds the right pixels and the sampling
+     * is wrong" from "the mirror holds black". Level 0 and level 1 are both written because the sampler blends them
+     * (mipmap mode LINEAR, {@code maxLod} 1.0), so a correct level 0 with a level 1 that was never written also draws
+     * black - and those two faults have different fixes.
+     */
+    private void dumpMirrorPixels(int glTextureId) {
+        if (!mirrorDumpWanted(glTextureId)) {
+            return;
+        }
+        if (this.mirrorDumps >= MIRROR_DUMPS_PER_OBJECT) {
+            return;
+        }
+        if (this.mirrorDumps == 0) {
+            synchronized (VulkanGlTexture.class) {
+                if (mirrorDumpsWritten >= MIRROR_DUMP_LIMIT) {
+                    return;
+                }
+                mirrorDumpsWritten++;
+            }
+        }
+        this.mirrorDumps++;
+        for (int level = 0; level < Math.min(MIRROR_DUMP_LEVELS, Math.max(1, this.mipLevels)); level++) {
+            if (levelLayout(level) != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+                // The dump transitions the level through TRANSFER_SRC and back. A level that is not at rest in
+                // SHADER_READ_ONLY is a level this diagnostic does not understand, and moving it would change the frame
+                // it is measuring.
+                System.out.println("[Celtium] CELTIUM_MIRROR_DUMP glTexture=" + glTextureId + " level=" + level
+                        + " skipped: layout is " + levelLayout(level));
+                continue;
+            }
+            java.nio.ByteBuffer read = readMirrorLevel(level);
+            if (read == null) {
+                continue;
+            }
+            try {
+                int levelWidth = Math.max(1, this.width >> level);
+                int levelHeight = Math.max(1, this.height >> level);
+                System.out.println("[Celtium] CELTIUM_MIRROR_LEVEL glTexture=" + glTextureId + " level=" + level
+                        + " size=" + levelWidth + "x" + levelHeight + " " + pixelSummary(read, levelWidth, levelHeight));
+                if ((long) levelWidth * levelHeight > MIRROR_DUMP_MAX_PIXELS) {
+                    // The numbers above are the measurement; a megapixel PNG would only cost the frame it measures.
+                    continue;
+                }
+                writePng(read, levelWidth, levelHeight,
+                        new java.io.File(MIRROR_DUMP_DIR, "mirror-gl" + glTextureId + "-" + levelWidth + "x"
+                                + levelHeight + "-l" + level + "-n" + this.mirrorDumps + "-obj"
+                                + Integer.toHexString(System.identityHashCode(this)) + ".png"));
+            } finally {
+                MemoryUtil.memFree(read);
+            }
+        }
+    }
+
+    /**
+     * Copies one mip level of this image into host memory.
+     * <p>
+     * Reuses the staging buffer the uploads already own, copies it into a fresh Java-owned buffer before returning so a
+     * concurrent upload cannot overwrite the pixels under the reader, and puts the image back into the layout the
+     * sampling side expects.
+     *
+     * @return the level's tightly packed RGBA8 rows, or {@code null} when there is nothing to read
+     */
+    private java.nio.ByteBuffer readMirrorLevel(int level) {
+        if (this.image == 0L || this.width <= 0 || this.height <= 0 || level < 0 || level >= Math.max(1, this.mipLevels)) {
+            return null;
+        }
+        int levelWidth = Math.max(1, this.width >> level);
+        int levelHeight = Math.max(1, this.height >> level);
+        long bytes = (long) levelWidth * levelHeight * BYTES_PER_PIXEL;
+        ensureStaging(bytes);
+        VkCommandBuffer commands = context.beginCommands();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(this.image);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            vkCmdPipelineBarrier(commands, SAMPLING_STAGES, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+            VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+            region.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0);
+            region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level).baseArrayLayer(0)
+                    .layerCount(1);
+            region.get(0).imageOffset().set(0, 0, 0);
+            region.get(0).imageExtent().set(levelWidth, levelHeight, 1);
+            vkCmdCopyImageToBuffer(commands, this.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, this.stagingBuffer, region);
+            barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
+        }
+        // Submitted and waited for by the context helper, so the staging buffer holds the level when this returns.
+        context.endCommands(commands);
+        if (!stagingCoherent) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkMappedMemoryRange.Buffer range = VkMappedMemoryRange.calloc(1, stack);
+                range.get(0).sType$Default().memory(stagingMemory).offset(0L).size(VK_WHOLE_SIZE);
+                check(vkInvalidateMappedMemoryRanges(context.device(), range), "vkInvalidateMappedMemoryRanges(dump)");
+            }
+        }
+        java.nio.ByteBuffer copy = MemoryUtil.memAlloc((int) bytes);
+        MemoryUtil.memCopy(stagingAddress, MemoryUtil.memAddress(copy), bytes);
+        return copy;
+    }
+
+    /**
+     * Writes RGBA8 rows to a PNG, top row first, exactly as the pixels are laid out in memory.
+     * <p>
+     * No vertical flip: the source dump and the device dump have to be comparable row for row, and a flip here would
+     * silently apply to one of them only.
+     */
+    private static void writePng(java.nio.ByteBuffer pixels, int width, int height, java.io.File target) {
+        try {
+            target.getParentFile().mkdirs();
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int offset = ((y * width) + x) * BYTES_PER_PIXEL;
+                    if (offset + 3 >= pixels.capacity()) {
+                        continue;
+                    }
+                    int r = pixels.get(offset) & 0xFF;
+                    int g = pixels.get(offset + 1) & 0xFF;
+                    int b = pixels.get(offset + 2) & 0xFF;
+                    int a = pixels.get(offset + 3) & 0xFF;
+                    image.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
+                }
+            }
+            javax.imageio.ImageIO.write(image, "png", target);
+        } catch (Throwable ignored) {
+            // Debug-only path: never let a dump failure affect rendering.
+        }
+    }
+
     /**
      * Writes the mirrored pixels to a PNG when {@code -Dceltium.vulkan.dumpTextures=<dir>} is set. Used while
      * bringing the backend up: comparing what GL hands over with what the shader sees separates an upload problem
@@ -948,7 +1259,26 @@ public final class VulkanGlTexture {
         // buffer into device visible memory without an intermediate Java array. The row order is kept as GL
         // returned it; a vertical flip here made the whole terrain black, so the orientation question is not
         // settled and must be answered with a controlled pattern instead of by flipping this copy.
-        if (FLIP_ROWS) {
+        if (this.poisonColour != 0) {
+            // A per-texel checkerboard of the colour and its inverse rather than the pixels: the frame then says both
+            // whether anything samples this image and whether its texture coordinates vary across it. One flat colour
+            // could not tell a correct mapping into this image apart from a mapping that is degenerate and lands on a
+            // single texel - and a degenerate mapping samples the atlas's empty corner, which is black.
+            int argb = this.poisonColour;
+            int inverse = argb ^ 0x00FFFFFF;
+            int rowBytes = pixelWidth * BYTES_PER_PIXEL;
+            for (int y = 0; y < pixelHeight; y++) {
+                long rowBase = stagingAddress + (long) y * rowBytes;
+                for (int x = 0; x < pixelWidth; x++) {
+                    int colour = ((x + y) & 1) == 0 ? argb : inverse;
+                    long offset = rowBase + (long) x * BYTES_PER_PIXEL;
+                    MemoryUtil.memPutByte(offset, (byte) (colour >> 16));
+                    MemoryUtil.memPutByte(offset + 1, (byte) (colour >> 8));
+                    MemoryUtil.memPutByte(offset + 2, (byte) colour);
+                    MemoryUtil.memPutByte(offset + 3, (byte) (colour >>> 24));
+                }
+            }
+        } else if (FLIP_ROWS) {
             // Off, and measured: flipping every mirrored row turned the terrain almost black (band luminance 3.2 against
             // the reference's 131) because the atlas's UVs and this upload are both in OpenGL's row order, so the flip
             // inverted every block face. The earlier note that a flip "made the whole terrain black" was right, and this
@@ -1126,7 +1456,12 @@ public final class VulkanGlTexture {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo create = VkBufferCreateInfo.calloc(stack).sType$Default()
                     .size(required)
-                    .usage(VK_BUFFER_USAGE_TRANSFER_SRC_BIT)
+                    // TRANSFER_DST as well as SRC: the pixels are written into the image from here, and
+                    // compareLevelZeroWithGl - and the mirror dump - copy the image back out into this same buffer.
+                    // Without DST the readback copy is a validation error, and the buffer keeps whatever the last
+                    // upload left in it, so the comparison reports a perfect match by comparing an upload with
+                    // itself (VUID-vkCmdCopyImageToBuffer-dstBuffer-00191, measured: ten messages a run).
+                    .usage(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateBuffer(device, create, null, handle), "vkCreateBuffer(staging)");

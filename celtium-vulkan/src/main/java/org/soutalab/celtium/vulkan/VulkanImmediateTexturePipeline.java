@@ -202,10 +202,70 @@ public final class VulkanImmediateTexturePipeline {
     public static long DESCRIPTOR_HITS;
     public static long DESCRIPTOR_MISSES;
 
+    /**
+     * The other side of the atlas-binding question: which images the registry is handing out.
+     * <p>
+     * Every texture this pipeline builds a descriptor for comes from {@code VulkanTextureRegistry} - either
+     * {@code get(boundTexture)} or {@code imageFor(...)} - so the first few distinct ones are a sample of the registry's
+     * current values, taken at the moment a descriptor is built from them. Printed next to
+     * {@code CELTIUM_ATLAS_DESCRIPTOR}, a run says whether the image the terrain samples is the same image the registry
+     * hands out for that size, or an older one the terrain is still holding. Bounded to
+     * {@link #CENSUS_LIMIT} lines for the whole process; the identity comparison per call is a walk over at most that
+     * many longs.
+     */
+    private static final int CENSUS_LIMIT = 6;
+    /** Distinct census entries: {key, view, generation, width<<32|height}, plus the object identity alongside. */
+    private static final long[][] CENSUS = new long[CENSUS_LIMIT][4];
+    private static final int[] CENSUS_IDENTITY = new int[CENSUS_LIMIT];
+    private static int censusCount;
+    private static int censusLines;
+    private static long censusCalls;
+
+    /** Records one distinct image the registry supplied, and prints the first few with their full identity. */
+    private static void censusTexture(VulkanGlTexture texture) {
+        censusCalls++;
+        long key = texture.key();
+        for (int i = 0; i < censusCount; i++) {
+            if (CENSUS[i][0] == key) {
+                return;
+            }
+        }
+        if (censusCount >= CENSUS_LIMIT) {
+            return;
+        }
+        int slot = censusCount++;
+        CENSUS[slot][0] = key;
+        CENSUS[slot][1] = texture.view();
+        CENSUS[slot][2] = key ^ (texture.view() * 31L);
+        CENSUS[slot][3] = ((long) texture.width() << 32) | (texture.height() & 0xFFFFFFFFL);
+        CENSUS_IDENTITY[slot] = System.identityHashCode(texture);
+        if (censusLines < CENSUS_LIMIT) {
+            censusLines++;
+            System.out.println("[Celtium] CELTIUM_REGISTRY_TEXTURE #" + slot + " obj="
+                    + Integer.toHexString(CENSUS_IDENTITY[slot]) + " view=0x" + Long.toHexString(texture.view())
+                    + " gen=" + CENSUS[slot][2] + " key=0x" + Long.toHexString(key) + " size=" + texture.width()
+                    + "x" + texture.height() + " full=" + texture.hasFullContent() + " sampler=0x"
+                    + Long.toHexString(texture.sampler()) + " (from the registry, sampled by the immediate path)");
+        }
+    }
+
+    /** {@return whether the registry has been seen supplying an image of this size}, for the terrain audit line. */
+    public static String registryImageOfSize(int width, int height) {
+        long packed = ((long) width << 32) | (height & 0xFFFFFFFFL);
+        for (int i = 0; i < censusCount; i++) {
+            if (CENSUS[i][3] == packed) {
+                return "#" + i + " obj=" + Integer.toHexString(CENSUS_IDENTITY[i]) + " view=0x"
+                        + Long.toHexString(CENSUS[i][1]) + " gen=" + CENSUS[i][2];
+            }
+        }
+        return "none-seen";
+    }
+
     public long descriptorSetFor(VulkanGlTexture texture) {
         if (this.descriptorPool == VK_NULL_HANDLE || texture == null) {
             return 0L;
         }
+        censusTexture(texture);
         Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
         if (existing != null) {
             DESCRIPTOR_HITS++;
