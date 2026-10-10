@@ -1499,6 +1499,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         long target = this.currentRenderTarget;
+        if (!this.modelMatrixLogged) {
+            // The matrices the model group is stored with, once: the row instrument in recordRenderPass stops after the first
+            // two terrain sections, so the model group was never reached there.
+            this.modelMatrixLogged = true;
+            System.out.println("[Celtium] CELTIUM_MODEL_ENQ proj=" + round3(projection[2]) + "," + round3(projection[6]) + ","
+                    + round3(projection[10]) + "," + round3(projection[14]) + " mvT=" + round3(modelView[12]) + ","
+                    + round3(modelView[13]) + "," + round3(modelView[14]));
+        }
         this.immediateGroups.add(new Object[] {mesh, projection, modelView,
                 Integer.valueOf(VulkanImmediateFormats.POSITION_TEX), Integer.valueOf(texture),
                 Long.valueOf(key), state, Long.valueOf(target), null,
@@ -3560,6 +3568,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (groupVertices > this.immediateMaxGroupVertices) {
                 this.immediateMaxGroupVertices = groupVertices;
             }
+            if (!this.immediateMatrixLogged) {
+                // The immediate path's own matrices, once, for the same comparison the model group prints.
+                this.immediateMatrixLogged = true;
+                System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ proj=" + round3(projection[2]) + ","
+                        + round3(projection[6]) + "," + round3(projection[10]) + "," + round3(projection[14])
+                        + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14]));
+            }
             this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
                     Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
                     Long.valueOf(this.currentGroupStateKey), this.currentGroupState,
@@ -5075,6 +5090,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean windowOrderLogged;
     /** One-shot: the distinct projection depth rows the groups of a frame draw with. */
     private int groupDepthRowsSeen;
+    /** One-shot: the matrices a model group is stored with. */
+    private boolean modelMatrixLogged;
+    /** One-shot: the matrices an immediate group is stored with. */
+    private boolean immediateMatrixLogged;
     private String lastGroupDepthRow = "";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
@@ -5129,14 +5148,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             // Asked of GL here rather than taken from the immediate path's fields: a display list is replayed under the
             // matrix in effect at that moment, and the projection gets the same clip-depth remap the immediate path uses.
-            float[] projectionNow = new float[16];
-            float[] modelViewNow = new float[16];
-            java.nio.FloatBuffer matrixBuffer = org.lwjgl.BufferUtils.createFloatBuffer(16);
-            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, matrixBuffer);
-            matrixBuffer.get(projectionNow);
-            matrixBuffer.clear();
-            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrixBuffer);
-            matrixBuffer.get(modelViewNow);
+            // The mirror, not glGetFloatv. Asking GL here was measured to give the orthographic projection the HUD last
+            // installed - "proj=0.0,0.0,-1.0,-0.05" for the model group against the terrain's perspective
+            // "0,0,-1.001,-1" - which is exactly what the one-quad image showed: model quads laid out in screen space.
+            // The immediate path's matrices come from this mirror for the same reason.
+            float[] projectionNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION).clone();
+            float[] modelViewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
             // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
             // switch was removed rather than kept.
