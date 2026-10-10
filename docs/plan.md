@@ -46,6 +46,42 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.106 **修正・受入済み**: texture 所有の欠損を3つ閉じる —— lightmap の per-update readback 176→2、sprite patch の in-place 化、image/view/descriptor の per-update churn 解消
+
+- **発見した3つの契約欠損（goal 項目2・texture 所有統合の内訳）**:
+  1. **announce が `bound` を見ていた**: `func_110988_a`（`TextureUtil.uploadTexture`＝`DynamicTexture.updateDynamicTexture` の経路）は
+     書き込む texture を**パラメータ**として持つのに、`announceDynamicTexture` はその時点の bound texture へ画素を aim していた。
+     lightmap(id 12, 16x16) の画素は別 texture（1x1 の id 28 等）へ投げられるか拒否され、mirror は空のまま →
+     `invalidateAll`（periodic blanket refresh）の cadence で **毎更新 readback**（run あたり ~176 回の 16x16 MIRROR）。
+  2. **`onGlTextureReallocated` が同一サイズの内容更新でも mirror を forget**: `func_110988_a` のたびに
+     `forgetTexture` → image/view/descriptor を per-update で破棄・再生成（`forgotten` ~176）。「全 upload＝再割当」の
+     誤判定で、DynamicTexture の内容更新を真の identity 変更と混同していた。
+  3. **所有状態の未同期**: `fromImage`（announced 全画像 → mirror 構築）が `fullyInitialized` を立てない → atlas の
+     sprite patch が「未初期化への部分 patch」として拒否 → readback（`beforeInit` 818）。`consumeReadback` が
+     `staleIds` を消さない → direct-path skip を記録しつつ registry `get()` が結局 readback（消せていなかった readback 流）。
+- **修正（producer/consumer/invalidate/delete を同じ契約へ）**:
+  - announce は **glTextureId パラメータ**を使う（bound ではなく）。`announceDynamicTexture(id, pixels[, w, h])`。
+    `DynamicTextureMixin` は `getGlTextureId()`、`TextureUtilMixin` はメソッドの id+size パラメータを渡す。
+  - `onGlTextureReallocated(id, w, h)` を**サイズ対応**に：同一サイズの再 upload は `invalidate`（stale マークのみ、
+    announce が直後に in-place 更新）で、image/view/descriptor を保持。真の再割当（サイズ変更・未登録 id のみ）で
+    `forgetTexture` + 直接参照を落とす。
+  - `fromImage` が `markFullyInitialized` を呼ぶ（announced image は常に全面）→ 以降の patch は初期化済み image へ入る。
+  - `consumeReadback` が `staleIds` を消す（consume＝「image は GL と同じ内容」の確定）＋ `get()` の stale refresh が
+    `canSkipReadback` を先に見る → announce 済み write はどの経路でも readback しない。
+  - `announceFullPixels` の fallback 生成は **DSA で対象 texture の size と GL mag filter を照会**（bound ではなく）→
+    mirror は GL の filter に合わせて作る（lightmap は linear）。
+- **受入（水アニメーション含む world）**:
+
+  | GPU | 16x16 (lightmap) readback | atlas `beforeInit` patch 拒否 | `forgotten` | verdict / diff |
+  |---|---|---|---|---|
+  | AMD `p442-tex` | **2**（旧 ~176） | **18**（旧 818、初回窓のみ） | **0**（旧 ~176） | PASSED・clean・0.005 % |
+  | Intel `p443-tex-intel` | **2** | **18** | **0** | PASSED・clean |
+
+  `CELTIUM_DYNAMIC_ANNOUNCE texture=12 size=16x16`（正しい id+size、旧は bound=28 size=1x1 への誤 aim）、`full=` 全面
+  announce が ~1900（lightmap 更新がすべて in-place に入る）。sprite patch も `patches` ~260→~966 で直接書き込まれる。
+- **残る計測限界**：`glDeleteTextures`/他の upload 経路の未 hook 分は invalidateAll が安全側で拾う（残る少数の
+  16x16 MIRROR は初回確立と blanket 由来）。`full` announce 自体の upload/submit 実コストは `patchCostSummary` に出る。
+
 ## 0.105 **修正・受入済み**: Nether 受入 —— portal 帰還の解消（AXIS 直交 step）と、backend 再生成後の frame target デッドロック復元
 
 - **旧 NO_CAPTURE の内訳は2つで、両方とも直した**:

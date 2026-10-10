@@ -72,24 +72,19 @@ public class TextureUtilMixin {
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
             // A full upload allocates this id's content from scratch, which is what a resource reload, a re-stitch or a
-            // reused id all look like from here. The mirror for the id is dropped first, so no image can outlive the
-            // content it was built from; the announcement below then creates the image this upload belongs to.
+            // reused id all look like from here. The size goes along so a same-size write is treated as the content
+            // update it is - a DynamicTexture refresh - rather than a new identity, which is what keeps the light map's
+            // mirror alive across its per-update uploads.
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                vulkan.onGlTextureReallocated(glTextureId);
+                vulkan.onGlTextureReallocated(glTextureId, width, height);
+                // The id rides along too: this method's own parameter names the texture it writes, and aiming the
+                // pixels at whatever is bound at hook time is how they were landing in the wrong texture.
+                vulkan.announceDynamicTexture(glTextureId, data, width, height);
             }
         } catch (RuntimeException | LinkageError ignored) {
             // A lifecycle notification must never break texture loading.
-        }
-
-        try {
-            TerrainGpuBackend backend = TerrainGpuBackends.current();
-            if (backend != null && data != null && width > 0 && height > 0) {
-                backend.announceDynamicTexture(data, width, height);
-            }
-        } catch (Throwable ignored) {
-            // Same rule as the other hooks: a bookkeeping hint must never break a texture upload.
         }
     }
 

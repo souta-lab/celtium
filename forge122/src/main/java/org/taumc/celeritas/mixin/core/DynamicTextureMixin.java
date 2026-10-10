@@ -48,15 +48,13 @@ public class DynamicTextureMixin {
                     }
                 }
             }
-            if (celtium$pixels != null) {
-                // The size rides along when the fields are readable, so the backend does not have to ask OpenGL for it
-                // (two glGetTexLevelParameteri per update, about a thousand a run on AMD). The fields are private in
-                // 1.12.2, but they are plain ints with stable names, which is the same footing as the pixel array above.
-                // The size is not read here: the fields are private and, in a production (SRG-named) jar, a lookup by the
-                // mapped name does not match - measured, the size-carrying path was never taken (announcedDynamicTextures
-                // stayed 0). The plain announce stays as the early hint; the size now comes from the TextureUtil upload
-                // hook, whose parameters carry it.
-                backend.announceDynamicTexture((int[]) celtium$pixels.get(this));
+            if (celtium$pixels != null && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                // The object's own id is handed over as well: the announce used to aim the pixels at whatever texture
+                // was bound at hook time, which is how they missed the texture they belonged to. The size is read from
+                // that id in the backend.
+                vulkan.announceDynamicTexture(
+                        ((net.minecraft.client.renderer.texture.DynamicTexture) (Object) this).getGlTextureId(),
+                        (int[]) celtium$pixels.get(this));
             }
         } catch (Throwable ignored) {
             // Same rule as the other texture hooks: a bookkeeping hint must never break an upload. If anything goes wrong the

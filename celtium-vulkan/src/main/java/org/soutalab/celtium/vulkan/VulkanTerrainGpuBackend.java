@@ -1276,65 +1276,51 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * makes. The id and the size are asked of GL because the method that performs the write takes neither.
      */
     /**
-     * The announce with the size the game already has: same work as {@link #announceDynamicTexture(int[])}, minus the two
-     * {@code glGetTexLevelParameteri} calls, which is what the caller's own fields make unnecessary (condition (b): the
-     * values come from Minecraft rather than from a GL query).
+     * Announces a whole-texture {@code int[]} upload, the {@code TextureUtil.uploadTexture} / DynamicTexture path.
+     * <p>
+     * The id comes from the caller, not from the bound texture: these upload methods carry the texture they write as a
+     * parameter, and the bound texture at hook time is whatever the frame had bound before - which is where the light
+     * map's pixels were being aimed (at a 1x1 placeholder), leaving its mirror to be read back on every update.
      */
-    @Override
-    public void announceDynamicTexture(int[] pixels, int width, int height) {
-        if (pixels == null || width <= 0 || height <= 0) {
-            announceDynamicTexture(pixels);
+    public void announceDynamicTexture(int glTextureId, int[] pixels, int width, int height) {
+        if (pixels == null || glTextureId == 0 || width <= 0 || height <= 0 || pixels.length < width * height) {
             return;
         }
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
         }
-        int bound = this.immediateState.boundTextureName();
-        compareBoundTextureWithGl(bound);
-        if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
-        if (bound == 0 || pixels.length < width * height) {
-            return;
-        }
+        if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) flushPendingBeforeGlDraw();
         int[][] rows = new int[height][width];
         for (int row = 0; row < height; row++) {
             System.arraycopy(pixels, row * width, rows[row], 0, width);
         }
         this.announcedDynamicTextures++;
-        if (this.textureRegistry.announceFullPixels(bound, rows, width, height, 0, 0)) {
+        if (this.textureRegistry.announceFullPixels(glTextureId, rows, width, height, 0, 0)) {
             this.animatedImageFills++;
             this.dynamicTextureFills++;
         }
     }
 
-    @Override
-    public void announceDynamicTexture(int[] pixels) {
-        if (pixels == null) {
+    /**
+     * As {@link #announceDynamicTexture(int, int[], int, int)}, with the size asked of the texture itself.
+     * The DynamicTexture mixin has the object and its id but not the size - so the size is read from the
+     * texture directly rather than from whatever is bound.
+     */
+    public void announceDynamicTexture(int glTextureId, int[] pixels) {
+        if (pixels == null || glTextureId == 0) {
             return;
         }
-        if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
-        }
-        int bound = this.immediateState.boundTextureName();
-        compareBoundTextureWithGl(bound);
-        if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
-        int width = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
+        int width = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-        int height = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
+        int height = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
-        if (bound == 0 || width <= 0 || height <= 0 || pixels.length < width * height) {
+        if (width <= 0 || height <= 0) {
             return;
         }
-        int[][] rows = new int[height][width];
-        for (int row = 0; row < height; row++) {
-            System.arraycopy(pixels, row * width, rows[row], 0, width);
-        }
-        if (this.textureRegistry.announceFullPixels(bound, rows, width, height, 0, 0)) {
-            this.animatedImageFills++;
-            this.dynamicTextureFills++;
-        }
+        announceDynamicTexture(glTextureId, pixels, width, height);
         if (this.dynamicAnnounceDiagnostics < 3) {
             this.dynamicAnnounceDiagnostics++;
-            System.out.println("[Celtium] CELTIUM_DYNAMIC_ANNOUNCE bound=" + bound + " size=" + width + "x" + height);
+            System.out.println("[Celtium] CELTIUM_DYNAMIC_ANNOUNCE texture=" + glTextureId + " size=" + width + "x" + height);
         }
     }
 
@@ -1497,7 +1483,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * than reused.
      */
     public void onGlTextureReallocated(int glTextureId) {
+        onGlTextureReallocated(glTextureId, -1, -1);
+    }
+
+    /**
+     * As {@link #onGlTextureReallocated(int)}, with the incoming content's size so a same-size write keeps its mirror.
+     * <p>
+     * A full upload is only a new texture identity when the storage changed: {@code DynamicTexture.updateDynamicTexture}
+     * reaches this method on every light-map refresh with the same id and the same 16x16, and forgetting the mirror each
+     * time meant a new image, a new view and new descriptor keys per update - and a readback whenever the announce then
+     * missed. A same-size write is a content replace instead: the entry is kept, marked stale, and the announcement that
+     * follows fills it in place.
+     */
+    public void onGlTextureReallocated(int glTextureId, int width, int height) {
         this.glTextureDeletions++;
+        boolean sameSize = width > 0 && height > 0 && this.textureRegistry != null
+                && this.textureRegistry.hasEntry(glTextureId, width, height);
+        if (sameSize) {
+            // Marked stale, not refreshed: invalidateTexture would run the direct refresh path now, before the
+            // announcement below lands, and read the texture back - the very cost this branch exists to avoid. The
+            // stale mark alone keeps an unannounced write honest: the next lookup refreshes it if nothing arrives.
+            this.textureRegistry.invalidate(glTextureId);
+            return;
+        }
         if (this.textureRegistry != null) {
             this.textureRegistry.forgetTexture(glTextureId);
         }

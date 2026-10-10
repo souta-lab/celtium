@@ -149,6 +149,12 @@ public final class VulkanTextureRegistry {
             this.consumedGeneration.put(id, applied);
         }
         this.readbacksSkippedAfterAnnouncement++;
+        // The generation being consumed means the pixels the invalidation reported are already in this image, so the
+        // stale mark - "the mirror may not match GL" - is false for it and must not send the next lookup into the
+        // readback path. Before this was removed, the directly held refresh skipped its readback while the registry's
+        // get() still re-uploaded the same texture on the next bind, which is the readback stream that was supposed
+        // to be gone: it ran once per animated-sprite invalidation for every texture the immediate path samples.
+        this.staleIds.remove(id);
     }
 
     /** {@return how many readbacks were skipped because the announced pixels were already in the image}. */
@@ -235,6 +241,12 @@ public final class VulkanTextureRegistry {
                 this.imageUploads++;
                 entry.width = width;
                 entry.height = height;
+                // The announcement carries the whole texture - announceImage is only ever reached by a full upload -
+                // so a successful conversion is an initialization, the same fact the readback path records. Without
+                // this mark the image holds full content while fullyInitialized does not know it, and every later
+                // partial patch is refused as "before initialization" - which is exactly where the atlas's animated
+                // sprite writes were landing and being read back instead.
+                markFullyInitialized(glTextureId);
             } else {
                 this.imageUploadsSkipped++;
             }
@@ -297,22 +309,25 @@ public final class VulkanTextureRegistry {
         Entry entry = this.entries.get(glTextureId);
         if (entry == null) {
             // The announcement arrives before the draw path has ever asked for this texture, which is the normal order for an
-            // atlas animation. Creating the mirror here needs the texture's full size, and a patch does not carry it - so the
-            // size is queried and the pixels are not: the expensive half of the readback is the pixels, and those are already
-            // in the announcement. The wait for the draw path was the whole reason these writes were being read back.
-            int textureWidth = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-            int textureHeight = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
+            // atlas animation. Creating the mirror here needs the texture's full size and its magnification filter, and a
+            // patch carries neither - so both are asked of the texture itself, not of whatever happens to be bound. The
+            // bound-read this used to do asked the wrong texture and produced a nearest-filtered image for textures that
+            // need linear (the light map): the draw path then had to throw the image away to get the right filter.
+            int textureWidth = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+            int textureHeight = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(glTextureId, 0,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
             if (textureWidth <= 0 || textureHeight <= 0) {
                 this.failureCount++;
                 this.lastFailure = "announced pixels for GL texture " + glTextureId + " whose size is "
                         + textureWidth + "x" + textureHeight;
                 return false;
             }
+            int magFilter = org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER);
             try {
-                // The caller normally creates the image first through imageFor, which is where the filter is decided. This
-                // fallback exists for an announcement that arrives before any draw asked for the texture; it cannot know the
-                // filter, so it uses nearest and records that the image was created here.
-                VulkanGlTexture created = VulkanGlTexture.create(this.context, textureWidth, textureHeight, true);
+                VulkanGlTexture created = VulkanGlTexture.create(this.context, textureWidth, textureHeight,
+                        magFilter == org.lwjgl.opengl.GL11.GL_NEAREST);
                 entry = new Entry(glTextureId, textureWidth, textureHeight, created);
                 this.entries.put(glTextureId, entry);
                 this.mirrorCount++;
@@ -516,6 +531,12 @@ public final class VulkanTextureRegistry {
         }
     }
 
+    /** {@return whether a mirror already exists for this id at exactly this size} */
+    public boolean hasEntry(int glTextureId, int width, int height) {
+        Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+        return entry != null && entry.width == width && entry.height == height;
+    }
+
     /** {@return how many GL textures were forgotten after deletion}. */
     public int forgotten() {
         return this.forgotten;
@@ -564,6 +585,14 @@ public final class VulkanTextureRegistry {
         Entry existing = this.entries.get(glTextureId);
         if (existing != null) {
             if (this.staleIds.remove(Integer.valueOf(glTextureId))) {
+                if (canSkipReadback(glTextureId)) {
+                    // The write that made this texture stale announced its pixels, and they are already in this image:
+                    // the refresh the direct path skips must be skipped here too, or registry-held textures (anything
+                    // that is not the directly held atlas or light map) still re-read GL on every animated write.
+                    consumeReadback(glTextureId);
+                    HIT_CALLS++;
+                    return existing.texture;
+                }
                 // In place: same image, same view, same generation - so the descriptor keys built for this mirror stay
                 // valid and the cache keeps working (audit S13). Recreating it instead cost 545 sets for 546 batches.
                 try {
