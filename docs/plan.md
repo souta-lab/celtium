@@ -2173,7 +2173,29 @@ list=4 … 同上 …   （list 2〜7 すべて同じ）
   native 側と display list 側で僅かに差が出る箇所と解釈できる（**ただしこの解釈はまだ検証していない**）。
 - 受入: 4 run とも exit 0 / validationClean=true / PASSED。
 
-**次の一手**: (1) **手のモデル部品**を対象に、display list の再生をキャンセルした場合の差を**同一条件の対**で測り直す
+**コンパイル連鎖を6フレームまで取り、リストの素性を確定（このターン）**:
+
+```
+submitImmediateBatch <- offerBatch <- WorldVertexBufferUploader.func_181679_a <- Tessellator.func_78381_a
+  <- TexturedQuad.func_178765_a (draw) <- ModelBox.func_178780_a (render)
+  <- ModelRenderer.func_78788_d (compileDisplayList) <- ModelRenderer.func_78785_a (render)
+```
+
+- **通常場面（三人称なし）で毎フレーム再生される list 2/3 は、`ModelRenderer.render` がコンパイルしたもの**
+  である。三人称でない場面で `ModelRenderer` が毎フレーム描くのは**一人称の手／手持ちアイテム**だけなので、
+  **list 2/3 = 手のモデル部品**と確定する（前ターンの訂正が裏づけられた）。
+- **これで「同一性」が呼び出し連鎖で言える**: リストが**どの経路でコンパイルされたか**が記録に残る
+  （id の並びやソース順ではなく、実測した連鎖）。前ターンの誤りは「id とソース順」で帰属したことだった。
+- **ただし手と他のモデルはまだ分離できない**: 連鎖の6フレーム目は手もプレイヤーモデルも `ModelRenderer.render`。
+  分けるには**さらに深いフレーム**（手持ちアイテムなら `ItemRenderer`、プレイヤーモデルなら `RenderPlayer`）が要る。
+  **まだ分離できていないので、キャンセルの既定化はしない。**
+- 受入: exit 0 / validationClean=true / PASSED（連鎖の記録を深くしただけで回帰なし）。
+
+**次の一手**: (1) 連鎖を**8フレーム**まで取り、手（`ItemRenderer` 系）とプレイヤーモデル（`RenderPlayer` 系）を分離する、
+(2) 分離できたら「**native が既に描いている内容のリストだけ**を取り消す」規則を実装し、既定化の可否を
+同一条件の対で判断する、(3) プレイヤーモデルの12リストはメッシュがあるので native 描画へ置き換える。
+
+**（旧メモ）** 次の一手: (1) **手のモデル部品**を対象に、display list の再生をキャンセルした場合の差を**同一条件の対**で測り直す
 （前ターンの測定は「空」という誤った前提で解釈していた）、(2) その結果で `cancelDisplayLists` の既定化を判断する、
 (3) プレイヤーモデルの12リストはメッシュがあるので native 描画へ置き換える。
 
