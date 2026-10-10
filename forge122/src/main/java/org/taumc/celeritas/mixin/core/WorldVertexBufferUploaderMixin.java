@@ -141,6 +141,46 @@ public abstract class WorldVertexBufferUploaderMixin {
                 return;
             }
             int formatId = celtium$formatId(format);
+            // Inside glNewList the geometry is being compiled into a display list rather than drawn. Recording the call site
+            // then is what gives that list an identity: the id alone shifts when something else allocates first.
+            int celtium$listIndex = 0;
+            try {
+                celtium$listIndex = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+            } catch (RuntimeException | LinkageError ignored) {
+                celtium$listIndex = 0;
+            }
+            if (celtium$listIndex != 0) {
+                StackTraceElement[] celtium$stack = new Throwable().getStackTrace();
+                String celtium$origin = "unknown";
+                int celtium$taken = 0;
+                for (StackTraceElement celtium$frame : celtium$stack) {
+                    String celtium$name = celtium$frame.getClassName();
+                    // The injected handler lives inside Minecraft's own class, so a package test is not enough: its name carries
+                    // the mixin's marker and has to be skipped explicitly (everything reported the handler before this).
+                    if (celtium$name.startsWith("org.taumc.celeritas") || celtium$name.startsWith("org.soutalab.celtium")
+                            || celtium$name.startsWith("org.spongepowered") || celtium$name.contains("$celeritas$")
+                            || celtium$name.contains("$celtium$")
+                            // The mixin's marker is in the METHOD name, not the class: the injected handler lives inside
+                            // Minecraft's own WorldVertexBufferUploader and reports as a frame of that class, which is
+                            // why every origin came back as the handler itself.
+                            || celtium$frame.getMethodName().contains("$celeritas$")
+                            || celtium$frame.getMethodName().contains("$celtium$")) {
+                        continue;
+                    }
+                    // Three frames, not one: the immediate caller is the uploader and its caller the Tessellator, so a
+                    // single frame named the machinery rather than the content. The chain is what identifies the list.
+                    if (celtium$taken == 0) {
+                        celtium$origin = celtium$name + '.' + celtium$frame.getMethodName();
+                    } else {
+                        celtium$origin = celtium$origin + " <- " + celtium$name + '.' + celtium$frame.getMethodName();
+                    }
+                    celtium$taken++;
+                    if (celtium$taken >= 3) {
+                        break;
+                    }
+                }
+                org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originIfAbsent(celtium$listIndex, celtium$origin);
+            }
             // What arrives, not what is accepted. A counter nobody was watching moved when the mapping was fixed - format 1 went
             // to zero while format 6 started being taken - and the way to tell "these batches no longer arrive" from "these
             // batches arrive and are declined" is to count them here, before any decision is made.

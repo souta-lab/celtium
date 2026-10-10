@@ -25,6 +25,46 @@ public final class VulkanDisplayListCensus {
     private VulkanDisplayListCensus() {
     }
 
+    private static final Map<Integer, String> ORIGINS = new LinkedHashMap<Integer, String>();
+
+    /**
+     * Records where a display list's geometry came from, the first time that list is compiled into.
+     * <p>
+     * The id alone cannot decide whether a list may be cancelled - a mod that allocates a list first shifts every id -
+     * but the call site can: a list compiled from {@code RenderGlobal.renderSky} is the sky, which the immediate path
+     * already draws as {@code POSITION_TEX}, while a list compiled from {@code ModelRenderer} is a model part, which
+     * does not have a native pipeline yet. This is the identity the cancellation rule needs.
+     */
+    public static synchronized void originIfAbsent(int list, String origin) {
+        if (list == 0 || ORIGINS.containsKey(Integer.valueOf(list))) {
+            return;
+        }
+        ORIGINS.put(Integer.valueOf(list), origin);
+        if (ORIGINS.size() <= 6) {
+            System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_ORIGIN list=" + list + " origin=" + origin);
+        }
+    }
+
+    /** {@return the recorded origin of a list, or null}. */
+    public static synchronized String originOf(int list) {
+        return ORIGINS.get(Integer.valueOf(list));
+    }
+
+    /** {@return the recorded origins, for the run summary}. */
+    public static synchronized String origins() {
+        if (ORIGINS.isEmpty()) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder();
+        for (Map.Entry<Integer, String> entry : ORIGINS.entrySet()) {
+            if (text.length() > 0) {
+                text.append(' ');
+            }
+            text.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        return text.toString();
+    }
+
     /** Records one replay of {@code list}, called from the {@code GlStateManager.callList} hook. */
     private static volatile boolean frameOpen;
     private static long replaysWithFrameOpen;
