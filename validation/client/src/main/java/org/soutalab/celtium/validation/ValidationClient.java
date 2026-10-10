@@ -55,6 +55,21 @@ public final class ValidationClient {
     private boolean enabled;
     private boolean launched;
     private boolean celtium$leftWorld;
+    /**
+     * Capture staging.
+     * <p>
+     * The capture used to be guarded by {@code worldTicks != 200}, one exact tick. That is fragile in a way that costs
+     * the whole run: if the tick is missed - the client tick can advance more than once between two frames on a slow
+     * GPU - or if the entity removal inside the block returns, the guard can never be true again and the run ends with
+     * no report at all. The threshold is now "at or after", the block retries until it completes, and the tick it
+     * actually captured on is recorded so two runs can be compared at the same animation phase.
+     */
+    private boolean celtium$captureStarted;
+    private int celtium$captureStartTick = -1;
+    private int celtium$interopAtTick = -1;
+    /** Whether the report has been written, and whether the partial-report exit hook is installed. */
+    private volatile boolean celtium$reportWritten;
+    private boolean celtium$exitHookInstalled;
 
     /** Dimension travel: which dimension to move to and at which world tick (both from properties, 0 disables). */
     private final int celtium$dimensionAtTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
@@ -1233,6 +1248,7 @@ public final class ValidationClient {
             // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
             // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
             report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
+        celtium$installExitHook(mc);
             celtium$blockSweep(mc);
             if (worldTicks == 20) {
                 mc.player.capabilities.isFlying = true;
@@ -1676,7 +1692,12 @@ public final class ValidationClient {
         // GUI-visible comparison: animated textures advance per tick, so a run whose capture lands a tick later shows
         // different water, lava and fire frames, and that alone measured as a larger difference than any renderer
         // question this project was asking. One tick is one image.
-        if (worldTicks != 200) return;
+        if (worldTicks < 200) return;
+        if (!celtium$captureStarted) {
+            celtium$captureStarted = true;
+            celtium$captureStartTick = worldTicks;
+            report.addProperty("captureStartTick", Integer.valueOf(worldTicks));
+        }
         try {
             if (commandBufferTargets && (!commandBufferTargetsAttempted || !commandBufferTargetsPassed)) {
                 throw new IllegalStateException("Required commandBufferTargets fixture "
@@ -1713,7 +1734,13 @@ public final class ValidationClient {
                     interopRun = true;
                     framesAtInterop = worldFrames;
                 }
-                if (worldTicks < 240) return;
+                // Was an absolute "worldTicks < 240", which can never be satisfied together with the capture's own
+                // threshold of 200: the interop branch was unreachable. It is now relative to the tick the interop run
+                // actually reported at.
+                if (celtium$interopAtTick < 0) {
+                    celtium$interopAtTick = worldTicks;
+                }
+                if (worldTicks < celtium$interopAtTick + 40) return;
                 Framebuffer target = mc.getFramebuffer();
                 if (worldFrames - framesAtInterop < 30 || GL11C.glGetError() != GL11C.GL_NO_ERROR
                         || target.framebufferObject != fboAtInterop || target.framebufferTexture != colorAtInterop
@@ -1887,8 +1914,50 @@ public final class ValidationClient {
         }
     }
 
+    /** Writes a partial report at exit when the capture never happened, instead of leaving no report at all. */
+    private void celtium$installExitHook(final Minecraft mc) {
+        if (celtium$exitHookInstalled) {
+            return;
+        }
+        celtium$exitHookInstalled = true;
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                if (celtium$reportWritten) {
+                    return;
+                }
+                try {
+                    report.addProperty("status", "NO_CAPTURE");
+                    report.addProperty("worldTicksAtExit", Integer.valueOf(worldTicks));
+                    report.addProperty("worldFramesAtExit", Integer.valueOf(worldFrames));
+                    report.addProperty("captureStarted", Boolean.valueOf(celtium$captureStarted));
+                    if (celtium$captureStartTick > 0) {
+                        report.addProperty("captureStartTick", Integer.valueOf(celtium$captureStartTick));
+                    }
+                    if (mc.player != null) {
+                        report.addProperty("clientDimensionAtExit", Integer.valueOf(mc.player.dimension));
+                    }
+                    if (mc.world != null) {
+                        report.addProperty("clientWorldDimensionAtExit",
+                                Integer.valueOf(mc.world.provider.getDimension()));
+                    }
+                    if (mc.currentScreen != null) {
+                        report.addProperty("screenAtExit", mc.currentScreen.getClass().getName());
+                    }
+                    Path output = mc.gameDir.toPath().resolve("logs/celtium-validation.json");
+                    Files.createDirectories(output.getParent());
+                    Files.write(output, (new GsonBuilder().setPrettyPrinting().create().toJson(report) + "\n")
+                            .getBytes(StandardCharsets.UTF_8));
+                } catch (Throwable ignored) {
+                    // Nothing here may keep the JVM from exiting.
+                }
+            }
+        }, "celtium-partial-report"));
+    }
+
     private void finish(Minecraft mc) {
         finished = true;
+        celtium$reportWritten = true;
         // Test-only GL resources stay alive through their same-frame captures and are released before shutdown.
         if (commandBufferTargets) {
             try {

@@ -2723,7 +2723,52 @@ this.commandState.endPass();
 - **次の測定はバックエンドの外側**: チャンク再構築（生成・照明）の回数、GL 側の時間、ドライバ/GPU の時間。
   **推測で埋めない**（溶岩は発光・半透明・アニメーションを持つので候補は複数ある）。
 
-**次の一手**: (1) **チャンク再構築の回数と時間**を計器に出して、溶岩世界で増えているかを測る、
+**ヒント（docs/hints-2026-10-10-nether.md）に沿った修正 — MISSING_REPORT の原因は捕捉tickの等号だった（このターン）**:
+
+- **ヒントの指摘は3点ともソースで確認できた**:
+  1. `ValidationClient.frame()` の捕捉全体が **`if (worldTicks != 200) return;`（等号）**で囲まれている（1679行）。
+     さらに**その内側**で `removeNonPlayerEntities(mc) > 0` なら **return** するので、**実体を消す必要があった frame では
+     tick 200 を二度と拾えず、レポートが永久に出ない**。
+  2. interop 分岐の内側に **`if (worldTicks < 240) return;`** があり、**外側の `== 200` と両立しない**
+     （200 < 240 が常に真なので interop 分岐は到達不能）。
+  3. 終了時に**レポートが無い**ため、ハーネスは `MISSING_REPORT` としか言えず、**どこまで進んだか分からない**。
+- **修正**:
+  - 捕捉を**段階化**した: **`worldTicks < 200` で待つ**（等号をやめる）→ 開始時に
+    **`captureStartTick` を記録**して**「実際に撮ったtick」を残す** → 実体除去で return しても**翌frameに再入**して完走する。
+    **アニメーション位相は `PINNED_WORLD_TIME` で固定済み**なので、**厳密な200でなくても同じ画像**が撮れる
+    （測定は下記のとおり実際に `captureStartTick=200`）。
+  - interop の待ちを**絶対値240から、interop が成立したtick＋40 の相対待ち**に変えた（**到達不能を解消**）。
+  - **終了時にレポートが無ければ部分レポートを書く**シャットダウンフックを追加
+    （`status=NO_CAPTURE`、`worldTicksAtExit`、`worldFramesAtExit`、`captureStarted`、client の dimension、
+    `screenAtExit`）。**MISSING_REPORT を無情報のままにしない**。
+- **実測（Intel 640）**:
+
+| run | harness | report |
+|---|---|---|
+| **軽い世界（溶岩なし、150 s）** | exit 0 / clean / **PASSED** | `status=PASSED`、**`captureStartTick=200`**、`worldFrames=300`、p50 **28.47 ms** |
+| **溶岩世界（120 s）** | exit 0 / clean / **PASSED** | `status=PASSED`、**`captureStartTick=200`**、`worldFrames=109`、p50 **64.52 ms** |
+
+- **結論（前ターンの主張を測定で訂正）**: **MISSING_REPORT は予算ではなく捕捉tickの問題だった**。
+  **Intel の溶岩世界は 120 秒でも捕捉に到達して PASSED する**。ヒントの
+  「600秒へ延長しても等号が戻らない問題は直らない」は**そのとおりで、修正は等号側だった**。
+  **「Intel は溶岩世界が重くて240秒/600秒でも届かない」という前ターンの記述は誤り**であり、以下に訂正する。
+- **ヒント4の指示に従い、混同を訂正する**: 前ターンの「duration 400 s / worldFrames 114 だから 1フレーム3.5秒」は
+  **根拠がない**。`--duration` は**上限**であり**実経過時間ではない**し、`worldFrames` が**全実行のフレームなのか
+  検証区間のフレームなのか**も確認していなかった。**この2つの数から実フレーム時間を主張しない**。
+  実測の p50 は **62.64 ms（溶岩世界・Intel）／28.47 ms（軽い世界・Intel）**であり、
+  **「1フレーム3.5秒」という報告は取り下げる**。
+- **未着手（ヒント2・3）**: atlas の mirror 所有（`announceFullPixels` が registry の別 image を更新し、
+  直接保持の `atlasTexture` は `invalidateTexture` で全面GL読み戻しに戻る経路）と、
+  **dimension 到達の判定**（`dimensionAfter` は schedule 直後の古い client 値で成功判定にならない）。
+  次のターンでこの2つを進める。
+
+**次の一手**: (1) **ヒント2**: atlas/lightmap の image 所有を一つに揃えるか、**同じCPU pixelsを実際にsampleする
+  image へ供給**し、`uploadFromGlTexture` の origin/id/bytes/wall nanos と `directMirrorRefreshes` を計器に出して
+  **全面読み戻しの回数**を測る、(2) **ヒント3**: server task 内で `getWorld`・transfer・結果受け渡しを行い、
+  **捕捉時に `mc.player.dimension == target` と `mc.world.provider.getDimension() == target` を assert**して
+  **fail-closed** にする、(3) チャンク再構築の計器を足して溶岩世界の費用の所在を測る。
+
+**（旧メモ）** 次の一手: (1) **チャンク再構築の回数と時間**を計器に出して、溶岩世界で増えているかを測る、
 (2) GL 側の時間（`glDraws*` やフレーム全体の時間の内訳）を測る、(3) Intel でも同じ A/B を取り、
   「Intel で1フレーム3.5秒」が世界由来かを確認する。
 
