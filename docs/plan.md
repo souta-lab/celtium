@@ -27,6 +27,31 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.18 提示経路の限定回帰と**実測コスト**（AMD はゼロ、Intel は +13.4 ms/frame）
+
+- **限定回帰（提示経路に触れる変更のため）**: すべて exit 0 / validationClean / **PASSED** / **VUID 0** / スクリーンショット有り /
+  mixin 失敗なし。
+
+| run | frames | p50 | `presentedFromVulkan` | `glSwapsSkipped` | `presentFailures` |
+|---|---|---|---|---|---|
+| AMD resize | 591 | 16.17 ms | **276** | **276** | 0 |
+| AMD reload | 622 | 13.66 ms | **339** | **338** | 0 |
+| AMD world switch | 640 | 12.97 ms | **352** | **351** | 0 |
+| **Intel 通常** | 219 | 43.73 ms | **207** | **206** | 0 |
+
+  **resize が通ること自体が、`@Redirect` 方式で resize 判定を残したことの確認**である（メソッド全体を cancel していたら落ちる）。
+
+- **A/B（`-Dceltium.vulkan.presentFromComposite=false` で提示経路ごと切った比較）**:
+
+| GPU | 提示 ON | 提示 OFF | 差 |
+|---|---|---|---|
+| **AMD** | p50 **16.17 ms** / p95 18.40 | p50 **16.19 ms** / p95 19.22 | **±0** |
+| **Intel** | p50 **43.73 ms** / p95 45.60 | p50 **30.33 ms** / p95 34.71 | **+13.4 ms** |
+
+  **AMD では提示のコストが測れない水準**、**Intel では 1 フレームあたり +13.4 ms** という**実測コスト**がある。
+  正しさの問題ではない（全 run PASSED・VUID 0・presentFailures 0）。次の調査対象は
+  **swapchain の present mode / image 数 / 待ちの構成**（FIFO 固定・image 不足・acquire/待機の直列化など）。
+
 ## 0.17 **GL swap の停止に成功**（通常フレームは Vulkan が提示し、GL は swap しない）
 
 **前ターンの失敗の原因（完全に特定）**: `@Redirect` ハンドラが **レシーバ引数 `(Display)` を取っていた**が、
