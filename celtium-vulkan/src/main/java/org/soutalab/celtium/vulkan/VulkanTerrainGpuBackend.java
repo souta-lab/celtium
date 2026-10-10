@@ -2227,6 +2227,33 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " last=0x" + Integer.toHexString(last) + "(" + last + ")"
                         + " u_first=" + round3((first & 0xFF) / 16.0f) + " v_first=" + round3(((first >> 8) & 0xFF) / 16.0f)
                         + " uraw_first=" + round3(first / 256.0f));
+                // Every vertex field of the first two vertices, once: whether the zero lights travel with a colour that
+                // is also zero (padding never written) or a real particle that happened to be unlit.
+                if (this.lightCoordLogged == 1) {
+                    float tu0 = org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 12);
+                    float tv0 = org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 16);
+                    int c0 = org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress + 20);
+                    int lu0 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(vertexAddress + 24));
+                    int lv0 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(vertexAddress + 26));
+                    long v1 = vertexAddress + vertexStride;
+                    float tu1 = org.lwjgl.system.MemoryUtil.memGetFloat(v1 + 12);
+                    float tv1 = org.lwjgl.system.MemoryUtil.memGetFloat(v1 + 16);
+                    int c1 = org.lwjgl.system.MemoryUtil.memGetInt(v1 + 20);
+                    int lu1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 24));
+                    int lv1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 26));
+                    System.out.println("[Celtium] CELTIUM_FMT5_VERTEX"
+                            + " v0 uv=(" + round3(tu0) + "," + round3(tv0) + ") color=0x"
+                            + Integer.toHexString(c0) + " lmap=(" + lu0 + "," + lv0 + ")"
+                            + " v1 uv=(" + round3(tu1) + "," + round3(tv1) + ") color=0x"
+                            + Integer.toHexString(c1) + " lmap=(" + lu1 + "," + lv1 + ")");
+                    StackTraceElement[] stack = new Throwable().getStackTrace();
+                    StringBuilder frames = new StringBuilder();
+                    for (int i = 1; i < Math.min(stack.length, 14); i++) {
+                        frames.append(" <- ").append(stack[i].getClassName()).append('.')
+                                .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+                    }
+                    System.out.println("[Celtium] CELTIUM_FMT5_SITE" + frames);
+                }
             } catch (RuntimeException | LinkageError error) {
                 this.lightCoordLogged = 4;
             }

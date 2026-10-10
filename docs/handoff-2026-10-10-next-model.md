@@ -104,7 +104,7 @@ diff = np.abs(P-S); mask = (diff.max(axis=2) > 8)   # >8 が異なる画素の�
 | **resize（項目7）** | **両GPU受入** | §0.102 で恒久 stall を解消（期間契約）、§0.103 で提示 blit を GL composite 契約へ。resize run で描画領域 vs screenshot（反転なし）= AMD 0.001 %・Intel 0.000 %、stall 0、退行 0.000 % |
 | End の dimension | 両GPU PASSED | capture 時 dimension 1 |
 | 失敗経路（fence timeout / submit 失敗） | 両方 clean・VUID 0 | `stalledStops=1` / `stalledTeardownSkips=548`、資源は解放しない設計 |
-| **entity 場面（モブあり）の残差** | **format 5（粒子系）に帰属・未解決** | AMD 1.25 / 1.43 / 1.62 %、Intel 1.33 %。**format 5 を除外すると AMD 0.32 %・Intel 0.36 %** |
+| **entity 場面（モブあり）の残差** | **解決済み: fixture キャプチャ仕様（§0.104）** | 提示フレームの生存粒子が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレーム静止 FLAME で format 5 の色・位置は正しい（AMD 0.157 % = 経年差のみ） |
 | model 経路（表示リスト）の native 描画 | **実験フラグ側・既定 off** | `V_now × C_compile⁻¹` で 2.19 %（7通りの実測で最良）。既定 off の理由は下記 |
 | **Nether** | **未成立（旧 PASSED は無効）** | 一時的に -1 → GuiDownloadTerrain → 0 で NO_CAPTURE。根因未確定 |
 | 条件 (b) の残り | GL context 生成そのもの＋起動直後10フレーム | native の描画先がまだ無い瞬間のもの |
@@ -162,11 +162,17 @@ swapchain 作成が **1280x720 ハードコード＋ドライバの OOD 報告�
 swapchain extent は surface の実効 extent へ**フレーム毎に照合して即再作成**。resize run で描画領域
 vs screenshot（反転なし）＝ **AMD 0.001 %・Intel 0.000 %**、退行 **0.000 %**、stall 0、両GPU PASSED/clean/VUID 0。
 
-### 5.2 entity 場面の format 5（粒子系）native 描画の残差
-- **帰属は確定**：format 5 を除外すると AMD 1.25〜1.62 % → **0.32 %**、Intel 1.33 % → **0.36 %**。
-- 差の性質は**暗さ**（差の領域で提示が平均 48.7〜59.8 暗い）。位置ずれではない（±6 画素の平行移動を総当たりして最良が dx=0,dy=0）。
-- **帰属は「除外方向」だけで行うこと**（受理方向の絞り込みは交絡する。§7 参照）。
-- 既に棄却した候補は §7。**残っている候補**：ライトマップ画像そのもの／光座標の入力／深度・UV の細部。
+### 5.2 entity 場面の format 5（粒子系）native 描画の残差 — **解決済み（§0.104）**
+- **残差の正体は fixture のキャプチャ仕様**（生存粒子が提示フレームにだけ写る）で、描画欠陥ではなかった。
+  キャプチャ待機ブロックは**毎 tick `removeNonPlayerEntities`＋`clearEffects`** を走らせるので、
+  スクリーンショットは**keepEntities に関係なく**実体・粒子を含まない。提示ダンプは除去前フレーム。
+  除外方向で 0.32 % = この場面のノイズ床（実測 p426b で 0.33 %）。
+- **format 5 の正しさは同フレーム静止粒子で確認済み**：FLAME×24（速度0・平地で可視化、`worldTicks`197・`py`9.6〜）を
+  提示とスクリーンショットの両方に写し、色・位置は正しく残差は経年差のみ（AMD 0.157 %）。
+- **新 fixture フラグ**（実測用・既定は旧挙動）: `celtium.validation.captureEntities`（キャプチャ直前の除去をスキップ）、
+  `celtium.validation.dumpPresentedAtCapture`（キャプチャ呼出し直前に提示ダンプ要求→次の present が書く）。
+- **残る計測限界**：「動く粒子の画素一致」は同フレームの GL 参照が無いためこの fixture では原理的に取れない。
+  これは欠陥ではなく比較系の限界として残す（動く粒子の正しさは位置・UV・色・ライトマップ式の検証でカバー）。
 
 ### 5.3 条件 (c)：実 window / compositor 出力
 `DISPLAY=:0` の root が 0×0、合成器なし。**利用可能な capture 方法を調べる**こと。

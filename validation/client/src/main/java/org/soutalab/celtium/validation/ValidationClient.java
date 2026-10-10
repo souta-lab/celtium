@@ -1857,14 +1857,18 @@ public final class ValidationClient {
                     + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f)))
                     + " rainingStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.rainingStrength)));
         }
-        if (worldTicks == 199 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
+        if (worldTicks == 197 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
             celtium$particlesSpawned = true;
             // Particles with no motion, one tick before the capture. A still particle has prev == current, so the
             // partial-tick interpolation that made the hand and the player model unusable as comparison subjects gives
             // the same answer whichever frame is captured.
             for (int i = 0; i < 24; i++) {
                 double px = -4.0 + (i % 6) * 1.6;
-                double py = 6.0 + (i / 6) * 0.8;
+                // Raised into the open air just over the world's glass surface, at about eye level: at 6-8 the
+                // particles sat inside solid blocks and at 12-13 they rose above the camera's field of view, so the
+                // still-particle comparison measured nothing either time. At ~eye height they render mid-frame
+                // against the terrain, where a wrong value is visible.
+                double py = 9.6 + (i / 6) * 0.6;
                 double pz = -4.0 + ((i / 6) % 3) * 3.0;
                 mc.world.spawnParticle(net.minecraft.util.EnumParticleTypes.FLAME, px, py, pz, 0.0, 0.0, 0.0);
             }
@@ -1946,7 +1950,14 @@ public final class ValidationClient {
             if (!Boolean.getBoolean("celtium.validation.interop")) {
                 // The frame that was just drawn may still contain an entity the client tick did not see. Drop it and
                 // capture on the next frame, so the saved scene contains terrain and the sky only.
-                if (removeNonPlayerEntities(mc) > 0) return;
+                // captureEntities keeps the live scene instead: for the entity comparison to measure the native
+                // renderer's own output rather than the difference between "has particles" (the presented dump, taken
+                // before this removal) and "has none" (the screenshot, taken after), the screenshot has to hold the
+                // same live frame the presented image does. What is measured here is the renderer, so the removal that
+                // only exists to make the terrain comparison deterministic is skipped on request.
+                if (Boolean.getBoolean("celtium.validation.captureEntities")) {
+                    report.addProperty("captureEntitiesKept", true);
+                } else if (removeNonPlayerEntities(mc) > 0) return;
                 report.addProperty("nonPlayerEntitiesRemoved", entitiesRemoved);
                 report.addProperty("captureWidth", mc.displayWidth);
                 report.addProperty("captureHeight", mc.displayHeight);
@@ -2130,6 +2141,25 @@ public final class ValidationClient {
             report.addProperty("frameIntervalP99Ms", percentile(0.99));
             report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark");
             if (!interopRun) {
+                // Asked for at the capture itself rather than at a configured tick: the tick request is consumed at
+                // the next present, and which frame that is depends on how far the render loop has run ahead of the
+                // tick clock - runs kept landing it one tick before a staged effect, so the compared frame had none of
+                // what the measurement was for. Asked here, the consumed present is the frame the loop produces right
+                // after this tick, which is the closest frame to the one the screenshot just read.
+                if (Boolean.getBoolean("celtium.validation.dumpPresentedAtCapture")) {
+                    try {
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                        if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                            report.addProperty("presentedDumpRequestedAtCapture", Boolean.valueOf(
+                                    ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
+                                            .celtium$dumpPresentedImage(mc.gameDir.toPath()
+                                                    .resolve("screenshots/celtium-presented.png"))));
+                        }
+                    } catch (RuntimeException | LinkageError error) {
+                        report.addProperty("presentedDumpRequestedAtCapture", error.toString());
+                    }
+                }
                 celtium$logFrameSample(mc);
                 ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth,
                         mc.displayHeight, mc.getFramebuffer());

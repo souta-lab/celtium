@@ -38,13 +38,41 @@
 | **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | **model 経路（表示リスト）の native 描画** | **実験フラグ側・既定 off／変換は特定済み** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、さらにモデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りの実測で最良）。既定は off のまま（§0.69〜§0.74） |
-| **entity 場面の残差（既定構成）** | **format 5（粒子系）に帰属・両GPUで確認** | 提示画像 vs 同一 run のスクリーンショット: **AMD 1.25 / 1.43 / 1.62 %**、**Intel 1.33 %**。**format 5 を除外すると AMD 0.32 %・Intel 0.36 %**。差の性質は**暗さ**。行列・ブレンド・被覆・シェーダ・SPIR-V・mip は**棄却済み**（§0.78〜§0.92） |
+| **entity 場面の残差（既定構成）** | **確定: fixture のキャプチャ仕様（描画欠陥ではない）** | format 5 = 実粒子（提出元 `ParticleManager`）。残差は**提示フレームの生存粒子**が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレームの静止 FLAME 比較で format 5 の色・位置は正しく、残差は経年差のみ（§0.104） |
 | **通常場面（実体なし）の一致** | **両GPU受入** | 提示画像 vs GL の絵: **AMD 0.011 / 0.01 %**、**Intel 0.000〜0.016 / 0.00 %**（§0.77・§0.92 の撤去後も維持） |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
 
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.104 **確定・受入済み**: entity 場面の「format 5 残差」は描画欠陥ではなく、**fixture のキャプチャ仕様**（生存粒子 vs 除去後スクリーンショット）
+
+- **残差の正体（数値の内訳）**: entity 場面の 1.25〜1.62 %（AMD）/1.33 %（Intel）は、提示画像の**生存粒子が写る画素そのもの**だった。
+  証拠: GL スクリーンショットの同領域に粒子画素は **0**、format 5 を受付から外すと **0.32 %**（=この場面のノイズ床、p426b で 0.33 % を実測）。
+  fixture はキャプチャ待機ブロック内で **毎 tick `removeNonPlayerEntities`＋`effectRenderer.clearEffects`** を走らせており、
+  **keepEntities の有無に関係なく**スクリーンショットは実体・粒子の無いフレームになる。対して提示ダンプは除去前（tick 198 等）のフレーム。
+  「残差」は **存在/非存在の差** であり、描画値の差ではなかった。
+- **format 5 の提出者・頂点データ（両方とも実粒子で正当）**:
+  - 提出元スタック = **`ParticleManager.func_78874_a:371` ← `EntityRenderer.func_175068_a:1488`**（`CELTIUM_FMT5_SITE`）。
+  - 頂点 = `pos/uv/color=0xffb26666/lmap=(0,176)`（`CELTIUM_FMT5_VERTEX`）。0xffb26666 は suspend 系粒子の色、
+    `lmap=(sky=0, block=176)` = その位置の照度として正当（水中/遮蔽下）。
+- **同フレーム実測（format 5 の正しさの直接検証）**: fixture に静止粒子の実比較を足した。
+  - `particles=true` が FLAME ×24（速度0）を worldTicks 197 に置く（`py=9.6..11.4`、地表ガラスの直上・視線高さ）。静止ゆえに
+    どのフレームでも同じ位置 → **提示ダンプとスクリーンショットが別フレームでも粒子比較ができる**。
+  - AMD `p435-still197`（平地・粒子・dumpPresentedTick=199）: **両画像に FLAME が写る**（P 1515 px・S 1157 px・同一帯 y156-193）。
+    差分 0.157 % の中身 = **同位置の粒子エッジ**で、色は両方オレンジ（P (252,151,0)・S (252,150,0)）。
+    P の warm 画素が多いのは粒子が**若い**（`ParticleFlame` は経 tick でスプライト index を進めるので経年で絵が変わる）。
+    **0.157 % = 経年・サブピクセルの差、描画値の誤りではない。**
+- **fixture の新フラグ（実測用・既定は旧挙動）**:
+  - `celtium.validation.captureEntities=true` — キャプチャ直前の `removeNonPlayerEntities`/`clearEffects` をスキップし、
+    スクリーンショットに生存シーンを残す（`captureEntitiesKept`/`nonPlayerEntitiesAtCapture` を記録）。
+  - `celtium.validation.dumpPresentedAtCapture=true` — キャプチャ呼出し直前に提示ダンプを要求し、次の present が書く
+    （`presentedDumpRequestedAtCapture` を記録）。tick 指定版は「次の present」が終了間際では来ないことがあるので用途限定。
+  - 粒子の生成 tick を 199→197、高さを空の中へ移動（`py=9.6+(i/6)*0.6`）。
+- **結論**: **format 5 のパイプラインは正しい**（実粒子の位置・UV・色・ライトマップ式は block 経路と同じ検証済み計算、
+  同フレームの静止粒子比較で残差は経年差のみ）。entity 場面の「残差」は比較系の時相ズレであり、**§5.2 はこれで閉じる**。
+  なお「動く粒子の画素一致」はこの fixture では原理的に取れない（同フレームの GL 参照がない）—— これは計測限界であって欠陥ではない。
 
 ## 0.103 **修正・受入済み**: 提示 blit を GL composite の配置契約へ（resize 後の伸縮・上下反転を解消）
 
