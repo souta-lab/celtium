@@ -4,7 +4,7 @@
 
 > **描画backendの決定（2026-10-10）:** Vulkan直結を維持する。SDL GPUへの全面移行は行わない。Angelicaはshader変換・model/TESR/文字のbatch化・状態と資源寿命の設計/試験を部品ごとに比較する。現在のGL除去と主要mod対応を優先し、影の実装は上記gateを満たしてから。汎用GLエミュレーションを新たな主backendにしない。
 
-> goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 49, phase active / activation armed）。
+> goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 59, phase active / activation armed）。
 > 全文は `docs/goal.md`。構造修復の方針は **`docs/handoff-structure-recovery-2026-10-10.md`**、
 > 直近の原因候補は `docs/hints-2026-10-10-nether.md`。監査起点は `docs/audit-2026-10-09-third.md`。
 > **round ごとの経緯と旧測定は `docs/history/plan-round-log-until-2026-10-10.md` に移した**（削除していない）。
@@ -30,13 +30,14 @@
 | **GUI / font / HUD** | **画像等価を受入済** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
 | **lightmap の供給漏れ（format 5）** | **解消・両GPU受入** | AMD `lightmapSuppliedOnDemand=2`・失敗なし・拒否ゼロ（§0.43）、**Intel も 2・失敗なし・拒否ゼロ・PASSED**（`p337-intel-lightmap`） |
 | End の dimension 受入 | **両GPU PASSED** | capture 時 dimension 1 |
-| **Nether の dimension 受入** | **両GPU受入** | capture 時 player/world/provider が -1 で、到着後 native scene を描いた（AMD 967 / Intel 349 pass・skip 0）。帰還の内訳は portal AXIS 直交 step 未対応と、backend 再生成後の共有 texture 死（0x0→frame target デッドロック）の2件で、両方修正済み（§0.105） |
+| **Nether の dimension 受入** | **AMD で絵を受入／validation 未受入（VUID 1件）・Intel は未実施** | `.celtium-work/nether-fix4.json`: fixture PASSED・capture 時 client/world/server すべて -1・`dimensionFramesInTarget=122`・presented PNG distinct 16543（netherrack/fire/portal 枠）。根因は fixture 側で、到着位置がポータル内＋`timeUntilPortal=0`（vanilla は cooldown を入れる）→ `Entity.onEntityUpdate` が -1 から 0 へ送り返していた。**旧「両GPU受入」の記載は撤回**（旧 PASSED は有効な受入ではない）。**未完**: `VUID-vkCmdDraw-None-09600`（post chain の記述子が GENERAL 宣言、image が UNDEFINED）が GL-less + dimension 変更で 1件/run。Intel での Nether 受入は未実施。§0.117 |
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
 | **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
 | **GL-context-less window（goal 項目6 / 条件 (b)）** | **達成（実 scene 描画まで）／条件 (b) の残りは GL context 生成と起動直後** | GL context なしで world まで起動し、Vulkan が毎フレーム提示して GL swap を1対1で飛ばす（`p548-glless`: `presentedFromVulkan=287`＝`glSwapsSkipped=287`）。**実 scene を描画**（`ver2-glless`: fixture PASSED・`validationClean`・VUID 0・`presentedDistinctColours=867`・`presentedImageAssertions=PASSED`）。地形の黒は lightmap の供給経路が根因（§0.115）。GL-bridge 既定経路は退行なし（`fix-bridge`: band 平均 (102.4,63.9,58.5)・1382 色・VUID 0）。**未完**: 表示リスト model/TESR（エンチャント台の本）は GL fallback のままで描かれない、announcement 経路の黒は未解明、FBO/postprocess・Nether・条件 (c) は未達。§0.114 §0.115 |
 | 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの。**GL-less flag 経路（`-Dceltium.vulkan.glless=true`）は §0.114 で起動・提示まで実測したが、窓の絵が未解決なので既定は bridge のまま** |
 | **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
+| **GPU 検証（条件 (d)）** | **AMD/Intel 両方で受入・ゲート修正済** | 描画側が選択確定時に `CELTIUM_NATIVE_DEVICE name="..." uuid=... matchedOpenGl=...` を出し、harness はこれで `--require-gpu` を判定する（device 未選択時のみ GL 文字列へ fallback、判定元を記録）。GL-less は `--render-node` では GPU を pin できず`VK_ICD_FILENAMES` が必要（pin で `vulkanDeviceCount 1`、無 pin は 3）。AMD RX 6400 と Intel UHD 630 の両方で bridge/GL-less とも PASSED・clean・VUID 0、ゲートが実デバイスを指名（Intel 実測: `gpuRequirementSource=nativeDeviceName`）。光量修正の効果も Intel で可視（GL-less band が (35.6,36.2,37.6) の黒から (102.5,63.9,58.7) へ、AMD と ±0.1・相関 0.9926）。**未検証 vendor/OS は Intel/AMD の Linux 以外すべて**。§0.118 |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | **model 経路（表示リスト）の native 描画** | **既定 ON（§0.108）／TESR の list は未 capture** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、モデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りで最良）。既定は ON（§0.108）。**未完**: 実測 `modelMeshLists=2 / modelQuads=12`＝腕と手持ちのみ。TESR の model（エンチャント台の本）は list 自体が capture されておらず、GL fallback に落ちて GL-less では何も描かれない。`celtium$drawModelList` は mesh の無い list を `modelMissingMeshes` として名指しで数えるようにした。§0.108 |
 | **entity 場面の残差（既定構成）** | **確定: fixture のキャプチャ仕様（描画欠陥ではない）** | format 5 = 実粒子（提出元 `ParticleManager`）。残差は**提示フレームの生存粒子**が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレームの静止 FLAME 比較で format 5 の色・位置は正しく、残差は経年差のみ（§0.104） |
