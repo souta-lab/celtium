@@ -463,6 +463,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         this.renderCalls++;
         this.lastUiPass = pass;
+        this.lastTerrainPassFrame = this.frameId;
 
         // One complete handoff per pass. GL signals its GL->Vulkan semaphore exactly once in beginFrame() and waits
         // for the Vulkan->GL semaphore exactly once in endFrame(), so exactly one submission must consume the first
@@ -3075,6 +3076,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (!supportedImmediateTarget()) throw new IllegalStateException("accepted target disappeared before flush");
         VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
         if (terrain == null) throw new IllegalStateException("accepted geometry has no render pass");
+        if (!this.windowOrderLogged) {
+            // The one fact that separates the two remaining candidates for the unoccluded model quads: if a terrain pass has
+            // already run in this frame, the depth buffer is populated and the fault is the depth values; if not, the window
+            // draws into an empty one and the fault is the order.
+            this.windowOrderLogged = true;
+            System.out.println("[Celtium] CELTIUM_WINDOW_ORDER frame=" + this.frameId + " lastTerrainPassFrame="
+                    + this.lastTerrainPassFrame + " terrainRanFirst=" + (this.lastTerrainPassFrame == this.frameId)
+                    + " lastUiPass=" + nameOf(this.lastUiPass) + " groups=" + this.immediateGroups.size());
+        }
         if (countGroupsForTarget(this.currentRenderTarget) == 0) return; // others remain owned in the queue
         boolean offTarget = !this.currentRenderTargetIsMain;
         long identity = this.currentRenderTarget;
@@ -4519,6 +4529,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             long uniformOffset = writeUniforms(region, pass, camera);
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
+            if (this.groupDepthRowsSeen < 2) {
+                // The depth row of the projection each group draws with, plus the model-view translation, so a model group and
+                // an immediate group can be told apart and compared: the order instrument said the terrain ran first, so the
+                // depth values are what is left.
+                // Which kind of group a row belongs to is not printed here: the loop's variable is not named group at this
+                // level, and the first two rows came out identical anyway - both immediate groups, judging by the model-view
+                // translations not matching the model path's. Labelling it is the next step, not a guess.
+                String row = round3(matrices.projection().m20()) + "," + round3(matrices.projection().m21()) + ","
+                        + round3(matrices.projection().m22()) + "," + round3(matrices.projection().m23())
+                        + " mvT=" + round3(matrices.modelView().m30()) + "," + round3(matrices.modelView().m31()) + ","
+                        + round3(matrices.modelView().m32());
+                if (!row.equals(this.lastGroupDepthRow)) {
+                    this.lastGroupDepthRow = row;
+                    this.groupDepthRowsSeen++;
+                    System.out.println("[Celtium] CELTIUM_GROUP_DEPTH row" + this.groupDepthRowsSeen + "=" + row);
+                }
+            }
             pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
 
             bindVertexBuffer(stack, resources);
@@ -5042,6 +5069,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int currentImmediateTexture;
     private int modelMeshQuads;
     private String modelMeshFailure = "none";
+    /** The frame in which a terrain pass last ran, so a window can say whether it came first. */
+    private long lastTerrainPassFrame = -1L;
+    /** One-shot: the frame's order, for settling whether the window runs before the terrain. */
+    private boolean windowOrderLogged;
+    /** One-shot: the distinct projection depth rows the groups of a frame draw with. */
+    private int groupDepthRowsSeen;
+    private String lastGroupDepthRow = "";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
 
