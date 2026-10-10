@@ -1888,6 +1888,19 @@ public final class ValidationClient {
                 }
             }
         }
+        // Block-breaking coverage: the crack overlay (drawBlockDamageTexture's stage texture on the block faces) is
+        // registered directly, so it exists whatever the game mode - creative onPlayerDamageBlock breaks instantly and
+        // never shows it. Stage 5 is plain mid-progress damage, refreshed every tick from 150 so it is alive at 200.
+        if (Boolean.getBoolean("celtium.validation.breakBlock") && mc.renderGlobal != null
+                && mc.objectMouseOver != null
+                && mc.objectMouseOver.typeOfHit == net.minecraft.util.math.RayTraceResult.Type.BLOCK
+                && worldTicks >= 150 && worldTicks <= 200) {
+            mc.renderGlobal.sendBlockBreakProgress(1, mc.objectMouseOver.getBlockPos(), 5);
+        }
+        if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.breakBlock")) {
+            report.addProperty("breakTarget", String.valueOf(
+                    mc.objectMouseOver == null ? "no target" : mc.objectMouseOver.getBlockPos()));
+        }
         if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.weather")) {
             // Read at capture time, not when the rain was requested: the client's rain strength ramps in over ticks, so
             // the value recorded at tick 150 was still 0.000 and said nothing about whether rain was on screen.
