@@ -316,7 +316,41 @@ spectator creeper/spider/enderman 等。**存在する pass を一括で未実�
 
 ---
 
-## 11. 参考：主要ファイル
+## 11. エビデンスの保存方針（2026-10-10 整理済み）
+
+**disk が 98%（空き 2.1G）まで逼迫したため、2026-10-10 に古い検証を整理した。**
+そのときの基準を以下に残す。**次の整理もこの基準で行う。**
+
+### 残すもの（証拠）
+- **全 run の `validation-process.json`**（verdict・exit code・clean・fixtureStatus・msgCount）
+- **全 run の `logs/celtium-validation.json`**（rendererDebug・GPU・driver）
+- **docs が引用している run の `screenshots/` と `logs/latest.log`**（引用 run の一覧は `.celtium-work/cited-runs.txt`）
+- 監査ディレクトリの JSON と screenshots
+
+### 消してよいもの（再生成可能な重複展開）
+run ディレクトリの中の `mods/`（jar の複製）・`test-libraries/`（共有 jar の複製）・`saves/`（world）・
+`assets/`・`libraries/`・`config/`・`headless/`・`crash-reports/`・`validation-console.log`・
+`logs/debug.log`（Minecraft の冗長ログ）。**harness は毎回これらを作り直す。**
+
+### 消してはいけないもの
+- **`.celtium-work/runtime/celtium-headless-interop/test-libraries/lwjgl-vulkan-3.4.1.jar`**
+  （全 run が `--library` で参照する共有物。run ディレクトリの外にある）
+- `.celtium-work/jdks/`（Gradle toolchain の JDK 21 / 8）
+- `.celtium-work/gpu-tools/`（Vulkan validation layer）
+- **`forge122/build/tmp` と `upstream-baseline/forge122/build` は残した**（ビルドキャッシュ。消すと次回ビルドが大幅に遅くなる。
+  さらに容量が要るときだけ、その代价を理解した上で消す）
+
+### 実績（2026-10-10）
+| 対象 | 前 | 後 |
+|---|---|---|
+| `.celtium-work/runtime` | **16 G** | **145 M** |
+| `.celtium-work/audit-2026-10-09-third` | **210 M** | **16 M** |
+| ディスク空き | **2.1 G** | **18 G** |
+
+保持した証拠：verdict JSON **848件**・renderer JSON **804件**・引用 run の screenshots **10件**・監査 JSON 6件。
+整理後のスモークテスト（通常場面 60 s）は exit 0 / clean / PASSED / msgCount 0、提示画像 vs スクリーンショット **0.017 / 0.01 %**。
+
+## 12. 参考：主要ファイル
 
 | 目的 | パス |
 |---|---|

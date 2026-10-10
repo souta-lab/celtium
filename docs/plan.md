@@ -10,6 +10,12 @@
 > **round ごとの経緯と旧測定は `docs/history/plan-round-log-until-2026-10-10.md` に移した**（削除していない）。
 > この文書は**現在状態を一箇所で管理する表**であり、末尾への訂正追記で整合させない。
 
+> **エビデンスの保存方針（2026-10-10 整理済み）**: 全 run の `validation-process.json` と `logs/celtium-validation.json`、
+> および **docs が引用している run** の `screenshots/` と `logs/latest.log` を残し、run 内の `mods/`・`test-libraries/`・
+> `saves/`・`assets/`・`libraries/`・`validation-console.log`・`logs/debug.log` は削除する（harness が毎回作り直す）。
+> `runtime/celtium-headless-interop/`（共有ライブラリ）・`jdks/`・`gpu-tools/` は消さない。詳細は
+> `docs/handoff-2026-10-10-next-model.md` §11。**実績: runtime 16 G → 145 M、空き 2.1 G → 18 G。**
+
 ## 0. 直近の到達点（最新実測・冒頭表）
 
 **この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.92 にある（新しい節ほど新しい実測）。
