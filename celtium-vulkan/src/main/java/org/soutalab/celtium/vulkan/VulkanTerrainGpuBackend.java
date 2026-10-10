@@ -5225,9 +5225,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.lightmapUnit = unit;
     }
 
-    /** Lab switch: point the game's main framebuffer at the shared images so it renders into them. */
+    /**
+     * Points the game's main framebuffer at the shared images so the frame is produced in Vulkan-owned memory.
+     * <p>
+     * On by default since both GPUs accepted it with the same picture: AMD 0.001 mean absolute difference and 0.00 % of
+     * pixels over 8 against the GL path in the same scene, Intel 0.026 and 0.02 %, both PASSED with no GL error and
+     * nothing left refused for a reason of its own. Set {@code -Dceltium.vulkan.adoptGameFramebuffer=false} to go back to
+     * the per-frame copy into OpenGL's framebuffer, which is what the migration still supports but no longer uses.
+     */
     private static final boolean ADOPT_GAME_FRAMEBUFFER =
-            Boolean.getBoolean("celtium.vulkan.adoptGameFramebuffer");
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.adoptGameFramebuffer", "true"));
 
     public int celtium$adoptableFramebuffer(int width, int height) {
         if (!ADOPT_GAME_FRAMEBUFFER || this.frameTarget == null) {

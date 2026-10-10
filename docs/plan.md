@@ -2,6 +2,8 @@
 
 > **影対応の後続計画:** [shader-plan.md](shader-plan.md)。**フルVK化＋主要modのshaderless対応が完了してから着手する。** この計画を理由に現在の本体実装を中断・前倒ししない。
 
+> **描画backendの決定（2026-10-10）:** Vulkan直結を維持する。SDL GPUへの全面移行は行わない。Angelicaはshader変換・model/TESR/文字のbatch化・状態と資源寿命の設計/試験を部品ごとに比較する。現在のGL除去と主要mod対応を優先し、影の実装は上記gateを満たしてから。汎用GLエミュレーションを新たな主backendにしない。
+
 > goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 49, phase active / activation armed）。
 > 全文は `docs/goal.md`。構造修復の方針は **`docs/handoff-structure-recovery-2026-10-10.md`**、
 > 直近の原因候補は `docs/hints-2026-10-10-nether.md`。監査起点は `docs/audit-2026-10-09-third.md`。
@@ -25,14 +27,39 @@
 | **Nether の dimension 受入** | **両GPU PASSED（旧 NO_CAPTURE を置換）** | portal から出る修正後、capture 時 dimension **-1**・**帰還 0 回**。旧 NO_CAPTURE の証拠は history に保持 |
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
-| **条件 (b) の本体（FBO 所有権）** | **受入成立（フラグ、既定 off）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**（`fixtureStatus=PASSED`・`presentedFromVulkan=997`・pass 失敗なし・参照フレームと 平均絶対差 0.001・>8 が 0.00 %・1020 frames）。往復 blit と GL 深度変換は走っていない（§0.50/§0.51） |
-| 条件 (b) の残り | **GL context と GL が描く約2割** | format 2 の非画面合成 709 を native へ（行き先が共有イメージになったので可能）→ GL context 除去 |
+| **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
+| 条件 (b) の残り | **GL context と、既定フレームバッファへ描く合成** | 後者は **post-present overlay**（present の後に swapchain へ重ねる）が必要で別機能。起動直後の拒否は本質的（§0.58） |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
 
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.59 **adoption を既定にした**（両GPU・フラグなしで PASSED、同一vendor画像等価を確認）
+
+- **既定化の根拠（測定）**:
+  - **Intel 同一vendor比較**（基準＝フラグ off の GL 経路、同一場面）: 基準スクリーンショット vs adoption 提示画像
+    **0.039・>8 が 0.03 %**、基準提示画像 vs adoption 提示画像 **0.026・0.02 %**。
+    （§0.52 の 0.98 % は **AMD フレームとの vendor 間差**だったことがこれで確定した。）
+  - **AMD 同一vendor**: 0.001・0.00 %（§0.51）。
+- **既定化**: `celtium.vulkan.adoptGameFramebuffer` を **既定 true**（`-D…=false` で旧経路に戻せる）。
+- **既定での受入（フラグを一切付けない run）**:
+
+| 計器 | AMD (RX 6400) | Intel (UHD 630) |
+|---|---|---|
+| exit / `validationClean` / `fixtureStatus` | **0 / true / PASSED** | **0 / true / PASSED** |
+| VUID / クラッシュ | **0 / なし** | **0 / なし** |
+| frames / `presentedFromVulkan` | 901 / **889** | 374 / **361** |
+| `gameFramebufferAdopted` | 1 | 1 |
+| `firstGlError` | **[null:0x0]** | **[null:0x0]** |
+| offers / accepted / GL 本体 | 16000 / **13088** / 2939 | — |
+| 参照（同一vendor GL 経路）vs 提示画像 | **0.072・0.05 %** | **0.066・0.04 %** |
+
+- **意味**: **通常のゲームフレームが Vulkan 所有の color/depth で生産され、swapchain へ提示される**のが既定になった。
+  bridge の往復 blit と GL 深度変換は走らない。**残る GL 依存は「GL context の生成」と
+  「既定フレームバッファへ描く合成（post-present overlay 待ち）」**だけである。
+- **旧経路**: `-Dceltium.vulkan.adoptGameFramebuffer=false` で bridge（往復 blit）に戻せる。**移行用として残す**。
 
 ## 0.58 無記名拒否の正体を特定: **既定フレームバッファへ描く合成**（＝行き先が無く、拒否が正しい）
 

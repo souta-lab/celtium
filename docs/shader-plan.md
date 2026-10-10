@@ -8,6 +8,8 @@
 
 目指すのは、既存のOptiFine / ShadersMod / Iris形式の**パックをユーザーが書き換えずに読み込み、Celtiumのnative Vulkanで描くこと**。既存影modのOpenGLレンダラをそのまま起動することとは分ける。パックのGLSLはロード時・設定変更時に変換し、SPIR-Vとnative pipelineとして実行する。
 
+**backend決定（2026-10-10）:** CeltiumのVulkan直結を維持し、SDL GPUへの全面移行は行わない。既存のnative描画・資源・同期・提示の成果を継続する。AngelicaのGLSM＋SDL GPU全体は移植せず、shader変換・reflection・cache・batch境界・互換性試験を部品ごとに比較する。SDL採用だけで既存mod互換が得られるとは扱わない。SDLによるwindow/inputの補助利用はGPU backend選択と別件。macOSは将来MoltenVKのportability条件を検証する。[R46–R47]
+
 開発順序は次に固定する。
 
 1. 全vanillaを含むCeltium本体のフルVK化を完成させる。
@@ -50,6 +52,7 @@ READMEの主張、ソース上の機構、作者の実描画報告、こちら�
 
 | プロジェクト | 確認できた方式・状況 | Celtiumでの扱い |
 | --- | --- | --- |
+| **Angelica SDL GPU** | Minecraft 1.7.10。GLSMが保持するGL状態/命令をSDL3 GPUへ接続し、Vulkan/Metal/D3D12で描く実装を確認。SDL GPUは実験扱い・既定GL。既存ComplementaryのVulkan描画不具合報告と修正PRでのcloseも確認したが、こちらではゲーム起動未検証。[R39–R43] | **主要なshader変換・legacy描画の設計参考**。SDL backend/GLSM全体は導入せず、native Vulkanへ合う部品を比較する。全pack・全mod互換の完成例とは扱わない。 |
 | **Vitrail Shaders** | Minecraft 26.2/26.3のnative Vulkan上でOptiFine形式packを扱う。tokenベースのGLSL変換、program単位のinterface統合、target/flip管理を確認。公開互換表にはBSL/Complementary等を実際に描いた記録と画像差がある。[R1–R6] | **主要な設計参考**。言語変換・target寿命・失敗例を調べる。26.xのGPU APIやMixin、reversed-Z設定をそのまま移植しない。 |
 | **Aetherium** | native Vulkan用のGLSL AST lowering、std140 uniform統合、stage location、shaderc computeコンパイルを確認。公開22pack表はコンパイル結果が中心で、描画Verdictには未記入が残る。[R7–R11] | **変換・bindingの比較参考**。「22packの見た目が完全互換」とは扱わない。Java25出力とAGPLのtransformer依存を含むため、一括取込み候補にしない。 |
 | **Iris-Vulkan-Port** | 非公式の実験fork。VulkanModへIrisのterrain/shadow/compositeを接続すると説明。shaderc/UBO変換ソースを確認したが、regex処理・custom VulkanMod jar依存がある。[R12–R14] | interfaceやterrain接続の参考。動作・配布再現性を別途証明するまで製品基盤にしない。Iris公式の完成済VK版と混同しない。 |
@@ -57,6 +60,19 @@ READMEの主張、ソース上の機構、作者の実描画報告、こちら�
 | **Sulkan** | Minecraft native Vulkan向けの独自pack形式。無改変のIris/OptiFine packは非対応と明記。[R16] | 言語・formatを新設する代案として把握。今回の既存pack互換の主案にはしない。 |
 | **Vulkanite** | GL/VK interopでIrisへhardware ray tracing等の追加passを提供する方式。[R17] | 純VK pack互換の証拠には使わない。GLなし・広いGPU対応というCeltiumの条件に合わない。 |
 | **Aperture** | Iris側の別pack API。公式migration資料は新しいpipeline記述を説明するが、資料自身が古くSlangへ移行済みと注意している。[R18] | 将来の別format候補。既存GLSL pack互換の代替として先に採用しない。最新APIを再調査してから独立判断する。 |
+
+### Angelicaから比較する部品（調査追加）
+
+2026-10-10に公開master `1946c2ad653cf120b369f4d622f7b952cbaf9524`（commit時刻2026-10-09 UTC）を固定して確認。初版の調査はSDL GPU経路を含んでいなかった。本節でその不足を補う。外部modの実機受入とは区別する。
+
+- **影gate通過後:** `glsm/.../shader/SpirvCompiler.java` と `GlslVulkanPreprocess.java`、`CompatShaderTransformer.java`、`sdl-gpu/.../shader/ShaderManager.java` のGLSL前処理、Vulkan向けcompile、reflection/binding、cacheを比較する。SDLのdescriptor/resource配置をCeltiumへそのまま持ち込まず、§6のnative契約に合わせる。[R40–R42]
+- **shaderlessの互換・性能作業:** `ModelPartBatcher` / `TesrBatchRenderer` の共通mesh、instance、状態変更時flush、透明物の順序を比較する。Celtiumの共通model replayからまとめ描画へ拡張できるか、CPU/GPU時間を測って採否を決める。entity個別の代替rendererを大量追加する方針にしない。[R45]
+- **文字:** `BatchingFontRenderer` の文字/影のbatch、texture/matrix変更時flushを比較する。現在のGUI/fontのVK描画実装と重複する部分を先に除き、文字frontendのCPU負荷とdraw回数に改善余地がある場合のみ実装する。[R45]
+- **今の本体修復で参考にできるもの:** FBO attachment、texture staging、sampler generation、pipeline key、pending resource/fence寿命の契約とregression test。SDLのAPI呼び出しを移植するのではなく、現在のCeltiumに欠ける不変条件・失敗ケースを抽出する。
+- **HUD cache:** 該当codeはCC BY-NC-SA 4.0の別license。LGPL本体の移植候補に含めない。必要になった場合、一般的な更新頻度制御・native targetへのcacheという設計を独立実装し、Forge overlay eventと動くHUDの意味を守る。[R44]
+- **地形:** Angelica自体がCeleritasを使うため、既存mesher/terrain最適化との重複が大きい。性能改善が未実装であることを比較で示せない限り優先しない。[R39]
+
+これらは比較候補であり全項目の実装義務ではない。現在のフルVK化＋主要mod対応を止めず、影用の変換器・依存の導入はgate後に行う。
 
 ### 1.12.2 / Celeritas周辺
 
@@ -74,6 +90,7 @@ READMEの主張、ソース上の機構、作者の実描画報告、こちら�
 | 案 | 判断 |
 | --- | --- |
 | Celeritas/Pintonium系frontend + native Vulkan backend | **主案**。手元のFOSS loader/設定/解析を先に評価でき、現rendererを保ちながらpack互換を追加できる。 |
+| Angelica GLSM＋SDL GPUへの全面移行 | **採用しない（backend決定）**。SDLは複数APIと資源管理を抽象化できるが、現在のVk資源・同期・command・swapchainを移植する範囲が広い。mod互換を支えるGLSMも自動では付かない。shader変換とbatch/testの部品比較に限定する。[R39–R42, R46] |
 | Vitrail/Aetherium丸ごと1.12.2へ移植 | 26.x GPU API、頂点形式、registry、Java条件、license差の移植範囲が広い。機構を比較し、必要な部品単位で判断する。 |
 | Demonica/Actiniumを無改変で併用 | GL context・GLSM・独自terrain/FBO所有の前提が合わない。将来は明示的adapterを作る場合のみ検討する。 |
 | VulkanModへ全面乗換え | CeltiumのForge/Cleanroom API・Celeritas mesher・既存mod成果を再接続する工数が生じる。本計画では採用しない。 |
@@ -213,6 +230,7 @@ Vulkanであることだけを高速化根拠にしない。影はGPU shader負�
 | TauMC GLSL Transformation Library | 公開repoの `COPYING.LESSER` はLGPL3。手元のcoordinateは `0.2.0-31.g980d228`。採用時は**実artifactのsource/license/hash**もpinし、latest mainのlicenseだけで旧jarを判定しない。[R26] |
 | Vitrail | LGPL3とNOTICEを確認。流用するfileと変更、Iris等からの元の出典を保持する。game固有部分を丸ごとcopyしない。[R6] |
 | Aetherium / Iris-Vulkan-Port | rootのLGPL表示だけで判断しない。Aetheriumのbuildには `glsl-transformer:3.0.0-pre3`、forkのLICENSE-DEPENDENCIESにはAGPLの注意がある。現在のLGPL方針へ無条件に埋め込まない。[R11, R14] |
+| Angelica | root LGPL3の表示を部品へ一律適用しない。HUDCachingはCC BY-NC-SA 4.0なので移植対象外。その他もfile history/header/依存を確認する。SDL GPU subprojectはJava25 toolchain、GLSMはJava21 toolchainを指定しているため、配布release21との互換をclass/API・native単位で確認する。SDL/LWJGL3ify/GTNHLibへの依存を無条件導入しない。[R39, R44, R48] |
 | Actinium / Demonica | rootのGPL/AGPLと部品の元licenseを区別する。独自portの変更を名前だけ変えてLGPL化できるとは扱わない。[R22, R24] |
 | Beryl / OptiFine / pack本体 | BerylはARR。OptiFineは公開仕様・参照動作を使い、実装codeをコピーしない。ユーザーpackの再配布とcache/dump公開もそのpackの条件を確認する。 |
 | shaderc / reflection / SPIR-V tools | version・native・license・OS/architectureをpinする。LWJGL bindingとnativeの組合せをCleanroomの版へ合わせる。Java21側へJava25依存のclass/APIを混ぜない。[R27–R28, R34] |
@@ -303,3 +321,13 @@ S0で再利用範囲と本体のnative APIを確定した時、S2で実packの�
 - **R37** [Sildur's official installation](https://sildurs-shaders.github.io/install/index.html)
 - **R38** [Iris glsl-transformer license](https://github.com/IrisShaders/glsl-transformer)
 
+- **R39** [Angelica README / backendの状況](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/README.MD)
+- **R40** [Angelica SDL GPU backend](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/sdl-gpu/src/main/java/com/gtnewhorizons/angelica/sdlgpu/SDLGPURenderBackend.java)
+- **R41** [Angelica SDL shader manager](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/sdl-gpu/src/main/java/com/gtnewhorizons/angelica/sdlgpu/shader/ShaderManager.java)
+- **R42** [Angelica shaderc compiler](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/glsm/src/main/java/com/gtnewhorizons/angelica/glsm/shader/SpirvCompiler.java)
+- **R43** [Complementary＋Vulkanの実描画不具合・修正close（2026-10-10確認）](https://github.com/GTNewHorizons/Angelica/issues/2141)
+- **R44** [Angelica HUD cache個別license](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/src/main/java/com/gtnewhorizons/angelica/hudcaching/LICENSE-HUDCaching.md)
+- **R45** [Angelica model batch](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/src/main/java/com/gtnewhorizons/angelica/rendering/tesr/ModelPartBatcher.java) / [TESR batch](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/src/main/java/com/gtnewhorizons/angelica/rendering/tesr/TesrBatchRenderer.java) / [font batch](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/src/main/java/com/gtnewhorizons/angelica/client/font/BatchingFontRenderer.java)
+- **R46** [SDL3 GPU official API / feature・shader・資源管理](https://wiki.libsdl.org/SDL3/CategoryGPU)
+- **R47** [MoltenVK official / portability](https://github.com/KhronosGroup/MoltenVK)
+- **R48** [Angelica SDL GPU Java/toolchain/dependencies](https://github.com/GTNewHorizons/Angelica/blob/1946c2ad653cf120b369f4d622f7b952cbaf9524/sdl-gpu/build.gradle.kts)
