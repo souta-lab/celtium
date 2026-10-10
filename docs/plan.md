@@ -46,6 +46,18 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.110 **修正・受入済み**: fence wait の非 TIMEOUT 失敗（DEVICE_LOST 等）でも frame を abandon —— post-submit device lost の実機注入を追加（goal 項目7）
+
+- `waitForIdle` の分岐：`VK_TIMEOUT` だけが `abandonFrame` を呼び、他の非 SUCCESS（DEVICE_LOST 等）は `noteStalled`
+  するが frame を開いたまま返していた —— timeout 分岐のコメントが説く「open frame の semaphore が来ない →
+  GL write-back が待つ」デッドロック条件を残していた。修正：非 SUCCESS 全般で `abandonFrame` する。
+- 注入：`-Dceltium.vulkan.failDeviceLost` で fence wait の結果を一度 `VK_ERROR_DEVICE_LOST` へ差し替える
+  （submit が queue へ渡った後の device lost —— pre-submit の `failSubmit` では作れない経路）。`CELTIUM_DEVICE_LOST`
+  行で発火を記録。
+- 実測（AMD `p460-dlost`）：注入発火後 `stalled; no further drawing until the renderer is rebuilt` で後続 draw を
+  拒否、presentAttempts も停止、run は **28 s で bounded 終了・exit 0・PASSED・clean**（修正前なら GL write-back
+  で hang していた経路）。stalledTeardown は使用中 command buffer を reset/re-record/destroy しない既存規則のまま。
+
 ## 0.109 **修正・受入済み**: default-framebuffer 合成 quad（vignette/portal 等の overlay）を shared target へ —— format-2 の定常残量を解消
 
 - 残量計測で format-2（POSITION_TEX_COLOR）が唯一の**増加する**拒否（`target: no frame target`、~40/周期）だった。

@@ -827,6 +827,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int stalledGeometryDrops;
     private int stalledGeometryDroppedBatches;
     private int injectedIdleFailures;
+    /** One-shot count for the injected device-lost fence result. */
+    private int injectedDeviceLosses;
     private boolean blendObserved;
     private int observedBlendSrc = -1;
     private int observedBlendDst = -1;
@@ -5698,6 +5700,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             System.getProperty("celtium.vulkan.modelDraw", "true"));
     /** Forces the fence wait to report a timeout, so the post-submit failure path can be exercised (lab switch). */
     private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
+    /**
+     * Makes the fence wait report {@code VK_ERROR_DEVICE_LOST} instead of its real result - the case of a submission
+     * that was queued and then lost with the device, which the pre-submit fault cannot produce. Lab switch.
+     */
+    private static final boolean DEVICE_LOST_FAULT = Boolean.getBoolean("celtium.vulkan.failDeviceLost");
 
     /**
      * Runs a descriptor-set request through the fault switch, so the refusal path can be exercised on a real GPU.
@@ -6525,6 +6532,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
                 System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
             }
+            if (DEVICE_LOST_FAULT && result == org.lwjgl.vulkan.VK10.VK_SUCCESS && this.injectedDeviceLosses == 0) {
+                // One lost device, once: reporting the loss after a real submission is the post-submit case the
+                // pre-submit vkQueueSubmit fault cannot produce - the queue took the command buffer and the answer
+                // is the device is gone.
+                this.injectedDeviceLosses++;
+                result = org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
+                System.out.println("[Celtium] CELTIUM_DEVICE_LOST injected");
+            }
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
                         + "s, so the last submission is not completing; not draining the queue");
@@ -6533,8 +6548,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return false;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                // Any other failure - device lost above all - means the frame's semaphores will never signal either, so
+                // the frame is abandoned for the same reason the timeout branch abandons it: leaving it open would hang
+                // the GL write-back waiting for a signal that cannot come.
                 record("waitForIdle: vkWaitForFences returned " + result);
                 this.noteStalled();
+                this.frameTarget.abandonFrame("fence wait failed: " + result);
                 return false;
             }
             this.submissionPending = false;
