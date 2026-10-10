@@ -2549,7 +2549,38 @@ this.commandState.endPass();
 - **正直な残り**: 注入したのは**pre-submit 失敗**であり、**フェンス timeout（submit 成功後の wait 失敗）は注入していない**。
   「timeout 後に使用中バッファを触らない」という性質の**後半は未検証**である。
 
-**次の一手**: (1) **フェンス timeout** を注入して「submit 成功後の wait 失敗」を実機で確認する（残る唯一の失敗経路）、
+**フェンス timeout（submit成功後のwait失敗）を両GPUで確認（このターン・優先順位6の最後の名前付き経路）**:
+
+- コードのコメントが既に規則を書いている（「wait は有界・フラグは解決後にのみクリア・フェンスが実際にシグナルした後に
+  だけキューを排出」「stall 後は資源を解放しない」）。その規則を**到達可能**にするため
+  `-Dceltium.vulkan.failFenceWait=true` を追加し、`vkWaitForFences` の結果を **`VK_TIMEOUT` に差し替える**
+  （`waitForIdle` の1箇所、ログ `CELTIUM_FENCE_TIMEOUT injected`）。
+- **実測（両GPU、注入は発火）**:
+
+| 指標 | AMD | Intel |
+|---|---|---|
+| exit / validationClean / fixture | **1 / true / FAILED** | **1 / true / FAILED** |
+| クラッシュ / VUID | **なし / 0** | **なし / 0** |
+| frames | 571 | 572 |
+| **`stalledTeardownSkips`** | **547** | **549** |
+| `gpuStalled` | **true** | **true** |
+| 経過時間 | **24 秒** | **26 秒** |
+
+- **意味（完成条件に直結）**:
+  1. **timeout のあと使用中コマンドバッファ／資源を解放しない** — `stalledTeardownSkips` が **547/549** を数えており、
+     これは「**stall 後に資源を解放しない**」経路が**実際に選ばれている**ことの実測である。
+  2. **ハングしない**（24/26 秒で終わる）。bounded wait が効いている。
+  3. **クラッシュしない・検証エラー0**。
+  4. **fixture は FAILED**（stall を成功として扱わない）。
+- **これで優先順位6の名前付き失敗経路はすべて実機で確認済み**: allocation（buffer/uniform/context/frame target/texture）、
+  descriptor、texture upload、submit（pre-submit）、**fence timeout**、out-of-date、resize/minimize、reload、
+  world switch。**未検証として残るのは start-up 段階の失敗と vendor 固有の device lost の再現**である。
+
+**次の一手**: (1) 優先順位5（vanilla coverage）の未確認項目に着手する（dimension 切替、水/溶岩/火、item/model の
+個別確認）、(2) モデル描画の「頂点の実データ比較」を残件として進める、(3) 優先順位4（GL なしの window/present）に
+ついて、環境で到達できる範囲と不足条件を docs に固定する。
+
+**（旧メモ）** 次の一手: (1) **フェンス timeout** を注入して「submit 成功後の wait 失敗」を実機で確認する（残る唯一の失敗経路）、
 (2) 優先順位5（vanilla coverage）の未確認項目（dimension、水/溶岩/火）に着手する、
 (3) モデル描画の「頂点の実データ比較」を残件として進める。
 

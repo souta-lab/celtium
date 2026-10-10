@@ -4650,6 +4650,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Whether captured display lists are drawn natively (lab switch; off keeps GL replaying them). */
     private static final boolean MODEL_DRAW = Boolean.getBoolean("celtium.vulkan.modelDraw");
+    /** Forces the fence wait to report a timeout, so the post-submit failure path can be exercised (lab switch). */
+    private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
 
     /**
      * Runs a descriptor-set request through the fault switch, so the refusal path can be exercised on a real GPU.
@@ -5399,6 +5401,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             LongBuffer fences = stack.mallocLong(1);
             fences.put(0, this.fence);
             int result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
+            if (FENCE_WAIT_FAULT) {
+                // A wait that times out after the submission was accepted: the command buffer may still be in flight, so
+                // nothing it recorded may be reset, re-recorded or destroyed. This is the second half of the rule the
+                // submit fault covers, and it had no way to run until now.
+                result = org.lwjgl.vulkan.VK10.VK_TIMEOUT;
+                System.out.println("[Celtium] CELTIUM_FENCE_TIMEOUT injected");
+            }
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
                         + "s, so the last submission is not completing; not draining the queue");
