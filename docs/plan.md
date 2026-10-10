@@ -39,6 +39,25 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.97 修正手順の障害を特定: `ensureFrameTarget()` は**バインド中の FBO** を読むので HEAD では古いサイズを読む
+
+- **読んだ事実**:
+  - `celtium$adoptableFramebuffer(w,h)` は `frameTarget.adoptableFramebuffer(w,h)` へ委譲し、**サイズ不一致なら 0**（＝付け替えなし）。
+  - `ensureFrameTarget()` は**そのとき GL にバインドされている FBO の色テクスチャ**からサイズを読んで作り直す。
+  - `FramebufferMixin` のフックは `func_147610_a`（**bind**）の **HEAD** にある ＝ その時点でバインドされているのは
+    **ゲームの新しい FBO ではなく、直前まで使っていた FBO**（MC は `func_147610_a` の中で `glBindFramebuffer` する）。
+    ＝ **HEAD で `ensureFrameTarget()` を呼んでも旧サイズを読む**ので、この経路では直せない。
+- **設計（次の実装単位・1つ）**: 同じ `FramebufferMixin` に **`func_147610_a` の RETURN を対象にした注入**を足す。
+  - RETURN では**ゲームの新しい FBO がバインド済み**なので、バックエンドに
+    **「今バインドされている FBO のサイズでターゲットを用意する」**入口（`ensureFrameTarget()` と同じ `settleGpu` 契約）を公開して呼ぶ。
+  - その直後に**既存の adopt 判定**（`framebufferObject != adopted` なら付け替え）を同じ注入から実行する。
+  - これで「**サイズ変更＝世代交代**」が bind 経路でも成立し、`gameFramebufferAdopted` が 2 以上になる。
+- **なぜ HEAD のままでは駄目か（記録）**: HEAD でターゲットを作り直すと**旧サイズ**で作り直してしまい、
+  かえって共有 image を 1280x720 に固定する。**順序（bind 完了後に読む）が本質**である。
+- **受入（実施時）**: resize run で `gameFramebufferAdopted >= 2`、
+  `presentedFromVulkan` が同 duration の plain 水準（700 台）へ戻り、提示画像が **1024x640** で書かれること。
+- **受入（現 HEAD・変更なし）**: resize なし run は AMD/Intel とも clean/PASSED/VUID 0 を維持。
+
 ## 0.96 resize の機構を確定: **bind 時点で共有 image が旧サイズ**なので再 adopt が成立しない（前節の「stalled が真因」も訂正）
 
 - **前節の訂正**: `rendererDebug` を見ると resize run でも **`target=1024x640`**、地形は **`draws=62 sections=62`** で
