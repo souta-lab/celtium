@@ -3604,6 +3604,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (groupVertices > this.immediateMaxGroupVertices) {
                 this.immediateMaxGroupVertices = groupVertices;
             }
+            if (this.formatProbeLogged < 6 && (this.currentGroupFormatId == 5 || this.currentGroupFormatId == 3)) {
+                // Raw GL projection against the one that is actually stored and pushed, for the two families that both use
+                // a light map. The stored one has been through remapClipDepth and the pushed one through vulkanProjection,
+                // so if the depth row changes shape between the two, that is where a wrong depth (or a wrong place) comes
+                // from - and the raw values on the left are what GL itself uses.
+                this.formatProbeLogged++;
+                System.out.println("[Celtium] CELTIUM_PROJ_PROBE fmt=" + this.currentGroupFormatId
+                        + " rawDepth=(" + round3(this.glProjection[2]) + "," + round3(this.glProjection[6]) + ","
+                        + round3(this.glProjection[10]) + "," + round3(this.glProjection[14]) + ")"
+                        + " storedDepth=(" + round3(this.currentGroupProjection[2]) + ","
+                        + round3(this.currentGroupProjection[6]) + "," + round3(this.currentGroupProjection[10]) + ","
+                        + round3(this.currentGroupProjection[14]) + ")"
+                        + " rawW=(" + round3(this.glProjection[11]) + "," + round3(this.glProjection[15]) + ")"
+                        + " mvT=(" + round3(this.currentGroupModelView[12]) + "," + round3(this.currentGroupModelView[13])
+                        + "," + round3(this.currentGroupModelView[14]) + ")");
+            }
             if (this.immediateMatrixLogged < 8) {
                 // The immediate path's own matrices and batch identity, for the first few groups: the first one was normal,
                 // so the groups that draw the dark squares have to be found among the others.
@@ -5136,6 +5152,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** How many model enqueues have printed their matrices. */
     private int modelMatrixLoggedCount;
     /** One-shot: the matrices an immediate group is stored with. */
+    /** How many immediate groups have printed their raw and stored projections. */
+    private int formatProbeLogged;
     /** How many particle batches have printed their light coordinates. */
     private int lightCoordLogged;
     /** How many immediate groups have printed their matrices. */
