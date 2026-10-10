@@ -416,6 +416,75 @@ public final class ValidationClient {
                 org.lwjgl.system.MemoryUtil.memFree(pixels);
             }
         }
+        // S05/S06 acceptance, behind its own flag: two INDEPENDENT batches that share the state key merge into one
+        // group, so the second batch's indices must carry the base vertex or it re-draws the first batch's geometry;
+        // then one batch large enough to cross the vertex/index arena capacity, so the first quads must survive the
+        // growth. Three probe points are reported so the image check can read the presented frame rather than guess.
+        if (Boolean.getBoolean("celtium.validation.drawMergedQuads")
+                && event.getType() == net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL
+                && worldTicks >= 150 && worldTicks <= 205) {
+            int width = event.getResolution().getScaledWidth();
+            int height = event.getResolution().getScaledHeight();
+            net.minecraft.client.renderer.GlStateManager.disableTexture2D();
+            net.minecraft.client.renderer.GlStateManager.disableDepth();
+            net.minecraft.client.renderer.GlStateManager.disableCull();
+            net.minecraft.client.renderer.GlStateManager.enableBlend();
+            net.minecraft.client.renderer.GlStateManager.tryBlendFuncSeparate(
+                    org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA,
+                    org.lwjgl.opengl.GL11.GL_ONE, org.lwjgl.opengl.GL11.GL_ZERO);
+            net.minecraft.client.renderer.GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+            net.minecraft.client.renderer.Tessellator tessellator =
+                    net.minecraft.client.renderer.Tessellator.getInstance();
+            net.minecraft.client.renderer.BufferBuilder buffer = tessellator.getBuffer();
+            // S05: two separate draw() calls, identical state, so they land in the same group's mesh. The red quad sits
+            // at the left quarter, the green at the right; a missing base vertex draws the second batch over the first
+            // and the green probe position stays background. Gui.drawRect's proven shape is used - POSITION format with
+            // the colour carried by GlStateManager.color, which is the call sequence that demonstrably reached the
+            // framebuffer where the POSITION_COLOR variant produced nothing.
+            net.minecraft.client.renderer.GlStateManager.color(1.0F, 0.0F, 0.0F, 1.0F);
+            buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS,
+                    net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION);
+            celtium$quadPos(buffer, width * 0.10D, height * 0.75D, width * 0.18D, height * 0.90D);
+            tessellator.draw();
+            net.minecraft.client.renderer.GlStateManager.color(0.0F, 1.0F, 0.0F, 1.0F);
+            buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS,
+                    net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION);
+            celtium$quadPos(buffer, width * 0.30D, height * 0.75D, width * 0.38D, height * 0.90D);
+            tessellator.draw();
+            // S06: a single batch whose quads push the group mesh past its initial arena. POSITION is 12 bytes a
+            // vertex, so 22000 quads (~1.06 MB) cross the 1 MiB vertex arena and the index arena alike. The first quad
+            // occupies a fixed tile; if the growth dropped what it already held, that tile shows background.
+            net.minecraft.client.renderer.GlStateManager.color(0.0F, 0.0F, 1.0F, 1.0F);
+            int grown = Integer.getInteger("celtium.validation.mergedQuadCount", 22000).intValue();
+            buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS,
+                    net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION);
+            int columns = 64;
+            int row = 0;
+            double tile = 3.0D;
+            for (int i = 0; i < grown; i++) {
+                int col = i % columns;
+                if (col == 0 && i > 0) {
+                    row++;
+                }
+                double x0 = width * 0.45D + col * (tile + 1.0D);
+                double y0 = height * 0.75D + row * (tile + 1.0D);
+                celtium$quadPos(buffer, x0, y0, x0 + tile, y0 + tile);
+            }
+            tessellator.draw();
+            net.minecraft.client.renderer.GlStateManager.enableDepth();
+            net.minecraft.client.renderer.GlStateManager.enableCull();
+            net.minecraft.client.renderer.GlStateManager.enableTexture2D();
+            net.minecraft.client.renderer.GlStateManager.disableBlend();
+            int scale = event.getResolution().getScaleFactor();
+            report.addProperty("mergedQuadsEmitted", 2 + grown);
+            // Image-space probe points for the upright presented dump: x = scaledX*scale, y = scaledY*scale from top.
+            report.addProperty("mergedQuadProbeRed",
+                    (int) (width * 0.14D * scale) + "," + (int) (height * 0.82D * scale));
+            report.addProperty("mergedQuadProbeGreen",
+                    (int) (width * 0.34D * scale) + "," + (int) (height * 0.82D * scale));
+            report.addProperty("mergedQuadProbeFirst",
+                    (int) ((width * 0.45D + 1.5D) * scale) + "," + (int) ((height * 0.75D + 1.5D) * scale));
+        }
         if (!Boolean.getBoolean("celtium.validation.drawTest")
                 || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
             return;
@@ -1062,6 +1131,14 @@ public final class ValidationClient {
             }
         }
         return this.celtium$secondary;
+    }
+
+    private static void celtium$quadPos(net.minecraft.client.renderer.BufferBuilder buffer,
+            double left, double top, double right, double bottom) {
+        buffer.pos(left, bottom, 0.0D).endVertex();
+        buffer.pos(right, bottom, 0.0D).endVertex();
+        buffer.pos(right, top, 0.0D).endVertex();
+        buffer.pos(left, top, 0.0D).endVertex();
     }
 
     private static void celtium$quad(net.minecraft.client.renderer.BufferBuilder buffer,
