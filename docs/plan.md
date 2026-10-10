@@ -47,6 +47,41 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.118 **修正・受入済み**: 監査バッチ（cancellation 契約・adoption 絞り込み・overlay 経路・GPU 報告）／TESR の本は描画される
+
+- **cancellation 契約（監査 優先度1）**: `callList` の `@Inject` に `cancellable = true` が無く、`info.cancel()` が
+  `CancellationException` を投げ、外側の catch が「計測失敗」として飲み、census は取消を数え、GL 本体は走っていた。
+  修正後は cancellable を明示し、census は**取消が実際に効いた後**に書き、CancellationException は
+  `CELTIUM_CANCEL_NOT_CANCELLABLE` として有界に報告し、`@At("RETURN")` の観測で「本当に走った GL 本体」を数える
+  （HEAD 取消は RETURN の前に return するので、これが判定になる）。実測（bridge・パッケージ済み jar）:
+  `CELTIUM_CANCEL_STATE cancelled=1 executed=8 failures=0`・not-cancellable 0 行・fixture PASSED・clean。
+- **adoption の絞り込み（監査 優先度2 相当の欠陥）**: 「game が bind した任意の identity」を adopt していたため、
+  spectator group が自分の4 target を adopt（`postTargets=0 postAdopted=4`）し、全 blur pass が1枚の image を
+  読み書きしていた。mixin が報告する **chain の最初の入力**（`passes.get(0).groupMainFbId`）だけを adopt する。
+  受入（`.celtium-work/runtime/outline5`・fixture PASSED・VUID 0）: `postChains=45 postPasses=180 postTargets=1
+  postAdopted=1 postAdoptions=1 postRunsOnStandIn=0 postAdoptedIds=[64c7afc6]`、off-target で silhouette を
+  受けた identity と一致。
+- **overlay の経路**: GL-less では stage-3 の skip が「frame 自身の blit」と「別 texture を sample する overlay」を
+  区別せず、outline composite が texture gate に到達する前に拒否されていた
+  （`CELTIUM_COMPOSITE_REFUSED reason=unrecorded format=2 count=4`、`textureRefusalsBeforeAccept=0`）。
+  現在の target 自身の colour texture を sample する場合だけ拒否し、それ以外は即時パスへ落とす
+  （判定は game の bind が埋める identity map。stub は attachment query に答えられない）。
+- **GPU 報告（監査 優先度5）**: 描画側が選択確定時に `CELTIUM_NATIVE_DEVICE name="..." uuid=... matchedOpenGl=...`
+  を出し、harness はこれで `--require-gpu` を判定する（device 未選択時のみ GL 文字列へ fallback し、どちらで
+  判定したかを記録）。`process.driver` は選択された device を UUID→name で照合して報告する。実測: GL-less で
+  AMD が選ばれた run に `--require-gpu UHD` を掛けると `gpuRequirementMet=false
+  gpuRequirementSource=nativeDeviceName nativeDeviceName="AMD Radeon RX 6400 (RADV NAVI24)"`。
+- **TESR / エンチャント台の本（受入）**: `tesr7`（GL-less・`-Dceltium.validation.allBlocks=true`）で
+  `modelDraws=3883 displayListCancelled=3883 displayListDistinct=29 modelMeshQuads=160`、本の list が
+  `liveMVt=(6.012,-5.843,-29.475)`（カメラ原点ではなく実ブロック位置）で描画。GL 参照
+  （`-Dceltium.vulkan.modelDraw=false` の bridge）と同一画素位置で一致（`.celtium-work/tesr-evidence/`）。
+  **fixture の superflat world は生成ブロックに TileEntity を作らない**（`Chunk(World,ChunkPrimer,int,int)` は
+  storageArrays のみ）ため、生成されたエンチャント台は GL でも本を出さない——これは vanilla の挙動。
+- **未達として残るもの**: 可視 glow（registry への image 公開＋layout dance）、post chain 自身の target の
+  `UNDEFINED` 参照 VUID（専用エージェントが調査中）、GL-less の一部 frame に出る半透明の大きな wedge
+  （`modelDraws=0` の run でも出るため model 経路ではない）、画像受入の frame 束縛（監査 優先度4）、
+  新 jar での Intel 再受入。
+
 ## 0.117 **受入済み**: Nether が capture 時に dimension -1 で native scene を描く（goal 項目4・条件 (a) の一部）
 
 - **受入（実測）**: `.celtium-work/nether-fix4.json`（AMD RX 6400・GL-less・`--jvm-arg=-Dceltium.validation.dimensionAtTick=80
