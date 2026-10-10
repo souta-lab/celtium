@@ -27,6 +27,25 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.22 spectator creeper / enderman の受入（goal 項目5が名指しする3種のうち残り2つ）
+
+- fixture には元から creeper/spider/enderman の spectator 効果（vanilla ShaderGroup の entity outline を
+  `loadEntityShader` で読み込む）があり、**spider は受入済み**だった。残り2種を受入した。
+- **受入（AMD 2場面＋Intel 1場面、duration 150 s）**:
+
+| run | exit | validationClean | fixture | frames | p50 | `modelDraws` | `modelMeshLists/Quads` | 拒否 | VUID | `spectatorResult` / `shaderActive` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| AMD creeper | 0 | true | **PASSED** | 663 | 13.36 ms | 1204 | **8 / 48** | 0 | 0 | loaded / **True** |
+| AMD enderman | 0 | true | **PASSED** | 663 | 13.32 ms | 1210 | **9 / 54** | 0 | 0 | loaded / **True** |
+| Intel creeper | 0 | true | **PASSED** | 234 | 40.83 ms | 414 | **8 / 48** | 0 | 0 | loaded / **True** |
+
+  **creeper と enderman のモデルが native 経路で捕獲・描画されている**（素の場面は 2 リスト/12 クワッドなので、
+  8/48 と 9/54 はこの2体のモデルが入ったことを示す）。`displayListCancelled == modelDraws`（成功時のみ取消）、
+  `modelDrawRefusals=0`、スクリーンショット有り、クラッシュなし。
+- **意味**: goal 項目5が名指しした **spectator creeper / spider / enderman の3種が両GPUで受入済み**になった。
+  **entity outline は vanilla ShaderGroup として動いている**（`shaderActive=True`）。ただし**その outline 自体は
+  依然 GL のパス**であり、**native 化は残件**である（延期ではなく未着手と明記）。
+
 ## 0.21 **Nether 成立（AMD/Intel 両方）**: 根因は「転送先のポータルの中に立っていた」こと
 
 **計器で確定した根因（推測ではなく caller chain）**: `EntityPlayerMP.changeDimension` に stack を出す計器を入れたところ、
