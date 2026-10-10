@@ -4577,6 +4577,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 float[] projectionRemapped = new float[16];
                 remapClipDepth(projectionNow, projectionRemapped);
                 pushCombinedMatrixInto(projectionRemapped, modelViewNow, push, 0);
+                // The matrices this draw uses, next to the matrix GL had when it replayed the same list. The vertices
+                // are captured in model space, so if these two differ the native model lands somewhere else than the
+                // original - which is what the stray shape at the top of the frame looked like. Logged once per list.
+                if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.matrixLogged(listId)) {
+                    StringBuilder line = new StringBuilder();
+                    line.append("[Celtium] CELTIUM_MODEL_MATRIX list=").append(listId);
+                    line.append(" drawModelView=[");
+                    for (int i = 0; i < 16; i++) {
+                        line.append(i == 0 ? "" : ",").append(Math.round(modelViewNow[i] * 1000f) / 1000f);
+                    }
+                    line.append("]");
+                    float[] replayed = org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replayMatrix(listId);
+                    line.append(" glReplayModelView=[");
+                    if (replayed == null) {
+                        line.append("none");
+                    } else {
+                        for (int i = 0; i < 16 && i < replayed.length; i++) {
+                            line.append(i == 0 ? "" : ",").append(Math.round(replayed[i] * 1000f) / 1000f);
+                        }
+                    }
+                    line.append("]");
+                    System.out.println(line);
+                }
                 push.putFloat(112, 0.0f);
                 push.putFloat(116, 1.0f);
                 push.putFloat(120, 1.0f);

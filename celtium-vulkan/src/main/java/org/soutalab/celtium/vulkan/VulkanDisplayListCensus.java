@@ -146,7 +146,14 @@ public final class VulkanDisplayListCensus {
 
     private static final java.util.Set<Integer> TEXTURE_LOGGED = new java.util.HashSet<Integer>();
 
-    /** {@return whether the bound texture of this list has been logged already}. */
+    private static final java.util.Set<Integer> MATRIX_LOGGED = new java.util.HashSet<Integer>();
+
+    /** {@return whether the model matrix of this list has been logged already}. */
+    public static synchronized boolean matrixLogged(int list) {
+        return MATRIX_LOGGED.add(Integer.valueOf(list));
+    }
+
+    /** {@return the bound texture of this list has been logged already}. */
     public static synchronized boolean textureLogged(int list) {
         return !TEXTURE_LOGGED.add(Integer.valueOf(list));
     }
