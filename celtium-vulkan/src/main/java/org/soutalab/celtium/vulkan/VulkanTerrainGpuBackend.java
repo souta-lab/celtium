@@ -555,6 +555,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateStateCalls;
     private int immediateBatchesOffered;
     private String immediateLastRefusal = "unrecorded";
+    /** The checkpoint the offer path last passed, so an unnamed refusal can still say where it stopped. */
+    private int offerStage;
     /**
      * Whether the immediate path draws, off by default.
      * <p>
@@ -1819,6 +1821,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public String lastRefusal() {
+        if (this.immediateLastRefusal != null && this.immediateLastRefusal.startsWith("unrecorded")) {
+            // The refusal never named itself; the stage says where the batch stopped. Stages are set at the checkpoints of
+            // the offer path below, so a number here is a location and not a guess.
+            return this.immediateLastRefusal + " stage=" + this.offerStage;
+        }
         return this.immediateLastRefusal;
     }
 
@@ -2096,6 +2103,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        this.offerStage = 1;
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode) && formatId == 1) {
             // Lines are refused by design unless the device can draw the width OpenGL asked for. The selection outline is
@@ -2129,6 +2137,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
         // controls in practice is which format-2 batches the present path may take; everything else falls through to
         // the immediate path. Recorded so the name is not read as evidence that a present happens.
+        this.offerStage = 2;
         if (formatId == 2 && SKIP_GL_COMPOSITE && this.framePresentedFromVulkan > 0
                 && this.currentRenderTargetIsMain) {
             // The frame is already on the swapchain (a present really happened for it), so the game's own composite would
@@ -2137,6 +2146,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.glCompositesSkipped++;
             return true;
         }
+        this.offerStage = 3;
         if (formatId == 2 && PRESENT_FROM_COMPOSITE && (this.currentRenderTargetIsMain
                 || celtium$samplesBoundFramebufferColor(this.immediateState.boundTextureName()))) {
             // The audit's S17: this layout is not only the screen composite. `Framebuffer.func_178038_a` uses it to blend
@@ -2229,12 +2239,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateLastRefusal = "reentrant upload during bridge handoff";
             return false;
         }
+        this.offerStage = 4;
         if (!supportedImmediateTarget()) {
             // The gate names the failing condition itself; overwriting it here is what hid which one refused 820
             // format-2 batches in a run.
             flushPendingBeforeGlDraw();
             return false;
         }
+        this.offerStage = 5;
         if (!celtium$formatAccepted(formatId)) {
             // Attribution switch: restricting which layouts this backend accepts makes the image difference
             // measurable per format instead of as one aggregate number. Refused batches are drawn by GL as usual.
@@ -2243,6 +2255,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        this.offerStage = 6;
         if (formatId < 1 || formatId > VulkanImmediateFormats.POSITION_TEX_NORMAL) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
@@ -2254,6 +2267,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        this.offerStage = 7;
         if (vertexStride != expectedStride) {
             this.immediateLastRefusal = "layout id " + formatId + " has stride " + vertexStride + ", expected "
                     + expectedStride;
@@ -2273,6 +2287,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        this.offerStage = 8;
         if (formatId >= 2 && this.immediateState.boundTextureName() == 0) {
             this.immediateLastRefusal = "textured batch with no texture bound";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
@@ -2497,7 +2512,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.programQueryCount++;
             if (boundProgram != 0) {
                 // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
-                if (formatId == 8 && !this.entityProgramLogged) {
+                this.offerStage = 9;
+        if (formatId == 8 && !this.entityProgramLogged) {
                     // The entity layout is refused in every scene (acceptedByFormat 8:0). Which program is bound when it
                     // is offered decides whether the custom-program shutter is what keeps entities on GL - and that is
                     // what the depth write-back depends on.
@@ -2554,7 +2570,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.flushPendingBeforeGlDraw();
                 return false;
             }
-            if (formatId == 5 && !canBuildDescriptor(boundTexture)) {
+            this.offerStage = 10;
+        if (formatId == 5 && !canBuildDescriptor(boundTexture)) {
                 // The particle family is the one that dropped: every post-accept drop counted so far is format 5, which is
                 // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
                 // refusal - before acceptance, where GL still owns the draw. The descriptor depends on the textures rather
@@ -2596,6 +2613,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.acceptedForOtherTargets++;
             }
 
+            this.offerStage = 11;
             if (formatId >= 0 && formatId < this.acceptedByFormat.length) {
 
                 this.acceptedByFormat[formatId]++;
@@ -3176,12 +3194,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private boolean supportedImmediateTarget() {
+        // Every condition names itself. One shared message covered all five and could not say which one refused, which is
+        // how 870 format-2 refusals in a run stayed unnamed (measured: the stage marker said this gate, and the tally
+        // still read "unrecorded").
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
-        if (fbo == 0) return false;
+        if (fbo == 0) {
+            this.immediateLastRefusal = "target: the default framebuffer is bound";
+            return false;
+        }
         int[] viewport = currentViewport();
-        if (viewport[0] != 0 || viewport[1] != 0 || !ensureFrameTarget()) return false;
-        if (viewport[2] != this.targetWidth || viewport[3] != this.targetHeight) return false;
-        return this.frameTarget.currentFramebufferViolation() == null;
+        if (viewport[0] != 0 || viewport[1] != 0) {
+            this.immediateLastRefusal = "target: the viewport origin is " + viewport[0] + "," + viewport[1];
+            return false;
+        }
+        if (!ensureFrameTarget()) {
+            this.immediateLastRefusal = "target: no frame target for " + this.targetWidth + "x" + this.targetHeight;
+            return false;
+        }
+        if (viewport[2] != this.targetWidth || viewport[3] != this.targetHeight) {
+            this.immediateLastRefusal = "target: the viewport is " + viewport[2] + "x" + viewport[3] + ", the target is "
+                    + this.targetWidth + "x" + this.targetHeight;
+            return false;
+        }
+        String violation = this.frameTarget.currentFramebufferViolation();
+        if (violation != null) {
+            this.immediateLastRefusal = "target: " + violation;
+            return false;
+        }
+        return true;
     }
 
     private PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
