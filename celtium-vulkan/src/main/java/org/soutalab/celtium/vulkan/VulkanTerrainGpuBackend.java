@@ -260,7 +260,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
-                    + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
+                    + " textureFaultInjections=" + VulkanTextureFault.injections()
+                + " textureUploadFailures=" + this.textureUploadFailures
+                + " lastTextureUploadFailure=" + this.lastTextureUploadFailure
+                + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
                 + " descriptorRequests=" + VulkanDescriptorFault.requests()
                 + " modelDraws=" + this.modelDraws
                 + " modelDrawRefusals=" + this.modelDrawRefusals
@@ -2014,6 +2017,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             int boundTexture = this.immediateState.boundTextureName();
             this.currentImmediateTexture = boundTexture;
+            if (boundTexture != 0 && VulkanTextureFault.shouldFail("immediate")) {
+                this.textureUploadFailures++;
+                this.lastTextureUploadFailure = "immediate " + boundTexture;
+                this.immediateLastRefusal = "texture upload fault";
+                this.flushPendingBeforeGlDraw();
+                return false;
+            }
             if (!this.immediateState.texture2dEnabled()) {
                 // Vanilla draws the sky with texturing switched off and the gradient in the vertex colours. Sampling
                 // the texture that happens to be bound then washes that out - measured as the sky going flat, 74.7% of
@@ -4485,6 +4495,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private String modelLastRefusal = "none";
     /** Whether a frame target exists, so a pass can be opened. */
     private boolean frameTargetKnown;
+    /** Texture uploads that were made to fail, and the last one, for the failure-path acceptance. */
+    private int textureUploadFailures;
+    private String lastTextureUploadFailure = "none";
     /** The terrain pipeline of the frame, for its render pass. */
     private VulkanTerrainPipeline terrainPipelineForFrame;
     /** The texture the immediate path most recently bound. */
