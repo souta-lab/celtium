@@ -182,6 +182,30 @@ public abstract class GlStateManagerMixin {
     }
 
     /**
+     * The float translation, which is the overload every entity, tile entity, item and camera offset goes through.
+     * <p>
+     * {@code func_179109_b} is {@code GlStateManager.translate(float,float,float)} and its body calls
+     * {@code GL11.glTranslatef}; the double overload above is {@code func_179137_b} and calls {@code glTranslated}. The
+     * GL-less stub lists {@code glTranslatef} as a state-set no-op, so before this hook the mirror saw only the camera:
+     * measured as translateCalls=59 in a 59-frame run with dozens of tile entities rendered, and as every model list
+     * compiling with a zero translation. The mirror has to see what GL sees, or every model - the enchanting table's
+     * book is the reported case - is drawn at the camera origin instead of where its block is.
+     */
+    @Inject(method = "func_179109_b", at = @At("HEAD"), require = 0)
+    private static void celtium$translateFloat(float x, float y, float z, CallbackInfo info) {
+        celtium$mirror(backend -> backend.translate(x, y, z));
+    }
+
+    /**
+     * The double scale, the counterpart of the already hooked float scale. The mirror keeps float components, so the
+     * cast is where the two overloads meet - the values Minecraft scales models by are small and exact in float.
+     */
+    @Inject(method = "func_179139_a", at = @At("HEAD"), require = 0)
+    private static void celtium$scaleDouble(double x, double y, double z, CallbackInfo info) {
+        celtium$mirror(backend -> backend.scale((float) x, (float) y, (float) z));
+    }
+
+    /**
      * Texture matrices are per unit, so the mirror must know which unit a {@code glMatrixMode(GL_TEXTURE)} sequence
      * addresses: the lightmap writes its own every frame, and without this it lands on unit 0's stack. The argument
      * is the GL enum ({@code GL_TEXTURE0 + n}); only the unit offset is kept.

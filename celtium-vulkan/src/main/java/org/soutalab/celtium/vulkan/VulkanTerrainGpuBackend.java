@@ -1365,12 +1365,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.textureRegistry = celtium$registry();
         }
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) flushPendingBeforeGlDraw();
-        int[][] rows = new int[height][width];
-        for (int row = 0; row < height; row++) {
-            System.arraycopy(pixels, row * width, rows[row], 0, width);
-        }
+        // One int[] holding the whole of level 0, which is the shape announceFullPixels documents: its data[0] is
+        // the entire base level, not its first row. Splitting the flat array into one int[] per row made data[0] a
+        // single row, so every texel past the first row fell outside the array the consumer reads and was written as
+        // transparent - measured as a light map whose row 0 held the noon gradient and whose rows 1..15 were black,
+        // which is the black terrain this replaces.
         this.announcedDynamicTextures++;
-        if (this.textureRegistry.announceFullPixels(glTextureId, rows, width, height, 0, 0)) {
+        if (this.textureRegistry.announceFullPixels(glTextureId, new int[][] { pixels }, width, height, 0, 0)) {
             this.animatedImageFills++;
             this.dynamicTextureFills++;
         }
@@ -6555,15 +6556,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                     : Boolean.toString(registryEntry.hasFullContent()))
                             + " same=" + (registryEntry == this.lightmapTexture));
                 }
-                // The light map is supplied by the same call the atlas uses rather than through the announcement
-                // short-circuit: the two are 16x16 and 512x512, but what makes the difference is the path, and the
-                // measured one is this one. The announcement path (canSkipReadback) leaves the light map's image
-                // unsampleable - a device dump of it shows the noon gradient (nonZero=1024, min=14) while the terrain
-                // samples black from it, and forcing the light term to white restores the whole picture.
-                this.lightmapTexture.uploadFromGlTexture(lightmapId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
-                if (this.textureRegistry != null) {
-                    this.textureRegistry.markFullyInitialized(lightmapId);
-                }
+                // Back on the announcement path, which is the light map's real source: the black it produced was the
+                // announced array's shape (one int[] per row where the consumer reads one int[] for the whole of level
+                // 0), not this call. With the producer fixed, an announcement-only run measures the same band as the
+                // readback did - 102.4/63.9/58.5 - so the readback detour is gone and the image has one owner again.
+                this.celtium$establishAtlasImage(lightmapId, this.lightmapTexture, "lightmap");
                 this.lightmapSourceGlId = lightmapId;
                 int[] lightmapSize = textureSize(lightmapId);
                 record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);

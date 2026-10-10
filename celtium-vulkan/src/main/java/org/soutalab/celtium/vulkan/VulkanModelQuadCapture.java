@@ -9,15 +9,18 @@ package org.soutalab.celtium.vulkan;
  * the replay census sees the sky and stars twice a frame and the player's ten model parts when the player is visible.
  * <p>
  * The capture is deliberately a measurement first: it records what the quads contain (vertices, texture coordinates and
- * the plane the normal is derived from) and how many arrive, without changing a single pixel of the rendering. Drawing
- * them natively needs two matrices - the one baked in at compile time, exactly as GL bakes it into the list, and the one
- * current at replay, which is the entity's transform - and the backend already mirrors both.
+ * the plane the normal is derived from) and how many arrive, without changing a single pixel of the rendering.
  * <p>
  * The geometry's identity is read from GL rather than assumed: the list being compiled and the bound texture both come
  * from the state the GL-less stub records when the game calls {@code glNewList} and {@code glBindTexture}. Under a real
  * context the capture behaves exactly as before. A quad whose list or texture cannot be established, and a quad whose
  * four vertices carry no area, are refused with a named reason and counted instead of being filed under an id no replay
  * can find.
+ * <p>
+ * The vertices are stored in model space and pair with the matrix current at replay, which is what a display list does:
+ * {@link #matrixForList(int)} answers the identity for that reason, and the reply-time modelview is the renderer's to
+ * supply. The modelview the list was compiled under is still recorded per list, as a measurement
+ * ({@link #compileMatrixForList(int)}) - and it is what showed the tile entity transform missing from the mirror.
  */
 public final class VulkanModelQuadCapture {
 
@@ -40,6 +43,22 @@ public final class VulkanModelQuadCapture {
     /** Per-display-list geometry, keyed by the list GL is compiling into. */
     private static final java.util.LinkedHashMap<Integer, ListGeometry> LISTS =
             new java.util.LinkedHashMap<Integer, ListGeometry>();
+
+    /**
+     * Quads submitted per list, captured and refused, keyed the way {@link #LISTS} is.
+     * <p>
+     * A list that received quads and captured none is a different fact from a list that was never compiled, and the
+     * two look identical in the geometry table - which holds only what was kept. The submitted count is what makes
+     * them distinguishable, and {@code {submitted, captured, refused, texture}} is all the close line needs.
+     */
+    private static final java.util.LinkedHashMap<Integer, int[]> LIST_TOTALS =
+            new java.util.LinkedHashMap<Integer, int[]>();
+    /** How many lists print an open and a close line, so a scene with forty model parts cannot flood the log. */
+    private static final int TRACE_LISTS = 24;
+    private static int tracedLists;
+    private static int closedLists;
+    /** The list the last submitted quad belonged to, so a change of list is the boundary between two compiles. */
+    private static int lastTracedList = Integer.MIN_VALUE;
 
     private static final class ListGeometry {
         int quads;
@@ -113,6 +132,7 @@ public final class VulkanModelQuadCapture {
             if (listId <= 0) {
                 // "No list is being compiled" is an answer, not an identity: a quad filed under list 0 is one no
                 // callList can ever reach, which is exactly the state this capture started in.
+                celtium$trace(listId, UNKNOWN, false);
                 celtium$refuse(REFUSED_UNKNOWN_LIST,
                         "list=" + celtium$value(listId) + " " + celtium$textureDiagnostic(), count);
                 return;
@@ -121,6 +141,7 @@ public final class VulkanModelQuadCapture {
             if (texture <= 0) {
                 // A model quad is drawn with a texture bound (the arm above is compiled under the player's 64x64 skin),
                 // so a name of 0 here is the read failing, not a textureless draw.
+                celtium$trace(listId, texture, false);
                 celtium$refuse(REFUSED_UNKNOWN_TEXTURE,
                         "list=" + listId + " texture=" + celtium$value(texture) + " " + celtium$textureDiagnostic(),
                         count);
@@ -131,6 +152,7 @@ public final class VulkanModelQuadCapture {
                 // A model face is a rectangle in one plane, so one constant coordinate is normal - the first quad this
                 // capture saw had x constant at 0.063 and the normal (1,0,0) that says it is a box's +X face. What is
                 // refused here is the area the four vertices span, not a coordinate.
+                celtium$trace(listId, texture, false);
                 celtium$refuse(REFUSED_DEGENERATE, "list=" + listId + " " + unusable, count);
                 return;
             }
@@ -145,7 +167,10 @@ public final class VulkanModelQuadCapture {
             geometry = new ListGeometry();
             geometry.listId = listId;
             geometry.texture = texture;
-            geometry.source = source;
+            // The call site of *this* list's first quad, not the first quad the capture ever saw: with the global value
+            // every list was attributed to whichever model happened to compile first, which is the one thing a per-list
+            // table must not do when the question is "who compiled the book".
+            geometry.source = celtium$callSite(6);
             try {
                 java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
                 org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
@@ -183,6 +208,7 @@ public final class VulkanModelQuadCapture {
             }
         }
         geometry.ensure();
+        celtium$trace(listId, texture, true);
         int base = geometry.quads * 4;
         for (int i = 0; i < count && i < 4; i++) {
             geometry.positions[(base + i) * 3] = xs[i];
@@ -234,6 +260,92 @@ public final class VulkanModelQuadCapture {
     /** {@return an int as text, with the sentinel spelled out rather than printed as a number}. */
     private static String celtium$value(int value) {
         return value == UNKNOWN ? "unknown" : String.valueOf(value);
+    }
+
+    /**
+     * Records one submitted quad against the list it was submitted for and prints the list's boundaries.
+     * <p>
+     * This is the compile-site accounting the geometry table cannot give: every quad {@code ModelRenderer} compiles is
+     * counted here whether it was kept or refused, so a list that was compiled and captured nothing reads as
+     * {@code submitted=N captured=0} rather than as "never compiled". The boundary is the change of list id between two
+     * submitted quads, which is what makes a line correspond to one {@code glNewList}/{@code glEndList} pair: the open
+     * line carries the texture and the owner (the frame after the last {@code ModelRenderer} call, which is the renderer
+     * that asked for the model - {@code RenderPlayer.func_177138_b} for the first-person arm, the TESR's own method for
+     * a tile entity) and the close line carries the totals. A quad with no list identity is not traced: the refusal line
+     * already names its reason and call site.
+     */
+    private static void celtium$trace(int listId, int texture, boolean captured) {
+        if (listId <= 0) {
+            return;
+        }
+        int[] totals = LIST_TOTALS.get(Integer.valueOf(listId));
+        if (totals == null) {
+            totals = new int[] { 0, 0, 0, texture };
+            LIST_TOTALS.put(Integer.valueOf(listId), totals);
+            if (tracedLists < TRACE_LISTS) {
+                tracedLists++;
+                System.out.println("[Celtium] CELTIUM_MODEL_LIST_OPEN list=" + listId + " texture=" + celtium$value(texture)
+                        + " owner=" + celtium$owner(celtium$callSite(6)));
+            }
+        }
+        totals[0]++;
+        totals[captured ? 1 : 2]++;
+        if (listId != lastTracedList) {
+            celtium$closeTracedList();
+            lastTracedList = listId;
+        }
+    }
+
+    /** Prints the totals of the list whose quads stopped arriving, once per list, for the first {@link #TRACE_LISTS}. */
+    private static void celtium$closeTracedList() {
+        if (lastTracedList <= 0 || closedLists >= TRACE_LISTS) {
+            return;
+        }
+        int[] totals = LIST_TOTALS.get(Integer.valueOf(lastTracedList));
+        if (totals == null) {
+            return;
+        }
+        closedLists++;
+        System.out.println("[Celtium] CELTIUM_MODEL_LIST_CLOSE list=" + lastTracedList
+                + " submitted=" + totals[0] + " captured=" + totals[1] + " refused=" + totals[2]
+                + " texture=" + celtium$value(totals[3]));
+    }
+
+    /**
+     * {@return the renderer that asked for the model, read from a call site string}.
+     * <p>
+     * The frames between {@code TexturedQuad.draw} and the caller are the model library's own
+     * ({@code ModelBox}, {@code ModelRenderer.compileDisplayList}, {@code ModelRenderer.render}), so the interesting
+     * frame is the first one after the last of them. Naming it makes "the book's list" a name in the log
+     * ({@code TileEntityEnchantmentTableRenderer.render} / {@code ModelBook.func_78088_a}) rather than an id.
+     */
+    private static String celtium$owner(String callSite) {
+        String[] frames = callSite.split(" <- ");
+        int last = -1;
+        for (int i = 0; i < frames.length; i++) {
+            if (frames[i].contains(".ModelRenderer.")) {
+                last = i;
+            }
+        }
+        if (last < 0 || last + 1 >= frames.length) {
+            return "unknown";
+        }
+        String owner = frames[last + 1];
+        int dot = owner.lastIndexOf('.');
+        int previous = dot < 0 ? -1 : owner.lastIndexOf('.', dot - 1);
+        return previous < 0 ? owner : owner.substring(previous + 1);
+    }
+
+    /** {@return how many quads were submitted for this list, captured or refused, or 0 when it never received one}. */
+    public static synchronized int submittedForList(int listId) {
+        int[] totals = LIST_TOTALS.get(Integer.valueOf(listId));
+        return totals == null ? 0 : totals[0];
+    }
+
+    /** {@return how many quads this list captured, which is what a mesh can be built from}. */
+    public static synchronized int quadsForList(int listId) {
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        return geometry == null ? 0 : geometry.quads;
     }
 
     /** {@return how the texture was read, so a refusal says which unit and which name it found}. */
@@ -416,19 +528,50 @@ public final class VulkanModelQuadCapture {
     }
 
     /**
-     * {@return a copy of the modelview a list was compiled under}, or {@code null} when that list was never seen.
+     * {@return the matrix the geometry of this list still needs before the replay-time modelview: the identity}.
      * <p>
-     * The stored vertices are in model space (measured: a part ranges over about +/-0.6), so the matrix they pair with is
-     * this one - the transform in effect when the list was compiled - and not the one in effect at replay, which for the
-     * model path carried no entity translation at all.
+     * The stored positions are model space - exactly the values {@code TexturedQuad.draw} submits to the Tessellator,
+     * measured: a model part ranges over about +/-0.6 - and a GL display list does not bake a matrix in, so GL
+     * transforms them with whatever modelview is current when {@code callList} runs. The caller already holds that
+     * matrix, so the honest answer for the vertices' own pairing is the identity.
+     * <p>
+     * This used to return the modelview the list was compiled under, which the replay path composed as
+     * {@code now * compile^-1}. That composition is only correct when the stored vertices are already in the view space
+     * of the compile moment, and they are not. What made it look plausible is that the mirror did not see the
+     * {@code GlStateManager.translate(float, float, float)} which places an entity or a tile entity, so the two
+     * matrices were the camera's and their ratio was near the identity - measured with an enchanting table placed at
+     * runtime: every model list, including the book compiled by the tile entity renderer, carried
+     * {@code compileT=(0,0,0)} although that renderer had just translated to a block up to thirty blocks away, and the
+     * models were drawn at the camera. The compile-time matrix is still recorded and reported, as a measurement, by
+     * {@link #compileMatrixForList(int)}.
      */
     public static synchronized float[] matrixForList(int listId) {
+        return LISTS.containsKey(Integer.valueOf(listId)) ? IDENTITY.clone() : null;
+    }
+
+    /**
+     * {@return a copy of the modelview a list was compiled under}, or {@code null} when that list was never seen.
+     * <p>
+     * A measurement, not a transform: the stored vertices are model space, so nothing has to be composed with this to
+     * place them - the matrix current at replay does that. It is what says whether the mirror could see the transform
+     * the renderer applied: a list compiled inside a tile entity renderer that translated to its block must show a
+     * translation, and a zero there is the missing {@code translate(float,float,float)} hook.
+     */
+    public static synchronized float[] compileMatrixForList(int listId) {
         ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
         if (geometry == null) {
             return null;
         }
         return geometry.modelView.clone();
     }
+
+    /** The identity, column-major, in the layout GL hands out: what model-space vertices pair with. */
+    private static final float[] IDENTITY = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
 
     /**
      * {@return the coordinate range of the largest list's stored vertices and its compile-time translation}.
@@ -520,24 +663,58 @@ public final class VulkanModelQuadCapture {
         return LISTS.size();
     }
 
-    /** {@return per-list quad counts, largest first, capped for one summary line}. */
+    /**
+     * {@return per-list geometry, largest first, capped for one summary line}.
+     * <p>
+     * Each entry carries the accounting the geometry table alone cannot: how many quads the list was submitted,
+     * how many it captured, the texture it was compiled under and the renderer that owns it. A list that appears here
+     * with {@code captured=0} is a compile whose quads were all refused (the refusal line names the reason); a list that
+     * does not appear at all never received a quad, which is a different fact and the one "the book is not drawn" has
+     * to be told apart from.
+     */
     public static synchronized String listSummary() {
-        if (LISTS.isEmpty()) {
+        if (LISTS.isEmpty() && LIST_TOTALS.isEmpty()) {
             return "none";
         }
         java.util.List<ListGeometry> all = new java.util.ArrayList<ListGeometry>(LISTS.values());
         all.sort((a, b) -> b.quads - a.quads);
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < Math.min(all.size(), 8); i++) {
+            ListGeometry geometry = all.get(i);
+            int[] totals = LIST_TOTALS.get(Integer.valueOf(geometry.listId));
             if (i > 0) {
-                text.append(' ');
+                text.append(" | ");
             }
-            text.append(all.get(i).listId).append(':').append(all.get(i).quads);
+            text.append(geometry.listId).append(" quads=").append(geometry.quads)
+                    .append(" submitted=").append(totals == null ? geometry.quads : totals[0])
+                    .append(" refused=").append(totals == null ? 0 : totals[2])
+                    .append(" texture=").append(celtium$value(geometry.texture))
+                    .append(" owner=").append(celtium$owner(geometry.source));
         }
         if (all.size() > 8) {
             text.append(" +").append(all.size() - 8).append(" more");
         }
-        return text.toString();
+        // Lists that were compiled and captured nothing: named here as well as in the trace, because the summary is the
+        // line the report keeps and the trace only prints to stdout.
+        StringBuilder empty = new StringBuilder();
+        for (java.util.Map.Entry<Integer, int[]> entry : LIST_TOTALS.entrySet()) {
+            if (LISTS.containsKey(entry.getKey())) {
+                continue;
+            }
+            if (empty.length() > 0) {
+                empty.append(' ');
+            }
+            empty.append(entry.getKey()).append(":submitted=").append(entry.getValue()[0])
+                    .append(" captured=0 refused=").append(entry.getValue()[2])
+                    .append(" texture=").append(celtium$value(entry.getValue()[3]));
+        }
+        if (empty.length() > 0) {
+            if (text.length() > 0) {
+                text.append(" | ");
+            }
+            text.append("capturedNothing[").append(empty).append(']');
+        }
+        return text.length() == 0 ? "none" : text.toString();
     }
 
     /** {@return how many quads have been captured}. */
@@ -587,6 +764,12 @@ public final class VulkanModelQuadCapture {
     public static synchronized int textureForList(int listId) {
         ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
         return geometry == null || geometry.texture == UNKNOWN || geometry.texture <= 0 ? 0 : geometry.texture;
+    }
+
+    /** {@return the renderer that compiled this list, named from the first quad's stack, or "unknown"}. */
+    public static synchronized String ownerForList(int listId) {
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        return geometry == null ? "not-captured" : celtium$owner(geometry.source);
     }
 
     /** {@return a one-line description of the captured extent, for the run summary}. */

@@ -108,8 +108,6 @@ public final class VulkanGlTexture {
      * are not written; the atlas is a quarter of a megapixel and stays inside this.
      */
     private static final int MIRROR_DUMP_MAX_PIXELS = 300000;
-    /** Mip levels written per upload: level 0 is what a correct frame samples, level 1 is what a broken chain would not. */
-    private static final int MIRROR_DUMP_LEVELS = 2;
 
     /**
      * GL names whose mirrored pixels are replaced by a flat colour, as {@code id=AARRGGBB,id=AARRGGBB}.
@@ -173,6 +171,22 @@ public final class VulkanGlTexture {
     private static final java.util.Set<Integer> encodeIds = parseIds(System.getProperty("celtium.vulkan.mirrorEncode"));
     /** The GL name of this object's last upload, so the encoding rule can be applied to it. */
     private int encodeLabel = -1;
+
+    /**
+     * GL names whose readback supply is suppressed, as {@code id,id}; for measurement only.
+     * <p>
+     * A directly held texture is filled by both the announcement and the readback, so "is the announcement path alone
+     * enough" cannot be asked while the readback covers for it. Naming a texture here makes the announcement its only
+     * source, which is the configuration the light map's black terrain was found in: with it set, the light map's mirror
+     * held only the announced pixels, the terrain sampled black before the producer's shape fix and the correct band
+     * after it. Nothing but a diagnostic run sets it, and the pixels it withholds are exactly the ones the announcement
+     * already carries. It is not a way to run the renderer - while the directly held textures are supplied through the
+     * readback the same condition is reached by re-pointing that supply, and once it is gone this switch has no work left.
+     */
+    private static final java.util.Set<Integer> suppressedReadbackIds =
+            parseIds(System.getProperty("celtium.vulkan.suppressReadbackIds"));
+    /** Uploads whose readback was suppressed, so a run says whether the property took effect. */
+    private static long suppressedReadbacks;
 
     private static java.util.Set<Integer> parseIds(String spec) {
         java.util.Set<Integer> ids = new java.util.HashSet<Integer>();
@@ -458,6 +472,16 @@ public final class VulkanGlTexture {
     public void uploadFromGlTexture(int glTextureId, int glTextureTarget) {
         long celtium$uploadStart = System.nanoTime();
         final int celtium$uploadGlId = glTextureId;
+        if (suppressedReadbackIds.contains(Integer.valueOf(glTextureId))) {
+            // Diagnostic only; see suppressedReadbackIds. Counted before the upload counters so a suppressed call is not
+            // reported as a transfer that happened, and named once so a run's log says the property took effect.
+            suppressedReadbacks++;
+            if (suppressedReadbacks == 1) {
+                System.out.println("[Celtium] CELTIUM_READBACK_SUPPRESSED glTexture=" + glTextureId
+                        + " (diagnostic: the announcement is this mirror's only source)");
+            }
+            return;
+        }
         try {
         requireAlive();
         // Where the pixels come from. With an OpenGL context they come from the readback, exactly as they always have -
@@ -1004,9 +1028,11 @@ public final class VulkanGlTexture {
      * Reads this mirror's mip levels back from the device and writes them as PNGs, with one line of numbers each.
      * <p>
      * This is the measurement the frame cannot make: it separates "the mirror holds the right pixels and the sampling
-     * is wrong" from "the mirror holds black". Level 0 and level 1 are both written because the sampler blends them
-     * (mipmap mode LINEAR, {@code maxLod} 1.0), so a correct level 0 with a level 1 that was never written also draws
-     * black - and those two faults have different fixes.
+     * is wrong" from "the mirror holds black". Every level is read, not only level 0: the sampler blends the levels the
+     * clamp admits (mipmap mode LINEAR, {@code maxLod} 1.0), so a correct level 0 with a level 1 that was never written
+     * also draws black, and those two faults have different fixes. The line names each level's recorded layout as well,
+     * because a level that holds content while the descriptor's declared layout says otherwise is a third fault, and it
+     * is invisible in the pixels.
      */
     private void dumpMirrorPixels(int glTextureId) {
         if (!mirrorDumpWanted(glTextureId)) {
@@ -1024,7 +1050,7 @@ public final class VulkanGlTexture {
             }
         }
         this.mirrorDumps++;
-        for (int level = 0; level < Math.min(MIRROR_DUMP_LEVELS, Math.max(1, this.mipLevels)); level++) {
+        for (int level = 0; level < Math.max(1, this.mipLevels); level++) {
             if (levelLayout(level) != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
                 // The dump transitions the level through TRANSFER_SRC and back. A level that is not at rest in
                 // SHADER_READ_ONLY is a level this diagnostic does not understand, and moving it would change the frame
@@ -1041,7 +1067,8 @@ public final class VulkanGlTexture {
                 int levelWidth = Math.max(1, this.width >> level);
                 int levelHeight = Math.max(1, this.height >> level);
                 System.out.println("[Celtium] CELTIUM_MIRROR_LEVEL glTexture=" + glTextureId + " level=" + level
-                        + " size=" + levelWidth + "x" + levelHeight + " " + pixelSummary(read, levelWidth, levelHeight));
+                        + " size=" + levelWidth + "x" + levelHeight + " layout=" + layoutName(levelLayout(level)) + " "
+                        + pixelSummary(read, levelWidth, levelHeight));
                 if ((long) levelWidth * levelHeight > MIRROR_DUMP_MAX_PIXELS) {
                     // The numbers above are the measurement; a megapixel PNG would only cost the frame it measures.
                     continue;
@@ -1053,6 +1080,26 @@ public final class VulkanGlTexture {
             } finally {
                 MemoryUtil.memFree(read);
             }
+        }
+    }
+
+    /** {@return the name of a layout this class records}, so a level line says which state it is in, not only its pixels. */
+    private static String layoutName(int layout) {
+        switch (layout) {
+            case VK_IMAGE_LAYOUT_UNDEFINED:
+                return "UNDEFINED";
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                return "SHADER_READ";
+            case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                return "TRANSFER_SRC";
+            case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                return "TRANSFER_DST";
+            case VK_IMAGE_LAYOUT_GENERAL:
+                return "GENERAL";
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                return "COLOR_ATTACHMENT";
+            default:
+                return Integer.toString(layout);
         }
     }
 

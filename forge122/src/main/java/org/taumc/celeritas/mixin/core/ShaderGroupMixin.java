@@ -21,18 +21,21 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Sends the vanilla post-process chain to the native executor instead of drawing it through GL.
  * <p>
- * {@code ShaderGroup.render} is a list of fullscreen passes over the group's framebuffers. When the group's main
- * framebuffer is the game's own (every reachable chain except the entity-outline group, whose main framebuffer is
- * the outline buffer GL still fills), each pass is collected with its live uniform values and the whole chain runs
- * natively inside a GL-to-Vulkan handoff, ordered exactly where the GL chain ran - after the world, before the HUD.
- * Anything the executor declines still renders through GL unchanged.
+ * {@code ShaderGroup.render} is a list of fullscreen passes over the group's framebuffers. Each pass is collected
+ * with its live uniform values and the whole chain runs natively inside a GL-to-Vulkan handoff, ordered exactly
+ * where the GL chain ran - after the world, before the HUD. Anything the executor declines still renders through GL
+ * unchanged.
  * <p>
- * A group whose passes read {@code minecraft:main} and whose main is not the game's is the outline case: the input of
- * that chain is the framebuffer the game bound while it produced it (the entity-outline buffer, filled with the
- * silhouette), so the target's identity, the GL colour texture behind it and its size are reported to the backend
- * before the passes are collected. That is what lets the renderer keep the silhouette under the identity it was
- * already told about - rather than drawing it onto the scene - and hand that identity's image to the chain instead
- * of re-seeding the chain from a GL read of the texture, which a GL-less path cannot answer.
+ * The group's main framebuffer is the game's own for every reachable chain, the entity-outline group included: its
+ * silhouette does not live in the group's main but in a <em>named target</em> the game fills itself -
+ * {@code RenderGlobal.entityOutlineFramebuffer}, the outline group's {@code final} target - and the chain both reads
+ * that target first and writes it last. The framebuffer a chain reads is therefore what this hook reports: when it
+ * is not the game's own framebuffer it is an image the renderer already keeps under that framebuffer's identity
+ * (the silhouette was drawn into it while the game had that framebuffer bound), so its identity, the GL colour
+ * texture behind it and its size go to the backend, which adopts that image for the chain and publishes it under
+ * the texture name the game's own composite binds. Reporting it here, at the moment the chain is about to run, is
+ * what lets the chain sample and write the silhouette instead of an empty chain target - and what keeps the
+ * silhouette off the scene it used to be painted flat onto.
  */
 @Mixin(ShaderGroup.class)
 public abstract class ShaderGroupMixin {
@@ -58,30 +61,31 @@ public abstract class ShaderGroupMixin {
                 || !backend.celtium$postChainAvailable()) {
             return;
         }
-        if (!mainIsGame && (this.mainFramebuffer == null || this.mainFramebuffer.framebufferTexture <= 0)) {
-            // An external main without a texture cannot be seeded or written back.
+        // The framebuffer the chain reads first - its entry point. For every chain that starts from the game's main
+        // image this is the game framebuffer itself; for the entity-outline group it is the outline target the game
+        // filled with the silhouette, which the chain also writes last. That framebuffer is the game's own buffer for
+        // the composite: the name it binds is read from here, so this is where the associations the executor needs
+        // come from.
+        net.minecraft.client.shader.Framebuffer chainInput = celtium$chainInput();
+        boolean inputIsGame = chainInput == null || chainInput == minecraft.getFramebuffer();
+        if (!inputIsGame && chainInput.framebufferTexture <= 0) {
+            // An input the game filled without a colour texture cannot stand for anything.
             return;
         }
-
-        // The group's input, when its main is not the game's: the framebuffer the game bound while it produced that
-        // input - the entity-outline buffer, whose silhouette was drawn under exactly this identity and whose id the
-        // bind hook already reported for this same object. The GL name is what the game binds again to composite the
-        // finished outline, and the texture size is the size an image standing for it must have. Reported before the
-        // passes are collected, because it says where the input lives even when the chain itself cannot be described
-        // natively and stays on GL.
         int inputIdentity = 0;
         int inputTexture = 0;
         int inputW = 0;
         int inputH = 0;
-        if (!mainIsGame) {
-            net.minecraft.client.shader.Framebuffer input = this.mainFramebuffer;
-            inputIdentity = System.identityHashCode(input);
-            inputTexture = input.framebufferTexture;
-            inputW = input.framebufferTextureWidth;
-            inputH = input.framebufferTextureHeight;
-            // Hand the input framebuffer over, so the chain samples the image the renderer kept under this identity
-            // instead of re-seeding from glGetTexImage, which the GL-less path cannot answer. The pass fields below
-            // carry the same three facts to celtium$postChainRun, which is what the seeded path reads them from.
+        if (!inputIsGame) {
+            // The image under this identity is the one the renderer kept when the game drew the silhouette into it,
+            // and the GL name is what the game binds again to composite the finished outline. Both are reported
+            // before the passes are collected, because they say where the input lives even when the chain itself
+            // cannot be described natively and stays on GL - and because the bind hook's own report is a bind-time
+            // association this one refreshes at the moment of use.
+            inputIdentity = System.identityHashCode(chainInput);
+            inputTexture = chainInput.framebufferTexture;
+            inputW = chainInput.framebufferTextureWidth;
+            inputH = chainInput.framebufferTextureHeight;
             backend.bindFramebufferColorTexture(inputIdentity, inputTexture, inputW, inputH);
         }
 
@@ -110,24 +114,31 @@ public abstract class ShaderGroupMixin {
         if (passes.isEmpty()) {
             return;
         }
-        if (!mainIsGame) {
-            // The group's main is a plain GL framebuffer (the entity-outline buffer): the seeded path seeds it
-            // from its texture and writes the output back, so carry the texture the executor must use. These are the
-            // very values reported above, on the pass the executor reads them from - identity, GL colour texture and
-            // input size for the target the chain's 'minecraft:main' resolves to.
+        if (!inputIsGame) {
+            // The framebuffer whose image the executor must adopt, on the pass it reads it from: identity, GL colour
+            // texture and size. Zero - the game's own framebuffer - marks the shared frame image instead, which the
+            // chain already resolves without an adoption.
             VulkanPostChain.Pass first = passes.get(0);
-            first.groupMainTextureId = inputTexture;
             first.groupMainFbId = inputIdentity;
+            first.groupMainTextureId = inputTexture;
             first.groupMainW = inputW;
             first.groupMainH = inputH;
-        } else {
-            // The handoff validates the bound framebuffer; under adoption the game framebuffer's binding is the
-            // shared one, which is exactly what a mid-frame acquire needs to see.
+        }
+        if (mainIsGame) {
+            // The handoff validates the bound framebuffer, and under adoption the game framebuffer's binding is the
+            // shared one - exactly what a mid-frame acquire needs to see. The bind is also what flushes the batches
+            // the game left pending for the framebuffer the chain is about to read: for the outline group those are
+            // the silhouette draws, and they must have reached the image before the first pass samples it.
             minecraft.getFramebuffer().bindFramebuffer(true);
         }
         if (backend.celtium$postChainRun(passes)) {
             info.cancel();
         }
+    }
+
+    /** {@return the framebuffer the chain's first pass reads}, or null when the group has no pass at all. */
+    private net.minecraft.client.shader.Framebuffer celtium$chainInput() {
+        return this.listShaders.isEmpty() ? null : this.listShaders.get(0).framebufferIn;
     }
 
     private static VulkanPostChain.Pass collect(Shader shader, float passTime, Minecraft minecraft,

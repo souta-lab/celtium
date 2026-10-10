@@ -267,6 +267,11 @@ public final class VulkanDisplayListCensus {
         return !TEXTURE_LOGGED.add(Integer.valueOf(list));
     }
     private static long cancelled;
+    /** Cancelled replays per list, paired with {@link #REPLAYS} so the lists nothing drew can be named. */
+    private static final Map<Integer, Integer> CANCELLED_PER_LIST = new LinkedHashMap<Integer, Integer>();
+    /** How many new lists have printed their first replay, so the line cannot flood the log. */
+    private static final java.util.Set<Integer> REPLAY_TRACED = new java.util.HashSet<Integer>();
+    private static int replayTraces;
 
 
 
@@ -281,6 +286,13 @@ public final class VulkanDisplayListCensus {
     /** Records one cancelled replay. */
     public static synchronized void cancelled(int list) {
         cancelled++;
+        if (list > 0) {
+            // Per list as well as in total: whether a list's replay was taken over by the native path is the difference
+            // between a draw that happened and one that reached a GL body with no context, and only the pair
+            // (replays, cancels) says which lists those are.
+            Integer seen = CANCELLED_PER_LIST.get(Integer.valueOf(list));
+            CANCELLED_PER_LIST.put(Integer.valueOf(list), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+        }
         String origin = ORIGINS.get(Integer.valueOf(list));
         if (origin != null && (origin.contains("ItemRenderer") || origin.contains("ModelPlayer")
                 || origin.contains("ModelBiped"))) {
@@ -343,6 +355,7 @@ public final class VulkanDisplayListCensus {
                 reportedFirst = true;
                 System.out.println("[Celtium] CELTIUM_DISPLAY_LIST first replay: list=" + list);
             }
+            celtium$traceFirstReplay(list);
         }
         REPLAYS.put(Integer.valueOf(list), Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
     }
@@ -377,6 +390,71 @@ public final class VulkanDisplayListCensus {
 
     private static final Map<Integer, float[]> MATRICES = new LinkedHashMap<Integer, float[]>();
     private static int matricesTaken;
+
+    /**
+     * Prints what a list that is being replayed for the first time holds, and whether it was ever captured.
+     * <p>
+     * This is the line that separates the two ways a display list can be missing from the frame. {@code captured=no} says
+     * the geometry never reached the capture - nothing was compiled through {@code TexturedQuad.draw} under this id - so
+     * the GL body is replaying geometry no native draw can be built from, while {@code captured=yes} with a replay that
+     * is never cancelled says the geometry is in hand and the draw is being refused. The texture pair does the same for
+     * the image: a replay-time binding the compile never saw would draw the model with someone else's texture.
+     */
+    private static void celtium$traceFirstReplay(int list) {
+        if (replayTraces >= 8 || !REPLAY_TRACED.add(Integer.valueOf(list))) {
+            return;
+        }
+        replayTraces++;
+        int texture = glInt(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        int captured = VulkanModelQuadCapture.quadsForList(list);
+        int submitted = VulkanModelQuadCapture.submittedForList(list);
+        System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_REPLAY list=" + list
+                + " captured=" + (captured > 0 ? "yes" : "no") + " quads=" + captured + " submitted=" + submitted
+                + " owner=" + VulkanModelQuadCapture.ownerForList(list)
+                + " replayTexture=" + value(texture)
+                + " compileTexture=" + value(VulkanModelQuadCapture.textureForList(list))
+                + celtium$transformPair(list)
+                + (captured > 0 ? "" : " (this list has no captured geometry: without a context nothing draws it)"));
+    }
+
+    /**
+     * {@return the live modelview's translation next to the one the list was compiled under, as text}.
+     * <p>
+     * The pair is how "the model is drawn at the camera" is read from a log instead of from the picture: a display list
+     * is replayed under the matrix current at replay, so a list whose live and compile-time translations are both zero
+     * while its owner is a tile entity renderer - which translates to its block before drawing - is a list whose
+     * transform never reached the mirror. Both come from the same {@code glGetFloatv} the capture uses, so the line
+     * measures the mirror, not an assumption about it.
+     */
+    private static String celtium$transformPair(int list) {
+        float[] compile = VulkanModelQuadCapture.compileMatrixForList(list);
+        float[] live = null;
+        try {
+            java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
+            live = new float[16];
+            matrix.get(live);
+        } catch (RuntimeException | LinkageError ignored) {
+            // A missing read is not a wrong draw; the pair is simply not reported.
+        }
+        if (compile == null && live == null) {
+            return "";
+        }
+        return " compileT=" + translation(compile) + " liveT=" + translation(live);
+    }
+
+    /** {@return the translation of a column-major matrix as text}, or {@code unknown}. */
+    private static String translation(float[] matrix) {
+        if (matrix == null) {
+            return "unknown";
+        }
+        return "(" + round3(matrix[12]) + "," + round3(matrix[13]) + "," + round3(matrix[14]) + ")";
+    }
+
+    /** {@return a float with three decimals}. */
+    private static String round3(float value) {
+        return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
+    }
 
     /** {@return the replay-time modelview matrix of a list, or null when it has not been replayed yet}. */
     public static synchronized float[] replayMatrix(int list) {
@@ -421,6 +499,32 @@ public final class VulkanDisplayListCensus {
             // some replays have no list to be counted under.
             text.append(" unknown[list=").append(replaysWithUnknownList)
                     .append(" textureLists=").append(UNKNOWN_TEXTURE_LISTS.size()).append(']');
+        }
+        // Replays no native draw took over: replays minus cancels, per list. Under a context these are the lists GL drew
+        // itself; without one they are the pieces of the scene nothing drew, and naming them is what turns "the model is
+        // missing" into a list id and its capture state.
+        StringBuilder notDrawn = new StringBuilder();
+        int shown = 0;
+        for (Map.Entry<Integer, Integer> entry : REPLAYS.entrySet()) {
+            int list = entry.getKey().intValue();
+            Integer drawn = CANCELLED_PER_LIST.get(Integer.valueOf(list));
+            int missing = entry.getValue().intValue() - (drawn == null ? 0 : drawn.intValue());
+            if (missing <= 0) {
+                continue;
+            }
+            if (shown >= 8) {
+                notDrawn.append(" +more");
+                break;
+            }
+            shown++;
+            if (notDrawn.length() > 0) {
+                notDrawn.append(' ');
+            }
+            notDrawn.append(list).append(':').append(missing)
+                    .append('/').append(VulkanModelQuadCapture.quadsForList(list) > 0 ? "captured" : "uncaptured");
+        }
+        if (notDrawn.length() > 0) {
+            text.append(" notDrawn[").append(notDrawn).append(']');
         }
         return text.length() == 0 ? "none" : text.toString();
     }

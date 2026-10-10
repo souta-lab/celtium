@@ -61,7 +61,11 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet;
  * ids are only ever matched for equality, and identity stays unique where a GL object name would not); the game's
  * framebuffer resolves to the shared image. A target may instead be an image the caller owns, adopted under the same
  * identity: the passes then sample and write that image directly and this class never creates or destroys it, only the
- * framebuffer a writing pass needs and the once-only {@code UNDEFINED -> GENERAL} transition a first use requires. The
+ * framebuffer a writing pass needs - the adopted image arrives already in {@code GENERAL} with its content live, so
+ * nothing here moves it from {@code UNDEFINED}. That is the entity-outline chain's whole case: the image adopted under
+ * the outline framebuffer's identity is the one the renderer kept for the silhouette the game drew while that
+ * framebuffer was bound, so the chain's first pass reads the silhouette and its last pass puts the finished glow back
+ * into the same image - the one the game's composite samples by texture name afterwards. The
  * uniform block the mixin packs in declaration order goes in whole as push constants - every program's block fits in
  * 128 bytes except color_convolve (180) and spider (140), so a device whose {@code maxPushConstantsSize} is the
  * 128-byte minimum keeps those chains on GL.
@@ -85,10 +89,11 @@ public final class VulkanPostChain {
         public float[] push = new float[0];
         public int pushBytes;
         /**
-         * Nonzero when the group's own main framebuffer is not the game's: the GL texture id of that framebuffer's
-         * colour attachment, the identity its passes carry and its size, so the caller can adopt the renderer-owned
-         * image that stands in for the texture under {@code groupMainFbId}. Only pass[0] carries it; zero marks the
-         * game's framebuffer, which resolves to the shared image instead.
+         * Nonzero when the chain's input framebuffer is not the game's own - the entity-outline case, whose chain
+         * reads and writes the target the game filled with the silhouette: the identity its passes carry, the GL
+         * texture name the game binds again to composite it, and its size, so the caller can adopt the image it
+         * already keeps under that identity instead of letting the chain allocate an empty target for it. Only
+         * pass[0] carries it; zero marks the game's own framebuffer, which resolves to the shared image.
          */
         public int groupMainTextureId;
         public int groupMainFbId;
@@ -129,6 +134,14 @@ public final class VulkanPostChain {
     private int mainFramebufferHeight;
     private int passesRecorded;
     private int chainsRun;
+    /**
+     * Chain runs whose caller reported an image to adopt ({@link Pass#groupMainFbId}) and had not adopted one under
+     * that identity: the passes then ran on an empty target this class allocated, which is the difference between
+     * "the chain ran" and "the chain ran on the image the game drew into". Zero with a caller that adopts.
+     */
+    private int runsOnAllocatedStandIn;
+    /** One-shot: the same fact printed with the identity, texture and size the caller reported. */
+    private boolean standInReported;
     /** How many adopted targets have been handed to this chain over its life; reported by {@link #status()}. */
     private int adoptions;
     /** Persistent descriptor sets, handed out round-robin: one set per pass, never reused inside one command
@@ -242,9 +255,16 @@ public final class VulkanPostChain {
     /**
      * Adopts an image this chain does not own as the target for an identity the passes carry: later passes sample and
      * write that image instead of one allocated here. Nothing about the image, its memory or its view is created or
-     * destroyed by this class - only the framebuffer a writing pass needs and the once-only {@code UNDEFINED ->
-     * GENERAL} transition a first use requires (the validation layer wants a defined first transition). A pass whose
-     * size disagrees with the adopted image is refused by message rather than sampling the wrong thing.
+     * destroyed by this class - only the framebuffer a writing pass needs.
+     * <p>
+     * The image belongs to the caller, so its layout does too: an adopted image is in {@code GENERAL} and its content
+     * is live (the entity-outline caller hands over the image the silhouette was just drawn into), and this class
+     * records no {@code UNDEFINED -> GENERAL} transition for it - that transition discards content, which for an
+     * image that stands for a framebuffer the game already filled is exactly the silhouette. A caller whose image is
+     * still undefined must move it to {@code GENERAL} itself before adopting it.
+     * <p>
+     * Re-adopting the same image under the same identity is a no-op: the caller reports the association every time
+     * the chain runs, and a fresh target each time would leak one framebuffer per frame.
      * <p>
      * The identity is the chain's own key - the {@code identityHashCode} of the framebuffer object, the same value the
      * passes carry - so a value outside the int range can never match a pass and is rejected here.
@@ -258,6 +278,11 @@ public final class VulkanPostChain {
         if (width <= 0 || height <= 0) {
             throw new IllegalArgumentException("adopted post chain target " + identity + " needs a size, got "
                     + width + "x" + height);
+        }
+        Target existing = this.targets.get(key);
+        if (existing != null && !existing.owned && existing.image == image && existing.view == view
+                && existing.width == width && existing.height == height) {
+            return;
         }
         Target previous = this.targets.put(key, Target.adopt(width, height, image, view));
         if (previous != null) {
@@ -296,6 +321,7 @@ public final class VulkanPostChain {
      * framebuffer resolves to a chain target - one allocated here, or the image the caller adopted for its identity.
      */
     public void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
+        checkStandInTarget(passes);
         for (Pass pass : passes) {
             Program program = program(pass.program);
             if (program == null || pass.pushBytes > program.pushRange) {
@@ -325,8 +351,9 @@ public final class VulkanPostChain {
                     ? mainFramebuffer(pass.outW, pass.outH)
                     : outTarget.framebuffer(this.context, this.renderPass);
 
-            // A target that was just created - or the image just adopted - is still UNDEFINED: bring it to GENERAL
-            // exactly once, before any use.
+            // A target that was just created is still UNDEFINED: bring it to GENERAL exactly once, before any use.
+            // An adopted target is never in that state - its caller declares it live and already in GENERAL - so it
+            // arrives here initialized and its content survives the first use.
             if (inTarget != null && !inTarget.initialized) {
                 initBarrier(commandBuffer, inTarget.image);
                 inTarget.initialized = true;
@@ -377,6 +404,31 @@ public final class VulkanPostChain {
         this.chainsRun++;
     }
 
+    /**
+     * Counts - and prints once - the case where the caller reported a framebuffer whose image it means to be adopted
+     * and no image was adopted under that identity, so the passes are about to run on an empty target allocated here.
+     * That is a wiring gap rather than a rendering decision: the chain still runs, but it reads nothing and its output
+     * goes nowhere the game can see. The line carries the identity, the GL texture name and the size the caller
+     * reported, which is everything an adoption needs.
+     */
+    private void checkStandInTarget(List<Pass> passes) {
+        if (passes.isEmpty() || passes.get(0).groupMainFbId == 0) {
+            return;
+        }
+        Target adopted = this.targets.get(Integer.valueOf(passes.get(0).groupMainFbId));
+        if (adopted != null && !adopted.owned) {
+            return;
+        }
+        this.runsOnAllocatedStandIn++;
+        if (!this.standInReported) {
+            this.standInReported = true;
+            Pass first = passes.get(0);
+            System.out.println("[Celtium] CELTIUM_POST_ADOPT_REPORTED identity=" + first.groupMainFbId
+                    + " texture=" + first.groupMainTextureId + " " + first.groupMainW + "x" + first.groupMainH
+                    + " adopted=false (no image under this identity: the chain allocates an empty stand-in)");
+        }
+    }
+
     /** {@return a one-line status for the verification line}; adopted targets count separately from allocated ones. */
     public String status() {
         int adopted = 0;
@@ -387,7 +439,8 @@ public final class VulkanPostChain {
         }
         return "postChains=" + this.chainsRun + ", postPasses=" + this.passesRecorded
                 + ", postTargets=" + (this.targets.size() - adopted) + ", postAdopted=" + adopted
-                + ", postAdoptions=" + this.adoptions + ", postPipelines=" + this.programs.size();
+                + ", postAdoptions=" + this.adoptions + ", postPipelines=" + this.programs.size()
+                + ", postRunsOnStandIn=" + this.runsOnAllocatedStandIn;
     }
 
     private void initBarrier(VkCommandBuffer commandBuffer, long image) {
@@ -578,7 +631,12 @@ public final class VulkanPostChain {
 
         /** {@return the adopted view of an image the caller owns}, with nothing but the view handed over. */
         static Target adopt(int width, int height, long image, long view) {
-            return new Target(width, height, image, 0L, view, 0L, false);
+            Target adopted = new Target(width, height, image, 0L, view, 0L, false);
+            // The caller's image is already in GENERAL and already holds what the passes must read - the silhouette,
+            // for the outline chain - so the one-time UNDEFINED -> GENERAL move is skipped: it discards content, and
+            // that content is the whole reason the image is adopted.
+            adopted.initialized = true;
+            return adopted;
         }
 
         static Target create(VulkanContext context, long renderPass, int width, int height) {

@@ -154,6 +154,79 @@ public final class ValidationClient {
     private boolean celtium$changedDimension;
 
     /**
+     * The dimension trace, bounded.
+     * <p>
+     * One run has to be able to say what happened on its own: what the fixture did and on which tick, what the client
+     * thread saw for the client and for its world, what the server had for that player, which screen was open, and
+     * whether the client's world object was replaced (the client-visible effect of the server's Respawn packet). The
+     * lines go to stdout and into the report, and the budget is finite so a run that is stuck says so instead of
+     * filling the log.
+     */
+    private static final int DIM_TRACE_MAX_LINES = 140;
+    private int celtium$dimTraceLines;
+    private final StringBuilder celtium$dimensionTrace = new StringBuilder();
+    /** The trace as one immutable string, published for the exit hook, which must not read the game or a live builder. */
+    private volatile String celtium$dimensionTraceText = "";
+    /** The previous client dimension, so a change is reported as a change rather than only as a value. */
+    private int celtium$lastClientDimension = Integer.MIN_VALUE;
+    /** World passes drawn while the client was really in the target dimension and no screen was over them. */
+    private int celtium$framesInTargetDimension;
+    /** The renderer's own presented-frame counter when the arrival was first observed. */
+    private int celtium$presentedFramesAtArrival = -1;
+    /** Set once the client is seen in a dimension other than the target after it had arrived there. */
+    private int celtium$leftTargetAtTick = -1;
+    private String celtium$leftTargetEvent = "none";
+    /** Where the fixture's own teleporter put the player, and what it had to do about the arrival portal. */
+    private volatile String celtium$arrivalPlacement = "not attempted";
+    private int celtium$portalCooldownAfterTransfer = -1;
+    private int celtium$portalReentries;
+    private int celtium$portalEscapes;
+    /** A verified portal-free spot beside the arrival, used if the player is pushed back into a portal. */
+    private double celtium$safeX;
+    private double celtium$safeY;
+    private double celtium$safeZ;
+    private boolean celtium$safeSpotKnown;
+    /** Ticks spent waiting for the target dimension to have a real frame before the capture is taken. */
+    private int celtium$dimensionWaitTicks;
+    /**
+     * The tick at which a capture was taken and only its presented-image verdict is left.
+     * <p>
+     * The presented image the assertion reads is written by the present that consumes the dump the capture asks for,
+     * and the capture's own render handler runs before that present. Judging the file in the capture's frame therefore
+     * judges the frame from before the request: on the Nether run that was the loading frame from tick 20, 9.5 seconds
+     * old, while the requested Nether frame was on disk a frame later. The verdict is taken on the next frame instead,
+     * which is when the requested frame is the one on disk.
+     */
+    private int celtium$presentedVerdictPendingAtTick = -1;
+    /** The world-frame count at the capture, so the presented-frame comparison names the window it is about. */
+    private int celtium$captureWorldFrames = -1;
+    /** The first world frame at which the renderer's presented-frame counter was above zero, or -1. */
+    private int celtium$firstPresentedWorldFrame = -1;
+    /**
+     * The highest value the renderer's presented-frame counter has been seen at.
+     * <p>
+     * The counter belongs to the live frame target, and a dimension change recreates that target: the counter then
+     * starts again from zero. A high-water mark taken every world frame is what turns "the counter is lower than the
+     * run's frame count" into a measured reset instead of an assumption, and it is what the whole-run accounting
+     * ({@code worldFrames} against high-water plus the counter at the capture) is checked with.
+     */
+    private int celtium$presentedFramesHighWater;
+    private int celtium$presentedHighWaterBeforeArrival = -1;
+    /**
+     * The acceptance floor for a dimension run: world frames the target dimension itself drew, with no screen over
+     * them, before the capture means anything. A capture taken while the download-terrain screen is up is a loading
+     * frame, not the new dimension; the default is low enough to be a floor rather than a budget.
+     */
+    private final int celtium$minDimensionFrames = Integer.getInteger("celtium.validation.minDimensionFrames", 10).intValue();
+    /**
+     * How long the capture may wait for those frames. The transfer is asynchronous - the server sends the dimension
+     * change, then the client downloads the new world's chunks - so the exact frame at which the scene exists is not
+     * known in advance. The wait is for the acceptance's own preconditions and is bounded; a client that has left the
+     * target dimension again is not waited for at all.
+     */
+    private final int celtium$dimensionWaitUntilTick = Integer.getInteger("celtium.validation.dimensionWaitUntilTick", 240).intValue();
+
+    /**
      * The flat world's layers, as the superflat generator string.
      * <p>
      * Configurable because the layers decide what the scene contains and therefore how heavy it is: the version with
@@ -1401,30 +1474,33 @@ public final class ValidationClient {
                                     // find a portal at the destination, exactly as a real trip would.
                                     player.setPortal(new net.minecraft.util.math.BlockPos(player));
                                     try {
-                                        server.getPlayerList().transferPlayerToDimension(player, celtium$dimension,
-                                                new net.minecraft.world.Teleporter(target));
-                                        // The teleporter lands the player inside the portal it found or built, and standing
-                                        // in one makes the game's own portal logic in Entity.onEntityUpdate send them back
-                                        // (measured with a caller chain: changeDimension from Entity.updateEntityActionState
-                                        // at tick ~96, 55 ticks after the arrival, full health, chunk loaded). Stepping out
-                                        // of the portal keeps the arrival. A portal is one block thick perpendicular to
-                                        // its plane, so the step out has to be perpendicular: the earlier +2Z always was
-                                        // wrong for a portal whose AXIS is Z (the Nether run still returned at ~148, which
-                                        // is the portal counter finishing ~80 ticks in the block). The block's AXIS says
-                                        // which way the plane runs - axis X means the plane runs along X and the thickness
-                                        // (the way out) is Z, axis Z means thickness is X.
-                                        net.minecraft.block.state.IBlockState arrival =
-                                                target.getBlockState(new net.minecraft.util.math.BlockPos(player));
-                                        double stepX = 0.0D, stepZ = 2.0D;
-                                        if (arrival.getBlock() == net.minecraft.init.Blocks.PORTAL) {
-                                            if (arrival.getValue(net.minecraft.block.BlockPortal.AXIS)
-                                                    == net.minecraft.util.EnumFacing.Axis.Z) {
-                                                stepX = 2.0D;
-                                                stepZ = 0.0D;
+                                        // The vanilla transfer lands the player inside the portal it finds or builds, and
+                                        // the game's own portal rule in Entity.onEntityUpdate then sends any entity whose
+                                        // bounding box is inside a portal block from -1 straight back to 0 - after
+                                        // getMaxInPortalTime() ticks of contact, which is one for a player who cannot take
+                                        // damage, as in this creative world. That is the return trip the Nether runs
+                                        // measured (dimension -1 at tick 82, back at 0 by tick 148), and it is why they
+                                        // ended with no capture.
+                                        //
+                                        // A real trip leaves the player beside the destination portal and with the portal
+                                        // cooldown set. The fixture drives the same server transfer, so it uses a Teleporter
+                                        // that runs the vanilla placement first and then steps the player to a verified,
+                                        // portal-free spot next to it - the step a player would take themselves. What was
+                                        // chosen is recorded and reported; nothing is silently moved.
+                                        net.minecraft.world.Teleporter teleporter = new net.minecraft.world.Teleporter(target) {
+                                            @Override
+                                            public void placeInPortal(net.minecraft.entity.Entity entityIn, float rotationYawIn) {
+                                                super.placeInPortal(entityIn, rotationYawIn);
+                                                celtium$settleArrival(this.world, entityIn, rotationYawIn);
                                             }
-                                        }
-                                        player.setPositionAndUpdate(player.posX + stepX, player.posY, player.posZ + stepZ);
-                                        player.timeUntilPortal = 0;
+                                        };
+                                        server.getPlayerList().transferPlayerToDimension(player, celtium$dimension,
+                                                teleporter);
+                                        // Entity.onEntityUpdate sets exactly this immediately before changeDimension, so a
+                                        // player who came through a portal cannot be sent back for 300 ticks. The fixture
+                                        // used to zero it, which re-armed the return trip instead.
+                                        player.timeUntilPortal = player.getPortalCooldown();
+                                        celtium$portalCooldownAfterTransfer = player.timeUntilPortal;
                                         celtium$transfer = new TransferSnapshot("transferred", worldTicks, rotation);
                                     } catch (Throwable error) {
                                         celtium$transfer = new TransferSnapshot("error: " + error, worldTicks, rotation);
@@ -1454,6 +1530,17 @@ public final class ValidationClient {
                     && mc.world.provider.getDimension() == celtium$dimension) {
                 celtium$arrivedAtTick = worldTicks;
                 celtium$arrivedFrames = worldFrames;
+                // The renderer's own presented-frame counter at the moment the client arrives: the delta to the value
+                // at the capture is the renderer's answer to "was a frame drawn in this dimension", independent of the
+                // fixture's own world-frame counter.
+                celtium$presentedFramesAtArrival = celtium$presentedFrameCount();
+                celtium$presentedHighWaterBeforeArrival = celtium$presentedFramesHighWater;
+                celtium$dimensionTrace("CELTIUM_DIM_ARRIVED tick=" + worldTicks + " client=" + mc.player.dimension
+                        + " world=" + mc.world.provider.getDimension() + " screen=" + celtium$screenName(mc)
+                        + " worldFrames=" + worldFrames + " presentedFrames=" + celtium$presentedFramesAtArrival
+                        + " presentedHighWater=" + celtium$presentedHighWaterBeforeArrival
+                        + " clientWorldId=" + Integer.toHexString(System.identityHashCode(mc.world))
+                        + " placement=[" + celtium$arrivalPlacement + "]");
             }
             // Per-tick dimension trace while a dimension run is in flight: the Nether run arrived at tick 81 and was
             // back in dimension 0 by the capture, and a single reading cannot say when or why. The server side is asked
@@ -1462,44 +1549,93 @@ public final class ValidationClient {
                 int clientDim = mc.player == null ? Integer.MIN_VALUE : mc.player.dimension;
                 int worldDim = mc.world == null ? Integer.MIN_VALUE : mc.world.provider.getDimension();
                 int serverDim = Integer.MIN_VALUE;
+                net.minecraft.entity.player.EntityPlayerMP tracePlayer = null;
                 net.minecraft.server.integrated.IntegratedServer traceServer = mc.getIntegratedServer();
                 if (traceServer != null && mc.player != null) {
-                    net.minecraft.entity.player.EntityPlayerMP tracePlayer =
-                            traceServer.getPlayerList().getPlayerByUUID(mc.player.getUniqueID());
+                    tracePlayer = traceServer.getPlayerList().getPlayerByUUID(mc.player.getUniqueID());
                     if (tracePlayer != null) {
                         serverDim = tracePlayer.dimension;
                     }
                 }
-                boolean changed = celtium$lastTraceClient != clientDim || celtium$lastTraceServer != serverDim;
+                boolean firstObservation = celtium$lastClientDimension == Integer.MIN_VALUE;
+                boolean dimensionChanged = !firstObservation && celtium$lastClientDimension != clientDim;
+                boolean changed = dimensionChanged || celtium$lastTraceClient != clientDim || celtium$lastTraceServer != serverDim;
+                if (dimensionChanged) {
+                    // This is the client-visible effect of the server's Respawn packet: the dimension value has changed,
+                    // the world object behind it is a different one, and the game has put its download-terrain screen up
+                    // while the new world's chunks arrive. Reported together because any one of them alone can be
+                    // produced without the others.
+                    celtium$dimensionTrace("CELTIUM_DIM_CHANGE tick=" + worldTicks + " from=" + celtium$lastClientDimension
+                            + " client=" + clientDim + " world=" + worldDim + " server=" + serverDim
+                            + " screen=" + celtium$screenName(mc)
+                            + " clientWorldId=" + (mc.world == null ? "-" : Integer.toHexString(System.identityHashCode(mc.world)))
+                            + " doneLoadingTerrain=" + celtium$doneLoadingTerrain(mc)
+                            + " arrivedAt=" + celtium$arrivedAtTick);
+                    if (celtium$arrivedAtTick >= 0 && clientDim != celtium$dimension && celtium$leftTargetAtTick < 0) {
+                        celtium$leftTargetAtTick = worldTicks;
+                        celtium$leftTargetEvent = "client dimension " + clientDim + " (target " + celtium$dimension
+                                + ") at tick " + worldTicks + ", screen=" + celtium$screenName(mc)
+                                + ", server=" + serverDim;
+                        celtium$dimensionTrace("CELTIUM_DIM_LEFT tick=" + worldTicks + " " + celtium$leftTargetEvent);
+                    }
+                }
+                // Kept outside the change branch: the first traced tick only establishes the starting dimension, and a
+                // value that was never stored would make every later tick look like the first one.
+                celtium$lastClientDimension = clientDim;
                 if (changed || worldTicks % 5 == 0) {
-                    System.out.println("[Celtium] CELTIUM_DIM_TRACE tick=" + worldTicks + " client=" + clientDim
+                    String clientPosition = mc.player == null ? "-" : (int) mc.player.posX + "," + (int) mc.player.posY
+                            + "," + (int) mc.player.posZ;
+                    String serverPosition = tracePlayer == null ? "-" : (int) tracePlayer.posX + "," + (int) tracePlayer.posY
+                            + "," + (int) tracePlayer.posZ;
+                    celtium$dimensionTrace("CELTIUM_DIM_TRACE tick=" + worldTicks + " client=" + clientDim
                             + " world=" + worldDim + " server=" + serverDim
-                            + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName())
+                            + " screen=" + celtium$screenName(mc)
                             + " arrivedAt=" + celtium$arrivedAtTick
                             // The client's own position and whether the chunk under it is loaded decide which side of the
                             // wait is stuck: no chunk means the server never finished sending it, a loaded chunk with the
                             // screen still up means only the screen is left behind.
-                            + " pos=" + (mc.player == null ? "-" : (int) mc.player.posX + "," + (int) mc.player.posY
-                                    + "," + (int) mc.player.posZ)
+                            + " cPos=" + clientPosition
+                            + " sPos=" + serverPosition
                             + " chunkLoaded=" + (mc.world == null || mc.player == null ? "-"
                                     : mc.world.isBlockLoaded(mc.player.getPosition()))
-                            // Whether the player is standing in a portal block is the candidate for the return to the
-                            // previous dimension: a transfer that lands inside one is sent back by the game's own
-                            // portal logic, which would look exactly like this trace.
+                            // Whether either side's bounding box is inside a portal block is the candidate for the return
+                            // to the previous dimension: a transfer that lands inside one is sent back by the game's own
+                            // portal logic, which would look exactly like this trace. Both sides are asked, because the
+                            // server's position is the one its portal rule reads while the client's is the one that
+                            // decides what the frame shows.
+                            + " cInPortal=" + (mc.player == null || mc.world == null ? "-"
+                                    : celtium$overlapsPortal(mc.world, mc.player))
+                            + " sInPortal=" + (tracePlayer == null || tracePlayer.world == null ? "-"
+                                    : celtium$overlapsPortal(tracePlayer.world, tracePlayer))
+                            + " sTimeUntilPortal=" + (tracePlayer == null ? "-" : tracePlayer.timeUntilPortal)
                             // Health is what distinguishes "something transferred the player back" from "the player died
                             // and respawned in the previous dimension", which is what the falling positions after the
                             // return look like.
                             + " health=" + (mc.player == null ? "-" : mc.player.getHealth() + "/" + mc.player.getMaxHealth())
                             + " onGround=" + (mc.player == null ? "-" : mc.player.onGround)
-                            + " inPortal=" + (mc.player == null || mc.world == null ? "-"
-                                    : (mc.world.getBlockState(mc.player.getPosition()).getBlock()
-                                            == net.minecraft.init.Blocks.PORTAL)));
+                            + " framesInTarget=" + celtium$framesInTargetDimension);
                 }
                 celtium$lastTraceClient = clientDim;
                 celtium$lastTraceServer = serverDim;
                 if (changed && celtium$dimensionEvents.length() < 320) {
                     celtium$dimensionEvents.append("t").append(worldTicks).append(":c=").append(clientDim)
                             .append(",s=").append(serverDim).append(' ');
+                }
+                // The arrival portal is a trap: an entity whose bounding box is inside a portal block is sent from -1
+                // back to 0 by the game's own rule. The teleporter places the player clear of it, and this is the guard
+                // for the remaining ways back in - falling, a collision pushing the player, or the client's own position
+                // being applied by the server. Every re-entry and every step out is reported with its tick, the count is
+                // bounded, and a player who is still inside a portal at the capture fails the capture below.
+                if (celtium$arrivedAtTick >= 0 && celtium$safeSpotKnown && mc.player != null && mc.world != null
+                        && mc.player.dimension == celtium$dimension && worldTicks < 195 && celtium$portalEscapes < 8
+                        && celtium$overlapsPortal(mc.world, mc.player)) {
+                    celtium$portalReentries++;
+                    celtium$portalEscapes++;
+                    celtium$dimensionTrace("CELTIUM_DIM_PORTAL_ESCAPE tick=" + worldTicks + " at="
+                            + (int) mc.player.posX + "," + (int) mc.player.posY + "," + (int) mc.player.posZ
+                            + " to=" + (int) celtium$safeX + "," + (int) celtium$safeY + "," + (int) celtium$safeZ
+                            + " escape=" + celtium$portalEscapes);
+                    mc.player.setPositionAndUpdate(celtium$safeX, celtium$safeY, celtium$safeZ);
                 }
             }
             if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks == 100 && !celtium$leftWorld) {
@@ -1526,6 +1662,15 @@ public final class ValidationClient {
             // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
             // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
             report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
+            if (celtium$presentedVerdictPendingAtTick >= 0 && worldTicks > celtium$presentedVerdictPendingAtTick + 5) {
+                // The capture happened and its verdict was left to the next rendered frame; if the render loop never
+                // produced one, the report is still written rather than left to the exit hook as a run without a
+                // capture. The reason is recorded, because it is a fact about the run.
+                report.addProperty("presentedVerdictWatchdogAtTick", Integer.valueOf(worldTicks));
+                celtium$presentedVerdictPendingAtTick = -1;
+                finish(mc);
+                return;
+            }
         celtium$installExitHook(mc);
         // Taken here, on the render thread, where the world, the player and the screen are the client's to read. The
         // shutdown hook only ever reads this value.
@@ -1677,8 +1822,29 @@ public final class ValidationClient {
         if (!enabled || finished) return;
         try {
             worldFrames++;
+            Minecraft mc = Minecraft.getMinecraft();
+            // The first world frame the renderer had presented anything for, and the high-water mark of its presented
+            // counter. The presented-image assertion compares that counter with this fixture's own world-frame counter,
+            // and a dimension change recreates the frame target the counter lives in, so the two only track inside one
+            // target's lifetime. Both numbers are sampled here, every world frame, so the report can say which of the
+            // two it is looking at instead of inferring it.
+            int presentedNow = celtium$presentedFrameCount();
+            if (presentedNow > 0 && celtium$firstPresentedWorldFrame < 0) {
+                celtium$firstPresentedWorldFrame = worldFrames;
+            }
+            if (presentedNow > celtium$presentedFramesHighWater) {
+                celtium$presentedFramesHighWater = presentedNow;
+            }
+            // Frames the target dimension itself drew, with nothing over them. The capture's claim for a dimension run is
+            // that a frame of the new dimension was drawn there; a frame counted while the download-terrain screen is up
+            // is that screen's background, not the scene, and a frame of the previous dimension is neither.
+            if (celtium$dimensionAtTick > 0 && mc.world != null && mc.player != null
+                    && mc.player.dimension == celtium$dimension
+                    && mc.world.provider.getDimension() == celtium$dimension
+                    && mc.currentScreen == null) {
+                celtium$framesInTargetDimension++;
+            }
             if (worldTicks == 120 || !report.has("framebuffer")) {
-                Minecraft mc = Minecraft.getMinecraft();
                 report.addProperty("glVendor", GL11C.glGetString(GL11C.GL_VENDOR));
                 report.addProperty("glRenderer", GL11C.glGetString(GL11C.GL_RENDERER));
                 report.addProperty("glVersion", GL11C.glGetString(GL11C.GL_VERSION));
@@ -1856,6 +2022,16 @@ public final class ValidationClient {
     public void frame(TickEvent.RenderTickEvent event) {
         if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
+        // Stage two of a GL-less capture: the present between the two render ticks has written the frame the capture
+        // asked for, so the presented-image verdict and the report belong to this frame rather than to the last one.
+        if (celtium$presentedVerdictPendingAtTick >= 0) {
+            celtium$presentedVerdictPendingAtTick = -1;
+            report.addProperty("presentedImageVerificationTick", Integer.valueOf(worldTicks));
+            report.addProperty("presentedImageVerificationWorldFrames", Integer.valueOf(worldFrames));
+            report.addProperty("presentedImageVerificationPresentedFrames", Integer.valueOf(celtium$presentedFrameCount()));
+            finish(mc);
+            return;
+        }
         long now = System.nanoTime();
         if (worldTicks >= 120 && worldTicks < 200 && previousFrame != 0) {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
@@ -2196,11 +2372,87 @@ public final class ValidationClient {
             report.addProperty("dimensionClientAtCapture", Integer.valueOf(mc.player == null ? Integer.MIN_VALUE : mc.player.dimension));
             report.addProperty("dimensionWorldAtCapture",
                     Integer.valueOf(mc.world == null ? Integer.MIN_VALUE : mc.world.provider.getDimension()));
-            if (celtium$arrivedAtTick < 0 || mc.world == null || mc.player == null
-                    || mc.player.dimension != celtium$dimension
-                    || mc.world.provider.getDimension() != celtium$dimension) {
-                throw new IllegalStateException("dimension target " + celtium$dimension + " not reached by the client"
-                        + " (server: " + transfer.state + ", arrivedAtTick=" + celtium$arrivedAtTick + ")");
+            report.addProperty("dimensionTarget", Integer.valueOf(celtium$dimension));
+            report.addProperty("dimensionFramesInTarget", Integer.valueOf(celtium$framesInTargetDimension));
+            report.addProperty("dimensionMinFrames", Integer.valueOf(celtium$minDimensionFrames));
+            report.addProperty("dimensionFramesSinceArrival",
+                    Integer.valueOf(celtium$arrivedFrames < 0 ? -1 : worldFrames - celtium$arrivedFrames));
+            report.addProperty("dimensionWorldFramesAtCapture", Integer.valueOf(worldFrames));
+            report.addProperty("dimensionArrivalPlacement", celtium$arrivalPlacement);
+            report.addProperty("dimensionPortalCooldownAfterTransfer", Integer.valueOf(celtium$portalCooldownAfterTransfer));
+            report.addProperty("dimensionPortalReentries", Integer.valueOf(celtium$portalReentries));
+            report.addProperty("dimensionPortalEscapes", Integer.valueOf(celtium$portalEscapes));
+            report.addProperty("dimensionLeftTargetAtTick", Integer.valueOf(celtium$leftTargetAtTick));
+            report.addProperty("dimensionLeftTargetEvent", celtium$leftTargetEvent);
+            report.addProperty("dimensionScreenAtCapture", celtium$screenName(mc));
+            report.addProperty("dimensionDoneLoadingTerrainAtCapture", celtium$doneLoadingTerrain(mc));
+            report.addProperty("dimensionClientInPortalAtCapture", Boolean.valueOf(
+                    mc.world != null && mc.player != null && celtium$overlapsPortal(mc.world, mc.player)));
+            // The server's own value for this player, read at the capture: the client can hold a dimension the server
+            // never agreed to, and then the world it renders is not the one that was asked for.
+            int serverDimensionAtCapture = Integer.MIN_VALUE;
+            net.minecraft.entity.player.EntityPlayerMP captureServerPlayer = null;
+            net.minecraft.server.integrated.IntegratedServer captureServer = mc.getIntegratedServer();
+            if (captureServer != null && mc.player != null) {
+                captureServerPlayer = captureServer.getPlayerList().getPlayerByUUID(mc.player.getUniqueID());
+                if (captureServerPlayer != null) {
+                    serverDimensionAtCapture = captureServerPlayer.dimension;
+                }
+            }
+            report.addProperty("dimensionServerAtCapture", Integer.valueOf(serverDimensionAtCapture));
+            report.addProperty("dimensionServerInPortalAtCapture", Boolean.valueOf(
+                    captureServerPlayer != null && captureServerPlayer.world != null
+                            && celtium$overlapsPortal(captureServerPlayer.world, captureServerPlayer)));
+            report.addProperty("dimensionServerTimeUntilPortalAtCapture",
+                    Integer.valueOf(captureServerPlayer == null ? -1 : captureServerPlayer.timeUntilPortal));
+            // The renderer's own frame counter, measured at the arrival and here: the difference is the renderer's
+            // answer to "was a frame presented in this dimension", independent of the fixture's own counters.
+            int presentedAtCapture = celtium$presentedFrameCount();
+            report.addProperty("dimensionPresentedFramesAtArrival", Integer.valueOf(celtium$presentedFramesAtArrival));
+            report.addProperty("dimensionPresentedFramesAtCapture", Integer.valueOf(presentedAtCapture));
+            report.addProperty("dimensionPresentedFramesDrawn", Integer.valueOf(
+                    celtium$presentedFramesAtArrival < 0 || presentedAtCapture < 0 ? -1
+                            : presentedAtCapture - celtium$presentedFramesAtArrival));
+            report.addProperty("dimensionPresentedHighWaterBeforeArrival", Integer.valueOf(celtium$presentedHighWaterBeforeArrival));
+            report.addProperty("dimensionPresentedHighWaterAtCapture", Integer.valueOf(celtium$presentedFramesHighWater));
+            // The measurement that says the renderer's counter is per frame target rather than per run: it had already
+            // reached this value before the transfer, and the value at the arrival is lower. Without this, the
+            // whole-run comparison in the presented-image check reads a counter reset as frames that never reached the
+            // window.
+            report.addProperty("dimensionPresentedCounterResetAtArrival",
+                    Boolean.valueOf(celtium$presentedHighWaterBeforeArrival > 0
+                            && celtium$presentedFramesAtArrival < celtium$presentedHighWaterBeforeArrival));
+            report.addProperty("dimensionWorldFramesAtArrival", Integer.valueOf(celtium$arrivedFrames < 0 ? -1 : celtium$arrivedFrames));
+            // The whole-run accounting, so the two counters' divergence is a sum the report shows rather than a gap a
+            // reader has to explain: frames presented before the frame target was recreated, plus frames presented
+            // after it, against the frames this fixture counted.
+            int presentedAccounted = Math.max(0, celtium$presentedHighWaterBeforeArrival) + Math.max(0, presentedAtCapture);
+            report.addProperty("dimensionWorldFramesAccountedByPresented", Integer.valueOf(presentedAccounted));
+            report.addProperty("dimensionWorldFramesUnaccountedByPresented", Integer.valueOf(worldFrames - presentedAccounted));
+            java.util.List<String> gateFailures = celtium$dimensionGateFailures(mc, serverDimensionAtCapture, presentedAtCapture);
+            String gate = celtium$join(gateFailures);
+            report.addProperty("dimensionGate", gate);
+            report.addProperty("dimensionGateWaitedTicks", Integer.valueOf(celtium$dimensionWaitTicks));
+            report.addProperty("dimensionTrace", celtium$dimensionTrace.toString().trim());
+            if (!gateFailures.isEmpty()) {
+                String message = "dimension target " + celtium$dimension + " was not a real scene at tick " + worldTicks
+                        + ": " + gate;
+                // The transfer is asynchronous and the exact frame at which the new world exists is not known in advance,
+                // so the capture waits - bounded - for the acceptance's own preconditions (the target dimension, frames
+                // of it, no screen over them). A client that has left the target dimension again is not waited for: that
+                // is the failure this gate exists to report, and it is reported immediately.
+                if (celtium$leftTargetAtTick < 0 && mc.player != null && mc.player.dimension == celtium$dimension
+                        && worldTicks < celtium$dimensionWaitUntilTick) {
+                    if (celtium$dimensionWaitTicks == 0) {
+                        celtium$dimensionTrace("CELTIUM_DIM_GATE_WAIT tick=" + worldTicks + " " + gate);
+                    }
+                    celtium$dimensionWaitTicks++;
+                    return;
+                }
+                report.addProperty("dimensionGateFailed", message);
+                System.out.println("[Celtium] CELTIUM_DIM_GATE FAILED: " + message);
+                fail(mc, new IllegalStateException(message));
+                return;
             }
         }
         if (!celtium$captureStarted) {
@@ -2269,14 +2521,13 @@ public final class ValidationClient {
                     // A measurement must never stop the capture.
                 }
             }
-            if (celtium$glLessInstalled()) {
+            if (celtium$glLessInstalled() && !Boolean.getBoolean("celtium.validation.presentedImageAtCapture")) {
                 // GL-less: there is no GL default framebuffer, so the game's screenshot is black whatever the window
-                // shows, and the presented image is the only true picture of it. The mean recorded above cannot tell
-                // terrain from a flat frame, so the picture itself is measured and asserted on here. The check reports
-                // and never throws: a GL-less run whose window is wrong must not end up claiming PASSED, and the
-                // numbers it did measure have to survive in the report even when they are the failure.
-                // The readback that fills presentedImageMeanAtCapture publishes only its mean, so the pixels come from
-                // the dumped PNG that same readback writes; ImageIO is already used by this fixture.
+                // shows, and the presented image is the only true picture of it. It is asserted on the frame after the
+                // capture, when the frame the capture's dump request asked for has been presented (see
+                // celtium$presentedVerdictPendingAtTick); reading it here read the frame from before the request, which
+                // on the Nether run was the loading frame from tick 20, 9.5 seconds old. The switch puts the check back
+                // on the capture's own frame for a run that wants to measure that staleness itself.
                 celtium$checkPresentedImage(mc, worldFrames);
             }
             if (Boolean.getBoolean("celtium.validation.interop")) {
@@ -2322,7 +2573,8 @@ public final class ValidationClient {
                 // The count is in the message on purpose: the threshold is the acceptance, and a run that misses it must say
                 // by how much rather than leaving the next attempt to guess whether it was close or nowhere near.
                 throw new IllegalStateException("Too few world rendering frames for startup validation: worldFrames="
-                        + worldFrames + " (threshold 100), worldTicks=" + worldTicks);
+                        + worldFrames + " (threshold " + Integer.getInteger("celtium.validation.minWorldFrames", 100).intValue()
+                        + "), worldTicks=" + worldTicks);
             }
             Path probe = mc.gameDir.toPath().resolve("logs/celtium-capabilities.json");
             if (report.get("celtiumCommandRegistered").getAsBoolean()) {
@@ -2470,6 +2722,16 @@ public final class ValidationClient {
             // black band and missing terrain passed once already. The value is named rather than "FAILED" so it cannot be
             // mistaken for an exception in the renderer. The GL bridge never records a failure here, so its "PASSED" is
             // unchanged.
+            celtium$captureWorldFrames = worldFrames;
+            report.addProperty("worldFramesAtCapture", Integer.valueOf(worldFrames));
+            report.addProperty("firstPresentedWorldFrame", Integer.valueOf(celtium$firstPresentedWorldFrame));
+            if (celtium$glLessInstalled()) {
+                // The screenshot and the report properties are taken; only the presented-image verdict is left, and it
+                // is taken on the next frame, when the frame the capture's dump request asked for has been presented.
+                celtium$presentedVerdictPendingAtTick = worldTicks;
+                report.addProperty("presentedVerdictDeferredAtTick", Integer.valueOf(worldTicks));
+                return;
+            }
             report.addProperty("status",
                     celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
             finish(mc);
@@ -2532,6 +2794,281 @@ public final class ValidationClient {
         } catch (RuntimeException | LinkageError absent) {
             return false;
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Dimension transfer: the destination placement, the trace, and the capture's dimension gate.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** One bounded trace line: to stdout, and into the report so the finding survives even when the log does not. */
+    private synchronized void celtium$dimensionTrace(String line) {
+        if (celtium$dimTraceLines >= DIM_TRACE_MAX_LINES) {
+            if (celtium$dimTraceLines == DIM_TRACE_MAX_LINES) {
+                celtium$dimTraceLines++;
+                celtium$dimensionTrace.append("... trace budget of ").append(DIM_TRACE_MAX_LINES)
+                        .append(" lines reached; further lines omitted\n");
+                celtium$dimensionTraceText = celtium$dimensionTrace.toString();
+                System.out.println("[Celtium] CELTIUM_DIM_TRACE budget of " + DIM_TRACE_MAX_LINES + " lines reached");
+            }
+            return;
+        }
+        celtium$dimTraceLines++;
+        celtium$dimensionTrace.append(line).append('\n');
+        celtium$dimensionTraceText = celtium$dimensionTrace.toString();
+        System.out.println("[Celtium] " + line);
+    }
+
+    /** The open screen's simple class name, or "none". */
+    private static String celtium$screenName(Minecraft mc) {
+        return mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName();
+    }
+
+    /**
+     * The client's own "terrain finished downloading" flag, read reflectively.
+     * <p>
+     * {@code NetHandlerPlayClient.doneLoadingTerrain} is set false by the server's Respawn packet and true when the
+     * first chunk arrives, which is what closes the download-terrain screen. The screen's class name is already in the
+     * trace; this separates "the chunks have arrived and only the screen's own frame is left" from "the chunks have not
+     * arrived yet", which the screen alone cannot.
+     */
+    private static String celtium$doneLoadingTerrain(Minecraft mc) {
+        try {
+            Object handler = mc.getConnection();
+            if (handler == null) {
+                return "no-connection";
+            }
+            Field field = findField(handler.getClass(), new String[] {"doneLoadingTerrain", "field_147309_h"});
+            return field == null ? "unresolved" : String.valueOf(field.getBoolean(handler));
+        } catch (Throwable error) {
+            return "unreadable: " + error.getClass().getSimpleName();
+        }
+    }
+
+    /**
+     * Whether the entity's own bounding box overlaps a portal block.
+     * <p>
+     * This is the test the game's collision pass makes before it marks an entity as being in a portal, and it is the
+     * state {@code Entity.onEntityUpdate} reads when it sends an entity from the Nether back to the Overworld. The block
+     * at the entity's feet alone is not it: a player standing on a portal's bottom block with their body inside one is
+     * in a portal as far as the game is concerned.
+     */
+    private static boolean celtium$overlapsPortal(net.minecraft.world.World world, net.minecraft.entity.Entity entity) {
+        if (world == null || entity == null) {
+            return false;
+        }
+        net.minecraft.util.math.AxisAlignedBB box = entity.getEntityBoundingBox().grow(-0.001D, -0.001D, -0.001D);
+        int minX = net.minecraft.util.math.MathHelper.floor(box.minX);
+        int maxX = net.minecraft.util.math.MathHelper.floor(box.maxX);
+        int minY = net.minecraft.util.math.MathHelper.floor(box.minY);
+        int maxY = net.minecraft.util.math.MathHelper.floor(box.maxY);
+        int minZ = net.minecraft.util.math.MathHelper.floor(box.minZ);
+        int maxZ = net.minecraft.util.math.MathHelper.floor(box.maxZ);
+        // A player's box covers at most 2x3x2 blocks; the clamp is there so a broken box cannot turn a trace line into
+        // a scan of the world.
+        if (maxX - minX > 3) maxX = minX + 3;
+        if (maxY - minY > 5) maxY = minY + 5;
+        if (maxZ - minZ > 3) maxZ = minZ + 3;
+        net.minecraft.util.math.BlockPos.MutableBlockPos cursor = new net.minecraft.util.math.BlockPos.MutableBlockPos();
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    if (world.getBlockState(cursor.setPos(x, y, z)).getBlock() == net.minecraft.init.Blocks.PORTAL) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Whether a position can hold a standing player: no portal, no solid block at the feet or head, no lava. */
+    private static boolean celtium$passableSpot(net.minecraft.world.World world, net.minecraft.util.math.BlockPos pos) {
+        net.minecraft.block.state.IBlockState feet = world.getBlockState(pos);
+        net.minecraft.block.state.IBlockState head = world.getBlockState(pos.up());
+        if (feet.getBlock() == net.minecraft.init.Blocks.PORTAL || head.getBlock() == net.minecraft.init.Blocks.PORTAL) {
+            return false;
+        }
+        if (feet.getMaterial().isSolid() || head.getMaterial().isSolid()) {
+            return false;
+        }
+        return feet.getMaterial() != net.minecraft.block.material.Material.LAVA
+                && head.getMaterial() != net.minecraft.block.material.Material.LAVA;
+    }
+
+    /**
+     * Places the arriving player beside the destination portal instead of inside it, and records what it chose.
+     * <p>
+     * The rule this exists for is vanilla: {@code Entity.onEntityUpdate} teleports any entity whose bounding box is
+     * inside a portal block to dimension 0 when its dimension is -1, after {@code getMaxInPortalTime()} ticks of
+     * contact - one, for a player who cannot take damage, as in this creative world. A fixture-driven transfer that
+     * leaves the player standing in the portal it arrived in therefore ends with the player back in the Overworld.
+     * <p>
+     * The vanilla placement runs first, so the arrival is still found or built by the game exactly as a real trip makes
+     * it; this then walks a bounded, deterministic list of nearby spots and takes the first one that is neither a portal
+     * block nor inside solid terrain, preferring one with ground under it. The arrival block, its axis, the offset taken
+     * and the destination block are reported either way, so a placement the fixture guessed is visible in the report
+     * rather than implied by the player's later position.
+     */
+    private void celtium$settleArrival(net.minecraft.world.WorldServer world, net.minecraft.entity.Entity entity,
+            float rotationYaw) {
+        int arrivalX = net.minecraft.util.math.MathHelper.floor(entity.posX);
+        int arrivalY = net.minecraft.util.math.MathHelper.floor(entity.posY);
+        int arrivalZ = net.minecraft.util.math.MathHelper.floor(entity.posZ);
+        net.minecraft.util.math.BlockPos arrival = new net.minecraft.util.math.BlockPos(arrivalX, arrivalY, arrivalZ);
+        net.minecraft.block.state.IBlockState arrivalState = world.getBlockState(arrival);
+        boolean arrivalIsPortal = arrivalState.getBlock() == net.minecraft.init.Blocks.PORTAL;
+        String axis = "none";
+        if (arrivalIsPortal) {
+            try {
+                axis = String.valueOf(arrivalState.getValue(net.minecraft.block.BlockPortal.AXIS));
+            } catch (RuntimeException error) {
+                axis = "unreadable";
+            }
+        }
+        // A portal is one block thick perpendicular to its plane, so one step leaves it. AXIS=X means the plane runs
+        // along X and the thickness - the way out - is Z; AXIS=Z means the thickness is X. When the arrival block is not
+        // a portal, all four horizontal directions are candidates.
+        int[][] perpendiculars;
+        if (arrivalIsPortal && "X".equals(axis)) {
+            perpendiculars = new int[][] {{0, 0, 1}, {0, 0, -1}};
+        } else if (arrivalIsPortal) {
+            perpendiculars = new int[][] {{1, 0, 0}, {-1, 0, 0}};
+        } else {
+            perpendiculars = new int[][] {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}};
+        }
+        java.util.List<int[]> offsets = new java.util.ArrayList<int[]>();
+        for (int[] direction : perpendiculars) {
+            offsets.add(new int[] {direction[0], 0, direction[2]});
+            offsets.add(new int[] {direction[0] * 2, 0, direction[2] * 2});
+            offsets.add(new int[] {direction[0] * 3, 0, direction[2] * 3});
+            offsets.add(new int[] {direction[0], 1, direction[2]});
+            offsets.add(new int[] {direction[0] * 2, 1, direction[2] * 2});
+        }
+        offsets.add(new int[] {0, 1, 0});
+        offsets.add(new int[] {0, 2, 0});
+        offsets.add(new int[] {0, 3, 0});
+        int[] chosen = null;
+        int[] fallback = null;
+        boolean hasGround = false;
+        for (int[] offset : offsets) {
+            net.minecraft.util.math.BlockPos candidate = arrival.add(offset[0], offset[1], offset[2]);
+            if (!celtium$passableSpot(world, candidate)) {
+                continue;
+            }
+            if (world.getBlockState(candidate.down()).getMaterial().isSolid()) {
+                chosen = offset;
+                hasGround = true;
+                break;
+            }
+            if (fallback == null) {
+                fallback = offset;
+            }
+        }
+        if (chosen == null) {
+            chosen = fallback;
+        }
+        boolean safe = chosen != null;
+        if (safe) {
+            net.minecraft.util.math.BlockPos destination = arrival.add(chosen[0], chosen[1], chosen[2]);
+            entity.setLocationAndAngles(destination.getX() + 0.5D, destination.getY(), destination.getZ() + 0.5D,
+                    rotationYaw, entity.rotationPitch);
+            entity.motionX = 0.0D;
+            entity.motionY = 0.0D;
+            entity.motionZ = 0.0D;
+            celtium$safeX = destination.getX() + 0.5D;
+            celtium$safeY = destination.getY();
+            celtium$safeZ = destination.getZ() + 0.5D;
+            celtium$safeSpotKnown = true;
+        }
+        net.minecraft.util.math.BlockPos placed = new net.minecraft.util.math.BlockPos(
+                net.minecraft.util.math.MathHelper.floor(entity.posX), net.minecraft.util.math.MathHelper.floor(entity.posY),
+                net.minecraft.util.math.MathHelper.floor(entity.posZ));
+        celtium$arrivalPlacement = "arrival=" + arrivalX + "," + arrivalY + "," + arrivalZ
+                + " arrivalBlock=" + String.valueOf(arrivalState.getBlock().getRegistryName())
+                + " arrivalIsPortal=" + arrivalIsPortal + " axis=" + axis
+                + " step=" + (safe ? chosen[0] + "," + chosen[1] + "," + chosen[2] : "none")
+                + " placed=" + placed.getX() + "," + placed.getY() + "," + placed.getZ()
+                + " placedBlock=" + String.valueOf(world.getBlockState(placed).getBlock().getRegistryName())
+                + " placedInPortal=" + celtium$overlapsPortal(world, entity)
+                + " ground=" + hasGround + " safe=" + safe
+                + " candidates=" + offsets.size();
+        celtium$dimensionTrace("CELTIUM_DIM_PLACEMENT tick=" + worldTicks + " dim=" + entity.dimension + " "
+                + celtium$arrivalPlacement + " timeUntilPortal=" + entity.timeUntilPortal);
+    }
+
+    /** The renderer's presented-frame counter, or -1 when the live terrain backend is not the Vulkan one. */
+    private static int celtium$presentedFrameCount() {
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                return ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current).celtium$presentedFrameCount();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A measurement must never stop the tick; -1 says it could not be taken.
+        }
+        return -1;
+    }
+
+    /** Every reason the capture tick cannot be accepted as a frame of the target dimension, with its numbers. */
+    private java.util.List<String> celtium$dimensionGateFailures(Minecraft mc, int serverDimensionAtCapture,
+            int presentedAtCapture) {
+        java.util.List<String> failures = new java.util.ArrayList<String>();
+        if (celtium$arrivedAtTick < 0) {
+            failures.add("the client never arrived in dimension " + celtium$dimension + " (arrivedAtTick=-1, server result '"
+                    + celtium$transfer.state + "')");
+        }
+        if (mc.player == null) {
+            failures.add("there is no client player");
+        } else if (mc.player.dimension != celtium$dimension) {
+            failures.add("the client player's dimension is " + mc.player.dimension + ", not " + celtium$dimension
+                    + (celtium$leftTargetAtTick >= 0 ? " (left at tick " + celtium$leftTargetAtTick + ": "
+                            + celtium$leftTargetEvent + ")" : ""));
+        }
+        if (mc.world == null) {
+            failures.add("there is no client world");
+        } else if (mc.world.provider.getDimension() != celtium$dimension) {
+            failures.add("the client world's provider dimension is " + mc.world.provider.getDimension() + ", not "
+                    + celtium$dimension);
+        }
+        if (serverDimensionAtCapture != celtium$dimension) {
+            failures.add("the server has this player in dimension " + serverDimensionAtCapture + ", not " + celtium$dimension);
+        }
+        if (celtium$framesInTargetDimension < celtium$minDimensionFrames) {
+            failures.add("world frames drawn in dimension " + celtium$dimension + " with no screen over them: "
+                    + celtium$framesInTargetDimension + " (minimum " + celtium$minDimensionFrames
+                    + ", worldFrames at capture " + worldFrames + ")");
+        }
+        if (mc.currentScreen != null) {
+            failures.add("a screen is open over the frame: " + mc.currentScreen.getClass().getName()
+                    + " (a capture behind the download-terrain screen is a loading frame, not the new dimension)");
+        }
+        if (mc.world != null && mc.player != null && celtium$overlapsPortal(mc.world, mc.player)) {
+            failures.add("the client player is inside a portal block, so the frame is the portal overlay and the game"
+                    + " is about to transfer them away again");
+        }
+        if (celtium$presentedFramesAtArrival >= 0 && presentedAtCapture >= 0
+                && presentedAtCapture <= celtium$presentedFramesAtArrival) {
+            failures.add("the renderer presented no frame after the arrival in dimension " + celtium$dimension
+                    + " (presented frame counter " + celtium$presentedFramesAtArrival + " at the arrival, "
+                    + presentedAtCapture + " at the capture)");
+        }
+        return failures;
+    }
+
+    /** The failures as one line, so a report can carry them without a nested object. */
+    private static String celtium$join(java.util.List<String> values) {
+        if (values.isEmpty()) {
+            return "none";
+        }
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                line.append(" | ");
+            }
+            line.append(values.get(i));
+        }
+        return line.toString();
     }
 
     /**
@@ -2628,14 +3165,44 @@ public final class ValidationClient {
             } else {
                 int presentedFrames = report.get("presentedImageFramesAtCapture").getAsInt();
                 framesAboveZero = presentedFrames > 0;
-                framesWithinOne = framesAboveZero && Math.abs(presentedFrames - worldFramesAtCapture) <= 1;
-                if (!framesAboveZero) {
-                    failures.add("presentedImageFramesAtCapture=" + presentedFrames
-                            + " is not greater than zero: no frame the renderer counted reached the window");
-                } else if (!framesWithinOne) {
-                    failures.add("presentedImageFramesAtCapture=" + presentedFrames
-                            + " is not within one of worldFrames=" + worldFramesAtCapture
-                            + ": the frame presented at the capture is not one the renderer counted");
+                boolean counterRestartedAtArrival = report.has("dimensionPresentedCounterResetAtArrival")
+                        && report.get("dimensionPresentedCounterResetAtArrival").getAsBoolean()
+                        && celtium$presentedFramesAtArrival >= 0;
+                if (counterRestartedAtArrival) {
+                    // The renderer's presented-frame counter belongs to the live frame target, and this run measured it
+                    // restarting at the dimension change: it had reached dimensionPresentedHighWaterBeforeArrival
+                    // before the arrival and read 0 at it. Comparing the capture's count against the whole run's
+                    // world-frame count would then read the restart as frames that never reached the window. What the
+                    // assertion is for - the frame at the capture is one the renderer counted, and every frame of the
+                    // new dimension reached the window - is checked inside the window the counter spans, and the
+                    // whole-run numbers are recorded beside it rather than dropped.
+                    int framesInTarget = celtium$framesInTargetDimension;
+                    framesWithinOne = framesAboveZero && presentedFrames - celtium$presentedFramesAtArrival >= framesInTarget - 1;
+                    report.addProperty("presentedImageFrameCountScope",
+                            "dimension window: the presented counter restarted at the arrival"
+                                    + " (high-water " + celtium$presentedHighWaterBeforeArrival + " before it, "
+                                    + celtium$presentedFramesAtArrival + " at it); the capture's " + presentedFrames
+                                    + " presents cover the " + framesInTarget + " frames drawn in the target dimension,"
+                                    + " while the run's " + worldFramesAtCapture + " world frames span both targets");
+                    if (!framesAboveZero) {
+                        failures.add("presentedImageFramesAtCapture=" + presentedFrames
+                                + " is not greater than zero: no frame the renderer counted reached the window");
+                    } else if (!framesWithinOne) {
+                        failures.add("the renderer presented " + (presentedFrames - celtium$presentedFramesAtArrival)
+                                + " frames after the arrival in dimension " + celtium$dimension + ", fewer than the "
+                                + framesInTarget + " frames that dimension drew (presentedImageFramesAtCapture="
+                                + presentedFrames + ", at arrival=" + celtium$presentedFramesAtArrival + ")");
+                    }
+                } else {
+                    framesWithinOne = framesAboveZero && Math.abs(presentedFrames - worldFramesAtCapture) <= 1;
+                    if (!framesAboveZero) {
+                        failures.add("presentedImageFramesAtCapture=" + presentedFrames
+                                + " is not greater than zero: no frame the renderer counted reached the window");
+                    } else if (!framesWithinOne) {
+                        failures.add("presentedImageFramesAtCapture=" + presentedFrames
+                                + " is not within one of worldFrames=" + worldFramesAtCapture
+                                + ": the frame presented at the capture is not one the renderer counted");
+                    }
                 }
             }
             report.addProperty("presentedImageFrameCountAboveZero", Boolean.valueOf(framesAboveZero));
@@ -2820,6 +3387,18 @@ public final class ValidationClient {
                     report.addProperty("screenAtExit", progress.screen);
                     TransferSnapshot transfer = celtium$transfer;
                     report.addProperty("dimensionServerResult", transfer.state);
+                    // The dimension run's own state, so a run that ends before the capture tick says where the player
+                    // was and what the transfer did instead of leaving NO_CAPTURE as the whole answer. These are
+                    // volatile snapshots: the hook must not read the game.
+                    report.addProperty("dimensionArrivedAtTick", Integer.valueOf(celtium$arrivedAtTick));
+                    report.addProperty("dimensionLeftTargetAtTick", Integer.valueOf(celtium$leftTargetAtTick));
+                    report.addProperty("dimensionLeftTargetEvent", celtium$leftTargetEvent);
+                    report.addProperty("dimensionFramesInTarget", Integer.valueOf(celtium$framesInTargetDimension));
+                    report.addProperty("dimensionArrivalPlacement", celtium$arrivalPlacement);
+                    report.addProperty("firstPresentedWorldFrame", Integer.valueOf(celtium$firstPresentedWorldFrame));
+                    report.addProperty("dimensionPortalReentries", Integer.valueOf(celtium$portalReentries));
+                    report.addProperty("dimensionPortalEscapes", Integer.valueOf(celtium$portalEscapes));
+                    report.addProperty("dimensionTrace", celtium$dimensionTraceText.trim());
                     java.nio.file.Path output = progress.outputPath;
                     java.nio.file.Files.createDirectories(output.getParent());
                     java.nio.file.Files.write(output, (new GsonBuilder().setPrettyPrinting().create().toJson(report) + "\n")
@@ -2857,9 +3436,20 @@ public final class ValidationClient {
         // the next present: the capture-time check reads whatever dump existed before it, which is the early one and
         // is still a loading frame. This is the same check on the same file after the write has landed.
         if (celtium$glLessInstalled()) {
+            String statusBeforePresentedCheck = report.has("status") ? report.get("status").getAsString() : null;
             celtium$presentedImageFailures = 0;
             celtium$checkPresentedImage(mc, worldFrames);
-            report.addProperty("status", celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
+            if ("FAILED".equals(statusBeforePresentedCheck)) {
+                // A run that has already failed for a reason of its own must not be relabelled by a check that runs
+                // afterwards: a dimension run whose gate failed can still have presented a clean frame of the
+                // Overworld, and that picture passing must not turn the failure into a pass. The image assertions are
+                // recorded separately, under their own name.
+                report.addProperty("presentedImageVerdict",
+                        celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
+            } else {
+                report.addProperty("status",
+                        celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
+            }
         }
         try {
             Path output = mc.gameDir.toPath().resolve("logs/celtium-validation.json");

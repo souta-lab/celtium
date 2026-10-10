@@ -492,6 +492,12 @@ public final class VulkanTextureRegistry {
      * The array is {@code int[mipLevel][y * width + x]}: the first index is the mip level and the second is a **flat** texel
      * offset, not a row. Level 0 is the patch being written. ARGB comes in and RGBA goes out, matching both the readback path
      * and the image path. This is static and device-free on purpose: it is the piece the CPU contract check exercises.
+     * <p>
+     * A producer that holds the pixels as one flat {@code int[]} - a {@code DynamicTexture}, or
+     * {@code TextureUtil.func_110988_a} - passes that array as the single level-0 entry
+     * ({@code new int[][] { pixels }}). Splitting it into one {@code int[]} per row instead makes {@code data[0]} a single
+     * row, and every texel past it is then written as a zero: that is how the light map's mirror came to hold row 0 and
+     * fifteen transparent rows, and why the terrain sampled black.
      *
      * @return the number of texels written
      */
@@ -610,7 +616,8 @@ public final class VulkanTextureRegistry {
         try {
             // The array the animation method passes is int[mipLevel][y * width + x], not an array of rows. The first index is
             // the mip level and the second is the flat texel index, so level 0 is the whole patch and the indexing below is
-            // one-dimensional. Treating data[row] as a row read the wrong texels for every patch of every animated sprite.
+            // one-dimensional. Treating data[row] as a row read the wrong texels for every patch of every animated sprite,
+            // and a producer that splits a flat int[] that way loses every row but the first - see toRgba's own note.
             toRgba(data, width, height, rgba);
             rgba.flip();
             long applicationStart = System.nanoTime();
