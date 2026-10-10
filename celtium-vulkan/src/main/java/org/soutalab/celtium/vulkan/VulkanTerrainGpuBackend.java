@@ -2145,6 +2145,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
+        if (formatId == 5 && this.lightCoordLogged < 4 && vertexAddress != 0 && vertexCount > 0) {
+            // The raw light coordinates of a particle batch, a few times. The shader's conversion is right and the layout is
+            // right, so what is left is whether the input matches what GL would use - the lightmap is at offset 24 in this
+            // layout. Values near 0 would mean the batch is unlit rather than lit differently.
+            this.lightCoordLogged++;
+            try {
+                long at = vertexAddress + 24;
+                int first = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(at));
+                int second = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(at + vertexStride));
+                int last = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(
+                        vertexAddress + 24 + (long) (vertexCount - 1) * vertexStride));
+                System.out.println("[Celtium] CELTIUM_LIGHTCOORD fmt=5 stride=" + vertexStride + " count=" + vertexCount
+                        + " first=0x" + Integer.toHexString(first) + "(" + first + ")"
+                        + " second=0x" + Integer.toHexString(second) + "(" + second + ")"
+                        + " last=0x" + Integer.toHexString(last) + "(" + last + ")"
+                        + " u_first=" + round3((first & 0xFF) / 16.0f) + " v_first=" + round3(((first >> 8) & 0xFF) / 16.0f)
+                        + " uraw_first=" + round3(first / 256.0f));
+            } catch (RuntimeException | LinkageError error) {
+                this.lightCoordLogged = 4;
+            }
+        }
         int expectedStride = formatId == 9 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES
                 : formatId == 8 ? VulkanImmediateTexturePipeline.POSITION_TEX_COLOR_NORMAL_BYTES
                 : formatId == 7 ? VulkanImmediateTexturePipeline.POSITION_BYTES
@@ -5109,6 +5130,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** How many model enqueues have printed their matrices. */
     private int modelMatrixLoggedCount;
     /** One-shot: the matrices an immediate group is stored with. */
+    /** How many particle batches have printed their light coordinates. */
+    private int lightCoordLogged;
     /** How many immediate groups have printed their matrices. */
     private int immediateMatrixLogged;
     private String lastGroupDepthRow = "";
