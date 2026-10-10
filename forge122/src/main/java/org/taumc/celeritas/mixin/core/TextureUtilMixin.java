@@ -71,6 +71,19 @@ public class TextureUtilMixin {
     private static void celtium$announceUploadedPixels(int glTextureId, int[] data, int width, int height,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
+            // A full upload allocates this id's content from scratch, which is what a resource reload, a re-stitch or a
+            // reused id all look like from here. The mirror for the id is dropped first, so no image can outlive the
+            // content it was built from; the announcement below then creates the image this upload belongs to.
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.onGlTextureReallocated(glTextureId);
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A lifecycle notification must never break texture loading.
+        }
+
+        try {
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null && data != null && width > 0 && height > 0) {
                 backend.announceDynamicTexture(data, width, height);

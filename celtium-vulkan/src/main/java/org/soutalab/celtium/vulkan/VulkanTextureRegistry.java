@@ -318,6 +318,16 @@ public final class VulkanTextureRegistry {
             }
         }
         boolean wholeTexture = x == 0 && y == 0 && entry.width == width && entry.height == height;
+        if (!wholeTexture && !this.fullyInitialized.contains(Integer.valueOf(glTextureId))) {
+            // A partial patch into an image that has never been filled whole would sit next to undefined texels. The draw
+            // path already refuses such a mirror (hasFullContent), so applying it would only make the state dishonest:
+            // the pixels are not sampled, and the bookkeeping would claim the image is up to date. Refusing here keeps
+            // the readback as the one way such a texture gets established.
+            this.patchesBeforeInitialization++;
+            this.rejectPatch("partial patch " + width + "x" + height + " at " + x + "," + y
+                    + " before the image for GL texture " + glTextureId + " was initialized");
+            return false;
+        }
         if (!wholeTexture && (x < 0 || y < 0 || x + width > entry.width || y + height > entry.height)) {
             this.rejectPatch("region " + width + "x" + height + " at " + x + "," + y + " outside the mirror "
                     + entry.width + "x" + entry.height);
@@ -330,10 +340,21 @@ public final class VulkanTextureRegistry {
             // one-dimensional. Treating data[row] as a row read the wrong texels for every patch of every animated sprite.
             toRgba(data, width, height, rgba);
             rgba.flip();
+            long applicationStart = System.nanoTime();
             if (wholeTexture) {
                 entry.texture.uploadFromImage(width, height, rgba);
             } else {
                 entry.texture.uploadPatchFromPixels(width, height, x, y, rgba);
+            }
+            long applicationNanos = System.nanoTime() - applicationStart;
+            if (wholeTexture) {
+                this.fullImageCount++;
+                this.fullImageBytes += (long) width * height * 4L;
+                this.fullImageNanos += applicationNanos;
+            } else {
+                this.patchCount++;
+                this.patchBytes += (long) width * height * 4L;
+                this.patchNanos += applicationNanos;
             }
             this.imageUploads++;
             this.staleIds.remove(Integer.valueOf(glTextureId));
@@ -451,8 +472,56 @@ public final class VulkanTextureRegistry {
     private final java.util.Map<Integer, Integer> consumedGeneration = new java.util.HashMap<Integer, Integer>();
     private int announceCounter;
     private int readbacksSkippedAfterAnnouncement;
+    /** CPU application cost, so "the update path is cheap" is a measurement and not an assumption. */
+    private long patchCount;
+    private long patchBytes;
+    private long patchNanos;
+    private long fullImageCount;
+    private long fullImageBytes;
+    private long fullImageNanos;
+    private int patchesBeforeInitialization;
+    private int forgotten;
     /** How many announced-image conversions were skipped because the same announcement was already consumed. */
     public static long ANNOUNCED_SKIPS;
+    /**
+     * Forgets a GL texture, retiring the image it owned.
+     * <p>
+     * Minecraft deletes and re-creates textures on a resource reload, and the same numeric id can come back for different
+     * content. Without this the registry would keep the old image under a reused id: patches would land in it, the size
+     * would be the old size, and the sampled content would be a different texture's. The image is destroyed through the
+     * retire queue because a frame that was already recorded may still reference it.
+     */
+    public void forgetTexture(int glTextureId) {
+        Integer id = Integer.valueOf(glTextureId);
+        Entry entry = this.entries.remove(id);
+        this.fullyInitialized.remove(id);
+        this.announcedGeneration.remove(id);
+        this.consumedGeneration.remove(id);
+        this.announcedImages.remove(id);
+        if (entry != null) {
+            this.forgotten++;
+            final VulkanGlTexture image = entry.texture;
+            VulkanRetireQueue.retire(new Runnable() {
+                @Override
+                public void run() {
+                    image.delete();
+                }
+            });
+        }
+    }
+
+    /** {@return how many GL textures were forgotten after deletion}. */
+    public int forgotten() {
+        return this.forgotten;
+    }
+
+    /** {@return the CPU application cost, as count/bytes/millis for patches and full images}. */
+    public String patchCostSummary() {
+        return "patches=" + this.patchCount + "/" + this.patchBytes + "B/" + (this.patchNanos / 1000000L)
+                + "ms full=" + this.fullImageCount + "/" + this.fullImageBytes + "B/" + (this.fullImageNanos / 1000000L)
+                + "ms beforeInit=" + this.patchesBeforeInitialization + " forgotten=" + this.forgotten;
+    }
+
     /** {@return how many 1x1 mirrors the last invalidation left alone}. */
 
 

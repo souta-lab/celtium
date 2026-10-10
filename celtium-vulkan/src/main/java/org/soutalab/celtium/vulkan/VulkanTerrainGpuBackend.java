@@ -282,6 +282,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
                 + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
                 + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
+                + " textureDeletions=" + this.glTextureDeletions
+                + " atlasReestablished=" + this.atlasReestablished
+                + " lightmapReestablished=" + this.lightmapReestablished
+                + " texturePatchCost=" + (this.textureRegistry == null ? "-" : this.textureRegistry.patchCostSummary())
                 + " displayListCompiledNatively=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.nativelyCompiledLists()
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
                 + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
@@ -637,6 +641,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int directMirrorFromAnnouncement;
     /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
     private int readbackSkippedAfterAnnouncement;
+    /** Texture lifecycle: reallocations seen, and how often the sampled atlas/light map had to be re-established. */
+    private int glTextureDeletions;
+    private int atlasReestablished;
+    private int lightmapReestablished;
     private int animatedAnnounceDiagnostics;
     private int dynamicTextureFills;
     private int dynamicAnnounceDiagnostics;
@@ -1339,6 +1347,36 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /**
+     * Handles a GL texture id being fully (re)allocated: a resource reload, a re-stitch, or an id that came back for
+     * different content.
+     * <p>
+     * The mirror for the id is dropped before the new pixels are announced, so an image can never outlive the content it
+     * was built from. The directly sampled textures release their reference and are re-established on the next frame from
+     * the fresh image the registry creates; a descriptor is keyed by the image it samples, so it is recomputed rather
+     * than reused.
+     */
+    public void onGlTextureReallocated(int glTextureId) {
+        this.glTextureDeletions++;
+        if (this.textureRegistry != null) {
+            this.textureRegistry.forgetTexture(glTextureId);
+        }
+        if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
+            this.atlasTexture = null;
+            this.atlasSourceGlId = 0;
+            this.atlasGlId = 0;
+            this.atlasRefreshCountdown = 0;
+            this.atlasReestablished++;
+        }
+        if (this.lightmapTexture != null && glTextureId == this.lightmapSourceGlId) {
+            this.lightmapTexture = null;
+            this.lightmapSourceGlId = 0;
+            this.lightmapGlId = 0;
+            this.lightmapRefreshCountdown = 0;
+            this.lightmapReestablished++;
+        }
+    }
+
     /** Reports the animation-driven mirror refreshes on stdout: the debug list is capped and would drop them. */
     private void reportDirectMirrorRefreshes() {
         if (this.directMirrorRefreshes != this.lastReportedDirectRefreshes) {
@@ -1346,7 +1384,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
                     + " readbacksSkipped=" + this.readbackSkippedAfterAnnouncement
                     + " invalidations=" + this.immediateTextureInvalidations + " atlasGlId=" + this.atlasSourceGlId
-                    + " lightmapGlId=" + this.lightmapSourceGlId);
+                    + " lightmapGlId=" + this.lightmapSourceGlId
+                    + " deletions=" + this.glTextureDeletions + " reestablished=" + this.atlasReestablished
+                    + "/" + this.lightmapReestablished
+                    + (this.textureRegistry == null ? "" : " cost=[" + this.textureRegistry.patchCostSummary() + "]"));
         }
     }
 

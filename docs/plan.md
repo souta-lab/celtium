@@ -27,6 +27,40 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.3 構造修復 1 の完成（この単位）: lifecycle と未初期化 patch と実コスト
+
+**同じ根因（texture の実体・更新・寿命）に対する残りを、producer/consumer/invalidator/lifecycle まとめて実装し、
+契約が揃ってから小GPU受入した**（goal「実装・検証の進め方」の単位）。
+
+- **A. 未初期化 image への partial patch を拒否**（registry）: 全面が一度も入っていない image に部分 patch を書くと、
+   patch 外が未定義のまま「更新済み」と記録してしまう。`announceFullPixels` は**部分 patch を拒否して計数**し、
+   その texture は**readback で全面が入るまで patch を受けない**（描画側の `hasFullContent` 拒否と整合）。
+- **B. lifecycle（reload / 再stitch / ID 再使用）**: 脆弱な `deleteTexture` への inject は**署名不一致で mixin 適用に失敗し
+  両GPUが起動クラッシュした**ため撤去し、**既に発火が実証されている full-upload フック**（`func_110988_a`＝id の
+   内容が確保し直される場所）を合図にした。`onGlTextureReallocated(id)` が **registry の entry を忘れ**、
+   古い image を **`VulkanRetireQueue` で退役**させ（記録済みフレームが参照し得るため即破棄しない）、
+   atlas/lightmap の直接参照を落として**次のフレームで新しい image から再確立**する。
+- **C. 実コスト計測**: patch / full image の**回数・バイト数・適用 nanos**、`beforeInit`（拒否数）、`forgotten` を
+   registry が出し、`CELTIUM_ANIM` 行と要約に載せる（upload/submit/wait は `VulkanGlTexture` が 1 操作ごとに
+   `beginCommands`/`endCommands` で submit+wait するので、この nanos がその実費である）。
+- **実測（AMD は reload fixture でこの経路を実際に通す、Intel は同段階の受入。軽い世界、duration 150 s）**:
+
+| run | exit | validationClean | fixture | frames | p50 | VUID | クラッシュ |
+|---|---|---|---|---|---|---|---|
+| **AMD + `reload=true`** | **0** | **true** | **PASSED** | 534 | 16.33 ms | **0** | なし |
+| **Intel** | **0** | **true** | **PASSED** | 321 | 27.56 ms | **0** | なし |
+
+  **不変条件の実測**（壊れれば 0 のままになる数値）:
+  **再確保 385（AMD）/ 503（Intel）**、**ライトマップ再確立 96 / 175**、
+  **patch 144 件・147456 B・70 ms（AMD）/ 267 件・273408 B・313 ms（Intel）**、
+  **`beforeInit=290 / 341`**（新設の拒否が実際に効いている）、`full=0〜2 件`。
+
+- **この単位で消した重複・例外**: backend 側の第2の `VulkanGlTexture.create`（二重実体）、名前ベースの取消分岐、
+  到達不能だった interop 絶対 tick 待ち、registry 生成7箇所の散在（前単位まで）。**死んだ lab flag は残していない**。
+- **検証として言えること / 言えないこと**: lifecycle と拒否の**不変条件は数値で動いている**。
+  **画像同一性はまだ言わない**（比較は非アニメーション統制の場面で行う）。mip は patch が level 0 のみを書き、
+  patch 外を保持する（full upload 側が全 level＋chain を書く）ことをコードで確認した。
+
 ## 0.2 構造修復 2（着手）: 取消の根拠を「記録された事実」に限定した
 
 - **goal の要求**: 取消は「対応する別経路が同じ内容を引き受けた/描いた」根拠を必要とし、**名前・counter だけで
@@ -52,7 +86,7 @@
 
 | # | 契約 | 状態 |
 |---|---|---|
-| 1 | texture の実体・更新・寿命を一つにする | **実装済み**（`297ce5caa`）。mip/reload/ID 再使用の確認が残る |
+| 1 | texture の実体・更新・寿命を一つにする | **実装済み・両GPU受入**（`297ce5caa` ＋ §0.3。lifecycle/拒否/コスト計測まで。画像同一性の統制比較のみ残る） |
 | 2 | draw の queued→recorded→submitted→completed→retired と取消根拠の整合 | **一部実装**（§0.2: 取消を記録された事実に限定、名前ベースを撤去）。queued→recorded→submitted→completed→retired の target/generation 紐付けは未着手 |
 | 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **一部実装**（capture 段階化・server task 化）。結果は volatile フィールド渡しで、**immutable snapshot 化は未完** |
 | 4 | Nether の未完を具体的に直す | **未着手**。短い trace と client/server stack で帰還・停止の地点を特定する（早い転送・budget 延長の反復はしない） |

@@ -1,4 +1,4 @@
-# Celtium goal — 2026-10-10 現状更新・構造修復反映
+# Celtium goal — 2026-10-10 現状更新・構造修復・開発単位の整理
 
 CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダラとして完成させる。2026-10-10の実装・受入に合わせてgoalを更新する。docs/plan.mdを現在の到達点・優先順・受入の現状表とし、docs/goal.mdはこのobjectiveと同期する。docs/audit-2026-10-09-third.mdは監査起点、docs/history/は過去の証拠・経緯であり、現在の完了判定ではない。構造修復の具体方針はdocs/handoff-structure-recovery-2026-10-10.md、直近の原因候補はdocs/hints-2026-10-10-nether.mdを参照し、最新HEAD・dirty差分・artifactを優先する。
 
@@ -40,10 +40,19 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 (d) AMD/Intelで必要な場面と失敗復旧を確認し、監査P0/P1を明示した受入で閉じる。原版GLと画像・状態を比較し、実装済/局所検証済/未検証/未実装を区別する。
 (e) 既存mod対応範囲、Java条件、最低VK能力、未検証GPU/OS、ライセンス/リブランド/性能実測をdocsと配布物に一致させる。
 
+【実装・検証の進め方】
+開発単位は同じ根因・所有/状態契約を完成させる関連変更のまとまりとする。「修正一箇所→ゲーム起動→確認→報告」を機械的に繰り返さない。
+- 関連コードを一度読んで根因・producer/consumer・変更範囲・不変条件・成功条件を決め、関連する複数箇所をまとめて実装する。途中の不整合な状態を毎回GPU受入に掛けない。独立した大機能を無制限に同じ変更へ混ぜず、失敗時に原因を追える単位を保つ。
+- 実装途中はコンパイル・型/境界確認と必要な短いCPU契約検査を使う。ゲーム起動・画像比較・長いworld試験は意味のある実装段階が揃ってから行う。各編集のたびに同じGPU fixtureを回さない。安い検査も実装を写しただけの試験にせず、不変条件を壊せば失敗するものを選ぶ。
+- 小さいGPU場面でAMDの主要な問題を潰し、まとまった段階でIntelの受入も行う。同期・memory・feature/format能力・GPU固有経路に関わる変更は早めに両GPUへ掛ける。AMD成功をIntel成功と同一視せず、未受入の変更を完成にしない。
+- atlasでは全面stitch供給、実sample先のimage所有統合、sprite patch/mip、invalidate、reload/delete/ID generationまで関連する経路を揃えてからまとめて受入する。必要な契約が揃った時点で小場面を検証し、遠い無関係機能の完成まで検証を延期しない。
+- 一度通った変更はまとめてcommit・短く報告し、次の機能へ進む。再試験は新しい変更・失敗・未解決の具体的懸念がある場合に絞る。フルworld/全mod再試験や両GPU全場面は統合節目と必要な退行確認へ集約し、変更と無関係な場面を毎round反復しない。
+- 並列化する場合は担当ファイル・interface・資源所有を先に分ける。同じ巨大backendの同時編集や統合コストが利益を上回るなら使わない。
+
 【作業・証拠の規律】
 docs/plan.mdは現在状態・優先順・受入を一箇所で管理し、古い冒頭表を最新実測で書き換える。round履歴はdocs/history/へ移し、末尾への訂正追記だけで整合したことにしない。docs/goal.mdとscope・audit参照を現状に合わせる。旧24/第3回32監査は修正済/局所受入/未確認/未完を分け、古い番号順に済んだ修正を反復しない。
-一度に一つの所有/状態契約を実装し、変更単位でreview可能なcommitにする。重複・到達不能・不要になった暫定経路は根拠を確認して整理する。恒久的正当性をlab flagに依存させない。新しい抽象と旧経路の併存を残さない。汎用GL変換器や全面書換えへ拡大しない。
-各roundは具体実装か意思決定に必要な限定検証を進める。同じ仮説の定数変更・budget延長・文書の言換えを反復しない。不変条件が壊れれば失敗する小検証を選び、CPU契約とGPU画像/完了を区別する。必要なAMD/Intel受入後は新しいnative化へ進む。
+関連変更を整合した単位で実装し、変更単位でreview可能なcommitにする。重複・到達不能・不要になった暫定経路は根拠を確認して整理する。恒久的正当性をlab flagに依存させない。新しい抽象と旧経路の併存を残さない。汎用GL変換器や全面書換えへ拡大しない。
+各roundは具体実装か意思決定に必要な限定検証を進める。同じ仮説の定数変更・budget延長・文書の言換えを反復しない。CPU契約とGPU画像/完了を区別する。必要な受入後は新しいnative化へ進む。
 baseline/candidate・HEAD/dirty・fixture・jar/SPIR-V・effective flags・GPU/driver・camera/scene/animation/capture tick・exit/verdict・画像差をhash付きで保存する。duration上限と実経過時間、全frameと測定区間、resources/calls、offers/accepted/recorded/submitted/completed/droppedを混同しない。欠落verdict・validationClean・copyback回数だけで成功にしない。過去の受入/失敗証拠を残し、重複展開・不要world等から容量を整理する。
 goal IDと完成仕様を維持し、active/armed/runningを別々に確認する。停止や未到達を完了扱いしない。公開報告は自然な日本語で、直した契約・消した重複/例外・必要な検証・次のnative化を短く述べる。根拠のない完了率・完成時期・「あと一点」は使わない。
 
