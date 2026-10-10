@@ -2247,7 +2247,51 @@ submitImmediateBatch <- offerBatch <- WorldVertexBufferUploader.func_181679_a <-
   **既定ではまだメッシュを作っていない**。描画を入れるときにこのフラグを既定へ上げるかを決める。
 - 受入: exit 0 / validationClean=true / PASSED（位相計器を足しただけで回帰なし）。
 
-**次の一手**: (1) `callList` のフックから、**メッシュのあるリスト**について
+**現在の既定での画質を再確認（このターン・優先順位3）**:
+
+- 既定を大きく変えた後（format 2 の native 化、手の display list キャンセル）の現行ビルドを、
+  **pinned Celeritas（p106-ref-normal）と同一fixtureで再比較**した。
+
+| 指標 | 現在（p208-amd） | round 501 の値 |
+|---|---|---|
+| 全画面 平均絶対差 | **7.7813** | 7.791 |
+| **空（上200行）** | **0.0000 / 0 画素** | 0.0000 |
+| HF比（候補/参照、中間帯） | **0.818** | 0.819 |
+| 統制（参照 AMD vs Intel） | **0.0636 / HF 1.002** | 0.064 |
+| べき乗フィット（中間帯、n=42700） | **`cand = 1.225 × ref^0.972`** | 1.223 × ref^0.972 |
+
+- **結論**: 最近の既定変更は**参照比で画像中立**である（全画面 7.78、HF 0.818、指数 0.972 がいずれも変わらない）。
+  **空は依然として画素完全一致（0.0000）**。統制（参照同士 0.064 / HF 1.002）も安定している。
+- **性能（同じ run）**: 参照 AMD p50 16.18 / p99 17.6、参照 Intel 16.17 / 17.2、
+  **celtium AMD 16.05 / 22.61**、celtium Intel 28.78 / 36.81。
+  **p50 は参照と同等（AMD は僅かに速い）だが、p99 は AMD 22.61 対 17.6 と裾が重い**（未解決として記録）。
+
+**モデル描画の実装レシピ（ソースから確定・次ターンの入力）**: `recordImmediateOnlyPass` の並びをそのまま使える。
+
+```
+long renderPass = <terrain>.renderPass();
+VkRenderPassBeginInfo begin = ...renderPass(renderPass).framebuffer(ensureFramebuffer(renderPass));
+renderArea(0,0,targetWidth,targetHeight);
+vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+this.activeImmediateTarget = this.currentRenderTarget;
+this.commandState.beginPass(this.activeImmediateTarget);
+setViewportAndScissor(stack);
+<pipeline>.draw(this.commandBuffer, mesh, push, prepared.descriptor);   // prepareImmediate(6, texture, key, state)
+vkCmdEndRenderPass(this.commandBuffer);
+this.commandState.endPass();
+```
+
+- `prepareImmediate(format, textureId, key, state)` が**パイプラインと記述子**を用意し、format 6 は
+  `POSITION_TEX`（20バイト＝モデルのメッシュと同じレイアウト）を使う。**状態（state/key）は
+  `celtium$captureState()` で `callList` の時点でも取れる**。
+- 未確定なのは **押し込み定数（行列）の組み立て**と**コマンドバッファの開始/終了・submit**の流儀で、
+  次ターンに読んで実装する。
+
+**次の一手**: (1) `callList` のフックから上記レシピでモデルを描く経路を作る（ラボフラグ、既定は従来どおりGL）、
+(2) 三人称で同一条件の対を取り、プレイヤーモデルが native で出ることと画像一致を確認する、
+(3) 一致したら同じ起点規則でプレイヤーモデルの再生もキャンセルする。
+
+**（旧メモ）** 次の一手: (1) `callList` のフックから、**メッシュのあるリスト**について
 **コマンドバッファを開く→パス開始→format 6 のパイプラインと記述子を束ねる→メッシュを描く→パス終了→submit** を行う
 経路を作る（**ラボフラグで切替**、既定は従来どおり GL）、(2) 三人称で**同一条件の対**を取り、プレイヤーモデルが
 native で出ていることと画像一致を確認する、(3) 一致したら同じ起点規則でプレイヤーモデルの再生もキャンセルする。
