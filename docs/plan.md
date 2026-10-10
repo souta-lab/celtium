@@ -49,6 +49,20 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.120 **実測**: 条件 (b) の現状プロファイル（標準 GL-less allBlocks）／次に埋める native 面は format 5
+
+- run `.celtium-work/runtime/regr4-glless`（GL-less・allBlocks・fixture PASSED・validationClean・msgs 0・画像 verdict PASSED・
+  distinct 10142）:
+  - `celtium offer decisions: offers=5000 accepted=4705 glBodyCompleted=341` ＝ **94.1% が native で受理**。
+  - per-format arrivals `[1:2254 2:634 5:126 6:946 7:860 9:180]` / accepted `[1:2280 2:640 5:92 6:948 7:860 9:180]`。
+- **読み方（§0.118 の規則）**: GL-less では `glBodyCompleted=341` は「GL が描いた」ではなく stub の no-op 実行。
+  条件 (b) の GL 残量は bridge 構成の拒否から読む。ここで意味を持つのは「native で描かれなかった量」。
+- **次の native 面**: format 5（粒子）が **126 中 92 のみ受理**。拒否は stage 10 の descriptor gate
+  （`canBuildDescriptor`）で、理由は 3条件（registry に texture が無い／lightmap が無い／mirror が full content でない）の
+  いずれか。実測は `5 unrecorded (format=5 stride=28 mode=7 count=3932) stage=10` のような大きな粒子 batch。
+  専用担当が原因特定と patch を作成中。
+- 併せて確認: publish 配線と layout 修正は**標準場面で退行なし**（この run が clean・画像 verdict PASSED）。
+
 ## 0.119 **修正・受入済み**: GL-less の layout 宣言を2箇所で正した（Nether の VUID 解消）／画像ゲートが scene 非依存だった
 
 - **VUID の正体（実測・エージェント）**: 「post chain が GENERAL 記述子で UNDEFINED を指す」という仮説は否定された。
