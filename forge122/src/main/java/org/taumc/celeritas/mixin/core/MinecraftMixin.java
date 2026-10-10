@@ -26,4 +26,31 @@ public class MinecraftMixin {
 
 
 
+
+    /**
+     * Replaces the GL swap with nothing for a frame Vulkan already presented.
+     * <p>
+     * A redirect is used rather than cancelling the method at this call, so only the swap itself is replaced and the
+     * profiler sections and window-resize check the same method performs still run. {@code Display.update()} is static, so
+     * the handler takes no arguments; a frame that was not presented calls it through exactly as before.
+     */
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "func_175601_h",
+            at = @org.spongepowered.asm.mixin.injection.At(value = "INVOKE",
+                    target = "Lorg/lwjgl/opengl/Display;update()V"), require = 0)
+    private void celtium$maybeSkipGlSwap() {
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    && vulkan.celtium$consumeSwapPendingFromVulkan()) {
+                // The frame is already on the swapchain. The window's events still need polling because the skipped call
+                // also did that.
+                vulkan.celtium$pollEvents();
+                return;
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A frame must still be shown if this fails, so the swap below happens.
+        }
+        org.lwjgl.opengl.Display.update();
+    }
 }

@@ -689,6 +689,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int presentFailures;
     /** A completed frame's content is in the shared image and has not been presented yet. */
     private boolean lastFrameReachedQueue;
+    /** A presented frame has not reached the game's swap point yet, and how many swaps that skipped. */
+    private boolean swapPendingFromVulkan;
+    private int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     private int presentHookCalls;
     private String presentSkipReason = "never called";
@@ -1480,6 +1483,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " presentHookCalls=" + this.presentHookCalls
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " presentedFromVulkan=" + this.framePresentedFromVulkan
+                    + " glSwapsSkipped=" + this.glSwapsSkipped
                     + " presentAttempts=" + this.presentAttempts
                     + " presentFailures=" + this.presentFailures
                     + " presentResult=[" + this.lastPresentResult + "]"
@@ -4880,6 +4884,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
                 // this module because the GLFW classes are on its classpath and not on the game module's.
                 celtium$pollEvents();
+                // The game's own Display.update runs after this and would swap through GL as well. The frame that swap
+                // would show is the one just presented, so it is skipped once, at the swap point itself.
+                this.swapPendingFromVulkan = true;
             } else {
                 this.presentFailures++;
             }
@@ -4900,6 +4907,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+
+    /**
+     * {@return whether a presented frame is still waiting for the game's swap point, consuming that fact}.
+     * <p>
+     * True at most once per presented frame: the caller uses it to skip the GL swap for a frame Vulkan already showed,
+     * and the answer is cleared here so that a frame which was not presented still swaps through GL.
+     */
+    public boolean celtium$consumeSwapPendingFromVulkan() {
+        boolean pending = this.swapPendingFromVulkan;
+        this.swapPendingFromVulkan = false;
+        if (pending) {
+            this.glSwapsSkipped++;
+        }
+        return pending;
+    }
 
     /** {@return whether the native model draw experiment is enabled}. */
     public static boolean modelDrawEnabled() {

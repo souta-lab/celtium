@@ -27,6 +27,31 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.17 **GL swap の停止に成功**（通常フレームは Vulkan が提示し、GL は swap しない）
+
+**前ターンの失敗の原因（完全に特定）**: `@Redirect` ハンドラが **レシーバ引数 `(Display)` を取っていた**が、
+**`Display.update()` は static メソッド**なので引数を取ってはいけない。mixin config の **`defaultRequire: 1`** のため
+これは**ハードエラー**になり、**ゲームは起動前に落ちていた**（失敗ログの `InvalidInjectionException ... Found 1 unexpected
+additional method arguments: (Display)` がそのまま根拠）。**ハンドラを無引数にし、通す場合は `Display.update()` を静的に呼ぶ**
+形にした（`require = 0`、失敗時は必ず元の swap を通す fail-open）。
+
+**受入（AMD、軽い世界、duration 90 s）**: exit 0 / validationClean / **PASSED**、269 frames、p50 25.59 ms、**VUID 0**、
+クラッシュなし、**mixin 適用失敗なし**、**スクリーンショット有り**（mean 113.423）。
+
+| 計器 | 値 |
+|---|---|
+| `presentHookCalls` | 269 |
+| **`presentedFromVulkan`** | **263** |
+| **`glSwapsSkipped`** | **262** |
+| `presentFailures` | 0 |
+| `presentResult` | `present image: blitted 1280x720 onto image 2 (0)` |
+| `presentSucceeded` / `presentSubmitDone` | true / true |
+
+**意味**: **通常フレームの表示は Vulkan の swapchain が出し、GL の swap は行わない**（提示済みフレームにつき1回だけ省略・
+resize 判定とイベント poll は維持）。**条件 (b) の「GL swap 依存」が通常フレームから外れた**。
+**まだ GL に残るもの**: 描画そのもの（GL/VK bridge・copyback・GL call）と GL context。`presentedMean` と GL 側
+スクリーンショット平均は**別の瞬間の値**なので内容一致の根拠には使わない（§0.16 の訂正どおり）。
+
 ## 0.16 GL swap の停止を試みて**失敗**し、巻き戻した（失敗の記録）
 
 - **per-frame フックの正しい SRG 名が判明**: `Minecraft.updateDisplay()` = **`func_175601_h`**、その直後に呼ばれる
