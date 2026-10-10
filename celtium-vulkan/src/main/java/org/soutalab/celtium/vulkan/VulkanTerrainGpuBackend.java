@@ -2028,7 +2028,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // batch before them, and the path that refused them was never named.
         // A non-null marker rather than null: one caller dereferences the reason, and null turned a stale reason into a
     // NullPointerException in the frame. "unrecorded" says the same thing without breaking that caller.
-    this.immediateLastRefusal = "unrecorded";
+    // The marker carries what the batch is, so an unnamed refusal still says which kind of batch it was: with 967 of them
+    // per run the tally could not tell one group from another. Naming the refusing condition itself is the next step; this
+    // at least splits the group so that step has one target instead of one number.
+    this.immediateLastRefusal = "unrecorded (format=" + formatId + " stride=" + vertexStride + " mode=" + drawMode
+            + " count=" + vertexCount + ")";
         if (REFERENCE_RENDER) {
             // Same reason as the pass entry: this method is called by the uploader hook directly, so reference mode has to
             // refuse it here as well.
@@ -2081,6 +2085,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
             // still referenced it, both from paths that assumed the frame had been recorded.
+            this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
             return false;
         }
         if (!IMMEDIATE_DRAWING_ENABLED) {
@@ -2192,6 +2197,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                     if (!this.swapchain.lastPresentSucceeded()) {
                         this.immediatePresentFailures++;
+                        this.immediateLastRefusal = "the composite present did not reach the screen";
                         record("composite present did not reach the screen, GL's composite stays: " + result);
                         return false;
                     }
@@ -2213,6 +2219,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
             } catch (RuntimeException | LinkageError error) {
                 if (this.immediatePresentedFrames == 0) {
+                    this.immediateLastRefusal = "presenting from the composite failed";
                     record("presenting from the composite failed: " + describe(error));
                 }
             }
@@ -2533,6 +2540,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                     System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED_SITE" + frames);
                 }
+                this.immediateLastRefusal = "no shader program could be prepared for this batch";
                 this.shaderProgramRefusals++;
                 this.refusedBeforeAppend++;
                 this.flushPendingBeforeGlDraw();
