@@ -49,6 +49,17 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.122 **受入（一部）**: layout/publish バッチは Intel でも成立（bridge leg 実測・GL-less leg は担当が実行中）
+
+- `.celtium-work/runtime/intel-layout`（Intel UHD 630・`VK_ICD_FILENAMES` で pin・bridge 構成）:
+  fixture **PASSED**・`validationClean=true`・**msgs 0**・`nativeDeviceName="Intel(R) UHD Graphics 630 (CFL GT2)"`・
+  `gpuRequirementSource=nativeDeviceName`・`gpuRequirementMet=true`・`nativeDeviceMatchedOpenGl=true`。
+  これは GL-less present の layout 宣言修正・chain の submitted 契約・outline の publish 配線を含む現 HEAD の build で取ったもので、
+  **AMD だけで成立していた batch が Intel でも退行しない**ことの実測。
+- GL-less leg（ICD pin 必須）は担当が続けて実行中。両 leg が揃うまでこの section は「一部受入」であって受入完了ではない。
+- 注意: この run の jar は他エージェントが同時に rebuild している期間のものなので、担当の報告で sha256 を確認してから
+  最終受入として扱う（build が動いている間の測定は、どの build を測ったかを必ず添える）。
+
 ## 0.121 **実測・進行中**: 条件 (c) の捕獲手段は実在する（旧前提を訂正）／glow は検証 clean・実体ありの frame で白アウトラインを確認
 
 - **条件 (c) の前提訂正（担当の実測）**: plan が長く持っていた「`DISPLAY=:0` の root が 0×0 で合成器なし」は**誤り**だった。
