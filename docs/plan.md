@@ -2817,7 +2817,37 @@ dimensionEvents: t80:c=0,s=0  t82:c=-1,s=-1  t148:c=0,s=0
   （tick はフレームに依存して進むので、重い場面では1tickが長い）。あるいは Nether 用に描画距離を下げる。
   **どちらが効くかは測って決める**。
 
-**次の一手**: (1) `dimensionAtTick=20` など**早い転送**で Nether の地形読み込みが捕捉までに終わるかを測る、
+**早い転送でも Nether は成立しない（このターン・追跡を止める判断）**:
+
+- `dimensionAtTick=20` で再測定した結果、**同じ挙動**だった:
+
+```
+tick=20  client=0  server=0
+tick=25  client=0  server=-1                        （サーバーが先に移る）
+tick=27  client=-1 server=-1 screen=GuiDownloadTerrain
+tick=30..50 client=-1 server=-1 screen=GuiDownloadTerrain  （地形ダウンロード中のまま）
+tick=90  client=0  server=0                         （Overworld へ戻る）
+```
+
+- **結論**: **時間の問題ではない**。転送を早めても `GuiDownloadTerrain` から抜けられず、
+  **Nether の地形が最後までクライアントに届かない**。`GuiDownloadTerrain` には待ち時間の上限があり、
+  それで Overworld に戻る。**フラット世界の生成設定は Overworld にしか効かない**ので、
+  **Nether は通常の地形生成**になり、**この fixture では完了しない**。
+- **判断**: ヒントの指示どおり、**予算を増やす連続 run はここで止める**。Nether は
+  **「fixture の地形ダウンロードが完了しない」という具体的な阻害要因**として記録し、
+  **Nether の受入は存在しない**（以前の「Nether PASSED」は Overworld だった）。
+  **End は AMD/Intel とも到達を実証して PASSED** なので、dimension の受入は **End で成立している**。
+- **次に必要な具体修正**（Nether をどうしても取る場合）: fixture 側で
+  **Nether 用に生成を軽くする**（カスタム生成器を与える／チャンク送信を待って完了を検出する）か、
+  **サーバー側で転送前にチャンクを生成し終える**。**どちらも fixture 側の作業**であり、
+  レンダラ側の未検証項目ではない。
+
+**次の一手**: (1) ヒント2（atlas の image 所有と全面読み戻し）の**計器**を入れる —
+  `uploadFromGlTexture` の origin/id/bytes/wall nanos と `directMirrorRefreshes` を出し、
+  **同じ sprite 変更で何回全面 upload するか**を数える、(2) Nether は
+  「fixture の地形ダウンロードが完了しない」として未検証のまま残す、(3) 溶岩世界の費用の所在を測る。
+
+**（旧メモ）** 次の一手: (1) `dimensionAtTick=20` など**早い転送**で Nether の地形読み込みが捕捉までに終わるかを測る、
   (2) 終わらない場合は Nether 用の描画距離を下げる（fixture の設定）、
   (3) 到達が持続したら**その状態で Nether の受入を取り直す**、(4) その後ヒント2（atlas の image 所有）へ進む。
 
