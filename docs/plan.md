@@ -60,6 +60,22 @@
   直列化し、VK 側の描画量に応じて frame 時間が伸びる。軽世界では VK 側が小さく全体も小さい。GL 側を消す
   （goal 項目6）方向が、この overhead の構造的な出口。
 
+## 0.113 **修正・受入済み**: fixed-pipeline 残 state を native 化 —— texture matrix・depthFunc・glColor tint（A12/A13）
+
+- **texture matrix**：`matrixMode(5890)` が触る stack を unit 毎に分離（`setActiveTexture` hook 新設 —— 単一 stack 時代は
+  lightmap の unit-1 matrix（scale 1/256,translate 8）が unit-0 に漏れる構造的漏れがあった）。group 生成時に
+  unit-0 の 2D affine を capture → push の dead 領域（旧 `u_MvColumn` の 64-111B、全 immediate shader が未読）
+  へ encode → 4 textured shader で適用。enchanted item の glint（scale 8+translate+rotate/frame）で
+  `texMatrixGroups=150` 実測（AMD・Intel 104）。
+- **depthFunc**：`func_179143_c` hook 新設（state model の field は ordinal 初期値で誰も書いていなかった）→
+  captureState `state[7]` → 5 pipeline class に `depthCompareOp` param。glint の `GL_EQUAL`・held item/outline
+  composite の `GL_ALWAYS` が正しく通る。
+- **glColor tint**：色要素なし format（6/7/9）で `group.color` を capture、vert shader で `v_Color=u_Color`
+  （combine 時は const 側残す分岐）。drawRect の tint が shader に届く。
+- **fixture**: `enchantItem`（glint 発火）、`allBlocks`（registry sweep 244 block 壁、両 GPU で描画一致）。
+- **A12 は実質解消**：残項（separate alpha factors・color mask・alpha func・scissor）は presented RGB で非可視
+  または mod GUI scope と分析済。
+
 ## 0.112 **修正・受入済み**: texture-env の GL_COMBINE/interpolate（hurt flash・team outline）を native 化
 
 - vanilla の hurt flash と glowing/team outline は、同じモデルを **2 度目に** `glTexEnvi` の `GL_COMBINE_RGB=GL_INTERPOLATE`
