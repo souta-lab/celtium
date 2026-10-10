@@ -131,6 +131,30 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private VulkanCommandBufferState commandState;
     private long activeImmediateTarget;
     private final java.util.List<Object[]> recordedImmediateGroups = new java.util.ArrayList<>();
+    /**
+     * When and against which frame-target generation a queued group was built.
+     * <p>
+     * The five stages - queued, recorded, submitted, completed, retired - live in separate lists and counters, but a group
+     * carried no record of the frame or the target it belonged to, so a group that outlived a frame-target recreation could
+     * still be drawn with a pipeline and render pass built for a target that no longer exists. The stamp is that record, and
+     * drawPendingImmediate refuses to draw a group whose target generation has been superseded.
+     * <p>
+     * The texture generation is deliberately not part of it: a group's vertices do not become invalid when a texture is
+     * re-uploaded, and dropping the draw would lose geometry. Only the target identity decides.
+     */
+    private static final class GroupStamp {
+        final long frameId;
+        final int targetGeneration;
+
+        GroupStamp(long frameId, int targetGeneration) {
+            this.frameId = frameId;
+            this.targetGeneration = targetGeneration;
+        }
+    }
+
+    /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
+    private int targetGeneration;
+    private int groupsStaleTargetGeneration;
     private long immediateRecordedBatches, immediateSubmittedBatches, immediateCompletedBatches;
     private long offTargetRecordedBatches, offTargetCompletedBatches;
     private long invalidImmediateRecords;
@@ -290,6 +314,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
                 + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
                 + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
+                + " groupsQueued=" + this.immediateGroups.size()
+                + " groupsRecorded=" + this.recordedImmediateGroups.size()
+                + " groupsRetired=" + this.retiredImmediateGroups.size()
+                + " groupsStaleTargetGeneration=" + this.groupsStaleTargetGeneration
+                + " targetGeneration=" + this.targetGeneration
                 + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
                 + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
                 + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
@@ -1381,6 +1410,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private void reportDirectMirrorRefreshes() {
         if (this.directMirrorRefreshes != this.lastReportedDirectRefreshes) {
             this.lastReportedDirectRefreshes = this.directMirrorRefreshes;
+            System.out.println("[Celtium] CELTIUM_GROUPS queued=" + this.immediateGroups.size()
+                    + " recorded=" + this.recordedImmediateGroups.size()
+                    + " retired=" + this.retiredImmediateGroups.size()
+                    + " staleTargetGeneration=" + this.groupsStaleTargetGeneration
+                    + " targetGeneration=" + this.targetGeneration
+                    + " submitted=" + this.immediateSubmittedBatches + " completed=" + this.immediateCompletedBatches
+                    + " discarded=" + this.immediateGroupsDiscarded
+                    + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets);
             System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
                     + " readbacksSkipped=" + this.readbackSkippedAfterAnnouncement
                     + " invalidations=" + this.immediateTextureInvalidations + " atlasGlId=" + this.atlasSourceGlId
@@ -3117,7 +3154,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     Long.valueOf(this.currentGroupStateKey), this.currentGroupState,
                     Long.valueOf(this.currentGroupTarget), this.currentGroupColor,
                     Integer.valueOf(this.currentGroupBlendSrc), Integer.valueOf(this.currentGroupBlendDst),
-                    this.currentPreparedImmediate, Integer.valueOf(this.currentGroupBatches), this.currentGroupViewportValues});
+                    this.currentPreparedImmediate, Integer.valueOf(this.currentGroupBatches), this.currentGroupViewportValues,
+                    new GroupStamp(this.frameId, this.targetGeneration)});
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -3580,6 +3618,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.frameTarget != null) {
             this.frameTarget.delete();
             this.frameTarget = null;
+            // Groups recorded against the old target may still be queued; the generation is what lets the draw refuse them
+            // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
+            this.targetGeneration++;
         }
         destroyCommandResources();
         // Everything the backend owns is released here, not just the terrain half (audit S15): the immediate mesh, the
@@ -4790,6 +4831,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.frameTarget != null) {
             this.frameTarget.delete();
             this.frameTarget = null;
+            // Groups recorded against the old target may still be queued; the generation is what lets the draw refuse them
+            // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
+            this.targetGeneration++;
         }
         try {
             this.frameTarget = VulkanFrameTarget.create(this.context.instance(), this.context.physicalDevice(),
@@ -5151,6 +5195,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             while (iterator.hasNext()) {
                 Object[] group = iterator.next();
                 if (((Long) group[7]).longValue() != target) continue; // kept for its own pass
+                if (group.length > 14 && group[14] instanceof GroupStamp) {
+                    GroupStamp stamp = (GroupStamp) group[14];
+                    if (stamp.targetGeneration != this.targetGeneration) {
+                        // Recorded against a frame target that has since been destroyed: its pipeline and render pass are
+                        // gone, so drawing it would bind the wrong thing. Retired without drawing and counted; the mesh is
+                        // freed by the next completion drain, which is safe because this group was never submitted.
+                        iterator.remove();
+                        this.retiredImmediateGroups.add(group);
+                        this.groupsStaleTargetGeneration++;
+                        this.immediateGroupsDiscarded++;
+                        continue;
+                    }
+                }
                 VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
                 if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
                 PreparedImmediate prepared = (PreparedImmediate) group[11];

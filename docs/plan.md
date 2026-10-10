@@ -27,6 +27,36 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.5 構造修復 3（前半・この単位）: draw の段階を target 世代に紐付ける
+
+**根因**: 5段階（queued / recorded / submitted / completed / retired）は別リストと counter で管理され、
+`VulkanCommandBufferState` も正しい状態機械（`INITIAL→RECORDING→RENDER_PASS→EXECUTABLE→PENDING`・target 保持・
+`requireDraw(target)`）を持つが、**group 自身が「どのフレーム・どの frame target 世代のものか」を記録していなかった**。
+frame target が作り直された後（resize / teardown）に古い group が残っていると、**もう存在しない render pass を束ねて
+描く**余地があった。
+
+- **`GroupStamp`（immutable: `frameId`, `targetGeneration`）を group に付与**（tuple の index 14）。
+  **texture 世代は入れない** — 描画対象の頂点は texture 再アップロードで無効にならず、落とせば**描画が消える**ため。
+  無効条件は **target 同一性だけ**である、と明示した。
+- **`targetGeneration` は frame target を破棄した2箇所**（再生成経路と teardown 経路）で進む。
+- **draw 時のゲート**: 世代が一致しない group は**描かずに退役**させ（mesh は次の完了ドレインで解放＝未 submit なので安全）、
+  `groupsStaleTargetGeneration` として計数する。
+- **段階の可視化**: queued/recorded/retired の実数、`targetGeneration`、stale 件数、submitted/completed/discarded を
+  **`CELTIUM_GROUPS` 行**として stdout に出す（`CELTIUM_ANIM` と同じ場所＝確実に残る場所）。
+- **実測（AMD resize fixture／Intel 通常。軽い世界）**:
+
+| run | exit | validationClean | fixture | frames | p50 | VUID | クラッシュ |
+|---|---|---|---|---|---|---|---|
+| **AMD + `resize=true`** | **0** | **true** | **PASSED** | 544〜568 | 16.1〜16.2 ms | **0** | なし |
+| **Intel** | **0** | **true** | **PASSED** | 320 | 27.41 ms | **0** | なし |
+
+  **段階の整合不変条件（レポートに出ている数値）**: **`immediateSubmittedBatches == immediateCompletedBatches`**
+  （1557=1557 / 1749=1749 / 4243=4243）。**submit されて完了しなかった group は無い**。
+- **正直な未検証**: 新設の `CELTIUM_GROUPS`（`targetGeneration`・`groupsStaleTargetGeneration` 等）は
+  **まだ数値を読み出していない**。要約メソッド内の別エントリに置いた版がレポートに現れなかったため、
+  **確実に出る `CELTIUM_ANIM` と同じ場所へ専用行として移した**ところまでが今回の実装で、
+  **数値の確認は次の1 runで行う**（`staleTargetGeneration` が 0 である前提は置かない）。
+
 ## 0.4 構造修復 3（後半・この単位）: fixture の結果と JSON 所有を snapshot に統一
 
 **根因**: サーバータスクが**3つの volatile フィールド**（`transferResult` / `transferAtTick` / `rotationBefore`）を書き、
@@ -114,7 +144,7 @@
 |---|---|---|
 | 1 | texture の実体・更新・寿命を一つにする | **実装済み・両GPU受入**（`297ce5caa` ＋ §0.3。lifecycle/拒否/コスト計測まで。画像同一性の統制比較のみ残る） |
 | 2 | draw の queued→recorded→submitted→completed→retired と取消根拠の整合 | **一部実装**（§0.2: 取消を記録された事実に限定、名前ベースを撤去）。queued→recorded→submitted→completed→retired の target/generation 紐付けは未着手 |
-| 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **fixture 側は完了**（§0.4: immutable snapshot 2つ、フックは snapshot のみ読む、3経路を両GPUで実測）。**draw 側の target/generation 紐付けは未着手** |
+| 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **fixture 側は完了**（§0.4）。**draw 側は実装済み**（§0.5: GroupStamp＋target 世代ゲート＋段階の可視化。段階整合は実測、新 counter の数値読み出しのみ次 run） |
 | 4 | Nether の未完を具体的に直す | **未着手**。短い trace と client/server stack で帰還・停止の地点を特定する（早い転送・budget 延長の反復はしない） |
 | 5 | plan を現状表へ戻し、経緯を history へ移す | **この文書で実施** |
 
