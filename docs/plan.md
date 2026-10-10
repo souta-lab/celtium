@@ -27,6 +27,31 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.26 **format 1 の ~800 件は「線の正しい拒否」だった**（§0.24 の記述を訂正）+ 最終合成の拒否を特定
+
+per-format の拒否集計を専用行（`CELTIUM_REFUSALS_BY_FORMAT`）に出したところ、内訳が名指しされた。
+
+```
+1 line primitives are not implemented in the Vulkan terrain renderer yet = 797
+2 target is outside the RGBA8/D24/full-viewport bridge contract           = 817
+1 preflight: format=1 texture=21 (no terrain pipeline for this pass)      = 10
+6 preflight: format=6 texture=NN (no terrain pipeline for this pass)      = 各 9〜18
+9 preflight: format=9 texture=25 (no terrain pipeline for this pass)      = 12
+```
+
+- **format 1 の ~800 件（797）は `GL_LINES` の拒否**である ＝ **selection outline は native に提供され、
+  「線は native 未実装」という理由で正しく拒否され、GL が描いている**。
+  **§0.24 の「outline は提供されていない」は誤り**だった（family 別の print 上限に当たっており、
+  ログの grep では 0 件に見えていた。**集計を専用行に出して初めて見えた**）。
+  → **overlay 系の残件は「native の線が無いこと」そのもの**であり、ゲーム側のガードの問題ではない。
+- **format 2 の 817 件**は `target is outside the RGBA8/D24/full-viewport bridge contract` ＝
+  **最終合成（POSITION_TEX_COLOR の全画面クアッド）が GL 所有のまま**であることの実測。
+  これは**条件 (a) の最後のピース**（「最終合成が native」）に直結する。
+- **次に実装する2つ（どちらも名指しできた）**: (1) **native の線**（`VK_PRIMITIVE_TOPOLOGY_LINE_LIST`＋
+  `VK_POLYGON_MODE_LINE`、`fillModeNonSolid`/`wideLines` は feature 確認つき）、
+  (2) **native の最終合成**（bridge 契約の外にある format 2 の全画面クアッドを Vulkan の合成パスへ）。
+- **計器の教訓（再掲）**: family 別 print の上限は「0 件」と誤読させる。**新しい分類は必ず専用行に集計で出す**。
+
 ## 0.25 TESR 可視場面と、**format 1 の未受理 800 件**という新しい具体的ギャップ
 
 - **場面**: 水を含まない層に **chest と enchanting table** を入れて見下ろす（TESR が視界に入る）。受入は
@@ -36,9 +61,8 @@
 - **新しい具体的ギャップ（実測）**: `ARRIVALS byFormat` は **1:826, 2:1639, 6:5748, 7:514…** なのに
   `ACCEPTED` は **1:26, 2:0, 6:5746, 7:5228…** ＝ **format 1（POSITION_COLOR）が 826 到着して 26 しか受理されていない**。
   format 1 は **selection outline・破壊 overlay・デバッグ表示**の family であり、**overlay 系の残件そのもの**である。
-- **分かっていないこと**: その ~800 件は**拒否として数えられていない**。ログに出る拒否は format 6/9（preflight）だけで、
-  `refusedBeforeAppend=208` にも現れない。つまり **受理でも拒否でもない第3の経路**（早期 return / 別分岐）に落ちている。
-  **次はこの経路を名指しする計器**（format ごとの offer→決定の内訳）を入れて確定する。
+- **解決（§0.26）**: その ~800 件は **`GL_LINES` の拒否（797 件）**だった。family 別 print の上限のためログに出ておらず、
+  「拒否として数えられていない」ように見えていた。**集計を専用行に出して確定**した。
 - **註**: `line primitives` の拒否は依然 0（§0.24 のとおり線は native 対象外で、提供されていない）。
 
 ## 0.24 selection outline が提供されない理由を**ガード単位で**分解（レンダラ側は正常と確定）

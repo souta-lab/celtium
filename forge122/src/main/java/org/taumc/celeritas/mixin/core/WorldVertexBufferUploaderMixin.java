@@ -46,6 +46,9 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$positionRefusals;
     private static int celtium$compositeLayoutRefusals;
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
+    /** Refusals by "format reason": the family-specific prints did not cover every format. */
+    private static final java.util.LinkedHashMap<String, Integer> celtium$refusalsByFormat =
+            new java.util.LinkedHashMap<String, Integer>();
     private static final int[] celtium$arrivalsByFormat =
             new int[org.soutalab.celtium.vulkan.VulkanImmediateFormats.COUNT];
     private static int celtium$arrivalTotal;
@@ -126,8 +129,10 @@ public abstract class WorldVertexBufferUploaderMixin {
             // never distinguish replacement from GL drawing everything.
             System.out.println("celtium offer decisions: offers=" + celtium$offers + " accepted="
                     + celtium$acceptedByBackend + " glBodyCompleted=" + celtium$glUploads);
+            System.out.println("[Celtium] CELTIUM_REFUSALS_BY_FORMAT " + celtium$refusalsByFormat);
         }
         boolean accepted = false;
+        int celtium$decidedFormat = -1;
         try {
             VertexFormat format = celtium$vertexFormat(buffer);
             int stride = format == null ? 0 : format.getSize();
@@ -141,6 +146,7 @@ public abstract class WorldVertexBufferUploaderMixin {
                 return;
             }
             int formatId = celtium$formatId(format);
+            celtium$decidedFormat = formatId;
             // Inside glNewList the geometry is being compiled into a display list rather than drawn. Recording the call site
             // then is what gives that list an identity: the id alone shifts when something else allocates first.
             int celtium$listIndex = 0;
@@ -244,6 +250,24 @@ public abstract class WorldVertexBufferUploaderMixin {
             long batchCallCpuStarted = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
             try {
                 accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
+                if (!accepted) {
+                    // Why a batch was not taken, by format. The refusals were recorded in the backend, but only some families
+                    // printed them, so a format could arrive hundreds of times, be accepted for a handful and be refused for the
+                    // rest with no line saying why - measured as format 1 arriving 826 times and being accepted 26.
+                    String reason = backend.lastRefusal();
+                    if (reason == null || reason.isEmpty()) reason = "no reason recorded";
+                    if (reason.length() > 70) reason = reason.substring(0, 70);
+                    String key = celtium$decidedFormat + " " + reason;
+                    Integer had = celtium$refusalsByFormat.get(key);
+                    if (had != null) {
+                        celtium$refusalsByFormat.put(key, Integer.valueOf(had.intValue() + 1));
+                    } else if (celtium$refusalsByFormat.size() < 24) {
+                        celtium$refusalsByFormat.put(key, Integer.valueOf(1));
+                    } else {
+                        Integer other = celtium$refusalsByFormat.get("other");
+                        celtium$refusalsByFormat.put("other", Integer.valueOf(other == null ? 1 : other.intValue() + 1));
+                    }
+                }
             } finally {
                 long batchCallTook = System.nanoTime() - batchCallStarted;
                 long batchCallCpuEnded = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
