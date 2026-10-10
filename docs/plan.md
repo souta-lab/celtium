@@ -119,9 +119,9 @@
   実測（16x16・5 level・announcement のみを供給源）: 修正前 level 0 は 256 texel 中 16 のみ
   （row 0 = (14,14,14,255)、rows 1..15 = 黒）、各 level は前段の1/4。地形は vertex の sky 行をサンプルするので
   row 15 が黒いと light 項が 0 になる。修正後 level 0 は 1024/1024 バイト・min 14。
-- **受入（実測）**: readback 経由の回避策を撤去し、lightmap を announcement 経路のみで供給した bridge run
+- **受入（実測）**: 「readback 経由」と呼ばれていた回避策（GL-less では実際には stub が捕捉した CPU 側ピクセルを読む経路で、GL readback ではない）を撤去し、lightmap を announcement 経路のみで供給した bridge run
   `.celtium-work/runtime/ann-acc3` が fixture PASSED・validationClean・msgs 0・**VUID 0**・
-  band 平均 (102.4, 63.9, 58.5)・1385 色。回避策なしで readback 経路と同一の絵になることを確認した
+  band 平均 (102.4, 63.9, 58.5)・1385 色。回避策なしで（GL-less では CPU 捕捉ピクセル経由の）経路と同一の絵になることを確認した
   （画像の所有者は1つに戻した）。
 - **model の平行移動**: `GlStateManagerMixin` は double 版 translate（`func_179137_b` → `glTranslated`）しか
   ミラーしておらず、ゲームが使う float 版（`func_179109_b` → `glTranslatef`）は GL-less stub が no-op として
