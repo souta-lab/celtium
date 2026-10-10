@@ -27,6 +27,28 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.46 item 6 の (B) に必要な**2つの前提**が実測で確定（深度の型と、記憶した宛先の使用）
+
+- **試作（§0.45 の続き）**: 差し替え時に**先に** frame target へ「これがゲームのフレームバッファだ」と教える
+  （`noteGameFramebufferAdopted` で `gameFbo = sharedFbo` 等を設定）ことで、§0.45 の `gameFbo==0` 問題を解消した。
+- **結果**: **`gameFramebufferAdopted=1`**（差し替えは1回で成立）だが **`presentedFromVulkan=0`／FAILED**。診断:
+
+| メッセージ | 意味 |
+|---|---|
+| `beginFrame: RGBA8 colour copy and D24 to D32 depth conversion: GL error 0x502` | **MC は `depthBuffer` をレンダーバッファとしてアタッチする**のに、こちらは**テクスチャ id** を入れた → `GL_INVALID_OPERATION` |
+| `beginFrame: the bound draw framebuffer is the default framebuffer …` | **ワールドパスは `useRememberedTarget=false` で `beginFrame` を呼ぶ**ため、記憶した宛先が使われない |
+| `skipReason=translucent:_no_frame_target`、`passes=0 skipped=547` | 帰結（フレーム目標が立たないのでパスが全部スキップ） |
+
+- **item 6 の (B) に必要な前提（これで具体化した）**:
+  1. **共有深度を「外部メモリのレンダーバッファ」として公開する**（`glImportMemoryFdEXT` ＋
+     `glNamedRenderbufferStorageMemEXT`）。MC の `Framebuffer` は深度を**レンダーバッファ**として扱うので、
+     テクスチャでは型が合わない。**現在の bridge は D32 をテクスチャで持っている**ため、ここが実装対象。
+  2. **ワールドパスの `beginFrame` が記憶した宛先を使うようにする**（`useRememberedTarget` の経路に乗せる）。
+  3. そのうえで §0.45 の (A)（blit と束縛クエリの削除）。
+- **対応**: 試作は**巻き戻した**（HEAD に戻しビルド緑）。**次の実装単位は前提1（深度をレンダーバッファで公開）**で、
+  これは **adoption と独立に検証できる**（bridge の深度アタッチが変わるだけ）。
+- **註**: 前提2は `beginFrame` の呼び出し側（`VulkanTerrainGpuBackend`）の分岐なので、1箇所の変更で済む見込み。
+
 ## 0.45 共有 FBO を契約にする改訂でも失敗: **順序は「blit を先に消す」**（実測で確定）
 
 - **試作（§0.44 の続き）**: `beginFrame`/`endFrame` を「束縛 FBO が共有 FBO なら契約検証・アタッチメント照会・
