@@ -2792,7 +2792,36 @@ this.commandState.endPass();
 - **End は AMD/Intel とも到達を実証して PASSED**。**Nether は到達が持続しない**という**新しい実問題**が残る
   （原因は未特定。サーバーが dimension -1 を unload する挙動が候補だが、**測ってはいない**）。
 
-**次の一手**: (1) **Nether でクライアントが Overworld に戻る理由**を突き止める（サーバーの dimension unload、
+**Nether が持続しない原因を特定（このターン・トレースが決定的）**:
+
+- 両側の dimension を毎tick記録した（変化時＋5tickごと、レポートには変化点の列）。**1回の run（AMD、Nether、
+  `dimensionAtTick=80`）で原因が判明した**:
+
+```
+tick=80   client=0  world=0  server=0                       （転送前）
+tick=82   client=-1 world=-1 server=-1  screen=GuiDownloadTerrain   ← クライアントは実際に Nether に居る
+tick=85..130 client=-1 world=-1 server=-1 screen=GuiDownloadTerrain ← そのまま留まっている
+tick=148  client=0  world=0  server=0                       ← Overworld へ戻る
+dimensionEvents: t80:c=0,s=0  t82:c=-1,s=-1  t148:c=0,s=0
+```
+
+- **原因**: **クライアントが `GuiDownloadTerrain`（地形ダウンロード中の画面）から抜けられていない**。
+  つまり **Nether のチャンクが最後まで読み込まれず**、**しばらくして Overworld に戻る**。
+  前ターンに「Nether のチャンク生成が重い」と考えたのは**方向としては合っていた**が、今回**直接の証拠**が取れた
+  （画面の名前と、両側の dimension の時系列）。
+- **fail-closed が正しく働いた**: 捕捉（tick 200）の時点では既に Overworld なので、run は
+  `status=NO_CAPTURE` と `dimensionClientAtCapture=0` を残して**失敗**した。**見かけの合格は出ない**。
+- **サーバー側のログ**も一致する: `loaded a new chunk ... in dimension -1 (the_nether)` →
+  `Unloading dimension -1`。**サーバーは動いていた**が、**クライアントの地形ダウンロードが完了しなかった**。
+- **修正の方向（次の測定）**: 転送を**もっと早い tick**で行い、地形が読み込まれる時間を稼ぐ
+  （tick はフレームに依存して進むので、重い場面では1tickが長い）。あるいは Nether 用に描画距離を下げる。
+  **どちらが効くかは測って決める**。
+
+**次の一手**: (1) `dimensionAtTick=20` など**早い転送**で Nether の地形読み込みが捕捉までに終わるかを測る、
+  (2) 終わらない場合は Nether 用の描画距離を下げる（fixture の設定）、
+  (3) 到達が持続したら**その状態で Nether の受入を取り直す**、(4) その後ヒント2（atlas の image 所有）へ進む。
+
+**（旧メモ）** 次の一手: (1) **Nether でクライアントが Overworld に戻る理由**を突き止める（サーバーの dimension unload、
   `SPacketRespawn` の扱い、transfer の二重実行のいずれか。サーバー/クライアント両方の dimension を毎tick記録する）、
   (2) Nether の到達が持続するようになったら**その状態で受入を取り直す**（今の Nether の受入は存在しない）、
   (3) ヒント2（atlas の image 所有と全面読み戻し）へ進む。

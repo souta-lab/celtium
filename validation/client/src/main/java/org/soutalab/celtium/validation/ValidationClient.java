@@ -77,6 +77,9 @@ public final class ValidationClient {
     private volatile String celtium$rotationBefore = "unknown";
     private int celtium$arrivedAtTick = -1;
     private int celtium$arrivedFrames = -1;
+    private int celtium$lastTraceClient = Integer.MIN_VALUE;
+    private int celtium$lastTraceServer = Integer.MIN_VALUE;
+    private final StringBuilder celtium$dimensionEvents = new StringBuilder();
     /** Whether the report has been written, and whether the partial-report exit hook is installed. */
     private volatile boolean celtium$reportWritten;
     private boolean celtium$exitHookInstalled;
@@ -1251,6 +1254,35 @@ public final class ValidationClient {
                 celtium$arrivedAtTick = worldTicks;
                 celtium$arrivedFrames = worldFrames;
             }
+            // Per-tick dimension trace while a dimension run is in flight: the Nether run arrived at tick 81 and was
+            // back in dimension 0 by the capture, and a single reading cannot say when or why. The server side is asked
+            // for its own value on the same tick, so a client-only change can be told from a real transfer back.
+            if (celtium$dimensionAtTick > 0 && celtium$changedDimension) {
+                int clientDim = mc.player == null ? Integer.MIN_VALUE : mc.player.dimension;
+                int worldDim = mc.world == null ? Integer.MIN_VALUE : mc.world.provider.getDimension();
+                int serverDim = Integer.MIN_VALUE;
+                net.minecraft.server.integrated.IntegratedServer traceServer = mc.getIntegratedServer();
+                if (traceServer != null && mc.player != null) {
+                    net.minecraft.entity.player.EntityPlayerMP tracePlayer =
+                            traceServer.getPlayerList().getPlayerByUUID(mc.player.getUniqueID());
+                    if (tracePlayer != null) {
+                        serverDim = tracePlayer.dimension;
+                    }
+                }
+                boolean changed = celtium$lastTraceClient != clientDim || celtium$lastTraceServer != serverDim;
+                if (changed || worldTicks % 5 == 0) {
+                    System.out.println("[Celtium] CELTIUM_DIM_TRACE tick=" + worldTicks + " client=" + clientDim
+                            + " world=" + worldDim + " server=" + serverDim
+                            + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName())
+                            + " arrivedAt=" + celtium$arrivedAtTick);
+                }
+                celtium$lastTraceClient = clientDim;
+                celtium$lastTraceServer = serverDim;
+                if (changed && celtium$dimensionEvents.length() < 320) {
+                    celtium$dimensionEvents.append("t").append(worldTicks).append(":c=").append(clientDim)
+                            .append(",s=").append(serverDim).append(' ');
+                }
+            }
             if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks == 100 && !celtium$leftWorld) {
                 celtium$leftWorld = true;
                 report.addProperty("leftWorldAtTick", worldTicks);
@@ -1725,6 +1757,7 @@ public final class ValidationClient {
             // previous acceptance did exactly that - dimensionAfter stayed 0 while the report said PASSED - because
             // the value it read was taken before the scheduled transfer could run.
             report.addProperty("dimensionServerResult", celtium$transferResult);
+            report.addProperty("dimensionEvents", celtium$dimensionEvents.toString().trim());
             report.addProperty("dimensionServerTaskAtTick", Integer.valueOf(celtium$transferAtTick));
             report.addProperty("dimensionRotationBefore", celtium$rotationBefore);
             report.addProperty("dimensionArrivedAtTick", Integer.valueOf(celtium$arrivedAtTick));
