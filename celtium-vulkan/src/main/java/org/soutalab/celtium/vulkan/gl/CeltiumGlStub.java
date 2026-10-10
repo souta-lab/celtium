@@ -1044,9 +1044,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * The transform calls the state mirror must see. Reaching this class means the corresponding hook did not run:
-     * {@code glTranslatef} arriving here is exactly how every model came to be drawn at the camera origin before the
-     * float translate was hooked, and the count is what turned that from an inference into a number.
+     * The transform calls worth counting.
+     * <p>
+     * This is an arrival census, not a hook-failure detector: the mirror's hooks run at the head of the
+     * {@code GlStateManager} method and do not cancel the GL body, so a correctly mirrored call still arrives here.
+     * What the count is for is the opposite comparison - it is the denominator. A name whose mirror is missing shows up
+     * as arrivals that no {@code matrixMirrorDelta} application accounts for, which is how the missing float translate
+     * was found (one translate per frame against dozens of tile entities). Read it with that counter, never alone.
      */
     private static final java.util.Set<String> MIRROR_REQUIRED = new java.util.HashSet<String>(java.util.Arrays.asList(
             "glTranslatef", "glTranslated", "glRotatef", "glRotated", "glScalef", "glScaled", "glOrtho",
@@ -1072,10 +1076,11 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * {@return a one-line census of the transform calls that reached the stub}, i.e. the hooks that did not run.
-     * Empty when every hooked transform was mirrored, which is the state a correct GL-less run is in.
+     * {@return a one-line census of the transform calls that reached the stub}. Arrivals are expected: the mirror
+     * hooks do not cancel the GL body. Compare it against the mirror's own application counts - an arrival that the
+     * mirror never applied is the gap.
      */
-    public static String mirrorMissSummary() {
+    public static String stubTransformSummary() {
         if (MIRROR_MISSES.isEmpty()) {
             return "none";
         }

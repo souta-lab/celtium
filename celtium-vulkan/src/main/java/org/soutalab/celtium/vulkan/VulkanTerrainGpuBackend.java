@@ -108,6 +108,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long offTargetFramebuffer;
     private long offTargetFramebufferRenderPass;
     private int offTargetFramebufferCreations;
+    /**
+     * The published wrapper for the chain's adopted output: the renderer's off-target colour image under the GL name
+     * the game's composite binds, plus the name and the image handle it was published for.
+     * <p>
+     * The pair is published from the chain's adoption, the one place that knows both the identity -&gt; GL name
+     * association (reported by the game's own framebuffer bind) and the image the chain actually runs on. Publishing
+     * is idempotent for the same handles, so a per-frame call returns the same wrapper and the descriptor keys the
+     * immediate path cached stay valid. The image handle is kept so a pair recreated at a new size - whose wrapper
+     * would name a destroyed image - is unpublished instead of transitioned.
+     */
+    private VulkanGlTexture publishedChainOutput;
+    private int publishedChainTexture;
+    private long publishedChainImage;
     /** The frame whose off-target images have been cleared, so the clear happens once per frame and not per window. */
     private long offTargetClearedFrame = -1L;
     private int offTargetClears;
@@ -295,18 +308,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // takeTimingSummary() was written but never called, so every post-process investigation ran without the numbers
         // that say where the handoff time goes. Gated, because it is a per-report string rather than a per-frame cost.
         // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
-        this.diagnostics.add("stateMirror: mirrorMisses="
+        this.diagnostics.add("stateMirror: stubTransformCalls="
                 + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge"));
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge"));
         if (Boolean.getBoolean("celtium.vulkan.handoffTimings")) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
-            // Whether the transform hooks actually ran. A transform that reached the stub was not mirrored, and with
-            // no context nothing else applies it - so this is the difference between "the mirror is complete" and
-            // "every model is at the camera origin", said as a number in every report rather than inferred later.
-            this.diagnostics.add("stateMirror: mirrorMisses="
+            // How many transform calls reached the stub. Not a hook-failure count on its own - the mirror hooks at
+            // the head of the GlStateManager method and does not cancel the GL body - but the denominator for the
+            // mirror's own application counts, which is the comparison that found the missing float translate.
+            this.diagnostics.add("stateMirror: stubTransformCalls="
                     + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge"));
+                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge"));
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
                     + " fullGlUploads=" + VulkanGlTexture.fullUploadSummary()
                 + " submitFaultInjections=" + VulkanSubmitFault.injections()
@@ -319,12 +332,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelDraws=" + this.modelDraws
                 + " texMatrixGroups=" + this.texMatrixGroups
                 + " modelDrawRefusals=" + this.modelDrawRefusals
-                + " mirrorMisses=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge")
-                + " mirrorMisses=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge")
-                + " mirrorMisses=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mirrorMissSummary() : "bridge") + " modelMissingMeshes=" + this.modelMissingMeshes
+                + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge")
+                + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge")
+                + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge") + " modelMissingMeshes=" + this.modelMissingMeshes
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                 + " modelMeshQuads=" + this.modelMeshQuads
@@ -3144,7 +3157,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     System.out.println("[Celtium] CELTIUM_ACCEPTED total=" + this.immediateAcceptedTotal
                             + " byFormat=[" + accepted.toString().trim() + "]"
                             + " blendingFactorsMix=" + this.immediateBlendedAccepted
-                            + " blendingOff=" + this.immediateOpaqueAccepted);
+                            + " blendingOff=" + this.immediateOpaqueAccepted
+                            // With the counters, not only in the report: how many transform calls reached the stub, to be read
+                            // against the mirror's own application counts rather than on its own.
+                            + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                                    ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge"));
                 }
             }
             this.immediateLastRefusal = "none";
@@ -4070,6 +4087,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (offTarget != null) {
             try {
                 offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
+                // CELTIUM-OUTLINE-COMPOSITE: the image the composite sampled last frame is in SHADER_READ_ONLY, and
+                // this pass clears it (which declares GENERAL) and then attaches it, so the hand-back is recorded
+                // before both. A pair recreated at a new size is unpublished here instead: its wrapper names a
+                // destroyed image, and a barrier on that is a validation error rather than a missing glow.
+                this.celtium$syncPublishedChainOutput(offTarget);
                 if (!offTarget.offTargetAcquired() || this.offTargetClearedFrame != this.frameId) {
                     // Outside the pass, which is where the clear and its first-use barrier belong, and once per frame:
                     // the game clears a framebuffer when it binds it, and clearing per window would erase what an
@@ -6081,7 +6103,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             beginCommands();
             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
             adoptChainFramebuffers(passes);
+            if (this.publishedChainOutput != null) {
+                // The chain's adopted target is GENERAL by contract, and the off-target pass may not have run in
+                // this frame (the game can render the chain from an image an earlier frame left behind).
+                this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
+            }
             this.postChain.recordPasses(this.commandBuffer, passes);
+            if (this.publishedChainOutput != null) {
+                // The chain has written the image and the game's composite samples it next, through a descriptor the
+                // immediate pipelines declare as SHADER_READ_ONLY_OPTIMAL. Recorded in the chain's own submission,
+                // so the layout is already right when the composite's command buffer runs - and the next frame's
+                // off-target pass hands it back before it attaches the image again.
+                this.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
+            }
             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
             submitCommands();
             submitted = true;
@@ -6143,6 +6177,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("post chain adoption refused: the off-target image is not " + width + "x" + height);
             return;
         }
+        // Before anything in this submission clears, attaches or samples the image: the previous frame's composite
+        // may have left it in SHADER_READ_ONLY, and both the clear and the chain declare GENERAL.
+        this.celtium$syncPublishedChainOutput(glless);
         if (!glless.offTargetAcquired() || this.offTargetClearedFrame != this.frameId) {
             glless.clearOffTarget(this.commandBuffer);
             this.offTargetClearedFrame = this.frameId;
@@ -6151,6 +6188,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.postChain.adoptTarget(identity, glless.offTargetColorImage(), glless.offTargetColorView(),
                 width, height);
         this.chainAdoptions++;
+        // CELTIUM-OUTLINE-COMPOSITE: the chain's output IS this image, and the game composites it by binding the
+        // outline framebuffer's colour texture name - the one the bind reported for this identity. Publishing the
+        // image under that name is what gives the composite's batch a texture to sample: every batch resolves its
+        // bound name through the registry, and with no entry there this one is refused and the glow never reaches
+        // the screen. Nothing is created, resized, transitioned or freed on the image's behalf here.
+        this.publishedChainOutput = celtium$registry().publishExternalImage((int) reported[0],
+                glless.offTargetColorImage(), glless.offTargetColorView(), width, height);
+        this.publishedChainTexture = (int) reported[0];
+        this.publishedChainImage = glless.offTargetColorImage();
+    }
+
+    /**
+     * Keeps the published outline output current and hands it back to the layout its owner attaches it in.
+     * <p>
+     * Called from the two places the image is about to be used as an attachment: the off-target pass, which clears
+     * it and then attaches it, and the chain submission, whose adopted target is GENERAL by contract. The composite
+     * is the one sampler, and its transition to SHADER_READ_ONLY is recorded at the end of the chain submission;
+     * without this hand-back the next attachment would begin a render pass on an image in the wrong layout. A pair
+     * recreated at a new size is unpublished rather than transitioned, because its wrapper names a destroyed image.
+     */
+    private void celtium$syncPublishedChainOutput(GllessFrameTarget glless) {
+        if (this.publishedChainOutput == null || glless == null) {
+            return;
+        }
+        if (this.publishedChainImage != glless.offTargetColorImage()) {
+            celtium$registry().unpublishExternalImage(this.publishedChainTexture);
+            this.publishedChainOutput = null;
+            this.publishedChainImage = 0L;
+            return;
+        }
+        this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
     }
 
     public boolean celtium$presentFrame() {

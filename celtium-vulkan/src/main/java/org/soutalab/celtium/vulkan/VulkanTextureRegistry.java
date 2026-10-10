@@ -71,6 +71,8 @@ public final class VulkanTextureRegistry {
     private int externalUnpublished;
     private int externalSupersededMirrors;
     private int externalRetireLogs;
+    /** Invalidations of a published name that were ignored, because its content is live. */
+    private int externalInvalidatesIgnored;
     /** GL names whose publication has been named in the log, so a per-frame publish cannot flood it. */
     private final java.util.Set<Integer> externalLogged = new java.util.HashSet<Integer>();
     private int mirrorCount;
@@ -276,6 +278,7 @@ public final class VulkanTextureRegistry {
     public String externalSummary() {
         return "published=" + this.externalPublished + " republished=" + this.externalRepublishes
                 + " unpublished=" + this.externalUnpublished + " supersededMirrors=" + this.externalSupersededMirrors
+                + " invalidatesIgnored=" + this.externalInvalidatesIgnored
                 + " live=" + this.externalImages.size() + " layout[" + VulkanGlTexture.foreignLayoutSummary() + "]";
     }
 
@@ -351,6 +354,14 @@ public final class VulkanTextureRegistry {
      */
     public boolean canSkipReadback(int glTextureId) {
         Integer id = Integer.valueOf(glTextureId);
+        VulkanGlTexture external = this.externalImages.get(id);
+        if (external != null) {
+            // Live content, and no readback could improve on it: this image is what its owner is rendering into
+            // right now, so a GL readback (which under the stub delivers nothing at all) could only replace it with
+            // something older or empty.
+            skipDecisionLog(glTextureId, "the image is published by its owner and its content is live", true);
+            return true;
+        }
         if (!this.fullyInitialized.contains(id)) {
             skipDecisionLog(glTextureId, "not fully initialized", false);
             return false;
@@ -451,6 +462,13 @@ public final class VulkanTextureRegistry {
 
     public void announceImage(int glTextureId, java.awt.image.BufferedImage image) {
         if (glTextureId == 0 || image == null) {
+            return;
+        }
+        if (this.externalImages.containsKey(Integer.valueOf(glTextureId))) {
+            // The renderer owns this name's image; a CPU-side upload of the same GL texture (the game allocating a
+            // framebuffer texture, say) does not describe its content, and storing it would let a later path build a
+            // mirror from pixels the image is not made of.
+            this.externalInvalidatesIgnored++;
             return;
         }
         this.announcedImages.put(Integer.valueOf(glTextureId), image);
@@ -705,6 +723,13 @@ public final class VulkanTextureRegistry {
      * @return whether the mirror was updated from these pixels
      */
     public boolean announceFullPixels(int glTextureId, int[][] data, int width, int height, int x, int y) {
+        if (this.externalImages.containsKey(Integer.valueOf(glTextureId))) {
+            // Same rule as announceImage: the pixels of a published image are the ones its owner rendered into it,
+            // and an upload the game makes to the same GL name is not that content. Answered as "nothing to do" so
+            // no caller falls back to a readback that cannot deliver either.
+            this.externalInvalidatesIgnored++;
+            return true;
+        }
         if (glTextureId == 0 || data == null) {
             this.rejectPatch("no texture id or no data (id=" + glTextureId + ", data=" + (data == null ? "null" : "present") + ")");
             return false;
@@ -1003,6 +1028,14 @@ public final class VulkanTextureRegistry {
      */
     public void forgetTexture(int glTextureId) {
         Integer id = Integer.valueOf(glTextureId);
+        // A published image is dropped, never destroyed: the registry does not own it, and its owner (the renderer's
+        // off-target pair, or whatever else published it) is the only thing that may free it. The GL name is going
+        // away, so the wrapper goes with it - but only the wrapper's sampler is released.
+        VulkanGlTexture external = this.externalImages.remove(id);
+        if (external != null) {
+            this.externalUnpublished++;
+            retireExternal(external, "GL texture " + glTextureId + " was forgotten by its owner");
+        }
         Entry entry = this.entries.remove(id);
         this.fullyInitialized.remove(id);
         this.announcedGeneration.remove(id);
@@ -1022,6 +1055,12 @@ public final class VulkanTextureRegistry {
 
     /** {@return whether a mirror already exists for this id at exactly this size} */
     public boolean hasEntry(int glTextureId, int width, int height) {
+        VulkanGlTexture external = this.externalImages.get(Integer.valueOf(glTextureId));
+        if (external != null) {
+            // "There is an image for this name at this size" is the question the callers ask, and a published image
+            // answers it exactly like an entry: the size it was published with is the size it has.
+            return external.width() == width && external.height() == height;
+        }
         Entry entry = this.entries.get(Integer.valueOf(glTextureId));
         return entry != null && entry.width == width && entry.height == height;
     }
@@ -1230,6 +1269,13 @@ public final class VulkanTextureRegistry {
     }
 
     public void invalidate(int glTextureId) {
+        if (this.externalImages.containsKey(Integer.valueOf(glTextureId))) {
+            // A published image is left alone: its content is what its owner is rendering, there is no stored state
+            // a re-read could supply, and dropping the entry would take the name away from the batch that samples it
+            // (which is exactly the batched glow). Counted rather than silently ignored.
+            this.externalInvalidatesIgnored++;
+            return;
+        }
         if (this.entries.containsKey(Integer.valueOf(glTextureId))) {
             this.staleIds.add(Integer.valueOf(glTextureId));
         }
@@ -1262,6 +1308,13 @@ public final class VulkanTextureRegistry {
             entry.texture.delete();
         }
         this.entries.clear();
+        // Published images are dropped the same way forgetTexture drops one: the wrapper's sampler is released and
+        // the image, its memory and its view are left to their owner. Skipping them would leak a sampler per
+        // published name; deleting them like entries would destroy an image this class never created.
+        for (VulkanGlTexture external : this.externalImages.values()) {
+            external.delete();
+        }
+        this.externalImages.clear();
     }
 
     /**
