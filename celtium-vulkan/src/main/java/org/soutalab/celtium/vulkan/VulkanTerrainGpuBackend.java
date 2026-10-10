@@ -4442,7 +4442,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // path the lighting comes from the light map, and the pipeline for this layout ignores a trailing
                 // element anyway - whether that is enough for entities is the next question, not this one.
                 mesh.begin(new VulkanDynamicMesh.Layout(20, 0, 12, -1, -1, -1));
-                for (int quad = 0; quad < snapshot.quads; quad++) {
+                // A limit on how many quads go into the mesh, so a single quad can be drawn on its own: if one quad comes
+                // out as a quad the mesh and draw path are sound and the capture is what is wrong, and if it comes out as
+                // a triangle the fault is on this side. That is the question the stray triangles leave open.
+                int quadLimit = snapshot.quads;
+                if (MODEL_QUAD_LIMIT > 0 && quadLimit > MODEL_QUAD_LIMIT) {
+                    quadLimit = MODEL_QUAD_LIMIT;
+                }
+                for (int quad = 0; quad < quadLimit; quad++) {
                     int base = mesh.nextVertex();
                     for (int vertex = 0; vertex < 4; vertex++) {
                         int source = (quad * 4 + vertex) * 3;
@@ -4499,6 +4506,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     public boolean celtium$drawModelList(int listId, int boundTextureId) {
         if (!MODEL_DRAW || this.modelMeshes == null || !this.frameTargetKnown) {
+            return false;
+        }
+        if (MODEL_ONLY_LIST != 0 && listId != MODEL_ONLY_LIST) {
             return false;
         }
         VulkanDynamicMesh mesh = this.modelMeshes.get(Integer.valueOf(listId));
@@ -4594,6 +4604,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
     }
+
+    /** Draws at most this many quads per list, for isolating a single quad (0 = all). */
+    private static final int MODEL_QUAD_LIMIT = Integer.getInteger("celtium.vulkan.modelQuadLimit", 0).intValue();
+    /** Draws only this display list, for isolating one list (0 = all). */
+    private static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
 
     /** Whether captured display lists are drawn natively (lab switch; off keeps GL replaying them). */
     private static final boolean MODEL_DRAW = Boolean.getBoolean("celtium.vulkan.modelDraw");

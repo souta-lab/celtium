@@ -160,8 +160,23 @@ public final class VulkanDisplayListCensus {
             return false;
         }
         String origin = originOf(list);
-        return origin != null && origin.contains("ItemRenderer");
+        if (origin == null) {
+            return false;
+        }
+        if (origin.contains("ItemRenderer")) {
+            return true;
+        }
+        // Lab switch: also take the player model's own display lists, which come through ModelPlayer/ModelBiped rather
+        // than ItemRenderer. Those parts have no native replacement today, so cancelling them without drawing would make
+        // the model disappear - the draw-then-cancel order in the hook is what makes this safe to try, and the switch
+        // exists to measure whether the native model actually matches before any of it becomes the default.
+        return CANCEL_MODEL_BY_ORIGIN
+                && (origin.contains("ModelPlayer") || origin.contains("ModelBiped"));
     }
+
+    /** Whether the player model's display lists are cancelled too (lab switch, off by default). */
+    private static final boolean CANCEL_MODEL_BY_ORIGIN =
+            Boolean.getBoolean("celtium.vulkan.cancelModelDisplayLists");
 
     private static long originCancels;
 
@@ -174,7 +189,8 @@ public final class VulkanDisplayListCensus {
     public static synchronized void cancelled(int list) {
         cancelled++;
         String origin = ORIGINS.get(Integer.valueOf(list));
-        if (origin != null && origin.contains("ItemRenderer")) {
+        if (origin != null && (origin.contains("ItemRenderer") || origin.contains("ModelPlayer")
+                || origin.contains("ModelBiped"))) {
             originCancels++;
         }
         if (cancelled <= 3) {
