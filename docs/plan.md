@@ -39,6 +39,27 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.101 修正点を確定: `bindFramebuffer` の**ターゲット切替時の flush**が resize で待機に失敗する
+
+- **読んだ事実**: `bindFramebuffer(targetIdentity, isMain)` は
+  ```
+  if (!this.immediateWindowBusy && targetIdentity != this.currentRenderTarget) {
+      flushPendingBeforeGlDraw();      // ← ここに待機がある
+  }
+  ```
+  を持つ。resize で MC がフレームバッファを作り直すと **同一性（`System.identityHashCode`）が変わる**ため、
+  この分岐が走り、**その中の待機が失敗して `noteStalled()` が立つ**（§0.100 のスタックと一致）。
+- **修正点（次の実装単位・1つ）**: **サイズが変わった bind では flush を致命にしない**。
+  - 具体的には、この分岐で「**フレームターゲットのサイズと、いまバインドされている FBO のサイズが食い違う**」場合
+    （＝ resize の境界）は、**待機を伴う flush を行わずに**ターゲットを切り替える。
+    直前のフレームバッファの内容は**この時点ですでに提示済み**で、その形は存在しないため、順序を守る対象がない。
+  - 「settle できないときは資源を解放しない」という**既存契約はそのまま**（解放しない）。変えるのは
+    **描画を止めないこと**だけ。
+  - `noteStalled()` は計器として残す（次に同種の失敗が起きたとき site を言う）。
+- **受入（実施時）**: resize run で **`CELTIUM_STALL` が出ない**、`presentedFromVulkan` が同 duration の
+  resize なし水準（700 台）に戻る、提示画像が **1024x640** で書かれる。
+- **現 HEAD の受入（変更なし）**: resize なし run は 0.001 / 0.01 %・提示 806・clean/PASSED を維持。
+
 ## 0.100 resize の最終原因: **bind フック内の `bindFramebuffer` の待機が失敗し、stalled が恒久化する**
 
 - **計器**: `gpuStalled = true` の4箇所すべてを `noteStalled()` に置き換え、**一度だけ** site を stdout に出す。
