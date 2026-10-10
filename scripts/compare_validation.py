@@ -71,7 +71,9 @@ def buffer_stats(debug_strings):
             index, rest = rest.split(" MiB ", 1)
             buffers = rest.strip().lstrip("(").split(" ", 1)[0]
             geometry_used, geometry_allocated = (int(value) for value in geometry.split("/"))
-            index_used, index_allocated = (int(value) for value in index.split("/"))
+            # The index half of the line carries its own "I: " prefix - it was being fed to int() verbatim, so the
+            # parse always failed and the memory comparison silently returned {"raw": line} (audit A24).
+            index_used, index_allocated = (int(value) for value in index.lstrip("I: ").split("/"))
         except (ValueError, IndexError):
             return {"raw": line.strip()}
         return {
@@ -205,6 +207,12 @@ def main():
         left = reference["report"].get(field)
         right = candidate["report"].get(field)
         checks[field] = {"reference": left, "candidate": right, "equal": left == right}
+        # A field absent on BOTH sides compares None == None and would pass silently: presence is required per side,
+        # not just agreement, so a fixture that stops emitting the field fails closed (audit A24).
+        if left is None:
+            problems.append(f"{field}: missing in reference report")
+        if right is None:
+            problems.append(f"{field}: missing in candidate report")
         if left != right:
             problems.append(f"{field}: {left!r} != {right!r}")
 
@@ -212,6 +220,10 @@ def main():
         left = reference["report"].get("framebuffer", {}).get(field)
         right = candidate["report"].get("framebuffer", {}).get(field)
         checks[f"framebuffer.{field}"] = {"reference": left, "candidate": right, "equal": left == right}
+        if left is None:
+            problems.append(f"framebuffer.{field}: missing in reference report")
+        if right is None:
+            problems.append(f"framebuffer.{field}: missing in candidate report")
         if left != right:
             problems.append(f"framebuffer.{field}: {left!r} != {right!r}")
 
@@ -231,6 +243,12 @@ def main():
         "candidate": candidate_counts,
         "equal": reference_counts == candidate_counts,
     }
+    # Two runs that both produced no debug lines compare {} == {} and would pass without having seen any pass:
+    # the comparison needs at least one named pass from each side to mean anything (audit A24).
+    if not reference_counts:
+        problems.append("passSections: reference report has no section counts")
+    if not candidate_counts:
+        problems.append("passSections: candidate report has no section counts")
     if reference_counts != candidate_counts:
         problems.append(f"visible sections per pass: {reference_counts} != {candidate_counts}")
 
@@ -245,6 +263,11 @@ def main():
         "comparedFields": list(memory_fields),
         "equal": memory_equal,
     }
+    # Missing on both sides reads as equal above: require the debug line on each side (audit A24).
+    if reference_memory is None or reference_memory.get("geometryUsed") is None:
+        problems.append("geometryMemory: reference report has no buffer statistics")
+    if candidate_memory is None or candidate_memory.get("geometryUsed") is None:
+        problems.append("geometryMemory: candidate report has no buffer statistics")
     if not memory_equal:
         problems.append(f"geometry memory (used MiB and buffer count): {reference_memory} != {candidate_memory}")
 
