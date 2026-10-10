@@ -680,6 +680,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int readbackSkippedAfterAnnouncement;
     /** Why a preflight returned no descriptor, split by cause so the refusal can be acted on. */
     private int prepareDescriptorFailures;
+    /** Preflights refused because no pass had run yet, and the frame range they happened in. */
+    private int prepareNoPassRefusals;
+    private long prepareNoPassFirstFrame = -1L;
+    private long prepareNoPassLastFrame = -1L;
     private String lastPrepareFailure = "none";
     /** Cached highest line width the device can draw, or -1 before it has been asked. */
     private float maxLineWidth = -1.0F;
@@ -1515,6 +1519,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " lazyMirrorSupplies=" + this.lazyMirrorSupplies
                     + " lazyMirrorFailures=" + this.lazyMirrorFailures
                     + " prepareDescriptorFailures=" + this.prepareDescriptorFailures
+                    + " noPassRefusals=" + this.prepareNoPassRefusals
+                    + " noPassFrames=" + this.prepareNoPassFirstFrame + ".." + this.prepareNoPassLastFrame
                     + " lastPrepareFailure=[" + this.lastPrepareFailure + "]");
             System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
                     + " readbacksSkipped=" + this.readbackSkippedAfterAnnouncement
@@ -3084,7 +3090,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Every null return names its cause here, so the offer path has one reason to report instead of judging the
             // same condition again with a message that merged three different causes.
             this.prepareDescriptorFailures++;
-            this.lastPrepareFailure = "format=" + format + " texture=" + textureId + " (no terrain pipeline for this pass)";
+            // Which pass was asked for, and whether there was one at all: "no pipeline for this pass" covers both "the
+            // pass has not run yet in this instance" and "this pass has no pipeline", and the two need different fixes.
+            this.prepareNoPassRefusals++;
+            this.prepareNoPassFirstFrame = this.prepareNoPassRefusals == 1 ? this.frameId : this.prepareNoPassFirstFrame;
+            this.prepareNoPassLastFrame = this.frameId;
+            this.lastPrepareFailure = "format=" + format + " texture=" + textureId
+                    + (this.lastUiPass == null ? " (no pass has run yet in this instance)" : " (no pipeline for this pass)");
             return null;
         }
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();

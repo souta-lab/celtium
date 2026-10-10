@@ -27,6 +27,29 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.41 条件 (b) の残りを**性質で分離**: 起動直後のみの 80 件と、FBO 所有権に阻まれる 709 件
+
+- **計器**: `lastUiPass == null`（その実体でまだ地形パスが走っていない）と「pass はあるがパイプラインが無い」を分けて数えた。
+- **結果（AMD、duration 120 s、676 frames、exit 0 / clean / PASSED）**:
+
+| 計器 | 値 |
+|---|---|
+| `noPassRefusals` | **80** |
+| `noPassFrames` | **1..10**（＝**起動後 10 フレームのみ**） |
+| 拒否理由 | `preflight: format=6/9 … (no pass has run yet in this instance)` |
+
+  **起動直後の 10 フレームを過ぎると 0 件**。676 フレーム中 1.2 %。
+- **読み方（(b) の性格分け）**:
+  1. **80 件は本質的**: その実体でまだ**どのパスも走っていない**ので、**native の描画先（render pass）が存在しない**。
+     拒否して GL に渡すのが正しい（**欠陥ではない**。捕捉は tick 200 なので受入には影響しない）。
+  2. **709 件（format 2）は「画面合成以外の合成」**（overlay を framebuffer へ混ぜる・postprocess 系）。
+     これらは**行き先が GL のフレームバッファ**であり、**FBO の所有権が Vulkan に移るまで native にできない**
+     ＝ **item 6（GL context / bridge の除去）と一体**である。**postprocess の設計ではなく所有権の話**だと確定した。
+  3. 23 件（format 5・lightmap 未ミラー）は下の節で扱う。
+- **意味**: 条件 (b) の残りは「GL を消す作業」ではなく、**(i) 起動直後は本質的に GL に渡す**、
+  **(ii) 709 件は FBO 所有権の移動待ち**、(iii) 少数の供給漏れ、という**3つの性質に分かれた**。
+  次に着手できるのは (iii) である。
+
 ## 0.40 GUI / font / HUD の画像等価（項目5の未比較項目・提示画像経路で測定）
 
 - **場面**: 三人称＋`keepGui`（HUD とフォントが描かれる）。証拠は**提示画像**（`dumpPresentedImage`）。
