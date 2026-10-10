@@ -1426,10 +1426,27 @@ public final class ValidationClient {
                 // family that draws through its own path (monster model, spider legs, enderman's TESR-ish layering).
                 // The player faces -Z (yaw 180, pitch 20): the spawns sit in that view cone, at ground level, so the
                 // comparison sees the models rather than measuring particles behind an out-of-frame mob.
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -3.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -4.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -3.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -5.0D);
+                // Eight to twelve blocks ahead, where pitch-20-down keeps a ground-standing model inside the frame:
+                // anything closer lands below the view cone's lower edge and the comparison only measures particles.
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -10.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -8.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -12.0D);
+                // TESR and item coverage in the same view cone: a chest and a sign draw through their special
+                // renderers (a model display list plus the sign's text quads), and the dropped item is the item
+                // entity's baked-model path rather than an entity model list.
+                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
+                int gy = mc.world.getHeight(px, pz - 6);
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px - 1, gy, pz - 6),
+                        net.minecraft.init.Blocks.CHEST.getDefaultState(), 3);
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + 1, gy, pz - 7),
+                        net.minecraft.init.Blocks.STANDING_SIGN.getDefaultState(), 3);
+                net.minecraft.entity.item.EntityItem dropped = new net.minecraft.entity.item.EntityItem(mc.world,
+                        mc.player.posX + 1.0D, gy + 0.5D, mc.player.posZ - 5.0D,
+                        new net.minecraft.item.ItemStack(net.minecraft.init.Items.APPLE));
+                dropped.motionX = 0.0D; dropped.motionY = 0.0D; dropped.motionZ = 0.0D;
+                dropped.setNoDespawn();
+                celtium$spawnEntity(mc, dropped, 1.0D, -5.0D);
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
             }
