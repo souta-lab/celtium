@@ -3355,6 +3355,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // how 870 format-2 refusals in a run stayed unnamed (measured: the stage marker said this gate, and the tally
         // still read "unrecorded").
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        boolean sharedComposite = false;
         if (fbo == 0) {
             // The default framebuffer is what Minecraft's own composite draws into: it blends an overlay over the frame on
             // the way to the screen. With the game rendering into the shared images that framebuffer is not where the
@@ -3366,6 +3367,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (sharedTarget != 0) {
                 this.defaultFramebufferCompositesTaken++;
                 fbo = sharedTarget;
+                sharedComposite = true;
                 this.immediateLastRefusal = "taken: the default framebuffer composite goes into the shared image";
             } else {
                 this.immediateLastRefusal = "target: the default framebuffer is bound";
@@ -3377,7 +3379,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateLastRefusal = "target: the viewport origin is " + viewport[0] + "," + viewport[1];
             return false;
         }
-        if (!ensureFrameTarget()) {
+        // The composite redirected above already proved the shared target exists and matches: asking ensureFrameTarget()
+        // again would re-read the bound GL framebuffer - still the default one - and refuse on what the redirect just
+        // decided. The framebuffer violation below is equally about the bound object, so it is skipped the same way.
+        boolean targetReady = sharedComposite
+                ? this.frameTarget != null && this.frameTarget.matches(this.targetWidth, this.targetHeight)
+                : ensureFrameTarget();
+        if (!targetReady) {
             this.immediateLastRefusal = "target: no frame target for " + this.targetWidth + "x" + this.targetHeight;
             return false;
         }
@@ -3386,10 +3394,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + this.targetWidth + "x" + this.targetHeight;
             return false;
         }
-        String violation = this.frameTarget.currentFramebufferViolation();
-        if (violation != null) {
-            this.immediateLastRefusal = "target: " + violation;
-            return false;
+        if (!sharedComposite) {
+            String violation = this.frameTarget.currentFramebufferViolation();
+            if (violation != null) {
+                this.immediateLastRefusal = "target: " + violation;
+                return false;
+            }
         }
         return true;
     }
@@ -5286,6 +5296,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long lastTerrainPassFrame = -1L;
     /** One-shot: the frame's order, for settling whether the window runs before the terrain. */
     private boolean windowOrderLogged;
+    /** One-shots: the frame-target refusals that used to collapse into "no frame target". */
+    private int nonTextureAttachmentLogged;
+    private int foreignFboLogged;
     /** One-shot: the distinct projection depth rows the groups of a frame draw with. */
     private int groupDepthRowsSeen;
     /** One-shot: the matrices a model group is stored with. */
@@ -5718,16 +5731,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (fbo == 0) return false;
         int type = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
                 org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
-        if (type != org.lwjgl.opengl.GL11.GL_TEXTURE) return false;
-        int texture = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
-                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-        int width = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-        int height = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
-        if (width <= 0 || height <= 0) {
-            record("drawable size unavailable");
+        if (type != org.lwjgl.opengl.GL11.GL_TEXTURE) {
+            if (this.nonTextureAttachmentLogged < 6) {
+                this.nonTextureAttachmentLogged++;
+                // First seen as a steady "no frame target" refusal for format-2 quads; the reason this gate fails has to
+                // name the framebuffer and its attachment, which only the dedicated line surfaces.
+                System.out.println("[Celtium] CELTIUM_TARGET_REFUSAL fbo=" + fbo + " attachmentType=" + type
+                        + " target=" + this.targetWidth + "x" + this.targetHeight);
+            }
             return false;
         }
-        return ensureFrameTarget(width, height);
+        int texture = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
+                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+        int w = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+        int h = org.lwjgl.opengl.GL45C.glGetTextureLevelParameteri(texture, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
+        if (w != this.targetWidth || h != this.targetHeight) {
+            // A non-shared framebuffer - a mod's or the post-chain's - reads a different size than the game target.
+            if (this.foreignFboLogged < 8) {
+                this.foreignFboLogged++;
+                System.out.println("[Celtium] CELTIUM_TARGET_FOREIGN fbo=" + fbo + " attachment=" + texture
+                        + " " + w + "x" + h + " target=" + this.targetWidth + "x" + this.targetHeight);
+            }
+        }
+        if (w <= 0 || h <= 0) {
+            if (this.nonTextureAttachmentLogged < 6) {
+                this.nonTextureAttachmentLogged++;
+                System.out.println("[Celtium] CELTIUM_TARGET_REFUSAL fbo=" + fbo + " attachment=" + texture
+                        + " size " + w + "x" + h + " (dead or incomplete)");
+            }
+            return false;
+        }
+        return ensureFrameTarget(w, h);
     }
 
     /**

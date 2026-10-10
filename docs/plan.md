@@ -46,6 +46,22 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.109 **修正・受入済み**: default-framebuffer 合成 quad（vignette/portal 等の overlay）を shared target へ —— format-2 の定常残量を解消
+
+- 残量計測で format-2（POSITION_TEX_COLOR）が唯一の**増加する**拒否（`target: no frame target`、~40/周期）だった。
+  計器を `ensureFrameTarget()` へ追加して特定：fbo==0 の default-FB composite（`framebufferRender` とは別、
+  vignette/portal/pumpkin/hurt の overlay quad）は `supportedImmediateTarget` の redirect で shared target へ送られるが、
+  直後の `ensureFrameTarget()` が **GL の bound framebuffer を再読**して fbo==0 → false、さらに
+  `currentFramebufferViolation` も fbo==0 を "default framebuffer" として拒否 —— redirect が決めた描画を
+  2段目で潰していた。
+- 修正：redirect 成立時は ensureFrameTarget を `frameTarget.matches(targetW,targetH)` の確認に置き換え、
+  violation 検査も skip（bound fbo=0 は redirect が正と決めた状態）。`framebufferRender` の self-blit は
+  `samplesBoundFramebufferColor` で present path へ行きこの経路に来ないので feedback 問題なし。
+- 結果：format-2 accept **2:0 → 2:170**、`no frame target` 拒否消滅、残り拒否は startup transient のみ
+  （"no pass has run yet"、固定件数）。`defaultFramebufferCompositesTaken` が増加＝overlay が shared image に
+  到達。AMD `p454-cmp` PASSED・clean。GL が fbo 0 へ描いていた overlay（Vulkan present では不可視だったもの）が
+  提示画像へ乗るようになった。
+
 ## 0.108 **修正・受入済み**: model draw（表示リストの entity/手の native 描画）を既定 ON に（goal 項目5 の一部）
 
 - `MODEL_DRAW`（`celtium.vulkan.modelDraw`）の既定を false → true。受入根拠：entity 場面（NoAI で固定した
