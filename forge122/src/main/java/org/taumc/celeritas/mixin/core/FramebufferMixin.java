@@ -21,28 +21,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(Framebuffer.class)
 public abstract class FramebufferMixin {
 
+    /** One-shot: whether the bind RETURN hook runs and what it sees, which decides if the adoption can happen there. */
+    private static int celtium$adoptProbeLastSize = -1;
+
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
         // Point the game's own framebuffer (by identity) at the shared images. Fail-open.
         try {
             net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
-            if (mc != null && mc.getFramebuffer() == self) {
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-                if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                    org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
-                            (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
-                    int adopted = vulkan.celtium$adoptableFramebuffer(self.framebufferWidth, self.framebufferHeight);
-                    if (adopted != 0 && self.framebufferObject != adopted) {
-                        self.framebufferObject = adopted;
-                        self.framebufferTexture = vulkan.celtium$adoptedColorTexture();
-                        self.depthBuffer = vulkan.celtium$adoptedDepthTexture();
-                        vulkan.celtium$noteFramebufferAdopted();
-                        vulkan.celtium$noteGlErrorAt("at the swap", org.lwjgl.opengl.GL11.glGetError());
-                    }
-                }
-            }
+            // The adoption is not done here: at HEAD the bind has not happened yet, so the size read below would be the
+            // previous framebuffer's. It runs in celtium$adoptAfterBind instead.
         } catch (RuntimeException | LinkageError ignored) {
             // A hint must never break the frame.
         }
@@ -64,6 +53,51 @@ public abstract class FramebufferMixin {
             backend.bindFramebuffer(System.identityHashCode(this), mc != null && mc.getFramebuffer() == (Object) this);
         }
     }
+    /**
+     * The adoption, after the bind has taken effect.
+     * <p>
+     * The target is prepared first, from the framebuffer that is bound now, which is the whole point of running here: a
+     * resize replaces the game framebuffer's textures, and preparing the shared images before the bind would have used the
+     * old size and kept them at it.
+     */
+    @Inject(method = "func_147610_a", at = @At("RETURN"), require = 0)
+    private void celtium$adoptAfterBind(boolean setViewport, CallbackInfo info) {
+        try {
+            net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            if (mc == null || mc.getFramebuffer() != self) {
+                return;
+            }
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
+                return;
+            }
+            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
+                    (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
+            boolean ensured = vulkan.celtium$ensureTargetForBoundFramebuffer();
+            int adopted = ensured ? vulkan.celtium$adoptableFramebuffer(self.framebufferWidth, self.framebufferHeight) : 0;
+            // Printed whenever the size changes rather than a fixed number of times: the bind runs every frame, so a
+            // count is used up long before a mid-run resize, which is exactly the case being looked at.
+            int size = self.framebufferWidth * 100000 + self.framebufferHeight;
+            if (size != celtium$adoptProbeLastSize) {
+                celtium$adoptProbeLastSize = size;
+                System.out.println("[Celtium] CELTIUM_ADOPT_PROBE afterBind size=" + self.framebufferWidth + "x"
+                        + self.framebufferHeight + " ensured=" + ensured + " adopted=" + adopted + " currentFbo="
+                        + self.framebufferObject);
+            }
+            if (adopted != 0 && self.framebufferObject != adopted) {
+                self.framebufferObject = adopted;
+                self.framebufferTexture = vulkan.celtium$adoptedColorTexture();
+                self.depthBuffer = vulkan.celtium$adoptedDepthTexture();
+                vulkan.celtium$noteFramebufferAdopted();
+                vulkan.celtium$noteGlErrorAt("at the swap", org.lwjgl.opengl.GL11.glGetError());
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A hint must never break the frame.
+        }
+    }
+
     @Inject(method = "func_147609_e", at = @At("HEAD"), require = 0)
     private void celtium$beforeUnbind(CallbackInfo info) {
         // Probe A2: the other end of the same method, so "during the bind" and "before it" are told apart.

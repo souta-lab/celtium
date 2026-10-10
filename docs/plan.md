@@ -39,6 +39,36 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.98 **実装した**: adoption を bind の RETURN へ移し、その場でターゲットを実サイズに合わせる（機構は計器で確認）
+
+- **変更（1単位）**:
+  - `VulkanTerrainGpuBackend` に **`celtium$ensureTargetForBoundFramebuffer()`** を公開（`ensureFrameTarget()` をそのまま呼ぶ）。
+  - `FramebufferMixin` の adoption を **bind の HEAD から RETURN へ移動**し、その注入から
+    「まず ensure、次に adopt」の順で実行する。HEAD 側には**理由のコメント**を残した。
+  - RETURN 注入に**サイズが変わったときだけ出す計器**（`CELTIUM_ADOPT_PROBE`）を入れた（毎フレーム bind するので件数制限では
+    resize 前に使い切るため）。
+- **計器の結果（resize run）**:
+  ```
+  afterBind size=1280x720 ensured=true adopted=7 currentFbo=1     <- 初回 adopt
+  afterBind size=1024x640 ensured=true adopted=7 currentFbo=7     <- resize 後
+  ```
+  ＝ **resize 後も新サイズで ensure が通り、共有 FBO（7）が維持されている**。
+  **リサイズ関連の拒否は消えた**（debug に残るのは起動時の `no frame target for 1280x720` 1件のみ）。
+- **受入指標の訂正（自分の前節の条件が誤り）**: `gameFramebufferAdopted >= 2` を条件にしたが、
+  **FBO 名が 7 のまま**なので**再 adopt は不要**で、このカウンタは 1 のままで**正しい**。
+  正しい指標は「**resize 後も共有 FBO が維持され、提示が続くこと**」である。
+- **実測（提示レート・duration で正規化）**:
+  | run | duration | presentedFromVulkan | 毎秒 |
+  |---|---|---|---|
+  | resize 前の実装（p410） | 120 s | 265 | 2.21 |
+  | **修正後（p413）** | 100 s | **331** | **3.31** |
+  | resize なし（p406） | 120 s | 785 | 6.54 |
+
+  ＝ **改善したが、resize なしの水準には戻っていない**（未解決として残す）。
+- **受入**: p413/p412 とも exit 0 / **clean** / **PASSED** / msgCount 0。
+- **次の一手（1点）**: resize 後に残る提示の目減りを、**提示経路の拒否理由ではなくフレーム供給側**で見る
+  （resize で作り直された `Framebuffer` の**テクスチャの再確保**と、1フレームあたりのどこが重いかを計測する）。
+
 ## 0.97 修正手順の障害を特定: `ensureFrameTarget()` は**バインド中の FBO** を読むので HEAD では古いサイズを読む
 
 - **読んだ事実**:

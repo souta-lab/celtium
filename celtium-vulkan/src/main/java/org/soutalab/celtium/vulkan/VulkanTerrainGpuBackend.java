@@ -5445,6 +5445,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean ADOPT_GAME_FRAMEBUFFER =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.adoptGameFramebuffer", "true"));
 
+    /**
+     * Prepares the frame target for whatever framebuffer is bound right now and answers whether it is ready.
+     * <p>
+     * The adoption runs after the game has bound its framebuffer, not before: {@code ensureFrameTarget} reads the size of
+     * the bound colour texture, and before the bind that is still the previous framebuffer. Doing it in that order made a
+     * resized window keep the old shared images - measured: after a mid-run resize the game bound a 1024x640 framebuffer
+     * while the shared images were 1280x720, {@code adoptableFramebuffer} answered 0, and no present came from Vulkan
+     * again (265 presents against 785 in the same duration without a resize).
+     */
+    public boolean celtium$ensureTargetForBoundFramebuffer() {
+        return ensureFrameTarget();
+    }
+
     public int celtium$adoptableFramebuffer(int width, int height) {
         if (!ADOPT_GAME_FRAMEBUFFER || this.frameTarget == null) {
             return 0;
