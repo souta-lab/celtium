@@ -12,30 +12,41 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 - 影mod / shader pack互換はCeltium本体のshaderless完成後。バニラのShaderGroup・spectator効果・entity outline等は本体機能であり、この延期を理由に省略しない。
 - 一括削除・全面書き直しはしない。現在の変更と有効な修正を保持し、一つの根因の所有・状態契約を揃える小さな修正と必要な構造整理を進める。リブランド・配布・性能・既存mod互換の強化も完成工程に残す。
 
-【現在の到達点と未完】
-- terrainと複数のimmediate pipelineはnative描画を持つ。既定受付はformat 1〜9で、1 runの実測は offers 13000 / accepted 10643 / GL本体 2386（AMD・軽い世界）。線（GL_LINES系）はnative化され、AMD 797・Intel 280 accepted（変更前17）、5 run連続PASSEDで線の拒否ゼロ。format認識・受付は全vanilla coverageを意味しない。
-- per-frame presentが成立し、GL swapは停止した（263 presented / 262 swap skipped）。提示画像はGLフレームと画素単位で一致し（上下反転比較で平均絶対差0.015・最大3）、GL最終合成を止めても内容は同一（glCompositesSkipped=717/718、off比 平均絶対差0.001）。GUI/font/HUDも画像等価（HUD帯 平均絶対差0.000・>8が0.00%）。
-- lightmapの供給漏れ（format 5）は解消し、AMD/Intel両方で受入した（lightmapSuppliedOnDemand=2・失敗なし・拒否ゼロ）。Endは両GPUでcapture時dimension 1のPASSED。
-- **texture所有の統合を進め**（§0.106）、**lightmapのper-update readback 176→2**・**sprite patchのin-place化**を両GPUで受入した。内訳は3件：announceが`bound`を見てlightmap画素を誤textureへ aimしていた（`func_110988_a`のidパラメータを使うへ）、`onGlTextureReallocated`が同一サイズの内容更新でもmirrorをforgetしていた（サイズ対応にしimage/view/descriptorを保持→`forgotten` 176→0）、`fromImage`/`consumeReadback`の所有状態未同期でatlas patchがreadbackに流れていた（`beforeInit` 818→18）。`announceFullPixels`の生成はDSAでsize+GL filterを照会（lightmapはlinear）。残る16x16 readback 2回は初回確立分。
-- **Netherは両GPUで受入した**（§0.105）。capture時player/world/providerが-1で、到着後native sceneを描いた（AMD 967・Intel 349 pass・skip 0・両方 PASSED/clean/VUID 0）。帰還の内訳は2件で両方修正：portal AXIS直交step（面方向に滑るだけだった+2Zでportal内に残り80tickで送り返されていた）と、backend再生成後の共有texture死（0x0→frame targetがattachment寸法を読めず永久拒否するデッドロックを、framebuffer論理サイズへのfallbackで解消）。
-- **model経路（表示リスト）は既定ON**（§0.108、`modelDraw`）。再計測でGL replay基準（AMD 1.15 %）を下回ったため昇格：native AMD 0.35 % / Intel 0.16 %。entity/TESR/hand/itemの表示リスト経由描画がnativeになり、censusの`CANCELLED`でcreeper・手・sign/chestのlist描画を実測。**texture-envのinterpolate（hurt flash・team outline）もnative化した**（replay時にlightmap unitのcombine mode+定数を読み、pushの空きslotへ負alpha符号でencode——`CELTIUM_ENV_COMBINE rgba=1.0,0.0,0.0,0.3`実測）。
-- **残り場面coverageを測定済み**：spectator 3視点は動作（creeper緑・spider 5眼・enderman反転、いずれもpresented=screenshot 0.000 %・PASSED —— post chainはGL実行だが出力はshared FBO→提示へ届く）。selection overlay・block crack overlay・weather(rain)も両経路一致で描画確認。TESR場面の定常拒否は0（startup transientのみ）。
-- **post-processも全native化**（A21・4063b7835+26c8c31ba）：`ShaderGroup.render`をhookして全passをuniform実値付きで収集しnative executorへ。game-main系（spectator系3＋desaturate/bits/blur/color_convolveのpostfx）はterrainと同じmid-frame handoff内で`minecraft:main`=shared image・named target=pure-VK imageとして実行。entity_outline系はseeded pathで実行（glGetTexImage seed→chain target→passes→fence download→glTexSubImage2D write-back）。7 program全port・push正規化・descriptor ring方式。**AMD/Intel両受入**（spectator 3 chain＋glow outline・postChains=40-51・VUID 0）。vanillaが実際に届かせない残り17 program（antialias/fxaa/ntsc等）は未port・該当chainはGL fallback。
-- **項目5のnative coverageはほぼ検証済**：registry sweepで全block model描画（244/244・両GPU）、texture matrix（glint）とdepthFunc（glint EQUAL・held item ALWAYS）もnative化・両GPU受入、env-combine hurt flash両GPU実測。post chainもnative化済（上記）。
-- **perf実測**：pinned Celeritas対同一fixture・AMDで`frameIntervalP50Ms` —— 既定世界 28.28 vs 16.32 ms（baselineは~16ms cap）、軽世界（worldLayers=3） 6.84 vs 16.05 ms。currentはuncapで軽世界はcap以下・既定世界はVK側描画量に比例して重い（dual-render構造の直列化が主因）。
-- **device-lost復旧**：fence waitの非TIMEOUT失敗でもframeをabandonする欠陥を修正、`-Dceltium.vulkan.failDeviceLost`でpost-submit lost注入 → bounded終了・37 draw拒否（§0.110）。
-- **entity場面の既定構成の残差はformat 5（粒子系）の生存粒子そのもの**で、**描画欠陥ではなくfixtureのキャプチャ仕様**（§0.104）。スクリーンショットはキャプチャ待機内で毎tick実体除去＋clearEffectsを走らせるため粒子を含まず、提示ダンプは除去前フレームで粒子を含む。除外方向で0.32%＝ノイズ床。同フレームの静止FLAME比較（平地・dumpPresentedTick=199）で両画像にFLAMEが写り、色・位置は正しく残差は経年差のみ（AMD 0.157%、色は両方オレンジ）。**format 5のパイプラインは正しい**。なお「動く粒子の画素一致」はこのfixtureでは原理的に取れない（同フレームGL参照がない）ので、これは計測限界として残す。
-- **通常場面（実体なし）は両GPUで一致**（AMD 0.011/0.01 %、Intel 0.000〜0.016/0.00 %）。
-- **resize（計画の項目7）は両GPUで受入した**。恒久stallは**フレームバッファ置換の期間全体で順序flushを行わない**契約で解消（`CELTIUM_STALL` 0件・提示843、§0.102）。その後残った「提示が旧サイズ内容」の内訳は：fixtureの`mc.resize()`はゲームのframebufferだけを変え、**実ウィンドウは1280x720のまま**＝swapchainが1280x720なのは正しく、実害は**フレームをswapchain全面へ伸縮blit**していたことと、swapchain作成が**1280x720ハードコード＋ドライバのOOD報告頼み**だったこと。**提示blitをGL compositeの配置契約（正立・1:1・左下アンカー・window clip）へ**揃え、extentはsurfaceの実効extentへ**フレーム毎に照合して即再作成**する方式にした。あわせて、これまで提示画像はtexel順序のまま**実ウィンドウでは上下反転**していたのを正立に直した（比較の反転要因だった）。resize runで描画領域 vs screenshot（**反転なし**・新作法）＝ **AMD 0.001 %・Intel 0.000 %**、resizeなし退行は **0.000 %**、stall 0・提示 AMD 810 / Intel 356・両方 PASSED/clean/VUID 0（§0.103）。**以降 `celtium-presented.png` は反転なしで比較する**。
-- **旧経路とlab flagを1つ撤去した**：`MIRROR_GL_MIPS`（GLのmip段数を写す経路、既定false、測定で5.60 %＝現行の0.16〜0.28 %より二十倍以上悪い）とその参照17箇所を削除。AMD 2場面＋Intel 1場面で退行なし。
-- **新たに観測した未解決点（解消済）**：resize後の提示サイズ問題は §0.103 で受入した（上のresize項参照）。実ウィンドウの正立表示はコード契約どおりに直し、compositor出力の実測もgrim screencopyで確認済（下の条件(c)項参照）。
-- **引き継ぎ書**：`docs/handoff-2026-10-10-next-model.md`（環境・実行手順・計器・**棄却済み仮説**・作業規律・落とし穴）。
-- 失敗経路は提示・線・合成の変更後も正しい。fence timeoutは検出して停止しteardownを548回スキップして資源を解放せず（stalledStops=1）、submit失敗はfixtureがFAILEDとして報告する。いずれもvalidationClean=true・VUID 0・クラッシュなし。
-- 条件(b)の残量は実測で約2割がGL。内訳はformat 2の非画面合成 709（FBO所有権がVulkanに移るまでnative化不可）、起動直後10フレームのみの80（nativeの描画先がまだ無いため本質的）、format 1/6/9の少数。lightmap分は解消済み。通常fixtureの0/frameを全sceneのreadback除去としない。
-- **ゲームの通常フレームがVulkan所有のcolor/depthで生産され、swapchainへ提示される経路が既定になった**（adoption）。AMD/IntelともフラグなしのrunでPASSED・VUID 0・GLエラーなしで、同一vendorのGL経路との画像差はAMD 0.001/0.00%・Intel 0.026/0.02%。bridgeの往復blitとGL深度変換は走らない。`-Dceltium.vulkan.adoptGameFramebuffer=false`で旧経路に戻せる。残るGL依存は「GL contextの生成」と「既定フレームバッファへ描く合成（post-present overlay待ち）」である。
-- 実window/compositor出力（条件(c)）は**確認済**：`--headless` runがnested wlroots-headless swayを起動し、`grim`がそのWayland socketからcompositor出力をscreencopy —— 実Minecraft sceneが正立・正色で届く（sky bandのRGBがgame screenshotと完全一致、証拠 `docs/history/evidence/grim-compositor-2026-10-10.png`）。swapchain→window→compositorの到達は実証された。method名や環境制約だけで完成目標から外さない。
-- 地形の暗さの主要因とlightmap座標の修正はあるが、照明・state・alpha/depth/blend・sampler/mip・遠景等の画質残件はある。entity/TESR/item/model全体のnative描画・照明・見た目は未完で、手持ちの取消だけをモデル完成と扱わない。FBO/postprocessのnative化、全block state、全entity/TESR、全mod互換、性能実測、リブランド/配布も未完である。過去の68.81%やlocal 0.267/255を最新版全体の一致率にしない。固定world timeだけでsprite animation位相も固定されたとは扱わない。
-- AMDのblock registry254種掃引とIntelの部分掃引、weather/particle/GUI等の局所fixtureは実績として保持する。現在HEADや未commit差分の進行に合わせてこのsnapshotを更新する。
+【現在の到達点と未完】（2026-10-11 時点。証拠と受入の現状表は docs/plan.md、履歴は docs/history/）
+
+到達点:
+- terrain・複数の immediate pipeline・線は native 描画を持ち、**GL context なしの window が実 scene を描いて提示する**
+  （fixture PASSED・validationClean・0 VUID・画像主張 PASSED。§0.115〜§0.119）。
+- 提示は per-frame で成立し、GL swap は 1対1 で停止。resize は両 GPU で受入済み（§0.102 §0.103）。
+- **lightmap の黒は解消**。根因は announcement の配列形状（producer が 1行1配列、consumer は level 0 全体を要求）で、
+  producer を契約に合わせた（§0.116）。**model/TESR は既定 ON** で、float translate のミラー欠落を修正し、
+  エンチャント台の本が実ブロック位置に描画されることを GL 参照と画素位置で確認（§0.118）。
+- **Nether は capture 時に dimension -1 で native scene を描き、validation も clean**
+  （`.celtium-work/runtime/vuid-after2`: client/world/server すべて -1・`dimensionFramesInTarget=129`・msgs 0・§0.117 §0.119）。
+  根因は fixture 側（到着位置がポータル内＋`timeUntilPortal=0`）だった。
+- **entity outline の chain は実シルエットを読み**（`postTargets=1 postAdopted=1 postRunsOnStandIn=0`）、
+  その出力を registry に publish する配線まで入った（§0.118）。
+- GPU 検証は AMD RX 6400 と Intel UHD 630 の両方で bridge/GL-less とも PASSED。
+  描画側が選択デバイスを `CELTIUM_NATIVE_DEVICE` で名乗り、harness はそれで `--require-gpu` を判定する（§0.118）。
+- 監査バッチ（cancellation 契約・adoption 絞り込み・overlay 経路・GPU 報告）は修正・受入済み（§0.118）。
+
+未完:
+- **可視 glow**（publish は入ったが画面上の glow は未受入）、**GL-less の一部 frame に出る半透明 wedge**、
+  **depth format の契約**（D32_SFLOAT 固定）、**Nether の画像ゲート較正**（scene 非依存の床で誤 FAIL）、
+  **video settings シーン**の受入。
+- 全 entity/TESR/item/model の画質（照明・alpha/depth/blend・sampler/mip・遠景）、FBO/postprocess の native 化、
+  全 block state、**全 mod 互換**（ロード互換と native 描画を分けて報告）、**性能実測**（Celeritas 同条件・p95/p99・
+  memory・chunk update）、リブランド/配布。
+- **条件 (c)（実 window/compositor 出力）は未確認**。捕獲手段の棚卸しと不足条件の記録を進めている。
+  環境制約を理由に目標から外さない。
+- 未検証 vendor/OS: この環境の AMD/Intel の Linux 以外はすべて未検証。
+
+使ってはいけない古い数値・古い主張:
+- 旧「Nether 両GPU受入」（§0.105 相当）は**撤回**。現在の Nether 受入は上記の run が根拠。
+- 過去の 68.81% や local 0.267/255 を最新版全体の一致率として使わない。固定 world time だけで
+  sprite animation 位相まで固定されたとは扱わない。
+- ⚠ GL-less の「拒否」は GL fallback ではない（GL 本体が stub の no-op なので、拒否＝どこも描いていない）。
+  条件 (b) の GL 残量は bridge 構成の拒否から読む（§0.118）。
 
 【直近の実行順】
 1. 現在進行中のdimension修正・readback計測と必要な受入を安全な境界でまとめる。未commit変更・成功した修正を保全し、短い構造修復フェーズへ入る。局所flag/定数/budget追加で症状だけ隠さず、一つの根因に対してproducer/consumer/invalidate/deleteを同じ契約へ揃える。抽象化や監査文書だけのroundを続けない。
