@@ -1324,7 +1324,20 @@ public final class ValidationClient {
                     System.out.println("[Celtium] CELTIUM_DIM_TRACE tick=" + worldTicks + " client=" + clientDim
                             + " world=" + worldDim + " server=" + serverDim
                             + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName())
-                            + " arrivedAt=" + celtium$arrivedAtTick);
+                            + " arrivedAt=" + celtium$arrivedAtTick
+                            // The client's own position and whether the chunk under it is loaded decide which side of the
+                            // wait is stuck: no chunk means the server never finished sending it, a loaded chunk with the
+                            // screen still up means only the screen is left behind.
+                            + " pos=" + (mc.player == null ? "-" : (int) mc.player.posX + "," + (int) mc.player.posY
+                                    + "," + (int) mc.player.posZ)
+                            + " chunkLoaded=" + (mc.world == null || mc.player == null ? "-"
+                                    : mc.world.isBlockLoaded(mc.player.getPosition()))
+                            // Whether the player is standing in a portal block is the candidate for the return to the
+                            // previous dimension: a transfer that lands inside one is sent back by the game's own
+                            // portal logic, which would look exactly like this trace.
+                            + " inPortal=" + (mc.player == null || mc.world == null ? "-"
+                                    : (mc.world.getBlockState(mc.player.getPosition()).getBlock()
+                                            == net.minecraft.init.Blocks.PORTAL)));
                 }
                 celtium$lastTraceClient = clientDim;
                 celtium$lastTraceServer = serverDim;

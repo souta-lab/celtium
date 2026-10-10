@@ -27,6 +27,31 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.20 Nether の根因が**別物**だった: 「画面で固まる」ではなく「到着後に約56tickで Overworld へ戻される」
+
+- 保存済み trace を読み直した結果、**停止ではなく往復**であることが分かった。新しい測定（AMD、`dimensionAtTick=40`、`dimension=-1`、
+  duration 200 s、trace は元から **5 tick ごと**に出ていた）:
+
+| tick | client | world | server | screen | arrivedAt |
+|---|---|---|---|---|---|
+| 40 | 0 | 0 | 0 | none | -1 |
+| **42** | **-1** | **-1** | **-1** | **GuiDownloadTerrain** | **42** |
+| 45〜85 | -1 | -1 | -1 | GuiDownloadTerrain（**約43 tick 表示**） | 42 |
+| **90 / 95** | -1 | -1 | -1 | **none**（＝ダウンロード完了。チャンクは届いている） | 42 |
+| **98** | **0** | **0** | **0** | GuiDownloadTerrain | 42 |
+| 100〜120 | 0 | 0 | 0 | GuiDownloadTerrain → none | 42 |
+
+  レポートは `NO_CAPTURE`、`dimensionServerResult=transferred`、`dimensionArrivedAtTick=42`、`clientDimensionAtExit=0`。
+- **読み方**: 転送は成功し、**クライアントもサーバーも -1 になり**、**ダウンロード画面も約48 tick で消える**
+  （＝チャンクは届いている）。**その約8 tick 後に dimension が 0 へ戻る**。旧説明の「GuiDownloadTerrain 残留」は
+  **到着直後の正常な待ち**であり、根因ではなかった。
+- **次の計器（実装済み・次の1 runで読む）**: trace に **クライアント位置**・**足元チャンクのロード状態**
+  (`world.isBlockLoaded`)・**足元がポータルブロックか**を追加した。候補は
+  (a) 転送先が**ポータル内**でゲーム自身のポータル論理が送り返す、(b) 統合サーバー側の再転送、(c) 到着地点が
+  チャンク外/不整合。**(a) はこの3つ目までの計器で確定できる**（`inPortal=true` なら確定）。
+- **ビルド**: 追加計器は `Chunk.isLoaded()` と `EntityPlayer.isInPortal()` が MCP 1.12.2 に無く2度失敗したため、
+  存在が確実な `World.isBlockLoaded(BlockPos)` と `getBlockState(...)==Blocks.PORTAL` に置き換えた（**ビルド緑**）。
+
 ## 0.19 提示経路の軽量化: 余分な copyback を外し、**AMD では pure win**（Intel は +10.3 ms が残る）
 
 - **内訳の切り分け**: 提示のたびに `beginFrame`/`endFrame` でフレームを枠取りしていた（＝**2回目の copyback とその待ち**）。
