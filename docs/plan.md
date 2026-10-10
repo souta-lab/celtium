@@ -27,6 +27,32 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.4 構造修復 3（後半・この単位）: fixture の結果と JSON 所有を snapshot に統一
+
+**根因**: サーバータスクが**3つの volatile フィールド**（`transferResult` / `transferAtTick` / `rotationBefore`）を書き、
+クライアントが別々に読む＝半端な結果を読む余地があり、**shutdown フックは生きた `mc.player` / `mc.world` /
+`mc.currentScreen` を任意スレッドから読んでいた**（goal が禁じている形）。
+
+- **`TransferSnapshot`（immutable・final フィールド）**: `state` / `completedAtTick` / `rotationBefore`。
+  サーバータスクは**完成した1つの object を1回 publish** するだけ。クライアントはそれだけを読む。
+- **`ProgressSnapshot`（immutable）**: `ticks` / `frames` / `captureStarted` / `captureStartTick` /
+  client・world の dimension / screen 名 / **出力パス**。**render スレッドで毎フレーム取得**し、1参照で publish。
+- **shutdown フックは snapshot だけを読む**（`mc` には一切触れない）。ファイルパスも snapshot が持つ。
+  捕捉時のレポート書き込みも snapshot 経由に統一。
+- **実測（3経路・両GPU）**:
+
+| run | harness | レポート |
+|---|---|---|
+| AMD（軽い世界、150 s） | exit 0 / clean / **PASSED** | `captureStartTick=200`、`worldFrames=545` |
+| **AMD（End、`dimensionAtTick=80`）** | exit 0 / clean / **PASSED** | **`dimensionServerResult=transferred`**、`dimensionArrivedAtTick=81`、**`dimensionClientAtCapture=1`**（転送 snapshot と fail-closed が有効） |
+| **Intel**（150 s） | exit 0 / clean / **PASSED** | `captureStartTick=200`、`worldFrames=324` |
+| **Intel（強制 NO_CAPTURE、25 s・溶岩世界）** | 124（ハーネス上限）/ clean / **NO_CAPTURE** | **`status=NO_CAPTURE`、`worldTicksAtExit=161`、`worldFramesAtExit=92`、`captureStarted=False`、`clientDimensionAtExit=0`、`screenAtExit=none`** — **フックが snapshot だけで書いた** |
+
+  すべて **VUID 0・クラッシュなし**。
+- **消した重複**: volatile フィールド3つ（結果の分割所有）、shutdown スレッドからのゲーム状態参照。
+- **残り（構造修復3の前半）**: draw 側の **queued→recorded→submitted→completed→retired を target/frame/generation に
+  紐付ける**こと（preflight/retry/失敗時保持・clear/depth/sample 順序の確認を含む）。**未着手**。
+
 ## 0.3 構造修復 1 の完成（この単位）: lifecycle と未初期化 patch と実コスト
 
 **同じ根因（texture の実体・更新・寿命）に対する残りを、producer/consumer/invalidator/lifecycle まとめて実装し、
@@ -88,7 +114,7 @@
 |---|---|---|
 | 1 | texture の実体・更新・寿命を一つにする | **実装済み・両GPU受入**（`297ce5caa` ＋ §0.3。lifecycle/拒否/コスト計測まで。画像同一性の統制比較のみ残る） |
 | 2 | draw の queued→recorded→submitted→completed→retired と取消根拠の整合 | **一部実装**（§0.2: 取消を記録された事実に限定、名前ベースを撤去）。queued→recorded→submitted→completed→retired の target/generation 紐付けは未着手 |
-| 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **一部実装**（capture 段階化・server task 化）。結果は volatile フィールド渡しで、**immutable snapshot 化は未完** |
+| 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **fixture 側は完了**（§0.4: immutable snapshot 2つ、フックは snapshot のみ読む、3経路を両GPUで実測）。**draw 側の target/generation 紐付けは未着手** |
 | 4 | Nether の未完を具体的に直す | **未着手**。短い trace と client/server stack で帰還・停止の地点を特定する（早い転送・budget 延長の反復はしない） |
 | 5 | plan を現状表へ戻し、経緯を history へ移す | **この文書で実施** |
 

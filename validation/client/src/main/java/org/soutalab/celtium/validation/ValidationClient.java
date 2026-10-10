@@ -72,9 +72,60 @@ public final class ValidationClient {
      * from the server thread: the JSON object belongs to the render thread, and the interesting question is whether the
      * client actually arrives, not whether a task was scheduled.
      */
-    private volatile String celtium$transferResult = "not attempted";
-    private volatile int celtium$transferAtTick = -1;
-    private volatile String celtium$rotationBefore = "unknown";
+    /**
+     * The server task's result, published once as an immutable object.
+     * <p>
+     * It used to be three volatile fields written from the server thread, which is three chances for the client to read a
+     * half-updated result and three fields to keep in step. One reference to one final-field object is the whole contract:
+     * whoever reads it sees a result that was complete when it was published.
+     */
+    private volatile TransferSnapshot celtium$transfer = new TransferSnapshot("not attempted", -1, "unknown");
+
+    /** The last progress reading, taken on the render thread, for the shutdown hook to write without touching the game. */
+    private volatile ProgressSnapshot celtium$progress;
+
+    /** What the server task did, as one immutable value. */
+    private static final class TransferSnapshot {
+        final String state;
+        final int completedAtTick;
+        final String rotationBefore;
+
+        TransferSnapshot(String state, int completedAtTick, String rotationBefore) {
+            this.state = state;
+            this.completedAtTick = completedAtTick;
+            this.rotationBefore = rotationBefore;
+        }
+    }
+
+    /**
+     * What is known at the end of a rendered frame, as one immutable value.
+     * <p>
+     * The shutdown hook writes a partial report when the capture never happened, and it runs on a thread that must not read
+     * the game: Minecraft's world, player and screen are owned by the client thread and may be mid-change or gone. This
+     * snapshot is taken where those values are safe to read, and the hook only ever sees this.
+     */
+    private static final class ProgressSnapshot {
+        final int ticks;
+        final int frames;
+        final boolean captureStarted;
+        final int captureStartTick;
+        final int clientDimension;
+        final int worldDimension;
+        final String screen;
+        final java.nio.file.Path outputPath;
+
+        ProgressSnapshot(int ticks, int frames, boolean captureStarted, int captureStartTick, int clientDimension,
+                int worldDimension, String screen, java.nio.file.Path outputPath) {
+            this.ticks = ticks;
+            this.frames = frames;
+            this.captureStarted = captureStarted;
+            this.captureStartTick = captureStartTick;
+            this.clientDimension = clientDimension;
+            this.worldDimension = worldDimension;
+            this.screen = screen;
+            this.outputPath = outputPath;
+        }
+    }
     private int celtium$arrivedAtTick = -1;
     private int celtium$arrivedFrames = -1;
     private int celtium$lastTraceClient = Integer.MIN_VALUE;
@@ -1163,7 +1214,7 @@ public final class ValidationClient {
                     final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
                     final java.util.UUID playerId = mc.player.getUniqueID();
                     if (server == null) {
-                        celtium$transferResult = "no integrated server";
+                        celtium$transfer = new TransferSnapshot("no integrated server", worldTicks, "unknown");
                     } else {
                         // The transfer runs as a scheduled server task rather than inline from the client tick: the
                         // first attempt called it from the tick hook and vanilla's transfer path dereferenced a look
@@ -1181,23 +1232,23 @@ public final class ValidationClient {
                                     net.minecraft.entity.player.EntityPlayerMP player = server.getPlayerList()
                                             .getPlayerByUUID(playerId);
                                     if (player == null) {
-                                        celtium$transferResult = "no server player";
+                                        celtium$transfer = new TransferSnapshot("no server player", worldTicks, "unknown");
                                         return;
                                     }
                                     if (player.dimension == celtium$dimension) {
-                                        celtium$transferResult = "already there";
+                                        celtium$transfer = new TransferSnapshot("already there", worldTicks, "unknown");
                                         return;
                                     }
                                     net.minecraft.world.WorldServer target = server.getWorld(celtium$dimension);
                                     if (target == null) {
-                                        celtium$transferResult = "no world for dimension " + celtium$dimension;
+                                        celtium$transfer = new TransferSnapshot("no world for dimension " + celtium$dimension, worldTicks, "unknown");
                                         return;
                                     }
                                     // Minecraft's getVectorForRotation returns null - and getLook then dereferences it - when the
                                     // pitch is not a number, and the transfer path asks for the look vector. The values are
                                     // recorded before they are replaced, because "the rotation was NaN" is the finding here,
                                     // not something to paper over silently.
-                                    celtium$rotationBefore = "pitch=" + player.rotationPitch + " yaw=" + player.rotationYaw;
+                                    final String rotation = "pitch=" + player.rotationPitch + " yaw=" + player.rotationYaw;
                                     if (Float.isNaN(player.rotationPitch) || Float.isInfinite(player.rotationPitch)) {
                                         player.rotationPitch = 0.0F;
                                     }
@@ -1223,10 +1274,9 @@ public final class ValidationClient {
                                     try {
                                         server.getPlayerList().transferPlayerToDimension(player, celtium$dimension,
                                                 new net.minecraft.world.Teleporter(target));
-                                        celtium$transferResult = "transferred";
-                                        celtium$transferAtTick = worldTicks;
+                                        celtium$transfer = new TransferSnapshot("transferred", worldTicks, rotation);
                                     } catch (Throwable error) {
-                                        celtium$transferResult = "error: " + error;
+                                        celtium$transfer = new TransferSnapshot("error: " + error, worldTicks, rotation);
                                         // The frames are collected into the same field: a message naming a Forge/SRG
                                         // symbol is not enough to find the call that failed.
                                         StringBuilder trace = new StringBuilder();
@@ -1234,7 +1284,7 @@ public final class ValidationClient {
                                         for (int i = 0; i < frames.length && i < 6; i++) {
                                             trace.append(frames[i].toString()).append(" | ");
                                         }
-                                        celtium$transferResult = "error: " + error + " || " + trace;
+                                        celtium$transfer = new TransferSnapshot("error: " + error + " || " + trace, worldTicks, rotation);
                                     }
                                 }
                             });
@@ -1308,6 +1358,13 @@ public final class ValidationClient {
             // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
             report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
         celtium$installExitHook(mc);
+        // Taken here, on the render thread, where the world, the player and the screen are the client's to read. The
+        // shutdown hook only ever reads this value.
+        celtium$progress = new ProgressSnapshot(worldTicks, worldFrames, celtium$captureStarted, celtium$captureStartTick,
+                mc.player == null ? Integer.MIN_VALUE : mc.player.dimension,
+                mc.world == null ? Integer.MIN_VALUE : mc.world.provider.getDimension(),
+                mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName(),
+                mc.gameDir.toPath().resolve("logs/celtium-validation.json"));
             celtium$blockSweep(mc);
             if (worldTicks == 20) {
                 mc.player.capabilities.isFlying = true;
@@ -1756,10 +1813,11 @@ public final class ValidationClient {
             // Fail closed: a run that asked for another dimension and did not get there must not report PASSED. The
             // previous acceptance did exactly that - dimensionAfter stayed 0 while the report said PASSED - because
             // the value it read was taken before the scheduled transfer could run.
-            report.addProperty("dimensionServerResult", celtium$transferResult);
+            TransferSnapshot transfer = celtium$transfer;
+            report.addProperty("dimensionServerResult", transfer.state);
             report.addProperty("dimensionEvents", celtium$dimensionEvents.toString().trim());
-            report.addProperty("dimensionServerTaskAtTick", Integer.valueOf(celtium$transferAtTick));
-            report.addProperty("dimensionRotationBefore", celtium$rotationBefore);
+            report.addProperty("dimensionServerTaskAtTick", Integer.valueOf(transfer.completedAtTick));
+            report.addProperty("dimensionRotationBefore", transfer.rotationBefore);
             report.addProperty("dimensionArrivedAtTick", Integer.valueOf(celtium$arrivedAtTick));
             report.addProperty("dimensionArrivedFrames", Integer.valueOf(celtium$arrivedFrames));
             report.addProperty("dimensionClientAtCapture", Integer.valueOf(mc.player == null ? Integer.MIN_VALUE : mc.player.dimension));
@@ -1769,7 +1827,7 @@ public final class ValidationClient {
                     || mc.player.dimension != celtium$dimension
                     || mc.world.provider.getDimension() != celtium$dimension) {
                 throw new IllegalStateException("dimension target " + celtium$dimension + " not reached by the client"
-                        + " (server: " + celtium$transferResult + ", arrivedAtTick=" + celtium$arrivedAtTick + ")");
+                        + " (server: " + transfer.state + ", arrivedAtTick=" + celtium$arrivedAtTick + ")");
             }
         }
         if (!celtium$captureStarted) {
@@ -2005,27 +2063,30 @@ public final class ValidationClient {
                 if (celtium$reportWritten) {
                     return;
                 }
+                ProgressSnapshot progress = celtium$progress;
+                if (progress == null) {
+                    return;
+                }
                 try {
                     report.addProperty("status", "NO_CAPTURE");
-                    report.addProperty("worldTicksAtExit", Integer.valueOf(worldTicks));
-                    report.addProperty("worldFramesAtExit", Integer.valueOf(worldFrames));
-                    report.addProperty("captureStarted", Boolean.valueOf(celtium$captureStarted));
-                    if (celtium$captureStartTick > 0) {
-                        report.addProperty("captureStartTick", Integer.valueOf(celtium$captureStartTick));
+                    report.addProperty("worldTicksAtExit", Integer.valueOf(progress.ticks));
+                    report.addProperty("worldFramesAtExit", Integer.valueOf(progress.frames));
+                    report.addProperty("captureStarted", Boolean.valueOf(progress.captureStarted));
+                    if (progress.captureStartTick > 0) {
+                        report.addProperty("captureStartTick", Integer.valueOf(progress.captureStartTick));
                     }
-                    if (mc.player != null) {
-                        report.addProperty("clientDimensionAtExit", Integer.valueOf(mc.player.dimension));
+                    if (progress.clientDimension != Integer.MIN_VALUE) {
+                        report.addProperty("clientDimensionAtExit", Integer.valueOf(progress.clientDimension));
                     }
-                    if (mc.world != null) {
-                        report.addProperty("clientWorldDimensionAtExit",
-                                Integer.valueOf(mc.world.provider.getDimension()));
+                    if (progress.worldDimension != Integer.MIN_VALUE) {
+                        report.addProperty("clientWorldDimensionAtExit", Integer.valueOf(progress.worldDimension));
                     }
-                    if (mc.currentScreen != null) {
-                        report.addProperty("screenAtExit", mc.currentScreen.getClass().getName());
-                    }
-                    Path output = mc.gameDir.toPath().resolve("logs/celtium-validation.json");
-                    Files.createDirectories(output.getParent());
-                    Files.write(output, (new GsonBuilder().setPrettyPrinting().create().toJson(report) + "\n")
+                    report.addProperty("screenAtExit", progress.screen);
+                    TransferSnapshot transfer = celtium$transfer;
+                    report.addProperty("dimensionServerResult", transfer.state);
+                    java.nio.file.Path output = progress.outputPath;
+                    java.nio.file.Files.createDirectories(output.getParent());
+                    java.nio.file.Files.write(output, (new GsonBuilder().setPrettyPrinting().create().toJson(report) + "\n")
                             .getBytes(StandardCharsets.UTF_8));
                 } catch (Throwable ignored) {
                     // Nothing here may keep the JVM from exiting.
