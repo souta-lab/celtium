@@ -46,6 +46,20 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.108 **修正・受入済み**: model draw（表示リストの entity/手の native 描画）を既定 ON に（goal 項目5 の一部）
+
+- `MODEL_DRAW`（`celtium.vulkan.modelDraw`）の既定を false → true。受入根拠：entity 場面（NoAI で固定した
+  creeper/zombie/spider/enderman を視野錐 `-Z`・地表へ spawn、`captureEntities` で live frame 保持）で
+  **AMD 0.35 %・Intel 0.16 %**、同場面の GL replay 基準（`modelDraw=false`）が **AMD 1.15 %** —— native が
+  基準以下の残差（残差は移動粒子のフレーム差、§0.104 と同じ計測限界）。旧測定の 2.19 % が消えた理由は
+  texture 所有修復（§0.106）が model の lightmap/atlas 供給も直したため。
+- `celtium$drawModelList` は capture/build 失敗で `false` を返し、その場合は GL replay を cancel しない ——
+  失敗時は旧 replay がそのまま走る安全側。flag は `-Dceltium.vulkan.modelDraw=false` で残す。
+- fixture の spawn 位置を修正：`keepEntities` 場面の spawn を視野錐内（プレイヤーは yaw 180=−Z 向き）・地表へ
+  移動（従来は player 周囲に散在させ大半が視野外だった）。`captureEntities`/`keepEntities` 併用で live frame の
+  entity を計測可能に。
+- 標準場面（entity なし）でも既定 ON で PASSED・clean —— 手/アイテムの list 2/3 が native 描画へ移行して退行なし。
+
 ## 0.107 **修正・受入済み**: immediate group の `Object[]` 添字契約を型付き `ImmediateGroup` へ（goal 項目3）
 
 - `immediateGroups`/`recordedImmediateGroups`/`retiredImmediateGroups` の `Object[]`（15 slot・添字意味が 3 構築

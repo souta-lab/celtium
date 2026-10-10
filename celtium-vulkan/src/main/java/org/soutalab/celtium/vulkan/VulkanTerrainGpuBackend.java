@@ -5671,9 +5671,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Draws only this display list, for isolating one list (0 = all). */
     private static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
 
-    /** Whether captured display lists are drawn natively (lab switch; off keeps GL replaying them). */
+    /**
+     * Whether captured display lists are drawn natively.
+     * <p>
+     * On by default since the staged acceptance: the entity scene (frozen creeper/zombie/spider/enderman in the view
+     * cone, captureEntities keeping the live frame) measures the native draw at 0.35 % on AMD and 0.16 % on Intel, at
+     * or below the GL replay baseline the same scene takes (1.15 % on AMD) - the texture-ownership work that fixed the
+     * light map's delivery is what made the models light correctly. A list whose capture or build fails returns false
+     * and the GL replay is not cancelled, so the fallback is the replay that used to run anyway.
+     * {@code -Dceltium.vulkan.modelDraw=false} restores the previous behaviour.
+     */
     private static final boolean MODEL_DRAW = Boolean.parseBoolean(
-            System.getProperty("celtium.vulkan.modelDraw", "false"));
+            System.getProperty("celtium.vulkan.modelDraw", "true"));
     /** Forces the fence wait to report a timeout, so the post-submit failure path can be exercised (lab switch). */
     private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
 

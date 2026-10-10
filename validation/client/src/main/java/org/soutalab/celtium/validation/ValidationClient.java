@@ -1424,10 +1424,12 @@ public final class ValidationClient {
                 // An entity scene, for the coverage that the terrain-only comparison deliberately leaves out. The mobs are
                 // named explicitly rather than left to natural spawning so the scene is the same set every run: one of each
                 // family that draws through its own path (monster model, spider legs, enderman's TESR-ish layering).
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), 2.0D, 0.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), -2.0D, 1.0D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 0.0D, 2.5D);
-                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -2.5D, -2.0D);
+                // The player faces -Z (yaw 180, pitch 20): the spawns sit in that view cone, at ground level, so the
+                // comparison sees the models rather than measuring particles behind an out-of-frame mob.
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -3.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -4.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -3.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -5.0D);
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
             }
