@@ -27,6 +27,25 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.9 モデル描画の段階受入: Intel と「モデルが多い場面」
+
+- **Intel 受入（三人称のプレイヤーモデル、duration 120 s）**: exit 0 / validationClean / **PASSED**、302 frames、p50 30.71 ms、
+  **`modelDraws=750`・拒否 0・`displayListCancelled=750`**、`submitted == completed = 8495`、**VUID 0**、クラッシュなし。
+- **モデルが多い場面（spectator spider、AMD、隣接3run）**:
+
+| 比較 | 差>2の画素 | 行 540-624 | 行 625 以降 | 最大 |
+|---|---|---|---|---|
+| **床（既定 vs 既定2）** | **0** | 0 | 0 | 2 |
+| **効果（既定 vs 実験ON）** | **20** | 6 | 14 | 3 |
+| 効果（既定2 vs 実験ON） | **21** | 7 | 14 | 4 |
+
+  `modelDraws=1004`・拒否 0・`cancelled=1004`、`submitted=13346`／`completed=13345`（**差1は標本時刻の in-flight**、
+  `retired=1` と整合）、`discarded=0`、**VUID 0**、クラッシュなし、全 run **PASSED**。
+- **意味**: **床が 0 の場面で効果が 20 画素**（92万画素中、最大差3）＝ **native モデル描画は既定と実質一致**。
+  三人称場面では効果が既定自身の床と同水準だった（§0.8）。**2場面・両GPUで、モデル描画の捕獲→メッシュ→
+  ウィンドウ内描画の経路が成立している**。
+- **言えないこと**: entity/TESR の**全種類**、他 scene、影mod、他 GPU/OS は未検証。**「モデル完成」ではない**。
+
 ## 0.8 モデル native 描画の非再現性を修正: 自前 submit をやめ、即時ウィンドウの順序に載せた
 
 **根因（このターンで特定・実装）**: モデル描画は `callList` で **自前のコマンドバッファを開いて即 submit** していた。
