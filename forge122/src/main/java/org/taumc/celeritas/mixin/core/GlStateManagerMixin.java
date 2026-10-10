@@ -51,7 +51,21 @@ public abstract class GlStateManagerMixin {
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
                 if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                    drawn = vulkan.celtium$drawModelList(list);
+                    // Asked of GL here: the model's own texture is bound at replay time, and it is not the texture the
+                    // immediate path happened to leave behind.
+                    int boundTexture = 0;
+                    int activeUnit = -1;
+                    try {
+                        activeUnit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+                        boundTexture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                        if (!org.soutalab.celtium.vulkan.VulkanDisplayListCensus.textureLogged(list)) {
+                            System.out.println("[Celtium] CELTIUM_MODEL_TEXTURE list=" + list + " unit=" + activeUnit
+                                    + " texture=" + boundTexture);
+                        }
+                    } catch (RuntimeException | LinkageError ignored) {
+                        boundTexture = 0;
+                    }
+                    drawn = vulkan.celtium$drawModelList(list, boundTexture);
                 }
                 if (drawn) {
                     org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);

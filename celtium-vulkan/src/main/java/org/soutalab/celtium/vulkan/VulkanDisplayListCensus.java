@@ -144,6 +144,13 @@ public final class VulkanDisplayListCensus {
     private static final boolean CANCEL_BY_ORIGIN = Boolean.parseBoolean(
             System.getProperty("celtium.vulkan.cancelHandDisplayLists", "true"));
 
+    private static final java.util.Set<Integer> TEXTURE_LOGGED = new java.util.HashSet<Integer>();
+
+    /** {@return whether the bound texture of this list has been logged already}. */
+    public static synchronized boolean textureLogged(int list) {
+        return !TEXTURE_LOGGED.add(Integer.valueOf(list));
+    }
+
     /** {@return whether this list's GL replay is being cancelled, so the native path draws it instead}. */
     public static boolean cancels(int list) {
         if (CANCEL.contains(Integer.valueOf(list))) {

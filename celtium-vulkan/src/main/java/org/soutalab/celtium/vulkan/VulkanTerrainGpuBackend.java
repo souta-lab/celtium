@@ -4494,7 +4494,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Lab switch: off by default, because this is a new draw path and the default must not change until a matched pair
      * says the image is the same.
      */
-    public boolean celtium$drawModelList(int listId) {
+    public boolean celtium$drawModelList(int listId, int boundTextureId) {
         if (!MODEL_DRAW || this.modelMeshes == null || !this.frameTargetKnown) {
             return false;
         }
@@ -4505,7 +4505,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             int[] state = celtium$captureState();
             long key = celtium$stateKey(VulkanImmediateFormats.POSITION_TEX, state);
-            int texture = this.currentImmediateTexture != 0 ? this.currentImmediateTexture : whiteTextureId();
+            // The texture the model is actually bound to, asked of GL at the moment of the replay rather than remembered
+            // from the immediate path: a held item or a player model samples its own texture, and using the last
+            // immediate texture drew it with the block atlas (measured: white pixels in the default became atlas colours
+            // in the native draw, meanAbsDiff 2.0 over fifteen thousand pixels).
+            int texture = boundTextureId != 0 ? boundTextureId : whiteTextureId();
+            if (this.textureRegistry != null && this.textureRegistry.get(boundTextureId) == null
+                    && boundTextureId != 0) {
+                this.modelDrawRefusals++;
+                this.modelLastRefusal = "texture " + boundTextureId + " is not mirrored";
+                return false;
+            }
             PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.POSITION_TEX, texture, key, state);
             if (prepared == null || prepared.pipeline == null) {
                 this.modelDrawRefusals++;
@@ -4540,7 +4550,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         org.lwjgl.vulkan.VK10.VK_SUBPASS_CONTENTS_INLINE);
                 setViewportAndScissor(stack);
                 java.nio.ByteBuffer push = stack.calloc(128);
-                pushCombinedMatrixInto(this.glProjection, this.glModelView, push, 0);
+                // The matrices are asked of GL here rather than taken from the immediate path's fields: those hold
+                // whatever the last immediate batch left behind, and a display list is replayed under the matrix in
+                // effect at that moment. The projection gets the same clip-depth remap the immediate path applies.
+                float[] projectionNow = new float[16];
+                float[] modelViewNow = new float[16];
+                java.nio.FloatBuffer matrixBuffer = org.lwjgl.BufferUtils.createFloatBuffer(16);
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, matrixBuffer);
+                matrixBuffer.get(projectionNow);
+                matrixBuffer.clear();
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrixBuffer);
+                matrixBuffer.get(modelViewNow);
+                float[] projectionRemapped = new float[16];
+                remapClipDepth(projectionNow, projectionRemapped);
+                pushCombinedMatrixInto(projectionRemapped, modelViewNow, push, 0);
                 push.putFloat(112, 0.0f);
                 push.putFloat(116, 1.0f);
                 push.putFloat(120, 1.0f);
