@@ -2576,7 +2576,41 @@ this.commandState.endPass();
   descriptor、texture upload、submit（pre-submit）、**fence timeout**、out-of-date、resize/minimize、reload、
   world switch。**未検証として残るのは start-up 段階の失敗と vendor 固有の device lost の再現**である。
 
-**次の一手**: (1) 優先順位5（vanilla coverage）の未確認項目に着手する（dimension 切替、水/溶岩/火、item/model の
+**優先順位5: 溶岩/火を世界に入れて両GPUで確認、dimension 切替は fixture 側の障害を特定（このターン）**:
+
+- **溶岩と火を世界に追加**（フラット世界の層に `minecraft:lava` と `minecraft:fire` を加えた。既に water と
+  stained_glass が入っており、水と半透明は以前から対象だった）。**これで世界そのものに溶岩・火が存在する場面**になる。
+- **実測（duration 120 s）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames | p50 |
+|---|---|---|---|---|---|---|---|
+| 溶岩/火 AMD | **0** | **true** | **PASSED** | なし | **0** | 243 | **28.94 ms** |
+| 溶岩/火 Intel | **0** | **true** | **PASSED** | なし | **0** | 122 | **63.89 ms** |
+
+- **両GPUで合格**。**同時に新しい性能データ点**が得られた: **溶岩/火を入れるとフレーム時間が約2倍**になり
+  （AMD 16.0 → **28.9 ms**、Intel 28.8 → **63.9 ms**）、フレーム数も半減する。**溶岩は発光・半透明・アニメーションを
+  持つ**ので重くなること自体は不思議ではないが、**平坦な世界でこの倍率**は優先順位8で切り分ける価値がある
+  （**推測**であり、まだ原因は測っていない）。
+- **dimension 切替**: `-Dceltium.validation.dimensionAtTick=<n>` と `-Dceltium.validation.dimension=<id>` を
+  fixture に追加した（既定は 0＝無効なので**通常runには影響しない**）。到達した事実:
+  1. プロパティは**発火する**（`dimensionChangeAtTick=80`、`dimensionTarget=-1`）。
+  2. **クライアント側**の `player.changeDimension` は**効かない**（`dimensionAfter=0` のまま）＝1.12.2 では
+     サーバー側が転送する必要がある。**統合サーバーの `PlayerList.transferPlayerToDimension`** に切り替えた。
+  3. その途中で **`server.worlds[-1]`** が `ArrayIndexOutOfBoundsException` になった（`worlds` は次元IDではなく
+     0..n の配列）。**`server.getWorld(id)`** に直した。
+  4. 直した結果、**vanilla の転送経路が NPE**（`Entity.getLook()` が null）を起こす。**tick フックから呼ぶ文脈**が
+     原因と思われる。**fixture 側の問題**であり、**レンダラは無傷**（その run も クラッシュなし・**VUID 0**・382 フレーム）。
+  5. **注意**: プロパティを有効にした run の1つ（End への転送）は**ハングして報告が出なかった**（exit 124）。
+     **プロパティを既定（無効）にした通常 run には影響しない**。
+- **状態**: **溶岩/火は完了**。**dimension 切替は「fixture の転送が未完成」**として残す（レンダラ側の未検証項目では
+  なくなった、という区別が重要）。
+
+**次の一手**: (1) dimension 転送を**サーバーのティック終了後**に走らせる（`ServerTickEvent` の末尾か、
+  `transferPlayerToDimension` をワーカースレッドではなくサーバースレッドで呼ぶ）ことで NPE を回避する、
+  (2) 溶岩/火の**倍率の原因**を切り分ける（半透明パス・発光・アニメーションのどれか）、
+  (3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) 優先順位5（vanilla coverage）の未確認項目に着手する（dimension 切替、水/溶岩/火、item/model の
 個別確認）、(2) モデル描画の「頂点の実データ比較」を残件として進める、(3) 優先順位4（GL なしの window/present）に
 ついて、環境で到達できる範囲と不足条件を docs に固定する。
 

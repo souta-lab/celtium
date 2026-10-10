@@ -55,6 +55,11 @@ public final class ValidationClient {
     private boolean enabled;
     private boolean launched;
     private boolean celtium$leftWorld;
+
+    /** Dimension travel: which dimension to move to and at which world tick (both from properties, 0 disables). */
+    private final int celtium$dimensionAtTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
+    private final int celtium$dimension = Integer.getInteger("celtium.validation.dimension", -1).intValue();
+    private boolean celtium$changedDimension;
     private boolean celtium$rejoinPending;
     private boolean commandsRun;
     private boolean finished;
@@ -1101,8 +1106,42 @@ public final class ValidationClient {
                 if (commandBufferTargets) mc.gameSettings.hideGUI = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
-                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:leaves,minecraft:stained_glass;1;");
+                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,minecraft:leaves,minecraft:stained_glass;1;");
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
+            }
+            // Dimension travel: the same player is moved to another dimension, which re-generates terrain with a
+            // different sky, fog and block set (the Nether has no sky and its own light rules). The dimension and the
+            // tick are both configurable so a run can target the Nether (-1) or the End (1) without a second fixture.
+            if (celtium$dimensionAtTick > 0 && worldTicks == celtium$dimensionAtTick && !celtium$changedDimension) {
+                celtium$changedDimension = true;
+                report.addProperty("dimensionChangeAtTick", Integer.valueOf(worldTicks));
+                report.addProperty("dimensionTarget", Integer.valueOf(celtium$dimension));
+                try {
+                    // The transfer has to be driven by the server: the client player's own changeDimension only moves the
+                    // entity locally, and the first attempt measured dimensionAfter=0 - the player stayed in the
+                    // Overworld because the server never sent it anywhere. The integrated server owns the transfer, the
+                    // client follows, and the run's later frames are then the new dimension's terrain.
+                    net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+                    net.minecraft.entity.player.EntityPlayerMP serverPlayer = server == null ? null
+                            : server.getPlayerList().getPlayerByUUID(mc.player.getUniqueID());
+                    if (serverPlayer == null) {
+                        report.addProperty("dimensionError", "no server player");
+                    } else if (serverPlayer.dimension != celtium$dimension) {
+                        // worlds is a plain array indexed 0..n, not by dimension id: indexing it with -1 threw
+                        // ArrayIndexOutOfBoundsException and the transfer never happened. getWorld maps the id properly.
+                        net.minecraft.world.WorldServer target = server.getWorld(celtium$dimension);
+                        if (target == null) {
+                            report.addProperty("dimensionError", "no world for dimension " + celtium$dimension);
+                        } else {
+                            server.getPlayerList().transferPlayerToDimension(serverPlayer, celtium$dimension,
+                                    new net.minecraft.world.Teleporter(target));
+                            report.addProperty("dimensionTransferred", Boolean.TRUE);
+                        }
+                    }
+                    report.addProperty("dimensionAfter", Integer.valueOf(mc.player.dimension));
+                } catch (Throwable error) {
+                    report.addProperty("dimensionError", String.valueOf(error));
+                }
             }
             if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks == 100 && !celtium$leftWorld) {
                 celtium$leftWorld = true;
@@ -1119,7 +1158,7 @@ public final class ValidationClient {
                 celtium$rejoinPending = false;
                 report.addProperty("rejoinedAtTick", worldTicks);
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
-                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:leaves,minecraft:stained_glass;1;");
+                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,minecraft:leaves,minecraft:stained_glass;1;");
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
             }
             if (mc.world == null || mc.player == null) return;
