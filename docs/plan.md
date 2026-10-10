@@ -27,6 +27,25 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.47 前提1は**このバインディングでは実現できない**と判明（外部メモリのレンダーバッファが無い）
+
+- **前提1の実装を試みた**: 共有深度を「外部メモリのレンダーバッファ」としても公開する
+  （`GL45C.glCreateRenderbuffers()` ＋ `glRenderbufferStorageMemEXT`）ことで、MC の `depthBuffer` に渡せるようにする。
+- **結果**: **`GL45C.glCreateRenderbuffers()` は存在して通る**が、**`EXTMemoryObject` に renderbuffer 用の関数が無い**
+  （`javap` で確認: `EXTMemoryObject` に `*Renderbuffer*` は1つも無い）。
+  ＝ **LWJGL のこのバインディングでは、外部メモリから GL のレンダーバッファを作れない**。
+- **意味（item 6 の構造）**: **MC の `Framebuffer` は深度を `glFramebufferRenderbuffer` でアタッチする**ため、
+  **深度は Vulkan 所有へ移せない**。native のパスは深度を読み書きするので、
+  **「色だけ共有・深度は GL」という混成では条件 (b) の通常フレームは成立しない**。
+- **代替経路（次の実装候補・実在する API で足りる）**: MC のアタッチ呼び出しを**横取りしてテクスチャとして付ける**。
+  MC は `OpenGlHelper.glFramebufferRenderbuffer(...)`（Forge のヘルパー）経由でアタッチしているので、
+  **そこを Mixin で redirect し、共有深度を `glFramebufferTexture2D` でアタッチ**すれば、
+  外部メモリの**テクスチャ**（これは既に作れている）で深度を Vulkan 所有にできる。
+  **`Framebuffer` 側の変更は不要**（呼び出し1箇所を差し替えるだけ）。
+- **対応**: 試作は**巻き戻した**（HEAD に戻しビルド緑）。
+- **未確認**: 上記 redirect が MC の深度の使い方（`glClear`・深度テスト・`GL_DEPTH_ATTACHMENT` の期待）と両立するかは**未検証**。
+  次はこれを最小の場面で試す。
+
 ## 0.46 item 6 の (B) に必要な**2つの前提**が実測で確定（深度の型と、記憶した宛先の使用）
 
 - **試作（§0.45 の続き）**: 差し替え時に**先に** frame target へ「これがゲームのフレームバッファだ」と教える
