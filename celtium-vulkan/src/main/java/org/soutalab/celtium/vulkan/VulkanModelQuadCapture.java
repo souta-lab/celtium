@@ -31,6 +31,8 @@ public final class VulkanModelQuadCapture {
         /** The plane normal the quad was drawn with, three floats per quad. */
         float[] normals = new float[3 * 64];
         int vertices;
+        /** Quads whose modelview differs from the list's first quad, which is the one the list keeps. */
+        int quadsWithOtherMatrix;
 
         void ensure() {
             if (quads * 4 + 4 <= positions.length / 3) {
@@ -89,6 +91,28 @@ public final class VulkanModelQuadCapture {
                 geometry.source = "matrix unavailable";
             }
             LISTS.put(Integer.valueOf(listId), geometry);
+        } else {
+            // The capture keeps one matrix per list, the first quad's - but a list is compiled part by part and each part
+            // can set its own transform. Counting the quads whose matrix differs from the first says how much of the model
+            // path's residual that approximation can explain.
+            try {
+                java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
+                float[] now = new float[16];
+                matrix.get(now);
+                boolean same = true;
+                for (int i = 0; i < 16; i++) {
+                    if (Math.abs(now[i] - geometry.modelView[i]) > 1e-4f) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (!same) {
+                    geometry.quadsWithOtherMatrix++;
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // A missing count is not a wrong draw.
+            }
         }
         geometry.ensure();
         int base = geometry.quads * 4;
@@ -232,11 +256,15 @@ public final class VulkanModelQuadCapture {
             minY = Math.min(minY, y); maxY = Math.max(maxY, y);
             minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
         }
+        int others = 0;
+        for (ListGeometry geometry : LISTS.values()) {
+            others += geometry.quadsWithOtherMatrix;
+        }
         return "list " + largest.listId + " vertices=" + largest.vertices
                 + " x=" + round(minX) + ".." + round(maxX) + " y=" + round(minY) + ".." + round(maxY)
                 + " z=" + round(minZ) + ".." + round(maxZ)
                 + " compileT=(" + round(largest.modelView[12]) + "," + round(largest.modelView[13]) + ","
-                + round(largest.modelView[14]) + ")";
+                + round(largest.modelView[14]) + ") quadsWithOtherMatrix=" + others + "/" + quads;
     }
 
     /** {@return the largest list's first stored vertex, as a shape sanity check}. */
