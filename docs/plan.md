@@ -27,7 +27,38 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
-## 0.7 モデル native 描画の画像比較: **run 間で再現しない**（このターンの結論・実験は lab flag のまま）
+## 0.8 モデル native 描画の非再現性を修正: 自前 submit をやめ、即時ウィンドウの順序に載せた
+
+**根因（このターンで特定・実装）**: モデル描画は `callList` で **自前のコマンドバッファを開いて即 submit** していた。
+即時経路は「ウィンドウに溜めて、次の GL 描画の直前のパスでまとめて描く」ことで**フレーム内の順序**を守っているが、
+モデルだけがその順序に**参加していなかった** → 同じ入力でも合成順が安定せず、**下段（モデルの帯）が run 間で再現しなかった**
+（前単位の実測: 既定の床 32 画素に対し ON の床 1283 画素）。
+
+- **修正**: モデルメッシュを **即時ウィンドウの group として enqueue** し、`flushImmediateWindow` →
+  `drawPendingImmediate` のパス内で、他と同じ順序で描かれるようにした（`celtium$enqueueModelMesh`）。
+  **mesh の所有は借用**（`GroupStamp.meshBorrowed`）とし、retire ドレインが**フレーム間で使い回すメッシュを解放しない**
+  ようにした（この契約を入れないと2フレーム目で消える）。
+- **併せて棄却した仮説**: 束縛テクスチャの run 間差（`CELTIUM_MODEL_TEXTURE` の list→texture 対応表は**両runで完全一致**、
+  全リストが texture 24）。
+- **実測（AMD、軽い世界、三人称＋GUI、duration 120 s）**:
+
+| 比較 | 差>2の画素 | 行 540-624 | **行 625 以降** | 最大 |
+|---|---|---|---|---|
+| **床 ON（隣接run、修正後）** | **41** | 37 | **4** | 244 |
+| **床 既定（隣接run）** | 1983 | 1953 | **30** | 192 |
+| **効果: 既定 vs ON（隣接）** | **1989** | 1959 | **30** | 243 |
+| 効果: 既定2 vs ON（隣接） | 2162 | 2162 | **0** | 247 |
+| （参考）床 ON（修正前） | 3237 | 1954 | **1283** | 249 |
+
+- **結論**: **ON 同士の床が 3237 → 41 に落ちた**（下段は 1283 → **4**）。さらに
+  **ON と既定の差（1989 / 2162）は、既定自身の run 間の床（1983）と同水準**である
+  → **この場面・この解像度では、native モデル描画は既定のばらつきを超える差を生んでいない**。
+  `modelDraws`（=queue 数）1402 に対し `cancelled` 1402（**成功時のみ取消**）、`refusals=0`、
+  `submitted == completed`、`discarded=0`、**VUID 0**、クラッシュなし、**PASSED**。
+- **言えること / まだ言わないこと**: **三人称のプレイヤーモデル1場面**で、native 描画が既定のばらつき内に収まった。
+  **entity/TESR/item 全体・他 scene・他 GPU は未検証**。「pixel 完全一致」でも「モデル完成」でもない。
+
+## 0.7 モデル native 描画の画像比較: **run 間で再現しない**（前ターンの結論・実験は lab flag のまま）
 
 **測定（AMD、軽い世界、三人称＋GUI、duration 120 s、`captureStartTick=200` は全 run 一致）**:
 
@@ -197,7 +228,7 @@ frame target が作り直された後（resize / teardown）に古い group が�
 |---|---|---|
 | 1 | texture の実体・更新・寿命を一つにする | **実装済み・両GPU受入**（`297ce5caa` ＋ §0.3。lifecycle/拒否/コスト計測まで。画像同一性の統制比較のみ残る） |
 | 2 | draw の queued→recorded→submitted→completed→retired と取消根拠の整合 | **一部実装**（§0.2: 取消を記録された事実に限定、名前ベースを撤去）。queued→recorded→submitted→completed→retired の target/generation 紐付けは未着手 |
-| 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **fixture 側は完了**（§0.4）。**draw 側は実装済み**（§0.5: GroupStamp＋target 世代ゲート＋段階の可視化。段階整合は実測、新 counter の数値読み出しのみ次 run） |
+| 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **完了**（§0.4 fixture snapshot、§0.5 draw の target 世代、§0.8 モデル描画も同じウィンドウ順序へ統合） |
 | 4 | Nether の未完を具体的に直す | **未着手**。短い trace と client/server stack で帰還・停止の地点を特定する（早い転送・budget 延長の反復はしない） |
 | 5 | plan を現状表へ戻し、経緯を history へ移す | **この文書で実施** |
 

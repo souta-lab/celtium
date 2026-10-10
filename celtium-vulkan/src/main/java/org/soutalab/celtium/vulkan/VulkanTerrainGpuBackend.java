@@ -145,10 +145,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final class GroupStamp {
         final long frameId;
         final int targetGeneration;
+        /** {@code true} when the mesh belongs to someone else and must not be freed when the group retires}. */
+        final boolean meshBorrowed;
 
         GroupStamp(long frameId, int targetGeneration) {
+            this(frameId, targetGeneration, false);
+        }
+
+        GroupStamp(long frameId, int targetGeneration, boolean meshBorrowed) {
             this.frameId = frameId;
             this.targetGeneration = targetGeneration;
+            this.meshBorrowed = meshBorrowed;
         }
     }
 
@@ -1405,6 +1412,38 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /**
+     * Queues an existing mesh for the immediate window instead of drawing it in a pass of its own.
+     * <p>
+     * The model draw used to open a command buffer, record a pass and submit it inline at {@code callList}. That made it a
+     * separate submission inside the frame: it did not participate in the ordering the immediate path maintains through its
+     * window, and two identical runs did not produce the same picture in the model's band (measured: the default floor in
+     * that band was 32 pixels, the experiment's own floor 1283). Queueing the mesh as a group of the window means the
+     * flush that precedes the next GL draw records it in the same pass as everything else, in the same order.
+     * <p>
+     * The mesh is borrowed: the captured model meshes live for the whole run and are drawn every frame, so the retire
+     * drain must not free them.
+     */
+    private boolean celtium$enqueueModelMesh(VulkanDynamicMesh mesh, int texture, int[] state, long key,
+            float[] projection, float[] modelView, int quads) {
+        if (mesh == null || mesh.isEmpty()) {
+            return false;
+        }
+        PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.POSITION_TEX, texture, key, state);
+        if (prepared == null || prepared.pipeline == null) {
+            return false;
+        }
+        long target = this.currentRenderTarget;
+        this.immediateGroups.add(new Object[] {mesh, projection, modelView,
+                Integer.valueOf(VulkanImmediateFormats.POSITION_TEX), Integer.valueOf(texture),
+                Long.valueOf(key), state, Long.valueOf(target), null,
+                Integer.valueOf(0), Integer.valueOf(0), prepared, Integer.valueOf(quads),
+                this.currentGroupViewportValues,
+                new GroupStamp(this.frameId, this.targetGeneration, true)});
+        this.immediateGroupsClosed++;
+        return true;
+    }
+
     /** Reports the animation-driven mirror refreshes on stdout: the debug list is capped and would drop them. */
     private void reportDirectMirrorRefreshes() {
         if (this.directMirrorRefreshes != this.lastReportedDirectRefreshes) {
@@ -2464,6 +2503,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Frees the meshes of groups whose draw was recorded at least one full pass ago. */
     private void releaseRetiredImmediateGroups() {
         for (Object[] group : this.retiredImmediateGroups) {
+            if (group.length > 14 && group[14] instanceof GroupStamp
+                    && ((GroupStamp) group[14]).meshBorrowed) {
+                // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so retiring
+                // the group must not free it.
+                continue;
+            }
             ((VulkanDynamicMesh) group[0]).delete();
         }
         this.retiredImmediateGroups.clear();
@@ -4652,109 +4697,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         try {
-            int[] state = celtium$captureState();
-            long key = celtium$stateKey(VulkanImmediateFormats.POSITION_TEX, state);
-            // The texture the model is actually bound to, asked of GL at the moment of the replay rather than remembered
-            // from the immediate path: a held item or a player model samples its own texture, and using the last
-            // immediate texture drew it with the block atlas (measured: white pixels in the default became atlas colours
-            // in the native draw, meanAbsDiff 2.0 over fifteen thousand pixels).
+            // The texture the model is actually bound to, asked of GL at the moment of the replay: a player model samples
+            // its own skin, not the block atlas the immediate path last used.
             int texture = boundTextureId != 0 ? boundTextureId : whiteTextureId();
-            if (this.textureRegistry != null && this.textureRegistry.get(boundTextureId) == null
-                    && boundTextureId != 0) {
+            if (boundTextureId != 0 && this.textureRegistry != null
+                    && this.textureRegistry.get(boundTextureId) == null) {
                 this.modelDrawRefusals++;
                 this.modelLastRefusal = "texture " + boundTextureId + " is not mirrored";
                 return false;
             }
-            PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.POSITION_TEX, texture, key, state);
-            if (prepared == null || prepared.pipeline == null) {
+            int[] state = celtium$captureState();
+            long key = celtium$stateKey(VulkanImmediateFormats.POSITION_TEX, state);
+            // Asked of GL here rather than taken from the immediate path's fields: a display list is replayed under the
+            // matrix in effect at that moment, and the projection gets the same clip-depth remap the immediate path uses.
+            float[] projectionNow = new float[16];
+            float[] modelViewNow = new float[16];
+            java.nio.FloatBuffer matrixBuffer = org.lwjgl.BufferUtils.createFloatBuffer(16);
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, matrixBuffer);
+            matrixBuffer.get(projectionNow);
+            matrixBuffer.clear();
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrixBuffer);
+            matrixBuffer.get(modelViewNow);
+            float[] projectionRemapped = new float[16];
+            remapClipDepth(projectionNow, projectionRemapped);
+            if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
+                    mesh.indexCount() / 6)) {
                 this.modelDrawRefusals++;
-                this.modelLastRefusal = "preflight failed for list " + listId;
+                this.modelLastRefusal = "could not queue list " + listId;
                 return false;
             }
-            VulkanTerrainPipeline terrain = this.terrainPipelineForFrame;
-            if (terrain == null) {
-                this.modelDrawRefusals++;
-                this.modelLastRefusal = "no terrain pipeline for a render pass";
-                return false;
-            }
-            org.lwjgl.vulkan.VkCommandBuffer commands = this.context.beginCommands();
-            // The viewport and scissor helpers record into the field, not into whatever buffer is passed to them, so the
-            // field is swapped for the duration and put back afterwards. Without this the pass was recorded into one
-            // buffer while the dynamic viewport and scissor went to another, and the validation layer reported it
-            // (vkCmdSetViewport-commandBuffer-recording, and then the draw complaining that its dynamic viewport was
-            // never set) for every one of the eleven hundred draws.
-            org.lwjgl.vulkan.VkCommandBuffer previousCommandBuffer = this.commandBuffer;
-            this.commandBuffer = commands;
-            try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                long renderPass = terrain.renderPass();
-                org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
-                        org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack).sType$Default();
-                begin.renderPass(renderPass);
-                begin.framebuffer(ensureFramebuffer(renderPass));
-                org.lwjgl.vulkan.VkRect2D.Buffer area = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-                area.get(0).offset().set(0, 0);
-                area.get(0).extent().set(this.targetWidth, this.targetHeight);
-                begin.renderArea(area.get(0));
-                org.lwjgl.vulkan.VK10.vkCmdBeginRenderPass(commands, begin,
-                        org.lwjgl.vulkan.VK10.VK_SUBPASS_CONTENTS_INLINE);
-                setViewportAndScissor(stack);
-                java.nio.ByteBuffer push = stack.calloc(128);
-                // The matrices are asked of GL here rather than taken from the immediate path's fields: those hold
-                // whatever the last immediate batch left behind, and a display list is replayed under the matrix in
-                // effect at that moment. The projection gets the same clip-depth remap the immediate path applies.
-                float[] projectionNow = new float[16];
-                float[] modelViewNow = new float[16];
-                java.nio.FloatBuffer matrixBuffer = org.lwjgl.BufferUtils.createFloatBuffer(16);
-                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, matrixBuffer);
-                matrixBuffer.get(projectionNow);
-                matrixBuffer.clear();
-                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrixBuffer);
-                matrixBuffer.get(modelViewNow);
-                float[] projectionRemapped = new float[16];
-                remapClipDepth(projectionNow, projectionRemapped);
-                pushCombinedMatrixInto(projectionRemapped, modelViewNow, push, 0);
-                // The matrices this draw uses, next to the matrix GL had when it replayed the same list. The vertices
-                // are captured in model space, so if these two differ the native model lands somewhere else than the
-                // original - which is what the stray shape at the top of the frame looked like. Logged once per list.
-                if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.matrixLogged(listId)) {
-                    StringBuilder line = new StringBuilder();
-                    line.append("[Celtium] CELTIUM_MODEL_MATRIX list=").append(listId);
-                    line.append(" drawModelView=[");
-                    for (int i = 0; i < 16; i++) {
-                        line.append(i == 0 ? "" : ",").append(Math.round(modelViewNow[i] * 1000f) / 1000f);
-                    }
-                    line.append("]");
-                    float[] replayed = org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replayMatrix(listId);
-                    line.append(" glReplayModelView=[");
-                    if (replayed == null) {
-                        line.append("none");
-                    } else {
-                        for (int i = 0; i < 16 && i < replayed.length; i++) {
-                            line.append(i == 0 ? "" : ",").append(Math.round(replayed[i] * 1000f) / 1000f);
-                        }
-                    }
-                    line.append("]");
-                    System.out.println(line);
-                }
-                push.putFloat(112, 0.0f);
-                push.putFloat(116, 1.0f);
-                push.putFloat(120, 1.0f);
-                push.putFloat(124, 1.0f);
-                if (prepared.pipeline instanceof VulkanImmediateTexturePipeline value) {
-                    value.draw(commands, mesh, push, prepared.descriptor);
-                } else {
-                    this.modelDrawRefusals++;
-                    this.modelLastRefusal = "prepared pipeline is not a texture pipeline";
-                    org.lwjgl.vulkan.VK10.vkCmdEndRenderPass(commands);
-                    this.commandBuffer = previousCommandBuffer;
-                    this.context.endCommands(commands);
-                    return false;
-                }
-                org.lwjgl.vulkan.VK10.vkCmdEndRenderPass(commands);
-            } finally {
-                this.commandBuffer = previousCommandBuffer;
-            }
-            this.context.endCommands(commands);
+            // Queued, not drawn: the draw happens in the window's pass, and the group counters (submitted/completed) are
+            // what show that the queued batch was actually drawn. The caller cancels the GL replay on this basis.
             this.modelDraws++;
             return true;
         } catch (RuntimeException | LinkageError error) {
