@@ -2519,7 +2519,7 @@ frame target が作り直された後（resize / teardown）に古い group が�
 | 1 | texture の実体・更新・寿命を一つにする | **実装済み・両GPU受入**（`297ce5caa` ＋ §0.3。lifecycle/拒否/コスト計測まで。画像同一性の統制比較のみ残る） |
 | 2 | draw の queued→recorded→submitted→completed→retired と取消根拠の整合 | **一部実装**（§0.2: 取消を記録された事実に限定、名前ベースを撤去）。queued→recorded→submitted→completed→retired の target/generation 紐付けは未着手 |
 | 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **完了**（§0.4 fixture snapshot、§0.5 draw の target 世代、§0.8 モデル描画も同じウィンドウ順序へ統合） |
-| 4 | Nether の未完を具体的に直す | **未着手**。短い trace と client/server stack で帰還・停止の地点を特定する（早い転送・budget 延長の反復はしない） |
+| 4 | Nether の未完を具体的に直す | **両GPU受入済み**（§0.105・§0.20/0.21: 帰還根因は「転送先ポータル内に立っていた」AXIS 直交 step 未対応＋backend 再生成後の frame target デッドロック —— AMD 967 / Intel 349 pass・PASSED・実 Nether 画像で確認） |
 | 5 | plan を現状表へ戻し、経緯を history へ移す | **この文書で実施** |
 
 ##

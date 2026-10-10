@@ -2,7 +2,7 @@
   {
     "modid": "celeritas",
     "name": "Celtium",
-    "description": "Native Vulkan terrain rendering for Minecraft 1.12.2, forked from Celeritas. The terrain GPU boundary is in place; terrain still renders through the OpenGL backend.",
+    "description": "Native Vulkan renderer for Minecraft 1.12.2 / Cleanroom, forked from Celeritas. Terrain, entities, items, particles, HUD and the HUD-adjacent overlays draw through native Vulkan pipelines; the vanilla post-process chains still render on the shared OpenGL framebuffer.",
     "version": "${version}",
     "mcversion": "1.12.2",
     "url": "https://github.com/souta-lab/celtium",
