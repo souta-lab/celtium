@@ -2156,6 +2156,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 int second = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(at + vertexStride));
                 int last = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(
                         vertexAddress + 24 + (long) (vertexCount - 1) * vertexStride));
+                float vx = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24);
+                float vy = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 4);
+                float vz = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 8);
+                System.out.println("[Celtium] CELTIUM_FMT5_POS first=(" + round3(vx) + "," + round3(vy) + "," + round3(vz)
+                        + ") camera=(" + round3(this.glModelView[12]) + "," + round3(this.glModelView[13]) + ","
+                        + round3(this.glModelView[14]) + ")");
                 System.out.println("[Celtium] CELTIUM_LIGHTCOORD fmt=5 stride=" + vertexStride + " count=" + vertexCount
                         + " first=0x" + Integer.toHexString(first) + "(" + first + ")"
                         + " second=0x" + Integer.toHexString(second) + "(" + second + ")"
