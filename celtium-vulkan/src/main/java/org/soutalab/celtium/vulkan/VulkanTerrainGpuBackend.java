@@ -260,7 +260,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
-                    + " submitFaultInjections=" + VulkanSubmitFault.injections()
+                    + " fullGlUploads=" + VulkanGlTexture.fullUploadSummary()
+                + " submitFaultInjections=" + VulkanSubmitFault.injections()
                 + " submitRequests=" + VulkanSubmitFault.requests()
                 + " textureFaultInjections=" + VulkanTextureFault.injections()
                 + " textureUploadFailures=" + this.textureUploadFailures

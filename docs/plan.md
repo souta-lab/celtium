@@ -2842,7 +2842,29 @@ tick=90  client=0  server=0                         （Overworld へ戻る）
   **サーバー側で転送前にチャンクを生成し終える**。**どちらも fixture 側の作業**であり、
   レンダラ側の未検証項目ではない。
 
-**次の一手**: (1) ヒント2（atlas の image 所有と全面読み戻し）の**計器**を入れる —
+**ヒント2の計器を実装（このターン・読み出し位置は未確定）**:
+
+- `VulkanGlTexture.uploadFromGlTexture` に**全面GL読み戻しの計器**を入れた:
+  呼び出し回数、バイト数、wall nanos、**GL texture id 別の内訳**（`fullUploadSummary()`）。
+  バックエンドの要約に `fullGlUploads=count=… bytes=… millis=… byGlId=[id:回数/バイト…]` として出す。
+  なお**この計器は「ハッシュ一致でスキップされた呼び出し」も数える**（＝**readback 試行回数**であり、
+  アップロード回数そのものではない）。**その区別は明記しておく**。
+- **実測（AMD、既定＝溶岩世界、duration 120 s）**: exit 0 / validationClean=true / **PASSED**、
+  `worldFrames=172`、**p50 40.41 ms**（溶岩ありの A/B の 41.45 ms と整合）、
+  `displayListOriginCancels=328`（起点キャンセルは正常）、ログに **`directMirrorRefreshes=433`**。
+- **未確定**: `fullGlUploads=` の値は**レポート本文からは見つからなかった**（要約が長く、`rendererDebug` の
+  どこに入るか／切り詰められているかを確認していない）。**数値はまだ読めていない**ので、
+  「読み戻しが N 回」とは**言わない**。次にやることは**読み出し位置の確定**（ログ側の同じ行を探すか、
+  要約を独立した行にする）。
+- ヒント2の本題（`announceFullPixels` が registry の別 image を更新し、直接保持の `atlasTexture` は
+  `invalidateTexture` で全面読み戻しに戻る経路）は**未着手**のままである。
+
+**次の一手**: (1) `fullGlUploads` の**読み出し位置を確定**して実数を取る（要約を独立行にするのが確実）、
+  (2) その数と `byGlId` から **atlas(9) と lightmap(12) のどちらが全面読み戻しを起こしているか**を見る、
+  (3) `announceFullPixels` と `atlasTexture` の**image 所有の不一致**を直す（同じCPU pixelsを実際にsampleする
+  image へ供給する）、(4) 直したら同じ A/B（溶岩あり/なし）で**読み戻し回数とフレーム時間**を比べる。
+
+**（旧メモ）** 次の一手: (1) ヒント2（atlas の image 所有と全面読み戻し）の**計器**を入れる —
   `uploadFromGlTexture` の origin/id/bytes/wall nanos と `directMirrorRefreshes` を出し、
   **同じ sprite 変更で何回全面 upload するか**を数える、(2) Nether は
   「fixture の地形ダウンロードが完了しない」として未検証のまま残す、(3) 溶岩世界の費用の所在を測る。

@@ -215,7 +215,44 @@ public final class VulkanGlTexture {
         return MIRROR_GL_MIPS;
     }
 
+    /** Full-image uploads from GL: how often, how many bytes, how long, and which GL textures they came from. */
+    private static long fullUploads;
+    private static long fullUploadBytes;
+    private static long fullUploadNanos;
+    private static final java.util.Map<Integer, Integer> fullUploadsByGlId =
+            new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
+    private static final java.util.Map<Integer, Long> fullUploadBytesByGlId =
+            new java.util.concurrent.ConcurrentHashMap<Integer, Long>();
+
+    /**
+     * {@return a one-line summary of the full GL uploads, so the cost of mirroring can be read next to the frames}.
+     * <p>
+     * A sprite patch that ends up triggering a whole-image readback is the case worth seeing: the count, the bytes and
+     * the wall time together say whether the mirror path is CPU-bound on copies or waiting on the GPU.
+     */
+    public static String fullUploadSummary() {
+        StringBuilder text = new StringBuilder();
+        text.append("count=").append(fullUploads)
+                .append(" bytes=").append(fullUploadBytes)
+                .append(" millis=").append(fullUploadNanos / 1000000L)
+                .append(" byGlId=[");
+        boolean first = true;
+        for (java.util.Map.Entry<Integer, Integer> entry : fullUploadsByGlId.entrySet()) {
+            if (!first) {
+                text.append(' ');
+            }
+            first = false;
+            Long bytes = fullUploadBytesByGlId.get(entry.getKey());
+            text.append(entry.getKey()).append(':').append(entry.getValue())
+                    .append('/').append(bytes == null ? 0L : bytes.longValue());
+        }
+        return text.append(']').toString();
+    }
+
     public void uploadFromGlTexture(int glTextureId, int glTextureTarget) {
+        long celtium$uploadStart = System.nanoTime();
+        final int celtium$uploadGlId = glTextureId;
+        try {
         requireAlive();
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
@@ -273,6 +310,17 @@ public final class VulkanGlTexture {
             }
         } finally {
             MemoryUtil.memFree(level.pixels);
+        }
+        } finally {
+            long celtium$elapsed = System.nanoTime() - celtium$uploadStart;
+            synchronized (VulkanGlTexture.class) {
+                fullUploads++;
+                fullUploadNanos += celtium$elapsed;
+                fullUploadsByGlId.merge(Integer.valueOf(celtium$uploadGlId), Integer.valueOf(1), (a, b) ->
+                        Integer.valueOf(a.intValue() + b.intValue()));
+                fullUploadBytesByGlId.merge(Integer.valueOf(celtium$uploadGlId), Long.valueOf(fullUploadBytes),
+                        (a, b) -> Long.valueOf(a.longValue() + b.longValue()));
+            }
         }
     }
 
