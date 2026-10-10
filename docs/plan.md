@@ -34,7 +34,7 @@
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
 | **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
-| **GL-context-less window（goal 項目6 / 条件 (b)）** | **部分達成: 起動・提示・terrain pass 開始は実測済／窓の絵が未解決なので未受入** | GL context なしで world まで起動し、Vulkan が毎フレーム提示して GL swap を1対1で飛ばす（`p548-glless`: `presentedFromVulkan=287`＝`glSwapsSkipped=287`・`presentFailures=0`・VUID 0）。`p549/p550-glless` で game の clear 色（sky 色 `#B3CFFF`）が届き、`logs/celtium-validation.json` に `pipeline for solid created`・`firstDraw region=8 pass=solid ... elements=16896`。**未解決**: 窓の絵はまだ絵ではない（`p559-glless`: `presentedDistinctColours=2`・`presentedNonBackgroundFraction=0.0`・`presentedVerticalBands=15`・fixture `FAILED_PRESENTED_IMAGE`）。GL-bridge 既定経路は退行なし（`reg-bridge3`: PASSED・clean・msgs 0・worldFrames 142・`validationExitCode=0`）。§0.114 |
+| **GL-context-less window（goal 項目6 / 条件 (b)）** | **達成（実 scene 描画まで）／条件 (b) の残りは GL context 生成と起動直後** | GL context なしで world まで起動し、Vulkan が毎フレーム提示して GL swap を1対1で飛ばす（`p548-glless`: `presentedFromVulkan=287`＝`glSwapsSkipped=287`）。**実 scene を描画**（`ver2-glless`: fixture PASSED・`validationClean`・VUID 0・`presentedDistinctColours=867`・`presentedImageAssertions=PASSED`）。地形の黒は lightmap の供給経路が根因（§0.115）。GL-bridge 既定経路は退行なし（`fix-bridge`: band 平均 (102.4,63.9,58.5)・1382 色・VUID 0）。**未完**: 表示リスト model/TESR（エンチャント台の本）は GL fallback のままで描かれない、announcement 経路の黒は未解明、FBO/postprocess・Nether・条件 (c) は未達。§0.114 §0.115 |
 | 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの。**GL-less flag 経路（`-Dceltium.vulkan.glless=true`）は §0.114 で起動・提示まで実測したが、窓の絵が未解決なので既定は bridge のまま** |
 | **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
@@ -46,6 +46,36 @@
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.115 **達成**: GL-less window が実 scene を描画 —— 地形の黒は lightmap の供給経路だった（goal 項目6 / 条件 (b)）
+
+- 対象は commit `ccae86911`。run は `.celtium-work/runtime/ver2-glless`（AMD RX 6400・`-Dceltium.vulkan.glless=true`・
+  `-Dceltium.vulkan.presentReadback=true -Dceltium.validation.dumpPresentedImage=true`・headless・
+  `-Dceltium.validation.minWorldFrames=40`）。
+- **受入（実測）**: fixture `PASSED`・`validationClean=true`・VUID 0。提示画像の主張は
+  `presentedDistinctColours=867`・`presentedVerticalBands=411`・`presentedImageAssertions=PASSED`。
+  直前の run（`p559-glless`）は同主張が `presentedDistinctColours=2` で `FAILED_PRESENTED_IMAGE` だったので、
+  これは「平坦な色ではない frame が窓に出ている」ことの実測であって、主張を緩めたのではない。
+- **根因**: terrain の黒は lightmap の **供給経路**だった。描画側の各要素は単体では正しく見えた——
+  アトラス標本だけ出力すると地形が出て（band 平均 120,87,81、参照 `p530-tp` は 112,79,74）、
+  頂点色だけ出力すると白（`a_Color` は正常）、ライト項を白に固定すると絵が完全に戻る。
+  ライトマップの画像自体は正しく（記述子が指す実オブジェクトの device 側 dump が noon グラデ・level 0 と mip 連鎖・
+  `nonZero=1024/1024 min=14`）、それでも shader は黒を返していた。差は画像を埋めた経路で、ライトマップは
+  registry の announcement 近道（`canSkipReadback`）を通り、正しく sample できていたアトラスは
+  `uploadFromGlTexture` を通っていた。ライトマップをアトラスと同じ呼び出しに載せると絵が出る。
+- **未解明として残す**: announcement 経路が「内容は正しいのに sample が黒い」image を残す理由は特定していない。
+  回避ではなく経路の統一として `uploadFromGlTexture` に寄せたが、`canSkipReadback` を通る他の texture
+  （animated sprite 等）に同じ状態が残っている可能性は未検証。次の計測は announcement 経路で level 0 だけを埋めた
+  場合の mip 段（level 1..n）の内容と、その image を sample する descriptor の状態。
+- **同時に直したもの**: 頂点 arena readback が slot ごとに region を覚えるようにした（単一 field を毎 draw が
+  上書きしていたため復号した頂点は信用できず、発行していた copy が
+  VUID-vkCmdCopyBuffer-srcOffset-00113 の 9 件/run そのものだった）。fixture は presented image を run 末尾でも
+  測る（capture の dump は次の present が書くため、capture 直後に終了する run では書かれない）。backend は
+  fixture の dump を 40 frame ごとに再要求し、ディスク上の画像が最近の frame であるようにした。
+- **GL-bridge の退行なし**: `fix-bridge` は band 平均 (102.4,63.9,58.5)・1382 色・VUID 0・fixture PASSED。
+- **未着手のまま残るもの（この section の scope 外）**: 表示リスト geometry は 2 list（腕・手持ち）しか
+  取り込まれておらず、TESR の model（エンチャント台の本）は GL fallback に落ちて何も描かれない。
+  entity/TESR/item/model の native 描画・照明・画質、FBO/postprocess、Nether、条件 (c) は未達のまま。
 
 ## 0.114 **部分達成**: GL-context-less window が起動・提示・terrain pass 開始まで到達（goal 項目6 / 条件 (b)）—— 窓の絵は未解決なので受入ではない
 
