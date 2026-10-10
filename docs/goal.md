@@ -33,7 +33,7 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 - 失敗経路は提示・線・合成の変更後も正しい。fence timeoutは検出して停止しteardownを548回スキップして資源を解放せず（stalledStops=1）、submit失敗はfixtureがFAILEDとして報告する。いずれもvalidationClean=true・VUID 0・クラッシュなし。
 - 条件(b)の残量は実測で約2割がGL。内訳はformat 2の非画面合成 709（FBO所有権がVulkanに移るまでnative化不可）、起動直後10フレームのみの80（nativeの描画先がまだ無いため本質的）、format 1/6/9の少数。lightmap分は解消済み。通常fixtureの0/frameを全sceneのreadback除去としない。
 - **ゲームの通常フレームがVulkan所有のcolor/depthで生産され、swapchainへ提示される経路が既定になった**（adoption）。AMD/IntelともフラグなしのrunでPASSED・VUID 0・GLエラーなしで、同一vendorのGL経路との画像差はAMD 0.001/0.00%・Intel 0.026/0.02%。bridgeの往復blitとGL深度変換は走らない。`-Dceltium.vulkan.adoptGameFramebuffer=false`で旧経路に戻せる。残るGL依存は「GL contextの生成」と「既定フレームバッファへ描く合成（post-present overlay待ち）」である。
-- 実window/compositor出力（条件(c)）は未確認である。DISPLAY=:0 のrootが0×0で合成器が無く、不足条件をdocs/plan.mdに記録した。method名や環境制約だけで完成目標から外さない。
+- 実window/compositor出力（条件(c)）は**確認済**：`--headless` runがnested wlroots-headless swayを起動し、`grim`がそのWayland socketからcompositor出力をscreencopy —— 実Minecraft sceneが正立・正色で届く（sky bandのRGBがgame screenshotと完全一致、証拠 `docs/history/evidence/grim-compositor-2026-10-10.png`）。swapchain→window→compositorの到達は実証された。method名や環境制約だけで完成目標から外さない。
 - 地形の暗さの主要因とlightmap座標の修正はあるが、照明・state・alpha/depth/blend・sampler/mip・遠景等の画質残件はある。entity/TESR/item/model全体のnative描画・照明・見た目は未完で、手持ちの取消だけをモデル完成と扱わない。FBO/postprocessのnative化、全block state、全entity/TESR、全mod互換、性能実測、リブランド/配布も未完である。過去の68.81%やlocal 0.267/255を最新版全体の一致率にしない。固定world timeだけでsprite animation位相も固定されたとは扱わない。
 - AMDのblock registry254種掃引とIntelの部分掃引、weather/particle/GUI等の局所fixtureは実績として保持する。現在HEADや未commit差分の進行に合わせてこのsnapshotを更新する。
 
