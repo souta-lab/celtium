@@ -36,6 +36,25 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.90 **被覆も棄却**（atlas/lightmap とも完全）／残る焦点は **sampler の mip（maxLod）**
+
+- **計器（format 5 グループで、atlas・lightmap・グループのテクスチャの被覆を出す）**:
+  ```
+  CELTIUM_PROJ_PROBE fmt=5 ... atlasFull=true lightmapFull=true groupTexFull=true
+  ```
+  ＝ **ミラーは完全**（部分ミラーのまま未初期化領域をサンプルしている、という説明は**棄却**）。
+- **ここまでで format 5 について棄却した説明（すべて実測・コード根拠つき）**:
+  属性順（stride 28 の取り違え）／シェーダ式／SPIR-V の鮮度／光座標の生値（0x0000 は正当な最暗値）／
+  生と保存済みの射影（完全一致）／ブレンド（観測値が配管済み）／atlas・lightmap の被覆（完全）。
+- **残る候補（次の1点）**: **sampler の mip**。
+  `VulkanGlTexture` のサンプラは `.mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)`、`.minLod(0.0f)`、**`.maxLod(1.0f)`** で作られ、
+  コード自身の注記にも「**この場面は maxLevel/maxLod 0 の1レベルで束縛するテクスチャがある**（minFilter/magFilter 9728＝GL_NEAREST）」
+  と書かれている。＝ **GL の `GL_TEXTURE_MAX_LEVEL` を追えていない場合、存在しない mip をサンプルして黒くなる**。
+  これは観測（**黒に近い 16.0 対 147.7**）と一致する。
+- **次の一手（1点）**: **ミラーごとに `GL_TEXTURE_MAX_LEVEL`（mip 段数）を記録し、サンプラの `maxLod` がそれに従うか**を確認する。
+  従っていなければ、**mip を持たないテクスチャは maxLod=0** にする。
+- **受入**: 変更は計器のみ。既定 run は exit 0 / clean / PASSED / VUID 0。
+
 ## 0.89 **行列とブレンドは正常**（計器とコードで棄却）／残る焦点は**テクスチャ（atlas ミラー）**
 
 - **計器（format 5/3 の生の `glProjection` と、保存・送出される射影を並べる）**:

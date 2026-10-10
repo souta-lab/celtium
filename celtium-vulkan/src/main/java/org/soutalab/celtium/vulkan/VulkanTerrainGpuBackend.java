@@ -3618,7 +3618,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + round3(this.currentGroupProjection[14]) + ")"
                         + " rawW=(" + round3(this.glProjection[11]) + "," + round3(this.glProjection[15]) + ")"
                         + " mvT=(" + round3(this.currentGroupModelView[12]) + "," + round3(this.currentGroupModelView[13])
-                        + "," + round3(this.currentGroupModelView[14]) + ")");
+                        + "," + round3(this.currentGroupModelView[14]) + ")"
+                        // The mirror's own account of its contents: a texture that only ever received patches would be sampled
+                        // in the parts that never arrived, which is what a black particle sprite would look like.
+                        + " atlasFull=" + (this.atlasTexture != null && this.atlasTexture.hasFullContent())
+                        + " lightmapFull=" + (this.lightmapTexture != null && this.lightmapTexture.hasFullContent())
+                        + " groupTexFull=" + this.groupTextureFull());
             }
             if (this.immediateMatrixLogged < 8) {
                 // The immediate path's own matrices and batch identity, for the first few groups: the first one was normal,
@@ -5152,6 +5157,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** How many model enqueues have printed their matrices. */
     private int modelMatrixLoggedCount;
     /** One-shot: the matrices an immediate group is stored with. */
+    /** {@return whether the texture of the group being closed reports a complete mirror}. */
+    private boolean groupTextureFull() {
+        try {
+            if (this.textureRegistry == null || this.currentGroupTexture == 0) {
+                return false;
+            }
+            org.soutalab.celtium.vulkan.VulkanGlTexture texture =
+                    this.textureRegistry.get(this.currentGroupTexture);
+            return texture != null && texture.hasFullContent();
+        } catch (RuntimeException | LinkageError error) {
+            return false;
+        }
+    }
+
     /** How many immediate groups have printed their raw and stored projections. */
     private int formatProbeLogged;
     /** How many particle batches have printed their light coordinates. */
