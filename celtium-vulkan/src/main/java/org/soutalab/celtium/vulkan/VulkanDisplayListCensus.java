@@ -181,6 +181,23 @@ public final class VulkanDisplayListCensus {
                 && (origin.contains("ModelPlayer") || origin.contains("ModelBiped"));
     }
 
+    /**
+     * Whether this list may be cancelled even when the native model draw did not run.
+     * <p>
+     * The held item's lists go through {@code ItemRenderer}, and the immediate path already draws that content, so its
+     * display list is a duplicate: cancelling it without a native model draw is what the default did before the model
+     * draw existed, and it was measured as image-neutral on both GPUs. Turning that into "cancel only what the model
+     * draw drew" silently stopped the cancellation altogether whenever the model draw switch was off - which is the
+     * default - and the counter showed it: {@code displayListOriginCancels} went from 1060 to 0.
+     * <p>
+     * The player model's own lists are a different case and stay behind their lab switch: nothing else draws them, so
+     * cancelling without drawing would make the model disappear.
+     */
+    public static boolean cancelsWithoutDraw(int list) {
+        String origin = originOf(list);
+        return origin != null && origin.contains("ItemRenderer");
+    }
+
     /** Whether the player model's display lists are cancelled too (lab switch, off by default). */
     private static final boolean CANCEL_MODEL_BY_ORIGIN =
             Boolean.getBoolean("celtium.vulkan.cancelModelDisplayLists");
