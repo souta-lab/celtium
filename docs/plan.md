@@ -1,4 +1,51 @@
 # Celtium 現状表 — 2026-10-09 第3回監査反映
+> **構造修復フェーズ（2026-10-10〜）**: 方針は `docs/hints-2026-10-10-nether.md` と
+> **`docs/handoff-structure-recovery-2026-10-10.md`（構造修復プロンプト）** に従う。要旨は
+> (1) texture の実体・更新・寿命を**一つの契約**にまとめる、(2) frame/draw の
+> accept→submit→complete→retire と取消根拠を整合させる、(3) fixture の段階・thread 所有を一つの状態機械にする、
+> (4) plan を現状表へ戻し経緯を history へ移す。**全面書換え・汎用GLエミュレーション・flag/定数/budget での症状隠しは禁止**。
+> 短い修復フェーズのあと、全 vanilla native 化・GL なし frame と実 present へ戻る。
+
+## 構造修復 1: texture の所有契約を一つにする（このターン・実装済み／検証は一部保留）
+
+- **根因（実コードで確認）**: 同じ GL texture id に対して **Vulkan image が2つ**あった。
+  `VulkanTextureRegistry` が `entries[id].texture` を持ち、`announceFullPixels(...)` は**そちら**へ patch を書く。
+  一方 `VulkanTerrainGpuBackend` は `atlasTexture`/`lightmapTexture` を**自前で `VulkanGlTexture.create`** して保持し、
+  **descriptor が sample するのはこちら**。したがって patch はサンプルされず、`invalidateTexture` が
+  `applyAnnouncedTo`（BufferedImage 経路のみ有効）に失敗して **GL 全面 readback** に落ちていた。
+- **直した契約**:
+  - **実体の所有者を registry に一本化**した。バックエンドは `registry.imageFor(id, w, h, filter)` で
+    **同じ object** を受け取り、それを sample する（フィルタは所有者側で一度だけ決める: atlas=nearest, lightmap=linear）。
+    backend 側の `VulkanGlTexture.create` による第2の実体は**撤去**した。
+  - **初期化状態**を明示した（`fullyInitialized`）。**部分 patch だけでは未初期化 image を作らない** —
+    全面が一度も入っていないなら readback を残す。
+  - **世代の消費**を明示した（既存の `announcedGeneration`/`consumedGeneration` に統合。新しい世代カウンタを
+    増やさない）。CPU 適用（int[][] patch・BufferedImage 変換）が世代を進め、**readback を省いた事実が消費**する。
+    「無効化を起こした書き込みが既に pixels を渡していた」ことを**事実**として扱う。
+  - registry の生成が**7箇所に散っていた**のを単一アクセサ `celtium$registry()` にまとめ、
+    「2つの registry ができて実体がずれる」余地を消した。
+- **実測（AMD、溶岩世界＝既定、duration 120 s、同一条件の変更前 run と比較）**:
+
+| 指標 | 変更前（p250-upload） | 変更後（p251-owner） |
+|---|---|---|
+| verdict | exit 0 / clean / **PASSED** | exit 0 / clean / **PASSED** |
+| p50 | 40.41 ms | **25.49 ms** |
+| `directMirrorRefreshes` / `readbacksSkipped` | — | **472 / 473**（ほぼ全更新が readback 不要） |
+| `CELTIUM_PATCH_REJECTED` | — | **0** |
+| VUID / クラッシュ | 0 / なし | **0 / なし** |
+
+- **検証として言えること**: **無効化のたびに走っていた全面 readback が消えた**（473 回が skip として計上され、
+  実測 p50 が 40.41→25.49 ms に下がった）。`applyAnnouncedTo` は BufferedImage 経路として残る（dynamic texture 用）。
+- **まだ言えないこと（重要）**: **画像が同一だとは言っていない**。比較した run は**溶岩世界（アニメーションする
+  スプライトを持つ）**で、`PINNED_WORLD_TIME` は world time を固定するが **sprite の animation 位相は固定しない**
+  （handoff の指摘どおり）。実際に全画面 meanAbsDiff 6.29 / 400k 画素の差が出ており、**これが位相の違いなのか
+  patch 経路の content 差なのかは切り分けていない**。**次の検証は「アニメーションを統制した（または静止した）
+  場面」で行う**。
+- **残る具体的な確認項目**: patch 経路が **mip と全画像内容**を readback 経路と同等に保つか
+  （`MIRROR_GL_MIPS=false` なので level 0 のみを触る点は両経路で同じ、という読みまではした）。
+  **reload / GL id 再使用 / sprite 単位 mip** はまだ測っていない。
+- このターンで**ヒント1・3 の修正は維持**（capture 段階化・部分レポート・dimension fail-closed）。
+
 
 本書は **現在の到達点・優先順・受入の唯一の現状表** である。経緯と過去の測定は `docs/history/` にあり、そこにある数値や「closed」は
 現在の判定ではない。根拠は `docs/audit-2026-10-09-third.md`（第3回監査、監査開始HEAD `c89bda361`）と、監査後に取得した実測である。

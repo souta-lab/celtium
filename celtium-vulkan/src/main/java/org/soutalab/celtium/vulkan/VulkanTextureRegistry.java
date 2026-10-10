@@ -89,6 +89,76 @@ public final class VulkanTextureRegistry {
         return get(glTextureId, true);
     }
 
+    /**
+     * {@return the single image for this GL texture, created if this is the first time it is asked for}.
+     * <p>
+     * This is the owner's door: the backend used to create its own atlas and light map images, so the announced pixels went
+     * into one image while the descriptors sampled another and every animation ended in a full readback. The filter is a
+     * property of the image, so it is decided here once, by the caller that knows what the texture is.
+     *
+     * @param nearestFilter see {@link VulkanGlTexture#create(VulkanContext, int, int, boolean)}
+     */
+    public VulkanGlTexture imageFor(int glTextureId, int width, int height, boolean nearestFilter) {
+        Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+        if (entry != null) {
+            return entry.texture;
+        }
+        VulkanGlTexture texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
+        this.entries.put(Integer.valueOf(glTextureId), new Entry(glTextureId, width, height, texture));
+        this.mirrorCount++;
+        return texture;
+    }
+
+    /** Records that the whole image has been filled, which a partial patch alone cannot establish. */
+    public void markFullyInitialized(int glTextureId) {
+        if (glTextureId != 0 && this.entries.containsKey(Integer.valueOf(glTextureId))) {
+            this.fullyInitialized.add(Integer.valueOf(glTextureId));
+        }
+    }
+
+    /**
+     * {@return whether the invalidation can be answered without reading the texture back from OpenGL}.
+     * <p>
+     * True only when the image is fully initialized and a CPU application has landed in it that no readback has consumed:
+     * the write that invalidated the mirror handed over its pixels, and they went into the image the descriptors sample.
+     */
+    public boolean canSkipReadback(int glTextureId) {
+        Integer id = Integer.valueOf(glTextureId);
+        if (!this.fullyInitialized.contains(id)) {
+            return false;
+        }
+        Integer applied = this.announcedGeneration.get(id);
+        if (applied == null) {
+            return false;
+        }
+        Integer consumed = this.consumedGeneration.get(id);
+        return consumed == null || applied.intValue() > consumed.intValue();
+    }
+
+    /** Consumes the CPU application that made a readback unnecessary, so the next write is judged on its own. */
+    public void consumeReadback(int glTextureId) {
+        Integer id = Integer.valueOf(glTextureId);
+        Integer applied = this.announcedGeneration.get(id);
+        if (applied != null) {
+            this.consumedGeneration.put(id, applied);
+        }
+        this.readbacksSkippedAfterAnnouncement++;
+    }
+
+    /** {@return how many readbacks were skipped because the announced pixels were already in the image}. */
+    public int readbacksSkippedAfterAnnouncement() {
+        return this.readbacksSkippedAfterAnnouncement;
+    }
+
+    /** Records one CPU application into the image, whatever producer it came from. */
+    private void recordApplication(int glTextureId, boolean wholeTexture) {
+        Integer id = Integer.valueOf(glTextureId);
+        this.announcedGeneration.put(id, Integer.valueOf(this.announceCounter = this.announceCounter + 1));
+        if (wholeTexture) {
+            this.fullyInitialized.add(id);
+        }
+    }
+
     /** @param nearestFilter see {@link VulkanGlTexture#create(VulkanContext, int, int, boolean)} */
     /**
      * Records the image a texture is being uploaded with, so the mirror can be built from it instead of from a readback.
@@ -233,6 +303,9 @@ public final class VulkanTextureRegistry {
                 return false;
             }
             try {
+                // The caller normally creates the image first through imageFor, which is where the filter is decided. This
+                // fallback exists for an announcement that arrives before any draw asked for the texture; it cannot know the
+                // filter, so it uses nearest and records that the image was created here.
                 VulkanGlTexture created = VulkanGlTexture.create(this.context, textureWidth, textureHeight, true);
                 entry = new Entry(glTextureId, textureWidth, textureHeight, created);
                 this.entries.put(glTextureId, entry);
@@ -264,6 +337,7 @@ public final class VulkanTextureRegistry {
             }
             this.imageUploads++;
             this.staleIds.remove(Integer.valueOf(glTextureId));
+            recordApplication(glTextureId, wholeTexture);
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
@@ -304,11 +378,15 @@ public final class VulkanTextureRegistry {
         }
         java.nio.ByteBuffer rgba = rgbaOf(image);
         try {
-            if (!target.uploadFromImage(image.getWidth(), image.getHeight(), rgba)) {
+            boolean uploaded = target.uploadFromImage(image.getWidth(), image.getHeight(), rgba);
+            if (!uploaded) {
                 this.imageUploadsSkipped++;
                 return true;
             }
             this.imageUploads++;
+            // Same contract as the int[][] producer: the pixels are in the image the descriptors sample, so the invalidation
+            // that follows does not need to read the texture back.
+            recordApplication(glTextureId, true);
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
@@ -352,8 +430,27 @@ public final class VulkanTextureRegistry {
     public static long HIT_CALLS;
     /** Announcement generation per texture, and the generation already turned into a mirror. */
     private final java.util.Map<Integer, Integer> announcedGeneration = new java.util.HashMap<Integer, Integer>();
+    /**
+     * The ownership contract for a mirrored texture, kept in one place.
+     * <p>
+     * One GL texture id has exactly one Vulkan image, and it is the one this registry holds - the backend samples the same
+     * object through {@link #imageFor}. Content arrives from two producers and the state below says which of them the image
+     * has already received:
+     * <ul>
+     *   <li>{@code fullyInitialized} - the whole image has been filled at least once (a full readback, or an announcement
+     *       that covered the whole texture). A partial patch applied before this would leave the untouched texels undefined,
+     *       so a readback is still required in that case.</li>
+     *   <li>{@code announcedGeneration} / {@code consumedGeneration} - every CPU application bumps the first, whatever
+     *       producer it came from; a readback that is skipped because the pixels are already there, and the mirror build that
+     *       converts an announced image, both consume it. One counter for both producers is what makes "the write that
+     *       invalidated the mirror already handed its pixels over" a fact rather than an assumption.</li>
+     * </ul>
+     */
+    private final java.util.Set<Integer> fullyInitialized = new java.util.HashSet<Integer>();
+    /** The generation already present in the image, per texture: consumed by a readback skip or by a mirror build. */
     private final java.util.Map<Integer, Integer> consumedGeneration = new java.util.HashMap<Integer, Integer>();
     private int announceCounter;
+    private int readbacksSkippedAfterAnnouncement;
     /** How many announced-image conversions were skipped because the same announcement was already consumed. */
     public static long ANNOUNCED_SKIPS;
     /** {@return how many 1x1 mirrors the last invalidation left alone}. */

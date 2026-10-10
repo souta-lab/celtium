@@ -634,6 +634,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int announcedUploads;
     private int animatedImageFills;
     private int directMirrorFromAnnouncement;
+    /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
+    private int readbackSkippedAfterAnnouncement;
     private int animatedAnnounceDiagnostics;
     private int dynamicTextureFills;
     private int dynamicAnnounceDiagnostics;
@@ -1136,7 +1138,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         if (this.textureRegistry == null) {
-            this.textureRegistry = new VulkanTextureRegistry(this.context);
+            this.textureRegistry = celtium$registry();
         }
         int bound = this.immediateState.boundTextureName();
         compareBoundTextureWithGl(bound);
@@ -1161,7 +1163,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         if (this.textureRegistry == null) {
-            this.textureRegistry = new VulkanTextureRegistry(this.context);
+            this.textureRegistry = celtium$registry();
         }
         int bound = this.immediateState.boundTextureName();
         compareBoundTextureWithGl(bound);
@@ -1208,7 +1210,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
-            this.textureRegistry = new VulkanTextureRegistry(this.context);
+            this.textureRegistry = celtium$registry();
         }
         this.textureRegistry.announceImage(glTextureId, image);
         this.announcedUploads++;
@@ -1225,7 +1227,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         compareBoundTextureWithGl(bound);
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
         if (this.textureRegistry == null) {
-            this.textureRegistry = new VulkanTextureRegistry(this.context);
+            this.textureRegistry = celtium$registry();
         }
         // Which id the animation announces, and which id the light map has: if those differ, the light map's writes are being
         // announced against something else and its refreshes will keep reading back.
@@ -1271,11 +1273,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 // The announcement first: if the write that triggered this invalidation handed its pixels over, the mirror can
                 // be filled from them and the readback is unnecessary - which is the whole stream this path was.
-                if (this.textureRegistry != null
+                if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
+                    // The write that invalidated this mirror handed its pixels over, and they went into this image.
+                    this.textureRegistry.consumeReadback(glTextureId);
+                    this.directMirrorFromAnnouncement++;
+                    this.readbackSkippedAfterAnnouncement++;
+                } else if (this.textureRegistry != null
                         && this.textureRegistry.applyAnnouncedTo(this.atlasTexture, glTextureId)) {
                     this.directMirrorFromAnnouncement++;
                 } else {
                     this.atlasTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    if (this.textureRegistry != null) {
+                        this.textureRegistry.markFullyInitialized(glTextureId);
+                    }
                 }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
@@ -1284,11 +1294,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         if (this.lightmapTexture != null && glTextureId == this.lightmapSourceGlId) {
             try {
-                if (this.textureRegistry != null
+                if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
+                    this.textureRegistry.consumeReadback(glTextureId);
+                    this.directMirrorFromAnnouncement++;
+                    this.readbackSkippedAfterAnnouncement++;
+                } else if (this.textureRegistry != null
                         && this.textureRegistry.applyAnnouncedTo(this.lightmapTexture, glTextureId)) {
                     this.directMirrorFromAnnouncement++;
                 } else {
                     this.lightmapTexture.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    if (this.textureRegistry != null) {
+                        this.textureRegistry.markFullyInitialized(glTextureId);
+                    }
                 }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
@@ -1301,11 +1318,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateTextureInvalidations++;
     }
 
+    /**
+     * Establishes the whole image for a directly sampled texture - the atlas or the light map - exactly once per generation.
+     * <p>
+     * A full readback is the only way to get a texture whose pixels never came through an announcement, so it stays. When the
+     * announced pixels are already in this image the readback is redundant and is skipped, and the skip is counted: those
+     * skips are the stream that used to run once per animation frame.
+     */
+    private void celtium$establishAtlasImage(int glTextureId, VulkanGlTexture image, String what) {
+        if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)) {
+            this.textureRegistry.consumeReadback(glTextureId);
+            this.directMirrorFromAnnouncement++;
+            this.readbackSkippedAfterAnnouncement++;
+            return;
+        }
+        image.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+        if (this.textureRegistry != null) {
+            this.textureRegistry.markFullyInitialized(glTextureId);
+        }
+    }
+
     /** Reports the animation-driven mirror refreshes on stdout: the debug list is capped and would drop them. */
     private void reportDirectMirrorRefreshes() {
         if (this.directMirrorRefreshes != this.lastReportedDirectRefreshes) {
             this.lastReportedDirectRefreshes = this.directMirrorRefreshes;
             System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
+                    + " readbacksSkipped=" + this.readbackSkippedAfterAnnouncement
                     + " invalidations=" + this.immediateTextureInvalidations + " atlasGlId=" + this.atlasSourceGlId
                     + " lightmapGlId=" + this.lightmapSourceGlId);
         }
@@ -1720,7 +1758,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // refused the batch with "copy failed: NullPointerException". The composite's layout arrives exactly then, which
             // is how twelve batches per run came to be mapped, in range, in the mask, with the right stride, and still
             // declined.
-            this.textureRegistry = new VulkanTextureRegistry(this.context);
+            this.textureRegistry = celtium$registry();
         }
         VulkanGlTexture texture = this.textureRegistry.get(boundTexture);
         if (texture == null || this.lightmapTexture == null) {
@@ -2165,7 +2203,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The other place the acceptance needs it: this check runs while a batch is being offered, before any flush
                 // has created the registry. Fixing only the descriptor probe left this one throwing, which the instrument
                 // showed by reporting the identical reason after the first fix.
-                this.textureRegistry = new VulkanTextureRegistry(this.context);
+                this.textureRegistry = celtium$registry();
             }
             // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
             // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
@@ -2774,7 +2812,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
         this.prepTerrainPipelineNanos += System.nanoTime() - prepLookupStart;
         if (terrain == null) return null;
-        if (this.textureRegistry == null) this.textureRegistry = new VulkanTextureRegistry(this.context);
+        if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
         long prepRegistryStart = System.nanoTime();
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
         this.prepRegistryNanos += System.nanoTime() - prepRegistryStart;
@@ -4667,6 +4705,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return descriptorSet;
     }
 
+    /**
+     * The one texture registry.
+     * <p>
+     * It was created inline at five call sites, which is five chances for two registries to exist and for the image the
+     * backend samples to differ from the image the announcements patch - the split this change removes. Creation stays lazy
+     * because the first texture registration happens before any world draw.
+     */
+    private VulkanTextureRegistry celtium$registry() {
+        if (this.textureRegistry == null) {
+            this.textureRegistry = new VulkanTextureRegistry(this.context);
+        }
+        return this.textureRegistry;
+    }
+
     private boolean ensureFrameTarget() {
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         if (fbo == 0) return false;
@@ -4752,9 +4804,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 if (this.atlasTexture == null) {
                     int[] size = textureSize(atlasId);
-                    this.atlasTexture = VulkanGlTexture.create(this.context, size[0], size[1], true);
+                    // The registry owns the image; the backend samples that same object, so an announced patch and the
+                    // descriptor look at one image instead of two.
+                    this.atlasTexture = celtium$registry().imageFor(atlasId, size[0], size[1], true);
                 }
-                this.atlasTexture.uploadFromGlTexture(atlasId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.celtium$establishAtlasImage(atlasId, this.atlasTexture, "atlas");
                 this.atlasSourceGlId = atlasId;
                 int[] atlasSize = textureSize(atlasId);
                 record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);
@@ -4771,9 +4825,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             try {
                 if (this.lightmapTexture == null) {
                     int[] size = textureSize(lightmapId);
-                    this.lightmapTexture = VulkanGlTexture.create(this.context, size[0], size[1], false);
+                    this.lightmapTexture = celtium$registry().imageFor(lightmapId, size[0], size[1], false);
                 }
-                this.lightmapTexture.uploadFromGlTexture(lightmapId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                this.celtium$establishAtlasImage(lightmapId, this.lightmapTexture, "lightmap");
                 this.lightmapSourceGlId = lightmapId;
                 int[] lightmapSize = textureSize(lightmapId);
                 record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
