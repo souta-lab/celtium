@@ -1556,12 +1556,14 @@ public final class ValidationClient {
                     // same model, which is the state the texture-matrix work exists for.
                     droppedStack.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
                 }
+                // Two blocks right of centre so the selection-outline stone at (px, pz-3) does not sit in front of
+                // it - the item is the lit ITEM-format path the pixel comparison needs actually visible.
                 net.minecraft.entity.item.EntityItem dropped = new net.minecraft.entity.item.EntityItem(mc.world,
-                        mc.player.posX + 1.0D, gy + 0.5D, mc.player.posZ - 5.0D,
+                        mc.player.posX + 2.5D, gy + 0.5D, mc.player.posZ - 5.0D,
                         droppedStack);
                 dropped.motionX = 0.0D; dropped.motionY = 0.0D; dropped.motionZ = 0.0D;
                 dropped.setNoDespawn();
-                celtium$spawnEntity(mc, dropped, 1.0D, -5.0D);
+                celtium$spawnEntity(mc, dropped, 2.5D, -5.0D);
                 // A block on the crosshair's line and inside the creative reach, so the selection outline draws: the eye
                 // is ~1.62 above posY and the pitch-20-down ray crosses y~8.5 at ~3 blocks out, so a block whose top face
                 // is there is what the ray points at.
