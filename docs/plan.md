@@ -2762,7 +2762,42 @@ this.commandState.endPass();
   **dimension 到達の判定**（`dimensionAfter` は schedule 直後の古い client 値で成功判定にならない）。
   次のターンでこの2つを進める。
 
-**次の一手**: (1) **ヒント2**: atlas/lightmap の image 所有を一つに揃えるか、**同じCPU pixelsを実際にsampleする
+**ヒント3の修正 — dimension 受入が fail-closed になり、以前の「Nether PASSED」が Nether ではなかったと判明（このターン）**:
+
+- **実装**（ヒントの指示どおり）:
+  1. **サーバー側の処理をすべてサーバータスクの中へ移した**: プレイヤーの解決、**`server.getWorld(target)`**、転送。
+     クライアントスレッドで `getWorld` を呼んでいたのが、ログに `[Client thread] Loading dimension -1` として
+     出ていた部分である（UUID だけをクライアントで取る）。
+  2. **サーバータスクから `report`（JsonObject）を書かない**。結果は**volatile なフィールド**へ渡し、
+     クライアント側で捕捉時にレポートへ写す。
+  3. **クライアント側で到達を観測**する（`mc.player.dimension == target && mc.world.provider.getDimension() == target`
+     になった tick と frame を記録）。
+  4. **捕捉条件に到達を入れ、fail-closed にした**: 未到達なら `IllegalStateException` で**FAILED**にする。
+- **実測（AMD/Intel、`dimensionAtTick=80`）**:
+
+| run | harness | 到達の証拠 |
+|---|---|---|
+| **Nether（AMD、dimension=-1）** | **exit 255 / NO_CAPTURE** | `dimensionServerResult=transferred`、**`dimensionArrivedAtTick=81`** の後、**`dimensionClientAtCapture=0` / `dimensionWorldAtCapture=0`** |
+| **End（AMD、dimension=1）** | **exit 0 / clean / PASSED** | `dimensionClientAtCapture=1` / `dimensionWorldAtCapture=1`、`captureStartTick=200`、`worldFrames=384` |
+| **End（Intel、dimension=1）** | **exit 0 / clean / PASSED** | 同上（`worldFrames=273`） |
+
+- **判明したこと（受入の訂正・重要）**: **以前に「Nether で PASSED」と記録した run は、Nether の場面ではなかった**。
+  新しい観測では、Nether 行きの run は **tick 81 でクライアントが確かに Nether へ入る**が、**捕捉時（tick 200）には
+  クライアントも world も dimension 0（Overworld）に戻っている**。つまり**レンダラは Overworld でテストされ、
+  レポートは Nether を主張していた**。ヒントが p241 のログから指摘した
+  「Nether advancement の後に Server thread が dimension -1 を unload し、後の fog は Overworld 様」と一致する。
+  **fail-closed にしたことで、この見かけ上の合格が消えた**。
+- **部分レポートが機能した**: 捕捉に失敗した run は `MISSING_REPORT` ではなく
+  `status=NO_CAPTURE` と到達状況を書いたファイルを残した（ヒント1の修正の効果）。
+- **End は AMD/Intel とも到達を実証して PASSED**。**Nether は到達が持続しない**という**新しい実問題**が残る
+  （原因は未特定。サーバーが dimension -1 を unload する挙動が候補だが、**測ってはいない**）。
+
+**次の一手**: (1) **Nether でクライアントが Overworld に戻る理由**を突き止める（サーバーの dimension unload、
+  `SPacketRespawn` の扱い、transfer の二重実行のいずれか。サーバー/クライアント両方の dimension を毎tick記録する）、
+  (2) Nether の到達が持続するようになったら**その状態で受入を取り直す**（今の Nether の受入は存在しない）、
+  (3) ヒント2（atlas の image 所有と全面読み戻し）へ進む。
+
+**（旧メモ）** 次の一手: (1) **ヒント2**: atlas/lightmap の image 所有を一つに揃えるか、**同じCPU pixelsを実際にsampleする
   image へ供給**し、`uploadFromGlTexture` の origin/id/bytes/wall nanos と `directMirrorRefreshes` を計器に出して
   **全面読み戻しの回数**を測る、(2) **ヒント3**: server task 内で `getWorld`・transfer・結果受け渡しを行い、
   **捕捉時に `mc.player.dimension == target` と `mc.world.provider.getDimension() == target` を assert**して

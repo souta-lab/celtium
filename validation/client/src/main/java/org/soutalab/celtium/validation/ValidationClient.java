@@ -67,6 +67,16 @@ public final class ValidationClient {
     private boolean celtium$captureStarted;
     private int celtium$captureStartTick = -1;
     private int celtium$interopAtTick = -1;
+    /**
+     * What the server task did, handed to the client thread through volatile fields rather than by writing the report
+     * from the server thread: the JSON object belongs to the render thread, and the interesting question is whether the
+     * client actually arrives, not whether a task was scheduled.
+     */
+    private volatile String celtium$transferResult = "not attempted";
+    private volatile int celtium$transferAtTick = -1;
+    private volatile String celtium$rotationBefore = "unknown";
+    private int celtium$arrivedAtTick = -1;
+    private int celtium$arrivedFrames = -1;
     /** Whether the report has been written, and whether the partial-report exit hook is installed. */
     private volatile boolean celtium$reportWritten;
     private boolean celtium$exitHookInstalled;
@@ -1147,36 +1157,44 @@ public final class ValidationClient {
                     // entity locally, and the first attempt measured dimensionAfter=0 - the player stayed in the
                     // Overworld because the server never sent it anywhere. The integrated server owns the transfer, the
                     // client follows, and the run's later frames are then the new dimension's terrain.
-                    net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
-                    net.minecraft.entity.player.EntityPlayerMP serverPlayer = server == null ? null
-                            : server.getPlayerList().getPlayerByUUID(mc.player.getUniqueID());
-                    if (serverPlayer == null) {
-                        report.addProperty("dimensionError", "no server player");
-                    } else if (serverPlayer.dimension != celtium$dimension) {
+                    final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+                    final java.util.UUID playerId = mc.player.getUniqueID();
+                    if (server == null) {
+                        celtium$transferResult = "no integrated server";
+                    } else {
                         // The transfer runs as a scheduled server task rather than inline from the client tick: the
                         // first attempt called it from the tick hook and vanilla's transfer path dereferenced a look
                         // vector that is only set up during the server's own player tick, which is the NPE that ended
                         // that run. addScheduledTask runs it at the server's next safe point.
                         // worlds is a plain array indexed 0..n, not by dimension id: indexing it with -1 threw
                         // ArrayIndexOutOfBoundsException and the transfer never happened. getWorld maps the id properly.
-                        final net.minecraft.world.WorldServer target = server.getWorld(celtium$dimension);
-                        if (target == null) {
-                            report.addProperty("dimensionError", "no world for dimension " + celtium$dimension);
-                        } else {
+                        {
                             server.addScheduledTask(new Runnable() {
                                 @Override
                                 public void run() {
+                                    // Everything that touches the server - resolving the player, resolving the target
+                                    // world, the transfer itself - happens here. Resolving the world on the client
+                                    // thread was what the run log showed as "[Client thread] Loading dimension -1".
                                     net.minecraft.entity.player.EntityPlayerMP player = server.getPlayerList()
-                                            .getPlayerByUUID(mc.player.getUniqueID());
-                                    if (player == null || player.dimension == celtium$dimension) {
+                                            .getPlayerByUUID(playerId);
+                                    if (player == null) {
+                                        celtium$transferResult = "no server player";
+                                        return;
+                                    }
+                                    if (player.dimension == celtium$dimension) {
+                                        celtium$transferResult = "already there";
+                                        return;
+                                    }
+                                    net.minecraft.world.WorldServer target = server.getWorld(celtium$dimension);
+                                    if (target == null) {
+                                        celtium$transferResult = "no world for dimension " + celtium$dimension;
                                         return;
                                     }
                                     // Minecraft's getVectorForRotation returns null - and getLook then dereferences it - when the
                                     // pitch is not a number, and the transfer path asks for the look vector. The values are
                                     // recorded before they are replaced, because "the rotation was NaN" is the finding here,
                                     // not something to paper over silently.
-                                    report.addProperty("dimensionPitchBefore", Float.toString(player.rotationPitch));
-                                    report.addProperty("dimensionYawBefore", Float.toString(player.rotationYaw));
+                                    celtium$rotationBefore = "pitch=" + player.rotationPitch + " yaw=" + player.rotationYaw;
                                     if (Float.isNaN(player.rotationPitch) || Float.isInfinite(player.rotationPitch)) {
                                         player.rotationPitch = 0.0F;
                                     }
@@ -1202,18 +1220,18 @@ public final class ValidationClient {
                                     try {
                                         server.getPlayerList().transferPlayerToDimension(player, celtium$dimension,
                                                 new net.minecraft.world.Teleporter(target));
-                                        report.addProperty("dimensionTransferred", Boolean.TRUE);
+                                        celtium$transferResult = "transferred";
+                                        celtium$transferAtTick = worldTicks;
                                     } catch (Throwable error) {
-                                        report.addProperty("dimensionTransferError", String.valueOf(error));
-                                        // The message alone names a method that is not in the cached sources (a
-                                        // Forge/SRG symbol), so the frames are recorded too: they say which vanilla call
-                                        // dereferenced the null look vector.
+                                        celtium$transferResult = "error: " + error;
+                                        // The frames are collected into the same field: a message naming a Forge/SRG
+                                        // symbol is not enough to find the call that failed.
                                         StringBuilder trace = new StringBuilder();
                                         StackTraceElement[] frames = error.getStackTrace();
-                                        for (int i = 0; i < frames.length && i < 8; i++) {
+                                        for (int i = 0; i < frames.length && i < 6; i++) {
                                             trace.append(frames[i].toString()).append(" | ");
                                         }
-                                        report.addProperty("dimensionTransferTrace", trace.toString());
+                                        celtium$transferResult = "error: " + error + " || " + trace;
                                     }
                                 }
                             });
@@ -1223,6 +1241,15 @@ public final class ValidationClient {
                 } catch (Throwable error) {
                     report.addProperty("dimensionError", String.valueOf(error));
                 }
+            }
+            // The arrival is observed on the client, which is the side that has to be in the new dimension for the
+            // capture to mean anything: a scheduled server task is not evidence that the client followed it.
+            if (celtium$dimensionAtTick > 0 && celtium$arrivedAtTick < 0 && celtium$changedDimension
+                    && mc.player != null && mc.world != null
+                    && mc.player.dimension == celtium$dimension
+                    && mc.world.provider.getDimension() == celtium$dimension) {
+                celtium$arrivedAtTick = worldTicks;
+                celtium$arrivedFrames = worldFrames;
             }
             if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks == 100 && !celtium$leftWorld) {
                 celtium$leftWorld = true;
@@ -1693,6 +1720,25 @@ public final class ValidationClient {
         // different water, lava and fire frames, and that alone measured as a larger difference than any renderer
         // question this project was asking. One tick is one image.
         if (worldTicks < 200) return;
+        if (celtium$dimensionAtTick > 0) {
+            // Fail closed: a run that asked for another dimension and did not get there must not report PASSED. The
+            // previous acceptance did exactly that - dimensionAfter stayed 0 while the report said PASSED - because
+            // the value it read was taken before the scheduled transfer could run.
+            report.addProperty("dimensionServerResult", celtium$transferResult);
+            report.addProperty("dimensionServerTaskAtTick", Integer.valueOf(celtium$transferAtTick));
+            report.addProperty("dimensionRotationBefore", celtium$rotationBefore);
+            report.addProperty("dimensionArrivedAtTick", Integer.valueOf(celtium$arrivedAtTick));
+            report.addProperty("dimensionArrivedFrames", Integer.valueOf(celtium$arrivedFrames));
+            report.addProperty("dimensionClientAtCapture", Integer.valueOf(mc.player == null ? Integer.MIN_VALUE : mc.player.dimension));
+            report.addProperty("dimensionWorldAtCapture",
+                    Integer.valueOf(mc.world == null ? Integer.MIN_VALUE : mc.world.provider.getDimension()));
+            if (celtium$arrivedAtTick < 0 || mc.world == null || mc.player == null
+                    || mc.player.dimension != celtium$dimension
+                    || mc.world.provider.getDimension() != celtium$dimension) {
+                throw new IllegalStateException("dimension target " + celtium$dimension + " not reached by the client"
+                        + " (server: " + celtium$transferResult + ", arrivedAtTick=" + celtium$arrivedAtTick + ")");
+            }
+        }
         if (!celtium$captureStarted) {
             celtium$captureStarted = true;
             celtium$captureStartTick = worldTicks;
