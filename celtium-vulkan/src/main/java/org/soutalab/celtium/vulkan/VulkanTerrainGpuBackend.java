@@ -4014,6 +4014,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " imageUploadsSkipped="
                 + (this.textureRegistry != null ? this.textureRegistry.imageUploadsSkipped() : 0)
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
+                + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
                 + " dynamicTextureFills=" + this.dynamicTextureFills
                 + " readbackByOrigin=" + (this.textureRegistry != null ? this.textureRegistry.readbackByOrigin() : "none")
@@ -4299,6 +4300,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.uniforms != null) {
             this.uniforms.delete();
             this.uniforms = null;
+        }
+        if (this.postChain != null) {
+            this.postChain.delete();
+            this.postChain = null;
         }
         if (this.atlasTexture != null) {
             this.atlasTexture.delete();
@@ -5560,6 +5565,75 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Called once per frame from {@code Minecraft.updateDisplay}. A false return leaves the caller to swap through GL as
      * before, so a failure here cannot leave the window without a frame.
      */
+    /** The post-process chain executor, created lazily the first frame a chain group actually renders. */
+    private VulkanPostChain postChain;
+
+    /**
+     * {@return whether a collected pass list can run natively this frame}.
+     * <p>
+     * Same readiness the frame path needs: a live frame target, a recording-capable command buffer and an unstalled
+     * device. The executor itself is not built until a chain actually arrives, which is most games' never.
+     */
+    public boolean celtium$postChainAvailable() {
+        return this.frameTarget != null && !this.gpuStalled && this.commandBuffer != null
+                && this.context != null;
+    }
+
+    /**
+     * Runs one collected shader chain inside a GL-to-Vulkan handoff: GL releases the shared image, the passes draw
+     * it (sampling it or the pure-Vulkan chain targets) and release it back, then GL waits and keeps going. The
+     * caller binds the game framebuffer first, so the acquire sees the shared framebuffer under adoption.
+     *
+     * @return true when every pass was recorded and submitted; false leaves the caller's GL path to run instead
+     */
+    public boolean celtium$postChainRun(java.util.List<VulkanPostChain.Pass> passes) {
+        if (!celtium$postChainAvailable() || passes == null || passes.isEmpty()) {
+            return false;
+        }
+        try {
+            if (this.postChain == null) {
+                this.postChain = VulkanPostChain.create(this.context, this.frameTarget);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            record("post chain executor creation failed: " + describe(error));
+            return false;
+        }
+        if (!this.postChain.supportsAll(passes)) {
+            StringBuilder reason = new StringBuilder("post chain refused:");
+            for (VulkanPostChain.Pass pass : passes) {
+                reason.append(' ').append(pass.program).append('(').append(pass.pushBytes).append("B)");
+            }
+            record(reason.toString());
+            return false;
+        }
+        boolean submitted = false;
+        try {
+            this.frameTarget.beginFrame();
+            beginCommands();
+            this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+            this.postChain.recordPasses(this.commandBuffer, passes);
+            this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+            submitCommands();
+            submitted = true;
+        } catch (RuntimeException | LinkageError error) {
+            record("post chain submission failed: " + describe(error));
+        } finally {
+            if (submitted) {
+                try {
+                    this.frameTarget.endFrame();
+                } catch (RuntimeException | LinkageError error) {
+                    record("post chain frame end failed: " + describe(error));
+                    return false;
+                }
+            } else {
+                // GL is already holding the image or would wait on a signal that never comes: abandon rather than
+                // leave the frame half-closed.
+                this.frameTarget.abandonFrame("post chain submission refused");
+            }
+        }
+        return submitted;
+    }
+
     public boolean celtium$presentFrame() {
         // Counted before any condition: the entry counter is what says whether the per-frame call arrives at all, which the
         // attempt counter cannot (it is only reached after the early returns).
