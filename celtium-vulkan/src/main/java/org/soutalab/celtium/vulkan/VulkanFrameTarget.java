@@ -390,7 +390,7 @@ public final class VulkanFrameTarget {
             } else if (fbo == 0) {
                 // Querying attachments of the default framebuffer is not what this bridge is built on, and some
                 // drivers reject it; fail with the contract message before touching it.
-                throw new IllegalStateException("beginFrame: the bound draw framebuffer is the default framebuffer [bound=" + fbo + " gameFbo=" + gameFbo + " sharedFbo=" + sharedFbo + " adopted=" + sharedGameFramebuffer + " useRemembered=" + useRememberedTarget + "]; the"
+                throw new IllegalStateException("beginFrame: the bound draw framebuffer is the default framebuffer [bound=" + fbo + " gameFbo=" + gameFbo + " sharedFbo=" + sharedFbo + " useRemembered=" + useRememberedTarget + "]; the"
                         + " verified bridge needs an FBO whose colour attachment is an RGBA8 texture and whose depth"
                         + " attachment is a D24 renderbuffer");
             } else {
@@ -418,7 +418,7 @@ public final class VulkanFrameTarget {
             this.tDepthIn += afterDepth - afterColor;
             convertDepth(scratchDepthTexture, sharedFbo);
             this.tConvertIn += System.nanoTime() - afterDepth;
-            glCheck("beginFrame: RGBA8 colour copy and D24 to D32 depth conversion [bound=" + fbo + " gameFbo=" + gameFbo + " sharedFbo=" + sharedFbo + " adopted=" + sharedGameFramebuffer + "]");
+            glCheck("beginFrame: RGBA8 colour copy and D24 to D32 depth conversion [bound=" + fbo + " gameFbo=" + gameFbo + " sharedFbo=" + sharedFbo + "]");
 
             step = System.nanoTime();
             signalFromGl(waitSemaphore.gl, "beginFrame: glSignalSemaphoreEXT(GL to Vulkan)");
