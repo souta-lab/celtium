@@ -86,7 +86,7 @@ public abstract class ShaderGroupMixin {
             // from its texture and writes the output back, so carry the texture the executor must use.
             VulkanPostChain.Pass first = passes.get(0);
             first.groupMainTextureId = this.mainFramebuffer.framebufferTexture;
-            first.groupMainFbId = this.mainFramebuffer.framebufferObject;
+            first.groupMainFbId = System.identityHashCode(this.mainFramebuffer);
             first.groupMainW = this.mainFramebuffer.framebufferTextureWidth;
             first.groupMainH = this.mainFramebuffer.framebufferTextureHeight;
         } else {
@@ -131,10 +131,13 @@ public abstract class ShaderGroupMixin {
             // image for the game's, seeded chain target for an external one - is the run's decision.
             pass.inIsMain = in == groupMain;
             pass.outIsMain = out == groupMain;
-            pass.inFbId = in.framebufferObject;
+            // Identity keys, not GL framebuffer ids: the executor only matches them, and identity keeps each
+            // framebuffer distinct even where the GL object name would be zero (a context-less path assigns no
+            // real ids at all).
+            pass.inFbId = System.identityHashCode(in);
             pass.inW = in.framebufferTextureWidth;
             pass.inH = in.framebufferTextureHeight;
-            pass.outFbId = out.framebufferObject;
+            pass.outFbId = System.identityHashCode(out);
             pass.outW = out.framebufferTextureWidth;
             pass.outH = out.framebufferTextureHeight;
             if (!auxFramebuffers.isEmpty()) {
@@ -148,7 +151,7 @@ public abstract class ShaderGroupMixin {
                     }
                     net.minecraft.client.shader.Framebuffer fbo = (net.minecraft.client.shader.Framebuffer) aux;
                     // 0 marks the group's main framebuffer, resolved the same way intarget is.
-                    pass.auxFbIds[i] = fbo == groupMain ? 0 : fbo.framebufferObject;
+                    pass.auxFbIds[i] = fbo == groupMain ? 0 : System.identityHashCode(fbo);
                     pass.auxW[i] = fbo.framebufferTextureWidth;
                     pass.auxH[i] = fbo.framebufferTextureHeight;
                 }

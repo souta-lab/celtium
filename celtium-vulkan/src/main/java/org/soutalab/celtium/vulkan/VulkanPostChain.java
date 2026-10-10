@@ -57,8 +57,9 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet;
  * passes use - the shared image is Vulkan-owned in that window, so the first pass can sample the frame GL just
  * produced and the last pass can write the result back before the game keeps compositing (HUD included).
  * <p>
- * Chain targets are pure-Vulkan images keyed by the GL framebuffer id that owns the chain; the game's framebuffer
- * resolves to the shared image. The uniform block the mixin packs in declaration order goes in whole as push
+ * Chain targets are pure-Vulkan images keyed by the framebuffer object's identity ({@code identityHashCode} - the
+ * ids are only ever matched for equality, and identity stays unique where a GL object name would not); the game's
+ * framebuffer resolves to the shared image. The uniform block the mixin packs in declaration order goes in whole as push
  * constants - every program's block fits in 128 bytes except color_convolve (180) and spider (140), so a device
  * whose {@code maxPushConstantsSize} is the 128-byte minimum keeps those chains on GL.
  */
