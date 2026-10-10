@@ -2287,7 +2287,43 @@ this.commandState.endPass();
 - 未確定なのは **押し込み定数（行列）の組み立て**と**コマンドバッファの開始/終了・submit**の流儀で、
   次ターンに読んで実装する。
 
-**次の一手**: (1) `callList` のフックから上記レシピでモデルを描く経路を作る（ラボフラグ、既定は従来どおりGL）、
+**モデルの native 描画を実装（このターン・初めてモデルが Vulkan で描かれた）**:
+
+- 実装: `callList` のフックで、**メッシュのあるリスト**について
+  「**まず native で描き、成功したときだけ GL の再生をキャンセル**」する（順序が逆だと、描画が拒否されたときに
+  モデルが消える）。描画は `VulkanTerrainGpuBackend.celtium$drawModelList(listId)` で、
+  即時経路と同じレシピ（format 6 のパイプライン・記述子・`pushCombinedMatrixInto` の押し込み定数・
+  `vkCmdBeginRenderPass`〜`vkCmdEndRenderPass`）を使う。**ラボフラグ `-Dceltium.vulkan.modelDraw` で既定OFF**。
+- **1回目の試行**: `modelDraws=1100` / `modelDrawRefusals=0` と**描画自体は成功**したが、
+  **VUID 80件**（層は20件で頭打ち）で `validationClean=false`。内訳は
+  `vkCmdSetViewport-commandBuffer-recording` / `vkCmdSetScissor-…` / `vkCmdDrawIndexed-None-0783x`。
+- **原因（VUID がそのまま示した）**: `setViewportAndScissor` は**フィールドのコマンドバッファ**に記録するのに、
+  こちらは**ローカルのバッファ**にパスを記録していた。**フィールドを一時的に差し替えて**（`try/finally` で戻す）
+  直した。
+- **修正後**:
+
+| 指標 | 値 |
+|---|---|
+| `modelDraws` | **1106** |
+| `modelDrawRefusals` | **0** |
+| `displayListCancelled` | **1106**（成功した描画だけキャンセル） |
+| **VUID** | **0 件** |
+| verdict | **exit 0 / validationClean=true / PASSED** |
+
+- **意味**: **このプロジェクトで初めて、モデル（プレイヤーモデルの12 display list）が Vulkan で描かれた**。
+  検証エラーも無い。
+- **ただし画像は一致しない（既定OFFのままにする理由）**: 同一条件の既定 run と比べて
+  **meanAbsDiff 2.0050 / 15595 画素 / max 255**。差分の例は `(498,387)` で
+  **既定=(255,255,255)・native=(141,150,129)** で、**テクスチャが違う**ことを示している。
+  原因の候補は「**モデルが使うテクスチャ（スキン等）ではなく、直前の即時テクスチャ（アトラス）を束ねている**」こと。
+  **特定はまだ**（次の測定で確かめる）。したがって**既定は OFF のまま**。
+- 性能（同じ run）: 既定 p50 16.05 ms 対 native 15.85 ms（描画経路を足しても悪化していない）。
+
+**次の一手**: (1) `callList` の時点で**実際にバインドされているテクスチャ**を記録し、native 描画がそれを使うようにする
+（今は `currentImmediateTexture` という**即時経路の最後のテクスチャ**を使っている）、(2) 同一条件の対を取り直して
+画像一致を確認する、(3) 一致したらフラグを既定にし、同じ起点規則でプレイヤーモデルの再生もキャンセルする。
+
+**（旧メモ）** 次の一手: (1) `callList` のフックから上記レシピでモデルを描く経路を作る（ラボフラグ、既定は従来どおりGL）、
 (2) 三人称で同一条件の対を取り、プレイヤーモデルが native で出ることと画像一致を確認する、
 (3) 一致したら同じ起点規則でプレイヤーモデルの再生もキャンセルする。
 

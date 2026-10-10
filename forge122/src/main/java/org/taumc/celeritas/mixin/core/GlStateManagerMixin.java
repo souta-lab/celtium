@@ -44,8 +44,19 @@ public abstract class GlStateManagerMixin {
             // the immediate path as POSITION_TEX, so their display lists are the first candidates - cancelling them is
             // only correct if the image does not change, which is what the flag is for measuring.
             if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancels(list)) {
-                org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
-                info.cancel();
+                // Only cancel what the native path actually drew: cancelling first and drawing afterwards would remove
+                // the model whenever the draw is refused, which is exactly the failure this order avoids. The draw is
+                // behind its own lab switch and returns false while it is off, so the default path is unchanged.
+                boolean drawn = false;
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                    drawn = vulkan.celtium$drawModelList(list);
+                }
+                if (drawn) {
+                    org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
+                    info.cancel();
+                }
             }
         } catch (RuntimeException | LinkageError ignored) {
             // Never let a measurement stop the game's rendering.

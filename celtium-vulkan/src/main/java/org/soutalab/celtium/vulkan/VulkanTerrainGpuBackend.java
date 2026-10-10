@@ -260,7 +260,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
-                    + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                    + " modelDraws=" + this.modelDraws
+                + " modelDrawRefusals=" + this.modelDrawRefusals
+                + " modelLastRefusal=" + this.modelLastRefusal
+                + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                 + " modelMeshQuads=" + this.modelMeshQuads
                 + " modelMeshFailure=" + this.modelMeshFailure
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
@@ -281,6 +284,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
+                + " modelDraws=" + this.modelDraws
+                + " modelDrawRefusals=" + this.modelDrawRefusals
+                + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                 + " modelMeshQuads=" + this.modelMeshQuads
                 + " modelMeshFailure=" + this.modelMeshFailure
@@ -2004,6 +2010,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 compareMirroredAndLiveMatrices();
             }
             int boundTexture = this.immediateState.boundTextureName();
+            this.currentImmediateTexture = boundTexture;
             if (!this.immediateState.texture2dEnabled()) {
                 // Vanilla draws the sky with texturing switched off and the gradient in the vertex colours. Sampling
                 // the texture that happens to be bound then washes that out - measured as the sky going flat, 74.7% of
@@ -2960,6 +2967,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
         this.immediateOnlyPasses++;
+        // Recorded for the model draw: it needs a render pass, and this is the one the frame is using.
+        this.terrainPipelineForFrame = terrain;
+        this.frameTargetKnown = true;
         if (this.gpuStalled) {
             // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
@@ -3134,6 +3144,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
+                + " modelDraws=" + this.modelDraws
+                + " modelDrawRefusals=" + this.modelDrawRefusals
+                + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                 + " modelMeshQuads=" + this.modelMeshQuads
                 + " modelMeshFailure=" + this.modelMeshFailure
@@ -4456,8 +4469,108 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean MODEL_MESH_BUILD = Boolean.getBoolean("celtium.vulkan.modelMeshBuild");
     /** The built meshes, keyed by display-list id, or null when they have not been built. */
     private java.util.LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
+    /** Native model draws and the reasons they were refused. */
+    private int modelDraws;
+    private int modelDrawRefusals;
+    private String modelLastRefusal = "none";
+    /** Whether a frame target exists, so a pass can be opened. */
+    private boolean frameTargetKnown;
+    /** The terrain pipeline of the frame, for its render pass. */
+    private VulkanTerrainPipeline terrainPipelineForFrame;
+    /** The texture the immediate path most recently bound. */
+    private int currentImmediateTexture;
     private int modelMeshQuads;
     private String modelMeshFailure = "none";
+
+    /**
+     * Draws one captured display list natively, at the moment GL would have replayed it.
+     * <p>
+     * The recipe is the immediate path's own: the format-6 {@code POSITION_TEX} pipeline, the atlas and light map
+     * descriptor, the combined matrix in the push constants, and a render pass opened for the duration because no pass
+     * is open at {@code callList} time (measured: passOpen 0, passClosed 2003). The display list's vertices were captured
+     * while {@code ModelRenderer} compiled it, and a display list is replayed under the current matrix rather than the
+     * one it was compiled with - also measured - so the matrix used here is the one in effect now.
+     * <p>
+     * Lab switch: off by default, because this is a new draw path and the default must not change until a matched pair
+     * says the image is the same.
+     */
+    public boolean celtium$drawModelList(int listId) {
+        if (!MODEL_DRAW || this.modelMeshes == null || !this.frameTargetKnown) {
+            return false;
+        }
+        VulkanDynamicMesh mesh = this.modelMeshes.get(Integer.valueOf(listId));
+        if (mesh == null || mesh.isEmpty()) {
+            return false;
+        }
+        try {
+            int[] state = celtium$captureState();
+            long key = celtium$stateKey(VulkanImmediateFormats.POSITION_TEX, state);
+            int texture = this.currentImmediateTexture != 0 ? this.currentImmediateTexture : whiteTextureId();
+            PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.POSITION_TEX, texture, key, state);
+            if (prepared == null || prepared.pipeline == null) {
+                this.modelDrawRefusals++;
+                this.modelLastRefusal = "preflight failed for list " + listId;
+                return false;
+            }
+            VulkanTerrainPipeline terrain = this.terrainPipelineForFrame;
+            if (terrain == null) {
+                this.modelDrawRefusals++;
+                this.modelLastRefusal = "no terrain pipeline for a render pass";
+                return false;
+            }
+            org.lwjgl.vulkan.VkCommandBuffer commands = this.context.beginCommands();
+            // The viewport and scissor helpers record into the field, not into whatever buffer is passed to them, so the
+            // field is swapped for the duration and put back afterwards. Without this the pass was recorded into one
+            // buffer while the dynamic viewport and scissor went to another, and the validation layer reported it
+            // (vkCmdSetViewport-commandBuffer-recording, and then the draw complaining that its dynamic viewport was
+            // never set) for every one of the eleven hundred draws.
+            org.lwjgl.vulkan.VkCommandBuffer previousCommandBuffer = this.commandBuffer;
+            this.commandBuffer = commands;
+            try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                long renderPass = terrain.renderPass();
+                org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
+                        org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack).sType$Default();
+                begin.renderPass(renderPass);
+                begin.framebuffer(ensureFramebuffer(renderPass));
+                org.lwjgl.vulkan.VkRect2D.Buffer area = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
+                area.get(0).offset().set(0, 0);
+                area.get(0).extent().set(this.targetWidth, this.targetHeight);
+                begin.renderArea(area.get(0));
+                org.lwjgl.vulkan.VK10.vkCmdBeginRenderPass(commands, begin,
+                        org.lwjgl.vulkan.VK10.VK_SUBPASS_CONTENTS_INLINE);
+                setViewportAndScissor(stack);
+                java.nio.ByteBuffer push = stack.calloc(128);
+                pushCombinedMatrixInto(this.glProjection, this.glModelView, push, 0);
+                push.putFloat(112, 0.0f);
+                push.putFloat(116, 1.0f);
+                push.putFloat(120, 1.0f);
+                push.putFloat(124, 1.0f);
+                if (prepared.pipeline instanceof VulkanImmediateTexturePipeline value) {
+                    value.draw(commands, mesh, push, prepared.descriptor);
+                } else {
+                    this.modelDrawRefusals++;
+                    this.modelLastRefusal = "prepared pipeline is not a texture pipeline";
+                    org.lwjgl.vulkan.VK10.vkCmdEndRenderPass(commands);
+                    this.commandBuffer = previousCommandBuffer;
+                    this.context.endCommands(commands);
+                    return false;
+                }
+                org.lwjgl.vulkan.VK10.vkCmdEndRenderPass(commands);
+            } finally {
+                this.commandBuffer = previousCommandBuffer;
+            }
+            this.context.endCommands(commands);
+            this.modelDraws++;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.modelDrawRefusals++;
+            this.modelLastRefusal = String.valueOf(error);
+            return false;
+        }
+    }
+
+    /** Whether captured display lists are drawn natively (lab switch; off keeps GL replaying them). */
+    private static final boolean MODEL_DRAW = Boolean.getBoolean("celtium.vulkan.modelDraw");
 
     private boolean ensureFrameTarget() {
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
