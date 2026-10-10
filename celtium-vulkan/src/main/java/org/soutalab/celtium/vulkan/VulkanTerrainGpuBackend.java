@@ -798,6 +798,33 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int postAcceptDroppedGroups;
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
+
+    /**
+     * Marks the device stalled and says where from, once.
+     * <p>
+     * The stall is permanent - nothing clears it, by design, because the resources it protects may still be owned by a
+     * command buffer that never completed. It happened on a mid-run resize and left the present path declining with
+     * "no frame target, or stalled" for the rest of the session (presentedFromVulkan frozen at 355), so which of the four
+     * places set it is the fact the fix needs.
+     */
+    private void noteStalled() {
+        if (!this.gpuStalled) {
+            this.gpuStalled = true;
+            StackTraceElement[] stack = new Throwable().getStackTrace();
+            String where = "unknown";
+            for (StackTraceElement frame : stack) {
+                if (!frame.getClassName().startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")) {
+                    where = frame.getClassName() + '.' + frame.getMethodName() + ':' + frame.getLineNumber();
+                    break;
+                }
+                where = frame.getMethodName() + ':' + frame.getLineNumber();
+            }
+            System.out.println("[Celtium] CELTIUM_STALL site=" + where + " target=" + this.targetWidth + "x"
+                    + this.targetHeight + " frameId=" + this.frameId + " frameTargetNull=" + (this.frameTarget == null)
+                    + " presentSkipReason=[" + this.presentSkipReason + "]");
+        }
+        this.stalledStops++;
+    }
     private int stalledStops;
     private int stalledTeardownSkips;
     /** Inject a wait failure after this many waits; 0 disables. See the comment in waitForIdle. */
@@ -1556,6 +1583,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " frameEntryGlError=[" + (this.frameTarget == null ? "no-target"
                     : String.valueOf(this.frameTarget.firstEntryGlError())) + "]"
                     + " glSwapsSkipped=" + this.glSwapsSkipped
+                    // Why the present path last declined, on a line that is known to surface. The resize left the counter
+                    // at a third of its usual rate with no refusal naming a size anywhere, so the reason has to be read
+                    // where it is set rather than inferred from the outcome.
+                    + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " presentAttempts=" + this.presentAttempts
                     + " presentFailures=" + this.presentFailures
                     + " presentResult=[" + this.lastPresentResult + "]"
@@ -2672,7 +2703,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
                 try { flushImmediateWindow(); }
                 catch (RuntimeException | LinkageError error) {
-                    this.gpuStalled = true;
+                    this.noteStalled();
                     // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
                     // abandoning it keeps the next beginFrame() from reporting an open frame instead of the stall.
                     this.frameTarget.abandonFrame("immediate window submit failure");
@@ -3071,7 +3102,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.actualFlushWorstNanos = tookNanos;
             }
         } catch (RuntimeException | LinkageError error) {
-            this.gpuStalled = true;
+            this.noteStalled();
             // The ordering operation stops here and the accepted batches cannot be drawn: the device is stalled and
             // their original OpenGL draws were cancelled when they were accepted, so there is no fallback to hand them
             // back to. Rethrowing reached Minecraft's render loop and killed the client on the crash screen - the
@@ -3169,7 +3200,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     return;
                 } catch (RuntimeException | LinkageError error) {
                     if (this.frameSubmitReachedQueue || this.submissionPending || this.gpuStalled) {
-                        this.gpuStalled = true; // no reset/retire/GL fallback while the GPU may own these resources
+                        this.noteStalled(); // no reset/retire/GL fallback while the GPU may own these resources
                         throw error;
                     }
                     // No queue submission: reset the failed attempt and restore recorded groups before releasing GL's semaphore.
@@ -3193,7 +3224,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.frameTarget.endFrame();
                     }
                     if (attempt == 1) {
-                        this.gpuStalled = true;
+                        this.noteStalled();
                         this.frameTarget.abandonFrame("accepted geometry retained");
                         throw new IllegalStateException("accepted geometry retained; renderer must be rebuilt", error);
                     }
@@ -5786,7 +5817,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // was cleared, reset and re-recorded although the GPU might still be reading it. Nothing is touched in
                 // that case - the flag stays set, the buffer is not reset - and every later use is refused, so the
                 // renderer stops drawing rather than re-recording a buffer that may be in flight.
-                this.gpuStalled = true;
+                this.noteStalled();
                 this.stalledStops++;
                 record("gpu stalled: the previous submission did not complete; drawing is refused from here");
                 throw new IllegalStateException("pending backend command buffer did not complete");
@@ -6269,7 +6300,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
         if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-            this.gpuStalled = true;
+            this.noteStalled();
             throw new IllegalStateException("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
         }
         long millis = (System.nanoTime() - start) / 1_000_000L;
@@ -6286,7 +6317,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // steady-state one this audit item describes, and the earlier run showed exactly that as a start-up abort.
         if (FAIL_IDLE_AFTER > 0 && ++this.idleWaits >= FAIL_IDLE_AFTER) {
             this.injectedIdleFailures++;
-            this.gpuStalled = true;
+            this.noteStalled();
             // Nothing was submitted, so the frame's semaphores are never consumed. Leaving the frame open made the
             // caller's endFrame() wait in the GL write-back for a Vulkan signal that cannot come: the injected idle
             // failure then hung the client (exit 124, report missing) instead of ending the run with a message.
@@ -6310,13 +6341,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
                         + "s, so the last submission is not completing; not draining the queue");
-                this.gpuStalled = true;
+                this.noteStalled();
                 this.frameTarget.abandonFrame("fence wait timed out");
                 return false;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 record("waitForIdle: vkWaitForFences returned " + result);
-                this.gpuStalled = true;
+                this.noteStalled();
                 return false;
             }
             this.submissionPending = false;

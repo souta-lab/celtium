@@ -39,6 +39,34 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.100 resize の最終原因: **bind フック内の `bindFramebuffer` の待機が失敗し、stalled が恒久化する**
+
+- **計器**: `gpuStalled = true` の4箇所すべてを `noteStalled()` に置き換え、**一度だけ** site を stdout に出す。
+  あわせて周期レポート行に **`presentSkipReason`** を載せた（post-resize の理由がどこにも出ていなかったため）。
+- **結果（resize run）**:
+  ```
+  presentSkipReason の内訳: [no frame target, or stalled]=100, [presented]=78, [no completed frame waiting]=2
+  CELTIUM_STALL site=net.minecraft.client.shader.Framebuffer.handler$...celtium$noteRenderTarget:553
+               target=1024x640 frameId=245 frameTargetNull=false presentSkipReason=[presented]
+  ```
+  ＝ 最多の理由は **`no frame target, or stalled`** で、条件は `frameTarget == null || gpuStalled`。
+  **フレームターゲットは存在する**（`frameTargetNull=false`）ので、**`gpuStalled` が真**である。
+  そして **stall を立てたのは bind の HEAD フック**（`celtium$noteRenderTarget`）で、**resize のフレーム**（frameId=245,
+  target=1024x640）に起きている。
+- **連鎖（確定）**:
+  1. resize で MC がフレームバッファを作り直す。
+  2. ゲームがそれを bind → HEAD フックが `backend.bindFramebuffer(...)` を呼ぶ。
+  3. **その中の待機が失敗**し `noteStalled()` が走る。
+  4. `gpuStalled` は**設計上クリアされない**（使用中 command buffer の資源を守るため）ので、
+     **以降 native 描画と提示がすべて止まる**（`presentedFromVulkan` が 355 で凍結、`glSwapsSkipped` が同数）。
+- **意味**: §0.95 の「stalled が真因」は**正しく**、§0.96 の「呼び出し順だけ」という訂正は**片側だけ**だった。
+  実体は **resize の bind 経路で待機が失敗し、恒久 stall に入る**ことである。
+- **次の一手（1つの契約）**: **フレームバッファの作り直しに伴う待機を致命にしない**。
+  サイズが変わった bind（＝世代交代）では、待機を**スキップまたは有界**にして stall を立てない。
+  既存の「settle できないときは解放しない」契約は**そのまま**（解放はしない）が、**描画停止にはしない**。
+- **受入（実施時）**: resize run で **`CELTIUM_STALL` が出ない**こと、
+  `presentedFromVulkan` が同 duration の resize なし水準（700 台）に戻ること、提示画像が **1024x640** で書かれること。
+
 ## 0.99 **退行なし**（通常経路の再測）: 0.001 / 0.01 %・提示 806・clean/PASSED
 
 - **変更が毎フレームの bind 経路に触れるため、resize なしの通常場面で再測した**（AMD・120 s・dump あり）:
