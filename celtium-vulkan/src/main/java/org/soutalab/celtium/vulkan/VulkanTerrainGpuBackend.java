@@ -4654,11 +4654,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Whether the model meshes are built from the captured display lists (lab switch: off leaves GL drawing them). */
-    private static final boolean MODEL_MESH_BUILD = Boolean.getBoolean("celtium.vulkan.modelMeshBuild");
+    // On by default since the staged acceptance: two scenes, both GPUs, the model draw inside the default's own
+    // run-to-run floor (the spider scene's floor is 0 pixels and the effect 20 of 921600). -Dceltium.vulkan.modelMeshBuild=false
+    // and -Dceltium.vulkan.modelDraw=false restore the previous behaviour.
+    private static final boolean MODEL_MESH_BUILD = Boolean.parseBoolean(
+            System.getProperty("celtium.vulkan.modelMeshBuild", "true"));
     /** The built meshes, keyed by display-list id, or null when they have not been built. */
     private java.util.LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
-    /** Native model draws and the reasons they were refused. */
-    private int modelDraws;
+    /**
+     * Native model draws and the reasons they were refused.
+     * <p>
+     * Static so the count lives as long as the cancellation counter it has to be compared with: the census is static and
+     * survives a resource reload or a world switch, while a backend instance does not. With an instance field the two
+     * numbers drifted apart on exactly those two scenes (measured: cancelled 1022 against draws 526), which reads like a
+     * defect but was only the counters having different lifetimes.
+     */
+    private static int modelDraws;
     private int modelDrawRefusals;
     private String modelLastRefusal = "none";
     /** Whether a frame target exists, so a pass can be opened. */
@@ -4748,7 +4759,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
 
     /** Whether captured display lists are drawn natively (lab switch; off keeps GL replaying them). */
-    private static final boolean MODEL_DRAW = Boolean.getBoolean("celtium.vulkan.modelDraw");
+    private static final boolean MODEL_DRAW = Boolean.parseBoolean(
+            System.getProperty("celtium.vulkan.modelDraw", "true"));
     /** Forces the fence wait to report a timeout, so the post-submit failure path can be exercised (lab switch). */
     private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
 

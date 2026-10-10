@@ -27,6 +27,33 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.10 モデル native 描画を**既定**にした（受入一式で回帰なし）
+
+- 既定化: `-Dceltium.vulkan.modelDraw` / `modelMeshBuild` を**既定 true**（`=false` で従来挙動に戻せる）。
+- **受入一式（AMD 8場面＋Intel 2場面、軽い世界、duration 120-150 s）**:
+
+| run | exit | validationClean | fixture | frames | p50 | `modelDraws` | 拒否 | `cancelled` | VUID |
+|---|---|---|---|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | 562 | 16.08 ms | 1038 | 0 | 1038 | 0 |
+| AMD spider | 0 | true | **PASSED** | 544 | 16.67 ms | 1000 | 0 | 1000 | 0 |
+| AMD 三人称＋GUI | 0 | true | **PASSED** | 560 | 16.25 ms | 1400 | 0 | 1400 | 0 |
+| AMD postprocess | 0 | true | **PASSED** | 563 | 16.17 ms | 1040 | 0 | 1040 | 0 |
+| AMD weather | 0 | true | **PASSED** | 562 | 16.20 ms | 1040 | 0 | 1040 | 0 |
+| AMD reload | 0 | true | **PASSED** | 555 | 16.17 ms | 526 | 0 | 1022 | 0 |
+| AMD resize | 0 | true | **PASSED** | 565 | 16.21 ms | 1046 | 0 | 1046 | 0 |
+| AMD world switch | 0 | true | **PASSED** | 554 | 16.14 ms | 524 | 0 | 1016 | 0 |
+| Intel 通常 | 0 | true | **PASSED** | 320 | 29.34 ms | 556 | 0 | 556 | 0 |
+| Intel 三人称＋GUI | 0 | true | **PASSED** | 313 | 28.50 ms | 822 | 0 | 822 | 0 |
+
+  **全 run PASSED・VUID 0・クラッシュなし**。p50 は既定化前（AMD 16.02〜16.24 / Intel 28.5〜29.3）と同等で**性能の退行なし**。
+- **画像**: spider は**20 画素**（フラグON時と同一）、三人称は 2407 画素＝**既定自身の床（1983）水準**。
+- **計器の寿命差を修正**: `reload`／`worldSwitch` で `cancelled`（1022/1016）が `modelDraws`（526/524）を上回った。
+  原因は **census が static で backend がインスタンス毎**（reload/world switch でインスタンスが作り直される）。
+  `modelDraws` を **static** にして寿命を揃えた（**欠陥ではなく計器の問題**だった）。
+- **意味**: **モデル描画（display list 経由の player/mob/item モデル）が既定の経路になった**。完成条件 (a) の
+  未達項目から「model/item の native 描画（実験フラグ側）」が外れ、**entity/TESR の全種類・他 scene** が残る。
+- **まだ言わないこと**: **全 entity/TESR**・影mod・他 GPU/OS は未検証。**「全vanilla native化」ではない**。
+
 ## 0.9 モデル描画の段階受入: Intel と「モデルが多い場面」
 
 - **Intel 受入（三人称のプレイヤーモデル、duration 120 s）**: exit 0 / validationClean / **PASSED**、302 frames、p50 30.71 ms、
@@ -310,8 +337,8 @@ frame target が作り直された後（resize / teardown）に古い group が�
 
 | 条件 | 状態 | 欠落・根拠（現在の実測） |
 |---|---|---|
-| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分** | **nativeで動いているもの**: 地形パス（1フレーム計 約2.2 ms（AMD）/ 約6.1 ms（Intel）、`solid`/`cutout_mipped`/`translucent` の timestamp 計測）、即時系の各family（`immediateSubmittedBatches` 13.5/フレーム）、**フレーム最終合成**（`presentFromComposite` が既定ON、画面サイズの読み戻しは消えた）。**block registry は AMD で 254/254 を掃引済み・失敗0、Intel は 75/254 の抜き取り**（`blockSweep`）。**未検証/未完**: entity/TESR の native 描画（モデル専用描画は実験フラグ側で、既定に無い三角形が出る問題が未解決）、
-  item/model の掃引、破壊/selection overlay、**Nether**（地形ダウンロードが完了せず NO_CAPTURE）。
+| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分** | **nativeで動いているもの**: 地形パス（1フレーム計 約2.2 ms（AMD）/ 約6.1 ms（Intel）、`solid`/`cutout_mipped`/`translucent` の timestamp 計測）、即時系の各family（`immediateSubmittedBatches` 13.5/フレーム）、**フレーム最終合成**（`presentFromComposite` が既定ON、画面サイズの読み戻しは消えた）。**block registry は AMD で 254/254 を掃引済み・失敗0、Intel は 75/254 の抜き取り**（`blockSweep`）。**未検証/未完**: **entity/TESR の全種類**（display list 経由のモデルは §0.10 で既定の経路になったが、
+  全 mob/TESR・他 scene は未検証）、破壊/selection overlay、**Nether**（地形ダウンロードが完了せず NO_CAPTURE）。
   水/溶岩/火と dimension(End) は世界・受入とも追加済み（§0）。 |
 | (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成（ただし欠落はブリッジに限定された）** | **前進**: 当時の計器で `regStaleCalls=0`・`inPlaceRefreshes=0`・announce 経由 16.2/フレーム を観測した。
   **ただしこれは通常fixtureの範囲の話であり「全sceneで readback が無い」意味ではない**。構造修復1（`297ce5caa`）で
