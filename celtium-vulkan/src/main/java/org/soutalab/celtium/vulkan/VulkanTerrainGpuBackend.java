@@ -3582,7 +3582,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.immediateMatrixLogged = true;
                 System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ proj=" + round3(projection[2]) + ","
                         + round3(projection[6]) + "," + round3(projection[10]) + "," + round3(projection[14])
-                        + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14]));
+                        + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
+                        + " fmt=" + this.currentGroupFormatId + " texture=" + this.currentGroupTexture
+                        + " batches=" + this.currentGroupBatches
+                        + " mirrored=" + (this.textureRegistry != null && this.currentGroupTexture != 0
+                                && this.textureRegistry.get(this.currentGroupTexture) != null)
+                        + " worldPass=" + this.worldPassActive);
             }
             this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
                     Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
