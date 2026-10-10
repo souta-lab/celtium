@@ -27,6 +27,20 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.25 TESR 可視場面と、**format 1 の未受理 800 件**という新しい具体的ギャップ
+
+- **場面**: 水を含まない層に **chest と enchanting table** を入れて見下ろす（TESR が視界に入る）。受入は
+  exit 0 / validationClean / **PASSED**、830 frames、**p50 10.48 ms**、**VUID 0**。
+- **確認できたこと**: **TESR は display list ではない**（`modelMeshLists=2 / quads=12` のまま＝プレイヤーの手のみ。
+  chest/enchanting table は加わらない）。TESR は即時描画なので別経路である。
+- **新しい具体的ギャップ（実測）**: `ARRIVALS byFormat` は **1:826, 2:1639, 6:5748, 7:514…** なのに
+  `ACCEPTED` は **1:26, 2:0, 6:5746, 7:5228…** ＝ **format 1（POSITION_COLOR）が 826 到着して 26 しか受理されていない**。
+  format 1 は **selection outline・破壊 overlay・デバッグ表示**の family であり、**overlay 系の残件そのもの**である。
+- **分かっていないこと**: その ~800 件は**拒否として数えられていない**。ログに出る拒否は format 6/9（preflight）だけで、
+  `refusedBeforeAppend=208` にも現れない。つまり **受理でも拒否でもない第3の経路**（早期 return / 別分岐）に落ちている。
+  **次はこの経路を名指しする計器**（format ごとの offer→決定の内訳）を入れて確定する。
+- **註**: `line primitives` の拒否は依然 0（§0.24 のとおり線は native 対象外で、提供されていない）。
+
 ## 0.24 selection outline が提供されない理由を**ガード単位で**分解（レンダラ側は正常と確定）
 
 `drawSelectionBox` の呼び出し条件（`EntityRenderer.renderWorld`）は次の形で、**どこで止まるかを1つずつ計器で潰した**。
