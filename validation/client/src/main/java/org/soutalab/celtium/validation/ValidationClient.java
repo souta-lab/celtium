@@ -1870,6 +1870,20 @@ public final class ValidationClient {
             // what it matched, goes to stdout where nothing can take it away.
             System.out.println("[Celtium] CELTIUM_POSTPROCESS tick=" + worldTicks + " result=" + result);
         }
+        String held = System.getProperty("celtium.validation.heldItem");
+        if (worldTicks == 30 && held != null && !held.isEmpty() && !"none".equals(held)) {
+            // A held item is the lit ITEM-format path at its largest: the first-person renderer draws it through
+            // the same enableStandardItemLighting the dropped item uses, at a size the comparison can see. Set this
+            // early so the ~10-tick equip animation has finished and the hand sits still at the capture. Enchanted
+            // adds the glint pass on top.
+            net.minecraft.item.ItemStack inHand = new net.minecraft.item.ItemStack(
+                    net.minecraft.init.Items.APPLE);
+            if ("enchanted".equals(held)) {
+                inHand.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
+            }
+            mc.player.setHeldItem(net.minecraft.util.EnumHand.MAIN_HAND, inHand);
+            report.addProperty("heldItem", held);
+        }
         if (worldTicks == 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
             // plan named as unestablished: JEI loading proves the mod, opening a screen proves that its own rendering goes
