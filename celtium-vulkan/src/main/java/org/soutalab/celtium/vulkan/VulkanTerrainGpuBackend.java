@@ -542,6 +542,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             submitCommands();
             submitted = true;
+            if (this.postChainCommitPending) {
+                // The chain's targets are "initialized" only once the buffer carrying their barrier has actually been
+                // submitted: setting that flag at record time is the same class of lie as declaring a layout the image
+                // is not in, so the recording says so here and an abandoned recording re-records its barrier.
+                this.postChain.commitPasses();
+                this.postChainCommitPending = false;
+            }
             this.passSubmissions++;
             if (this.readbackPending) {
 
@@ -771,6 +778,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int boundHandleLogs;
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
     private int chainAdoptions;
+    /** Whether the chain recorded passes whose initialization barrier has not yet been confirmed submitted. */
+    private boolean postChainCommitPending;
     /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
     private long currentFramebufferIdentity;
     private int chainAdoptionsRefused;
@@ -1445,6 +1454,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * descriptor prepared for it, so replacing the image behind it would swap what those batches sample. When no group
      * references it, flushing would open a window - four full-screen blits and two depth conversions - to protect nothing.
      */
+    /** {@return whether a queued batch for this target samples the published outline image}. */
+    private boolean celtium$queuedForTargetUsesPublished(long target) {
+        if (this.publishedChainOutput == null || this.publishedChainTexture == 0) {
+            return false;
+        }
+        for (ImmediateGroup group : this.immediateGroups) {
+            if (group.target == target && group.texture == this.publishedChainTexture) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean queuedGroupUsesTexture(int glTextureId) {
         for (ImmediateGroup group : this.immediateGroups) {
             if (group.texture == glTextureId) {
@@ -4132,6 +4154,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         area.get(0).offset().set(0, 0);
         area.get(0).extent().set(this.targetWidth, this.targetHeight);
         begin.renderArea(area.get(0));
+        if (this.publishedChainOutput != null
+                && celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)) {
+            // The immediate pipelines declare SHADER_READ_ONLY_OPTIMAL in their descriptors while the published
+            // outline image can be in GENERAL here: an off-target pass hands it back before attaching it, and a frame
+            // in which the chain did not run never moves it forward. The transition belongs to the submission that
+            // draws the sampling batch - recorded outside the pass, before the draw, which is what this site is.
+            this.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
+        }
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.currentRenderTarget;
         this.commandState.beginPass(this.activeImmediateTarget);
@@ -4339,6 +4369,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " descriptorSets=" + this.descriptorSetsCreated()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
+                + " externalImages=[" + (this.textureRegistry != null
+                        ? this.textureRegistry.externalSummary() : "none") + "]"
                 // Condition (c) evidence: what the swapchain last presented, and whether the present was accepted. With
                 // presentMarker the image is cleared to magenta (1,0,1), whose 8-bit channel mean is ~170, so a
                 // presented mean near 170 says the swapchain image held this renderer's frame rather than nothing.
@@ -5155,6 +5187,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
                     timestampSlot * 2);
+        }
+        if (this.publishedChainOutput != null
+                && celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)) {
+            // The immediate pipelines declare SHADER_READ_ONLY_OPTIMAL in their descriptors while the published
+            // outline image can be in GENERAL here: an off-target pass hands it back before attaching it, and a frame
+            // in which the chain did not run never moves it forward. The transition belongs to the submission that
+            // draws the sampling batch - recorded outside the pass, before the draw, which is what this site is.
+            this.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
         }
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.currentRenderTarget;
@@ -6121,6 +6161,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
             }
             this.postChain.recordPasses(this.commandBuffer, passes);
+            this.postChainCommitPending = true;
             if (this.publishedChainOutput != null) {
                 // The chain has written the image and the game's composite samples it next, through a descriptor the
                 // immediate pipelines declare as SHADER_READ_ONLY_OPTIMAL. Recorded in the chain's own submission,
@@ -6280,8 +6321,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // there), so it is the layout this present really finds. Taking it from the target's own bookkeeping was
             // tried and reverted: the bridge target records the layout its *GL* side leaves, which is a different
             // question from the one this call asks.
+            // Except when ensureFrameTarget() above has just rebuilt the target - a world or dimension change does -
+            // because a fresh image is UNDEFINED and no barrier for it has reached any submitted buffer yet.
+            // Declaring GENERAL for it makes this blit's source barrier claim a layout the image is not in, which the
+            // layer reports at vkQueueSubmit as VUID-vkCmdDraw-None-09600 (its submit-time first-layout check, whose
+            // "vkCmdDraw" is a hardcoded label rather than the command). The GL-less target's own bookkeeping answers
+            // this exactly - UNDEFINED while fresh, GENERAL once a submitted frame has transitioned it - so it is
+            // asked only in the configuration that owns the image; the bridge's tracking answers a different question.
+            int presentSourceLayout = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                    ? this.frameTarget.colorImageLayout()
+                    : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
             this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
-                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL, this.targetWidth, this.targetHeight);
+                    presentSourceLayout, this.targetWidth, this.targetHeight);
             this.presentAttempts++;
             this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();
