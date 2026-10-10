@@ -230,7 +230,9 @@ public final class VulkanTextureRegistry {
             Entry entry = this.entries.get(glTextureId);
             VulkanGlTexture texture = entry != null ? entry.texture : null;
             if (texture == null) {
-                texture = VulkanGlTexture.create(this.context, width, height, nearestFilter);
+                boolean wrapS = wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S);
+                boolean wrapT = wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T);
+                texture = VulkanGlTexture.create(this.context, width, height, nearestFilter, wrapS, wrapT);
                 entry = new Entry(glTextureId, width, height, texture);
                 this.entries.put(glTextureId, entry);
                 this.mirrorCount++;
@@ -325,9 +327,11 @@ public final class VulkanTextureRegistry {
             }
             int magFilter = org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER);
+            boolean wrapS = wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S);
+            boolean wrapT = wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T);
             try {
                 VulkanGlTexture created = VulkanGlTexture.create(this.context, textureWidth, textureHeight,
-                        magFilter == org.lwjgl.opengl.GL11.GL_NEAREST);
+                        magFilter == org.lwjgl.opengl.GL11.GL_NEAREST, wrapS, wrapT);
                 entry = new Entry(glTextureId, textureWidth, textureHeight, created);
                 this.entries.put(glTextureId, entry);
                 this.mirrorCount++;
@@ -706,5 +710,21 @@ public final class VulkanTextureRegistry {
             entry.texture.delete();
         }
         this.entries.clear();
+    }
+
+    /**
+     * {@return whether the named GL texture wraps by repeating on this axis}.
+     * <p>
+     * Read from the texture object itself rather than the currently bound unit: an announcement names its texture, so
+     * a bind-side query would read whatever happened to be bound. On any failure the safe answer is clamp, which is
+     * what the mirror used before wrap modes were carried over at all.
+     */
+    private static boolean wrapRepeats(int glTextureId, int pname) {
+        try {
+            return org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId, pname)
+                    == org.lwjgl.opengl.GL11.GL_REPEAT;
+        } catch (RuntimeException | LinkageError error) {
+            return false;
+        }
     }
 }

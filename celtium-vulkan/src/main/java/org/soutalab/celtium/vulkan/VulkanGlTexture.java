@@ -98,6 +98,9 @@ public final class VulkanGlTexture {
     private boolean fullContentArrived;
     private int currentLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
     private boolean nearestFilter;
+    /** The source GL texture's wrap on each axis: {@code true} for GL_REPEAT, {@code false} for a clamp mode. */
+    private boolean wrapRepeatU;
+    private boolean wrapRepeatV;
 
     /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
     private long lastPixelHash;
@@ -159,11 +162,24 @@ public final class VulkanGlTexture {
      *                      OpenGL texture is filtered linearly
      */
     public static VulkanGlTexture create(VulkanContext context, int width, int height, boolean nearestFilter) {
+        return create(context, width, height, nearestFilter, false, false);
+    }
+
+    /**
+     * @param nearestFilter {@code true} for the pixel-art block atlas, {@code false} for the light map, whose
+     *                      OpenGL texture is filtered linearly
+     * @param wrapRepeatU   {@code true} when the GL texture repeats on S (GL_REPEAT) rather than clamping
+     * @param wrapRepeatV   {@code true} when the GL texture repeats on T
+     */
+    public static VulkanGlTexture create(VulkanContext context, int width, int height, boolean nearestFilter,
+            boolean wrapRepeatU, boolean wrapRepeatV) {
         if (context == null) {
             throw new NullPointerException("context");
         }
         VulkanGlTexture result = new VulkanGlTexture(context);
         result.nearestFilter = nearestFilter;
+        result.wrapRepeatU = wrapRepeatU;
+        result.wrapRepeatV = wrapRepeatV;
         try {
             // One variable at a time: the level count is computed here so the sampler can be told the truth about the
             // chain, while the creation order stays exactly as it was. The previous measurement changed the order and the
@@ -545,8 +561,12 @@ public final class VulkanGlTexture {
                     .magFilter(this.nearestFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
                     .minFilter(this.nearestFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
                     .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)
-                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-                    .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    // The wrap mode of the source GL texture, carried through at mirror creation: a repeating
+                    // texture (GUI sprites, item icons) that is clamped here samples its edge texels instead.
+                    .addressModeU(this.wrapRepeatU ? VK_SAMPLER_ADDRESS_MODE_REPEAT
+                            : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeV(this.wrapRepeatV ? VK_SAMPLER_ADDRESS_MODE_REPEAT
+                            : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .mipLodBias(0.0f)
                     .anisotropyEnable(false)
