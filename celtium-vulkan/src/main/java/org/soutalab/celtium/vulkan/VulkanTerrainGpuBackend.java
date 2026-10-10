@@ -4045,10 +4045,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (offTarget != null) {
             try {
                 offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
-                if (this.offTargetClearedFrame != this.frameId) {
+                if (!offTarget.offTargetAcquired() || this.offTargetClearedFrame != this.frameId) {
                     // Outside the pass, which is where the clear and its first-use barrier belong, and once per frame:
                     // the game clears a framebuffer when it binds it, and clearing per window would erase what an
-                    // earlier window of the same frame already drew there.
+                    // earlier window of the same frame already drew there. The acquire state is asked of the pair as
+                    // well as the frame, because a pair recreated after this frame's clear is UNDEFINED again while
+                    // the frame flag still says otherwise - which is the layout error a dimension change produced.
                     offTarget.clearOffTarget(this.commandBuffer);
                     this.offTargetClearedFrame = this.frameId;
                     this.offTargetClears++;
@@ -6094,7 +6096,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("post chain adoption refused: the off-target image is not " + width + "x" + height);
             return;
         }
-        if (this.offTargetClearedFrame != this.frameId) {
+        if (!glless.offTargetAcquired() || this.offTargetClearedFrame != this.frameId) {
             glless.clearOffTarget(this.commandBuffer);
             this.offTargetClearedFrame = this.frameId;
             this.offTargetClears++;

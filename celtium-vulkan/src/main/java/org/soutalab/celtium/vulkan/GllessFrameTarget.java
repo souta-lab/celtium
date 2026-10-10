@@ -521,6 +521,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
     // ----------------------------------------------------------------------------------------------------------
 
     /** The colour image view off-target draws render into, or 0 before the first {@link #ensureOffTarget}. */
+    /**
+     * {@return whether the off-target pair has been acquired}, i.e. moved out of UNDEFINED into the layout its render
+     * pass and the post chain assume.
+     * <p>
+     * A caller that only remembers "this frame already cleared it" cannot see a pair that was recreated after that
+     * clear: the new images are UNDEFINED again while the frame flag still says otherwise, and the next pass that
+     * attaches or samples them is a layout error. This asks the pair itself.
+     */
+    public boolean offTargetAcquired() {
+        return this.offTargetAcquired;
+    }
+
     /** The colour image off-target draws render into and the post chain adopts, or 0 before it exists. */
     public long offTargetColorImage() {
         checkAlive();

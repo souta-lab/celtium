@@ -47,6 +47,35 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.117 **受入済み**: Nether が capture 時に dimension -1 で native scene を描く（goal 項目4・条件 (a) の一部）
+
+- **受入（実測）**: `.celtium-work/nether-fix4.json`（AMD RX 6400・GL-less・`--jvm-arg=-Dceltium.validation.dimensionAtTick=80
+  --jvm-arg=-Dceltium.validation.dimension=-1`）が fixture **PASSED**。capture tick 200 で
+  **client/world/server すべて -1**、`dimensionGate=none`、`dimensionFramesInTarget=122`（-1 で画面なしのまま描いた
+  frame 数）、player はポータル外、`dimensionLeftTargetAtTick=-1`（0 に戻っていない）。
+  presented PNG は distinct **16543**・non-background 0.594 で、netherrack・fire・obsidian のポータル枠という
+  実 Nether scene（`.celtium-work/evidence-nether/nether-dimension-1-presented.png`）。
+- **根因（実測・推論ではない）**: fixture 側。vanilla `Teleporter` の到着位置が**ポータルの中**で、その直後に
+  fixture が `player.timeUntilPortal = 0` を設定していた——vanilla は `changeDimension` 直前に
+  `getPortalCooldown()` を入れる。`Entity.onEntityUpdate` は portal block と重なる entity を
+  `getMaxInPortalTime()` tick 後に -1 から 0 へ送る（creative では 1 tick、＝2 tick 接触）。
+  これが「到着後に 0 へ戻る」の正体。約60 tick の遅れは server が
+  `Teleporter.placeInExistingPortal/makePortal` で詰まっていた時間（trace に client が -1、server がまだ 63,10,0 と出る）。
+- **fixture の修正**: vanilla 準拠の cooldown、到着位置の探索（13候補・ポータル外/通行可/ground 優先、全数報告）、
+  140行の dimension trace（stdout・report・exit hook へ）、fail-closed な capture gate（到達＋client/world/server が
+  目標次元＋画面なし＋ポータル外＋その次元で N frame 描画）、presented image の判定を capture の1 frame 後に
+  行う修正（従来は 9.5 秒前の loading frame を判定していた）。
+- **残る未達（fixture ではない）**: `validationClean=false` の原因は 1件の
+  `VUID-vkCmdDraw-None-09600`（`VulkanPostChain` の記述子が `GENERAL` を宣言しているのに image が `UNDEFINED`）。
+  GL-less かつ dimension 変更の run にのみ出て、GL-less で dimension 変更なしの run、GL-bridge の dimension run は
+  いずれも 0件。chain 自身が確保した target の初期化 barrier の欠落/無効が疑わしく、専用エージェントで修正中。
+  この1件が解消するまで Nether は「絵は受入・validation は未受入」として扱う。
+- **注意（他 run への影響）**: GL-less の presented-image 判定が capture の1 frame 後になったため、
+  dimension 変更のない GL-less run（p559/p561 相当）も判定対象 frame が変わる。
+  `-Dceltium.validation.presentedImageAtCapture=true` で旧挙動に戻せる（A/B 用）。
+  また renderer の presented-frame counter は dimension 変更で frame target と共にリセットされる（実測 high-water 37 → 0）。
+  dimension run の frame 数主張はその窓に限定し、全体の会計（37+323=360 / worldFrames 362）を記録する。
+
 ## 0.116 **修正・受入済み**: lightmap の黒は announcement の配列形状だった（producer/consumer 契約）／model の平行移動がミラーに届いていなかった
 
 - **根因（実測）**: `VulkanTextureRegistry.announceFullPixels`/`toRgba` の契約は `int[mipLevel][flat texel]` で
