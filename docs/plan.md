@@ -2608,21 +2608,21 @@ frame target が作り直された後（resize / teardown）に古い group が�
 | **A11** | format 2（POSITION_TEX_COLOR）は既定でGL（※この記述は撤去済み） | **修正済・AMD/Intel受入済** | 既定maskを `1,2,3,4,5,6,7,8,9` に。前提として backend 専用 `VulkanCommandBufferState`（handle別ライフサイクル）と `flushImmediateWindow()`（begin→acquire→pass→release→submit→fence→endFrame の同期window）を実装し、`flushPendingBeforeGlDraw` が pass 外で直接記録していた欠陥を除去。受入: `sol-cb-final-amd` exit 0 / clean / msgs 0 / fixture PASSED / passed=true / delta=4,4,4,4 pending0 invalid0 / off-target 2,2,2 / 4矩形と未更新領域の不一致0。再現は `sol-cb-base-amd`（70メッセージ）。**Intel**: target受入は `passed=true`（最終artifactのログ行）だが、run verdict は
  1回目 `worldFrames<100` の起動ゲート、2回目は480秒上限で report 未到達。**フレーム数不足が未解決**（window往復コストが最有力） |
 | **A12** | state modelとpipelineの不一致 | **未解決** | alpha enable/func、depth func、separate alpha blend、color mask、scissor、texture matrix。pipelineはLEQUAL/ADD等を固定 |
-| **A13** | current color/alphaの欠落（group keyにも無い） | **未解決** | POSITIONはRGBのみでalpha=1、POSITION_TEXは白固定。tint/alphaの再現証拠なし |
+| **A13** | current color/alphaの欠落（group keyにも無い） | **部分** | texture-envのCOMBINE定数（hurt flash=1,0,0,0.3・team outline色）はreplay時にlightmap unitから読みpushへencodeされnative化（§0.112、`CELTIUM_ENV_COMBINE`実測）。`group.color`（glColor由来の即時draw色）はpushへ渡るがshaderが未読（dead write・要配線）。残: POSITION系のvertex alpha欠落・`glColor` runtime tintのshader適用 |
 | **A14** | normal無視のITEM対応は照明対応ではない | **未解決** | 固定lighting・normal変換・shade・fog |
 | **A15** | sampler固定値と旧比較による調整 | **未解決** | blur/clamp引数をannounceへ渡していない。filter/wrap/LOD固定 |
 | **A16** | 「hot-pathのGL読取り除去済み」は過大 | **訂正** | 通常frameのMODELVIEW/CURRENT_COLOR/fog/bound texture/FBO/viewport照会が残る。診断用readと通常readを分けて数える |
 | **A17** | `withoutGlIdentity` 成功はGLなし描画ではない | **訂正済** | GL contextを生成せず全frameをVK資源から描く経路が要る（条件(b)） |
 | **A18** | bridge presentのownership/layout契約 | **未解決** | 共有画像のbarrierは `QUEUE_FAMILY_IGNORED`、復帰先 `COLOR_ATTACHMENT_OPTIMAL`。最終native経路はbridge資源を使わない |
 | **A19** | native presentの画面到達証拠 | **未確認** | compositor/headless capture等を調査し、markerと連番で実window出力を確認。不可なら具体的不足条件を残す |
-| **A20** | wait failureを全面閉鎖したとは言えない | **部分（実機構成を追加）** | `waitForIdle()` は fence timeout/error で **false を返し `gpuStalled` を立てる**（以前は true を返し pending buffer を reset していた）。`settleGpu` は stalled で例外。submit前失敗は再試行1回・資源はqueueへ戻す。**submit成功後失敗／device lost は分岐のみ実装で実機注入は未実施** |
-| **A21** | vanilla postprocessを根拠なくscope外にした | **訂正済・未実装** | `EntityRenderer.func_175066_a` はcreeper/spider/enderman視点でShaderGroupをロードし、`func_175069_a(ResourceLocation)` は引数あり。spectator 3視点・entity outlineは**本体機能**として実装対象 |
+| **A20** | wait failureを全面閉鎖したとは言えない | **AMD受入済** | `waitForIdle()` の非TIMEOUT失敗（device lost等）でも frame を abandon する欠陥を修正（旧来は GL write-back hang）。`failDeviceLost` でpost-submit lost注入 → `CELTIUM_DEVICE_LOST`発火・37 draw拒否・bounded終了・PASSED（§0.110）。fault matrix（alloc/descriptor/submit/fence/idle/texture upload/device lost）は全typeに注入を持つ |
+| **A21** | vanilla postprocessを根拠なくscope外にした | **動作確認済・native化は未実装** | spectator 3視点は**動作する**：creeper緑desaturate・spider 5眼mosaic・enderman反転、いずれもpresented=screenshot 0.000%・PASSED（AMD）。post chainのpass drawはformat-1 quadでimmediate経路に来るが`a custom shader program is bound`でGLへ逃し、chain FBOはforeign、出力はshared FBO→提示へ正しく届く。glow outline（entityOutline FBO+silhouette composite）も同構造で動作確認。残る未完は**shader chain自体のnative化**（chain targetのnative化+~15 shaderのport+chain executor） |
 | **A22** | 比較worldは全vanillaのcoverageではない | **未解決** | registryから自動fixture生成、小場面分割。flat worldとlayout受付数で全制覇にしない |
 | **A23** | 古い画像差とlocal attributionの混同 | **訂正済** | 68.81%（旧baseline対地形）と 0.267/255・0.40%（同一Celtiumの描画切替）を最新版全体の一致率として使わない。pinned Celeritas対current Celtiumを同一fixture/GPU/camera/sceneで再取得する |
 | **A24** | 比較器が欠落verdictをfail-closedにしない | **未解決** | required fieldの存在・型・成功値を必須化 |
 | **A25** | counterの単位が完了主張と違う | **部分** | `imageFilledMirrors` はresource数ではなく呼出し/refresh回数。`outsideWorldPassAccepted` はaccept判定前に増える。単位（resources/calls/batches/groups/frames）を分けて文書化（本表がその記録） |
 | **A26** | S05/S06の専用受入が不十分 | **未解決** | 2つの独立batchを同groupへmergeし色・位置を画像確認。容量拡大跨ぎの保持 |
-| **A27** | 性能向上の根拠がない | **未測定** | 正しい描画成立後に元Celeritasと同条件でCPU/GPU時間・平均FPS・p95/p99・メモリ・chunk更新を比較 |
+| **A27** | 性能向上の根拠がない | **計測済・比較は正直に記録** | pinned Celeritas対同一fixture・AMDの`frameIntervalP50Ms`：既定世界 28.28 vs 16.32 ms（baselineは~16ms capで真cost不明）、軽世界 6.84 vs 16.05 ms（currentはuncapでcapより速い）。差の主因はdual-render構造の直列化（GL+VK両pass+sync）。backend CPU計器: batchCall ~0.3ms/call・flush ~1ms・handoff wait 185us —— frame時間の大半はGL側+present sync。残: p95/p99・メモリ・chunk更新の計測 |
 | **A28** | 能力判定と純nativeの必須条件 | **未解決** | 現行はVulkan1.2・GL UUID・external FD・GL照会能力に依存。2GPU通過を全Vulkan GPU対応と同一視しない |
 | **A29** | 根拠なく診断し定数と文書を反復 | **規律として受領** | vanilla優先。各roundは具体実装か意思決定に必要な限定検証。同一仮説を定数変更・budget延長で反復しない |
 | **A30** | 容量と証拠保全 | **規律として受領** | pinned baseline・失敗再現・受入代表runをhash付きで保存。`.celtium-work/audit-2026-10-09-third` は監査者の再比較証拠として**削除しない** |
