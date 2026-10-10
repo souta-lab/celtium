@@ -39,6 +39,29 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.94 **resize 後にフレームターゲットが旧サイズのまま**（提示が 265 対 785 に減る・ダンプが書かれない）
+
+- **前節の「未説明」の答え**: `dumpPresentedImage` を**渡した再 run（p410）でも提示画像は書かれなかった**。
+  ＝ フラグの渡し忘れではなく、**実際に書き出しが起きていない**（前節の推測は誤りだったので訂正する）。
+- **計測（同一 duration の通常場面との比較・stdout の最終値）**:
+
+| run | `presentedFromVulkan` | `glSwapsSkipped` | `gameFramebufferAdopted` |
+|---|---|---|---|
+| **resize あり（p410）** | **265** | 265 | 1 |
+| resize なし（p406） | **785** | 784 | 1 |
+
+  ＝ **resize 後は提示フレームが約 1/3 に落ちる**（残りは GL swap に戻っている）。
+- **拒否理由に旧サイズが残る**: ログに **`no frame target for 1280x720`**（resize 後は 1024×640）が繰り返し出る。
+  ＝ **フレームターゲット（と adoption 済みの共有 image）が resize に追随していない**。
+  これが**提示画像の書き出しが書かれない理由**でもある（旧サイズのターゲットを待ち続ける）。
+- **resize 自体は壊れていない**: p409/p410 とも exit 0 / **clean** / **PASSED** / msgCount 0、
+  スクリーンショットは **1024×640**（＝ resize が Minecraft に届いた証拠）。**壊れているのは提示経路の追随**。
+- **次の一手（1つの契約）**: **フレームバッファのサイズが変わったら adoption をやり直す**
+  （共有 color/depth とフレームターゲットを新サイズで作り直し、`gameFramebufferIsShared` の判定も更新する）。
+  「target/frame/generation を持つ」既存の契約に、**サイズ変更＝世代交代**を同じ単位で足す。
+- **受入（実施時）**: resize run で `presentedFromVulkan` が resize なしの水準（同 duration で 700 台）に戻り、
+  **提示画像が書かれ、1024×640 でスクリーンショットと比較できる**こと。
+
 ## 0.93 **format 5 の帰属を Intel でも確認** ＋ **冒頭表/goal.md の矛盾修正** ＋ **resize を AMD で受入**
 
 - **Intel での確認（除外方向・entity 場面）**: `-Dceltium.vulkan.immediateFormats=12346789`（format 5 を除外）で
