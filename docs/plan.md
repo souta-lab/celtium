@@ -39,6 +39,29 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.95 **resize の真因は「GPU stalled → 再構築されないまま描画停止」**（ログで確定）
+
+- **前節の訂正**: ターゲットが「旧サイズのまま」なのではなく、**再作成が失敗して fail-closed のまま固まる**。
+  `ensureFrameTarget()` は**バインド中の FBO のテクスチャから実サイズを読んで**、
+  サイズが違えば**作り直す**（`settleGpu("frame target recreation")` を通してから）実装になっている。
+  失敗時は**古いターゲットを解放せず、新しいものも作らない**（コメントどおり、使用中 VkFramebuffer を破棄しないため）。
+  拒否メッセージが**旧サイズ**（1280x720）を出すのは、`targetWidth/Height` の更新が**成功時だけ**だからである。
+- **真因（ログで確定）**: resize run にだけ次の行が繰り返し出る。
+  ```
+  GPU stalled; no further drawing until the renderer is rebuilt
+  ```
+  （同じ duration の resize なし run には**一度も出ない**）。＝ **resize が GPU の stalled を誘発**し、
+  「**再構築されるまで描画しない**」設計のため、**その後は何も描かれない**。
+  - 提示数 265 は **resize（tick 100）以前の分**とほぼ一致し、**以降はゼロ**。
+  - `glSwapsSkipped=265` も同数で、以降は GL swap に戻っている。
+- **意味**: resize 経路の欠陥は「サイズ追随」ではなく、**stalled からの再構築経路が無いこと**である。
+  これは失敗時設計（fence timeout で解放しない・§0.37）と**同じ契約の裏側**で、
+  「**再構築**」を明示的に持つ必要がある（goal の項目7: minimize/out-of-date の確認）。
+- **次の一手（1点・読みのみ）**: **「renderer is rebuilt」が想定している再構築経路が既にあるか**を読む
+  （初期化/teardown の対、`stalledStops` と `stalledTeardownSkips` の使われ方）。
+  無ければ **resize を契機にした再構築**を 1 つの契約として実装する。
+- **受入（現 HEAD・変更なし）**: resize なし run は AMD/Intel とも clean/PASSED/VUID 0 を維持。
+
 ## 0.94 **resize 後にフレームターゲットが旧サイズのまま**（提示が 265 対 785 に減る・ダンプが書かれない）
 
 - **前節の「未説明」の答え**: `dumpPresentedImage` を**渡した再 run（p410）でも提示画像は書かれなかった**。
