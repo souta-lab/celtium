@@ -79,8 +79,12 @@
 
   `CELTIUM_DYNAMIC_ANNOUNCE texture=12 size=16x16`（正しい id+size、旧は bound=28 size=1x1 への誤 aim）、`full=` 全面
   announce が ~1900（lightmap 更新がすべて in-place に入る）。sprite patch も `patches` ~260→~966 で直接書き込まれる。
-- **残る計測限界**：`glDeleteTextures`/他の upload 経路の未 hook 分は invalidateAll が安全側で拾う（残る少数の
-  16x16 MIRROR は初回確立と blanket 由来）。`full` announce 自体の upload/submit 実コストは `patchCostSummary` に出る。
+- **delete 半分も hook した**：`TextureUtil.func_147942_a`（`deleteTexture`、vanilla の全削除が通る唯一の funnel：
+  TextureManager unload・Framebuffer teardown・`AbstractTexture.func_147631_c`）→ `onGlTextureReallocated(id)`
+  （always-forget）。id 再使用が mirror の旧内容を引きずる穴を塞いだ（`p444-del` PASSED/clean）。
+- **残る計測限界**：`glTexSubImage2D`/`glCopyTexSubImage2D` など TextureUtil を通らない直 GL 書込み、mod が
+  `GlStateManager.deleteTexture` を直接呼ぶ経路は未 hook —— `invalidateAll` の periodic refresh が安全側で拾う。
+  `full` announce 自体の upload/submit 実コストは `patchCostSummary` に出る。
 
 ## 0.105 **修正・受入済み**: Nether 受入 —— portal 帰還の解消（AXIS 直交 step）と、backend 再生成後の frame target デッドロック復元
 

@@ -88,6 +88,27 @@ public class TextureUtilMixin {
         }
     }
 
+    /**
+     * The delete half of the lifecycle. Every vanilla texture deletion - resource unload, framebuffer teardown,
+     * {@code AbstractTexture.func_147631_c} - funnels through this one method, and until now none of them reached the
+     * registry: a mirror could outlive its GL texture, and an id that came back for different content would sample the
+     * old pixels until some other hook noticed. {@code onGlTextureReallocated} without a size is the always-forget path,
+     * which is the right answer for a deletion.
+     */
+    @Inject(method = "func_147942_a", at = @At("HEAD"), require = 0)
+    private static void celtium$forgetDeletedTexture(int glTextureId,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.onGlTextureReallocated(glTextureId);
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A lifecycle notification must never break a deletion.
+        }
+    }
+
     @Inject(method = "func_110989_a", at = @At("HEAD"), require = 0)
     private static void celtium$invalidateUploadedTexture(int glTextureId, java.awt.image.BufferedImage image, boolean blur,
             boolean clamp, CallbackInfoReturnable<Integer> info) {
