@@ -27,6 +27,28 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.45 共有 FBO を契約にする改訂でも失敗: **順序は「blit を先に消す」**（実測で確定）
+
+- **試作（§0.44 の続き）**: `beginFrame`/`endFrame` を「束縛 FBO が共有 FBO なら契約検証・アタッチメント照会・
+  入出力 blit・深度変換をすべて省き、共有イメージ自体を契約とする」形に組み直した（フラグ付き・fail-open）。
+- **結果**: **`gameFramebufferAdopted=1154`** と差し替えは機能したが **`fixtureStatus=FAILED`／`presentedFromVulkan=0`**。
+  診断に理由が2つ出た:
+
+  | メッセージ | 意味 |
+  |---|---|
+  | `beginFrame: RGBA8 colour copy and D24 to D32 depth conversion: GL error 0x502` | 恒等 blit／変換が `GL_INVALID_OPERATION` |
+  | `beginFrame: the bound draw framebuffer is the default framebuffer; the verified bridge needs an FBO …` | ワールドパスが**既定フレームバッファ束縛**で走った |
+  | `did not render cleanly: passes=0 skipped=554 errors=1108` | パスが1つも描かれなかった |
+
+- **根因**: **MC のフレームバッファ束縛プロトコルとの衝突**。MC はフレームの途中で**意図的に unbind（0 を束縛）**する
+  箇所があり、差し替えると**ワールドパスが 0 束縛で走る**。bridge の `beginFrame` は「GL が何を束縛しているか」を
+  **blit のために読んでいる**ので、その前提が崩れると壊れる。
+- **確定した正しい順序（この失敗が示した）**: **先に blit と束縛クエリを消す**。
+  **Vulkan のパスは GL の束縛を必要としていない**（描画先は `frameTarget` が持っている）。
+  束縛を読む理由は**2つの blit のためだけ**なので、blit を消せば束縛は無関係になり、その後に差し替えれば衝突しない。
+  → 段取りは **(A) blit 2箇所と束縛クエリを削除（提示画像を証拠に）→ (B) ゲームの FBO を共有へ差し替え**。
+- **対応**: 試作は**巻き戻した**（HEAD に戻しビルド緑）。**(A) が次の実装単位**である。
+
 ## 0.44 item 6 の本体（FBO 所有権）は**フレームライフサイクルの置き換え**だと実証（試作は巻き戻し）
 
 - **試作**: ゲームの主フレームバッファ（`mc.getFramebuffer()` と**同一性で**判定）の
