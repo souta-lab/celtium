@@ -5176,12 +5176,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Identity was tried as an experiment - if the captured vertices carried their own placement, no model-view at all
             // would be right - and it measured worse than the mirror (8.08 % against 5.80 % of the entity frame), so the
             // camera rotation the mirror holds is needed. The mirror stays until the vertex space itself is settled.
-            // The mirror, translation and all - six pairings were measured and this one is the best (5.80 % of the entity
-            // frame against 8.08 for identity, 13.19 for the captured compile-time matrix, 18.30 for GL's live view, 18.40
-            // for the mirror's rotation with GL's translation, 18.49 with GL's projection too). Every pairing that puts a
-            // translation in is worse, which says the captured vertices are already placed; which of the six is exactly
-            // right is not settled by these, so the data itself has to be looked at next.
+            // Six pairings were measured: the mirror 5.80 % of the entity frame, identity 8.08, the captured compile-time
+            // matrix 13.19, GL's live view 18.30, the mirror's rotation with GL's translation 18.40, GL's projection too
+            // 18.49. No translation helping and a rotation helping says the vertices are already in the view space of the
+            // moment they were captured in - so what has to be applied is the change of camera since then, which is exactly
+            // V_now * C_compile^-1. Both halves are in hand: the mirror is V_now, the capture kept C_compile.
             float[] modelViewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
+            if (compileMatrix != null) {
+                try {
+                    org.joml.Matrix4f now = new org.joml.Matrix4f().set(modelViewNow);
+                    org.joml.Matrix4f compileView = new org.joml.Matrix4f().set(compileMatrix);
+                    org.joml.Matrix4f relative = now.mul(compileView.invert(), new org.joml.Matrix4f());
+                    relative.get(modelViewNow);
+                } catch (RuntimeException | LinkageError error) {
+                    this.modelLastRefusal = "relative view failed: " + error;
+                }
+            }
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
             // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
             // switch was removed rather than kept.
