@@ -45,14 +45,14 @@ public abstract class ShaderGroupMixin {
     @Inject(method = "render", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$renderChainNatively(float partialTicks, CallbackInfo info) {
         Minecraft minecraft = Minecraft.getMinecraft();
-        if (this.mainFramebuffer != minecraft.getFramebuffer()) {
-            // The entity-outline group's main framebuffer is the outline buffer: its first pass reads silhouettes GL
-            // wrote, which the chain-target model does not cover, so that group keeps its GL path for now.
-            return;
-        }
+        boolean mainIsGame = this.mainFramebuffer == minecraft.getFramebuffer();
         TerrainGpuBackend current = TerrainGpuBackends.current();
         if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)
                 || !backend.celtium$postChainAvailable()) {
+            return;
+        }
+        if (!mainIsGame && (this.mainFramebuffer == null || this.mainFramebuffer.framebufferTexture <= 0)) {
+            // An external main without a texture cannot be seeded or written back.
             return;
         }
 
@@ -70,7 +70,7 @@ public abstract class ShaderGroupMixin {
 
         List<VulkanPostChain.Pass> passes = new ArrayList<>(this.listShaders.size());
         for (Shader shader : this.listShaders) {
-            VulkanPostChain.Pass pass = collect(shader, passTime, minecraft);
+            VulkanPostChain.Pass pass = collect(shader, passTime, minecraft, this.mainFramebuffer);
             if (pass == null) {
                 // A pass that cannot be described natively keeps the whole group on GL - partial chains are not a
                 // mode the GL and native outputs can be compared on.
@@ -81,15 +81,26 @@ public abstract class ShaderGroupMixin {
         if (passes.isEmpty()) {
             return;
         }
-        // The handoff validates the bound framebuffer; under adoption the game framebuffer's binding is the shared
-        // one, which is exactly what a mid-frame acquire needs to see.
-        minecraft.getFramebuffer().bindFramebuffer(true);
+        if (!mainIsGame) {
+            // The group's main is a plain GL framebuffer (the entity-outline buffer): the seeded path seeds it
+            // from its texture and writes the output back, so carry the texture the executor must use.
+            VulkanPostChain.Pass first = passes.get(0);
+            first.groupMainTextureId = this.mainFramebuffer.framebufferTexture;
+            first.groupMainFbId = this.mainFramebuffer.framebufferObject;
+            first.groupMainW = this.mainFramebuffer.framebufferTextureWidth;
+            first.groupMainH = this.mainFramebuffer.framebufferTextureHeight;
+        } else {
+            // The handoff validates the bound framebuffer; under adoption the game framebuffer's binding is the
+            // shared one, which is exactly what a mid-frame acquire needs to see.
+            minecraft.getFramebuffer().bindFramebuffer(true);
+        }
         if (backend.celtium$postChainRun(passes)) {
             info.cancel();
         }
     }
 
-    private static VulkanPostChain.Pass collect(Shader shader, float passTime, Minecraft minecraft) {
+    private static VulkanPostChain.Pass collect(Shader shader, float passTime, Minecraft minecraft,
+            net.minecraft.client.shader.Framebuffer groupMain) {
         try {
             ShaderManager manager = shader.getShaderManager();
             net.minecraft.client.shader.Framebuffer in = shader.framebufferIn;
@@ -116,8 +127,10 @@ public abstract class ShaderGroupMixin {
 
             VulkanPostChain.Pass pass = new VulkanPostChain.Pass();
             pass.program = programName(manager);
-            pass.inIsMain = in == minecraft.getFramebuffer();
-            pass.outIsMain = out == minecraft.getFramebuffer();
+            // 'main' in a chain means the group's own main framebuffer; how the executor resolves it - shared
+            // image for the game's, seeded chain target for an external one - is the run's decision.
+            pass.inIsMain = in == groupMain;
+            pass.outIsMain = out == groupMain;
             pass.inFbId = in.framebufferObject;
             pass.inW = in.framebufferTextureWidth;
             pass.inH = in.framebufferTextureHeight;
@@ -134,8 +147,8 @@ public abstract class ShaderGroupMixin {
                         return null;
                     }
                     net.minecraft.client.shader.Framebuffer fbo = (net.minecraft.client.shader.Framebuffer) aux;
-                    // 0 marks the game framebuffer itself; the executor resolves it to the shared image.
-                    pass.auxFbIds[i] = fbo == minecraft.getFramebuffer() ? 0 : fbo.framebufferObject;
+                    // 0 marks the group's main framebuffer, resolved the same way intarget is.
+                    pass.auxFbIds[i] = fbo == groupMain ? 0 : fbo.framebufferObject;
                     pass.auxW[i] = fbo.framebufferTextureWidth;
                     pass.auxH[i] = fbo.framebufferTextureHeight;
                 }

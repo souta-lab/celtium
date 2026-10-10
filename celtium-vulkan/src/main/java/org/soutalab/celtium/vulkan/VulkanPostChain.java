@@ -12,6 +12,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkAttachmentDescription;
 import org.lwjgl.vulkan.VkAttachmentReference;
+import org.lwjgl.vulkan.VkBufferImageCopy;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDescriptorImageInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
@@ -79,6 +80,15 @@ public final class VulkanPostChain {
         public int[] auxH = new int[0];
         public float[] push = new float[0];
         public int pushBytes;
+        /**
+         * Nonzero when the group's own main framebuffer is not the game's: the GL texture id it must be seeded from
+         * before the chain and written back to after, with its size. Only pass[0] carries it; zero marks the
+         * game's framebuffer, which resolves to the shared image instead.
+         */
+        public int groupMainTextureId;
+        public int groupMainFbId;
+        public int groupMainW;
+        public int groupMainH;
     }
 
     /** program name -> (vertex module, fragment module); names are program JSON ids without path/extension. */
@@ -108,6 +118,19 @@ public final class VulkanPostChain {
     private int mainFramebufferHeight;
     private int passesRecorded;
     private int chainsRun;
+    private long hostUploadBuffer;
+    private long hostUploadMemory;
+    private long hostUploadMapped;
+    private long hostUploadBytes;
+    private long hostDownloadBuffer;
+    private long hostDownloadMemory;
+    private long hostDownloadMapped;
+    private long hostDownloadBytes;
+    private long pendingDownloadBytes;
+    /** Persistent descriptor sets, handed out round-robin: one set per pass, never reused inside one command
+     * buffer, so updating one is legal whenever the buffer that last bound it has completed. */
+    private final long[] setRing = new long[32];
+    private int setCursor;
 
     private VulkanPostChain(VulkanContext context, VulkanFrameTarget frameTarget, long renderPass, long setLayout,
             long descriptorPool, long sampler, int maxPushConstants) {
@@ -182,7 +205,19 @@ public final class VulkanPostChain {
                     .mipLodBias(0.0f).minLod(0.0f).maxLod(0.0f);
             check(vkCreateSampler(device, samplerInfo, null, handle), "vkCreateSampler(post chain)");
             long sampler = handle.get(0);
-            return new VulkanPostChain(context, frameTarget, renderPass, setLayout, descriptorPool, sampler, maxPush);
+            VulkanPostChain chain = new VulkanPostChain(context, frameTarget, renderPass, setLayout,
+                    descriptorPool, sampler, maxPush);
+            // The set ring is allocated once: each pass takes the next set, so a set is only ever bound and then
+            // updated again after the command buffer that bound it has long completed - the pattern the spec
+            // allows without UPDATE_AFTER_BIND.
+            for (int i = 0; i < chain.setRing.length; ++i) {
+                LongBuffer layouts = stack.longs(setLayout);
+                VkDescriptorSetAllocateInfo alloc = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                        .descriptorPool(descriptorPool).pSetLayouts(layouts);
+                check(vkAllocateDescriptorSets(device, alloc, handle), "vkAllocateDescriptorSets(post ring)");
+                chain.setRing[i] = handle.get(0);
+            }
+            return chain;
         }
     }
 
@@ -201,30 +236,118 @@ public final class VulkanPostChain {
     }
 
     /**
-     * Records every pass into the caller's command buffer, which must already hold the acquire barrier for the
-     * shared image.
+     * Records the seeded variant for a group whose main framebuffer is not the game's (the entity-outline group):
+     * a chain target stands in for it - the GL texture's pixels upload into it first, the passes run, then a copy
+     * back into a host buffer the caller writes back with {@code glTexSubImage2D}. No frame-target handoff is
+     * involved, so the caller's command buffer needs no acquire barrier.
+     */
+    public void recordSeededPasses(VkCommandBuffer commandBuffer, List<Pass> passes, ByteBuffer pixels) {
+        Pass first = passes.get(0);
+        Target main = target(first.groupMainFbId, first.groupMainW, first.groupMainH);
+        long bytes = (long) first.groupMainW * first.groupMainH * 4L;
+        requireHostUpload(bytes);
+        MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), this.hostUploadMapped, bytes);
+        if (!main.initialized) {
+            initBarrier(commandBuffer, main.image);
+            main.initialized = true;
+        }
+        try (MemoryStack stack = stackPush()) {
+            VkBufferImageCopy.Buffer copy = VkBufferImageCopy.calloc(1, stack);
+            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0)
+                    .imageOffset(it -> it.x(0).y(0).z(0))
+                    .imageExtent(it -> it.width(first.groupMainW).height(first.groupMainH).depth(1));
+            copy.get(0).imageSubresource(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                    .mipLevel(0).baseArrayLayer(0).layerCount(1));
+            vkCmdCopyBufferToImage(commandBuffer, this.hostUploadBuffer, main.image,
+                    VK_IMAGE_LAYOUT_GENERAL, copy);
+            // The upload must be visible before the first pass samples it.
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(main.image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barrier);
+        }
+        recordPasses(commandBuffer, passes, main);
+        // Write-back: the group's output lives in 'main' after the last pass; copy it out for the GL readback.
+        writebackBarrier(commandBuffer, main.image);
+        try (MemoryStack stack = stackPush()) {
+            requireHostDownload(bytes);
+            VkBufferImageCopy.Buffer copy = VkBufferImageCopy.calloc(1, stack);
+            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0)
+                    .imageOffset(it -> it.x(0).y(0).z(0))
+                    .imageExtent(it -> it.width(first.groupMainW).height(first.groupMainH).depth(1));
+            copy.get(0).imageSubresource(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                    .mipLevel(0).baseArrayLayer(0).layerCount(1));
+            vkCmdCopyImageToBuffer(commandBuffer, main.image, VK_IMAGE_LAYOUT_GENERAL,
+                    this.hostDownloadBuffer, copy);
+        }
+        this.pendingDownloadBytes = bytes;
+    }
+
+    /** Copies the downloaded pixels into {@code destination}; call after the submission's fence has been waited. */
+    public void readback(ByteBuffer destination, long bytes) {
+        if (bytes > this.pendingDownloadBytes || this.hostDownloadMapped == 0L) {
+            throw new IllegalStateException("readback without a recorded download");
+        }
+        MemoryUtil.memCopy(this.hostDownloadMapped, MemoryUtil.memAddress(destination), bytes);
+        this.pendingDownloadBytes = 0;
+    }
+
+    private void writebackBarrier(VkCommandBuffer commandBuffer, long image) {
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+        }
+    }
+
+    /**
+     * Records every pass into the caller's command buffer. {@code mainOverride} null means the group's main is the
+     * game's framebuffer - the shared image, which the caller must already have acquired; non-null is the seeded
+     * chain target that stands in for an external group's main.
      */
     public void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
+        recordPasses(commandBuffer, passes, null);
+    }
+
+    private void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes, Target mainOverride) {
         for (Pass pass : passes) {
             Program program = program(pass.program);
             if (program == null || pass.pushBytes > program.pushRange) {
                 throw new IllegalStateException("post chain program without a pipeline: " + pass.program);
             }
-            Target inTarget = pass.inIsMain ? null : target(pass.inFbId, pass.inW, pass.inH);
-            long inView = pass.inIsMain ? this.frameTarget.colorView() : inTarget.view;
-            long inImage = pass.inIsMain ? this.frameTarget.colorImage() : inTarget.image;
-            // auxFbIds[0] == 0 marks the game's framebuffer, which resolves to the shared image like intarget does.
+            Target inTarget = pass.inIsMain ? mainOverride : target(pass.inFbId, pass.inW, pass.inH);
+            long inView = inTarget != null ? inTarget.view : this.frameTarget.colorView();
+            long inImage = inTarget != null ? inTarget.image : this.frameTarget.colorImage();
+            // auxFbIds[0] == 0 marks the group's main framebuffer; the same resolution as intarget applies.
             Target auxTarget = pass.auxFbIds.length > 0 && pass.auxFbIds[0] != 0
                     ? target(pass.auxFbIds[0], pass.auxW[0], pass.auxH[0]) : null;
             boolean auxIsMain = pass.auxFbIds.length > 0 && pass.auxFbIds[0] == 0;
-            long auxView = auxTarget != null ? auxTarget.view
-                    : (auxIsMain ? this.frameTarget.colorView() : inView);
-            if (auxIsMain) {
+            long auxView;
+            if (auxTarget != null) {
+                auxView = auxTarget.view;
+            } else if (auxIsMain) {
+                auxView = mainOverride != null ? mainOverride.view : this.frameTarget.colorView();
+            } else {
+                auxView = inView;
+            }
+            if (auxIsMain && mainOverride == null) {
                 shaderReadBarrier(commandBuffer, this.frameTarget.colorImage());
             }
-            long outFramebuffer = pass.outIsMain
+            Target outTarget = pass.outIsMain ? mainOverride : target(pass.outFbId, pass.outW, pass.outH);
+            long outFramebuffer = pass.outIsMain && mainOverride == null
                     ? mainFramebuffer(pass.outW, pass.outH)
-                    : target(pass.outFbId, pass.outW, pass.outH).fb;
+                    : outTarget.fb;
 
             // A target that was just created is still UNDEFINED: bring it to GENERAL once, before any use.
             if (inTarget != null && !inTarget.initialized) {
@@ -235,7 +358,6 @@ public final class VulkanPostChain {
                 initBarrier(commandBuffer, auxTarget.image);
                 auxTarget.initialized = true;
             }
-            Target outTarget = pass.outIsMain ? null : target(pass.outFbId, pass.outW, pass.outH);
             if (outTarget != null && !outTarget.initialized) {
                 initBarrier(commandBuffer, outTarget.image);
                 outTarget.initialized = true;
@@ -364,15 +486,15 @@ public final class VulkanPostChain {
         return this.mainFramebuffer;
     }
 
+    /**
+     * Updates the next ring set with this pass's views. A set is updated only after the command buffer that last
+     * bound it finished - each pass takes a fresh slot, so nothing here is bound in the buffer being recorded.
+     */
     private long descriptorSet(long inView, long auxView) {
         VkDevice device = this.context.device();
+        long set = this.setRing[this.setCursor];
+        this.setCursor = (this.setCursor + 1) % this.setRing.length;
         try (MemoryStack stack = stackPush()) {
-            LongBuffer layouts = stack.longs(this.setLayout);
-            VkDescriptorSetAllocateInfo alloc = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
-                    .descriptorPool(this.descriptorPool).pSetLayouts(layouts);
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkAllocateDescriptorSets(device, alloc, handle), "vkAllocateDescriptorSets(post)");
-            long set = handle.get(0);
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(2, stack);
             VkDescriptorImageInfo.Buffer inInfo = VkDescriptorImageInfo.calloc(1, stack);
             inInfo.get(0).sampler(this.sampler).imageView(inView).imageLayout(VK_IMAGE_LAYOUT_GENERAL);
@@ -387,9 +509,75 @@ public final class VulkanPostChain {
         }
     }
 
+    /** Grows the coherent host-visible upload buffer to fit {@code bytes}; recorded copies are same-queue. */
+    private void requireHostUpload(long bytes) {
+        if (this.hostUploadBytes >= bytes) {
+            return;
+        }
+        if (this.hostUploadBuffer != VK_NULL_HANDLE) {
+            destroyHostBuffer(this.hostUploadBuffer, this.hostUploadMemory, this.hostUploadMapped);
+            this.hostUploadBuffer = VK_NULL_HANDLE;
+        }
+        long[] created = createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        this.hostUploadBuffer = created[0];
+        this.hostUploadMemory = created[1];
+        this.hostUploadMapped = created[2];
+        this.hostUploadBytes = bytes;
+    }
+
+    private void requireHostDownload(long bytes) {
+        if (this.hostDownloadBytes >= bytes) {
+            return;
+        }
+        if (this.hostDownloadBuffer != VK_NULL_HANDLE) {
+            destroyHostBuffer(this.hostDownloadBuffer, this.hostDownloadMemory, this.hostDownloadMapped);
+            this.hostDownloadBuffer = VK_NULL_HANDLE;
+        }
+        long[] created = createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        this.hostDownloadBuffer = created[0];
+        this.hostDownloadMemory = created[1];
+        this.hostDownloadMapped = created[2];
+        this.hostDownloadBytes = bytes;
+    }
+
+    private long[] createHostBuffer(long bytes, int usage) {
+        VkDevice device = this.context.device();
+        try (MemoryStack stack = stackPush()) {
+            LongBuffer handle = stack.mallocLong(1);
+            org.lwjgl.vulkan.VkBufferCreateInfo info = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
+                    .sType$Default().size(bytes).usage(usage).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+            check(vkCreateBuffer(device, info, null, handle), "vkCreateBuffer(post host)");
+            long buffer = handle.get(0);
+            VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+            vkGetBufferMemoryRequirements(device, buffer, requirements);
+            VkMemoryAllocateInfo alloc = VkMemoryAllocateInfo.calloc(stack).sType$Default()
+                    .allocationSize(requirements.size())
+                    .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            "post host buffer"));
+            check(vkAllocateMemory(device, alloc, null, handle), "vkAllocateMemory(post host)");
+            long memory = handle.get(0);
+            check(vkBindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory(post host)");
+            org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
+            check(vkMapMemory(device, memory, 0, bytes, 0, mapped), "vkMapMemory(post host)");
+            return new long[] { buffer, memory, mapped.get(0) };
+        }
+    }
+
+    private void destroyHostBuffer(long buffer, long memory, long mapped) {
+        VkDevice device = this.context.device();
+        if (mapped != 0L) {
+            vkUnmapMemory(device, memory);
+        }
+        vkDestroyBuffer(device, buffer, null);
+        vkFreeMemory(device, memory, null);
+    }
+
     public void delete() {
         VkDevice device = this.context.device();
         vkDeviceWaitIdle(device);
+        destroyHostBuffer(this.hostUploadBuffer, this.hostUploadMemory, this.hostUploadMapped);
+        destroyHostBuffer(this.hostDownloadBuffer, this.hostDownloadMemory, this.hostDownloadMapped);
         for (Target target : this.targets.values()) {
             target.delete(device);
         }
@@ -459,7 +647,7 @@ public final class VulkanPostChain {
                         .mipLevels(1).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
                         .tiling(VK_IMAGE_TILING_OPTIMAL)
                         .usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                         .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
                         .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
                 imageInfo.extent(it -> it.width(width).height(height).depth(1));

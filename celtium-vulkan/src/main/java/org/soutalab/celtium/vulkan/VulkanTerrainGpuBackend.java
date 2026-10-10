@@ -5606,6 +5606,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record(reason.toString());
             return false;
         }
+        if (passes.get(0).groupMainTextureId != 0) {
+            return celtium$postChainRunSeeded(passes);
+        }
         boolean submitted = false;
         try {
             this.frameTarget.beginFrame();
@@ -5632,6 +5635,45 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         return submitted;
+    }
+
+    /**
+     * The entity-outline group: its main framebuffer is a plain GL framebuffer, not the shared image, so no
+     * handoff applies. The group's GL texture uploads into a chain target, the passes run, and the result comes
+     * back through a fence-waited download and {@code glTexSubImage2D}. The GL readback at the start flushes the
+     * silhouette writes GL just made, so the two sides agree on the texture's contents.
+     */
+    private boolean celtium$postChainRunSeeded(java.util.List<VulkanPostChain.Pass> passes) {
+        VulkanPostChain.Pass first = passes.get(0);
+        long bytes = (long) first.groupMainW * first.groupMainH * 4L;
+        java.nio.ByteBuffer pixels = org.lwjgl.system.MemoryUtil.memAlloc((int) bytes);
+        try {
+            int previous = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, first.groupMainTextureId);
+            org.lwjgl.opengl.GL11.glGetTexImage(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
+                    org.lwjgl.opengl.GL11.GL_RGBA, org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE, pixels);
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, previous);
+            beginCommands();
+            this.postChain.recordSeededPasses(this.commandBuffer, passes, pixels);
+            submitCommands(false);
+            if (!waitForIdle()) {
+                record("post chain seeded submission did not complete");
+                return false;
+            }
+            previous = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, first.groupMainTextureId);
+            this.postChain.readback(pixels, bytes);
+            org.lwjgl.opengl.GL11.glTexSubImage2D(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0, 0, 0,
+                    first.groupMainW, first.groupMainH,
+                    org.lwjgl.opengl.GL11.GL_RGBA, org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE, pixels);
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, previous);
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            record("post chain seeded run failed: " + describe(error));
+            return false;
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(pixels);
+        }
     }
 
     public boolean celtium$presentFrame() {
@@ -6609,6 +6651,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void submitCommands() {
+        submitCommands(true);
+    }
+
+    /**
+     * {@code withFrameSemaphores} false submits the same command buffer without the GL↔Vulkan semaphore pair: the
+     * seeded post-chain path synchronizes with the fence instead, and the frame's semaphores belong to whoever
+     * opened the frame.
+     */
+    private void submitCommands(boolean withFrameSemaphores) {
         if (this.gpuStalled) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
             // reported, after the pass-level ones.
@@ -6619,22 +6670,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.commandState.end();
             check(vkResetFences(this.context.device(), this.fence), "vkResetFences");
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
-            LongBuffer waitSemaphores = stack.mallocLong(1);
-            waitSemaphores.put(0, this.frameTarget.waitSemaphore());
-            IntBuffer waitStages = stack.mallocInt(1);
-            waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-            LongBuffer signalSemaphores = stack.mallocLong(1);
-            signalSemaphores.put(0, this.frameTarget.doneSemaphore());
+            LongBuffer waitSemaphores = null;
+            IntBuffer waitStages = null;
+            LongBuffer signalSemaphores = null;
+            if (withFrameSemaphores) {
+                waitSemaphores = stack.mallocLong(1);
+                waitSemaphores.put(0, this.frameTarget.waitSemaphore());
+                waitStages = stack.mallocInt(1);
+                waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+                signalSemaphores = stack.mallocLong(1);
+                signalSemaphores.put(0, this.frameTarget.doneSemaphore());
+            }
             org.lwjgl.PointerBuffer commandBuffers = stack.mallocPointer(1);
             commandBuffers.put(0, this.commandBuffer.address());
             // LWJGL derives the semaphore counts from the buffers, so only the pointers are set here.
             // waitSemaphoreCount must be set explicitly: LWJGL's pWaitSemaphores(LongBuffer) writes only the
             // pointer, unlike pSignalSemaphores which also sets its count. Leaving it to calloc's zero meant this
             // submission waited on nothing at all - which is what the validation layer was reporting all along.
-            submit.waitSemaphoreCount(waitSemaphores.remaining());
-            submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
-                    .pCommandBuffers(commandBuffers)
-                    .pSignalSemaphores(signalSemaphores);
+            if (withFrameSemaphores) {
+                submit.waitSemaphoreCount(waitSemaphores.remaining());
+                submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
+                        .pSignalSemaphores(signalSemaphores);
+            }
+            submit.pCommandBuffers(commandBuffers);
             if (this.immediateWindowBusy && !this.recordedImmediateGroups.isEmpty() && failImmediateSubmits > 0) {
                 failImmediateSubmits--;
                 throw new IllegalStateException("injected immediate submit failure before queue ownership");
