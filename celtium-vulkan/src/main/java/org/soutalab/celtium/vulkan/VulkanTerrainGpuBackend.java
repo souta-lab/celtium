@@ -683,6 +683,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private String lastPrepareFailure = "none";
     /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
     private String lastPresentResult = "none";
+    /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
+    private int framePresentedFromVulkan;
+    private int presentAttempts;
+    private int presentFailures;
+    /** A completed frame's content is in the shared image and has not been presented yet. */
+    private boolean lastFrameReachedQueue;
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     private int lazyMirrorSupplies;
     private int lazyMirrorFailures;
@@ -1468,6 +1474,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " discarded=" + this.immediateGroupsDiscarded
                     + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                     + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
+                    + " presentedFromVulkan=" + this.framePresentedFromVulkan
+                    + " presentAttempts=" + this.presentAttempts
+                    + " presentFailures=" + this.presentFailures
                     + " presentResult=[" + this.lastPresentResult + "]"
                     + " lazyMirrorSupplies=" + this.lazyMirrorSupplies
                     + " lazyMirrorFailures=" + this.lazyMirrorFailures
@@ -4812,6 +4821,62 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /**
+     * Presents this frame's content from Vulkan, and says whether it reached the queue.
+     * <p>
+     * The frame's colour image is the one the game's own rendering and the native passes both wrote into (it is the shared
+     * image the GL side draws through), so presenting it puts this frame on the swapchain without a GL swap. The sequence
+     * is the one the probe already used: beginFrame, presentImage, endFrame.
+     * <p>
+     * Called once per frame from {@code Minecraft.updateDisplay}. A false return leaves the caller to swap through GL as
+     * before, so a failure here cannot leave the window without a frame.
+     */
+    public boolean celtium$presentFrame() {
+        if (this.swapchain == null || this.frameTarget == null || this.gpuStalled) {
+            return false;
+        }
+        if (!this.lastFrameReachedQueue) {
+            // No completed frame's content is waiting in the shared image. frameSubmitReachedQueue cannot be used here:
+            // it is cleared when the next frame begins, and this call happens after that.
+            return false;
+        }
+        // Consumed: the next call presents the frame after this one.
+        this.lastFrameReachedQueue = false;
+        try {
+            if (!ensureFrameTarget()) {
+                return false;
+            }
+            this.frameTarget.beginFrame();
+            try {
+                this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
+                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
+                        this.targetHeight);
+            } finally {
+                this.frameTarget.endFrame();
+            }
+            this.presentAttempts++;
+            boolean reached = this.swapchain.lastPresentSucceeded();
+            if (reached) {
+                this.framePresentedFromVulkan++;
+                // The caller skips the game's own Display.update when this returns true, and that call is also what polls
+                // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
+                // this module because the GLFW classes are on its classpath and not on the game module's.
+                try {
+                    org.lwjgl.glfw.GLFW.glfwPollEvents();
+                } catch (RuntimeException | LinkageError ignored) {
+                    // Polling is not worth failing a presented frame over.
+                }
+            } else {
+                this.presentFailures++;
+            }
+            return reached;
+        } catch (RuntimeException | LinkageError error) {
+            this.presentFailures++;
+            this.lastPresentResult = "present threw: " + error;
+            return false;
+        }
+    }
+
     /** {@return whether the native model draw experiment is enabled}. */
     public static boolean modelDrawEnabled() {
         return MODEL_DRAW;
@@ -5484,6 +5549,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
                         check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
             this.frameSubmitReachedQueue = true;
+            this.lastFrameReachedQueue = true;
         }
     }
 
@@ -5541,6 +5607,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.recordedImmediateGroups.clear();
             this.frameSubmitReachedQueue = true;
+            this.lastFrameReachedQueue = true;
         }
     }
 

@@ -27,6 +27,23 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.14 通常フレームからの Vulkan present に着手: 提示の入口は実装、**per-frame の呼び出し点が未解決**
+
+- **判明した bridge の全体像**（`VulkanFrameTarget` の設計コメントより）: Vulkan 所有の RGBA8 色イメージと D32 深度イメージを
+  **外部メモリ FD で GL に import** し、GL はその FBO に描き、Vulkan が所有権を受け取り、**`endFrame()` で GL が共有イメージを
+  ゲームの FBO へ blit バック**（copyback）し、最後に **GL が swap** する。**present の配線・marker・readback は既にある**。
+- **実装したもの**: `celtium$presentFrame()`（フレーム内容が共有イメージにあるとき `beginFrame → presentImage → endFrame`
+  の実測済み手順で提示し、`presentedFromVulkan`／`presentAttempts`／`presentFailures`／`presentResult` を計器として出し、
+  成功時は GLFW のイベントを自前で poll する）。提示位置は「フレーム先頭で直前のフレームを提示」とした
+  （`renderWorld` の RETURN は **GUI 描画より前**なので、GUI を含む完成フレームにはならない）。
+- **未解決（実測2回）**: **per-frame の呼び出し点が発火しない**。`Minecraft.updateDisplay` は SRG に存在せず
+  （`forge.srg` に該当なし）、既存で動作している名前 `func_175068_a` の HEAD に付けても **`presentAttempts=0`** のまま
+  （＝条件分岐ではなく**メソッド自体が呼ばれていない**。条件を変えても数値が動かなかったことがその証拠）。
+  **SRG 名を `srg_merged_minecraft.jar` のバイトコードから解決するのが次の一手**。
+- **状態**: 提示の入口と計器は保持（契約は明確・未使用）。**GL swap は触っていない**ので表示の退行は無い
+  （`presentedFromVulkan=0` のまま、スクリーンショットは従来どおり GL 側で mean 113 前後）。
+  **「通常フレームが Vulkan から提示された」とは言わない**。
+
 ## 0.13 最終合成・present の現状を測定: **present 経路は既定で配線済みだが、通常フレームでは到達しない**
 
 - 発見: **`celtium.vulkan.presentFromComposite` は既定 true**（`VulkanTerrainGpuBackend` 925 行）。つまり

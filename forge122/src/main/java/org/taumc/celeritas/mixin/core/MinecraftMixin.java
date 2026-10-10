@@ -23,4 +23,5 @@ public class MinecraftMixin {
     private void postRender(CallbackInfo ci) {
         celeritas$renderAheadManager.endFrame();
     }
+
 }
