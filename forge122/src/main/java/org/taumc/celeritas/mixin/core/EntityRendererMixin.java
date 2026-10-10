@@ -56,10 +56,24 @@ public abstract class EntityRendererMixin {
      * earlier flag was inferred from which projection was installed and proved unreliable - a first-person hand pass or a
      * custom framebuffer can install anything - so the lifecycle is stated rather than guessed.
      */
+    /** Set once, when the light map's unit has been handed to the renderer. */
+    private static boolean celtium$lightmapUnitSent;
+
     @Inject(method = "func_175068_a", at = @At("HEAD"), require = 0)
     private void celtium$worldPassBegin(int pass, float partialTicks, long finishTimeNano,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
+            // The light map's unit is a Minecraft constant and the renderer module does not depend on Minecraft, so the
+            // number is handed over here. It is needed when the light map's GL id has been zeroed by a reallocation and a
+            // batch arrives before the next announcement: the renderer then asks GL for the binding on this unit.
+            if (!celtium$lightmapUnitSent) {
+                TerrainGpuBackend handover = TerrainGpuBackends.current();
+                if (handover instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                    celtium$lightmapUnitSent = true;
+                    ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) handover)
+                            .celtium$setLightmapUnit(net.minecraft.client.renderer.OpenGlHelper.lightmapTexUnit);
+                }
+            }
             TerrainGpuBackend backend = TerrainGpuBackends.current();
             if (backend != null) {
                 backend.beginWorldPass();

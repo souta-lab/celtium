@@ -27,6 +27,24 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.43 lightmap の供給漏れ（format 5）を解消: mod 側から unit を渡し、その場で取り直す
+
+- **実装（モジュール境界を守る形）**:
+  1. `celtium-vulkan` 側に **`celtium$setLightmapUnit(int)`**（**ただの int**。Minecraft クラスは持ち込まない）を足し、
+     再確保で `lightmapGlId` が零化された場合に **その unit に束縛されている id を GL に問い合わせる**
+     （旧 active unit は復元する＝状態変更ではなく問い合わせ）。
+  2. `forge122` 側（`EntityRendererMixin` の world pass 先頭）で **`OpenGlHelper.lightmapTexUnit` の値を一度だけ渡す**
+     （model draw が GL に束縛テクスチャを問い合わせているのと同じ形）。
+  3. 供給は **id ごとに一度だけ**（`imageFor` → `uploadFromGlTexture` → `markFullyInitialized`）。
+- **受入（AMD、weather、duration 120 s）**: exit 0 / **validationClean=true** / messages 0 / **PASSED** / **VUID 0**、クラッシュなし。
+  **`lightmapSuppliedOnDemand=2`**、**`lightmapSupplyFailure=[none]`**、
+  そして **`reason=lightmapped …` の拒否行が消滅**（以前は毎 run 12〜23 件）。
+- **分岐がデッドでないことの確認**: 前回の測定で `lightmapSuppliedOnDemand=0` だったのは
+  **条件のどれかで止まっていた**ためで、**拒否メッセージに `id=` と `unit=` を載せた**ことで切り分けられるようにした。
+  その次の run で供給が 2 回走り、拒否が 0 になった ＝ **到達可能な経路**である。
+- **意味**: 条件 (b) の3群のうち **(iii) 少数の供給漏れ**が閉じた。残るのは
+  **(i) 起動直後 10 フレームの 80 件（本質的）** と **(ii) format 2 の 709 件（FBO 所有権の移動待ち＝item 6）**。
+
 ## 0.42 lightmap 未ミラー（format 5）の扱い: **id が零化されるため mod 側の計器が要る**（試作は巻き戻し）
 
 - **試したこと**: format 3/5 のバッチが到着した時点で lightmap ミラーが無いとき、**その場で再供給**する
