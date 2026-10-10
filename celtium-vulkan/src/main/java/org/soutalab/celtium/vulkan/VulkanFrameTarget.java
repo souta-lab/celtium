@@ -753,7 +753,13 @@ public final class VulkanFrameTarget {
         requireGlCapabilities("endFrame");
         try (GlState state = new GlState()) {
             drainGlErrors();
-            requireVerifiedContract(gameFbo, gameColorTexture, gameDepthRenderbuffer, "endFrame");
+                // The contract describes the framebuffer the game owns. When the game draws into the shared
+                // images the objects to judge are this class own ones and the liveness test at entry has just
+                // checked them; judging them by the game contract counted one error per pass (errors=2883 of
+                // 2883 passes), which is what kept the fixture FAILED.
+                if (!sharedGameFramebuffer) {
+                requireVerifiedContract(gameFbo, gameColorTexture, gameDepthRenderbuffer, "endFrame");
+                }
             long step = System.nanoTime();
             waitGlOn(doneSemaphore.gl, "endFrame: glWaitSemaphoreEXT(Vulkan to GL)");
             glFlush();

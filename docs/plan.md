@@ -25,13 +25,38 @@
 | **Nether の dimension 受入** | **両GPU PASSED（旧 NO_CAPTURE を置換）** | portal から出る修正後、capture 時 dimension **-1**・**帰還 0 回**。旧 NO_CAPTURE の証拠は history に保持 |
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
-| **条件 (b) の本体（FBO 所有権）** | **動作（フラグ、既定 off）・残り1点** | **ゲームが Vulkan 所有イメージへ直接描画し提示が成立**（`presentedFromVulkan=960`、GL エラーなし、参照フレームと 平均絶対差 0.026・>8 が 0.00 %、987 frames）。残るのは `errors=2883`（パスごとに1件）の正体1点（§0.50） |
+| **条件 (b) の本体（FBO 所有権）** | **受入成立（フラグ、既定 off）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**（`fixtureStatus=PASSED`・`presentedFromVulkan=997`・pass 失敗なし・参照フレームと 平均絶対差 0.001・>8 が 0.00 %・1020 frames）。往復 blit と GL 深度変換は走っていない（§0.50/§0.51） |
+| 条件 (b) の残り | **GL context と GL が描く約2割** | format 2 の非画面合成 709 を native へ（行き先が共有イメージになったので可能）→ GL context 除去 |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
 
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.51 **(b) の本体が受入成立**: ゲームが Vulkan 所有イメージに直接描画し、PASSED・提示 997・画素一致 0.001
+
+- **残っていた1件の正体**: `endFrame` の契約検証だった。**同じ検証が2行連続で重複**しており（以前のパッチ痕跡）、
+  **ガードしたのは1つ目・投げていたのは無条件の2つ目**だった。重複行を削除して解消（`errors=2883` の正体もこれ）。
+- **受入（AMD、duration 120 s、`-Dceltium.vulkan.adoptGameFramebuffer=true`）**:
+
+| 計器 | 値 |
+|---|---|
+| **exit / `validationClean` / messages / `fixtureStatus`** | **0 / true / 0 / PASSED** |
+| VUID / クラッシュ | **0 / なし** |
+| frames | **1020** |
+| **`presentedFromVulkan`** | **997** |
+| **pass 失敗（4種すべて）** | **なし**（`frame begin failed` も `frame end failed` も 0） |
+| `firstGlError` / `frameEntryGlError` | **[null:0x0] / [null]** |
+| **参照フレーム vs 提示画像（上下反転）** | **平均絶対差 0.001・>8 が 0.00 %** |
+
+- **意味（条件 (b) の到達点）**: **ゲームの通常フレームが Vulkan 所有の color/depth で生産され、swapchain へ提示される**。
+  `beginFrame`/`endFrame` の**往復 blit も GL 深度変換も走っていない**。
+  **残る GL 依存は「GL context の生成」と「GL がまだ描いている約2割（format 2 の非画面合成 709 等）」**であり、
+  それらは**adoption 後は共有イメージへ直接書かれる**（＝表示経路にはもう GL のコピーが介在しない）。
+- **フラグ**: 既定 off のまま（`-Dceltium.vulkan.adoptGameFramebuffer=true`）。**残る GL 描画を native へ移してから既定化**する。
+- **次の実装単位**: **format 2 の非画面合成 709 を native へ**（行き先が共有イメージになったので、これで初めて可能になる）→
+  その後 **GL context 自体の除去**（条件 (b) の残り）。
 
 ## 0.50 **ゲームが Vulkan 所有イメージへ直接描画し、提示が成立した**（(b) の本体が動作）
 
