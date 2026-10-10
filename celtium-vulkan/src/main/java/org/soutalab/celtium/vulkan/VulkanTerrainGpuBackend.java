@@ -320,6 +320,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
                 + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
                 + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
+                + " prepareDescriptorFailures=" + this.prepareDescriptorFailures
+                + " lastPrepareFailure=" + this.lastPrepareFailure
                 + " groupsQueued=" + this.immediateGroups.size()
                 + " groupsRecorded=" + this.recordedImmediateGroups.size()
                 + " groupsRetired=" + this.retiredImmediateGroups.size()
@@ -676,6 +678,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int directMirrorFromAnnouncement;
     /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
     private int readbackSkippedAfterAnnouncement;
+    /** Why a preflight returned no descriptor, split by cause so the refusal can be acted on. */
+    private int prepareDescriptorFailures;
+    private String lastPrepareFailure = "none";
+    /** Textures supplied whole on their first offer, and the ones that could not be. */
+    private int lazyMirrorSupplies;
+    private int lazyMirrorFailures;
+    private String lastLazyMirrorFailure = "none";
     /** Texture lifecycle: reallocations seen, and how often the sampled atlas/light map had to be re-established. */
     private int glTextureDeletions;
     private int atlasReestablished;
@@ -1455,7 +1464,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " targetGeneration=" + this.targetGeneration
                     + " submitted=" + this.immediateSubmittedBatches + " completed=" + this.immediateCompletedBatches
                     + " discarded=" + this.immediateGroupsDiscarded
-                    + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets);
+                    + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
+                    + " lazyMirrorSupplies=" + this.lazyMirrorSupplies
+                    + " lazyMirrorFailures=" + this.lazyMirrorFailures
+                    + " prepareDescriptorFailures=" + this.prepareDescriptorFailures
+                    + " lastPrepareFailure=[" + this.lastPrepareFailure + "]");
             System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
                     + " readbacksSkipped=" + this.readbackSkippedAfterAnnouncement
                     + " invalidations=" + this.immediateTextureInvalidations + " atlasGlId=" + this.atlasSourceGlId
@@ -2207,6 +2220,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // of the body (which the existing immediateSubmitNanos already times as a whole).
             long preflightStart = System.nanoTime();
             long preflightCpuStart = threadCpuNanos();
+            // A texture nothing has announced yet gets its one full supply here, before the preflight that refuses when no
+            // mirror exists. Entity and TESR models sample their own skins and none of the upload hooks see them, so without
+            // this their offers could never be accepted however correct the rest of the path was. Once per GL id.
+            if (boundTexture != 0 && celtium$registry().get(boundTexture) == null) {
+                int[] size = textureSize(boundTexture);
+                if (size[0] > 0 && size[1] > 0) {
+                    try {
+                        org.soutalab.celtium.vulkan.VulkanGlTexture created =
+                                celtium$registry().imageFor(boundTexture, size[0], size[1], true);
+                        created.uploadFromGlTexture(boundTexture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                        celtium$registry().markFullyInitialized(boundTexture);
+                        this.lazyMirrorSupplies++;
+                    } catch (RuntimeException | LinkageError error) {
+                        this.lazyMirrorFailures++;
+                        this.lastLazyMirrorFailure = boundTexture + ": " + error;
+                    }
+                }
+            }
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
             long preflightCpuEnd = threadCpuNanos();
             this.prepareImmediateNanos += System.nanoTime() - preflightStart;
@@ -2986,6 +3017,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             state[3] != 0, state[4] != 0, state[5] != 0));
         }
         this.prepBranchNanos += System.nanoTime() - prepBranchStart;
+        if (format != 1 && descriptor == 0) {
+            // "pipeline or descriptor preflight failed" merged three different causes into one line and a decision could
+            // not be made from it: no mirror, a mirror that never received its full content, or a descriptor that could
+            // not be built for an image that does exist. The three are told apart here because the fix differs.
+            this.prepareDescriptorFailures++;
+            this.lastPrepareFailure = "format=" + format + " texture=" + textureId
+                    + (texture == null ? " (no mirror)" : texture.hasFullContent()
+                            ? " (mirror has full content: descriptor creation failed)" : " (mirror never fully initialized)")
+                    + " pipeline=" + (pipeline == null ? "null" : "present");
+            return null;
+        }
         return format == 1 || descriptor != 0 ? new PreparedImmediate(pipeline, descriptor) : null;
     }
 

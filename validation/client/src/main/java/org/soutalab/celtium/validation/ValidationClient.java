@@ -149,7 +149,7 @@ public final class ValidationClient {
      */
     private final String celtium$worldLayers = System.getProperty("celtium.validation.worldLayers",
             "3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,"
-            + "minecraft:leaves,minecraft:stained_glass;1;");
+            + "minecraft:leaves,minecraft:stained_glass,minecraft:chest,minecraft:enchanting_table;1;");
     private boolean celtium$rejoinPending;
     private boolean commandsRun;
     private boolean finished;
