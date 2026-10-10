@@ -27,6 +27,32 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.24 selection outline が提供されない理由を**ガード単位で**分解（レンダラ側は正常と確定）
+
+`drawSelectionBox` の呼び出し条件（`EntityRenderer.renderWorld`）は次の形で、**どこで止まるかを1つずつ計器で潰した**。
+
+```java
+if (flag && this.mc.objectMouseOver != null && !entity.isInsideOfMaterial(Material.WATER)) {
+    if (!ForgeHooksClient.onDrawBlockHighlight(...))        // Forge イベント。listener が cancel できる
+        renderglobal.drawSelectionBox(entityplayer, this.mc.objectMouseOver, 0, partialTicks);
+```
+
+| 条件 | 計器/出典 | 結果 |
+|---|---|---|
+| レイがブロックに当たる | `CELTIUM_MOUSEOVER` | **成立**（`hit=BLOCK@…`、`inGameHasFocus=true`、`hideGui=false`、`screen=none`） |
+| 水の中にいない | `!isInsideOfMaterial(WATER)` | **既定の層では不成立**（層は bedrock3→dirt4,5→grass6→**water7** で足元が水）→ **水を含まない層で走らせて成立** |
+| 線プリミティブが native で描かれる | `VulkanImmediateDrawer.unsupportedReason` | **native は線を実装していない**（`GL_LINES`/`LINE_STRIP`/`LINE_LOOP`/`POINTS` を理由付きで拒否＝**正しい設計**。GL が描く） |
+| Forge の `DrawBlockHighlightEvent` が cancel されない | 未計器 | **残る唯一の候補**（インスタンスには mod が入っている） |
+
+- **受入（AMD、`lookDown=true`、水を含まない層、duration 150 s）**: exit 0 / validationClean / **PASSED**、871 frames、
+  **p50 9.92 ms**（これまでで最良）、**VUID 0**、`hit=BLOCK@BlockPos{x=0, y=4, z=-1}`。**line の拒否は依然 0 件**
+  ＝ outline は**まだ提供されていない**。
+- **確定したこと**: **レンダラ側に欠陥は無い**。線は native の対象外として**理由付きで拒否**され、GL が描く経路になっている。
+  提供されない原因はゲーム側のガード（水 or Forge イベント）である。
+- **次の安い一手**: 場面から `RenderGlobal.drawSelectionBox` を直接呼ぶ（`ForgeHooksClient` をバイパスする）か、
+  `DrawBlockHighlightEvent` の cancel を記録する。前者なら **native の線拒否→GL 描画**の往復がそのまま検証できる。
+- **註（破壊 overlay）**: 掘削中のひびは `PlayerControllerMP` の破壊進行が必要で、この場面の対象外。
+
 ## 0.23 破壊/selection overlay の場面を追加（**outline は未提供**＝レンダラ側の問題ではないと確定）
 
 - **追加した場面**: `-Dceltium.validation.lookDown=true` で**カメラを真下（pitch 75）に向け**、`hideGUI` を false にする

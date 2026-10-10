@@ -1748,6 +1748,24 @@ public final class ValidationClient {
             // game's hideGUI is set, and that setting is copied from the instance's options. Without this the scene looks
             // right and the outline is simply never submitted - measured as zero line-primitive refusals and no outline.
             mc.gameSettings.hideGUI = false;
+            // The vanilla guard for the outline is "not inside water" (EntityRenderer: !entity.isInsideOfMaterial(WATER)),
+            // and the default layer stack puts the player's feet in the water layer (bedrock 3, dirt 4-5, grass 6, water 7),
+            // so the outline was skipped before it was ever submitted - measured as zero line-primitive offers while the ray
+            // trace hit a block. Lifting the player out of the water is the scene's job, and the harness already takes
+            // worldLayers, so this scene is run with a water-free stack (see the plan); forcing a height here only moved the
+            // ray out of reach (measured hit=MISS).
+            // The outline is drawn from the ray trace, so the trace's own result is the thing that says whether the scene
+            // reaches drawSelectionBox at all: a null or non-block result means the outline is never submitted, which is
+            // what zero line-primitive offers measured.
+            if (worldTicks % 40 == 0) {
+                net.minecraft.util.math.RayTraceResult hit = mc.objectMouseOver;
+                System.out.println("[Celtium] CELTIUM_MOUSEOVER tick=" + worldTicks + " hit="
+                        + (hit == null ? "null" : hit.typeOfHit + "@" + hit.getBlockPos())
+                        + " inGameHasFocus=" + mc.inGameHasFocus
+                        + " hideGui=" + mc.gameSettings.hideGUI
+                        + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName())
+                        + " guiOpen=" + mc.currentScreen);
+            }
         }
         if (worldTicks >= 150 && !celtium$spectator) {
             // The spectator effects the audit lists: creeper, spider and enderman each load their own post shader
