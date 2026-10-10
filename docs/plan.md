@@ -27,6 +27,45 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.21 **Nether 成立（AMD/Intel 両方）**: 根因は「転送先のポータルの中に立っていた」こと
+
+**計器で確定した根因（推測ではなく caller chain）**: `EntityPlayerMP.changeDimension` に stack を出す計器を入れたところ、
+戻りの転送は次の連鎖で起きていた。
+
+```
+CELTIUM_CHANGE_DIM to=0 teleporter=Teleporter
+  EntityPlayerMP.changeDimension
+    Entity.func_184204_a            (= Entity.changeDimension)
+      Entity.func_70030_z           (= Entity.onEntityUpdate … バニラのポータル論理)
+        EntityLivingBase/Entity/EntityPlayer.func_70071_h_ (onUpdate)
+          EntityPlayerMP.func_71127_g / NetHandlerPlayServer … / MinecraftServer
+```
+
+**つまり**: fixture の転送は `player.setPortal(new BlockPos(player))` を立てて
+`transferPlayerToDimension` を呼ぶため、**Teleporter が見つけた/作ったポータルの *中* に着地**し、
+**バニラのポータル論理が約55 tick 後にそのまま送り返していた**。
+（`inPortal` の足元ブロック判定が false だったのは、体がポータルに接している状態を見ていなかったため。
+体力は終始 20.0/20.0 で**死亡仮説は棄却**、チャンクは loaded で**未達仮説も棄却**。）
+
+- **修正（fixture 側・境界が明確）**: 転送成功直後に **ポータルの外へ出す**
+  （`player.setPositionAndUpdate(player.posX, player.posY, player.posZ + 2.0D)` — ポータルは軸方向に1ブロック厚なので
+  Z に2ブロックで向きによらず外）＋ `timeUntilPortal = 0`。
+- **受入（両GPU、`dimensionAtTick=40`、`dimension=-1`）**:
+
+| GPU | exit | validationClean | fixture | frames | `dimensionClientAtCapture` | `dimensionWorldAtCapture` | 戻り転送 | VUID |
+|---|---|---|---|---|---|---|---|---|
+| **AMD** | 0 | true | **PASSED** | 691 | **-1** | **-1** | **0 回** | 0 |
+| **Intel** | 0 | true | **PASSED** | 391 | **-1** | **-1** | **0 回** | 0 |
+
+  `dimensionServerResult=transferred`、`dimensionArrivedAtTick=41/42`。**capture 時の client と world が両方 -1** ＝
+  goal 項目4の受入条件（capture時 player/world/provider が target）を満たす。
+- **旧記載の撤回**: 「Nether は GuiDownloadTerrain が残留して NO_CAPTURE」は**誤り**だった。実際は
+  **到着成功 → ダウンロード画面は約48 tick で正常に消える → その約8 tick 後にポータル論理が送り返す**であり、
+  画面の残留は症状ではなかった。**旧 Nether PASSED を外した判断も、この根因判明により更新する**
+  （当時の PASSED は capture 時 dimension を見ていなかったため受入としては不十分、現在の方式で取り直した）。
+- **残置した計器**: `EntityPlayerMPMixin` は**診断のみ**（次元変更時に caller chain を1行出すだけ・挙動を変えない）。
+  次元まわりの次の作業で効くため残す。fixture 側の trace も位置・チャンク・体力・ポータル・onGround を持つ。
+
 ## 0.20 Nether の根因が**別物**だった: 「画面で固まる」ではなく「到着後に約56tickで Overworld へ戻される」
 
 - 保存済み trace を読み直した結果、**停止ではなく往復**であることが分かった。新しい測定（AMD、`dimensionAtTick=40`、`dimension=-1`、

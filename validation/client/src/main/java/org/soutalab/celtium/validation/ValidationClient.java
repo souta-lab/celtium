@@ -1274,6 +1274,14 @@ public final class ValidationClient {
                                     try {
                                         server.getPlayerList().transferPlayerToDimension(player, celtium$dimension,
                                                 new net.minecraft.world.Teleporter(target));
+                                        // The teleporter lands the player inside the portal it found or built, and standing
+                                        // in one makes the game's own portal logic in Entity.onEntityUpdate send them back
+                                        // (measured with a caller chain: changeDimension from Entity.updateEntityActionState
+                                        // at tick ~96, 55 ticks after the arrival, full health, chunk loaded). Stepping out
+                                        // of the portal keeps the arrival; a portal is one block thick along its axis, so
+                                        // two blocks along Z is outside it whatever its facing.
+                                        player.setPositionAndUpdate(player.posX, player.posY, player.posZ + 2.0D);
+                                        player.timeUntilPortal = 0;
                                         celtium$transfer = new TransferSnapshot("transferred", worldTicks, rotation);
                                     } catch (Throwable error) {
                                         celtium$transfer = new TransferSnapshot("error: " + error, worldTicks, rotation);
@@ -1335,6 +1343,11 @@ public final class ValidationClient {
                             // Whether the player is standing in a portal block is the candidate for the return to the
                             // previous dimension: a transfer that lands inside one is sent back by the game's own
                             // portal logic, which would look exactly like this trace.
+                            // Health is what distinguishes "something transferred the player back" from "the player died
+                            // and respawned in the previous dimension", which is what the falling positions after the
+                            // return look like.
+                            + " health=" + (mc.player == null ? "-" : mc.player.getHealth() + "/" + mc.player.getMaxHealth())
+                            + " onGround=" + (mc.player == null ? "-" : mc.player.onGround)
                             + " inPortal=" + (mc.player == null || mc.world == null ? "-"
                                     : (mc.world.getBlockState(mc.player.getPosition()).getBlock()
                                             == net.minecraft.init.Blocks.PORTAL)));
