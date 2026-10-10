@@ -39,6 +39,23 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.93 **format 5 の帰属を Intel でも確認** ＋ **冒頭表/goal.md の矛盾修正** ＋ **resize を AMD で受入**
+
+- **Intel での確認（除外方向・entity 場面）**: `-Dceltium.vulkan.immediateFormats=12346789`（format 5 を除外）で
+  **1.33 % → 0.36 %**（exit 0 / **clean** / **PASSED** / msgCount 0）。AMD は 1.25〜1.61 % → **0.32 %**。
+  ＝ **format 5（粒子系）の native 描画という帰属が両GPUで確定**。
+- **冒頭表と `docs/goal.md` の矛盾を修正**: どちらも「**Nether は両GPU PASSED（旧 NO_CAPTURE を置換）**」のままだったが、
+  objective は「**旧 Nether PASSED は有効な受入から外す**」と明記している。両方を
+  「**未成立**（一時的に -1 → GuiDownloadTerrain → 0 で NO_CAPTURE、根因未確定）」へ直した。
+  あわせて冒頭表に **model 経路 2.19 %**・**entity 場面の format 5 帰属（両GPU）**・**通常場面の両GPU一致**の行を追加。
+- **resize の受入（AMD・`-Dceltium.validation.resize=true`）**: exit 0 / **clean** / **PASSED** / msgCount 0。
+  保存されたスクリーンショットが **1024×640**（既定 1280×720）＝ **resize が Minecraft に届いた証拠**。
+  `presentedFromVulkan` は resizing 後も増え続けている（64→73→83→93 の途中経過）。
+  - **未説明（記録）**: この run では**提示画像の書き出しファイルが残っていない**（`celtium-presented.png` が無い）。
+    画像差の比較はこの run では**行えていない**。次の確認事項として残す。
+- **意味**: 計画の項目7（reload/resize/world switch）のうち **resize が初めて受入**された。
+  フレームターゲット側に resize/out-of-date の**明示処理は無い**が、この場面では破綻していない。
+
 ## 0.92 **`MIRROR_GL_MIPS` を撤去**（旧経路と lab flag を削除、AMD 2場面＋Intel 1場面で退行なし）
 
 - **実施内容（17 編集・全参照を先に列挙してから同じ変更単位で）**:
