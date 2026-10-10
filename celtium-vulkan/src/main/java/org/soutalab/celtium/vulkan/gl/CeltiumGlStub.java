@@ -40,11 +40,14 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
  *   texture lookup, framebuffer identity and every cached descriptor key on the names being unique.</li>
  *   <li>State that is queried - {@code glGetString}, {@code glGetError}, {@code glIsEnabled}, {@code glGetInteger*}
  *   answer plausibly from a recorded state so capability detection and error checks behave.</li>
+ *   <li>Uploaded pixels - {@code glTexImage1D/2D/3D} and {@code glTexSubImage2D} are converted to RGBA8 and kept in
+ *   stub-owned storage, because GL-less mode has no driver to read a texture back from and the Vulkan mirrors have to
+ *   be built from the bytes the game handed over. {@link #textureUploadRgba8} is that record and
+ *   {@link #textureCaptureSummary} is its census; an upload whose format is not understood is counted and dropped
+ *   rather than stored wrong.</li>
  *   <li>Everything else records and no-ops - drawing, blending and state setting the Vulkan side already mirrors
  *   or owns, so dropping them loses nothing the frame needed.</li>
  * </ul>
- * The pixel-carrying functions ({@code glTexImage2D} and friends) are the next layer: they are table entries whose
- * semantics id marks "route the upload" - the handler lands with the texture-path work, one function at a time.
  */
 public final class CeltiumGlStub implements FunctionProvider {
 
@@ -92,6 +95,22 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_BIND_TEXTURE = 24;   // (target,name) -> texture binding record
     private static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
     private static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
+    private static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
+    private static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
+    private static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
+    private static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
+    private static final int SEM_CLEAR_DEPTH = 31;    // (d) -> the depth glClear will use
+    private static final int SEM_BUFFER_SUBDATA = 32; // (target,offset,size,data) -> into the recorded storage
+    private static final int SEM_LINE_WIDTH = 33;      // (w) -> recorded raster line width
+    private static final int SEM_USE_PROGRAM = 34;     // (program) -> recorded current program
+    private static final int SEM_NEW_LIST = 35;        // (list,mode) -> the list being compiled
+    private static final int SEM_END_LIST = 36;        // () -> compilation finished
+    private static final int SEM_CALL_LIST = 37;       // (list) -> recorded for the display-list census
+    private static final int SEM_BIND_VERTEX_ARRAY = 38; // (vao) -> recorded vertex array binding
+    private static final int SEM_TEXIMAGE_PIXELS = 39; // (target,level,internal,w,h,border,fmt,type,pixels) -> extent + RGBA8
+    private static final int SEM_TEXSUBIMAGE = 40;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
+    private static final int SEM_COMPRESSED_TEXIMAGE = 41; // (target,level,internal,w,h,border,size,data) -> extent only
+    private static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -182,6 +201,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glGetProgramResourceIndex", R_INT, SEM_ZERO, A_INT, A_INT, A_PTR);
         fn("glCreateShaderProgramv", R_INT, SEM_GEN, A_INT, A_INT, A_PTR);
         fn("glGetTexLevelParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
+        // The DSA forms the modern renderer path actually calls: without these every size query answers 0, so
+        // announcements are refused as "0x0" and mirrors are built 1x1 before the upload resizes them.
+        fn("glGetTextureLevelParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
+        fn("glGetTextureLevelParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
+        fn("glGetTextureParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        fn("glGetTextureParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        fn("glGetNamedFramebufferAttachmentParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
+        fn("glGetFramebufferAttachmentParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
         fn("glGetTexLevelParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
         fn("glGetTexParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
         fn("glGetTexParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
@@ -226,15 +253,36 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glUnmapNamedBuffer", R_INT, SEM_UNMAP, A_INT);
         fn("glBindBuffer", R_VOID, SEM_BIND_BUFFER, A_INT, A_INT);
         // ---- texture bindings/images: size tracking feeds glGetTexLevelParameter (FML probes the max texture
-        // size by uploading proxy images) and, later, the pixel-routing layer.
+        // size by uploading proxy images) and the pixel capture the Vulkan mirrors are built from.
         fn("glBindTexture", R_VOID, SEM_BIND_TEXTURE, A_INT, A_INT);
         fn("glActiveTexture", R_VOID, SEM_ACTIVE_TEXTURE, A_INT);
-        fn("glTexImage1D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        fn("glTexImage2D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        fn("glTexImage3D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
+        fn("glTexImage1D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
+        fn("glTexImage2D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
+        // glTexImage3D carries depth between height and border: (target,level,internal,w,h,depth,border,fmt,type,pixels)
+        fn("glTexImage3D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
         fn("glTexStorage2D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT);
         fn("glTexStorage3D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
-        fn("glCompressedTexImage2D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
+        fn("glCompressedTexImage2D", R_VOID, SEM_COMPRESSED_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
+        fn("glTexSubImage2D", R_VOID, SEM_TEXSUBIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
+        fn("glPixelStorei", R_VOID, SEM_PIXEL_STORE, A_INT, A_INT);
+        fn("glViewport", R_VOID, SEM_VIEWPORT, A_INT, A_INT, A_INT, A_INT);
+        fn("glBindFramebuffer", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
+        fn("glBindFramebufferEXT", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
+        fn("glBindFramebufferARB", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
+        // ---- clears: with no GL framebuffer to clear, the request is recorded for the owned frame image. Without
+        // this the image's depth holds undefined values for the whole session and every depth-tested draw fails.
+        fn("glClear", R_VOID, SEM_CLEAR, A_INT);
+        fn("glClearColor", R_VOID, SEM_CLEAR_COLOR, A_FLOAT, A_FLOAT, A_FLOAT, A_FLOAT);
+        fn("glClearDepth", R_VOID, SEM_CLEAR_DEPTH, A_DOUBLE);
+        fn("glClearDepthf", R_VOID, SEM_CLEAR_DEPTH, A_FLOAT);
+        // ---- state the getters answer from: recorded rather than left at the no-op default
+        fn("glLineWidth", R_VOID, SEM_LINE_WIDTH, A_FLOAT);
+        fn("glUseProgram", R_VOID, SEM_USE_PROGRAM, A_INT);
+        fn("glNewList", R_VOID, SEM_NEW_LIST, A_INT, A_INT);
+        fn("glEndList", R_VOID, SEM_END_LIST);
+        fn("glCallList", R_VOID, SEM_CALL_LIST, A_INT);
+        fn("glBindVertexArray", R_VOID, SEM_BIND_VERTEX_ARRAY, A_INT);
+        fn("glBufferSubData", R_VOID, SEM_BUFFER_SUBDATA, A_INT, A_LONG, A_LONG, A_PTR);
         // ---- DSA create-functions: same out-array shape as the glGen* family
         fn("glCreateTextures", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
         fn("glCreateBuffers", R_VOID, SEM_GEN, A_INT, A_PTR);
@@ -247,16 +295,16 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glCreateProgramPipelines", R_VOID, SEM_GEN, A_INT, A_PTR);
         // ---- state-set no-ops: the fixed-function and raster state the Vulkan side mirrors or owns
         String[] noops = {
-                "glBindFramebuffer", "glBindRenderbuffer",
-                "glBindVertexArray", "glBindSampler", "glBindBufferBase", "glBindBufferRange", "glBlendFunc",
+                "glBindRenderbuffer",
+                "glBindSampler", "glBindBufferBase", "glBindBufferRange", "glBlendFunc",
                 "glBlendFuncSeparate", "glBlendFuncSeparatei", "glBlendEquation", "glBlendEquationSeparate",
                 "glBlendColor", "glColorMask", "glColorMaski", "glDepthMask", "glDepthFunc", "glDepthRange",
-                "glClearColor", "glClearDepth", "glClearStencil", "glClear", "glClearBufferfv", "glClearBufferiv",
+                "glClearBufferfv", "glClearBufferiv",
                 "glClearBufferuiv", "glStencilFunc", "glStencilFuncSeparate", "glStencilOp", "glStencilOpSeparate",
                 "glStencilMask", "glStencilMaskSeparate", "glCullFace", "glFrontFace", "glPolygonMode",
-                "glPolygonOffset", "glLineWidth", "glPointSize", "glPrimitiveRestartIndex", "glProvokingVertex",
-                "glSampleCoverage", "glSampleMaski", "glScissor", "glViewport", "glLogicOp", "glHint",
-                "glPixelStorei", "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers", "glClampColor",
+                "glPolygonOffset", "glPointSize", "glPrimitiveRestartIndex", "glProvokingVertex",
+                "glSampleCoverage", "glSampleMaski", "glScissor", "glLogicOp", "glHint",
+                "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers", "glClampColor",
                 "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glLightf", "glLightfv",
                 "glLighti", "glLightiv", "glLightModelf", "glLightModelfv", "glLightModeli", "glLightModeliv",
                 "glShadeModel", "glFogf", "glFogfv", "glFogi", "glFogiv", "glTexEnvi", "glTexEnvf", "glTexEnviv",
@@ -268,7 +316,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glScalef", "glScaled", "glTexParameteri", "glTexParameterf", "glTexParameteriv", "glTexParameterfv",
                 "glTexParameterIiv", "glTexParameterIuiv", "glGenerateMipmap", "glSamplerParameteri",
                 "glSamplerParameterf", "glSamplerParameteriv", "glSamplerParameterIiv", "glSamplerParameterIuiv",
-                "glUseProgram", "glAttachShader", "glDetachShader", "glBindAttribLocation", "glBindFragDataLocation",
+                "glAttachShader", "glDetachShader", "glBindAttribLocation", "glBindFragDataLocation",
                 "glLinkProgram", "glValidateProgram", "glShaderSource", "glCompileShader", "glUniform1i",
                 "glUniform1f", "glUniform2f", "glUniform3f", "glUniform4f", "glUniform1iv", "glUniform2iv",
                 "glUniform3iv", "glUniform4iv", "glUniform1fv", "glUniform2fv", "glUniform3fv", "glUniform4fv",
@@ -279,17 +327,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glDrawRangeElements", "glDrawElementsInstanced", "glDrawArraysInstanced", "glMultiDrawArrays",
                 "glMultiDrawElements", "glDrawElementsBaseVertex", "glBeginQuery", "glEndQuery", "glBeginQueryIndexed",
                 "glEndQueryIndexed", "glClientWaitSync", "glWaitSync", "glFlush", "glFinish", "glPushAttrib",
-                "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glCallList", "glCallLists", "glNewList",
-                "glEndList", "glListBase", "glRenderMode", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
+                "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glCallLists",
+                "glListBase", "glRenderMode", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
                 "glPushName", "glPopName", "glLoadName", "glRasterPos2f", "glRasterPos3f", "glBitmap",
                 "glCopyPixels", "glDrawPixels", "glReadPixels", "glCopyTexImage2D", "glCopyTexSubImage2D",
                 "glBlitFramebuffer", "glFramebufferTexture2D", "glFramebufferTexture", "glFramebufferTexture1D",
                 "glFramebufferTexture3D", "glFramebufferTextureLayer", "glFramebufferRenderbuffer",
                 "glRenderbufferStorage", "glRenderbufferStorageMultisample",
-                "glTexSubImage1D", "glTexSubImage2D", "glTexSubImage3D",
+                "glTexSubImage1D", "glTexSubImage3D",
                 "glCompressedTexSubImage2D", "glGetTexImage",
-                "glGetCompressedTexImage", "glBufferData", "glBufferSubData", "glMapBuffer", "glMapBufferRange",
-                "glUnmapBuffer", "glCopyBufferSubData", "glFlushMappedBufferRange", "glGetBufferSubData",
+                "glGetCompressedTexImage", "glMapBuffer", "glMapBufferRange",
+                "glCopyBufferSubData", "glFlushMappedBufferRange", "glGetBufferSubData",
                 "glEnableClientState", "glDisableClientState", "glVertexPointer",
                 "glTexCoordPointer", "glColorPointer", "glNormalPointer", "glIndexPointer", "glEdgeFlagPointer",
                 "glSecondaryColorPointer", "glFogCoordPointer", "glInterleavedArrays", "glArrayElement",
@@ -319,7 +367,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     // ---- runtime state ---------------------------------------------------------------
 
-    private final Map<String, CeltiumGlTrampoline> trampolines = new HashMap<>();
+    private final Map<String, Callback> trampolines = new HashMap<>();
     private final java.util.concurrent.atomic.AtomicInteger nextName = new java.util.concurrent.atomic.AtomicInteger(1);
     private final java.util.concurrent.atomic.AtomicLong nextSync = new java.util.concurrent.atomic.AtomicLong(1);
     private final java.util.Set<Long> liveSync = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -331,12 +379,47 @@ public final class CeltiumGlStub implements FunctionProvider {
     private int activeTexture;
     /** Recorded image extents: key {@code (textureName << 16) | level}, proxy targets key on a name of -target. */
     private final java.util.Map<Long, int[]> texLevels = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * Captured uploads in RGBA8, keyed like {@link #texLevels}. A full {@code glTexImage*} publishes a new record, so
+     * a reader sees the old image or the new one and never a half-written one; {@code glTexSubImage2D} patches rows
+     * of the record that is already there.
+     */
+    private final java.util.Map<Long, TexCapture> texCaptures = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The capture census {@link #textureCaptureSummary()} reports: full images, patches and refused uploads. */
+    private final java.util.concurrent.atomic.AtomicInteger fullCaptures =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger subCaptures =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /** Levels that were allocated with no data - a zero-filled surface waiting for the patches that fill it. */
+    private final java.util.concurrent.atomic.AtomicInteger undefinedExtents =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger unconvertedUploads =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /**
+     * The unpack state {@code glPixelStorei} set. Conversion reads rows where GL would read them: assuming tight rows
+     * while the game asked for a row length or a row skip would store a sheared image instead of a missing one.
+     */
+    private volatile int unpackAlignment = 4;
+    private volatile int unpackRowLength;
+    private volatile int unpackSkipPixels, unpackSkipRows;
     private final java.util.Map<Integer, ByteBuffer> bufferStore = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<Integer, Integer> lastBoundOnTarget = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.List<CeltiumGlTrampoline> ownedTrampolines = new ArrayList<>();
+    private final java.util.List<Callback> ownedTrampolines = new ArrayList<>();
     private long getStringAddress;
     private ByteBuffer getStringBuffer;
     private volatile int viewportW = 1280, viewportH = 720;
+    /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
+    private volatile int drawFbo, readFbo;
+    /** The colour and depth glClear will use, and the buffers it was asked to clear and nobody consumed yet. */
+    private volatile float clearRed, clearGreen, clearBlue = 0.0f, clearAlpha = 1.0f;
+    private volatile double clearDepth = 1.0;
+    private final java.util.concurrent.atomic.AtomicInteger pendingClears =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
+    private volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
+    private volatile float lineWidth = 1.0f;
+    /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
+    private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
 
     /** The installed stub - one per process; GL capabilities are process-global so this is a singleton. */
     private static CeltiumGlStub installed;
@@ -362,6 +445,98 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static boolean isInstalled() {
         return installed != null;
+    }
+
+    /**
+     * {@return the buffers the game asked {@code glClear} to clear since this was last called}, consuming them.
+     * <p>
+     * With no GL framebuffer to clear, the request is carried to the owned frame image instead: an image whose depth
+     * still holds undefined values rejects every depth-tested draw, which is a whole frame of nothing rather than a
+     * wrong pixel.
+     */
+    public static int consumePendingClears() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.pendingClears.getAndSet(0);
+    }
+
+    /** The colour the game last asked {@code glClear} to use, into {@code out} as {r,g,b,a}. */
+    public static void clearColor(float[] out) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            out[0] = 0.0f;
+            out[1] = 0.0f;
+            out[2] = 0.0f;
+            out[3] = 1.0f;
+            return;
+        }
+        out[0] = stub.clearRed;
+        out[1] = stub.clearGreen;
+        out[2] = stub.clearBlue;
+        out[3] = stub.clearAlpha;
+    }
+
+    /** The depth the game last asked {@code glClear} to use. */
+    public static double clearDepth() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 1.0 : stub.clearDepth;
+    }
+
+    /**
+     * The RGBA8 pixels the game uploaded for a texture level, top row first, or {@code null} when nothing was captured
+     * for it.
+     * <p>
+     * The upload is the source of truth for the Vulkan mirrors: GL-less mode has no driver to read back from, so the
+     * bytes are the ones {@code glTexImage2D} and friends handed the stub. {@code outWidthHeight} receives the
+     * captured extent; the returned buffer is a read-only duplicate positioned at 0, so a caller can neither move nor
+     * modify the record. Weakly consistent and safe from any thread - a concurrent upload may land mid-call, but an
+     * unknown texture name is just a {@code null} answer, and a compressed or unconverted upload is a {@code null}
+     * answer too (the census says which).
+     */
+    public static java.nio.ByteBuffer textureUploadRgba8(int textureName, int level, int[] outWidthHeight) {
+        CeltiumGlStub stub = installed;
+        TexCapture capture = stub == null
+                ? null
+                : stub.texCaptures.get(Long.valueOf(texLevelKey(textureName, level)));
+        if (capture == null) {
+            if (outWidthHeight != null && outWidthHeight.length >= 2) {
+                // The extent goes with the pixels: a caller that reuses one array across levels must not read the
+                // previous texture's size as this level's.
+                outWidthHeight[0] = 0;
+                outWidthHeight[1] = 0;
+            }
+            return null;
+        }
+        if (outWidthHeight != null && outWidthHeight.length >= 2) {
+            outWidthHeight[0] = capture.width;
+            outWidthHeight[1] = capture.height;
+        }
+        ByteBuffer view = capture.data.duplicate();
+        view.clear();
+        return view.asReadOnlyBuffer();
+    }
+
+    /**
+     * One line of capture diagnostics: the levels currently holding pixels, how many came from a full image, a
+     * sub-image patch or an undefined level allocated with no data and zero-filled (the shape the game gives its
+     * atlases before writing them sprite by sprite), the uploads that could not be converted (unsupported format/type
+     * pair, a pixel-store state the conversion does not model, a compressed payload, a depth-carrying or oversized
+     * level), and the RGBA8 bytes those levels hold.
+     */
+    public static String textureCaptureSummary() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "texture capture: levels=0 full=0 patches=0 undefined=0 unconverted=0 bytes=0";
+        }
+        long bytes = 0L;
+        for (TexCapture capture : stub.texCaptures.values()) {
+            bytes += capture.data.capacity();
+        }
+        return "texture capture: levels=" + stub.texCaptures.size()
+                + " full=" + stub.fullCaptures.get()
+                + " patches=" + stub.subCaptures.get()
+                + " undefined=" + stub.undefinedExtents.get()
+                + " unconverted=" + stub.unconvertedUploads.get()
+                + " bytes=" + bytes;
     }
 
     private CeltiumGlStub() {
@@ -394,8 +569,23 @@ public final class CeltiumGlStub implements FunctionProvider {
                 && ("glGetError".equals(name) || "glGetIntegerv".equals(name) || "glGetString".equals(name))) {
             System.out.println("[GLSTUB] addressFor " + name + " id=" + id);
         }
+        byte[] args = id >= 0 ? TABLE.get(id).args : new byte[0];
+        if (args.length > 0 && args[0] == A_DOUBLE) {
+            return this.trampolines.computeIfAbsent(name, n -> {
+                CeltiumGlDoubleTrampoline trampoline = new CeltiumGlDoubleTrampoline(id, this);
+                this.ownedTrampolines.add(trampoline);
+                return trampoline;
+            }).address();
+        }
+        if (args.length > 0 && args[0] == A_FLOAT) {
+            return this.trampolines.computeIfAbsent(name, n -> {
+                CeltiumGlFloatTrampoline trampoline = new CeltiumGlFloatTrampoline(id, this);
+                this.ownedTrampolines.add(trampoline);
+                return trampoline;
+            }).address();
+        }
         return this.trampolines.computeIfAbsent(name, n -> {
-            CeltiumGlTrampoline trampoline = new CeltiumGlTrampoline(id, this);
+            CeltiumGlTrampoline trampoline = new CeltiumGlTrampoline(id, this, args);
             this.ownedTrampolines.add(trampoline);
             return trampoline;
         }).address();
@@ -404,17 +594,79 @@ public final class CeltiumGlStub implements FunctionProvider {
     // ---- trampoline plumbing ---------------------------------------------------------
 
     /**
+     * Argument slots in the plain (integer/pointer) upcall shape.
+     * <p>
+     * This is set by the widest row in the table, {@code glTexImage3D} at ten arguments - and it has to be that wide
+     * for the texture path to work at all: {@code glTexImage2D} takes nine arguments, so its {@code pixels} pointer is
+     * slot 8 and an upcall narrower than that never receives it. Slots past a call's declared arguments carry whatever
+     * the caller left in the registers and stack; no handler reads past its own row's declaration, so they are inert.
+     */
+    private static final int SLOTS = 12;
+
+    /**
      * One uniform call interface covers every function in the table: the FFM upcall invokes the SAM with the C
-     * arguments marshalled per the CIF, so a CIF of eight pointer-sized arguments means {@code invoke} receives up
-     * to eight argument slots. Callers of the real functions supply fewer - the extra slots carry garbage that the
-     * dispatcher ignores; callers expecting narrower results (int or nothing) read only the low bits or discard the
-     * value entirely. No function in the table exceeds eight arguments.
+     * arguments marshalled per the CIF, so a CIF of twelve argument slots means {@code invoke} receives up to twelve
+     * argument slots. Callers of the real functions supply fewer - the extra slots carry garbage that the dispatcher
+     * ignores; callers expecting narrower results (int or nothing) read only the low bits or discard the value
+     * entirely. The widest function in the table is {@code glTexImage3D} at ten arguments.
      */
     private static final Callback.Descriptor UNIFORM_DESCRIPTOR = new Callback.Descriptor(
             java.lang.invoke.MethodHandles.lookup(),
             apiCreateCIF(ffi_type_pointer, new FFIType[] {
                     ffi_type_pointer, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer,
+                    ffi_type_pointer, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer,
                     ffi_type_pointer, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer }));
+
+    /**
+     * One descriptor per declared signature, so the trampoline reads the arguments where the caller actually put
+     * them.
+     * <p>
+     * The uniform pointer interface above is only correct for functions that take integers and pointers: an x86-64
+     * caller passes floating-point arguments in the SSE registers, so a closure that declares pointers reads the
+     * general-purpose registers and sees whatever was left in them. That is not theoretical - it is what turned the
+     * game's {@code glClearColor} into an arbitrary colour. The table already declares every argument's type, so the
+     * CIF is built from it and float arguments arrive as floats.
+     */
+    private static final java.util.Map<String, Callback.Descriptor> SIGNATURE_DESCRIPTORS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static Callback.Descriptor descriptorFor(byte[] args) {
+        StringBuilder key = new StringBuilder(args.length + 1);
+        for (byte arg : args) {
+            key.append((char) ('a' + arg));
+        }
+        return SIGNATURE_DESCRIPTORS.computeIfAbsent(key.toString(), ignored -> {
+            java.util.List<FFIType> types = new java.util.ArrayList<FFIType>(SLOTS);
+            for (byte arg : args) {
+                if (types.size() == SLOTS) {
+                    break;
+                }
+                types.add(ffiTypeFor(arg));
+            }
+            // Padded to the uniform arity: the dispatcher ignores the slots past the declared arguments, and the
+            // native side reads only what the caller passed.
+            while (types.size() < SLOTS) {
+                types.add(ffi_type_pointer);
+            }
+            return new Callback.Descriptor(java.lang.invoke.MethodHandles.lookup(),
+                    apiCreateCIF(ffi_type_pointer, types.toArray(new FFIType[0])));
+        });
+    }
+
+    private static FFIType ffiTypeFor(byte arg) {
+        switch (arg) {
+            case A_FLOAT:
+                return ffi_type_float;
+            case A_DOUBLE:
+                return ffi_type_double;
+            case A_LONG:
+                return ffi_type_sint64;
+            case A_PTR:
+                return ffi_type_pointer;
+            default:
+                return ffi_type_sint32;
+        }
+    }
 
     /**
      * The upcall interface the FFM backend binds: one abstract method receiving the call's argument values. The
@@ -422,7 +674,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     @FunctionalInterface
     public interface GlTrampolineI extends org.lwjgl.system.CallbackI {
-        long invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7);
+        long invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7,
+                long a8, long a9, long a10, long a11);
 
         /**
          * Required by {@link CallbackI}; the trampoline class overrides it with the legacy-backend entry. A default
@@ -440,6 +693,106 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * The upcall shape for functions that take floating-point arguments.
+     * <p>
+     * The long-argument shape cannot deliver them: an x86-64 caller passes floats and doubles in the SSE registers,
+     * and an upcall whose parameters are all {@code long} reads the general-purpose ones instead, so the values
+     * arrive as whatever was left in them (measured: {@code glClearColor(0.25, 0.5, 0.75, 1)} arriving as
+     * {@code -1.6e29}). The CIF declares the floats, so the runtime marshals them where they belong. The shape carries
+     * eight slots, which is every float-argument row's width; the dispatcher's wider slots stay zero for these.
+     */
+    private static final Callback.Descriptor FLOAT4_DESCRIPTOR = new Callback.Descriptor(
+            java.lang.invoke.MethodHandles.lookup(),
+            apiCreateCIF(ffi_type_pointer, new FFIType[] {
+                    ffi_type_float, ffi_type_float, ffi_type_float, ffi_type_float,
+                    ffi_type_pointer, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer }));
+
+    private static final Callback.Descriptor DOUBLE1_DESCRIPTOR = new Callback.Descriptor(
+            java.lang.invoke.MethodHandles.lookup(),
+            apiCreateCIF(ffi_type_pointer, new FFIType[] {
+                    ffi_type_double, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer,
+                    ffi_type_pointer, ffi_type_pointer, ffi_type_pointer, ffi_type_pointer }));
+
+    /** The four-float upcall: {@code glClearColor} and the single-float setters share it. */
+    @FunctionalInterface
+    public interface GlTrampolineFloatI extends org.lwjgl.system.CallbackI {
+        long invoke(float a0, float a1, float a2, float a3, long a4, long a5, long a6, long a7);
+
+        @Override
+        default void callback(long result, long args) {
+        }
+
+        @Override
+        default Callback.Descriptor getDescriptor() {
+            return FLOAT4_DESCRIPTOR;
+        }
+    }
+
+    /** The double upcall: {@code glClearDepth} is the one in the table. */
+    @FunctionalInterface
+    public interface GlTrampolineDoubleI extends org.lwjgl.system.CallbackI {
+        long invoke(double a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7);
+
+        @Override
+        default void callback(long result, long args) {
+        }
+
+        @Override
+        default Callback.Descriptor getDescriptor() {
+            return DOUBLE1_DESCRIPTOR;
+        }
+    }
+
+    private static final class CeltiumGlFloatTrampoline extends Callback implements GlTrampolineFloatI {
+        private final int functionId;
+        private final CeltiumGlStub stub;
+
+        CeltiumGlFloatTrampoline(int functionId, CeltiumGlStub stub) {
+            super(FLOAT4_DESCRIPTOR);
+            this.functionId = functionId;
+            this.stub = stub;
+        }
+
+        @Override
+        public long invoke(float a0, float a1, float a2, float a3, long a4, long a5, long a6, long a7) {
+            // Every float-argument row declares at most four arguments, so this narrow upcall stays as measured and
+            // the wide slots the dispatcher carries are zero rather than junk.
+            return this.stub.dispatch(this.functionId,
+                    Float.floatToRawIntBits(a0) & 0xFFFFFFFFL, Float.floatToRawIntBits(a1) & 0xFFFFFFFFL,
+                    Float.floatToRawIntBits(a2) & 0xFFFFFFFFL, Float.floatToRawIntBits(a3) & 0xFFFFFFFFL,
+                    a4, a5, a6, a7, 0L, 0L, 0L, 0L);
+        }
+
+        @Override
+        public void callback(long result, long args) {
+            this.stub.legacyDispatch(this.functionId, result, args);
+        }
+    }
+
+    private static final class CeltiumGlDoubleTrampoline extends Callback implements GlTrampolineDoubleI {
+        private final int functionId;
+        private final CeltiumGlStub stub;
+
+        CeltiumGlDoubleTrampoline(int functionId, CeltiumGlStub stub) {
+            super(DOUBLE1_DESCRIPTOR);
+            this.functionId = functionId;
+            this.stub = stub;
+        }
+
+        @Override
+        public long invoke(double a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7) {
+            // One double argument is the widest row this shape serves; the wide slots stay zero (see the float entry).
+            return this.stub.dispatch(this.functionId, Double.doubleToRawLongBits(a0), a1, a2, a3, a4, a5, a6, a7,
+                    0L, 0L, 0L, 0L);
+        }
+
+        @Override
+        public void callback(long result, long args) {
+            this.stub.legacyDispatch(this.functionId, result, args);
+        }
+    }
+
+    /**
      * One native trampoline per function name. Two call entries exist because which backend LWJGL uses is a
      * runtime property, not a compile-time one: {@code invoke} serves the FFM backend, {@code callback} the
      * legacy libffi one.
@@ -447,17 +800,28 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final class CeltiumGlTrampoline extends Callback implements GlTrampolineI {
         private final int functionId;
         private final CeltiumGlStub stub;
+        private final Callback.Descriptor descriptor;
 
-        CeltiumGlTrampoline(int functionId, CeltiumGlStub stub) {
-            super(UNIFORM_DESCRIPTOR);
+        CeltiumGlTrampoline(int functionId, CeltiumGlStub stub, byte[] args) {
+            super(descriptorFor(args));
             this.functionId = functionId;
             this.stub = stub;
+            this.descriptor = descriptorFor(args);
+        }
+
+        @Override
+        public Callback.Descriptor getDescriptor() {
+            return this.descriptor;
         }
 
         /** The FFM backend's entry: the C call's arguments arrive as this SAM's parameters, in order. */
         @Override
-        public long invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7) {
-            return this.stub.dispatch(this.functionId, a0, a1, a2, a3, a4, a5, a6, a7);
+        public long invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7,
+                long a8, long a9, long a10, long a11) {
+            if (ENTRY_LOGGED.compareAndSet(false, true)) {
+                System.out.println("[Celtium] GLSTUB entry=ffm (the uniform long-argument upcall)");
+            }
+            return this.stub.dispatch(this.functionId, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
         }
 
         /**
@@ -466,11 +830,18 @@ public final class CeltiumGlStub implements FunctionProvider {
          */
         @Override
         public void callback(long result, long args) {
+            if (ENTRY_LOGGED.compareAndSet(false, true)) {
+                System.out.println("[Celtium] GLSTUB entry=legacy (the libffi pointer-array callback)");
+            }
             this.stub.legacyDispatch(this.functionId, result, args);
         }
     }
 
     // ---- dispatch ---------------------------------------------------------------------
+
+    /** One line saying which upcall entry the runtime actually uses; the two need different argument handling. */
+    private static final java.util.concurrent.atomic.AtomicBoolean ENTRY_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     private static final int TRACE_LIMIT = Integer.getInteger("celtium.glstub.traceLimit", 40).intValue();
 
@@ -488,8 +859,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         Fn fn = TABLE.get(functionId);
-        long[] c = new long[8];
-        for (int i = 0; i < fn.args.length && i < 8; i++) {
+        long[] c = new long[SLOTS];
+        for (int i = 0; i < fn.args.length && i < SLOTS; i++) {
             long slot = MemoryUtil.memGetAddress(args + (long) i * org.lwjgl.system.Pointer.POINTER_SIZE);
             switch (fn.args[i]) {
                 case A_INT:
@@ -512,15 +883,18 @@ public final class CeltiumGlStub implements FunctionProvider {
                     break;
             }
         }
-        APIUtil.apiClosureRetP(result, dispatch(functionId, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]));
+        APIUtil.apiClosureRetP(result, dispatch(functionId,
+                c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11]));
     }
 
     /**
      * Handles a call. {@code c} is the call's argument values in order - ints widened to longs, pointers as raw
-     * addresses. Only the first {@code fn.args.length} slots are meaningful. The return value goes into the
-     * caller's result register; narrower results use the low bits.
+     * addresses. Only the first {@code fn.args.length} slots are meaningful: the rest carry whatever the upcall read
+     * past the arguments the C caller actually passed (or an explicit zero from the float/double entries). The return
+     * value goes into the caller's result register; narrower results use the low bits.
      */
-    private long dispatch(int functionId, long c0, long c1, long c2, long c3, long c4, long c5, long c6, long c7) {
+    private long dispatch(int functionId, long c0, long c1, long c2, long c3, long c4, long c5, long c6, long c7,
+            long c8, long c9, long c10, long c11) {
         if (functionId < 0) {
             // A function outside the table: the generic no-op.
             return 0L;
@@ -531,7 +905,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     + " (" + Long.toHexString(c0) + "," + Long.toHexString(c1) + "," + Long.toHexString(c2)
                     + "," + Long.toHexString(c3) + ")");
         }
-        long[] c = { c0, c1, c2, c3, c4, c5, c6, c7 };
+        long[] c = { c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11 };
         long a0 = fn.args.length > 0 ? c[0] : 0L;
         long a1 = fn.args.length > 1 ? c[1] : 0L;
         switch (fn.semantics) {
@@ -594,10 +968,66 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.textureBindings.put(texBindKey((int) a0), Integer.valueOf((int) a1));
                 return 0L;
             case SEM_ACTIVE_TEXTURE:
-                this.activeTexture = (int) a0;
+                // The unit index, not the raw enum: the getter adds the GL_TEXTURE0 base back, and a stored enum made
+                // every save/restore round trip add another base (measured as the 0x84C0 ladder in the game's own
+                // active-unit reads), which sent every unit-keyed binding record to a key no reader looked up.
+                this.activeTexture = Math.max(0, (int) a0 - 0x84C0);
                 return 0L;
             case SEM_TEXIMAGE:
-                texImage(fn, c);
+                texImage(c);
+                return 0L;
+            case SEM_TEXIMAGE_PIXELS:
+                texImagePixels(fn, c);
+                return 0L;
+            case SEM_TEXSUBIMAGE:
+                texSubImage(c);
+                return 0L;
+            case SEM_COMPRESSED_TEXIMAGE:
+                compressedTexImage(c);
+                return 0L;
+            case SEM_PIXEL_STORE:
+                pixelStore((int) c[0], (int) c[1]);
+                return 0L;
+            case SEM_VIEWPORT:
+                this.viewportW = (int) c[2];
+                this.viewportH = (int) c[3];
+                return 0L;
+            case SEM_BIND_FRAMEBUFFER:
+                bindFramebuffer((int) a0, (int) a1);
+                return 0L;
+            case SEM_CLEAR:
+                this.pendingClears.getAndUpdate(mask -> mask | (int) a0);
+                return 0L;
+            case SEM_CLEAR_COLOR:
+                this.clearRed = Float.intBitsToFloat((int) c[0]);
+                this.clearGreen = Float.intBitsToFloat((int) c[1]);
+                this.clearBlue = Float.intBitsToFloat((int) c[2]);
+                this.clearAlpha = Float.intBitsToFloat((int) c[3]);
+                return 0L;
+            case SEM_CLEAR_DEPTH:
+                this.clearDepth = "glClearDepth".equals(fn.name) ? Double.longBitsToDouble(c[0])
+                        : (double) Float.intBitsToFloat((int) c[0]);
+                return 0L;
+            case SEM_BUFFER_SUBDATA:
+                bufferSubData(fn, c);
+                return 0L;
+            case SEM_LINE_WIDTH:
+                this.lineWidth = Float.intBitsToFloat((int) c[0]);
+                return 0L;
+            case SEM_USE_PROGRAM:
+                this.currentProgram = (int) c[0];
+                return 0L;
+            case SEM_NEW_LIST:
+                this.compilingList = (int) c[0];
+                return 0L;
+            case SEM_END_LIST:
+                this.compilingList = 0;
+                return 0L;
+            case SEM_CALL_LIST:
+                this.lastCalledList = (int) c[0];
+                return 0L;
+            case SEM_BIND_VERTEX_ARRAY:
+                this.boundVertexArray = (int) c[0];
                 return 0L;
             case SEM_ROUTE:
                 route(fn, c);
@@ -663,6 +1093,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void delete(Fn fn, long[] c) {
+        boolean textures = "glDeleteTextures".equals(fn.name);
         if (fn.args.length == 2 && fn.args[0] == A_INT && fn.args[1] == A_PTR) {
             int count = (int) c[0];
             long names = c[1];
@@ -670,7 +1101,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             }
             for (int i = 0; i < count; i++) {
-                this.liveNames.remove(Integer.valueOf(memGetInt(names + (long) i * 4L)));
+                int name = memGetInt(names + (long) i * 4L);
+                this.liveNames.remove(Integer.valueOf(name));
+                if (textures) {
+                    forgetTexture(name);
+                }
             }
             return;
         }
@@ -680,6 +1115,23 @@ public final class CeltiumGlStub implements FunctionProvider {
             } else {
                 this.liveNames.remove(Integer.valueOf((int) c[0]));
             }
+        }
+    }
+
+    /**
+     * Retires a texture's extent and pixel records.
+     * <p>
+     * Names are never reissued by the generator, but the game reuses one itself: {@code TextureUtil.allocateTexture}
+     * deletes the texture and immediately uploads to the same name again, mip level by mip level. A capture left
+     * behind by the previous image would be read as the new texture's pixels until its first real upload replaced it -
+     * stale content that looks like a working mirror, which is worse than the null an un-uploaded level answers with.
+     * The extents go with the pixels: a level nobody uploaded has no size to report.
+     */
+    private void forgetTexture(int name) {
+        for (int level = 0; level < 256; level++) {
+            Long key = Long.valueOf(texLevelKey(name, level));
+            this.texLevels.remove(key);
+            this.texCaptures.remove(key);
         }
     }
 
@@ -739,11 +1191,43 @@ public final class CeltiumGlStub implements FunctionProvider {
                 memPutInt(out + 8, this.viewportW);
                 memPutInt(out + 12, this.viewportH);
                 return;
-            case 0x8069: // GL_TEXTURE_BINDING_2D
-            case 0x84E0: // near GL_ACTIVE_TEXTURE - wrong on purpose check: ACTIVE_TEXTURE is 0x84E0, writes the
-                // selector; binding queries get 0 = no texture bound.
-            case 0x84C0: // GL_TEXTURE0 read back as an enum answer for ACTIVE_TEXTURE
-                value = 0x84C0;
+            case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
+                Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(0x0DE1)));
+                value = bound == null ? 0 : bound.intValue();
+                break;
+            }
+            case 0x84E0: // GL_ACTIVE_TEXTURE
+                value = 0x84C0 + this.activeTexture;
+                break;
+            case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
+                value = this.drawFbo;
+                break;
+            case 0x8CA5: // GL_READ_FRAMEBUFFER_BINDING
+                value = this.readFbo;
+                break;
+            case 0x0C10: // GL_SCISSOR_BOX - four ints, and the default is the whole drawable
+                memPutInt(out, 0);
+                memPutInt(out + 4, 0);
+                memPutInt(out + 8, this.viewportW);
+                memPutInt(out + 12, this.viewportH);
+                return;
+            case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
+                value = this.compilingList;
+                break;
+            case 0x8B8D: // GL_CURRENT_PROGRAM
+                value = this.currentProgram;
+                break;
+            case 0x0B74: // GL_DEPTH_FUNC
+                value = 0x0201; // GL_LESS
+                break;
+            case 0x0D05: // GL_PACK_ALIGNMENT
+                value = 4;
+                break;
+            case 0x0B65: // GL_FOG_MODE
+                value = 0x2601; // GL_LINEAR
+                break;
+            case 0x85B5: // GL_VERTEX_ARRAY_BINDING
+                value = this.boundVertexArray;
                 break;
             case 0x0D33: // GL_MAX_TEXTURE_SIZE
                 value = 16384;
@@ -784,18 +1268,58 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /**
+     * Answers a float query with the number of components its pname has.
+     * <p>
+     * One float was written for every pname before this, which left the rest of the caller's buffer uninitialised: a
+     * sixteen-float matrix read produced one zero and fifteen words of whatever the allocation held, and every
+     * transform built from it was garbage. Matrices answer the identity and the single-valued states answer the value
+     * a fresh GL context starts them at, which is the honest answer for a context that never had them set.
+     */
     private void getFloats(int pname, long out, Fn fn) {
         if (out == 0L) {
             return;
         }
-        float value;
+        boolean asDouble = "glGetDoublev".equals(fn.name);
         switch (pname) {
-            case 0x0D3A: // GL_POINT_SIZE_RANGE-ish defaults; matrix queries answer 0 like an unset matrix
-            case 0x0B01: // GL_ACCUM_CLEAR_VALUE etc - 0/1 style defaults: pick the honest single value
+            case 0x0BA6: // GL_MODELVIEW_MATRIX
+            case 0x0BA7: // GL_PROJECTION_MATRIX
+            case 0x0BA8: // GL_TEXTURE_MATRIX
+                for (int i = 0; i < 16; i++) {
+                    putFloatOrDouble(out, i, i % 5 == 0 ? 1.0f : 0.0f, asDouble);
+                }
+                return;
+            case 0x0B00: // GL_CURRENT_COLOR
+                putFloatOrDouble(out, 0, this.currentRed, asDouble);
+                putFloatOrDouble(out, 1, this.currentGreen, asDouble);
+                putFloatOrDouble(out, 2, this.currentBlue, asDouble);
+                putFloatOrDouble(out, 3, this.currentAlpha, asDouble);
+                return;
+            case 0x0B70: // GL_DEPTH_RANGE
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
+                putFloatOrDouble(out, 1, 1.0f, asDouble);
+                return;
+            case 0x0B21: // GL_LINE_WIDTH
+                putFloatOrDouble(out, 0, this.lineWidth, asDouble);
+                return;
+            case 0x0B22: // GL_POINT_SIZE
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                return;
+            case 0x0D3A: // GL_ALIASED_LINE_WIDTH_RANGE
+                putFloatOrDouble(out, 0, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, this.lineWidth, asDouble);
+                return;
             default:
-                value = 0.0f;
+                putFloatOrDouble(out, 0, 0.0f, asDouble);
         }
-        MemoryUtil.memPutFloat(out, value);
+    }
+
+    private static void putFloatOrDouble(long out, int index, float value, boolean asDouble) {
+        if (asDouble) {
+            MemoryUtil.memPutDouble(out + (long) index * 8L, value);
+        } else {
+            MemoryUtil.memPutFloat(out + (long) index * 4L, value);
+        }
     }
 
     private void getBooleans(int pname, long out, Fn fn) {
@@ -811,6 +1335,16 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     // ---- texture image extents: what glGetTexLevelParameter answers from ---------------------------------
 
+    /** GL_FRAMEBUFFER (0x8D40) binds both slots; GL_DRAW/READ_FRAMEBUFFER (0x8CA9/0x8CA8) bind one each. */
+    private void bindFramebuffer(int target, int name) {
+        if (target == 0x8D40 || target == 0x8CA9) {
+            this.drawFbo = name;
+        }
+        if (target == 0x8D40 || target == 0x8CA8) {
+            this.readFbo = name;
+        }
+    }
+
     private static boolean isProxyTarget(int target) {
         // GL_PROXY_TEXTURE_1D/2D/3D/CUBE_MAP - uploads to these carry no pixels and bind to nothing.
         return target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B;
@@ -821,38 +1355,357 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * Records the uploaded extent under the texture the target is bound to (or the target itself for proxy
-     * uploads). {@code glTexStorage} counts as a level-0 image; {@code glTexImage1D} has no height slot.
+     * The shared record key: texture name in the high bits, level in the low byte. {@link #texLevels} and
+     * {@link #texCaptures} agree on it, so a level's extent and its pixels are found the same way.
      */
-    private void texImage(Fn fn, long[] c) {
-        int target = (int) c[0];
-        int level = "glTexStorage2D".equals(fn.name) || "glTexStorage3D".equals(fn.name) ? 0 : (int) c[1];
-        int internal = (int) c[2];
-        int w = (int) c[3];
-        int h = "glTexImage1D".equals(fn.name) ? 1 : (int) c[4];
-        int name;
+    private static long texLevelKey(int name, int level) {
+        return ((long) name << 16) | (level & 0xFFL);
+    }
+
+    /**
+     * The name an upload's records belong to: the texture bound to the target on the active unit, or {@code -target}
+     * for a proxy target. Proxy uploads are how FML probes the maximum texture size - they bind to nothing and their
+     * "pixels" are never a real image, so only an extent is recorded for them.
+     */
+    private int uploadTargetName(int target) {
         if (isProxyTarget(target)) {
-            name = -target;
-        } else {
-            Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
-            name = bound == null ? 0 : bound.intValue();
+            return -target;
         }
+        Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
+        return bound == null ? 0 : bound.intValue();
+    }
+
+    /**
+     * Records an uploaded extent under {@link #uploadTargetName}, which is what {@code glGetTexLevelParameter} answers
+     * from. For an upload whose pixels the stub cannot use, this record is all there is.
+     */
+    private void recordExtent(int target, int level, int internal, int width, int height) {
+        int name = uploadTargetName(target);
         if (name == 0) {
             return;
         }
-        this.texLevels.put(Long.valueOf(((long) name << 16) | (level & 0xFFL)), new int[] { w, h, internal });
+        this.texLevels.put(Long.valueOf(texLevelKey(name, level)), new int[] { width, height, internal });
+    }
+
+    /**
+     * {@code glTexStorage2D/3D}: storage is reserved for level 0 (the level count is not walked) and its content is
+     * undefined even in real GL, so there is nothing to capture - only the extent the size queries answer from.
+     */
+    private void texImage(long[] c) {
+        recordExtent((int) c[0], 0, (int) c[2], (int) c[3], (int) c[4]);
+    }
+
+    /** Writes into the storage {@code glBufferData} allocated, which is what the mirrored meshes are read from. */
+    private void bufferSubData(Fn fn, long[] c) {
+        int name = this.bufferBindings.getOrDefault(Integer.valueOf((int) c[0]), Integer.valueOf(0)).intValue();
+        long offset = c[1];
+        long size = c[2];
+        long data = c[3];
+        ByteBuffer storage = this.bufferStore.get(Integer.valueOf(name));
+        if (storage == null || data == 0L || size <= 0 || offset < 0 || offset + size > storage.capacity()) {
+            return;
+        }
+        ByteBuffer source = MemoryUtil.memByteBuffer(data, (int) size);
+        int position = storage.position();
+        storage.position((int) offset);
+        storage.put(source);
+        storage.position(position);
+    }
+
+    /** {@code glPixelStorei}: the unpack state upload conversion reads rows with. Only the UNPACK_* pnames matter. */
+    private void pixelStore(int pname, int value) {
+        switch (pname) {
+            case 0x0CF5: // GL_UNPACK_ALIGNMENT - 1, 2, 4 or 8; anything else is not a legal GL value
+                this.unpackAlignment = value == 1 || value == 2 || value == 8 ? value : 4;
+                break;
+            case 0x0CF2: // GL_UNPACK_ROW_LENGTH
+                this.unpackRowLength = Math.max(0, value);
+                break;
+            case 0x0CF3: // GL_UNPACK_SKIP_ROWS
+                this.unpackSkipRows = Math.max(0, value);
+                break;
+            case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
+                this.unpackSkipPixels = Math.max(0, value);
+                break;
+            default:
+                break;
+        }
+    }
+
+    // ---- texture pixels: the uploads the Vulkan mirrors are built from -----------------------------------
+
+    /** The pixel formats and types the conversion understands - the pairs the game's texture loader uses. */
+    private static final int GL_UNSIGNED_BYTE = 0x1401;
+    private static final int GL_RGB = 0x1907;
+    private static final int GL_RGBA = 0x1908;
+    private static final int GL_BGRA = 0x80E1;
+    private static final int GL_UNSIGNED_INT_8_8_8_8_REV = 0x8367;
+
+    /**
+     * The largest level worth mirroring: 4096x4096 RGBA8, the biggest atlas the game builds. A larger upload is
+     * counted as unconverted rather than allocated - one level of a speculative 16384x16384 probe would be a gigabyte
+     * of direct memory for pixels the game itself never had to find room for.
+     */
+    private static final long MAX_CAPTURE_BYTES = 64L * 1024L * 1024L;
+
+    /** One captured level: RGBA8, {@code width * height} pixels, top row first, in stub-owned direct storage. */
+    private static final class TexCapture {
+        final int width;
+        final int height;
+        final ByteBuffer data;
+
+        TexCapture(int width, int height, ByteBuffer data) {
+            this.width = width;
+            this.height = height;
+            this.data = data;
+        }
+    }
+
+    /**
+     * {@code glTexImage1D/2D/3D}: the extent record plus the uploaded pixels, converted to RGBA8 and filed under the
+     * bound texture's level. A NULL data pointer is a legal GL call that allocates the level with undefined content -
+     * see {@link #undefinedLevel}, because the game fills levels exactly that way.
+     */
+    private void texImagePixels(Fn fn, long[] c) {
+        boolean oneD = "glTexImage1D".equals(fn.name);
+        boolean threeD = "glTexImage3D".equals(fn.name);
+        int target = (int) c[0];
+        int level = (int) c[1];
+        int internal = (int) c[2];
+        int width = (int) c[3];
+        int height = oneD ? 1 : (int) c[4];
+        int depth = threeD ? (int) c[5] : 1;
+        // The format slot follows the extent, which differs per form: 1D has no height, 3D carries depth.
+        int formatIndex = oneD ? 5 : threeD ? 7 : 6;
+        int format = (int) c[formatIndex];
+        int type = (int) c[formatIndex + 1];
+        long pixels = c[formatIndex + 2];
+        recordExtent(target, level, internal, width, height);
+        int name = uploadTargetName(target);
+        if (isProxyTarget(target) || name == 0) {
+            return;
+        }
+        if (pixels == 0L) {
+            undefinedLevel(name, level, width, height, depth);
+            return;
+        }
+        if (depth > 1) {
+            // A 2D mirror cannot hold the remaining slices: the extent is recorded and the upload counted rather than
+            // storing the first slice as if it were the whole image.
+            this.unconvertedUploads.incrementAndGet();
+            return;
+        }
+        ByteBuffer rgba = uploadToRgba8(width, height, format, type, pixels);
+        if (rgba == null) {
+            this.unconvertedUploads.incrementAndGet();
+            return;
+        }
+        // Publishing a new record instead of rewriting the old one, so a reader polling the level sees one whole image.
+        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, rgba));
+        this.fullCaptures.incrementAndGet();
+    }
+
+    /**
+     * A level allocated with a NULL data pointer: GL reserves the storage and leaves its content undefined.
+     * <p>
+     * The level still needs a surface here, because the game fills levels in patches: {@code TextureUtil} allocates
+     * every mip level with no data and then writes the image sprite by sprite through {@code glTexSubImage2D}. Without
+     * one, those sprites were dropped one by one - the first became a capture the size of a single sprite and every
+     * later one fell outside it, which left the block atlas mirrored as one 16x16 corner. Zeros are the honest reading
+     * of an undefined level, and they are exactly what the extent record already claims, so the two records agree. It
+     * carries no game bytes, so it is counted apart from the full images.
+     */
+    private void undefinedLevel(int name, int level, int width, int height, int depth) {
+        long bytes = (long) width * (long) height * 4L;
+        if (depth > 1 || width <= 0 || height <= 0 || bytes > MAX_CAPTURE_BYTES) {
+            // No shape to lay a surface out from: a 2D record cannot describe depth, and this level is past the size
+            // the stub will mirror at all. The extent stands, the pixels do not.
+            this.unconvertedUploads.incrementAndGet();
+            return;
+        }
+        ByteBuffer zeros = ByteBuffer.allocateDirect((int) bytes);
+        // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small
+        // buffer, and a garbage surface is exactly the silently wrong atlas this path exists to prevent.
+        MemoryUtil.memSet(memAddress(zeros), 0, bytes);
+        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, zeros));
+        this.undefinedExtents.incrementAndGet();
+    }
+
+    /**
+     * {@code glTexSubImage2D}: the patch is converted on its own and written into the level's captured rows.
+     * <p>
+     * A level with no capture yet takes the patch as its storage, placed at the origin - the summary counts that as a
+     * patch, not as a full image. A patch that does not fit inside the captured image is counted and dropped, the way
+     * GL raises GL_INVALID_VALUE and leaves the level alone; a partly written image would be worse than none.
+     */
+    private void texSubImage(long[] c) {
+        int target = (int) c[0];
+        if (isProxyTarget(target)) {
+            return;
+        }
+        int level = (int) c[1];
+        int x = (int) c[2];
+        int y = (int) c[3];
+        int width = (int) c[4];
+        int height = (int) c[5];
+        int format = (int) c[6];
+        int type = (int) c[7];
+        long pixels = c[8];
+        int name = uploadTargetName(target);
+        if (name == 0 || pixels == 0L || width <= 0 || height <= 0) {
+            return;
+        }
+        ByteBuffer patch = uploadToRgba8(width, height, format, type, pixels);
+        if (patch == null) {
+            this.unconvertedUploads.incrementAndGet();
+            return;
+        }
+        long key = texLevelKey(name, level);
+        TexCapture existing = this.texCaptures.get(Long.valueOf(key));
+        if (existing == null) {
+            this.texCaptures.put(Long.valueOf(key), new TexCapture(width, height, patch));
+            this.subCaptures.incrementAndGet();
+            return;
+        }
+        if (x < 0 || y < 0 || x + width > existing.width || y + height > existing.height) {
+            this.unconvertedUploads.incrementAndGet();
+            return;
+        }
+        int destinationStride = existing.width * 4;
+        int sourceStride = width * 4;
+        for (int row = 0; row < height; row++) {
+            // Absolute and whole-row, so the record's own position never moves under a concurrent reader.
+            existing.data.put((y + row) * destinationStride + x * 4, patch, row * sourceStride, sourceStride);
+        }
+        this.subCaptures.incrementAndGet();
+    }
+
+    /**
+     * {@code glCompressedTexImage2D}: the extent is recorded like any other upload, but the payload is DXT/S3TC or
+     * similar and decoding it is not this stub's job - the upload is counted as unconverted, which leaves whatever the
+     * level held before it.
+     */
+    private void compressedTexImage(long[] c) {
+        int target = (int) c[0];
+        recordExtent(target, (int) c[1], (int) c[2], (int) c[3], (int) c[4]);
+        if (!isProxyTarget(target) && c[7] != 0L) {
+            this.unconvertedUploads.incrementAndGet();
+        }
+    }
+
+    /**
+     * Converts one upload's pixels to RGBA8, top row first, or {@code null} when the format/type pair or the recorded
+     * unpack state is not one this understands.
+     * <p>
+     * A {@code null} is never turned into a guess: the caller counts it and keeps the level's previous content, because
+     * an upload read with the wrong layout would be a silently wrong atlas rather than a missing one. Understood are
+     * {@code GL_RGBA} and {@code GL_BGRA} with {@code GL_UNSIGNED_BYTE}, either of those with
+     * {@code GL_UNSIGNED_INT_8_8_8_8_REV} - the packed {@code 0xAARRGGBB} form the atlas uploads use - and
+     * {@code GL_RGB} with {@code GL_UNSIGNED_BYTE}. Rows are read where GL would read them, padded to the recorded
+     * unpack alignment; a row length or a pixel/row skip that is not the default is refused rather than misread.
+     */
+    private ByteBuffer uploadToRgba8(int width, int height, int format, int type, long pixels) {
+        if (pixels == 0L || width <= 0 || height <= 0) {
+            return null;
+        }
+        if ((this.unpackRowLength != 0 && this.unpackRowLength != width)
+                || this.unpackSkipPixels != 0 || this.unpackSkipRows != 0) {
+            return null;
+        }
+        long bytes = (long) width * (long) height * 4L;
+        if (bytes > MAX_CAPTURE_BYTES) {
+            return null;
+        }
+        boolean bgra = format == GL_BGRA;
+        if (type == GL_UNSIGNED_BYTE && (format == GL_RGBA || bgra)) {
+            int rowBytes = width * 4;
+            int stride = aligned(rowBytes, this.unpackAlignment);
+            ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
+            ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
+            for (int row = 0; row < height; row++) {
+                int base = row * stride;
+                if (!bgra) {
+                    // Absolute on both sides: the row's source offset and the record's offset move together, and no
+                    // buffer position has to be legal at any intermediate point.
+                    out.put(row * rowBytes, source, base, rowBytes);
+                } else {
+                    for (int i = 0; i < rowBytes; i += 4) {
+                        int pixel = base + i;
+                        out.put(source.get(pixel + 2)).put(source.get(pixel + 1))
+                                .put(source.get(pixel)).put(source.get(pixel + 3));
+                    }
+                }
+            }
+            out.clear();
+            return out;
+        }
+        if (type == GL_UNSIGNED_BYTE && format == GL_RGB) {
+            // Three bytes per pixel, expanded with an opaque alpha; the source rows carry GL's alignment padding.
+            int rowBytes = width * 3;
+            int stride = aligned(rowBytes, this.unpackAlignment);
+            ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
+            ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
+            for (int row = 0; row < height; row++) {
+                int base = row * stride;
+                for (int x = 0; x < width; x++) {
+                    int pixel = base + x * 3;
+                    out.put(source.get(pixel)).put(source.get(pixel + 1))
+                            .put(source.get(pixel + 2)).put((byte) 0xFF);
+                }
+            }
+            out.clear();
+            return out;
+        }
+        if (type == GL_UNSIGNED_INT_8_8_8_8_REV && (format == GL_RGBA || bgra)) {
+            // The packed form puts the first component in the least significant bits of the 32-bit word, so the word
+            // is read in host order and unpacked: for GL_BGRA that is the game's own 0xAARRGGBB int.
+            int stride = aligned(width * 4, this.unpackAlignment);
+            ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (height - 1) * stride + width * 4)
+                    .order(java.nio.ByteOrder.nativeOrder());
+            ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
+            for (int row = 0; row < height; row++) {
+                int base = row * stride;
+                for (int x = 0; x < width; x++) {
+                    int packed = source.getInt(base + x * 4);
+                    int first = packed & 0xFF;
+                    int third = (packed >>> 16) & 0xFF;
+                    out.put((byte) (bgra ? third : first)).put((byte) ((packed >>> 8) & 0xFF))
+                            .put((byte) (bgra ? first : third)).put((byte) ((packed >>> 24) & 0xFF));
+                }
+            }
+            out.clear();
+            return out;
+        }
+        return null;
+    }
+
+    /** {@code bytes} rounded up to a GL unpack alignment, which is always a power of two: 1, 2, 4 or 8. */
+    private static int aligned(int bytes, int alignment) {
+        return (bytes + alignment - 1) & ~(alignment - 1);
+    }
+
+    /** The pname's recorded value for a named texture's level - the DSA form of {@link #texLevelParam}. */
+    private int texLevelParamForName(int name, int level, int pname) {
+        int[] dims = this.texLevels.get(Long.valueOf(texLevelKey(name, level)));
+        if (dims == null) {
+            return 0;
+        }
+        switch (pname) {
+            case 0x1000: // GL_TEXTURE_WIDTH
+                return dims[0];
+            case 0x1001: // GL_TEXTURE_HEIGHT
+                return dims[1];
+            case 0x1003: // GL_TEXTURE_INTERNAL_FORMAT
+                return dims[2];
+            default:
+                return 8; // the component sizes the announced formats describe themselves with
+        }
     }
 
     /** The pname's recorded value for the bound texture's level, or 0 when nothing was uploaded. */
     private int texLevelParam(int target, int level, int pname) {
-        int name;
-        if (isProxyTarget(target)) {
-            name = -target;
-        } else {
-            Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
-            name = bound == null ? 0 : bound.intValue();
-        }
-        int[] dims = this.texLevels.get(Long.valueOf(((long) name << 16) | (level & 0xFFL)));
+        int name = uploadTargetName(target);
+        int[] dims = this.texLevels.get(Long.valueOf(texLevelKey(name, level)));
         if (dims == null) {
             return 0;
         }
@@ -947,6 +1800,37 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         int pname = fn.args.length > 1 ? (int) c[1] : 0;
+        if (fn.name.startsWith("glGetTextureLevelParameter")) {
+            // DSA form: (texture, level, pname, out) - the texture name is given, so no binding lookup is needed.
+            int value = texLevelParamForName((int) c[0], (int) c[1], (int) c[2]);
+            if (fn.name.endsWith("fv")) {
+                MemoryUtil.memPutFloat(out, value);
+            } else {
+                memPutInt(out, value);
+            }
+            return;
+        }
+        if (fn.name.startsWith("glGetTextureParameter")) {
+            // (texture, pname, out): the filter and wrap state the registry announces from. Defaults are the GL
+            // defaults, which is what a texture created without an explicit parameter really has.
+            int filterPname = (int) c[1];
+            int value = filterPname == 0x2801 || filterPname == 0x2800 ? 0x2601 // GL_TEXTURE_MIN/MAG_FILTER
+                    : filterPname == 0x2802 || filterPname == 0x2803 ? 0x812F // GL_TEXTURE_WRAP_S/T
+                    : 0;
+            if (fn.name.endsWith("fv")) {
+                MemoryUtil.memPutFloat(out, value);
+            } else {
+                memPutInt(out, value);
+            }
+            return;
+        }
+        if (fn.name.startsWith("glGetNamedFramebufferAttachmentParameter")
+                || fn.name.startsWith("glGetFramebufferAttachmentParameter")) {
+            // (target-or-fbo, attachment, pname, out). No framebuffer objects exist under the stub, so the honest
+            // answer is "no attachment" rather than a zero that reads as attachment 0.
+            memPutInt(out, 0); // GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE = GL_NONE: there is no attachment
+            return;
+        }
         if (fn.name.startsWith("glGetTexLevelParameter")) {
             int value = texLevelParam((int) c[0], (int) c[1], (int) c[2]);
             if (fn.name.endsWith("fv")) {

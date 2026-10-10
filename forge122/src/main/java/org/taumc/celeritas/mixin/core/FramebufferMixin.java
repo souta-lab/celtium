@@ -15,8 +15,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * into one draw. The audit lists this as S10, and the framebuffer turned out not to come through {@code GlStateManager} at
  * all - its SRG source has no {@code glBindFramebuffer} - so this hooks the Minecraft class that does the binding.
  * <p>
- * Only the identity of the framebuffer is reported, not its GL name: a pass discriminator needs to tell targets apart, and
- * taking an object identity avoids reaching for a shadowed field or any other accessor machinery.
+ * The identity reported is the object identity, not the GL name: it has to stay the same for the whole life of one
+ * framebuffer, and {@code framebufferObject} does not - adoption below rewrites it in place, and a resize regenerates the
+ * textures of the same object - while the shader-group hook hands the id of a group's input to the post chain and only an
+ * identity that never moves can be matched against it. The colour texture name travels with the identity because the
+ * GL-less path has no GL to ask for a framebuffer's attachment, and because the finished outline is composited by the
+ * name the game binds again, not by the identity the renderer keyed its image under.
  */
 @Mixin(Framebuffer.class)
 public abstract class FramebufferMixin {
@@ -55,8 +59,27 @@ public abstract class FramebufferMixin {
         }
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend != null) {
+            net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
-            backend.bindFramebuffer(System.identityHashCode(this), mc != null && mc.getFramebuffer() == (Object) this);
+            // One framebuffer is one identity for its whole life: this value is what the shader-group hook hands the
+            // backend as the id of a group's input, and what the queue keys the silhouette's batches under, so it must
+            // not move when the GL name behind it does (adoption rewrites framebufferObject, a resize regenerates
+            // framebufferTexture in place through func_147613_a).
+            long identity = System.identityHashCode(self);
+            backend.bindFramebuffer(identity, mc != null && mc.getFramebuffer() == self);
+            // CELTIUM-OUTLINE-WIRING (call site 1 of 2; blocked on the backend - nothing is invented here): the colour
+            // texture name and size attached to the framebuffer that is being bound. The GL-less path cannot ask GL for
+            // an attachment (glGetNamedFramebufferAttachmentParameteri answers nothing without a context), so this bind
+            // is the only place the association identity -> texture can be made. It is what lets the renderer keep the
+            // silhouette in an image of its own - keyed by this identity - instead of drawing it onto the scene, and
+            // what lets the later full-screen composite, which samples the outline texture by name, find the image the
+            // chain wrote. The texture size (not the logical framebuffer size the hint above carries, which differs
+            // while a resize is in flight) is the size an image standing for this colour texture must have.
+            //
+            // The pair travels together: the identity says which target a batch belongs to, the colour texture says
+            // which image stands for its pixels.
+            backend.bindFramebufferColorTexture(identity, self.framebufferTexture,
+                    self.framebufferTextureWidth, self.framebufferTextureHeight);
         }
     }
     /**
@@ -98,6 +121,9 @@ public abstract class FramebufferMixin {
             }
             if (adopted != 0 && self.framebufferObject != adopted) {
                 self.framebufferObject = adopted;
+                // The identity does not move, only the name behind it: the bind above reported the old name for this
+                // identity, and this one's own report on the next bind carries the adopted name, so the pair the backend
+                // holds stays current without a second hand-off here.
                 self.framebufferTexture = vulkan.celtium$adoptedColorTexture();
                 self.depthBuffer = vulkan.celtium$adoptedDepthTexture();
                 vulkan.celtium$noteFramebufferAdopted();

@@ -26,6 +26,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * the outline buffer GL still fills), each pass is collected with its live uniform values and the whole chain runs
  * natively inside a GL-to-Vulkan handoff, ordered exactly where the GL chain ran - after the world, before the HUD.
  * Anything the executor declines still renders through GL unchanged.
+ * <p>
+ * A group whose passes read {@code minecraft:main} and whose main is not the game's is the outline case: the input of
+ * that chain is the framebuffer the game bound while it produced it (the entity-outline buffer, filled with the
+ * silhouette), so the target's identity, the GL colour texture behind it and its size are reported to the backend
+ * before the passes are collected. That is what lets the renderer keep the silhouette under the identity it was
+ * already told about - rather than drawing it onto the scene - and hand that identity's image to the chain instead
+ * of re-seeding the chain from a GL read of the texture, which a GL-less path cannot answer.
  */
 @Mixin(ShaderGroup.class)
 public abstract class ShaderGroupMixin {
@@ -56,6 +63,28 @@ public abstract class ShaderGroupMixin {
             return;
         }
 
+        // The group's input, when its main is not the game's: the framebuffer the game bound while it produced that
+        // input - the entity-outline buffer, whose silhouette was drawn under exactly this identity and whose id the
+        // bind hook already reported for this same object. The GL name is what the game binds again to composite the
+        // finished outline, and the texture size is the size an image standing for it must have. Reported before the
+        // passes are collected, because it says where the input lives even when the chain itself cannot be described
+        // natively and stays on GL.
+        int inputIdentity = 0;
+        int inputTexture = 0;
+        int inputW = 0;
+        int inputH = 0;
+        if (!mainIsGame) {
+            net.minecraft.client.shader.Framebuffer input = this.mainFramebuffer;
+            inputIdentity = System.identityHashCode(input);
+            inputTexture = input.framebufferTexture;
+            inputW = input.framebufferTextureWidth;
+            inputH = input.framebufferTextureHeight;
+            // Hand the input framebuffer over, so the chain samples the image the renderer kept under this identity
+            // instead of re-seeding from glGetTexImage, which the GL-less path cannot answer. The pass fields below
+            // carry the same three facts to celtium$postChainRun, which is what the seeded path reads them from.
+            backend.bindFramebufferColorTexture(inputIdentity, inputTexture, inputW, inputH);
+        }
+
         // The time accumulation is the group's own; the mixin cannot call the original, so it keeps the contract.
         if (partialTicks < this.lastStamp) {
             this.time += 1.0F - this.lastStamp;
@@ -83,12 +112,14 @@ public abstract class ShaderGroupMixin {
         }
         if (!mainIsGame) {
             // The group's main is a plain GL framebuffer (the entity-outline buffer): the seeded path seeds it
-            // from its texture and writes the output back, so carry the texture the executor must use.
+            // from its texture and writes the output back, so carry the texture the executor must use. These are the
+            // very values reported above, on the pass the executor reads them from - identity, GL colour texture and
+            // input size for the target the chain's 'minecraft:main' resolves to.
             VulkanPostChain.Pass first = passes.get(0);
-            first.groupMainTextureId = this.mainFramebuffer.framebufferTexture;
-            first.groupMainFbId = System.identityHashCode(this.mainFramebuffer);
-            first.groupMainW = this.mainFramebuffer.framebufferTextureWidth;
-            first.groupMainH = this.mainFramebuffer.framebufferTextureHeight;
+            first.groupMainTextureId = inputTexture;
+            first.groupMainFbId = inputIdentity;
+            first.groupMainW = inputW;
+            first.groupMainH = inputH;
         } else {
             // The handoff validates the bound framebuffer; under adoption the game framebuffer's binding is the
             // shared one, which is exactly what a mid-frame acquire needs to see.

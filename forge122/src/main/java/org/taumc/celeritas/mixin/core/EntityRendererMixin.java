@@ -130,7 +130,10 @@ public abstract class EntityRendererMixin {
         try {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // GL-less has one present site per frame and it is the swap point: this one would present the same
+                // frame a second time and overwrite the skip reason with its own refusal.
                 vulkan.celtium$presentFrame();
             }
         } catch (RuntimeException | LinkageError ignored) {

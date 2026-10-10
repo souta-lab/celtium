@@ -24,6 +24,14 @@ import static org.lwjgl.vulkan.VK11.*;
  * the whole level and a CPU to GPU transfer, so it must only run when the texture content actually changed
  * (resource reload / texture atlas refresh), never per frame.
  * <p>
+ * <b>Where the pixels come from when there is no GL context.</b> A GL-less boot has no texture storage to read:
+ * {@code glGetTexImage} is answered by the stub and writes nothing, so the readback above would deliver uninitialized
+ * memory and the mirror would sample noise. The pixels do exist on the CPU side, because the game hands them to GL
+ * itself: the stub keeps the last upload per texture level, and {@link #uploadFromGlTexture} takes them from there.
+ * They travel through the same copy, the same layout changes and the same flags as a readback, and a level the stub
+ * never saw is not uploaded at all - the mirror keeps no content and says so through {@link #hasFullContent}
+ * (see {@link #readCapturedLevel}). {@link #capturedUploadSummary} counts both outcomes.
+ * <p>
  * <b>What is mirrored.</b> Only mip level 0 is copied. Minecraft's atlas has a mip chain, but this image has a
  * single level and the sampler clamps the LOD to 0, so terrain always samples the base level. That is a deliberate
  * simplification of the first mirroring implementation, not an accident.
@@ -217,12 +225,20 @@ public final class VulkanGlTexture {
      * texture unit that was active on entry, and the active texture unit itself. Restoring the exact previous
      * binding matters because Minecraft caches per-unit texture bindings - leaving a different texture bound here
      * would make the cache lie and Minecraft would skip a rebind it actually needs.
+     * <p>
+     * <b>Without a GL context</b> (the stub is installed) there is nothing to read back, so the pixels are the ones the
+     * game uploaded and the stub kept, and none of the GL state above is touched. Everything after the pixels arrive is
+     * the same code: same hash, same resize, same copy and barriers, same {@code fullContentArrived}-adjacent
+     * bookkeeping and the same generation bump. A texture level the stub never captured is not uploaded at all - the
+     * exception below is what the callers record, and the mirror is left without content so the descriptor decision
+     * refuses it instead of sampling noise.
      *
      * @param glTextureId     the GL name of the source texture
      * @param glTextureTarget the GL target, which must be {@code GL_TEXTURE_2D}
      * @throws IllegalArgumentException if the target is not {@code GL_TEXTURE_2D} or the id is 0
-     * @throws IllegalStateException    if the GL texture has no level-0 storage, a GL call fails, or this texture was
-     *                                  deleted
+     * @throws IllegalStateException    if the GL texture has no level-0 storage, a GL call fails, this texture was
+     *                                  deleted, or a GL-less run has no captured upload for the texture level (counted
+     *                                  by {@link #capturedUploadSummary})
      */
 
     /** Full-image uploads from GL: how often, how many bytes, how long, and which GL textures they came from. */
@@ -233,6 +249,22 @@ public final class VulkanGlTexture {
             new java.util.concurrent.ConcurrentHashMap<Integer, Integer>();
     private static final java.util.Map<Integer, Long> fullUploadBytesByGlId =
             new java.util.concurrent.ConcurrentHashMap<Integer, Long>();
+
+    /**
+     * GL-less fills, split so a run can tell a mirror that was filled from the upload the game itself made apart from
+     * one that was left empty because the stub had captured nothing.
+     * <p>
+     * Kept apart from {@link #fullUploads} on purpose: that one counts calls, and a call that ends in the miss below
+     * still lands there, so it cannot answer "were the pixels in the image real". These two can.
+     */
+    private static long capturedUploads;
+    private static long capturedUploadBytes;
+    private static long capturedUploadMisses;
+    /** The GL names each capture diagnostic has already named, so a per-frame light map cannot flood the log. */
+    private static final java.util.Set<Integer> capturedUploadIdsLogged = new java.util.HashSet<Integer>();
+    private static final java.util.Set<Integer> capturedUploadMissIdsLogged = new java.util.HashSet<Integer>();
+    /** How many distinct GL names each capture diagnostic prints before it stays quiet. */
+    private static final int CAPTURE_LOG_IDS = 8;
 
     /**
      * {@return a one-line summary of the full GL uploads, so the cost of mirroring can be read next to the frames}.
@@ -259,11 +291,73 @@ public final class VulkanGlTexture {
         return text.append(']').toString();
     }
 
+    /**
+     * {@return one line with the GL-less capture counters}, so a run log distinguishes "this mirror was filled from the
+     * upload the game made" from "the stub had nothing and the mirror was deliberately left empty".
+     * <p>
+     * {@code filled} counts the images that actually received the captured pixels, {@code skippedNoCapture} the calls
+     * that threw instead of uploading a buffer nothing had written. A run in which the block atlas renders has
+     * {@code filled} at least one; a GL-less run with {@code skippedNoCapture} rising is a run in which the stub did
+     * not see the game's upload, which is the one thing to check before looking at the frame.
+     */
+    public static String capturedUploadSummary() {
+        synchronized (VulkanGlTexture.class) {
+            return "filled=" + capturedUploads + " bytes=" + capturedUploadBytes
+                    + " skippedNoCapture=" + capturedUploadMisses;
+        }
+    }
+
+    /**
+     * Counts one image that was given the pixels the game uploaded, and names the first few GL textures they came from.
+     * <p>
+     * Called after the copy, not when the capture was read: a byte count recorded before the transfer would claim
+     * content a failed transfer never delivered, which is the mistake audit A07 records for the pixel hash.
+     */
+    private static void recordCapturedFill(int glTextureId, GlLevel level) {
+        long bytes = (long) level.width * (long) level.height * BYTES_PER_PIXEL;
+        synchronized (VulkanGlTexture.class) {
+            capturedUploads++;
+            capturedUploadBytes += bytes;
+            if (capturedUploadIdsLogged.size() < CAPTURE_LOG_IDS
+                    && capturedUploadIdsLogged.add(Integer.valueOf(glTextureId))) {
+                System.out.println("[Celtium] CELTIUM_CAPTURED_UPLOAD glTexture=" + glTextureId + " size="
+                        + level.width + "x" + level.height + " bytes=" + bytes + " filled=" + capturedUploads
+                        + " (from the game's own upload; no readback and no GL context)");
+            }
+        }
+    }
+
+    /**
+     * Counts and describes one GL-less upload that could not be filled, and returns the exception that carries the
+     * reason to the caller's existing failure field.
+     * <p>
+     * The exception is the mechanism on purpose: every caller of {@link #uploadFromGlTexture} already catches it and
+     * records it, and it is also what keeps "fully initialized" from being marked afterwards - the descriptor decision
+     * then refuses the mirror instead of sampling an image with no content.
+     */
+    private static IllegalStateException captureMiss(int glTextureId, int level, String reason) {
+        synchronized (VulkanGlTexture.class) {
+            capturedUploadMisses++;
+            if (capturedUploadMissIdsLogged.size() < CAPTURE_LOG_IDS
+                    && capturedUploadMissIdsLogged.add(Integer.valueOf(glTextureId))) {
+                System.out.println("[Celtium] CELTIUM_CAPTURE_MISS glTexture=" + glTextureId + " level=" + level
+                        + " misses=" + capturedUploadMisses + " reason=" + reason);
+            }
+        }
+        return new IllegalStateException("GL-less mirror of GL texture " + glTextureId + " level " + level + ": "
+                + reason + "; the mirror is left without content rather than filled with uninitialized memory");
+    }
+
     public void uploadFromGlTexture(int glTextureId, int glTextureTarget) {
         long celtium$uploadStart = System.nanoTime();
         final int celtium$uploadGlId = glTextureId;
         try {
         requireAlive();
+        // Where the pixels come from. With an OpenGL context they come from the readback, exactly as they always have -
+        // this flag is false there and nothing below changes. Without one there is nothing to read back, so they come
+        // from the upload the game itself made, which the stub kept; the fallback is inside readGlLevel0 so that both
+        // sources return the same GlLevel and every line after this one is shared rather than duplicated.
+        final boolean fromCapture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
             long hash = 1469598103934665603L;
@@ -292,7 +386,15 @@ public final class VulkanGlTexture {
                     + " view=" + Long.toHexString(this.view) + " image=" + Long.toHexString(this.image)
                     + " recreated=" + recreated);
             copyToImage(level.pixels, level.width, level.height, 0);
-            if (SAMPLER_DIAGNOSTICS && level.width >= 128 && level.height >= 128 && !levelZeroCompared) {
+            if (!level.owned) {
+                // A captured upload is the one source whose arrival is worth counting separately: it says the mirror
+                // holds the pixels the game uploaded rather than bytes nothing ever wrote.
+                recordCapturedFill(glTextureId, level);
+            }
+            // The comparison reads the same GL texture back and needs a context; the captured pixels are already the
+            // upload the mirror was built from, so comparing them with themselves would be an instrument that only
+            // prints its own input.
+            if (SAMPLER_DIAGNOSTICS && !fromCapture && level.width >= 128 && level.height >= 128 && !levelZeroCompared) {
                 levelZeroCompared = true;
                 try {
                     compareLevelZeroWithGl(glTextureId);
@@ -301,7 +403,11 @@ public final class VulkanGlTexture {
                 }
             }
         } finally {
-            MemoryUtil.memFree(level.pixels);
+            // Only a buffer this class allocated may be freed: a captured upload belongs to the stub, and freeing it
+            // would hand the stub's own memory back to the allocator.
+            if (level.owned) {
+                MemoryUtil.memFree(level.pixels);
+            }
         }
         } finally {
             long celtium$elapsed = System.nanoTime() - celtium$uploadStart;
@@ -1003,7 +1109,11 @@ public final class VulkanGlTexture {
                     + " meanAbsDiff=" + String.format("%.2f", (double) sumDiff / Math.max(1L, total))
                     + " maxAbsDiff=" + maxDiff);
         } finally {
-            MemoryUtil.memFree(gl.pixels);
+            // Same rule as the upload path: only a buffer this class allocated is freed, a captured upload is the
+            // stub's. This diagnostic is gated off in a GL-less run, but the free must not depend on that gate.
+            if (gl.owned) {
+                MemoryUtil.memFree(gl.pixels);
+            }
         }
     }
 
@@ -1124,9 +1234,13 @@ public final class VulkanGlTexture {
     }
 
     /**
-     * Reads level 0 of a GL texture into a freshly allocated direct buffer, restoring all GL state it touches.
+     * Reads level 0 of a GL texture into a direct buffer, restoring all GL state it touches.
+     * <p>
+     * With a GL context this is the readback, and the buffer is freshly allocated here. Without one it is the upload the
+     * game itself made, which the stub kept: same shape, same RGBA8 rows, no GL state to save or restore. Whether the
+     * caller owns the buffer is what {@link GlLevel#owned} says.
      *
-     * @return the pixel buffer (the caller frees it with {@link MemoryUtil#memFree(ByteBuffer)}) plus the source size
+     * @return the pixel buffer plus the source size
      */
     private static GlLevel readGlLevel0(int glTextureId, int glTextureTarget) {
         return readGlLevel(glTextureId, glTextureTarget, 0);
@@ -1142,6 +1256,12 @@ public final class VulkanGlTexture {
         }
         if (glTextureId == 0) {
             throw new IllegalArgumentException("GL texture name 0 is not a texture");
+        }
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            // No context to read from: the only pixels that exist for this texture are the ones the game handed to GL,
+            // and the stub kept them. Taken before any of the GL state below is touched, because under the stub those
+            // queries answer recorded values and the binding they report is not a binding anything can be restored to.
+            return readCapturedLevel(glTextureId, level);
         }
         // The unit that is active on entry is reused instead of switching to unit 0, so the state that changes is
         // as small as possible. Whatever unit it is, its binding and the pack alignment are restored below.
@@ -1197,6 +1317,59 @@ public final class VulkanGlTexture {
         }
     }
 
+    /**
+     * The level of a GL texture as the bytes the game itself uploaded, for a run in which there is no GL context.
+     * <p>
+     * Under the stub there is no texture storage to read and {@code glGetTexImage} writes nothing: the pixels only exist
+     * in the upload the game made, which the stub keeps. Asking it for them is the whole substitute for the readback,
+     * and the answer is used exactly like a readback buffer - tightly packed RGBA8, the rows in the order the game
+     * supplied them, no flip here and none there - so only the ownership differs.
+     * <p>
+     * Nothing is returned when the stub has no capture. A buffer nothing wrote, memcpy'd into the image, is a texture of
+     * noise that the renderer samples long before any check could notice it; leaving the image without content instead
+     * is what makes {@link #hasFullContent} false and the descriptor decision refuse the mirror.
+     *
+     * @return the captured pixels, owned by the stub (the caller must not free them) plus the captured size
+     * @throws IllegalStateException if the stub captured nothing usable for this texture level
+     */
+    private static GlLevel readCapturedLevel(int glTextureId, int level) {
+        // The one size source for this path: the capture reports the extent it was uploaded with, and the pixels and
+        // that extent come from the same call, so no second query can disagree with them.
+        int[] capturedSize = new int[2];
+        ByteBuffer captured = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, level,
+                capturedSize);
+        if (captured == null) {
+            throw captureMiss(glTextureId, level, "the stub captured no upload for this texture level");
+        }
+        int capturedWidth = capturedSize[0];
+        int capturedHeight = capturedSize[1];
+        if (capturedWidth <= 0 || capturedHeight <= 0) {
+            throw captureMiss(glTextureId, level, "the captured upload reports size " + capturedWidth + "x"
+                    + capturedHeight);
+        }
+        long bytes = (long) capturedWidth * (long) capturedHeight * BYTES_PER_PIXEL;
+        if (bytes > Integer.MAX_VALUE) {
+            throw captureMiss(glTextureId, level, "the captured upload is too large to mirror (" + bytes + " bytes)");
+        }
+        if (!captured.isDirect()) {
+            throw captureMiss(glTextureId, level, "the captured upload is not a direct buffer, so its bytes have no"
+                    + " address to copy from");
+        }
+        if (captured.position() != 0) {
+            // The hash and the mip dump read this buffer with absolute indices while the copy takes its address, and
+            // MemoryUtil.memAddress returns the address of the position - so a buffer that does not start at 0 would be
+            // hashed from one byte and uploaded from another. Refused rather than repaired: an upload whose bytes are
+            // not the ones the game handed over is exactly the class of silent wrongness this path exists to remove.
+            throw captureMiss(glTextureId, level, "the captured upload starts at position " + captured.position()
+                    + ", expected 0");
+        }
+        if (captured.limit() < (int) bytes) {
+            throw captureMiss(glTextureId, level, "the captured upload holds " + captured.limit()
+                    + " readable bytes, expected " + bytes + " for " + capturedWidth + "x" + capturedHeight);
+        }
+        return new GlLevel(captured, capturedWidth, capturedHeight, false);
+    }
+
     private static void checkGl(String operation) {
         int error = glGetError();
         if (error != GL_NO_ERROR) {
@@ -1216,16 +1389,23 @@ public final class VulkanGlTexture {
         }
     }
 
-    /** One GL level-0 readback: the pixels are owned by the caller until it frees them. */
+    /** One GL level-0 readback or captured upload: the pixels plus the size they were read or captured with. */
     private static final class GlLevel {
         final ByteBuffer pixels;
         final int width;
         final int height;
+        /** Whether this class allocated {@link #pixels} and has to free it; a captured upload belongs to the stub. */
+        final boolean owned;
 
         GlLevel(ByteBuffer pixels, int width, int height) {
+            this(pixels, width, height, true);
+        }
+
+        GlLevel(ByteBuffer pixels, int width, int height, boolean owned) {
             this.pixels = pixels;
             this.width = width;
             this.height = height;
+            this.owned = owned;
         }
     }
 }

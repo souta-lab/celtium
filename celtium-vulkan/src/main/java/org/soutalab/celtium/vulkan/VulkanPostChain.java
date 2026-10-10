@@ -5,6 +5,7 @@ import static org.lwjgl.vulkan.VK10.*;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,7 +13,6 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkAttachmentDescription;
 import org.lwjgl.vulkan.VkAttachmentReference;
-import org.lwjgl.vulkan.VkBufferImageCopy;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDescriptorImageInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
@@ -59,9 +59,12 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet;
  * <p>
  * Chain targets are pure-Vulkan images keyed by the framebuffer object's identity ({@code identityHashCode} - the
  * ids are only ever matched for equality, and identity stays unique where a GL object name would not); the game's
- * framebuffer resolves to the shared image. The uniform block the mixin packs in declaration order goes in whole as push
- * constants - every program's block fits in 128 bytes except color_convolve (180) and spider (140), so a device
- * whose {@code maxPushConstantsSize} is the 128-byte minimum keeps those chains on GL.
+ * framebuffer resolves to the shared image. A target may instead be an image the caller owns, adopted under the same
+ * identity: the passes then sample and write that image directly and this class never creates or destroys it, only the
+ * framebuffer a writing pass needs and the once-only {@code UNDEFINED -> GENERAL} transition a first use requires. The
+ * uniform block the mixin packs in declaration order goes in whole as push constants - every program's block fits in
+ * 128 bytes except color_convolve (180) and spider (140), so a device whose {@code maxPushConstantsSize} is the
+ * 128-byte minimum keeps those chains on GL.
  */
 public final class VulkanPostChain {
 
@@ -82,8 +85,9 @@ public final class VulkanPostChain {
         public float[] push = new float[0];
         public int pushBytes;
         /**
-         * Nonzero when the group's own main framebuffer is not the game's: the GL texture id it must be seeded from
-         * before the chain and written back to after, with its size. Only pass[0] carries it; zero marks the
+         * Nonzero when the group's own main framebuffer is not the game's: the GL texture id of that framebuffer's
+         * colour attachment, the identity its passes carry and its size, so the caller can adopt the renderer-owned
+         * image that stands in for the texture under {@code groupMainFbId}. Only pass[0] carries it; zero marks the
          * game's framebuffer, which resolves to the shared image instead.
          */
         public int groupMainTextureId;
@@ -105,13 +109,19 @@ public final class VulkanPostChain {
     }
 
     private final VulkanContext context;
-    private final VulkanFrameTarget frameTarget;
+    private final FrameImageTarget frameTarget;
     private final long renderPass;
     private final long setLayout;
     private final long descriptorPool;
     private final long sampler;
     private final int maxPushConstants;
+    /** Every chain target, allocated here or adopted from the caller, keyed by the identity the passes carry. */
     private final Map<Integer, Target> targets = new HashMap<>();
+    /**
+     * Targets that an adoption or a release replaced. They are freed only in {@link #delete()}, after the device
+     * wait: a command buffer that already recorded one may still be in flight.
+     */
+    private final List<Target> retiredTargets = new ArrayList<>();
     private final Map<String, Program> programs = new HashMap<>();
     private long mainFramebuffer;
     private long mainFramebufferImage;
@@ -119,21 +129,14 @@ public final class VulkanPostChain {
     private int mainFramebufferHeight;
     private int passesRecorded;
     private int chainsRun;
-    private long hostUploadBuffer;
-    private long hostUploadMemory;
-    private long hostUploadMapped;
-    private long hostUploadBytes;
-    private long hostDownloadBuffer;
-    private long hostDownloadMemory;
-    private long hostDownloadMapped;
-    private long hostDownloadBytes;
-    private long pendingDownloadBytes;
+    /** How many adopted targets have been handed to this chain over its life; reported by {@link #status()}. */
+    private int adoptions;
     /** Persistent descriptor sets, handed out round-robin: one set per pass, never reused inside one command
      * buffer, so updating one is legal whenever the buffer that last bound it has completed. */
     private final long[] setRing = new long[32];
     private int setCursor;
 
-    private VulkanPostChain(VulkanContext context, VulkanFrameTarget frameTarget, long renderPass, long setLayout,
+    private VulkanPostChain(VulkanContext context, FrameImageTarget frameTarget, long renderPass, long setLayout,
             long descriptorPool, long sampler, int maxPushConstants) {
         this.context = context;
         this.frameTarget = frameTarget;
@@ -144,7 +147,7 @@ public final class VulkanPostChain {
         this.maxPushConstants = maxPushConstants;
     }
 
-    public static VulkanPostChain create(VulkanContext context, VulkanFrameTarget frameTarget) {
+    public static VulkanPostChain create(VulkanContext context, FrameImageTarget frameTarget) {
         if (context == null || frameTarget == null) {
             throw new IllegalArgumentException("context and frame target must be set");
         }
@@ -237,97 +240,68 @@ public final class VulkanPostChain {
     }
 
     /**
-     * Records the seeded variant for a group whose main framebuffer is not the game's (the entity-outline group):
-     * a chain target stands in for it - the GL texture's pixels upload into it first, the passes run, then a copy
-     * back into a host buffer the caller writes back with {@code glTexSubImage2D}. No frame-target handoff is
-     * involved, so the caller's command buffer needs no acquire barrier.
+     * Adopts an image this chain does not own as the target for an identity the passes carry: later passes sample and
+     * write that image instead of one allocated here. Nothing about the image, its memory or its view is created or
+     * destroyed by this class - only the framebuffer a writing pass needs and the once-only {@code UNDEFINED ->
+     * GENERAL} transition a first use requires (the validation layer wants a defined first transition). A pass whose
+     * size disagrees with the adopted image is refused by message rather than sampling the wrong thing.
+     * <p>
+     * The identity is the chain's own key - the {@code identityHashCode} of the framebuffer object, the same value the
+     * passes carry - so a value outside the int range can never match a pass and is rejected here.
      */
-    public void recordSeededPasses(VkCommandBuffer commandBuffer, List<Pass> passes, ByteBuffer pixels) {
-        Pass first = passes.get(0);
-        Target main = target(first.groupMainFbId, first.groupMainW, first.groupMainH);
-        long bytes = (long) first.groupMainW * first.groupMainH * 4L;
-        requireHostUpload(bytes);
-        MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), this.hostUploadMapped, bytes);
-        if (!main.initialized) {
-            initBarrier(commandBuffer, main.image);
-            main.initialized = true;
+    public void adoptTarget(long identity, long image, long view, int width, int height) {
+        Integer key = adoptedKey(identity);
+        if (image == VK_NULL_HANDLE || view == VK_NULL_HANDLE) {
+            throw new IllegalArgumentException("adopted post chain target " + identity
+                    + " needs an image and a view");
         }
-        try (MemoryStack stack = stackPush()) {
-            VkBufferImageCopy.Buffer copy = VkBufferImageCopy.calloc(1, stack);
-            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0)
-                    .imageOffset(it -> it.x(0).y(0).z(0))
-                    .imageExtent(it -> it.width(first.groupMainW).height(first.groupMainH).depth(1));
-            copy.get(0).imageSubresource(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                    .mipLevel(0).baseArrayLayer(0).layerCount(1));
-            vkCmdCopyBufferToImage(commandBuffer, this.hostUploadBuffer, main.image,
-                    VK_IMAGE_LAYOUT_GENERAL, copy);
-            // The upload must be visible before the first pass samples it.
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .image(main.image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, barrier);
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("adopted post chain target " + identity + " needs a size, got "
+                    + width + "x" + height);
         }
-        recordPasses(commandBuffer, passes, main);
-        // Write-back: the group's output lives in 'main' after the last pass; copy it out for the GL readback.
-        writebackBarrier(commandBuffer, main.image);
-        try (MemoryStack stack = stackPush()) {
-            requireHostDownload(bytes);
-            VkBufferImageCopy.Buffer copy = VkBufferImageCopy.calloc(1, stack);
-            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0)
-                    .imageOffset(it -> it.x(0).y(0).z(0))
-                    .imageExtent(it -> it.width(first.groupMainW).height(first.groupMainH).depth(1));
-            copy.get(0).imageSubresource(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                    .mipLevel(0).baseArrayLayer(0).layerCount(1));
-            vkCmdCopyImageToBuffer(commandBuffer, main.image, VK_IMAGE_LAYOUT_GENERAL,
-                    this.hostDownloadBuffer, copy);
+        Target previous = this.targets.put(key, Target.adopt(width, height, image, view));
+        if (previous != null) {
+            // Whatever this identity resolved to before may already be recorded in a buffer still in flight.
+            this.retiredTargets.add(previous);
         }
-        this.pendingDownloadBytes = bytes;
-    }
-
-    /** Copies the downloaded pixels into {@code destination}; call after the submission's fence has been waited. */
-    public void readback(ByteBuffer destination, long bytes) {
-        if (bytes > this.pendingDownloadBytes || this.hostDownloadMapped == 0L) {
-            throw new IllegalStateException("readback without a recorded download");
-        }
-        MemoryUtil.memCopy(this.hostDownloadMapped, MemoryUtil.memAddress(destination), bytes);
-        this.pendingDownloadBytes = 0;
-    }
-
-    private void writebackBarrier(VkCommandBuffer commandBuffer, long image) {
-        try (MemoryStack stack = stackPush()) {
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
-                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
-                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .image(image).subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                            .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1));
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
-        }
+        this.adoptions++;
     }
 
     /**
-     * Records every pass into the caller's command buffer. {@code mainOverride} null means the group's main is the
-     * game's framebuffer - the shared image, which the caller must already have acquired; non-null is the seeded
-     * chain target that stands in for an external group's main.
+     * Stops resolving {@code identity} to an adopted image; the image itself stays the caller's. Releasing an identity
+     * this chain allocated, or one it never adopted, does nothing.
      */
-    public void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
-        recordPasses(commandBuffer, passes, null);
+    public void releaseAdoptedTarget(long identity) {
+        Integer key = adoptedKey(identity);
+        Target target = this.targets.get(key);
+        if (target == null || target.owned) {
+            return;
+        }
+        this.targets.remove(key);
+        this.retiredTargets.add(target);
     }
 
-    private void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes, Target mainOverride) {
+    /** {@return the chain's key for an adopted identity}; the passes carry int keys and a wider one cannot match. */
+    private static Integer adoptedKey(long identity) {
+        if ((long) (int) identity != identity) {
+            throw new IllegalArgumentException("adopted post chain target identity is outside the chain's key range: "
+                    + identity);
+        }
+        return Integer.valueOf((int) identity);
+    }
+
+    /**
+     * Records every pass into the caller's command buffer. A pass whose input or output is the group's main
+     * framebuffer samples or writes the shared frame image, which the caller must already have acquired; every other
+     * framebuffer resolves to a chain target - one allocated here, or the image the caller adopted for its identity.
+     */
+    public void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
         for (Pass pass : passes) {
             Program program = program(pass.program);
             if (program == null || pass.pushBytes > program.pushRange) {
                 throw new IllegalStateException("post chain program without a pipeline: " + pass.program);
             }
-            Target inTarget = pass.inIsMain ? mainOverride : target(pass.inFbId, pass.inW, pass.inH);
+            Target inTarget = pass.inIsMain ? null : target(pass.inFbId, pass.inW, pass.inH);
             long inView = inTarget != null ? inTarget.view : this.frameTarget.colorView();
             long inImage = inTarget != null ? inTarget.image : this.frameTarget.colorImage();
             // auxFbIds[0] == 0 marks the group's main framebuffer; the same resolution as intarget applies.
@@ -338,19 +312,21 @@ public final class VulkanPostChain {
             if (auxTarget != null) {
                 auxView = auxTarget.view;
             } else if (auxIsMain) {
-                auxView = mainOverride != null ? mainOverride.view : this.frameTarget.colorView();
+                auxView = this.frameTarget.colorView();
             } else {
                 auxView = inView;
             }
-            if (auxIsMain && mainOverride == null) {
+            if (auxIsMain) {
                 shaderReadBarrier(commandBuffer, this.frameTarget.colorImage());
             }
-            Target outTarget = pass.outIsMain ? mainOverride : target(pass.outFbId, pass.outW, pass.outH);
-            long outFramebuffer = pass.outIsMain && mainOverride == null
+            Target outTarget = pass.outIsMain ? null : target(pass.outFbId, pass.outW, pass.outH);
+            // An adopted target has no framebuffer until a pass writes it; that is where its view gets one.
+            long outFramebuffer = pass.outIsMain
                     ? mainFramebuffer(pass.outW, pass.outH)
-                    : outTarget.fb;
+                    : outTarget.framebuffer(this.context, this.renderPass);
 
-            // A target that was just created is still UNDEFINED: bring it to GENERAL once, before any use.
+            // A target that was just created - or the image just adopted - is still UNDEFINED: bring it to GENERAL
+            // exactly once, before any use.
             if (inTarget != null && !inTarget.initialized) {
                 initBarrier(commandBuffer, inTarget.image);
                 inTarget.initialized = true;
@@ -401,10 +377,17 @@ public final class VulkanPostChain {
         this.chainsRun++;
     }
 
-    /** {@return a one-line status for the verification line} */
+    /** {@return a one-line status for the verification line}; adopted targets count separately from allocated ones. */
     public String status() {
+        int adopted = 0;
+        for (Target target : this.targets.values()) {
+            if (!target.owned) {
+                adopted++;
+            }
+        }
         return "postChains=" + this.chainsRun + ", postPasses=" + this.passesRecorded
-                + ", postTargets=" + this.targets.size() + ", postPipelines=" + this.programs.size();
+                + ", postTargets=" + (this.targets.size() - adopted) + ", postAdopted=" + adopted
+                + ", postAdoptions=" + this.adoptions + ", postPipelines=" + this.programs.size();
     }
 
     private void initBarrier(VkCommandBuffer commandBuffer, long image) {
@@ -436,15 +419,26 @@ public final class VulkanPostChain {
         }
     }
 
+    /**
+     * {@return the chain target for a framebuffer identity}, allocated on first use or the image the caller adopted
+     * for that identity. An allocated target whose size changed is replaced; an adopted one whose size disagrees with
+     * the pass is refused by message - the caller's image is not this class's to resize, and sampling the wrong one
+     * silently is exactly what the refusal is for.
+     */
     private Target target(int fbId, int width, int height) {
-        Target target = this.targets.get(Integer.valueOf(fbId));
+        Integer key = Integer.valueOf(fbId);
+        Target target = this.targets.get(key);
         if (target != null && (target.width != width || target.height != height)) {
+            if (!target.owned) {
+                throw new IllegalStateException("adopted post chain target " + fbId + " is " + target.width + "x"
+                        + target.height + ", the pass asks for " + width + "x" + height);
+            }
             target.delete(this.context.device());
             target = null;
         }
         if (target == null) {
             target = Target.create(this.context, this.renderPass, width, height);
-            this.targets.put(Integer.valueOf(fbId), target);
+            this.targets.put(key, target);
         }
         return target;
     }
@@ -510,79 +504,18 @@ public final class VulkanPostChain {
         }
     }
 
-    /** Grows the coherent host-visible upload buffer to fit {@code bytes}; recorded copies are same-queue. */
-    private void requireHostUpload(long bytes) {
-        if (this.hostUploadBytes >= bytes) {
-            return;
-        }
-        if (this.hostUploadBuffer != VK_NULL_HANDLE) {
-            destroyHostBuffer(this.hostUploadBuffer, this.hostUploadMemory, this.hostUploadMapped);
-            this.hostUploadBuffer = VK_NULL_HANDLE;
-        }
-        long[] created = createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        this.hostUploadBuffer = created[0];
-        this.hostUploadMemory = created[1];
-        this.hostUploadMapped = created[2];
-        this.hostUploadBytes = bytes;
-    }
-
-    private void requireHostDownload(long bytes) {
-        if (this.hostDownloadBytes >= bytes) {
-            return;
-        }
-        if (this.hostDownloadBuffer != VK_NULL_HANDLE) {
-            destroyHostBuffer(this.hostDownloadBuffer, this.hostDownloadMemory, this.hostDownloadMapped);
-            this.hostDownloadBuffer = VK_NULL_HANDLE;
-        }
-        long[] created = createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-        this.hostDownloadBuffer = created[0];
-        this.hostDownloadMemory = created[1];
-        this.hostDownloadMapped = created[2];
-        this.hostDownloadBytes = bytes;
-    }
-
-    private long[] createHostBuffer(long bytes, int usage) {
-        VkDevice device = this.context.device();
-        try (MemoryStack stack = stackPush()) {
-            LongBuffer handle = stack.mallocLong(1);
-            org.lwjgl.vulkan.VkBufferCreateInfo info = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
-                    .sType$Default().size(bytes).usage(usage).sharingMode(VK_SHARING_MODE_EXCLUSIVE);
-            check(vkCreateBuffer(device, info, null, handle), "vkCreateBuffer(post host)");
-            long buffer = handle.get(0);
-            VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
-            vkGetBufferMemoryRequirements(device, buffer, requirements);
-            VkMemoryAllocateInfo alloc = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size())
-                    .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            "post host buffer"));
-            check(vkAllocateMemory(device, alloc, null, handle), "vkAllocateMemory(post host)");
-            long memory = handle.get(0);
-            check(vkBindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory(post host)");
-            org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
-            check(vkMapMemory(device, memory, 0, bytes, 0, mapped), "vkMapMemory(post host)");
-            return new long[] { buffer, memory, mapped.get(0) };
-        }
-    }
-
-    private void destroyHostBuffer(long buffer, long memory, long mapped) {
-        VkDevice device = this.context.device();
-        if (mapped != 0L) {
-            vkUnmapMemory(device, memory);
-        }
-        vkDestroyBuffer(device, buffer, null);
-        vkFreeMemory(device, memory, null);
-    }
-
     public void delete() {
         VkDevice device = this.context.device();
         vkDeviceWaitIdle(device);
-        destroyHostBuffer(this.hostUploadBuffer, this.hostUploadMemory, this.hostUploadMapped);
-        destroyHostBuffer(this.hostDownloadBuffer, this.hostDownloadMemory, this.hostDownloadMapped);
+        // An adopted target frees only the framebuffer this class built around it, never the caller's image.
         for (Target target : this.targets.values()) {
             target.delete(device);
         }
         this.targets.clear();
+        for (Target retired : this.retiredTargets) {
+            retired.delete(device);
+        }
+        this.retiredTargets.clear();
         for (Program program : this.programs.values()) {
             vkDestroyPipeline(device, program.pipeline, null);
             vkDestroyPipelineLayout(device, program.layout, null);
@@ -616,25 +549,37 @@ public final class VulkanPostChain {
         }
     }
 
-    /** A named chain target: a pure-Vulkan image the passes both write to and sample from. */
+    /**
+     * A named chain target: an image the passes both write to and sample from, either one this class allocated or one
+     * the caller adopted. The ownership flag decides everything but the framebuffer: an adopted target's image, its
+     * memory and its view belong to the caller, so they are never created, resized or freed here.
+     */
     private static final class Target {
         final int width;
         final int height;
         final long image;
         final long memory;
         final long view;
-        final long fb;
+        /** 0 until a pass writes an adopted target; an allocated target is given one at creation. */
+        long fb;
+        final boolean owned;
 
-        Target(int width, int height, long image, long memory, long view, long fb) {
+        Target(int width, int height, long image, long memory, long view, long fb, boolean owned) {
             this.width = width;
             this.height = height;
             this.image = image;
             this.memory = memory;
             this.view = view;
             this.fb = fb;
+            this.owned = owned;
         }
 
         boolean initialized;
+
+        /** {@return the adopted view of an image the caller owns}, with nothing but the view handed over. */
+        static Target adopt(int width, int height, long image, long view) {
+            return new Target(width, height, image, 0L, view, 0L, false);
+        }
 
         static Target create(VulkanContext context, long renderPass, int width, int height) {
             if (width <= 0 || height <= 0) {
@@ -674,12 +619,36 @@ public final class VulkanPostChain {
                         .renderPass(renderPass).pAttachments(attachments).width(width).height(height).layers(1);
                 check(vkCreateFramebuffer(device, fbInfo, null, handle), "vkCreateFramebuffer(post)");
                 long fb = handle.get(0);
-                return new Target(width, height, image, memory, view, fb);
+                return new Target(width, height, image, memory, view, fb, true);
             }
         }
 
+        /** {@return the framebuffer that renders into this target}, built when a pass first writes an adopted one. */
+        long framebuffer(VulkanContext context, long renderPass) {
+            if (this.fb == 0L) {
+                try (MemoryStack stack = stackPush()) {
+                    LongBuffer attachments = stack.longs(this.view);
+                    VkFramebufferCreateInfo info = VkFramebufferCreateInfo.calloc(stack).sType$Default()
+                            .renderPass(renderPass).pAttachments(attachments)
+                            .width(this.width).height(this.height).layers(1);
+                    LongBuffer handle = stack.mallocLong(1);
+                    check(vkCreateFramebuffer(context.device(), info, null, handle),
+                            "vkCreateFramebuffer(post adopted target)");
+                    this.fb = handle.get(0);
+                }
+            }
+            return this.fb;
+        }
+
         void delete(VkDevice device) {
-            vkDestroyFramebuffer(device, fb, null);
+            if (this.fb != 0L) {
+                vkDestroyFramebuffer(device, this.fb, null);
+                this.fb = 0L;
+            }
+            if (!this.owned) {
+                // The image, its memory and its view are the caller's: the framebuffer above was all this class owned.
+                return;
+            }
             vkDestroyImageView(device, view, null);
             vkDestroyImage(device, image, null);
             vkFreeMemory(device, memory, null);

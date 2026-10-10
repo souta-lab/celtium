@@ -149,13 +149,8 @@ public abstract class WorldVertexBufferUploaderMixin {
             celtium$decidedFormat = formatId;
             // Inside glNewList the geometry is being compiled into a display list rather than drawn. Recording the call site
             // then is what gives that list an identity: the id alone shifts when something else allocates first.
-            int celtium$listIndex = 0;
-            try {
-                celtium$listIndex = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
-            } catch (RuntimeException | LinkageError ignored) {
-                celtium$listIndex = 0;
-            }
-            if (celtium$listIndex != 0) {
+            int celtium$listIndex = celtium$listIndex();
+            if (celtium$listIndex > 0) {
                 StackTraceElement[] celtium$stack = new Throwable().getStackTrace();
                 String celtium$origin = "unknown";
                 // Eight frames: the first three name the machinery (uploader, Tessellator, TexturedQuad) and the next
@@ -190,6 +185,13 @@ public abstract class WorldVertexBufferUploaderMixin {
                     }
                 }
                 org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originIfAbsent(celtium$listIndex, celtium$origin);
+                celtium$noteCompileTexture(celtium$listIndex);
+            } else if (celtium$listIndex != 0) {
+                // GL_LIST_INDEX did not answer at all. That is an identity that could not be established, so it is
+                // counted as unknown and kept out of the per-list census; filing it under 0 would name a list that no
+                // replay can ever reach, which is what every model quad did while the stub answered 0 for everything.
+                org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originUnknown(celtium$listIndex,
+                        "list-index-query-failed");
             }
             // What arrives, not what is accepted. A counter nobody was watching moved when the mapping was fixed - format 1 went
             // to zero while format 6 started being taken - and the way to tell "these batches no longer arrive" from "these
@@ -458,6 +460,46 @@ public abstract class WorldVertexBufferUploaderMixin {
             return ((BufferBuilderAccessor) buffer).celtium$drawMode();
         } catch (RuntimeException | LinkageError error) {
             return -1;
+        }
+    }
+
+    /**
+     * {@return the display list GL is compiling into, 0 when none is, and {@link Integer#MIN_VALUE} when GL did not
+     * answer}.
+     * <p>
+     * The distinction matters under the GL-less stub: 0 is a real answer ("nothing is being compiled", which is true for
+     * every immediate batch) while a failed query is an identity that could not be established. The old catch collapsed
+     * both into 0, so a broken read looked exactly like the ordinary no-list case.
+     */
+    private static int celtium$listIndex() {
+        try {
+            return org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
+        } catch (RuntimeException | LinkageError error) {
+            return Integer.MIN_VALUE;
+        }
+    }
+
+    /**
+     * Records the texture the list is being compiled under, once per list.
+     * <p>
+     * The same GL state the quad capture reads per quad, taken from the uploader side: the stub answers both from the
+     * single {@code glBindTexture} record, so this is the compile-time half of the texture identity the replay-time read
+     * in the {@code callList} hook pairs with. Read once per list - a batch arriving inside {@code glNewList} is the
+     * moment the geometry is compiled, and the texture does not change between the batches of one part.
+     */
+    private static void celtium$noteCompileTexture(int listIndex) {
+        try {
+            if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTextureKnown(listIndex)) {
+                return;
+            }
+            int unit = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+            int texture = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTexture(listIndex, texture, unit);
+        } catch (RuntimeException | LinkageError error) {
+            // Record the failure rather than leaving the list to be retried on every batch, and rather than reporting a
+            // name of 0: the census prints it as "unknown".
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTexture(listIndex, Integer.MIN_VALUE,
+                    Integer.MIN_VALUE);
         }
     }
 }

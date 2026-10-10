@@ -176,6 +176,20 @@ public interface TerrainGpuBackend {
     default void bindFramebuffer(long targetIdentity, boolean isMain) {
     }
 
+    /**
+     * The colour texture a bound framebuffer draws into, and its size.
+     * <p>
+     * A framebuffer's own name says which target a batch belongs to but not what its pixels are: with no OpenGL
+     * context there is nothing to ask, and a pass that reads another pass's framebuffer (the entity outline reads the
+     * silhouette framebuffer) can only be routed to the right image if the texture name that stands for it is known.
+     * This is that name, reported where the framebuffer is bound.
+     *
+     * @param framebufferIdentity the same identity {@link #bindFramebuffer} was given
+     * @param colorTexture        the GL texture name of the colour attachment, or 0 when there is none
+     */
+    default void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
+    }
+
     /** The viewport in effect, which the group key also needs (audit S10). */
     default void viewport(int x, int y, int width, int height) {
     }

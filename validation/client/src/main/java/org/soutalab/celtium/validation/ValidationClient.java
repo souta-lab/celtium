@@ -49,6 +49,19 @@ public final class ValidationClient {
     private static final String[] FLICKER_X_NAMES = {"torchFlickerX", "field_78514_e"};
     private static final String[] FLICKER_DX_NAMES = {"torchFlickerDX", "field_175075_L"};
 
+    /**
+     * The GL-less presented-image floor. An image with at most this many distinct RGB values is a clear colour plus a
+     * quad or two rather than a frame of the world: the fixture's own world frames measure in the hundreds, so the
+     * floor only rejects pictures that cannot be the world at all.
+     */
+    private static final int PRESENTED_DISTINCT_COLOUR_FLOOR = 16;
+
+    /**
+     * How far a channel may differ from the image's most common colour and still count as background. The same
+     * 8-step tolerance the pixel comparisons elsewhere in this project use.
+     */
+    private static final int PRESENTED_BACKGROUND_TOLERANCE = 8;
+
     private final JsonObject report = new JsonObject();
     private net.minecraft.client.shader.Framebuffer celtium$secondary;
     private final List<Double> frameIntervals = new ArrayList<Double>();
@@ -157,6 +170,8 @@ public final class ValidationClient {
     private int framesAtInterop;
     private int fboAtInterop, colorAtInterop, depthAtInterop;
     private int worldTicks;
+    /** Whether this run has already asked for the presented image to be dumped; the request is one-shot. */
+    private static boolean celtium$presentedDumpRequested;
     /**
      * Registry-driven block coverage.
      * <p>
@@ -291,6 +306,11 @@ public final class ValidationClient {
     private int celtium$probeFirstY = -1;
     private boolean celtium$postprocess;
     private boolean celtium$spectator;
+    /**
+     * How many presented-image assertions failed at the capture. Only the GL-less stub ever runs that check, and only a
+     * non-zero value changes the verdict, so the GL bridge's PASSED is untouched.
+     */
+    private int celtium$presentedImageFailures;
     private int worldFrames;
     private long previousFrame;
     private int entitiesRemoved;
@@ -1997,8 +2017,14 @@ public final class ValidationClient {
         // The tick is a property because the presented image belongs to the frame before the request is consumed at the
         // next present: the capture is at 200, so 198 dumps the frame of 198 and 199 the frame of 199. Being able to move
         // it settles whether a remaining difference is that frame gap or the picture itself.
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")
-                && worldTicks == Integer.getInteger("celtium.validation.dumpPresentedTick", 198).intValue()) {
+        // Requested as soon as the world is running rather than a few ticks before the capture: the capture is
+        // trigger-driven (it starts once the fixture's preconditions hold, measured at world frame 61 with the
+        // preconditions met), so any fixed tick near an assumed capture tick either fires too late or never. The
+        // request is one-shot and the file is what the picture assertions read, so being early is the safe direction;
+        // presentedImagePngAgeMs reports how early it was.
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$presentedDumpRequested
+                && worldTicks >= Integer.getInteger("celtium.validation.dumpPresentedTick", 20).intValue()) {
+            celtium$presentedDumpRequested = true;
             try {
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -2243,6 +2269,16 @@ public final class ValidationClient {
                     // A measurement must never stop the capture.
                 }
             }
+            if (celtium$glLessInstalled()) {
+                // GL-less: there is no GL default framebuffer, so the game's screenshot is black whatever the window
+                // shows, and the presented image is the only true picture of it. The mean recorded above cannot tell
+                // terrain from a flat frame, so the picture itself is measured and asserted on here. The check reports
+                // and never throws: a GL-less run whose window is wrong must not end up claiming PASSED, and the
+                // numbers it did measure have to survive in the report even when they are the failure.
+                // The readback that fills presentedImageMeanAtCapture publishes only its mean, so the pixels come from
+                // the dumped PNG that same readback writes; ImageIO is already used by this fixture.
+                celtium$checkPresentedImage(mc, worldFrames);
+            }
             if (Boolean.getBoolean("celtium.validation.interop")) {
                 if (!interopRun) {
                     ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
@@ -2413,7 +2449,13 @@ public final class ValidationClient {
                 ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth,
                         mc.displayHeight, mc.getFramebuffer());
             }
-            report.addProperty("status", "PASSED");
+            // The verdict carries the presented-image assertions. Under the GL-less stub a run whose only true picture of
+            // the window is flat, unmeasurable, or not a frame the renderer counted must not report PASSED: that is how a
+            // black band and missing terrain passed once already. The value is named rather than "FAILED" so it cannot be
+            // mistaken for an exception in the renderer. The GL bridge never records a failure here, so its "PASSED" is
+            // unchanged.
+            report.addProperty("status",
+                    celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
             finish(mc);
         } catch (Throwable error) {
             fail(mc, error);
@@ -2459,6 +2501,274 @@ public final class ValidationClient {
             org.apache.logging.log4j.LogManager.getLogger("CeltiumValidation")
                     .info("celtium capture frame sample failed: {}", error.toString());
         }
+    }
+
+    /**
+     * Whether the GL-less stub is answering GL calls in this process.
+     * <p>
+     * The renderer's classes are not on the classpath in every configuration this fixture runs in - the vanilla reference
+     * runs it with no terrain mod at all, which is why the backend lookups above swallow linkage errors - so a missing
+     * class has to answer false and leave the GL-bridge path exactly as it was, rather than ending the capture.
+     */
+    private static boolean celtium$glLessInstalled() {
+        try {
+            return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
+        } catch (RuntimeException | LinkageError absent) {
+            return false;
+        }
+    }
+
+    /**
+     * Measures the image the renderer presented and asserts that it can be a picture of the world at all.
+     * <p>
+     * Under the GL-less stub there is no GL default framebuffer, so the game's own screenshot is black whatever the
+     * window shows and is worthless as evidence; the image the swapchain received is the only true picture. That image
+     * was already being recorded, but only as a mean - and a mean cannot tell a frame of terrain from a clear colour
+     * with one quad over it, which is exactly how a run whose window showed a black band and no terrain reported
+     * PASSED and clean. The arithmetic below lives in the fixture on purpose: what counts as a picture is the
+     * instrument's question, not the renderer's.
+     * <p>
+     * The pixels come from the dumped PNG rather than from a readback buffer: the readback behind
+     * {@code celtium$presentedImageMean} reads into a local array and keeps only the mean, and no accessor on the
+     * backend hands the pixels over. The PNG is written by that same readback, and {@code javax.imageio.ImageIO} is
+     * already used by this fixture for its own proof images, so reading it adds no dependency and no switch. The dump
+     * the fixture requests two ticks before the capture is the one on disk at this point; a capture-time request is
+     * only consumed by a present after this call.
+     * <p>
+     * This reports and never throws. A check that cannot be taken counts as a failed check, because a GL-less run
+     * whose only picture cannot be measured must not end up claiming PASSED.
+     */
+    private void celtium$checkPresentedImage(Minecraft mc, int worldFramesAtCapture) {
+        java.util.List<String> failures = new java.util.ArrayList<String>();
+        try {
+            java.nio.file.Path png = mc.gameDir.toPath().resolve("screenshots/celtium-presented.png");
+            java.awt.image.BufferedImage image = null;
+            String unavailable = "the dumped presented image could not be read";
+            long ageMillis = -1L;
+            try {
+                if (java.nio.file.Files.isRegularFile(png)) {
+                    ageMillis = System.currentTimeMillis()
+                            - java.nio.file.Files.getLastModifiedTime(png).toMillis();
+                    image = javax.imageio.ImageIO.read(png.toFile());
+                    if (image == null) {
+                        unavailable = "ImageIO read no image from " + png;
+                    }
+                } else {
+                    unavailable = "no dumped presented image at " + png;
+                }
+            } catch (Throwable error) {
+                unavailable = error.toString();
+            }
+            PresentedImageStats stats = image == null ? null : celtium$measurePresentedImage(image);
+            if (image != null && stats == null) {
+                unavailable = "the dumped image has no pixels (" + image.getWidth() + "x" + image.getHeight() + ")";
+            }
+            if (stats != null) {
+                report.addProperty("presentedImageStatsSource", "dumped PNG screenshots/celtium-presented.png "
+                        + stats.width + "x" + stats.height
+                        + " (the readback that fills it publishes only its mean, not its pixels)");
+                // Reported, not asserted: the dump is written by the present that consumes the tick-198 request, so an
+                // age of a second or two is normal and a very old file is stale evidence. A time-based threshold here
+                // would fail slow machines for the wrong reason; the frame-count assertion below is what catches a PNG
+                // no present has refreshed.
+                report.addProperty("presentedImagePngAgeMs", Long.valueOf(ageMillis));
+                report.addProperty("presentedDistinctColours", Integer.valueOf(stats.distinctColours));
+                report.addProperty("presentedNonBackgroundFraction", Double.valueOf(stats.nonBackgroundFraction));
+                report.addProperty("presentedVerticalBands", Integer.valueOf(stats.verticalBands));
+                report.addProperty("presentedBackgroundColour", celtium$hexColour(stats.backgroundColour));
+                report.addProperty("presentedBackgroundTolerance", Integer.valueOf(PRESENTED_BACKGROUND_TOLERANCE));
+                report.addProperty("presentedImagePixels", Integer.valueOf(stats.width * stats.height));
+            } else {
+                report.addProperty("presentedImageStatsSource", "unavailable: " + unavailable);
+            }
+            boolean notSingleColour = stats != null && stats.distinctColours > 1;
+            boolean distinctColoursAboveFloor = stats != null
+                    && stats.distinctColours > PRESENTED_DISTINCT_COLOUR_FLOOR;
+            report.addProperty("presentedImageNotSingleColour", Boolean.valueOf(notSingleColour));
+            report.addProperty("presentedImageDistinctColoursAboveFloor", Boolean.valueOf(distinctColoursAboveFloor));
+            if (stats == null) {
+                failures.add("the presented image could not be measured (" + unavailable
+                        + "), so this GL-less run has no picture evidence about the window");
+            } else {
+                if (!notSingleColour) {
+                    failures.add("the presented image is a single colour: presentedDistinctColours="
+                            + stats.distinctColours + " over " + (stats.width * stats.height)
+                            + " pixels (presentedBackgroundColour=" + celtium$hexColour(stats.backgroundColour)
+                            + ", presentedVerticalBands=" + stats.verticalBands + ", image "
+                            + stats.width + "x" + stats.height + ")");
+                }
+                if (!distinctColoursAboveFloor) {
+                    failures.add("presentedDistinctColours=" + stats.distinctColours + " is not above the floor of "
+                            + PRESENTED_DISTINCT_COLOUR_FLOOR + " (presentedNonBackgroundFraction="
+                            + stats.nonBackgroundFraction + ", presentedVerticalBands=" + stats.verticalBands
+                            + "): the window is a clear colour plus at most a quad or two, not a frame");
+                }
+            }
+            boolean framesAboveZero = false;
+            boolean framesWithinOne = false;
+            if (!report.has("presentedImageFramesAtCapture")) {
+                failures.add("presentedImageFramesAtCapture was not recorded, so the frame at capture cannot be tied to"
+                        + " the frames the renderer counted (worldFrames at capture=" + worldFramesAtCapture + ")");
+            } else {
+                int presentedFrames = report.get("presentedImageFramesAtCapture").getAsInt();
+                framesAboveZero = presentedFrames > 0;
+                framesWithinOne = framesAboveZero && Math.abs(presentedFrames - worldFramesAtCapture) <= 1;
+                if (!framesAboveZero) {
+                    failures.add("presentedImageFramesAtCapture=" + presentedFrames
+                            + " is not greater than zero: no frame the renderer counted reached the window");
+                } else if (!framesWithinOne) {
+                    failures.add("presentedImageFramesAtCapture=" + presentedFrames
+                            + " is not within one of worldFrames=" + worldFramesAtCapture
+                            + ": the frame presented at the capture is not one the renderer counted");
+                }
+            }
+            report.addProperty("presentedImageFrameCountAboveZero", Boolean.valueOf(framesAboveZero));
+            report.addProperty("presentedImageFrameCountMatchesWorldFrames", Boolean.valueOf(framesWithinOne));
+            celtium$presentedImageFailures = failures.size();
+            report.addProperty("presentedImageAssertionFailures", Integer.valueOf(failures.size()));
+            report.addProperty("presentedImageAssertions", celtium$presentedImageAssertionMessage(failures));
+            // Printed as well as recorded: the log is what a run leaves behind when the report cannot be read, and these
+            // are the numbers that say whether the window was right.
+            for (int i = 0; i < failures.size(); i++) {
+                System.out.println("[Celtium] CELTIUM_PRESENTED_IMAGE " + failures.get(i));
+            }
+        } catch (Throwable error) {
+            // The check must never stop the capture. An unexpected failure of the check itself is still a failed check:
+            // a GL-less run must not pass because the instrument broke.
+            celtium$presentedImageFailures = 1;
+            report.addProperty("presentedImageAssertionFailures", Integer.valueOf(1));
+            report.addProperty("presentedImageAssertions",
+                    "FAILED: the presented-image check itself failed: " + error);
+            report.addProperty("presentedImageCheckError", error.toString());
+            System.out.println("[Celtium] CELTIUM_PRESENTED_IMAGE the check itself failed: " + error);
+        }
+    }
+
+    /** The assertion results as one line: PASSED, or every failure with the numbers it measured. */
+    private static String celtium$presentedImageAssertionMessage(java.util.List<String> failures) {
+        if (failures.isEmpty()) {
+            return "PASSED: the presented image is not a single colour, its colour count is above the floor of "
+                    + PRESENTED_DISTINCT_COLOUR_FLOOR
+                    + ", and the frame at capture is one the renderer counted";
+        }
+        StringBuilder message = new StringBuilder("FAILED: ");
+        for (int i = 0; i < failures.size(); i++) {
+            if (i > 0) {
+                message.append(" | ");
+            }
+            message.append(failures.get(i));
+        }
+        return message.toString();
+    }
+
+    /** A packed RGB value as the report's hex form, matching the other colour properties. */
+    private static String celtium$hexColour(int rgb) {
+        return "0x" + String.format(java.util.Locale.ROOT, "%06X", Integer.valueOf(rgb & 0xFFFFFF));
+    }
+
+    /**
+     * What a presented image looks like as numbers, rather than as one mean.
+     * <p>
+     * The mean cannot separate a frame of terrain from a clear colour with a quad over it - both have a plausible mean.
+     * These three can. {@code distinctColours} counts the distinct RGB values in the image. {@code nonBackgroundFraction}
+     * is the share of pixels that are neither the most common colour nor within {@link #PRESENTED_BACKGROUND_TOLERANCE}
+     * of it, so a frame that is almost all one colour says so whatever its mean is. {@code verticalBands} is the number
+     * of maximal runs of consecutive pixel-identical rows: a picture assembled from one clear colour and one flat quad
+     * is a handful of bands however large it is, while a frame of the world changes from row to row.
+     */
+    private static final class PresentedImageStats {
+        final int width;
+        final int height;
+        final int distinctColours;
+        final double nonBackgroundFraction;
+        final int verticalBands;
+        final int backgroundColour;
+
+        PresentedImageStats(int width, int height, int distinctColours, double nonBackgroundFraction,
+                int verticalBands, int backgroundColour) {
+            this.width = width;
+            this.height = height;
+            this.distinctColours = distinctColours;
+            this.nonBackgroundFraction = nonBackgroundFraction;
+            this.verticalBands = verticalBands;
+            this.backgroundColour = backgroundColour;
+        }
+    }
+
+    /**
+     * {@return the measurements of a presented image}, or null when it has no pixels.
+     * <p>
+     * The pixels are read in one bulk call and packed to RGB once, so the per-pixel work below never goes through
+     * {@code BufferedImage}. The three numbers are computed from the same array: the runs of identical rows while it is
+     * filled, the distinct colours and the most common one in one sorted pass, and the non-background share from the
+     * colour that pass found.
+     */
+    private static PresentedImageStats celtium$measurePresentedImage(java.awt.image.BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+        int[] argb = new int[width * height];
+        image.getRGB(0, 0, width, height, argb, 0, width);
+        int[] pixels = new int[argb.length];
+        int verticalBands = 1;
+        for (int y = 0; y < height; y++) {
+            int row = y * width;
+            for (int x = 0; x < width; x++) {
+                pixels[row + x] = argb[row + x] & 0xFFFFFF;
+            }
+            if (y > 0 && !celtium$rowsIdentical(pixels, row - width, row, width)) {
+                verticalBands++;
+            }
+        }
+        // Distinct colours and the most common one in one sorted pass. The most common colour is the background: it is
+        // what the window would be showing if nothing had been drawn, and the share of everything else is what says
+        // whether anything was.
+        int[] sorted = pixels.clone();
+        java.util.Arrays.sort(sorted);
+        int distinctColours = 0;
+        int backgroundColour = 0;
+        int backgroundCount = 0;
+        int runStart = 0;
+        for (int i = 0; i <= sorted.length; i++) {
+            if (i == sorted.length || sorted[i] != sorted[runStart]) {
+                int run = i - runStart;
+                distinctColours++;
+                if (run > backgroundCount) {
+                    backgroundCount = run;
+                    backgroundColour = sorted[runStart];
+                }
+                runStart = i;
+            }
+        }
+        int nonBackground = 0;
+        for (int i = 0; i < pixels.length; i++) {
+            if (!celtium$withinBackgroundTolerance(pixels[i], backgroundColour)) {
+                nonBackground++;
+            }
+        }
+        // Rounded to six decimals: reports of the same scene are compared between runs, and the digits beyond that are
+        // float noise rather than measurement.
+        double fraction = Math.round((double) nonBackground * 1000000.0D / pixels.length) / 1000000.0D;
+        return new PresentedImageStats(width, height, distinctColours, fraction, verticalBands, backgroundColour);
+    }
+
+    /** Whether two rows of packed-RGB pixels are the same picture. */
+    private static boolean celtium$rowsIdentical(int[] pixels, int firstRow, int secondRow, int width) {
+        for (int x = 0; x < width; x++) {
+            if (pixels[firstRow + x] != pixels[secondRow + x]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether a packed-RGB pixel is the background colour or within the tolerance of it. */
+    private static boolean celtium$withinBackgroundTolerance(int pixel, int background) {
+        return Math.abs(((pixel >> 16) & 0xFF) - ((background >> 16) & 0xFF)) <= PRESENTED_BACKGROUND_TOLERANCE
+                && Math.abs(((pixel >> 8) & 0xFF) - ((background >> 8) & 0xFF)) <= PRESENTED_BACKGROUND_TOLERANCE
+                && Math.abs((pixel & 0xFF) - (background & 0xFF)) <= PRESENTED_BACKGROUND_TOLERANCE;
     }
 
     /** Writes a partial report at exit when the capture never happened, instead of leaving no report at all. */

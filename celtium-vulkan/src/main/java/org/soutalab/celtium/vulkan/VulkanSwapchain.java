@@ -142,7 +142,12 @@ public final class VulkanSwapchain {
     /** The image handle the last present used, so the frame that reached the swapchain can be written out. */
     private long lastPresentedImage = VK_NULL_HANDLE;
     /** Set by the fixture, consumed by the present path so the read happens while the image is still ours. */
-    private java.nio.file.Path pendingDumpPath;
+    /**
+     * The dumps waiting for the next present. A queue rather than one slot: the fixture's proof image and a
+     * diagnostic run's periodic frames are both requested at moments only the present can serve, and a single slot
+     * silently dropped whichever asked first.
+     */
+    private final java.util.List<java.nio.file.Path> pendingDumpPaths = new java.util.ArrayList<>();
     private boolean lastDumpWritten;
 
     /**
@@ -161,7 +166,9 @@ public final class VulkanSwapchain {
      * a flag the present path consumes, and the copy uses the same routine as the centre sample.
      */
     public void requestPresentedImageDump(java.nio.file.Path path) {
-        this.pendingDumpPath = path;
+        if (path != null) {
+            this.pendingDumpPaths.add(path);
+        }
     }
 
     /** Writes the image the present just handed over, while it is still ours to read. */
@@ -747,10 +754,15 @@ public final class VulkanSwapchain {
                 this.presentReadbacks++;
                 this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
                 this.lastPresentedImage = image;
-                if (this.pendingDumpPath != null) {
-                    java.nio.file.Path path = this.pendingDumpPath;
-                    this.pendingDumpPath = null;
-                    this.lastDumpWritten = writePresentedImage(path, image);
+                if (!this.pendingDumpPaths.isEmpty()) {
+                    java.util.List<java.nio.file.Path> paths =
+                            new java.util.ArrayList<>(this.pendingDumpPaths);
+                    this.pendingDumpPaths.clear();
+                    boolean written = false;
+                    for (java.nio.file.Path path : paths) {
+                        written |= writePresentedImage(path, image);
+                    }
+                    this.lastDumpWritten = written;
                 }
             }
             if (this.presentTraces < 4) {

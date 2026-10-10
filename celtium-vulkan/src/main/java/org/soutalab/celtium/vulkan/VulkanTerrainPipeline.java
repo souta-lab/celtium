@@ -693,6 +693,21 @@ public final class VulkanTerrainPipeline {
     }
 
     private void createRenderPass(MemoryStack stack, VkDevice device) {
+        renderPass = buildFrameRenderPass(stack, device);
+    }
+
+    /**
+     * Builds a render pass compatible with the frame target's attachments without any terrain pipeline - the
+     * standalone handle UI draws use when no terrain pass has run yet (the GL-less menu screen is the case: every
+     * batch is immediate and no pass ever opens).
+     */
+    static long createFrameRenderPass(VulkanContext context) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return buildFrameRenderPass(stack, context.device());
+        }
+    }
+
+    private static long buildFrameRenderPass(MemoryStack stack, VkDevice device) {
         VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.calloc(2, stack);
         VkAttachmentDescription color = attachments.get(0);
         color.format(COLOR_FORMAT)
@@ -741,7 +756,7 @@ public final class VulkanTerrainPipeline {
                 .pSubpasses(subpasses);
         LongBuffer handle = stack.mallocLong(1);
         check(vkCreateRenderPass(device, create, null, handle), "vkCreateRenderPass");
-        renderPass = handle.get(0);
+        return handle.get(0);
     }
 
     private void createDescriptorSetLayout(MemoryStack stack, VkDevice device) {

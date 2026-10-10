@@ -119,7 +119,7 @@ import static org.lwjgl.vulkan.VK11.*;
  * <b>Ownership.</b> The instance, physical device, logical device and queue are supplied by the caller and are never
  * destroyed here. Everything else this class creates is destroyed by {@link #delete()}.
  */
-public final class VulkanFrameTarget {
+public final class VulkanFrameTarget implements FrameImageTarget {
     /** Lab switch: leaves the terrain's depth out of the write-back to OpenGL, to measure whether GL needs it. */
     private static final boolean SKIP_DEPTH_RETURN = Boolean.getBoolean("celtium.vulkan.skipDepthReturn");
     /** Lab switch: leaves the frame's colour out of the write-back to OpenGL, for the frame the present path has taken. */

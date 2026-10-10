@@ -28,6 +28,36 @@ public class MinecraftMixin {
 
 
     /**
+     * Presents the frame from Vulkan at the game's own swap point.
+     * <p>
+     * The world render is the wrong place for the GL-less window: it runs only when a world is loaded, so the menu, the
+     * loading screens and every GUI-only frame reached the window with nothing to show. {@code updateDisplay} is the
+     * one point every frame passes through on its way to the screen, and it is also where the GL swap below sits, so
+     * the present and the swap decision happen in the same place and in the right order: this presents first, and the
+     * redirect on {@code Display.update()} then consumes the fact and skips the swap it replaced.
+     */
+    @Unique
+    private static int celtium$swapPointCalls;
+
+    @Inject(method = "func_175601_h", at = @At("HEAD"), require = 0)
+    private void celtium$presentAtSwapPoint(CallbackInfo ci) {
+        celtium$swapPointCalls++;
+        if (celtium$swapPointCalls <= 3 || celtium$swapPointCalls % 300 == 0) {
+            System.out.println("[Celtium] CELTIUM_SWAPPOINT calls=" + celtium$swapPointCalls);
+        }
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                vulkan.celtium$presentFrame();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A failed present must not stop the frame from being shown, and the swap below still runs.
+        }
+    }
+
+    /**
      * Replaces the GL swap with nothing for a frame Vulkan already presented.
      * <p>
      * A redirect is used rather than cancelling the method at this call, so only the swap itself is replaced and the
@@ -43,9 +73,10 @@ public class MinecraftMixin {
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
                     && vulkan.celtium$consumeSwapPendingFromVulkan()) {
-                // The frame is already on the swapchain. The window's events still need polling because the skipped call
-                // also did that.
-                vulkan.celtium$pollEvents();
+                // The frame is already on the swapchain, so only the swap is skipped: processMessages() is
+                // everything Display.update() does besides it - GLFW's events, the mouse position and the resize
+                // bookkeeping Minecraft.checkWindowResize reads - and skipping all of that froze input and resizes.
+                org.lwjgl.opengl.Display.processMessages();
                 return;
             }
         } catch (RuntimeException | LinkageError ignored) {
