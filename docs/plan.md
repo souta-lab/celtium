@@ -46,6 +46,20 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.111 **計測**: pinned Celeritas（989ebf2e）対 current Celtium の frame 時間（goal 項目8）
+
+- 方法: 同一 harness・同一 fixture（標準 flat world）・同一 GPU（AMD RX 6400）で `frameIntervalP50Ms` を比較。
+  **worldLayers は計測条件に明記必須** —— `worldLayers=3`（軽世界）と既定（重い・溶岩/火入り）で大きく違う。
+- **既定世界**: baseline Celeritas **p50 = 16.32 ms**（p95 32.88 / p99 39.49）対 current Celtium **p50 = 28.28 ms**
+  （p95 48.01 / p99 75.42）—— current は約 **1.7 倍遅い**。
+- **軽世界（worldLayers=3）**: baseline **p50 = 16.05 ms** 対 current **p50 = 6.84 ms** —— current の方が **速い**。
+- 解釈: baseline は両世界で **p50 ≈ 16 ms に固定**（60 fps の vsync/フレーム上限で cap —— p95 も ~17 で真の frame
+  cost は不明、cap 以下）。current は cap 無し：軽世界では cap を下回る速さ（6.84 ms ≈ 146 fps）。既定世界での
+  28.3 ms は描画量に比例する重さ —— mirror refresh は ~2/frame で非主因。差の主因は **dual-render 構造**：
+  GL（未 capture の GUI/sky/等）と VK（地形 + capture 済み immediate + present blit）の両 pass が semaphore で
+  直列化し、VK 側の描画量に応じて frame 時間が伸びる。軽世界では VK 側が小さく全体も小さい。GL 側を消す
+  （goal 項目6）方向が、この overhead の構造的な出口。
+
 ## 0.110 **修正・受入済み**: fence wait の非 TIMEOUT 失敗（DEVICE_LOST 等）でも frame を abandon —— post-submit device lost の実機注入を追加（goal 項目7）
 
 - `waitForIdle` の分岐：`VK_TIMEOUT` だけが `abandonFrame` を呼び、他の非 SUCCESS（DEVICE_LOST 等）は `noteStalled`
