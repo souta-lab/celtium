@@ -738,6 +738,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int boundHandleLogs;
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
     private int chainAdoptions;
+    /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
+    private long currentFramebufferIdentity;
     private int chainAdoptionsRefused;
     /** How many lightmap identity lines have been recorded; bounded. */
     private int lightmapIdentityLogs;
@@ -2190,6 +2192,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.framebufferColorTextures.put(Long.valueOf(framebufferIdentity),
                 new long[] { colorTexture, width, height });
+        // The last framebuffer the game bound is the one it is rendering into, which is what the overlay-vs-blit
+        // question needs; the alternative - asking GL - is exactly what the GL-less stub cannot answer.
+        this.currentFramebufferIdentity = framebufferIdentity;
         this.framebufferColorTextureReports++;
         if (this.framebufferColorTextureLog < 6) {
             this.framebufferColorTextureLog++;
@@ -5693,6 +5698,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * framebuffer to be checked rather than the vertex format alone (S17), and this is that check done on the texture
      * the batch actually binds.
      */
+    /**
+     * Whether the bound texture is the colour image of the framebuffer the game is currently rendering into.
+     * <p>
+     * This is what separates the frame's own blit - already presented at the swap point, so GL's copy must stay
+     * cancelled - from an overlay that samples a different texture and blends into the frame, such as the entity
+     * outline's composite. Asked of the map the game's own binds fill rather than of GL, because under the GL-less
+     * window the attachment query is unanswerable and {@link #celtium$samplesBoundFramebufferColor(int)} is false
+     * there for everything.
+     */
+    private boolean celtium$samplesCurrentTargetColor(int texture) {
+        if (texture == 0 || this.currentFramebufferIdentity == 0L) {
+            return false;
+        }
+        long[] reported = framebufferColorTexture(this.currentFramebufferIdentity);
+        return reported != null && (int) reported[0] == texture;
+    }
+
     private boolean celtium$samplesBoundFramebufferColor(int texture) {
         if (texture == 0) {
             return false;
@@ -6070,19 +6092,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private void adoptChainFramebuffers(java.util.List<VulkanPostChain.Pass> passes) {
         GllessFrameTarget glless = offTargetTarget();
-        if (glless == null || this.postChain == null) {
+        if (glless == null || this.postChain == null || passes.isEmpty()) {
             // The GL bridge has real GL framebuffers behind these identities; there is no stand-in image to adopt.
             return;
         }
-        for (VulkanPostChain.Pass pass : passes) {
-            adoptChainFramebuffer(pass.inIsMain ? 0 : pass.inFbId, pass.inW, pass.inH, glless);
-            adoptChainFramebuffer(pass.outIsMain ? 0 : pass.outFbId, pass.outW, pass.outH, glless);
-            for (int i = 0; i < pass.auxFbIds.length; ++i) {
-                if (pass.auxFbIds[i] != 0) {
-                    adoptChainFramebuffer(pass.auxFbIds[i], pass.auxW[i], pass.auxH[i], glless);
-                }
-            }
+        // Only the identity the mixin reports as the chain's own first input, never "any framebuffer the game has
+        // bound". That second rule was measured to over-adopt: `framebufferColorTextures` also remembers the targets a
+        // chain bound while it was still rendering through GL, so the spectator group adopted all four of its own
+        // targets (postTargets=0, postAdopted=4) and every blur pass read and wrote one image. A chain-created target
+        // can never be reported as the chain's input, because the mixin reports what the group reads first.
+        VulkanPostChain.Pass first = passes.get(0);
+        if (first.groupMainFbId == 0) {
+            return;
         }
+        adoptChainFramebuffer(first.groupMainFbId, first.groupMainW, first.groupMainH, glless);
     }
 
     private void adoptChainFramebuffer(int identity, int width, int height, GllessFrameTarget glless) {

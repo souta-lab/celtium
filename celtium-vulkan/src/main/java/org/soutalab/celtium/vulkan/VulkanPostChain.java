@@ -7,8 +7,10 @@ import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkAttachmentDescription;
@@ -144,6 +146,32 @@ public final class VulkanPostChain {
     private boolean standInReported;
     /** How many adopted targets have been handed to this chain over its life; reported by {@link #status()}. */
     private int adoptions;
+    /**
+     * Targets whose one-time {@code UNDEFINED -> GENERAL} barrier is in the recording being recorded right now.
+     * <p>
+     * The flag that says "this image is in {@code GENERAL}" ({@link Target#initialized}) is set for them by
+     * {@link #commitPasses()} alone, which the caller calls after the submission that carried the barrier reached the
+     * queue. A recording that is reset or abandoned therefore leaves every target it touched uninitialized, and the
+     * next recording carries their barriers again - which is the whole invariant: an image is never sampled before
+     * the barrier that moves it out of {@code UNDEFINED} is recorded into the command buffer that draws, and the flag
+     * that says so belongs to a submission that really happened.
+     */
+    private final Set<Target> pendingInit = new LinkedHashSet<>();
+    /** Recordings that carried a first-use barrier, counted by {@link #initBarriers} and {@link #commits}. */
+    private int initBarriers;
+    private int commits;
+    /** Recordings that carried a first-use barrier and were never reported as submitted before the next one began. */
+    private int uncommittedRecordings;
+    /** How many targets were recorded a barrier again after an earlier recording of theirs was not submitted. */
+    private int repeatInits;
+    /** Bounded trace budget: {@link #trace} prints at most this many lines over the chain's whole life. */
+    private static final int TRACE_LIMIT = 240;
+    private int traceLines;
+    /** One-shot flag: the trace says once that it stopped printing rather than going silent for no stated reason. */
+    private boolean traceLimitReported;
+    /** Recordings recorded so far; the trace numbers them so a barrier and the draw that follows can be paired. */
+    private int recordings;
+
     /** Persistent descriptor sets, handed out round-robin: one set per pass, never reused inside one command
      * buffer, so updating one is legal whenever the buffer that last bound it has completed. */
     private final long[] setRing = new long[32];
@@ -284,19 +312,25 @@ public final class VulkanPostChain {
                 && existing.width == width && existing.height == height) {
             return;
         }
-        Target previous = this.targets.put(key, Target.adopt(width, height, image, view));
+        Target adopted = Target.adopt(key.intValue(), width, height, image, view);
+        Target previous = this.targets.put(key, adopted);
         if (previous != null) {
             // Whatever this identity resolved to before may already be recorded in a buffer still in flight.
             this.retiredTargets.add(previous);
         }
         this.adoptions++;
+        trace("adopt identity=" + adopted.identity + " image=0x" + hex(image) + " view=0x" + hex(view) + " "
+                + width + "x" + height + " replaced="
+                + (previous == null ? "none" : (previous.owned ? "owned" : "adopted") + "(image=0x"
+                        + hex(previous.image) + ",initialized=" + previous.initialized + ")")
+                + " - the caller declares this image live in GENERAL, so no UNDEFINED -> GENERAL move is recorded"
+                + " for it here");
     }
 
     /**
      * Stops resolving {@code identity} to an adopted image; the image itself stays the caller's. Releasing an identity
      * this chain allocated, or one it never adopted, does nothing.
-     */
-    public void releaseAdoptedTarget(long identity) {
+     */    public void releaseAdoptedTarget(long identity) {
         Integer key = adoptedKey(identity);
         Target target = this.targets.get(key);
         if (target == null || target.owned) {
@@ -319,9 +353,33 @@ public final class VulkanPostChain {
      * Records every pass into the caller's command buffer. A pass whose input or output is the group's main
      * framebuffer samples or writes the shared frame image, which the caller must already have acquired; every other
      * framebuffer resolves to a chain target - one allocated here, or the image the caller adopted for its identity.
+     * <p>
+     * Every target this recording uses for the first time gets its {@code UNDEFINED -> GENERAL} barrier recorded into
+     * this same command buffer, immediately before the draw that samples it. The targets are also remembered in
+     * {@link #pendingInit} until {@link #commitPasses()} reports the submission that carried them reached the queue:
+     * a recording that is reset or abandoned therefore leaves them uninitialized, and the next recording carries
+     * their barriers again instead of sampling an image that is still {@code UNDEFINED}.
      */
     public void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
         checkStandInTarget(passes);
+        if (!this.pendingInit.isEmpty()) {
+            // Not a second recording inside one command buffer: a non-empty set means the recording that carried
+            // these targets' first-use barrier ended without commitPasses(), so that recording never reached the
+            // queue and the images it moved are still UNDEFINED. The barriers are recorded again below.
+            this.uncommittedRecordings++;
+            this.repeatInits += this.pendingInit.size();
+            if (this.uncommittedRecordings <= 4) {
+                for (Target target : this.pendingInit) {
+                    trace("UNCOMMITTED identity=" + target.identity + " image=0x" + hex(target.image)
+                            + " recording=" + this.recordings + ": its UNDEFINED -> GENERAL barrier was recorded"
+                            + " but never submitted; it is recorded again in this recording");
+                }
+            }
+        }
+        this.pendingInit.clear();
+        this.recordings++;
+        List<String> details = new ArrayList<>();
+        boolean interesting = false;
         for (Pass pass : passes) {
             Program program = program(pass.program);
             if (program == null || pass.pushBytes > program.pushRange) {
@@ -354,23 +412,21 @@ public final class VulkanPostChain {
             // A target that was just created is still UNDEFINED: bring it to GENERAL exactly once, before any use.
             // An adopted target is never in that state - its caller declares it live and already in GENERAL - so it
             // arrives here initialized and its content survives the first use.
-            if (inTarget != null && !inTarget.initialized) {
-                initBarrier(commandBuffer, inTarget.image);
-                inTarget.initialized = true;
-            }
-            if (auxTarget != null && !auxTarget.initialized) {
-                initBarrier(commandBuffer, auxTarget.image);
-                auxTarget.initialized = true;
-            }
-            if (outTarget != null && !outTarget.initialized) {
-                initBarrier(commandBuffer, outTarget.image);
-                outTarget.initialized = true;
-            }
+            interesting |= beginUse(commandBuffer, inTarget) | beginUse(commandBuffer, auxTarget)
+                    | beginUse(commandBuffer, outTarget);
 
             // The previous pass's attachment writes (or the acquired GL frame) must be visible to this sampler.
             shaderReadBarrier(commandBuffer, inImage);
             if (auxTarget != null) {
                 shaderReadBarrier(commandBuffer, auxTarget.image);
+            }
+
+            if (details.size() < 12) {
+                details.add("pass=" + details.size() + " program=" + pass.program
+                        + " in=" + describe(inTarget, pass.inIsMain, pass.inW, pass.inH)
+                        + " aux=" + describe(auxTarget, auxIsMain, pass.auxFbIds.length > 0 ? pass.auxW[0] : 0,
+                                pass.auxFbIds.length > 0 ? pass.auxH[0] : 0)
+                        + " out=" + describe(outTarget, pass.outIsMain, pass.outW, pass.outH));
             }
 
             long descriptorSet = descriptorSet(inView, auxView);
@@ -401,7 +457,86 @@ public final class VulkanPostChain {
             }
             this.passesRecorded++;
         }
+        // The header and the per-pass lines go out together, and the per-pass detail only for a run that touched a
+        // target's first use: a run that reuses targets already in GENERAL has nothing to say about layouts, and
+        // printing every pass of every run would spend the whole trace budget before the interesting frame.
+        trace("run=" + this.chainsRun + " recording=" + this.recordings + " cmd=0x" + hex(commandBuffer.address())
+                + " frame=0x" + hex(this.frameTarget.colorImage()) + " frameView=0x"
+                + hex(this.frameTarget.colorView()) + " passes=" + passes.size()
+                + " pendingInit=" + this.pendingInit.size());
+        if (interesting) {
+            for (String detail : details) {
+                trace(detail);
+            }
+        }
         this.chainsRun++;
+    }
+
+    /**
+     * Reports that the submission which carried the barriers {@link #recordPasses} recorded reached the queue, so
+     * every target that needed its {@code UNDEFINED -> GENERAL} move in that recording is now really in
+     * {@code GENERAL}.
+     * <p>
+     * This is the caller's half of the chain's layout invariant and the reason the flag is not set while recording:
+     * a command buffer that is reset or abandoned never runs its barriers, so a target whose barrier went into one is
+     * not initialized, and the next recording carries the barrier again. Calling this for a recording that did not
+     * reach the queue would make the chain believe an image is in {@code GENERAL} while it is still
+     * {@code UNDEFINED} - which is exactly the state the flag exists to prevent.
+     */
+    public void commitPasses() {
+        this.commits++;
+        for (Target target : this.pendingInit) {
+            target.initialized = true;
+        }
+        this.pendingInit.clear();
+    }
+
+    /**
+     * Records the one-time {@code UNDEFINED -> GENERAL} move for a target this pass samples or writes, unless the
+     * target is already known to be in {@code GENERAL} (its transition was committed) or this recording already
+     * carries the barrier ({@link #pendingInit}). The barrier lands in the caller's command buffer, before the draw
+     * that reads or writes the image.
+     *
+     * {@return whether this call is what touched the target's first use in this recording}
+     */
+    private boolean beginUse(VkCommandBuffer commandBuffer, Target target) {
+        if (target == null || target.initialized || !this.pendingInit.add(target)) {
+            return false;
+        }
+        this.initBarriers++;
+        target.barriersRecorded++;
+        initBarrier(commandBuffer, target.image);
+        trace("initBarrier recording=" + this.recordings + " identity=" + target.identity + " image=0x"
+                + hex(target.image) + " view=0x" + hex(target.view) + " " + target.width + "x" + target.height
+                + " owned=" + target.owned + " barriersForThisTarget=" + target.barriersRecorded);
+        return true;
+    }
+
+    /** {@return a pass side rendered for the trace}: the shared frame image, or the target and its handles. */
+    private static String describe(Target target, boolean isMain, int width, int height) {
+        if (target == null) {
+            return isMain ? "main(" + width + "x" + height + ")" : "none(" + width + "x" + height + ")";
+        }
+        return (target.owned ? "owned#" : "adopted#") + target.identity + "(image=0x" + hex(target.image)
+                + ",view=0x" + hex(target.view) + "," + target.width + "x" + target.height
+                + ",initialized=" + target.initialized + ")";
+    }
+
+    /** Prints one bounded trace line, with the address of the image handles the validation layer reports. */
+    private void trace(String message) {
+        if (this.traceLines >= TRACE_LIMIT) {
+            if (!this.traceLimitReported) {
+                this.traceLimitReported = true;
+                System.out.println("[Celtium] CELTIUM_POSTCHAIN trace limit reached (" + TRACE_LIMIT + " lines)");
+            }
+            return;
+        }
+        this.traceLines++;
+        System.out.println("[Celtium] CELTIUM_POSTCHAIN " + message);
+    }
+
+    private static String hex(long handle) {
+        return Long.toHexString(handle);
     }
 
     /**
@@ -432,15 +567,26 @@ public final class VulkanPostChain {
     /** {@return a one-line status for the verification line}; adopted targets count separately from allocated ones. */
     public String status() {
         int adopted = 0;
-        for (Target target : this.targets.values()) {
-            if (!target.owned) {
+        StringBuilder adoptedIds = new StringBuilder();
+        for (Map.Entry<Integer, Target> entry : this.targets.entrySet()) {
+            if (!entry.getValue().owned) {
                 adopted++;
+                // Which identities were adopted, not just how many: an adoption the caller aimed at the wrong
+                // framebuffer (a chain's own target among them) is invisible in a count and obvious in the list.
+                if (adoptedIds.length() > 0) {
+                    adoptedIds.append(',');
+                }
+                adoptedIds.append(Integer.toHexString(entry.getKey().intValue()));
             }
         }
         return "postChains=" + this.chainsRun + ", postPasses=" + this.passesRecorded
                 + ", postTargets=" + (this.targets.size() - adopted) + ", postAdopted=" + adopted
                 + ", postAdoptions=" + this.adoptions + ", postPipelines=" + this.programs.size()
-                + ", postRunsOnStandIn=" + this.runsOnAllocatedStandIn;
+                + ", postRunsOnStandIn=" + this.runsOnAllocatedStandIn
+                + ", postRecordingInitBarriers=" + this.initBarriers + ", postRecordingCommits=" + this.commits
+                + ", postUncommittedRecordings=" + this.uncommittedRecordings
+                + ", postRepeatInits=" + this.repeatInits
+                + ", postAdoptedIds=[" + adoptedIds + "]";
     }
 
     private void initBarrier(VkCommandBuffer commandBuffer, long image) {
@@ -487,11 +633,16 @@ public final class VulkanPostChain {
                         + target.height + ", the pass asks for " + width + "x" + height);
             }
             target.delete(this.context.device());
+            trace("resize identity=" + fbId + " replaced image=0x" + hex(target.image)
+                    + " (the replacement starts UNDEFINED and gets its own barrier)");
             target = null;
         }
         if (target == null) {
-            target = Target.create(this.context, this.renderPass, width, height);
+            target = Target.create(key.intValue(), this.context, this.renderPass, width, height);
             this.targets.put(key, target);
+            trace("created identity=" + target.identity + " image=0x" + hex(target.image) + " view=0x"
+                    + hex(target.view) + " framebuffer=0x" + hex(target.fb) + " " + width + "x" + height
+                    + " owned=true (UNDEFINED until a pass records its barrier)");
         }
         return target;
     }
@@ -560,6 +711,17 @@ public final class VulkanPostChain {
     public void delete() {
         VkDevice device = this.context.device();
         vkDeviceWaitIdle(device);
+        // The census before anything is freed: the handles this chain's targets carried, so a validation message's
+        // image handle can be matched against the target it belonged to after the run.
+        trace("delete: targets=" + this.targets.size() + " recordings=" + this.recordings + " chains=" + this.chainsRun
+                + " initBarriers=" + this.initBarriers + " commits=" + this.commits + " uncommittedRecordings="
+                + this.uncommittedRecordings + " repeatInits=" + this.repeatInits + " adoptions=" + this.adoptions
+                + " pendingInit=" + this.pendingInit.size());
+        for (Target target : this.targets.values()) {
+            trace("delete: identity=" + target.identity + " image=0x" + hex(target.image) + " view=0x"
+                    + hex(target.view) + " " + target.width + "x" + target.height + " owned=" + target.owned
+                    + " initialized=" + target.initialized + " barriersRecorded=" + target.barriersRecorded);
+        }
         // An adopted target frees only the framebuffer this class built around it, never the caller's image.
         for (Target target : this.targets.values()) {
             target.delete(device);
@@ -608,6 +770,8 @@ public final class VulkanPostChain {
      * memory and its view belong to the caller, so they are never created, resized or freed here.
      */
     private static final class Target {
+        /** The framebuffer identity this target resolves, carried here so a trace line names it. */
+        final int identity;
         final int width;
         final int height;
         final long image;
@@ -617,7 +781,8 @@ public final class VulkanPostChain {
         long fb;
         final boolean owned;
 
-        Target(int width, int height, long image, long memory, long view, long fb, boolean owned) {
+        Target(int identity, int width, int height, long image, long memory, long view, long fb, boolean owned) {
+            this.identity = identity;
             this.width = width;
             this.height = height;
             this.image = image;
@@ -627,19 +792,29 @@ public final class VulkanPostChain {
             this.owned = owned;
         }
 
+        /**
+         * Whether this image is in {@code GENERAL}, which is only ever true once the recording that carried its
+         * {@code UNDEFINED -> GENERAL} barrier was reported as submitted ({@link #commitPasses()}), or - for an
+         * adopted image - from the moment the caller guarantees a layout it established itself in the same command
+         * buffer. An allocated target starts false here and stays false until {@link #commitPasses()} says otherwise.
+         */
         boolean initialized;
+        /** How many recordings carried this target's one-time barrier; more than one means one of them never ran. */
+        int barriersRecorded;
 
         /** {@return the adopted view of an image the caller owns}, with nothing but the view handed over. */
-        static Target adopt(int width, int height, long image, long view) {
-            Target adopted = new Target(width, height, image, 0L, view, 0L, false);
+        static Target adopt(int identity, int width, int height, long image, long view) {
+            Target adopted = new Target(identity, width, height, image, 0L, view, 0L, false);
             // The caller's image is already in GENERAL and already holds what the passes must read - the silhouette,
             // for the outline chain - so the one-time UNDEFINED -> GENERAL move is skipped: it discards content, and
-            // that content is the whole reason the image is adopted.
+            // that content is the whole reason the image is adopted. The caller establishes that layout itself, in the
+            // same command buffer the passes are recorded into (the off-target clear records the one-way move), which
+            // is what makes skipping the barrier here an assertion about the caller rather than a guess.
             adopted.initialized = true;
             return adopted;
         }
 
-        static Target create(VulkanContext context, long renderPass, int width, int height) {
+        static Target create(int identity, VulkanContext context, long renderPass, int width, int height) {
             if (width <= 0 || height <= 0) {
                 throw new IllegalArgumentException("chain target needs a size, got " + width + "x" + height);
             }
@@ -677,7 +852,7 @@ public final class VulkanPostChain {
                         .renderPass(renderPass).pAttachments(attachments).width(width).height(height).layers(1);
                 check(vkCreateFramebuffer(device, fbInfo, null, handle), "vkCreateFramebuffer(post)");
                 long fb = handle.get(0);
-                return new Target(width, height, image, memory, view, fb, true);
+                return new Target(identity, width, height, image, memory, view, fb, true);
             }
         }
 

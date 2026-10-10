@@ -293,8 +293,32 @@ def main():
         outcome["screenshotSaved"] = screenshot.is_file() and screenshot.stat().st_size > 24 and screenshot.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
         if not outcome["screenshotSaved"] and code == 0:
             code = 1
+        # Which device actually rendered. The GL renderer string is not an answer in the GL-less configuration - it is
+        # the stub's own name - so the authoritative line is the one the renderer prints when it has chosen its physical
+        # device. The GL string stays as the bridge's preflight and as the fallback for a run that never reached device
+        # selection, and the source of the verdict is recorded rather than implied.
+        console = game / "validation-console.log"
+        native_name = native_uuid = None
+        native_matched = None
+        try:
+            text = console.read_text(errors="replace") if console.is_file() else ""
+            match = re.search(r'CELTIUM_NATIVE_DEVICE name="([^"]*)" uuid=([0-9a-fA-F]*) matchedOpenGl=(\w+)', text)
+            if match:
+                native_name, native_uuid, native_matched = match.group(1), match.group(2), match.group(3) == "true"
+        except OSError:
+            pass
+        outcome["nativeDeviceName"] = native_name
+        outcome["nativeDeviceUuid"] = native_uuid
+        outcome["nativeDeviceMatchedOpenGl"] = native_matched
+        outcome["glRendererPreflight"] = fixture.get("glRenderer")
         if args.require_gpu:
-            outcome["gpuRequirementMet"] = args.require_gpu.lower() in fixture.get("glRenderer", "").lower()
+            if native_name is not None:
+                outcome["gpuRequirementSource"] = "nativeDeviceName"
+                outcome["gpuRequirementMet"] = args.require_gpu.lower() in native_name.lower()
+            else:
+                # No device line: the run never selected a physical device, so the GL renderer is all there is to go on.
+                outcome["gpuRequirementSource"] = "glRendererPreflight"
+                outcome["gpuRequirementMet"] = args.require_gpu.lower() in fixture.get("glRenderer", "").lower()
             if not outcome["gpuRequirementMet"] and code == 0:
                 code = 1
         if outcome["fixtureStatus"] != "PASSED" and code == 0:
@@ -363,12 +387,30 @@ def main():
         try:
             caps = json.loads(capabilities.read_text())
             devices = caps.get("vulkanDevices") or []
-            device = devices[0] if devices else {}
+            # The device this run used, not the first one the loader listed: those differ whenever more than one GPU is
+            # present, which is exactly the case this reporting exists for. Matched by the UUID the renderer printed,
+            # then by name; the first entry is only the last resort.
+            device = {}
+            for candidate in devices:
+                if not isinstance(candidate, dict):
+                    continue
+                if native_uuid and candidate.get("deviceUUID") == native_uuid:
+                    device = candidate
+                    break
+                if native_name and candidate.get("name") == native_name:
+                    device = candidate
+                    break
+            if not device and devices:
+                device = devices[0]
+                flat_note = "first-listed"
+            else:
+                flat_note = "selected"
+            outcome.setdefault("driverSelection", flat_note)
             flat = {"lwjglVersion": caps.get("lwjglVersion"),
                     "vulkanLoaderVersion": caps.get("vulkanLoaderVersion"),
                     "vulkanDeviceCount": len(devices)}
-            for key in ("deviceName", "driverName", "driverInfo", "driverVersion", "apiVersion", "deviceType",
-                        "deviceId", "vendorId"):
+            for key in ("name", "deviceName", "driverName", "driverInfo", "driverVersion", "apiVersion", "deviceType",
+                        "deviceId", "vendorId", "deviceUUID"):
                 if isinstance(device, dict) and device.get(key) is not None:
                     flat[key] = device[key]
             outcome["driver"] = {"source": str(capabilities.relative_to(game)), **flat}

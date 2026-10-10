@@ -700,6 +700,13 @@ public final class VulkanContext {
                 System.out.println("[Celtium] device chosen without matching an OpenGL device: " + this.deviceName
                         + " (" + this.deviceUuid + ")");
             }
+            // The authoritative device line, printed once the choice is made and before anything can fail later: the
+            // harness gates --require-gpu on this rather than on the GL renderer string, which in the GL-less
+            // configuration is the stub's own name and therefore says nothing about which GPU is actually rendering.
+            // `matchedOpenGl=false` is the honest form of "no GL identity was available to pin the choice", i.e. the
+            // first capable device was taken - a run in that state is a measurement of whatever device this names.
+            System.out.println("[Celtium] CELTIUM_NATIVE_DEVICE name=\"" + this.deviceName + "\" uuid="
+                    + this.deviceUuid + " matchedOpenGl=" + (openGl != null));
             Set<String> extensions = deviceExtensionNames(stack, this.physicalDevice);
             List<String> missing = new ArrayList<String>();
             if (!extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {

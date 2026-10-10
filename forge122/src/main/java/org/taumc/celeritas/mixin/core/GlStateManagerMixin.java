@@ -36,7 +36,17 @@ public abstract class GlStateManagerMixin {
      * path hooks, so this is the only place the size of that missing path can be measured from - and it is where a native
      * replacement will have to draw from, once the vertices are captured at compile time.
      */
-    @Inject(method = "callList", at = @At("HEAD"), require = 0)
+    /**
+     * Counts one display-list replay and, when the native path draws the list, cancels the GL body.
+     * <p>
+     * {@code cancellable = true} is what makes {@link CallbackInfo#cancel()} mean anything: with it false - the
+     * default - {@code cancel()} throws {@code CancellationException}, the catch below swallows it as if a measurement
+     * had failed, the census still counts a cancellation and the original GL body runs anyway. That is exactly the
+     * silent double draw this annotation now prevents, and {@link #celtium$observeCallListExecuted(int, CallbackInfo)}
+     * exists to make it measurable: a HEAD cancellation returns before the original body, so the RETURN hook fires
+     * only for lists that really executed on GL.
+     */
+    @Inject(method = "callList", at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$countCallList(int list, CallbackInfo info) {
         try {
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replay(list);
@@ -68,14 +78,53 @@ public abstract class GlStateManagerMixin {
                     drawn = vulkan.celtium$drawModelList(list, boundTexture);
                 }
                 if (drawn) {
-                    org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
+                    // Cancelled first, counted second: the census exists to say that the GL body did not run, so it
+                    // must not be written before the cancellation that makes that true has actually taken effect.
                     info.cancel();
+                    org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
+                    celtium$callListCancelled++;
+                    if (celtium$callListCancelled == 1 || celtium$callListCancelled % 500 == 0) {
+                        // Bounded, and printed from the cancelled path so it appears only in a run that really took a
+                        // GL replay over. `executed` counts GL bodies that ran; equal counts with a non-zero
+                        // cancellation count would mean the cancellation is not real.
+                        System.out.println("[Celtium] CELTIUM_CANCEL_STATE cancelled=" + celtium$callListCancelled
+                                + " executed=" + celtium$callListExecuted + " failures="
+                                + celtium$callListCancelFailures);
+                    }
                 }
+            }
+        } catch (java.util.concurrent.CancellationException notCancellable) {
+            // Reaching here means the annotation lost its cancellable flag again: the exception is not a measurement
+            // failing, it is the cancellation not happening. Loud and bounded, because the alternative is a silent
+            // double draw that every counter still reports as a native takeover.
+            celtium$callListCancelFailures++;
+            if (celtium$callListCancelFailures <= 4) {
+                System.out.println("[Celtium] CELTIUM_CANCEL_NOT_CANCELLABLE list=" + list + " - the callList"
+                        + " injection is not cancellable, so the GL body ran as well: " + notCancellable);
             }
         } catch (RuntimeException | LinkageError ignored) {
             // Never let a measurement stop the game's rendering.
         }
     }
+
+    /**
+     * Fires only when the original {@code callList} body actually ran, because a cancelled HEAD callback returns
+     * before it. Compared against {@link #celtium$callListCancelled} it says whether a native model draw really
+     * replaced the GL replay: equal counters with a non-zero cancellation count mean the cancellation is not real.
+     */
+    @Inject(method = "callList", at = @At("RETURN"), require = 0)
+    private static void celtium$observeCallListExecuted(int list, CallbackInfo info) {
+        celtium$callListExecuted++;
+    }
+
+    /** Cancellations that took effect, GL bodies that ran anyway, and the times the annotation was not cancellable. */
+    private static int celtium$callListCancelled;
+    private static int celtium$callListExecuted;
+    private static int celtium$callListCancelFailures;
+
+    // The counters are read from the bounded log line inside the cancelled path rather than through an accessor:
+    // Mixin rejects a non-private method in a mixin class ("contains non-private static method"), and that rejection
+    // is a hard crash at class-load time, not a warning.
 
     @Inject(method = "func_179147_l", at = @At("HEAD"), require = 0)
     private static void celtium$enableBlend(CallbackInfo info) {
