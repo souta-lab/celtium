@@ -2524,9 +2524,17 @@ frame target が作り直された後（resize / teardown）に古い group が�
 
 | 条件 | 状態 | 欠落・根拠（現在の実測） |
 |---|---|---|
-| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分** | **nativeで動いているもの**: 地形パス（1フレーム計 約2.2 ms（AMD）/ 約6.1 ms（Intel）、`solid`/`cutout_mipped`/`translucent` の timestamp 計測）、即時系の各family（`immediateSubmittedBatches` 13.5/フレーム）、**フレーム最終合成**（`presentFromComposite` が既定ON、画面サイズの読み戻しは消えた）。**block registry は AMD で 254/254 を掃引済み・失敗0、Intel は 75/254 の抜き取り**（`blockSweep`）。**未検証/未完**: **entity/TESR の全種類**（display list 経由のモデルは §0.10 で既定の経路になったが、
-  全 mob/TESR・他 scene は未検証）、破壊/selection overlay、**Nether**（地形ダウンロードが完了せず NO_CAPTURE）。
-  水/溶岩/火と dimension(End) は世界・受入とも追加済み（§0）。 |
+| (a) 全vanilla描画と最終合成・presentがnative Vulkan | **部分** | **nativeで動いているもの**: 地形パス、全即時 format（1〜9 受理、TESR 場面で定常拒否 **0**・startup transient のみ）、**display list 経由の
+  entity/model/手/TESR**（`modelDraw` 既定 ON・§0.108：entity 場面 AMD 0.35 %/Intel 0.16 %、GL replay 基準以下）、
+  **default-FB composite overlay**（vignette/portal 等・§0.109：format-2 accept 2:0→2:170・`no frame target` 消滅）、
+  フレーム最終合成（`presentFromComposite` 既定 ON）。**block registry は AMD 254/254 掃引・失敗0**、**Nether は
+  AMD/Intel 両方 portal 帰還・PASSED**（§0.105）。**未検証/未完**: **custom shader/postprocess/spectator 3視点**
+  （`a custom shader program is bound` 拒否＋non-shared FBO＝shader chain は GL のまま）、全 mob 種・破壊/selection、
+  天候（雨/雪粒子は format 5 で経路あり・未場面計測）、実 FBO が non-shared の描画（`CELTIUM_TARGET_FOREIGN` は
+  現在ほぼ発火しない＝通常場面で foreign FBO への描画が観測されていない）。**追記**: **spectator 3視点は
+  動作確認済み**（AMD：creeper 緑・spider 5眼モザイク・enderman 反転、いずれも presented=screenshot
+  0.000 %・PASSED —— post chain は GL 実行だが出力は shared FBO 経由で提示へ届く）。残る厳密な未了は
+  **post-process 自体の native 化**（shader chain は GL のまま —— 出力は正しいが native Vulkan ではない）。 |
 | (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **未達成（ただし欠落はブリッジに限定された）** | **前進**: 当時の計器で `regStaleCalls=0`・`inPlaceRefreshes=0`・announce 経由 16.2/フレーム を観測した。
   **ただしこれは通常fixtureの範囲の話であり「全sceneで readback が無い」意味ではない**。構造修復1（`297ce5caa`）で
   atlas/lightmap の**無効化ごとの全面 readback を廃止**し、`readbacksSkipped=473` 対 `directMirrorRefreshes=472` を
