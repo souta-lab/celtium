@@ -28,7 +28,7 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 - **通常場面（実体なし）は両GPUで一致**（AMD 0.011/0.01 %、Intel 0.000〜0.016/0.00 %）。
 - **resize（計画の項目7）は両GPUで受入した**。恒久stallは**フレームバッファ置換の期間全体で順序flushを行わない**契約で解消（`CELTIUM_STALL` 0件・提示843、§0.102）。その後残った「提示が旧サイズ内容」の内訳は：fixtureの`mc.resize()`はゲームのframebufferだけを変え、**実ウィンドウは1280x720のまま**＝swapchainが1280x720なのは正しく、実害は**フレームをswapchain全面へ伸縮blit**していたことと、swapchain作成が**1280x720ハードコード＋ドライバのOOD報告頼み**だったこと。**提示blitをGL compositeの配置契約（正立・1:1・左下アンカー・window clip）へ**揃え、extentはsurfaceの実効extentへ**フレーム毎に照合して即再作成**する方式にした。あわせて、これまで提示画像はtexel順序のまま**実ウィンドウでは上下反転**していたのを正立に直した（比較の反転要因だった）。resize runで描画領域 vs screenshot（**反転なし**・新作法）＝ **AMD 0.001 %・Intel 0.000 %**、resizeなし退行は **0.000 %**、stall 0・提示 AMD 810 / Intel 356・両方 PASSED/clean/VUID 0（§0.103）。**以降 `celtium-presented.png` は反転なしで比較する**。
 - **旧経路とlab flagを1つ撤去した**：`MIRROR_GL_MIPS`（GLのmip段数を写す経路、既定false、測定で5.60 %＝現行の0.16〜0.28 %より二十倍以上悪い）とその参照17箇所を削除。AMD 2場面＋Intel 1場面で退行なし。
-- **新たに観測した未解決点（解消済）**：resize後の提示サイズ問題は §0.103 で受入した（上のresize項参照）。実ウィンドウの正立表示はコード契約どおりに直したが、compositor出力の実測は条件(c)の未確認項目として残る。
+- **新たに観測した未解決点（解消済）**：resize後の提示サイズ問題は §0.103 で受入した（上のresize項参照）。実ウィンドウの正立表示はコード契約どおりに直し、compositor出力の実測もgrim screencopyで確認済（下の条件(c)項参照）。
 - **引き継ぎ書**：`docs/handoff-2026-10-10-next-model.md`（環境・実行手順・計器・**棄却済み仮説**・作業規律・落とし穴）。
 - 失敗経路は提示・線・合成の変更後も正しい。fence timeoutは検出して停止しteardownを548回スキップして資源を解放せず（stalledStops=1）、submit失敗はfixtureがFAILEDとして報告する。いずれもvalidationClean=true・VUID 0・クラッシュなし。
 - 条件(b)の残量は実測で約2割がGL。内訳はformat 2の非画面合成 709（FBO所有権がVulkanに移るまでnative化不可）、起動直後10フレームのみの80（nativeの描画先がまだ無いため本質的）、format 1/6/9の少数。lightmap分は解消済み。通常fixtureの0/frameを全sceneのreadback除去としない。
