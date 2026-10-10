@@ -6331,8 +6331,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             int presentSourceLayout = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
                     ? this.frameTarget.colorImageLayout()
                     : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+            // The image is handed back in GENERAL whatever it was found in, because UNDEFINED is a legal oldLayout for
+            // the source transition and an illegal newLayout for the hand-back: passing the found layout through as the
+            // restore target produced VUID-VkImageMemoryBarrier-newLayout-01198 on a freshly rebuilt target (the
+            // present's restore barrier asked for newLayout=UNDEFINED). Content is not claimed by saying GENERAL here -
+            // a fresh image has none either way, and the next frame's acquire barrier is what gives it a layout it can
+            // be drawn into.
             this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
-                    presentSourceLayout, this.targetWidth, this.targetHeight);
+                    presentSourceLayout, this.targetWidth, this.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
+                    org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
             this.presentAttempts++;
             this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();
