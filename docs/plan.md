@@ -27,6 +27,30 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.48 深度のテクスチャ差し替えを実装しても残る失敗: **別の beginFrame 呼び出し／別の target 実体**が次の焦点
+
+- **実装したもの（1単位）**: (1) 共有 FBO を契約にする `beginFrame`、(2) `beginFrame()` を**記憶した宛先**で呼ぶ、
+  (3) `FramebufferMixin` での adoption、(4) **`OpenGlHelper.glFramebufferRenderbuffer` を redirect し、
+  共有深度（外部メモリの**テクスチャ**）を `glFramebufferTexture2D` でアタッチ**（外部メモリのレンダーバッファが無いため）。
+  redirect は「**束縛 FBO が共有 FBO のときだけ**」発火する（`glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING)` で判定）。
+- **結果**: **`gameFramebufferAdopted=1`**、しかし **`presentedFromVulkan=0`／FAILED** は変わらず。診断も同じ2つ:
+  `beginFrame: RGBA8 colour copy and D24 to D32 depth conversion: GL error 0x502` と
+  `beginFrame: the bound draw framebuffer is the default framebuffer`。
+- **確認したこと（切り分け）**:
+  - `beginFrame()` が `beginFrame(true)` を呼ぶ patch は**適用済み**（ソースで確認）。
+  - mixin は**登録されている**（プラグインの「Found 37 mixin classes」に含まれる）。
+  - `OpenGlHelper.glFramebufferRenderbuffer` は **static** で署名も injector と一致（ソースで確認）。
+  - **それでも2つのエラーが残る** ＝ 失敗している `beginFrame` は
+    **別の呼び出し（または別の target 実体）**であり、`gameFbo` がその実体では 0 のままである。
+- **次の計器（具体的・これで決まる）**: `beginFrame` の失敗時に
+  **bound FBO・`gameFbo`・`sharedFbo`・`frameTarget` の同一性（hashCode）**を一緒に記録する。
+  これで「別実体」か「別呼び出し」かが一意に決まる。
+- **対応**: **既知の失敗を抱えたフラグ経路を残さない**方針で**巻き戻した**（HEAD に戻し、追加した mixin も削除。ビルド緑）。
+- **この3ラウンドで確定した (b) の全前提（再掲・設計として有効）**:
+  1. 共有 FBO を契約にする 2. `beginFrame` は記憶した宛先を使う
+  3. **深度はテクスチャとしてアタッチ**（外部メモリのレンダーバッファはこのバインディングに無い）
+  4. そのうえで blit 2箇所と束縛クエリを削除 5. format 2 の合成を native へ。
+
 ## 0.47 前提1は**このバインディングでは実現できない**と判明（外部メモリのレンダーバッファが無い）
 
 - **前提1の実装を試みた**: 共有深度を「外部メモリのレンダーバッファ」としても公開する
