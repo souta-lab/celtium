@@ -282,6 +282,13 @@ public final class ValidationClient {
     private boolean celtium$jeiRecipe;
     private boolean celtium$compositeBlit;
     private boolean celtium$screenReadback;
+    /** Screen-space pixels of the merged-quad probes, so the GL_BACK readback can sample what the screen shows. */
+    private int celtium$probeRedX = -1;
+    private int celtium$probeRedY = -1;
+    private int celtium$probeGreenX = -1;
+    private int celtium$probeGreenY = -1;
+    private int celtium$probeFirstX = -1;
+    private int celtium$probeFirstY = -1;
     private boolean celtium$postprocess;
     private boolean celtium$spectator;
     private int worldFrames;
@@ -410,6 +417,17 @@ public final class ValidationClient {
                                 (double) sumBlue / samples));
                 report.addProperty("screenReadbackNonBlackPercent",
                         String.format("%.1f", 100.0 * nonBlack / samples));
+                // The merged-quad probes, sampled where the screen - not the game FBO - would show them: the fixture's
+                // overlay draws land on the default framebuffer, which is exactly what this readback covers. GL's
+                // origin is bottom-left, so the image-space y is flipped.
+                if (celtium$probeRedX >= 0) {
+                    report.addProperty("screenReadbackProbeRed", celtium$samplePixel(pixels, width, height,
+                            celtium$probeRedX, celtium$probeRedY));
+                    report.addProperty("screenReadbackProbeGreen", celtium$samplePixel(pixels, width, height,
+                            celtium$probeGreenX, celtium$probeGreenY));
+                    report.addProperty("screenReadbackProbeFirst", celtium$samplePixel(pixels, width, height,
+                            celtium$probeFirstX, celtium$probeFirstY));
+                }
             } catch (RuntimeException | LinkageError error) {
                 report.addProperty("screenReadbackError", String.valueOf(error));
             } finally {
@@ -478,12 +496,15 @@ public final class ValidationClient {
             int scale = event.getResolution().getScaleFactor();
             report.addProperty("mergedQuadsEmitted", 2 + grown);
             // Image-space probe points for the upright presented dump: x = scaledX*scale, y = scaledY*scale from top.
-            report.addProperty("mergedQuadProbeRed",
-                    (int) (width * 0.14D * scale) + "," + (int) (height * 0.82D * scale));
-            report.addProperty("mergedQuadProbeGreen",
-                    (int) (width * 0.34D * scale) + "," + (int) (height * 0.82D * scale));
-            report.addProperty("mergedQuadProbeFirst",
-                    (int) ((width * 0.45D + 1.5D) * scale) + "," + (int) ((height * 0.75D + 1.5D) * scale));
+            celtium$probeRedX = (int) (width * 0.14D * scale);
+            celtium$probeRedY = (int) (height * 0.82D * scale);
+            celtium$probeGreenX = (int) (width * 0.34D * scale);
+            celtium$probeGreenY = (int) (height * 0.82D * scale);
+            celtium$probeFirstX = (int) ((width * 0.45D + 1.5D) * scale);
+            celtium$probeFirstY = (int) ((height * 0.75D + 1.5D) * scale);
+            report.addProperty("mergedQuadProbeRed", celtium$probeRedX + "," + celtium$probeRedY);
+            report.addProperty("mergedQuadProbeGreen", celtium$probeGreenX + "," + celtium$probeGreenY);
+            report.addProperty("mergedQuadProbeFirst", celtium$probeFirstX + "," + celtium$probeFirstY);
         }
         if (!Boolean.getBoolean("celtium.validation.drawTest")
                 || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
@@ -1131,6 +1152,17 @@ public final class ValidationClient {
             }
         }
         return this.celtium$secondary;
+    }
+
+    /** {@return the RGB at image-space (top-origin) x,y} in a GL back-buffer readback (bottom-origin). */
+    private static String celtium$samplePixel(java.nio.ByteBuffer pixels, int width, int height, int x, int y) {
+        int glY = height - 1 - y;
+        if (x < 0 || x >= width || glY < 0 || glY >= height) {
+            return "outside";
+        }
+        int index = (glY * width + x) * 4;
+        return (pixels.get(index) & 0xFF) + "," + (pixels.get(index + 1) & 0xFF) + ","
+                + (pixels.get(index + 2) & 0xFF);
     }
 
     private static void celtium$quadPos(net.minecraft.client.renderer.BufferBuilder buffer,
