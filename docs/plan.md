@@ -12,7 +12,7 @@
 
 ## 0. 直近の到達点（最新実測・冒頭表）
 
-**この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.49 にある。
+**この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.92 にある（新しい節ほど新しい実測）。
 
 | 項目 | 状態 | 最新の実測（GPU・条件つき） |
 |---|---|---|
@@ -24,12 +24,15 @@
 | **GUI / font / HUD** | **画像等価を受入済** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
 | **lightmap の供給漏れ（format 5）** | **解消・両GPU受入** | AMD `lightmapSuppliedOnDemand=2`・失敗なし・拒否ゼロ（§0.43）、**Intel も 2・失敗なし・拒否ゼロ・PASSED**（`p337-intel-lightmap`） |
 | End の dimension 受入 | **両GPU PASSED** | capture 時 dimension 1 |
-| **Nether の dimension 受入** | **両GPU PASSED（旧 NO_CAPTURE を置換）** | portal から出る修正後、capture 時 dimension **-1**・**帰還 0 回**。旧 NO_CAPTURE の証拠は history に保持 |
+| **Nether の dimension 受入** | **未成立（旧 PASSED は有効な受入から外した）** | p247-nether / p248-trace / p249-early は一時的に -1 へ到達後、GuiDownloadTerrain を経て 0 へ戻り NO_CAPTURE。**地形ダウンロード画面の残留と帰還が観測事実**で、renderer・packet/portal・fixture のどこが根因かは未確定（goal の【現在の到達点と未完】と一致） |
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
 | **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
 | 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
+| **model 経路（表示リスト）の native 描画** | **実験フラグ側・既定 off／変換は特定済み** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、さらにモデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りの実測で最良）。既定は off のまま（§0.69〜§0.74） |
+| **entity 場面の残差（既定構成）** | **format 5（粒子系）に帰属・両GPUで確認** | 提示画像 vs 同一 run のスクリーンショット: **AMD 1.25 / 1.43 / 1.62 %**、**Intel 1.33 %**。**format 5 を除外すると AMD 0.32 %・Intel 0.36 %**。差の性質は**暗さ**。行列・ブレンド・被覆・シェーダ・SPIR-V・mip は**棄却済み**（§0.78〜§0.92） |
+| **通常場面（実体なし）の一致** | **両GPU受入** | 提示画像 vs GL の絵: **AMD 0.011 / 0.01 %**、**Intel 0.000〜0.016 / 0.00 %**（§0.77・§0.92 の撤去後も維持） |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
 
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
