@@ -5023,13 +5023,49 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
      * needs to present calls this instead, so the probe is only a probe.
      */
+    /** The frame the swapchain's extent was last compared against the surface's, so callers may ask every batch. */
+    private long lastSwapchainExtentCheck = -1L;
+
     private boolean ensureSwapchain() {
-        if (this.swapchain != null) {
-            return true;
-        }
         long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+        if (window == 0L) {
+            record("swapchain unavailable: no current GLFW window");
+            return false;
+        }
+        int framebufferWidth;
+        int framebufferHeight;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer width = stack.mallocInt(1);
+            IntBuffer height = stack.mallocInt(1);
+            org.lwjgl.glfw.GLFW.glfwGetFramebufferSize(window, width, height);
+            framebufferWidth = width.get(0);
+            framebufferHeight = height.get(0);
+        }
+        if (framebufferWidth <= 0 || framebufferHeight <= 0) {
+            // A minimised window has no drawable: the swapchain stays as it is and the frame swaps through GL.
+            this.presentSkipReason = "window has no drawable size";
+            return false;
+        }
+        if (this.swapchain != null) {
+            if (this.lastSwapchainExtentCheck != this.frameId) {
+                // The size the surface would give a fresh swapchain is the authority, not the driver's
+                // out-of-date report: the check runs once per frame because a window resize may never be
+                // reported at an acquire (the resize harness's compositor does not report it).
+                this.lastSwapchainExtentCheck = this.frameId;
+                if (!this.swapchain.matchesSurfaceExtent(framebufferWidth, framebufferHeight)) {
+                    record("the surface extent no longer matches the " + this.swapchain.width() + "x"
+                            + this.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
+                            + "x" + framebufferHeight + "), rebuilding it");
+                    this.swapchain.delete();
+                    this.swapchain = null;
+                }
+            }
+            if (this.swapchain != null) {
+                return true;
+            }
+        }
         java.util.List<String> reasons = new java.util.ArrayList<String>();
-        this.swapchain = VulkanSwapchain.create(this.context, window, 1280, 720, reasons);
+        this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons);
         if (this.swapchain == null) {
             record("swapchain unavailable at surface and swapchain creation: " + reasons);
             return false;

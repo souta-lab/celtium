@@ -678,12 +678,22 @@ public final class VulkanSwapchain {
                 org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
                 region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
                         .layerCount(1);
-                region.get(0).srcOffsets().get(0).set(0, 0, 0);
-                region.get(0).srcOffsets().get(1).set(width, height, 1);
+                // The blit reproduces the semantics of the GL composite it replaces: Minecraft draws the game
+                // framebuffer one texel per pixel into a viewport anchored at the window's lower left, clipped by
+                // the drawable. The shared image's row 0 is the picture's bottom (GL texture order), so the source
+                // is read back to front to leave the swapchain image upright for presentation; the destination is
+                // bottom-anchored and never scaled - a frame smaller than the swapchain lands where the viewport
+                // puts it (measured: a mid-run resize to 1024x640 left the real window at 1280x720, and stretching
+                // filled it instead), and a frame larger than the swapchain shows its lower left the way the
+                // window clips an oversized viewport.
+                int blitWidth = Math.min(width, this.width);
+                int blitHeight = Math.min(height, this.height);
+                region.get(0).srcOffsets().get(0).set(0, blitHeight, 0);
+                region.get(0).srcOffsets().get(1).set(blitWidth, 0, 1);
                 region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
                         .layerCount(1);
-                region.get(0).dstOffsets().get(0).set(0, 0, 0);
-                region.get(0).dstOffsets().get(1).set(this.width, this.height, 1);
+                region.get(0).dstOffsets().get(0).set(0, this.height - blitHeight, 0);
+                region.get(0).dstOffsets().get(1).set(blitWidth, this.height, 1);
                 if (PRESENT_MARKER) {
                     // A deliberately distinguishable present. The blit is replaced by a solid marker colour, so a screen that
                     // shows the marker can only have been written by this path - which is the question the screen readback
@@ -918,6 +928,43 @@ public final class VulkanSwapchain {
         }
     }
 
+    /**
+     * The extent a swapchain against this surface gets: the current extent the driver pins, or the request clamped
+     * into the advertised limits when it does not. The request is the window's framebuffer size; the clamp keeps a
+     * zero-sized (minimised) request inside the legal {@code minImageExtent} bound.
+     */
+    private static int[] effectiveExtent(VkSurfaceCapabilitiesKHR capabilities, int requestedWidth,
+            int requestedHeight) {
+        if (capabilities.currentExtent().width() != -1) {
+            return new int[]{capabilities.currentExtent().width(), capabilities.currentExtent().height()};
+        }
+        int width = Math.max(capabilities.minImageExtent().width(),
+                Math.min(Math.max(1, requestedWidth), capabilities.maxImageExtent().width()));
+        int height = Math.max(capabilities.minImageExtent().height(),
+                Math.min(Math.max(1, requestedHeight), capabilities.maxImageExtent().height()));
+        return new int[]{width, height};
+    }
+
+    /**
+     * Whether the extent a fresh swapchain would get still equals this one's.
+     * <p>
+     * Called once per frame from the present path: a real window resize changes the surface's current extent, and
+     * relying on the driver to report out-of-date at an acquire leaves the stale extent on the window for frames or
+     * forever - the resize harness's compositor never reports it. The framebuffer size arguments are only the
+     * fallback for a surface that pins no extent; a pinned one answers for itself.
+     */
+    public boolean matchesSurfaceExtent(int framebufferWidth, int framebufferHeight) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkSurfaceCapabilitiesKHR capabilities = VkSurfaceCapabilitiesKHR.calloc(stack);
+            if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(this.context.physicalDevice(), this.surface,
+                    capabilities) != VK_SUCCESS) {
+                return true;
+            }
+            int[] extent = effectiveExtent(capabilities, framebufferWidth, framebufferHeight);
+            return extent[0] == this.width && extent[1] == this.height;
+        }
+    }
+
     private boolean createSwapchain(int requestedWidth, int requestedHeight, List<String> reasons) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSurfaceCapabilitiesKHR capabilities = VkSurfaceCapabilitiesKHR.calloc(stack);
@@ -969,12 +1016,9 @@ public final class VulkanSwapchain {
                 this.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
             }
 
-            int extentWidth = capabilities.currentExtent().width() == -1 ? requestedWidth
-                    : capabilities.currentExtent().width();
-            int extentHeight = capabilities.currentExtent().height() == -1 ? requestedHeight
-                    : capabilities.currentExtent().height();
-            this.width = extentWidth;
-            this.height = extentHeight;
+            int[] extent = effectiveExtent(capabilities, requestedWidth, requestedHeight);
+            this.width = extent[0];
+            this.height = extent[1];
             int imageCount = Math.max(capabilities.minImageCount() + 1,
                     Math.min(capabilities.maxImageCount() == 0 ? 3 : capabilities.maxImageCount(), 3));
 

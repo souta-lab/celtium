@@ -25,7 +25,7 @@
 | terrain / immediate の native 描画 | **実装済・両GPU受入** | 既定受付 format 1〜9。1 run の内訳: `offers 13000 / accepted 10643 / GL 本体 2386`（AMD・軽い世界） |
 | **線（GL_LINES 系）の native 化** | **受入済（AMD 797・Intel 280 accepted）** | 変更前は 17 accepted。5 run 連続 PASSED、線の拒否ゼロ |
 | **per-frame present** | **受入済（AMD/Intel）** | 263 presented / 262 GL swap skipped（§0.17）。GL swap は `@Redirect` で停止 |
-| **提示画像と GL フレームの画素一致** | **受入済** | 上下反転比較で 平均絶対差 0.015・最大 3（§0.35）。比較の常套手段は「反転して比べる」 |
+| **提示画像と GL フレームの画素一致** | **受入済** | 上下反転比較で 平均絶対差 0.015・最大 3（§0.35）。**§0.103 で提示画像は正立になったので、以降は反転なしで比べる**（resize 時は提示画像の左下 `dw×dh` 領域を screenshot と比較） |
 | **GL 最終合成の停止** | **受入済（フラグ、既定 off）** | `glCompositesSkipped=717/718`、提示画像は off 比 平均絶対差 0.001（§0.36） |
 | **GUI / font / HUD** | **画像等価を受入済** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
 | **lightmap の供給漏れ（format 5）** | **解消・両GPU受入** | AMD `lightmapSuppliedOnDemand=2`・失敗なし・拒否ゼロ（§0.43）、**Intel も 2・失敗なし・拒否ゼロ・PASSED**（`p337-intel-lightmap`） |
@@ -35,6 +35,7 @@
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
 | **条件 (b) の本体（FBO 所有権）** | **既定で受入済（両GPU）** | **ゲームが Vulkan 所有 color/depth に直接描画し提示**。フラグなしの run で AMD/Intel とも **PASSED・VUID 0・GL エラーなし**、同一vendorの GL 経路と **AMD 0.001/0.00 %・Intel 0.026/0.02 %**（§0.59）。`-D…adoptGameFramebuffer=false` で旧経路に戻せる |
 | 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの |
+| **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | **model 経路（表示リスト）の native 描画** | **実験フラグ側・既定 off／変換は特定済み** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、さらにモデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りの実測で最良）。既定は off のまま（§0.69〜§0.74） |
 | **entity 場面の残差（既定構成）** | **format 5（粒子系）に帰属・両GPUで確認** | 提示画像 vs 同一 run のスクリーンショット: **AMD 1.25 / 1.43 / 1.62 %**、**Intel 1.33 %**。**format 5 を除外すると AMD 0.32 %・Intel 0.36 %**。差の性質は**暗さ**。行列・ブレンド・被覆・シェーダ・SPIR-V・mip は**棄却済み**（§0.78〜§0.92） |
@@ -44,6 +45,39 @@
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.103 **修正・受入済み**: 提示 blit を GL composite の配置契約へ（resize 後の伸縮・上下反転を解消）
+
+- **事実の整理（「提示画像が 1280x720 のまま」の内訳）**:
+  - fixture の `mc.resize()` は**ゲームの framebuffer だけ**を 1024x640 にする。**実ウィンドウ（X11 surface）は 1280x720 のまま**
+    （この harness は `glfwSetWindowSize` を無視する）。X11 では swapchain extent = `currentExtent` 固定なので、
+    **提示画像が 1280x720 であること自体は正しい** —— 1024x640 の swapchain は作れない。
+  - 実際の欠陥は2つ: (1) `presentImage` がフレームを swapchain 全面へ**伸縮 blit** していた。GL の composite は
+    viewport `(0,0,dispW,dispH)` に **1:1・左下アンカー・window clip** で描く。(2) swapchain は 1280x720 ハードコードで作られ、
+    再作成は**ドライバの out-of-date 報告頼み**だった（この compositor は報告しないので実 resize でも追随しなかった）。
+  - **潜伏していた別欠陥**: shared image の texel row 0 は絵の下端（GL texture 順序）。それを 1:1 で swapchain に
+    コピーしていたので、**実ウィンドウ上では絵が上下反転**していた（比較で反転が必要だったのはその症状）。
+- **契約（1つ）**: swapchain 画像は「GL の composite が window framebuffer に置くもの」と同じ内容を持つ。
+  = **正立・1:1・左下（絵座標で下端）アンカー・window で clip**。フレームが window より小さいときは viewport の位置に
+  置き（伸縮しない）、大きいときは window が viewport を clip するのと同じく左下を切り出す。
+  swapchain extent は surface の実効 extent（`currentExtent` 優先、未固定なら要求値を min/max に clamp）に追随し、
+  **フレーム毎に1回 `matchesSurfaceExtent` で照合**してずれていれば即作り直す（OOD 報告を待たない）。
+  作成要求は実 GLFW framebuffer サイズ（1280x720 固定を撤去）。`presented.png` はこれで**実ウィンドウの内容そのもの**（正立）になる。
+- **比較作法の変更（重要）**: `celtium-presented.png` は**正立**になった。比較は **反転なし**で、
+  drawable が window より小さい run では提示画像の**左下 `dw×dh` 領域**（この fixture では `[H-h:H, 0:w]`）を screenshot と比べる。
+  旧「反転して比べる」は提示が反転していた名残で、以降の run には適用しない。
+- **受入（resize fixture・両GPU）**:
+
+  | GPU | 提示画像 | 描画領域 vs screenshot（反転なし） | stall | presentedFromVulkan | verdict |
+  |---|---|---|---|---|---|
+  | AMD (`p421-resize-blit`) | 1280x720（実 window） | **0.001 %**（1024x640 領域・上端帯は未描画=黑） | **0件** | 810 | PASSED・clean・VUID 0 |
+  | Intel (`p423-resize-intel`) | 1280x720 | **0.000 %** | **0件** | 356 | PASSED・clean・VUID 0 |
+
+  `presentResult=blitted 1024x640 onto image N`（伸縮ではなく領域 blit）・`CELTIUM_REPLACE_DROP batches=14`・`presentFailures=0`。
+- **退行確認（resize なし・AMD `p422-noresize`）**: 提示画像 vs screenshot **反転なしで 0.000 %**（旧来の 0.001/0.01 % と同等）、
+  提示 751・stall 0・PASSED・clean・VUID 0。**上下反転が要らなくなったこと自体が、旧提示が逆さだった証拠**。
+- **残る論点**: window 外の帯は未描画（GL でも未定義領域。本 fixture では AMD 黑・Intel stale）。実ウィンドウでの正立表示は
+  コード契約どおりだが、compositor 出力の実測は条件 (c) の未確認項目のまま。
 
 ## 0.102 **修正・受入済み**: フレームバッファ置換の**期間全体**で順序 flush を行わない（resize の恒久 stall が解消）
 
