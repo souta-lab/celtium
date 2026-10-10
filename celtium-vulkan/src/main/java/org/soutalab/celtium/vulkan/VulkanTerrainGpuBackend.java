@@ -260,7 +260,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
-                    + " textureFaultInjections=" + VulkanTextureFault.injections()
+                    + " submitFaultInjections=" + VulkanSubmitFault.injections()
+                + " submitRequests=" + VulkanSubmitFault.requests()
+                + " textureFaultInjections=" + VulkanTextureFault.injections()
                 + " textureUploadFailures=" + this.textureUploadFailures
                 + " lastTextureUploadFailure=" + this.lastTextureUploadFailure
                 + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
@@ -5265,7 +5267,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             submit.waitSemaphoreCount(waitSemaphores.remaining());
             submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages).pSignalSemaphores(signalSemaphores);
             // No command buffers: the submission exists only to release the frame's synchronization.
-            check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
+            if (VulkanSubmitFault.shouldFail("signal-only")) {
+                // The failure is raised exactly where a driver refusal would be, before the queue has seen anything, so
+                // the code's own pre-submit rules apply: what is already recorded stays recorded and nothing in flight is
+                // touched. That is the property this switch exists to check.
+                check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
+            }
+                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
             this.frameSubmitReachedQueue = true;
         }
     }
@@ -5309,7 +5317,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 record("injected submit failure (" + FAIL_SUBMITS_REMAINING + " left): this submission is not sent");
                 throw new IllegalStateException("injected submit failure before queue ownership");
             }
-            check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
+            if (VulkanSubmitFault.shouldFail("fenced")) {
+                // The failure is raised exactly where a driver refusal would be, before the queue has seen anything, so
+                // the code's own pre-submit rules apply: what is already recorded stays recorded and nothing in flight is
+                // touched. That is the property this switch exists to check.
+                check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
+            }
+                        check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
             this.submissionPending = true;
             this.commandState.submitted();
             for (Object[] group : this.recordedImmediateGroups) {

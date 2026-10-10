@@ -2524,7 +2524,36 @@ this.commandState.endPass();
   **テクスチャを必要とするバッチが丸ごと拒否された**（＝仕事が減った）結果であり、
   「**テクスチャアップロードのコストが 13 ms**」という主張では**ない**。切り分けてはいない。
 
-**次の一手**: (1) **submit/wait の失敗**にも同じ形の注入を入れ、両GPUで「使用中コマンドバッファを
+**submit 失敗を両GPUで確認（このターン・優先順位6）**:
+
+- コードには既に「**pre-submit 失敗は1回だけ再試行し、`vkQueueSubmit` 成功後やフェンス timeout 後は決して再試行しない**」
+  と明記されている（`VulkanTerrainGpuBackend` の該当コメント）。その規則を**実機で到達可能にする**ため
+  `VulkanSubmitFault` を追加し、`-Dceltium.vulkan.failSubmitAt=<n>`（n番目）と
+  `-Dceltium.vulkan.failSubmitSite=<部分文字列>`（最初の一致）で **`vkQueueSubmit` の直前にドライバ拒否と同じ失敗**を
+  起こす（`check(VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)")`）。バックエンドの2つの submit 地点
+  （signal-only と fenced）の両方を包んだ。
+- **実測（3 run、注入はすべて発火）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames |
+|---|---|---|---|---|---|---|
+| AMD（200回目） | **1** | **true** | **FAILED** | なし | **0** | 563 |
+| Intel（200回目） | **1** | **true** | **FAILED** | なし | **0** | 306 |
+| AMD（最初の fenced） | **1** | **true** | **FAILED** | なし | **0** | 561 |
+
+- **意味**:
+  - **クラッシュしない**（`Game crashed` なし）。**使用中コマンドバッファを reset/re-record/destroy した形跡も無い**
+    （検証エラー0・VUID 0 がその裏づけ）。
+  - **フレームは動き続ける**（563/306/561 フレーム）＝失敗しても描画ループは止まらない。
+  - **fixture は正しく FAILED を返す**（submit が失敗したのに成功として扱わない）。
+  - `validationClean=true` は**Vulkan 検証エラーが無い**ことの意味であり、**成功の意味ではない**。
+- **正直な残り**: 注入したのは**pre-submit 失敗**であり、**フェンス timeout（submit 成功後の wait 失敗）は注入していない**。
+  「timeout 後に使用中バッファを触らない」という性質の**後半は未検証**である。
+
+**次の一手**: (1) **フェンス timeout** を注入して「submit 成功後の wait 失敗」を実機で確認する（残る唯一の失敗経路）、
+(2) 優先順位5（vanilla coverage）の未確認項目（dimension、水/溶岩/火）に着手する、
+(3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) **submit/wait の失敗**にも同じ形の注入を入れ、両GPUで「使用中コマンドバッファを
 reset/re-record/destroy しない」ことを確認する、(2) モデル描画の「頂点の実データ比較」を残件として進める、
 (3) 優先順位5（vanilla coverage）の未確認項目（dimension、水/溶岩/火）に着手する。
 
