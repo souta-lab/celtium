@@ -3577,9 +3577,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (groupVertices > this.immediateMaxGroupVertices) {
                 this.immediateMaxGroupVertices = groupVertices;
             }
-            if (!this.immediateMatrixLogged) {
-                // The immediate path's own matrices, once, for the same comparison the model group prints.
-                this.immediateMatrixLogged = true;
+            if (this.immediateMatrixLogged < 8) {
+                // The immediate path's own matrices and batch identity, for the first few groups: the first one was normal,
+                // so the groups that draw the dark squares have to be found among the others.
+                this.immediateMatrixLogged++;
                 System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ proj=" + round3(projection[2]) + ","
                         + round3(projection[6]) + "," + round3(projection[10]) + "," + round3(projection[14])
                         + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
@@ -5108,7 +5109,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** How many model enqueues have printed their matrices. */
     private int modelMatrixLoggedCount;
     /** One-shot: the matrices an immediate group is stored with. */
-    private boolean immediateMatrixLogged;
+    /** How many immediate groups have printed their matrices. */
+    private int immediateMatrixLogged;
     private String lastGroupDepthRow = "";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
