@@ -681,6 +681,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Why a preflight returned no descriptor, split by cause so the refusal can be acted on. */
     private int prepareDescriptorFailures;
     private String lastPrepareFailure = "none";
+    /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
+    private String lastPresentResult = "none";
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     private int lazyMirrorSupplies;
     private int lazyMirrorFailures;
@@ -1465,6 +1467,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " submitted=" + this.immediateSubmittedBatches + " completed=" + this.immediateCompletedBatches
                     + " discarded=" + this.immediateGroupsDiscarded
                     + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
+                    + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
+                    + " presentResult=[" + this.lastPresentResult + "]"
                     + " lazyMirrorSupplies=" + this.lazyMirrorSupplies
                     + " lazyMirrorFailures=" + this.lazyMirrorFailures
                     + " prepareDescriptorFailures=" + this.prepareDescriptorFailures
@@ -2059,7 +2063,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     long bridgeDone = this.frameTarget.doneSemaphore();
                     int sourceLayout = this.frameTarget.colorImageLayout();
                     int restoredLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                    String result = this.swapchain.presentImage(this.frameTarget.colorImage(), sourceLayout,
+                    String result = this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(), sourceLayout,
                             this.targetWidth, this.targetHeight, bridgeWait, bridgeDone, restoredLayout);
                     // The present moved the shared image through the transfer layout and this hands it back, so the
                     // owner's bookkeeping follows what the commands actually did.
@@ -4589,10 +4593,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " to present here");
             } else if (ensureFrameTarget()) {
                 this.frameSubmitReachedQueue = false;
-            this.frameTarget.beginFrame();
-                record(this.swapchain.presentImage(this.frameTarget.colorImage(),
+                this.frameTarget.beginFrame();
+                this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
                         org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
-                        this.targetHeight));
+                        this.targetHeight);
+                record(this.lastPresentResult);
                 this.frameTarget.endFrame();
             } else {
                 record("presenting the frame skipped: no frame target");

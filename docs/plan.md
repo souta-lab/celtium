@@ -27,6 +27,25 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.13 最終合成・present の現状を測定: **present 経路は既定で配線済みだが、通常フレームでは到達しない**
+
+- 発見: **`celtium.vulkan.presentFromComposite` は既定 true**（`VulkanTerrainGpuBackend` 925 行）。つまり
+  **native 合成からの present は既定の経路**であり、§0.12 で追っていた `COMPOSITE_*_REFUSED` は *GL 側合成* の別ルール。
+  合成経路のコードには**設計として明記**されている: `final default-FBO composite remains GL-owned, never inferred from
+  format id`。
+- **測定（AMD、`presentMarker=true`、duration 90 s、exit 0 / clean / PASSED）**:
+  `presentSucceeded=false`、**`presentResult=[none]`**、`submitted=6505`／`completed=6505`。
+  **`presentImage` が一度も呼ばれていない**（結果文字列が初期値のまま）。理由は実行コードの gate:
+  `glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING) == 0` のとき
+  「presenting the frame skipped: the default framebuffer is bound, so there is no frame content to present here」。
+- **これが条件 (b)(c) の具体的な不足条件である**: **通常フレームの内容は依然として GL の既定フレームバッファにあり**、
+  Vulkan のフレームターゲットは**鏡**であって**源ではない** → **present するものが Vulkan 側に無い**。
+  native present の配線・marker・readback・no-record は既にあり、**フレームの生産者が GL である限り到達しない**。
+- **次に必要なこと（順序）**: 通常フレームの色・深度の**生産者**を Vulkan 側へ移す（item 6 の本体）。
+  そのとき `presentImage` が呼ばれ、`presentResult` と `presentedMean` が意味を持つ。
+  **実 window/compositor 出力の到達**はその次の受入であり、**この環境の DISPLAY=:0 に実 compositor が無い**
+  （`xdpyinfo` は root 0×0、`grim` は wl_output 無し）ため、**取得不能時の不足条件はこの1行に集約される**。
+
 ## 0.12 拒否理由の確定と、前ラウンド推論の**訂正**
 
 - `prepareImmediate` の **3つの null 経路すべてが理由を記録**するようにし、offer 側の粗いメッセージ
