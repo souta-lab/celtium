@@ -27,6 +27,25 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.44 item 6 の本体（FBO 所有権）は**フレームライフサイクルの置き換え**だと実証（試作は巻き戻し）
+
+- **試作**: ゲームの主フレームバッファ（`mc.getFramebuffer()` と**同一性で**判定）の
+  `framebufferObject`／`framebufferTexture`／`depthBuffer` を、共有イメージの GL オブジェクトへ差し替える
+  （フラグ `-Dceltium.vulkan.adoptGameFramebuffer`、fail-open）。同一 FBO になる blit 2箇所は恒等コピーとしてスキップ。
+- **1回目**: `gameFramebufferAdopted=0` ＝ 発火せず。原因は**私のガードが `frameOpen` を要求していた**こと
+  （MC はフレームバッファを bridge の `beginFrame` **より前**に束縛するため、その時点では false）。ガードを直した。
+- **2回目**: **`gameFramebufferAdopted=1142`** ＝ 差し替えは機能した。しかし **`fixtureStatus=FAILED`／`presentedFromVulkan=0`**
+  ＝ **フレームが出なくなった**。
+- **根因（構造）**: bridge は `beginFrame` で **「束縛されている game FBO が検証済みの契約（特定の GL テクスチャ＋
+  レンダーバッファ）であること」を検証**している。差し替えると、その検証対象が**まさに共有 FBO になる**ので契約が破れる
+  ＝ **ブリッジの begin/end 機構そのものが前提ごと無効になる**。
+- **結論**: **item 6 の本体は「小さな付け替え」ではない**。必要なのは
+  **フレームライフサイクルの置き換え**（ゲームが共有イメージへ直接描く前提で、検証・開始・終了・レイアウト受け渡しを
+  組み直す）であり、**9割の GL 依存はこの一点に集約されている**。この試作は**巻き戻した**（HEAD に戻しビルド緑）。
+- **次に必要な設計（順序）**: (1) 共有 FBO を「契約」にする（検証を共有側へ反転）、
+  (2) `beginFrame`/`endFrame` を「GL のフレームバッファとの往復」から「共有イメージの前後処理」へ組み直す、
+  (3) blit 2箇所を削除、(4) その上で format 2 の合成を native へ。**(1)(2) は不可分**である。
+
 ## 0.43 lightmap の供給漏れ（format 5）を解消: mod 側から unit を渡し、その場で取り直す
 
 - **実装（モジュール境界を守る形）**:
