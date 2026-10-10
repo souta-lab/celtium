@@ -27,6 +27,23 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.27 native の線に向けた第一歩: 線プリミティブの展開と**CPU 契約検査**
+
+- **実装**: `VulkanImmediateDrawer.expandIndices` が線モードを扱うようにした（それまでは `default` で `null`＝未対応）。
+  - `GL_LINES`: そのまま対（頂点数が奇数なら**推測せず拒否**）。
+  - `GL_LINE_STRIP`: n 頂点 → n-1 線分。`GL_LINE_LOOP`: ＋閉じる線分。
+- **CPU 契約検査（`celtium-vulkan/src/test/java/.../VulkanImmediateDrawerTest.java` を追加）**: 線リスト・奇数拒否・
+  ストリップの連続対・ループの閉じ・1頂点拒否・クワッドが従来どおり2三角形、の6件。**`:celtium-vulkan:test` は成功**。
+- **なぜこれが安全に進められるか**: `unsupportedReason` は**まだ線を拒否している**ので、**GPU の挙動は変わっていない**
+  （selection outline は引き続き GL が描く）。展開だけを先に固定し、**不変条件を壊せば失敗する検査**を付けた。
+- **次に必要なたたき台（実装済みの設計判断）**:
+  1. **線トポロジのパイプライン**（`VK_PRIMITIVE_TOPOLOGY_LINE_LIST`）。既存は全て `TRIANGLE_LIST`
+     （`VulkanImmediatePipeline` 180 行）。線を使うのは **format 1（POSITION_COLOR）だけ**なので、パイプラインは1系統で足りる。
+  2. **`glLineWidth(2.0)` は再現できない**: Vulkan の `wideLines` は**任意機能**であり、goal の baseline 方針
+     （広い Vulkan 対応 GPU で動くこと）に照らして**必須にしてはいけない**。よって
+     **`wideLines` が要求幅を満たすときだけ線を native で受け、満たさなければ理由付きで拒否して GL に渡す**のが正しい形。
+  3. `unsupportedReason` を **format に依存させる**（線は format 1 のみ受付）。
+
 ## 0.26 **format 1 の ~800 件は「線の正しい拒否」だった**（§0.24 の記述を訂正）+ 最終合成の拒否を特定
 
 per-format の拒否集計を専用行（`CELTIUM_REFUSALS_BY_FORMAT`）に出したところ、内訳が名指しされた。

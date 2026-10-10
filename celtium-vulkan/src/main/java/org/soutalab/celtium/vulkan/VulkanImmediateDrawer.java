@@ -66,6 +66,32 @@ public final class VulkanImmediateDrawer {
                 }
                 return indices;
             }
+            case GL11.GL_LINES: {
+                // Two vertices per segment, in the order Minecraft wrote them. The segment count is what the batch's
+                // vertex count says, so an odd count is not a line list and is refused rather than guessed at.
+                if (vertexCount % 2 != 0) {
+                    return null;
+                }
+                int[] indices = new int[vertexCount];
+                for (int i = 0; i < vertexCount; i++) {
+                    indices[i] = i;
+                }
+                return indices;
+            }
+            case GL11.GL_LINE_STRIP:
+            case GL11.GL_LINE_LOOP: {
+                // A strip of n vertices is n-1 segments; a loop adds the closing one. Both are drawn as a line list.
+                if (vertexCount < 2) {
+                    return null;
+                }
+                int segments = glMode == GL11.GL_LINE_LOOP ? vertexCount : vertexCount - 1;
+                int[] indices = new int[segments * 2];
+                for (int segment = 0; segment < segments; segment++) {
+                    indices[segment * 2] = segment;
+                    indices[segment * 2 + 1] = (segment + 1) % vertexCount;
+                }
+                return indices;
+            }
             case GL11.GL_TRIANGLE_STRIP: {
                 int[] indices = new int[(vertexCount - 2) * 3];
                 for (int i = 0; i < vertexCount - 2; i++) {
