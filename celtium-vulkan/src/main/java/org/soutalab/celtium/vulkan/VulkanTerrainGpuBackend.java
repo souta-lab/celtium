@@ -272,6 +272,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
                 + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
+                + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
+                + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
                 + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
                 + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
                 + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
@@ -291,6 +293,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
                 + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
+                + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
+                + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
                 + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
                 + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
                 + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
@@ -2973,6 +2977,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.currentRenderTarget;
         this.commandState.beginPass(this.activeImmediateTarget);
+        org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
         setViewportAndScissor(stack);
         if (!this.currentRenderTargetIsMain) {
             this.offTargetPassGroupsByTarget.merge(this.currentRenderTarget, countGroupsForTarget(this.currentRenderTarget),
@@ -2981,6 +2986,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
+        org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
     }
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
@@ -3140,6 +3146,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
                 + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
+                + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
+                + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
                 + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
                 + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
                 + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
@@ -3915,6 +3923,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.currentRenderTarget;
         this.commandState.beginPass(this.activeImmediateTarget);
+        org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
 
         setViewportAndScissor(stack);
         pipeline.bindPipeline(this.commandBuffer);
@@ -4039,6 +4048,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
+        org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
                     (timestampSlot * 2) + 1);

@@ -70,6 +70,31 @@ public final class VulkanDisplayListCensus {
     private static long replaysWithFrameOpen;
     private static long replaysWithFrameClosed;
 
+    private static volatile boolean renderPassOpen;
+    private static long replaysWithPassOpen;
+    private static long replaysWithPassClosed;
+
+    /**
+     * Called by the renderer whenever a Vulkan render pass opens or closes.
+     * <p>
+     * Whether a display list can be drawn natively where it is replayed depends on this: recording into an open pass is
+     * the same thing the immediate path does, while a closed one needs a pass of its own. Measured rather than assumed,
+     * because the answer decides how the model draw has to be built.
+     */
+    public static void setRenderPassOpen(boolean open) {
+        renderPassOpen = open;
+    }
+
+    /** {@return replays that happened while a render pass was open}. */
+    public static synchronized long replaysWithPassOpen() {
+        return replaysWithPassOpen;
+    }
+
+    /** {@return replays that happened while no render pass was open}. */
+    public static synchronized long replaysWithPassClosed() {
+        return replaysWithPassClosed;
+    }
+
     /** Called by the renderer when a frame opens or closes, so the replays can be split by phase. */
     public static void setFrameOpen(boolean open) {
         frameOpen = open;
@@ -161,6 +186,11 @@ public final class VulkanDisplayListCensus {
             replaysWithFrameOpen++;
         } else {
             replaysWithFrameClosed++;
+        }
+        if (renderPassOpen) {
+            replaysWithPassOpen++;
+        } else {
+            replaysWithPassClosed++;
         }
         // The matrix in effect at replay, next to the one captured while the list was compiled. Whether a display list
         // bakes the transform or is replayed under the current matrix decides how a native replacement has to combine
