@@ -27,6 +27,30 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.39 条件 (b) の作業量: **GL にまだ残っている量の内訳**（実測）
+
+- **量**: `offers 11000 / accepted 9042 / glBodyCompleted 1985`（p318）、`13000 / 10643 / 2386`（p321）
+  ＝ **8割は native に受理され、約2割（≈2000/run・7/フレーム）が GL に渡っている**。
+- **内訳（拒否集計の1サンプル、合計 1172）**:
+
+| 理由 | 件数 |
+|---|---|
+| **`2 target is outside the RGBA8/D24/full-viewport bridge contract`** | **709** |
+| `8 preflight: format=8 texture=16 (no terrain pipeline for this pass)` | **128** |
+| `1/6/9 preflight: … (no terrain pipeline for this pass)` | 9〜21 ずつ |
+| `5 lightmapped batch with no lightmap texture mirrored` | 23 |
+
+- **読み方**:
+  - **709 件の format 2 は「画面合成以外の合成」**（overlay を framebuffer へ混ぜるもの・postprocess 系）で、
+    監査 S17 が「この layout は画面合成だけのものではない」と記録しているもの。**正規の GL 作業**であり、
+    native 化するには postprocess/overlay の設計が要る（`skipGlComposite` の条件は**画面合成のみ**を対象にしているので、
+    これらは意図どおり残る）。
+  - **128 件の format 8** と少数の format 1/6/9 は **「その pass 用のパイプラインが無い」**という preflight 失敗。
+    §0.12 で扱ったのと同じ種類の問いで、**pass の選び方**の問題である。
+  - **23 件の lightmap 未ミラー**は format 5（particle）でライトマップが無いケース。
+- **意味**: 条件 (b) の残りは「GL を全部消す」ではなく、**この4群を順に native へ移すか、対象外と明示するか**である。
+  **量と理由が数えられている**ので、次はこの順に潰せる。
+
 ## 0.38 copyback は**単独では外せない**（ブリッジが循環していることの実証）
 
 - **試したこと**: `-Dceltium.vulkan.skipColorReturn=true`（`endFrame` の色の書き戻しを止める。既存の `SKIP_DEPTH_RETURN` と
