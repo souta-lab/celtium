@@ -304,7 +304,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " descriptorRequests=" + VulkanDescriptorFault.requests()
                 + " modelDraws=" + this.modelDraws
                 + " texMatrixGroups=" + this.texMatrixGroups
-                + " modelDrawRefusals=" + this.modelDrawRefusals
+                + " modelDrawRefusals=" + this.modelDrawRefusals + " modelMissingMeshes=" + this.modelMissingMeshes
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                 + " modelMeshQuads=" + this.modelMeshQuads
@@ -5795,6 +5795,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private static int modelDraws;
     private int modelDrawRefusals;
+    /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
+    private int modelMissingMeshes;
+    private int modelMissingMeshLog;
+    private int modelLastMissingList = Integer.MIN_VALUE;
     private String modelLastRefusal = "none";
     /** Whether a frame target exists, so a pass can be opened. */
     private boolean frameTargetKnown;
@@ -5868,6 +5872,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         VulkanDynamicMesh mesh = this.modelMeshes.get(Integer.valueOf(listId));
         if (mesh == null || mesh.isEmpty()) {
+            // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
+            // body would draw and that nothing draws without a context. Counting it is what turns "the model is missing"
+            // into "list N, texture M, no mesh", which is the only form in which it can be fixed.
+            this.modelMissingMeshes++;
+            if (this.modelMissingMeshLog < 8 && listId != this.modelLastMissingList) {
+                this.modelLastMissingList = listId;
+                this.modelMissingMeshLog++;
+                System.out.println("[Celtium] CELTIUM_MODEL_MISSING list=" + listId + " texture=" + boundTextureId
+                        + " (no captured mesh for this display list; the GL body runs and there is no context)");
+            }
             return false;
         }
         try {

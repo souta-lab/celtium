@@ -38,7 +38,7 @@
 | 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの。**GL-less flag 経路（`-Dceltium.vulkan.glless=true`）は §0.114 で起動・提示まで実測したが、窓の絵が未解決なので既定は bridge のまま** |
 | **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
-| **model 経路（表示リスト）の native 描画** | **実験フラグ側・既定 off／変換は特定済み** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、さらにモデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りの実測で最良）。既定は off のまま（§0.69〜§0.74） |
+| **model 経路（表示リスト）の native 描画** | **既定 ON（§0.108）／TESR の list は未 capture** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、モデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りで最良）。既定は ON（§0.108）。**未完**: 実測 `modelMeshLists=2 / modelQuads=12`＝腕と手持ちのみ。TESR の model（エンチャント台の本）は list 自体が capture されておらず、GL fallback に落ちて GL-less では何も描かれない。`celtium$drawModelList` は mesh の無い list を `modelMissingMeshes` として名指しで数えるようにした。§0.108 |
 | **entity 場面の残差（既定構成）** | **確定: fixture のキャプチャ仕様（描画欠陥ではない）** | format 5 = 実粒子（提出元 `ParticleManager`）。残差は**提示フレームの生存粒子**が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレームの静止 FLAME 比較で format 5 の色・位置は正しく、残差は経年差のみ（§0.104） |
 | **通常場面（実体なし）の一致** | **両GPU受入** | 提示画像 vs GL の絵: **AMD 0.011 / 0.01 %**、**Intel 0.000〜0.016 / 0.00 %**（§0.77・§0.92 の撤去後も維持） |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
