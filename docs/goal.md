@@ -13,15 +13,15 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 - 一括削除・全面書き直しはしない。現在の変更と有効な修正を保持し、一つの根因の所有・状態契約を揃える小さな修正と必要な構造整理を進める。リブランド・配布・性能・既存mod互換の強化も完成工程に残す。
 
 【現在の到達点と未完】
-- terrainと複数のimmediate pipelineはnative描画を持つ。immediateの既定受付はformat 1〜9で、format 2が既定でGLに残るという古い説明は撤去する。format認識・受付は全vanilla coverageを意味しない。
-- backend専用command bufferの状態遷移、pass内での記録、preflight、target別group保持/retire、off-targetの色・clear/depth順序が修正され、小GPU fixtureでAMD/Intelの局所受入がある。A01/A02/A03/A08/A09/A32等の有効な修正とSolの受入を保持し、済んだ欠陥を最初から直し直さない。残るbranch・GPU画像・失敗復旧は個別に判定する。
-- 地形の暗さの主要因とlightmap座標の修正はあるが、照明・state・alpha/depth/blend・sampler/mip・遠景等の画質残件はある。過去の68.81%やlocal 0.267/255を最新版全体の一致率にしない。
-- CPU image/patch供給とregistry更新はあるが、直接保持atlas/lightmapとregistryのVk image所有が分裂し、patchの後に全面GL読み戻しへ戻る経路が残る。通常fixtureの0/frameを全sceneのreadback除去としない。animation・reload・dimensionを含むtexture所有の統合が直近の根因修正対象である。
-- モデル専用native描画は実験フラグ側に残り、entity/TESR/item/model全体のnative描画・照明・見た目は未完。手持ちの取消だけをモデル完成と扱わない。vanilla ShaderGroup等にもGL fallbackがあり、mod shader pack延期とは分ける。
-- native合成とswapchain提示画像の内容を調べる実験はあるが、GL context・GL/VK bridge・copyback・GL swap依存を除いた通常ゲームframeは未成立。提示画像のmarker一致と実window/compositor出力の到達は別の受入であり、後者は未確認。withoutGlIdentityはGLなし起動ではない。
-- captureのtick等号によるMISSING_REPORTはbf27f1975で段階化され、Intelの通常/溶岩fixtureが完走した。duration上限/worldFramesから「1frame3.5秒」とした説明は撤回する。固定world timeだけでsprite animation位相も固定されたとは扱わない。
-- dimension受入は8ee7cf97e以降、server taskとclientの実到達・capture時dimensionを見る方式へ修正された。p247-end / p247-end-intelはcapture時player/worldが1でPASSED。Netherはp247-nether / p248-trace / p249-earlyで一時的に-1へ到達後、GuiDownloadTerrainを経て0へ戻りNO_CAPTURE。旧Nether PASSEDは有効な受入から外す。地形ダウンロード画面の残留と帰還は観測事実で、renderer・packet/portal・fixtureのどこが根因かは未確定である。
-- AMDのblock registry254種掃引とIntelの部分掃引、weather/particle/GUI等の局所fixtureは実績として保持する。全block state・全entity/TESR・全vanilla・全modの正しさは未確認。現在HEADや未commit差分の進行に合わせてこのsnapshotを更新する。
+- terrainと複数のimmediate pipelineはnative描画を持つ。既定受付はformat 1〜9で、1 runの実測は offers 13000 / accepted 10643 / GL本体 2386（AMD・軽い世界）。線（GL_LINES系）はnative化され、AMD 797・Intel 280 accepted（変更前17）、5 run連続PASSEDで線の拒否ゼロ。format認識・受付は全vanilla coverageを意味しない。
+- per-frame presentが成立し、GL swapは停止した（263 presented / 262 swap skipped）。提示画像はGLフレームと画素単位で一致し（上下反転比較で平均絶対差0.015・最大3）、GL最終合成を止めても内容は同一（glCompositesSkipped=717/718、off比 平均絶対差0.001）。GUI/font/HUDも画像等価（HUD帯 平均絶対差0.000・>8が0.00%）。
+- lightmapの供給漏れ（format 5）は解消し、AMD/Intel両方で受入した（lightmapSuppliedOnDemand=2・失敗なし・拒否ゼロ）。Endは両GPUでcapture時dimension 1のPASSED。Netherはportalから出る修正後、両GPUでcapture時dimension -1・帰還0回のPASSEDとなり、旧NO_CAPTUREを有効な受入から外した。
+- 失敗経路は提示・線・合成の変更後も正しい。fence timeoutは検出して停止しteardownを548回スキップして資源を解放せず（stalledStops=1）、submit失敗はfixtureがFAILEDとして報告する。いずれもvalidationClean=true・VUID 0・クラッシュなし。
+- 条件(b)の残量は実測で約2割がGL。内訳はformat 2の非画面合成 709（FBO所有権がVulkanに移るまでnative化不可）、起動直後10フレームのみの80（nativeの描画先がまだ無いため本質的）、format 1/6/9の少数。lightmap分は解消済み。通常fixtureの0/frameを全sceneのreadback除去としない。
+- 条件(b)の本体（FBO所有権）は実装が動作する段階にある。ゲームの主フレームバッファ差し替え（adoption）は成立し（bound=gameFbo=sharedFbo=7・adopted=true・差し替え時のGLエラーは0x0）、共有FBOを契約とするbeginFrame、記憶した宛先、深度のテクスチャ・アタッチまで入った。残るのは差し替え後beginFrameまでに出る保留GL error 0x502の発生源1点で、次はその窓を二分する計器で確定させる。失敗したフラグ経路は保持せず巻き戻し、診断メッセージの計器だけを残した。
+- 実window/compositor出力（条件(c)）は未確認である。DISPLAY=:0 のrootが0×0で合成器が無く、不足条件をdocs/plan.mdに記録した。method名や環境制約だけで完成目標から外さない。
+- 地形の暗さの主要因とlightmap座標の修正はあるが、照明・state・alpha/depth/blend・sampler/mip・遠景等の画質残件はある。entity/TESR/item/model全体のnative描画・照明・見た目は未完で、手持ちの取消だけをモデル完成と扱わない。FBO/postprocessのnative化、全block state、全entity/TESR、全mod互換、性能実測、リブランド/配布も未完である。過去の68.81%やlocal 0.267/255を最新版全体の一致率にしない。固定world timeだけでsprite animation位相も固定されたとは扱わない。
+- AMDのblock registry254種掃引とIntelの部分掃引、weather/particle/GUI等の局所fixtureは実績として保持する。現在HEADや未commit差分の進行に合わせてこのsnapshotを更新する。
 
 【直近の実行順】
 1. 現在進行中のdimension修正・readback計測と必要な受入を安全な境界でまとめる。未commit変更・成功した修正を保全し、短い構造修復フェーズへ入る。局所flag/定数/budget追加で症状だけ隠さず、一つの根因に対してproducer/consumer/invalidate/deleteを同じ契約へ揃える。抽象化や監査文書だけのroundを続けない。

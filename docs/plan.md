@@ -2,32 +2,36 @@
 
 > **影対応の後続計画:** [shader-plan.md](shader-plan.md)。**フルVK化＋主要modのshaderless対応が完了してから着手する。** この計画を理由に現在の本体実装を中断・前倒ししない。
 
-> goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 48, phase active / activation armed）。
+> goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 49, phase active / activation armed）。
 > 全文は `docs/goal.md`。構造修復の方針は **`docs/handoff-structure-recovery-2026-10-10.md`**、
 > 直近の原因候補は `docs/hints-2026-10-10-nether.md`。監査起点は `docs/audit-2026-10-09-third.md`。
 > **round ごとの経緯と旧測定は `docs/history/plan-round-log-until-2026-10-10.md` に移した**（削除していない）。
 > この文書は**現在状態を一箇所で管理する表**であり、末尾への訂正追記で整合させない。
 
-## 0. 直近の到達点（最新実測・2026-10-10）
+## 0. 直近の到達点（最新実測・冒頭表）
 
-- **構造修復 1（texture の所有契約）実装済み**（commit `297ce5caa`）。同じ GL texture id に2つの Vulkan image が
-  あった分裂を解消し、registry を唯一の所有者にした（`registry.imageFor(id,w,h,filter)` を backend が sample する）。
-  世代の消費は既存の `announcedGeneration`/`consumedGeneration` に統合。実測（AMD・溶岩世界・120 s、同一条件の
-  変更前 run と比較）: **`readbacksSkipped=473` 対 `directMirrorRefreshes=472`**（ほぼ全更新が readback 不要）、
-  **p50 40.41 → 25.49 ms**、`CELTIUM_PATCH_REJECTED=0`、**VUID 0**、クラッシュなし、**PASSED**。
-  **未検証**: patch 経路が mip・全画像内容を readback 経路と同等に保つか（`MIRROR_GL_MIPS=false` で level 0 のみ、
-  という読みまでは確認）。**reload / GL id 再使用 / sprite 単位 mip は未測定**。
-  **画像同一性は未確認**: 比較した run は**アニメーションする溶岩世界**で、`PINNED_WORLD_TIME` は sprite の
-  animation 位相を固定しない。meanAbsDiff 6.29 / 400k 画素の差は**位相差か content 差か未切り分け**。
-- **capture 段階化**（`bf27f1975`）: tick 等号をやめ、`captureStartTick` を記録し、捕捉できなくても
-  `status=NO_CAPTURE` の部分レポートを残す。Intel は**軽い世界 p50 28.47 ms / 溶岩世界 120 s 完走 p50 64.52 ms**、
-  いずれも **PASSED**。**MISSING_REPORT の原因は予算ではなく捕捉 tick の等号**だった。
-- **dimension 受入は fail-closed**（`8ee7cf97e`）: サーバー処理を server task に移し、client の実到達を観測し、
-  捕捉時に `player/world provider == target` を要求する。
-  **End は AMD/Intel とも capture 時 dimension 1 で PASSED**（`p247-end`, `p247-end-intel`）。
-  **Nether は NO_CAPTURE**（`p247-nether`, `p248-trace`, `p249-early`）: tick 82 で -1 に到達後、
-  **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
-  地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
+**この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.49 にある。
+
+| 項目 | 状態 | 最新の実測（GPU・条件つき） |
+|---|---|---|
+| terrain / immediate の native 描画 | **実装済・両GPU受入** | 既定受付 format 1〜9。1 run の内訳: `offers 13000 / accepted 10643 / GL 本体 2386`（AMD・軽い世界） |
+| **線（GL_LINES 系）の native 化** | **受入済（AMD 797・Intel 280 accepted）** | 変更前は 17 accepted。5 run 連続 PASSED、線の拒否ゼロ |
+| **per-frame present** | **受入済（AMD/Intel）** | 263 presented / 262 GL swap skipped（§0.17）。GL swap は `@Redirect` で停止 |
+| **提示画像と GL フレームの画素一致** | **受入済** | 上下反転比較で 平均絶対差 0.015・最大 3（§0.35）。比較の常套手段は「反転して比べる」 |
+| **GL 最終合成の停止** | **受入済（フラグ、既定 off）** | `glCompositesSkipped=717/718`、提示画像は off 比 平均絶対差 0.001（§0.36） |
+| **GUI / font / HUD** | **画像等価を受入済** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
+| **lightmap の供給漏れ（format 5）** | **解消・両GPU受入** | AMD `lightmapSuppliedOnDemand=2`・失敗なし・拒否ゼロ（§0.43）、**Intel も 2・失敗なし・拒否ゼロ・PASSED**（`p337-intel-lightmap`） |
+| End の dimension 受入 | **両GPU PASSED** | capture 時 dimension 1 |
+| **Nether の dimension 受入** | **両GPU PASSED（旧 NO_CAPTURE を置換）** | portal から出る修正後、capture 時 dimension **-1**・**帰還 0 回**。旧 NO_CAPTURE の証拠は history に保持 |
+| 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
+| **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
+| **条件 (b) の本体（FBO 所有権）** | **実装は動作・残り1点** | adoption 成立（`bound=gameFbo=sharedFbo=7`・`adopted=true`・差し替え時 GL error `0x0`）。残るのは**差し替え後 beginFrame までに出る保留 `0x502` の発生源1点**（§0.45〜§0.49） |
+| 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
+| 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
+
+**未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
+実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
+**古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
 ## 0.49 **adoption は成立した**（計器で確定）。残るのは差し替え後に他所で出る保留 `GL error 0x502`
 
