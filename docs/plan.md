@@ -34,6 +34,26 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.52 **(b) の本体を Intel でも受入**（bridge/sync/memory 経路のため両GPUで確認）
+
+- **受入（Intel UHD Graphics 630 / Mesa、duration 120 s、`adoptGameFramebuffer=true`）**:
+
+| 計器 | 値 |
+|---|---|
+| **exit / `validationClean` / messages / `fixtureStatus`** | **0 / true / 0 / PASSED** |
+| VUID / クラッシュ | **0 / なし** |
+| frames | 390 |
+| **`presentedFromVulkan`** | **365** |
+| **pass 失敗** | **なし** |
+| `firstGlError` / `frameEntryGlError` | **[null:0x0] / [null]** |
+| GPU | `Mesa Intel(R) UHD Graphics 630 (CFL GT2)` |
+| 参照（AMD の GL 経路フレーム）vs 提示画像（反転） | 平均絶対差 **0.168**・>8 が 0.98 %・最大 126 |
+
+- **註（正直な区別）**: 画素比較の参照は **AMD のフレーム**なので、**この 0.98 % は vendor 間の差**を含む。
+  **同一 vendor 内（AMD の adoption 対 AMD の GL 経路）では 0.001・0.00 %** だった。**vendor 間の画素一致を主張しない**。
+- **意味**: **adoption（ゲームが Vulkan 所有 color/depth に直接描画）は AMD/Intel の両方で PASSED**。
+  同期・メモリ・interop 経路の変更なので、これは計画が求める「早期の両GPU確認」を満たす。
+
 ## 0.51 **(b) の本体が受入成立**: ゲームが Vulkan 所有イメージに直接描画し、PASSED・提示 997・画素一致 0.001
 
 - **残っていた1件の正体**: `endFrame` の契約検証だった。**同じ検証が2行連続で重複**しており（以前のパッチ痕跡）、
