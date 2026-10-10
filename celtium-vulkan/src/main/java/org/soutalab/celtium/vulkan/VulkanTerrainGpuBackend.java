@@ -4867,14 +4867,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.presentSkipReason = "frame target not available";
                 return false;
             }
-            this.frameTarget.beginFrame();
-            try {
-                this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
-                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
-                        this.targetHeight);
-            } finally {
-                this.frameTarget.endFrame();
-            }
+            // No beginFrame/endFrame around this any more. The probe needed them because it produced the content itself,
+            // but in the normal frame the content and the copyback have already happened: the shading was measured as
+            // +13.4 ms per frame on Intel with them (AMD: no measurable cost), which is the price of a second copyback and
+            // its waits per frame. The shared image is left in the layout GL declares, which is what is passed here.
+            this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
+                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL, this.targetWidth, this.targetHeight);
             this.presentAttempts++;
             this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();

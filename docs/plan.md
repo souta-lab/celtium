@@ -27,6 +27,28 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.19 提示経路の軽量化: 余分な copyback を外し、**AMD では pure win**（Intel は +10.3 ms が残る）
+
+- **内訳の切り分け**: 提示のたびに `beginFrame`/`endFrame` でフレームを枠取りしていた（＝**2回目の copyback とその待ち**）。
+  通常フレームでは内容も copyback も既に済んでいるので、**枠を外して `presentImage` を直接呼ぶ**形にした
+  （共有イメージは GL が宣言したレイアウトのままなので `VK_IMAGE_LAYOUT_GENERAL` を渡す）。
+- **実測（`presentFromComposite` / framing の有無で比較、軽い世界）**:
+
+| 構成 | AMD p50 / p95 | Intel p50 / p95 |
+|---|---|---|
+| 提示 OFF（GL swap） | 16.19 / 19.22 | 30.33 / 34.71 |
+| 提示 ON・framing あり | 16.17 / 18.40 | 43.73 / 45.60 |
+| **提示 ON・lean（今回）** | **13.07 / 16.07** | **40.62 / 42.21** |
+
+  受入は AMD・Intel とも exit 0 / validationClean / **PASSED** / **VUID 0** / `presentFailures=0` /
+  `presentResult=[present image: blitted 1280x720 onto image 1 (0)]`。
+- **AMD は提示が純益**: **13.07 ms は「提示しない」16.19 ms より速い**（GL swap を省いた分が present のコストを上回る）。
+- **Intel は +10.3 ms が残る**（30.33 → 40.62）。framing を外して削れたのは約3 ms なので、残りは
+  **present 自体（image の取得と提示の待ち）**である。swapchain は **MAILBOX 優先（無ければ FIFO）・image 数は最小+1**。
+  最有力の説明は **headless な X では提示済み image を消費する側がいないため取得が待つ**というもので、
+  **実 display では同じコストとは限らない**（これは仮説であり、実 display での確認は未実施）。
+- **次に残るもの**: 描画そのもの（GL/VK bridge・copyback・GL call）と GL context。
+
 ## 0.18 提示経路の限定回帰と**実測コスト**（AMD はゼロ、Intel は +13.4 ms/frame）
 
 - **限定回帰（提示経路に触れる変更のため）**: すべて exit 0 / validationClean / **PASSED** / **VUID 0** / スクリーンショット有り /
