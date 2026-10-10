@@ -34,6 +34,33 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.53 adoption 下で**受理が激減していた回帰を修正**（受理ゲートが adopted 状態を契約違反と判定していた）
+
+- **計測で回帰を発見**: adoption を入れると受理が `9042 → 982`、GL 本体が `1985 → 17045` に**悪化**していた
+  （描画結果は正しい＝PASSED・画素一致だが、**native の割合が下がる**ので放置できない）。
+- **理由**: 拒否の理由が**一律** `target is outside the RGBA8/D24/full-viewport bridge contract`
+  （format 6 6844・7 6200・2 982・5 975）。実体は `VulkanFrameTarget.currentFramebufferViolation()` が
+  **RGBA8＋D24 レンダーバッファ**の契約で adopted 状態（**D32F テクスチャ深度**）を違反と判定していたこと。
+  `matches()` と `endFrame` に入れたのと**同じ形の見落とし**。
+- **修正**: 束縛 FBO が共有 FBO のときは `currentFramebufferViolation()` が `null` を返す
+  （判定対象はこのクラス自身が作ったオブジェクトで、入口の liveness 検査が既に見ている）。
+- **受入（AMD、duration 120 s、adoption on、`presentReadback`＋`dumpPresentedImage`）**:
+
+| 計器 | 基準（GL FBO） | adoption 修正前 | **adoption 修正後** |
+|---|---|---|---|
+| offers | 11000 | 18000 | **15000** |
+| **accepted** | 9042 | **982** | **11526** |
+| GL 本体 | 1985 | 17045 | **3499** |
+| `fixtureStatus` | PASSED | PASSED | **PASSED** |
+| `validationClean` / VUID | true / 0 | true / 0 | **true / 0** |
+| frames / `presentedFromVulkan` | — / — | — | **898 / 886** |
+| `firstGlError` | — | [null:0x0] | **[null:0x0]** |
+| 参照フレーム vs 提示画像（反転） | — | 0.001 | **0.012・>8 が 0.00 %** |
+
+- **残る拒否（adoption 下・1サンプル）**: `format 2: 830`・`format 5: 812`・`format 6: 176`・`format 9: 17`・
+  `format 4: 12`・`1/7/3/8: 各8〜11`。**次は format 5（粒子・ライトマップ）と format 2（合成）の理由**を読む。
+  （基準時は format 5 の拒否は 26 だったので、**adoption 下で format 5 が増えている**点も確認対象。）
+
 ## 0.52 **(b) の本体を Intel でも受入**（bridge/sync/memory 経路のため両GPUで確認）
 
 - **受入（Intel UHD Graphics 630 / Mesa、duration 120 s、`adoptGameFramebuffer=true`）**:

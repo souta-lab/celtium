@@ -337,6 +337,15 @@ public final class VulkanFrameTarget {
      */
     /** Preflight the CURRENT bound Minecraft FBO without opening/signalling an interop handoff. */
     public String currentFramebufferViolation() {
+        // The contract describes a game framebuffer with its own RGBA8 colour and D24 depth renderbuffer. When the game
+        // draws into the shared images there is no such framebuffer to judge: the depth is the Vulkan-owned D32 texture
+        // and the colour is the shared one, both of which this class created. Judging them by the game contract refused
+        // every immediate batch once the swap was on (measured: accepted 9042 -> 982, refusals all reading
+        // "target is outside the RGBA8/D24/full-viewport bridge contract"), while the picture stayed correct because the
+        // game drew them itself.
+        if (isSharedFramebuffer(org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING))) {
+            return null;
+        }
         checkAlive();
         try (GlState state = new GlState()) {
             int fbo = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
