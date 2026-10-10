@@ -113,6 +113,11 @@ public final class VulkanImmediateDrawer {
         }
     }
 
+    /** {@return whether this is a line primitive mode, which the line pipeline can draw}. */
+    public static boolean isLineMode(int glMode) {
+        return glMode == GL11.GL_LINES || glMode == GL11.GL_LINE_STRIP || glMode == GL11.GL_LINE_LOOP;
+    }
+
     /** {@return a human-readable reason why a mode is not drawable here, or null when it is} */
     public static String unsupportedReason(int glMode) {
         switch (glMode) {

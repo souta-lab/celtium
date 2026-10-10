@@ -27,6 +27,33 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.28 **native の線が成立**（format 1 の受理 17 → 797、拒否エントリ消滅）
+
+- **実装したもの**:
+  1. **線トポロジのパイプライン** `VulkanImmediatePipeline.createForLines(...)`
+     （`VK_PRIMITIVE_TOPOLOGY_LINE_LIST`）。8引数の既存ファクトリのシグネチャは変えず、内部に `lines` を通す形にしたので
+     呼び出し側の変更はゼロ。線用のキャッシュを1系統追加（キーは既存の state キー＋**線ビット** `1L << 61`）。
+  2. **能力判定**（baseline 方針に沿う形）: `VkPhysicalDeviceLimits.lineWidthRange(1)` を読み、**GL が要求している線幅**
+     （`GL_LINE_WIDTH` を実際に問い合わせる）と比較する。`wideLines` は**任意機能**なので必須にしない —
+     feature を別途問い合わせる必要も無い（`wideLines` が無ければ範囲が `[1,1]` になり、同じ比較で拒否される）。
+     満たさない場合は **理由付きで拒否して GL に渡す**（`lineBatchesRefusedForWidth`）。
+  3. `VulkanImmediateDrawer.isLineMode(mode)` を追加し、**線は format 1 のときだけ** native 候補にする。
+- **受入（AMD、`lookDown`＋TESR 層、duration 150 s）**: exit 0 / validationClean / **PASSED**、823 frames、
+  **p50 10.52 ms**、**VUID 0**、クラッシュなし。
+
+| 計器 | 前 | 後 |
+|---|---|---|
+| `ACCEPTED byFormat 1` | **17** | **797** |
+| `acceptedByFormat 1` | 26 | **810** |
+| 拒否集計の `1 line primitives …` | **797** | **消滅** |
+
+  **拒否されていた 797 件が、そのまま 797 件受理されている** ＝ **selection outline を含む線プリミティブが native で描かれる**。
+  （残る format 2 の 816 件は**最終合成**で、条件 (a) の最後のピース。）
+- **まだ GL に残るもの**: 最終合成（format 2）、GL/VK bridge、copyback、GL context。
+- **未確認**: Intel での受入（線の幅能力は Intel でも 2.0 を満たす見込みだが**測っていない**）。
+- **計器の置き場所**: `lineBatchesNative`／`lineBatchesRefusedForWidth` を要約側に置いたため**レポートに出ていない**
+  （また同じ誤り）。挙動の証拠は `ACCEPTED byFormat 1` の 797 で足りているが、**次に触るときは専用行へ移す**。
+
 ## 0.27 native の線に向けた第一歩: 線プリミティブの展開と**CPU 契約検査**
 
 - **実装**: `VulkanImmediateDrawer.expandIndices` が線モードを扱うようにした（それまでは `default` で `null`＝未対応）。

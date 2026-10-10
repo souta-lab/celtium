@@ -58,9 +58,11 @@ public final class VulkanImmediatePipeline {
     private final boolean depthTest;
     private final boolean depthWrite;
     private final boolean cull;
+    /** Draw line lists instead of triangles: the selection outline and other line batches. */
+    private final boolean lines;
 
     private VulkanImmediatePipeline(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
-               boolean depthTest, boolean depthWrite, boolean cull) {
+               boolean depthTest, boolean depthWrite, boolean cull, boolean lines) {
         this.context = context;
         this.renderPass = renderPass;
         this.blend = blend;
@@ -69,6 +71,7 @@ public final class VulkanImmediatePipeline {
         this.depthTest = depthTest;
         this.depthWrite = depthWrite;
         this.cull = cull;
+        this.lines = lines;
     }
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
@@ -84,10 +87,29 @@ public final class VulkanImmediatePipeline {
      */
     public static VulkanImmediatePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
                             boolean depthTest, boolean depthWrite, boolean cull) {
+        return create(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, false);
+    }
+
+    /**
+     * The line-list variant.
+     * <p>
+     * Minecraft draws the block-selection outline with {@code GL_LINE_STRIP}, and a line batch expanded to a line list
+     * cannot be drawn by a triangle pipeline. Whether the width OpenGL was asked for can be honoured is decided by the
+     * caller from the device's {@code wideLines} and line-width range before this is built at all, so this factory simply
+     * builds the variant it is told to.
+     */
+    public static VulkanImmediatePipeline createForLines(VulkanContext context, long renderPass, boolean blend,
+            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull) {
+        return create(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, true);
+    }
+
+    private static VulkanImmediatePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor,
+            int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, boolean lines) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
-        VulkanImmediatePipeline result = new VulkanImmediatePipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull);
+        VulkanImmediatePipeline result = new VulkanImmediatePipeline(context, renderPass, blend, srcFactor, dstFactor,
+                depthTest, depthWrite, cull, lines);
         result.createPipelineLayout();
         result.createPipeline();
         return result;
@@ -177,7 +199,8 @@ public final class VulkanImmediatePipeline {
 
                 VkPipelineInputAssemblyStateCreateInfo assembly =
                         VkPipelineInputAssemblyStateCreateInfo.calloc(stack).sType$Default()
-                                .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+                                .topology(this.lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
+                                        : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
                 VkPipelineViewportStateCreateInfo viewport =
                         VkPipelineViewportStateCreateInfo.calloc(stack).sType$Default()
                                 .viewportCount(1).scissorCount(1);

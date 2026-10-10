@@ -681,6 +681,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Why a preflight returned no descriptor, split by cause so the refusal can be acted on. */
     private int prepareDescriptorFailures;
     private String lastPrepareFailure = "none";
+    /** Cached highest line width the device can draw, or -1 before it has been asked. */
+    private float maxLineWidth = -1.0F;
+    /** Line batches drawn by the line pipeline, and how many were refused for their width. */
+    private int lineBatchesNative;
+    private int lineBatchesRefusedForWidth;
     /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
     private String lastPresentResult = "none";
     /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
@@ -859,6 +864,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long currentGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
     private final java.util.Map<Long, VulkanImmediatePipeline> immediatePipelineCache =
+            new java.util.HashMap<Long, VulkanImmediatePipeline>();
+    /** The same states, but with a line-list topology: the selection outline and other line batches. */
+    private final java.util.Map<Long, VulkanImmediatePipeline> linePipelineCache =
             new java.util.HashMap<Long, VulkanImmediatePipeline>();
     /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
     /** One pipeline per state for the entity/TESR layout, whose stride the textured pipeline cannot serve. */
@@ -2031,6 +2039,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
+        if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode) && formatId == 1) {
+            // Lines are refused by design unless the device can draw the width OpenGL asked for. The selection outline is
+            // the batch this covers: it is POSITION_COLOR (format 1) and OpenGL draws it with glLineWidth(2.0), which
+            // Vulkan can only honour with the optional wideLines feature.
+            if (this.celtium$lineWidthSupported()) {
+                reason = null;
+            } else {
+                this.lineBatchesRefusedForWidth++;
+                reason = "line width " + "> device maximum " + this.celtium$maxLineWidth()
+                        + " (wideLines) - drawn by OpenGL";
+            }
+        }
         if (reason != null) {
             this.immediateLastRefusal = reason;
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
@@ -2237,6 +2257,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.captureStateNanos += System.nanoTime() - captureStart;
             long keyStart = System.nanoTime();
             long stateKey = celtium$stateKey(formatId, state);
+            if (VulkanImmediateDrawer.isLineMode(drawMode)) {
+                // A bit of its own, so the preflight can pick the line pipeline without being told the mode again.
+                stateKey |= 1L << 61;
+            }
             this.stateKeyNanos += System.nanoTime() - keyStart;
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
@@ -2662,6 +2686,44 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         };
     }
 
+    /**
+     * The highest line width the device can draw, or 0 when it cannot draw wide lines at all.
+     * <p>
+     * {@code wideLines} is an optional Vulkan feature, so a renderer that has to run on a wide range of devices cannot
+     * require it: the line width OpenGL was asked for is compared against this, and a batch that needs more is refused
+     * with a reason and drawn by OpenGL, which is where it is correct today.
+     */
+    private float celtium$maxLineWidth() {
+        if (this.maxLineWidth >= 0.0F) {
+            return this.maxLineWidth;
+        }
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkPhysicalDeviceProperties properties =
+                    org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
+            org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceProperties(this.context.physicalDevice(), properties);
+            org.lwjgl.vulkan.VkPhysicalDeviceLimits limits = properties.limits();
+            // lineWidthRange is the limit; wideLines is a feature and is not queried separately because the two agree:
+            // without the feature the range is [1, 1], so the width comparison below already refuses anything wider.
+            this.maxLineWidth = limits.lineWidthRange(1);
+        } catch (RuntimeException | LinkageError error) {
+            this.maxLineWidth = 1.0F;
+        }
+        return this.maxLineWidth;
+    }
+
+    /** {@return whether a line batch that OpenGL asked this width for can be drawn by the line pipeline}. */
+    private boolean celtium$lineWidthSupported() {
+        float asked = 1.0F;
+        try {
+            java.nio.FloatBuffer width = org.lwjgl.BufferUtils.createFloatBuffer(1);
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_LINE_WIDTH, width);
+            asked = width.get(0);
+        } catch (RuntimeException | LinkageError ignored) {
+            asked = 1.0F;
+        }
+        return asked <= this.celtium$maxLineWidth() + 0.01F;
+    }
+
     private static long celtium$stateKey(int formatId, int[] state) {
         long key = formatId;
         for (int value : state) {
@@ -3051,9 +3113,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else {
-            pipeline = this.immediatePipelineCache.computeIfAbsent(key,
-                    k -> VulkanImmediatePipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
-                            state[3] != 0, state[4] != 0, state[5] != 0));
+            boolean lineBatch = (key & (1L << 61)) != 0;
+            pipeline = (lineBatch ? this.linePipelineCache : this.immediatePipelineCache).computeIfAbsent(key,
+                    k -> lineBatch
+                            ? VulkanImmediatePipeline.createForLines(this.context, pass, state[0] != 0, state[1], state[2],
+                                    state[3] != 0, state[4] != 0, state[5] != 0)
+                            : VulkanImmediatePipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
+                                    state[3] != 0, state[4] != 0, state[5] != 0));
+            if (lineBatch) {
+                this.lineBatchesNative++;
+            }
         }
         this.prepBranchNanos += System.nanoTime() - prepBranchStart;
         if (format != 1 && descriptor == 0) {
