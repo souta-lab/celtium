@@ -521,6 +521,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
     // ----------------------------------------------------------------------------------------------------------
 
     /** The colour image view off-target draws render into, or 0 before the first {@link #ensureOffTarget}. */
+    /** The colour image off-target draws render into and the post chain adopts, or 0 before it exists. */
+    public long offTargetColorImage() {
+        checkAlive();
+        return this.offTargetColorImage;
+    }
+
     public long offTargetColorView() {
         checkAlive();
         return this.offTargetColorView;

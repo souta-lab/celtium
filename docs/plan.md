@@ -47,6 +47,46 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.116 **修正・受入済み**: lightmap の黒は announcement の配列形状だった（producer/consumer 契約）／model の平行移動がミラーに届いていなかった
+
+- **根因（実測）**: `VulkanTextureRegistry.announceFullPixels`/`toRgba` の契約は `int[mipLevel][flat texel]` で
+  `data[0]` が level 0 全体。producer の `VulkanTerrainGpuBackend.announceDynamicTexture` が flat な `int[]` を
+  **1行1配列**に分割していたため、`data[0]` は1行だけになり、それ以降の texel は範囲外として透明で書かれていた。
+  実測（16x16・5 level・announcement のみを供給源）: 修正前 level 0 は 256 texel 中 16 のみ
+  （row 0 = (14,14,14,255)、rows 1..15 = 黒）、各 level は前段の1/4。地形は vertex の sky 行をサンプルするので
+  row 15 が黒いと light 項が 0 になる。修正後 level 0 は 1024/1024 バイト・min 14。
+- **受入（実測）**: readback 経由の回避策を撤去し、lightmap を announcement 経路のみで供給した bridge run
+  `.celtium-work/runtime/ann-acc3` が fixture PASSED・validationClean・msgs 0・**VUID 0**・
+  band 平均 (102.4, 63.9, 58.5)・1385 色。回避策なしで readback 経路と同一の絵になることを確認した
+  （画像の所有者は1つに戻した）。
+- **model の平行移動**: `GlStateManagerMixin` は double 版 translate（`func_179137_b` → `glTranslated`）しか
+  ミラーしておらず、ゲームが使う float 版（`func_179109_b` → `glTranslatef`）は GL-less stub が no-op として
+  捨てていた。実測: 59 frame の run で `translateCalls=59`（＝カメラ1回のみ）、全 model list が
+  `compileT=(0,0,0)`。フック追加後は tile entity の list が実ブロック位置
+  `compileT=(-14.0,0.614,-31.022)` / `liveT=(-14.0,-0.84,-30.659)` を持つ。**絵の受入は発見エージェントが実行中**で、
+  この section では主張しない。double 版 scale も同理由でフックした。
+- **Intel 受入（実測）**: UHD 630 で両 leg PASSED・clean・VUID 0。GL-bridge band (119.4, 86.1, 80.5)（AMD は
+  (102.4, 63.9, 58.5)、差は HUD 被覆で terrain の色集合は同一）、GL-less は presented assertions PASSED・
+  bands 411（AMD と同一）・AMD との行輝度相関 0.9995。**注意**: GL-less leg は `--render-node` では GPU を
+  pin できない（GL identity が無いため最初の非CPU device=AMD が選ばれる）。実測は
+  `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/intel_icd.json` で pin した。harness の `--require-gpu` は
+  stub の `glRenderer` 文字列を見るため GL-less では GPU を検証できない（既知の harness 欠陥）。
+- **Nether（進展・未受入）**: 根因は fixture 側で、`Entity.onEntityUpdate` のポータル再突入だった
+  （vanilla は `changeDimension` 直前に `timeUntilPortal` を設定するが fixture は 0 にしていた）。fixture は
+  vanilla 準拠の cooldown と到着位置探索に直し、capture 時に client/world/provider すべて -1・
+  `dimensionFramesInTarget=49`・画面なし・ポータル外、presented PNG は distinct 15428 の実 Nether scene。
+  残る未達は presented-frame counter が dimension 変更で再作成される frame target と共にリセットされる件の
+  会計1件で、エージェントが修正中。**旧 Nether PASSED は引き続き無効**。
+- **未解決（新規・renderer 側）**: GL-less かつ dimension 変更の run に限り
+  `vkQueueSubmit(): ... expects VK_IMAGE_LAYOUT_GENERAL -- instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED`
+  が 1件/run 出る（GL-less + dimension 変更なしの run、GL-bridge + dimension 変更の run はいずれも 0件）。
+  frame target 再作成時に古い image 用の descriptor が新しい UNDEFINED image を指す経路が疑わしく、未修正。
+- **アウトライン**: chain が空の stand-in target を確保していた（`postChains=34, postPasses=136, postTargets=2,
+  postAdopted=0`、`CELTIUM_POST_ADOPT_REPORTED ... adopted=false`）。silhouette 自体は off-target image に
+  描かれている（identity 0x79D2D96A に 35 提出・34 pass 描画）。本ラウンドで chain 側の adoption を配線した
+  （`adoptChainFramebuffers`、識別子はゲームが実際に bind したものだけ）。registry への image 公開
+  （composite が texture 42 を解決できるようにする）は `VulkanGlTexture` の所有モデルを変えるため次段に分離。
+
 ## 0.115 **達成**: GL-less window が実 scene を描画 —— 地形の黒は lightmap の供給経路だった（goal 項目6 / 条件 (b)）
 
 - 対象は commit `ccae86911`。run は `.celtium-work/runtime/ver2-glless`（AMD RX 6400・`-Dceltium.vulkan.glless=true`・

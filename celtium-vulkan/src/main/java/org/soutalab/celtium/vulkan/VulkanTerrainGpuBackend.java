@@ -736,6 +736,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private java.nio.file.Path presentedDumpPath;
     /** How many bound-pipeline/descriptor lines have been recorded; bounded so a run cannot flood. */
     private int boundHandleLogs;
+    /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
+    private int chainAdoptions;
+    private int chainAdoptionsRefused;
     /** How many lightmap identity lines have been recorded; bounded. */
     private int lightmapIdentityLogs;
     /** How often the camera seed was skipped because there is no context to read it from. */
@@ -6029,6 +6032,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameTarget.beginFrame();
             beginCommands();
             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+            adoptChainFramebuffers(passes);
             this.postChain.recordPasses(this.commandBuffer, passes);
             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
             submitCommands();
@@ -6050,6 +6054,54 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         return submitted;
+    }
+
+    /**
+     * Adopts the renderer-owned off-target image under every framebuffer identity the game bound and drew into, so a
+     * pass that reads another pass's framebuffer - the entity-outline chain reads the silhouette framebuffer - samples
+     * what the game actually drew there instead of an empty stand-in the chain allocated for itself.
+     * <p>
+     * The identity map is filled only by the game's own framebuffer binds, so a chain-allocated target (its "swap"
+     * sibling, say) is never in it and cannot be adopted by mistake. The pair must already be in the layout the chain
+     * assumes, which is what the frame's first off-target clear records; if the frame has not used the pair yet, the
+     * clear happens here, and if it has, the silhouette is live and must not be cleared again.
+     */
+    private void adoptChainFramebuffers(java.util.List<VulkanPostChain.Pass> passes) {
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null || this.postChain == null) {
+            // The GL bridge has real GL framebuffers behind these identities; there is no stand-in image to adopt.
+            return;
+        }
+        for (VulkanPostChain.Pass pass : passes) {
+            adoptChainFramebuffer(pass.inIsMain ? 0 : pass.inFbId, pass.inW, pass.inH, glless);
+            adoptChainFramebuffer(pass.outIsMain ? 0 : pass.outFbId, pass.outW, pass.outH, glless);
+            for (int i = 0; i < pass.auxFbIds.length; ++i) {
+                if (pass.auxFbIds[i] != 0) {
+                    adoptChainFramebuffer(pass.auxFbIds[i], pass.auxW[i], pass.auxH[i], glless);
+                }
+            }
+        }
+    }
+
+    private void adoptChainFramebuffer(int identity, int width, int height, GllessFrameTarget glless) {
+        long[] reported = identity == 0 ? null : framebufferColorTexture(identity);
+        if (reported == null || width <= 0 || height <= 0 || identity == (int) this.mainTargetIdentity) {
+            return;
+        }
+        if (!glless.offTargetMatches(width, height)) {
+            // Never resize a live pair here: the silhouette it holds is what the chain is about to read.
+            this.chainAdoptionsRefused++;
+            record("post chain adoption refused: the off-target image is not " + width + "x" + height);
+            return;
+        }
+        if (this.offTargetClearedFrame != this.frameId) {
+            glless.clearOffTarget(this.commandBuffer);
+            this.offTargetClearedFrame = this.frameId;
+            this.offTargetClears++;
+        }
+        this.postChain.adoptTarget(identity, glless.offTargetColorImage(), glless.offTargetColorView(),
+                width, height);
+        this.chainAdoptions++;
     }
 
     public boolean celtium$presentFrame() {
