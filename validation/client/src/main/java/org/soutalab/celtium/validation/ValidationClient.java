@@ -60,6 +60,17 @@ public final class ValidationClient {
     private final int celtium$dimensionAtTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
     private final int celtium$dimension = Integer.getInteger("celtium.validation.dimension", -1).intValue();
     private boolean celtium$changedDimension;
+
+    /**
+     * The flat world's layers, as the superflat generator string.
+     * <p>
+     * Configurable because the layers decide what the scene contains and therefore how heavy it is: the version with
+     * lava and fire measured about twice the frame time of the one without, and an A/B of the same build has to be able
+     * to tell "the world got heavier" apart from "the renderer got slower". The default is the fuller world.
+     */
+    private final String celtium$worldLayers = System.getProperty("celtium.validation.worldLayers",
+            "3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,"
+            + "minecraft:leaves,minecraft:stained_glass;1;");
     private boolean celtium$rejoinPending;
     private boolean commandsRun;
     private boolean finished;
@@ -1106,7 +1117,7 @@ public final class ValidationClient {
                 if (commandBufferTargets) mc.gameSettings.hideGUI = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
-                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,minecraft:leaves,minecraft:stained_glass;1;");
+                settings.setGeneratorOptions(celtium$worldLayers);
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
             }
             // Dimension travel: the same player is moved to another dimension, which re-generates terrain with a
@@ -1213,7 +1224,7 @@ public final class ValidationClient {
                 celtium$rejoinPending = false;
                 report.addProperty("rejoinedAtTick", worldTicks);
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
-                settings.setGeneratorOptions("3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,minecraft:leaves,minecraft:stained_glass;1;");
+                settings.setGeneratorOptions(celtium$worldLayers);
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
             }
             if (mc.world == null || mc.player == null) return;
