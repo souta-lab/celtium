@@ -36,6 +36,28 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.92 **`MIRROR_GL_MIPS` を撤去**（旧経路と lab flag を削除、AMD 2場面＋Intel 1場面で退行なし）
+
+- **実施内容（17 編集・全参照を先に列挙してから同じ変更単位で）**:
+  `VulkanGlTexture` の flag 宣言・accessor・`mirroredLevels` フィールドと3使用・
+  `glLevels` とその4使用・ミラー取り込みブロック・`glLevelCount`・関連コメント2箇所・
+  `for (level = 1; level < (MIRROR_GL_MIPS ? 1 : mipLevels))`・barrier の `oldLayout` 分岐・
+  tail transition 条件、`VulkanTextureRegistry` の `mirrorsGlMips()` 三項。**残参照 0**。
+- **一度だけビルドエラー**（accessor の**メソッド本体**を残してしまい `return` 欠落）。**その場で直して緑**にした。
+- **受入（撤去後）**:
+
+| 場面 | GPU | exit | clean | verdict | 提示画像 vs GL |
+|---|---|---|---|---|---|
+| entity | AMD | 0 | true | PASSED | 1.139 / **1.62 %**（既知のばらつき 1.25〜1.61 % 内） |
+| 通常 | AMD | 0 | true | PASSED | 0.001 / **0.01 %** |
+| 通常 | **Intel** | 0 | true | PASSED（msgCount 0） | 0.016 / **0.00 %** |
+
+- **意味**: **現行の生成チェーン（＋1.0 クランプ）だけ**が残り、**測定で二十倍以上悪い併存経路**と
+  **その lab flag が消えた**（「旧経路の併存を残さない／lab flag に正当性を依存させない」）。
+  既定の画は**通常場面 AMD 0.01 % / Intel 0.00 %** を維持。
+- **残る未完**: entity 場面の **format 5（粒子系）の native 描画**（§0.78〜§0.90 で候補を消し込み済み。
+  除外で 1.25 % → 0.32 %）。**行列・ブレンド・被覆・シェーダ・SPIR-V・mip は棄却済み**。
+
 ## 0.91 **前節の mip 仮説を撤回**（既存の測定で 13.51 % と記録済み）／S23 の descriptor 疑いは**対処済み**／`MIRROR_GL_MIPS` は撤去対象
 
 - **撤回（§0.90 の「maxLod を 0 にすべき」）**: `VulkanGlTexture` に**既存の測定記録**がある。

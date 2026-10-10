@@ -63,9 +63,7 @@ public final class VulkanGlTexture {
     /** Number of mip levels of the current image; the OpenGL atlas is sampled with a mip chain. */
     private int mipLevels = 1;
     private int imageUploadsSkipped;
-    private static final boolean MIRROR_GL_MIPS = Boolean.getBoolean("celtium.vulkan.mirrorGlMips");
     /** Levels the GL texture reported on the last upload, or 0 to compute them from the size. */
-    private int mirroredLevels;
     /**
      * Bumped whenever this mirror's image and view are recreated (audit S12).
      * <p>
@@ -210,10 +208,6 @@ public final class VulkanGlTexture {
      * @throws IllegalStateException    if the GL texture has no level-0 storage, a GL call fails, or this texture was
      *                                  deleted
      */
-    /** {@return whether the mirrors copy OpenGL's own mip levels}, which needs the readback path. */
-    public static boolean mirrorsGlMips() {
-        return MIRROR_GL_MIPS;
-    }
 
     /** Full-image uploads from GL: how often, how many bytes, how long, and which GL textures they came from. */
     private static long fullUploads;
@@ -260,9 +254,7 @@ public final class VulkanGlTexture {
             for (int i = 0; i < level.width * level.height * BYTES_PER_PIXEL; i++) {
                 hash = (hash ^ (level.pixels.get(i) & 0xFF)) * 1099511628211L;
             }
-            int glLevels = MIRROR_GL_MIPS ? glLevelCount(glTextureId) : 0;
-            if (hash == lastPixelHash && level.width == width && level.height == height
-                    && (!MIRROR_GL_MIPS || glLevels == this.mipLevels)) {
+            if (hash == lastPixelHash && level.width == width && level.height == height) {
                 // The content is identical to what is already on the device: skip the copy, the command buffer and
                 // the queue drain it would otherwise cost. The light map in particular is re-read every frame but
                 // only changes when the sun moves or a torch flickers.
@@ -270,20 +262,17 @@ public final class VulkanGlTexture {
             }
             lastPixelHash = hash;
             dumpForDebugging(glTextureId, level);
-            // Mirror OpenGL's own levels rather than generating a chain: Minecraft builds the atlas's mipmaps per
-            // sprite, so a level copied from GL never mixes two sprites' colours, where a blit of the whole image does
-            // from level 1 upward. The measured difference is 7.37-8.77% for the generated chain against better than
-            // 0.21% when the sampling stays on ground the reference also uses.
-            this.mirroredLevels = MIRROR_GL_MIPS ? Math.max(1, glLevels) : 0;
-            boolean recreated = level.width != width || level.height != height
-                    || (MIRROR_GL_MIPS && this.mipLevels != Math.min(mipLevelsFor(level.width, level.height), glLevels));
+            // The chain is generated here rather than copied from OpenGL. Copying GL's own levels needs the readback path
+            // and measured 5.60%, against 0.16-0.28% for this generated chain with the sampler clamped at 1.0 - five
+            // configurations were measured and this is the best, so the copying path is gone rather than kept behind a flag.
+            boolean recreated = level.width != width || level.height != height;
             if (recreated) {
                 // The count matters as much as the size: the previous attempt kept the size-derived chain and then read
                 // levels OpenGL does not have, which measured 12.66% with ten validation errors.
                 recreateImageResources(level.width, level.height);
             }
             System.out.println("[Celtium] CELTIUM_MIRROR size=" + level.width + "x" + level.height
-                    + " glLevels=" + glLevels + " imageLevels=" + this.mipLevels
+                    + " imageLevels=" + this.mipLevels
                     + " view=" + Long.toHexString(this.view) + " image=" + Long.toHexString(this.image)
                     + " recreated=" + recreated);
             copyToImage(level.pixels, level.width, level.height, 0);
@@ -293,19 +282,6 @@ public final class VulkanGlTexture {
                     compareLevelZeroWithGl(glTextureId);
                 } catch (RuntimeException | LinkageError error) {
                     System.out.println("[Celtium] CELTIUM_LEVEL0 comparison failed: " + error);
-                }
-            }
-            if (MIRROR_GL_MIPS) {
-                for (int l = 1; l < Math.min(this.mipLevels, glLevels); l++) {
-                    GlLevel sub = readGlLevel(glTextureId, glTextureTarget, l);
-                    try {
-                        // The level's own dimensions, not a shift of level 0's: the size a level actually has is the only
-                        // thing the copy region can be built from, and reading it is free because the read already
-                        // queried it.
-                        copyToImage(sub.pixels, sub.width, sub.height, l);
-                    } finally {
-                        MemoryUtil.memFree(sub.pixels);
-                    }
                 }
             }
         } finally {
@@ -384,7 +360,6 @@ public final class VulkanGlTexture {
             this.imageUploadsSkipped++;
             return false;
         }
-        this.mirroredLevels = 0;
         if (pixelWidth != width || pixelHeight != height) {
             recreateImageResources(pixelWidth, pixelHeight);
         }
@@ -486,10 +461,6 @@ public final class VulkanGlTexture {
 
     private void createImageResources(int newWidth, int newHeight) {
         this.mipLevels = mipLevelsFor(newWidth, newHeight);
-        if (this.mirroredLevels > 0) {
-            // The count OpenGL reports wins, capped by what this size can have: the chain is a copy of that one.
-            this.mipLevels = Math.min(this.mipLevels, this.mirroredLevels);
-        }
         if (newWidth <= 0 || newHeight <= 0) {
             throw new IllegalArgumentException("A mirrored texture size of " + newWidth + "x" + newHeight
                     + " pixels is not usable");
@@ -739,10 +710,10 @@ public final class VulkanGlTexture {
         }
         int levelWidth = pixelWidth;
         int levelHeight = pixelHeight;
-        // Off while MIRROR_GL_MIPS: generating the chain here averaged texels across sprite borders, which is why
+        // Generating the chain here used to average texels across sprite borders, which is why
         // sampling it deeply measured 7.37-8.77% against the reference while OpenGL's own per-sprite levels measure
         // better. uploadFromGlTexture copies each of GL's levels instead, so this loop exists only for the other mode.
-        for (int level = 1; level < (MIRROR_GL_MIPS ? 1 : this.mipLevels); level++) {
+        for (int level = 1; level < this.mipLevels; level++) {
             int nextWidth = Math.max(1, levelWidth / 2);
             int nextHeight = Math.max(1, levelHeight / 2);
 
@@ -920,15 +891,14 @@ public final class VulkanGlTexture {
                     // Mirrored levels are copied, not blitted, so the image is still in TRANSFER_DST when they are done -
                     // declaring TRANSFER_SRC here is what validation rejected with fifteen errors, the same class of
                     // mistake the Intel run caught in the mip chain (audit S23).
-                    .oldLayout(MIRROR_GL_MIPS ? this.currentLayout
-                            : (this.mipLevels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : this.currentLayout))
+                    .oldLayout(this.mipLevels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : this.currentLayout)
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             // The tail transition belongs to whichever call finishes the chain: the last mirrored level, or level 0
                 // when the chain is generated by blitting below. Getting this wrong left images in a transfer layout -
                 // ten validation errors and no SHADER_READ_ONLY for the atlas (audit S23).
                 // A patch writes level 0 of a multi-level image, so it does its own transition; a full upload keeps the original
                 // condition, whose barrier covers the whole chain - which is what makes every level end up sampled.
-                if (preserve || level == this.mipLevels - 1 || (level == 0 && !MIRROR_GL_MIPS)) {
+                if (preserve || level == this.mipLevels - 1 || level == 0) {
                     if (preserve) {
                         barrier.get(0).oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
                     }
@@ -1143,18 +1113,6 @@ public final class VulkanGlTexture {
     }
 
     /** How many levels the GL texture actually has, from its own {@code GL_TEXTURE_MAX_LEVEL}. */
-    private static int glLevelCount(int glTextureId) {
-        int previousUnit = glGetInteger(GL_ACTIVE_TEXTURE);
-        int previousBinding = glGetInteger(GL_TEXTURE_BINDING_2D);
-        try {
-            glBindTexture(GL_TEXTURE_2D, glTextureId);
-            int maxLevel = glGetTexParameteri(GL_TEXTURE_2D, 0x813D);
-            return maxLevel < 0 ? 1 : maxLevel + 1;
-        } finally {
-            glBindTexture(GL_TEXTURE_2D, previousBinding);
-            glActiveTexture(previousUnit);
-        }
-    }
 
     private static GlLevel readGlLevel(int glTextureId, int glTextureTarget, int level) {
         if (glTextureTarget != GL_TEXTURE_2D) {
