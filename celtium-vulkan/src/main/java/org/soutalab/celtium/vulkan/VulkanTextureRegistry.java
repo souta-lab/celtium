@@ -181,15 +181,28 @@ public final class VulkanTextureRegistry {
             skipDecisionLog(glTextureId, "not fully initialized", false);
             return false;
         }
+        // The image's own fact decides in BOTH configurations, and it is asked first: the set above is bookkeeping and
+        // the generation below speaks about announced pixels, but neither says that the image a descriptor samples has
+        // ever received its whole content. The block atlas is the case that proves it: it is announced one sprite at a
+        // time, so an announced generation exists long before any whole supply, and the directly held mirror was then
+        // left with a patch (or with nothing at all) while this method answered "the readback is unnecessary" - the
+        // terrain sampled undefined texels and drew them as black. A mirror whose whole content never arrived may not
+        // have its supply skipped; once it has, the generation comparison below is the economy it was meant to be.
+        Entry entry = this.entries.get(id);
+        if (entry == null || !entry.texture.hasFullContent()) {
+            skipDecisionLog(glTextureId, "the mirror holds no whole content", false);
+            return false;
+        }
         if (CeltiumGlStub.isInstalled()) {
-            Entry entry = this.entries.get(id);
-            if (entry != null && entry.texture.hasFullContent()) {
-                skipDecisionLog(glTextureId, "stub mirror holds whole content", true);
-                return true;
-            }
+            // Without a context the captured surface is the only source, and it is already in the image.
+            skipDecisionLog(glTextureId, "stub mirror holds whole content", true);
+            return true;
         }
         Integer applied = this.announcedGeneration.get(id);
         if (applied == null) {
+            // Whole content is present and nothing was announced: kept as it was. Skipping here would also skip the
+            // refresh of a texture the game writes without announcing (a rendered framebuffer), and that is a separate
+            // question from the one this method answers.
             skipDecisionLog(glTextureId, "no announced application", false);
             return false;
         }

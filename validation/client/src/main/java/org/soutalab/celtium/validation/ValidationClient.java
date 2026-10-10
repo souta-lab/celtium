@@ -2853,6 +2853,14 @@ public final class ValidationClient {
                 error.printStackTrace();
             }
         }
+        // Measured again here, at the end of the run, because the presented image the capture asked for is written by
+        // the next present: the capture-time check reads whatever dump existed before it, which is the early one and
+        // is still a loading frame. This is the same check on the same file after the write has landed.
+        if (celtium$glLessInstalled()) {
+            celtium$presentedImageFailures = 0;
+            celtium$checkPresentedImage(mc, worldFrames);
+            report.addProperty("status", celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
+        }
         try {
             Path output = mc.gameDir.toPath().resolve("logs/celtium-validation.json");
             Files.createDirectories(output.getParent());

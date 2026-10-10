@@ -121,12 +121,33 @@ public final class VulkanGlTexture {
      */
     private static final String MIRROR_POISON = System.getProperty("celtium.vulkan.mirrorPoison");
 
+    /**
+     * GL names whose mirror is filled with ONE flat colour, as {@code id=AARRGGBB,id=AARRGGBB}.
+     * <p>
+     * Not the same instrument as {@link #MIRROR_POISON}: that one is a per-texel checkerboard of the colour and its
+     * inverse, which is what detects a degenerate texture mapping but also lets the sample land on the inverse -
+     * and the inverse of white is black, so a light map poisoned that way can zero the whole shading term and hide the
+     * answer. This one writes the same colour over every texel of level 0 (the mip chain is blitted from it, so every
+     * level is flat too) and is sticky across every write path, which is what makes "does this draw sample that image"
+     * a question with only two possible answers.
+     */
+    private static final String MIRROR_POISON_FLAT = System.getProperty("celtium.vulkan.mirrorPoisonFlat");
+
+    /** {@return the one colour to fill this texture's mirror with, or 0 to write the real pixels}. */
+    private static int flatPoisonFor(int glTextureId) {
+        return parseColourFor(MIRROR_POISON_FLAT, glTextureId);
+    }
+
     /** {@return the flat colour to write instead of this texture's pixels, or 0 to write the real ones}. */
     private static int poisonFor(int glTextureId) {
-        if (MIRROR_POISON == null || MIRROR_POISON.isEmpty()) {
+        return parseColourFor(MIRROR_POISON, glTextureId);
+    }
+
+    private static int parseColourFor(String spec, int glTextureId) {
+        if (spec == null || spec.isEmpty()) {
             return 0;
         }
-        for (String part : MIRROR_POISON.split(",")) {
+        for (String part : spec.split(",")) {
             int equals = part.indexOf('=');
             if (equals <= 0) {
                 continue;
@@ -144,6 +165,29 @@ public final class VulkanGlTexture {
 
     /** The flat colour the last upload of this object was told to write, or 0 for the real pixels. */
     private int poisonColour;
+
+    /** The one colour this object's mirror is filled with, or 0 for the real pixels; sticky like {@link #poisonColour}. */
+    private int flatPoisonColour;
+
+    /** GL names whose mirror is filled with an x/y coordinate ramp instead of their pixels; see copyToImage. */
+    private static final java.util.Set<Integer> encodeIds = parseIds(System.getProperty("celtium.vulkan.mirrorEncode"));
+    /** The GL name of this object's last upload, so the encoding rule can be applied to it. */
+    private int encodeLabel = -1;
+
+    private static java.util.Set<Integer> parseIds(String spec) {
+        java.util.Set<Integer> ids = new java.util.HashSet<Integer>();
+        if (spec == null || spec.isEmpty()) {
+            return ids;
+        }
+        for (String part : spec.split(",")) {
+            try {
+                ids.add(Integer.valueOf(Integer.parseInt(part.trim())));
+            } catch (NumberFormatException ignored) {
+                // A malformed entry names no texture.
+            }
+        }
+        return ids;
+    }
 
     /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
     /** The layout the image is actually in; barriers used to declare one the image was not in. */
@@ -422,6 +466,8 @@ public final class VulkanGlTexture {
         // sources return the same GlLevel and every line after this one is shared rather than duplicated.
         final boolean fromCapture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled();
         this.poisonColour = poisonFor(glTextureId);
+        this.flatPoisonColour = flatPoisonFor(glTextureId);
+        this.encodeLabel = glTextureId;
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
             long hash = 1469598103934665603L;
@@ -542,9 +588,9 @@ public final class VulkanGlTexture {
 
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
         requireAlive();
-        // The poison is STICKY: it is set by the GL-name entry point and never cleared, so a later write through this
-        // path - the announced image, the captured surface - cannot put the real pixels back and make a poisoned run
-        // look like a run that never sampled this image. Measured at draw time is the only measurement that counts.
+        // The poisons are STICKY: they are set by the GL-name entry point and never cleared, so a later write through
+        // this path - the announced image, the captured surface - cannot put the real pixels back and make a poisoned
+        // run look like a run that never sampled this image. Measured at draw time is the only measurement that counts.
         requireAlive();
         long hash = 1469598103934665603L;
         int stride = Math.min(rgba.remaining() / Math.max(1, pixelHeight), pixelWidth * BYTES_PER_PIXEL);
@@ -1259,7 +1305,34 @@ public final class VulkanGlTexture {
         // buffer into device visible memory without an intermediate Java array. The row order is kept as GL
         // returned it; a vertical flip here made the whole terrain black, so the orientation question is not
         // settled and must be answered with a controlled pattern instead of by flipping this copy.
-        if (this.poisonColour != 0) {
+        if (this.flatPoisonColour != 0) {
+            // One colour over every texel: the frame then answers "does this draw sample this image" with no masking
+            // case, because there is no second colour to land on.
+            int colour = this.flatPoisonColour;
+            for (long offset = 0; offset < bytes; offset += BYTES_PER_PIXEL) {
+                MemoryUtil.memPutByte(stagingAddress + offset, (byte) (colour >> 16));
+                MemoryUtil.memPutByte(stagingAddress + offset + 1, (byte) (colour >> 8));
+                MemoryUtil.memPutByte(stagingAddress + offset + 2, (byte) colour);
+                MemoryUtil.memPutByte(stagingAddress + offset + 3, (byte) (colour >>> 24));
+            }
+        } else if (encodeIds.contains(Integer.valueOf(this.encodeLabel))) {
+            // Coordinate encoding: R and G carry the sampled texel's position in the atlas, so the frame reads back the
+            // texture coordinates the shader used. A single flat colour cannot say whether a UV is degenerate or merely
+            // landing on an empty texel, and that is the difference between a broken vertex attribute and an empty atlas.
+            int rowBytes = pixelWidth * BYTES_PER_PIXEL;
+            for (int y = 0; y < pixelHeight; y++) {
+                long rowBase = stagingAddress + (long) y * rowBytes;
+                int g = pixelHeight > 1 ? (y * 255) / (pixelHeight - 1) : 0;
+                for (int x = 0; x < pixelWidth; x++) {
+                    int r = pixelWidth > 1 ? (x * 255) / (pixelWidth - 1) : 0;
+                    long offset = rowBase + (long) x * BYTES_PER_PIXEL;
+                    MemoryUtil.memPutByte(offset, (byte) r);
+                    MemoryUtil.memPutByte(offset + 1, (byte) g);
+                    MemoryUtil.memPutByte(offset + 2, (byte) 0x80);
+                    MemoryUtil.memPutByte(offset + 3, (byte) 0xFF);
+                }
+            }
+        } else if (this.poisonColour != 0) {
             // A per-texel checkerboard of the colour and its inverse rather than the pixels: the frame then says both
             // whether anything samples this image and whether its texture coordinates vary across it. One flat colour
             // could not tell a correct mapping into this image apart from a mapping that is degenerate and lands on a

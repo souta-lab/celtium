@@ -143,6 +143,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final long[] readbackOffsets = new long[READBACK_SLOTS];
     /** The region the remembered reads come from; a frame's first draws all belong to the same one in practice. */
     private RegionResources readbackFrom;
+    /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
+    private final RegionResources[] readbackRegions = new RegionResources[READBACK_SLOTS];
+    private int readbackRefusals;
+    private int readbackRegionsUsed;
 
     private long readbackMemory;
     private long readbackMapped;
@@ -728,6 +732,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     private int presentHookCalls;
+    /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
+    private java.nio.file.Path presentedDumpPath;
+    /** How many bound-pipeline/descriptor lines have been recorded; bounded so a run cannot flood. */
+    private int boundHandleLogs;
+    /** How many lightmap identity lines have been recorded; bounded. */
+    private int lightmapIdentityLogs;
     /** How often the camera seed was skipped because there is no context to read it from. */
     private int cameraSetupSeedsSkipped;
     /** identity -> {colour texture name, texture width, texture height}, reported at each framebuffer bind. */
@@ -5128,6 +5138,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             long uniformOffset = writeUniforms(region, pass, camera);
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
+            if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
+                // Which pipeline and descriptor set the draw will actually use, next to the views the backend handed
+                // bindTextures. If the set printed here is not the one that was written, the terrain samples another
+                // image - and that is invisible from the image's content, however correct the content is.
+                this.boundHandleLogs++;
+                record("bound draw: pass=" + nameOf(pass) + " pipeline=" + Long.toHexString(pipeline.pipelineHandle())
+                        + " set=" + Long.toHexString(pipeline.descriptorSetHandle())
+                        + " atlasView=" + Long.toHexString(this.atlasTexture.view())
+                        + " atlasKey=" + Long.toHexString(this.atlasTexture.key())
+                        + " lightmapView=" + (this.lightmapTexture == null ? "none"
+                                : Long.toHexString(this.lightmapTexture.view())));
+            }
             if (this.groupDepthRowsSeen < 2) {
                 // The depth row of the projection each group draws with, plus the model-view translation, so a model group and
                 // an immediate group can be told apart and compared: the order instrument said the terrain ran first, so the
@@ -5197,9 +5219,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         batch.baseVertex(command), 0);
                 if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < READBACK_SLOTS) {
                     // Only the address is remembered here: a buffer copy is illegal inside a render pass, so the copies
-                    // are issued after vkCmdEndRenderPass for every remembered draw.
+                    // are issued after vkCmdEndRenderPass for every remembered draw. The region travels with the offset
+                    // because a single field was overwritten by every draw, so every slot was read back from whichever
+                    // region happened to be drawn last - which is why the decoded vertices could never be trusted.
                     this.readbackOffsets[this.readbackSlots] = (long) batch.baseVertex(command) * this.commonVertexStride;
-                    this.readbackFrom = resources;
+                    this.readbackRegions[this.readbackSlots] = resources;
                     this.readbackSlots++;
                 }
                 this.lastDrawCommands++;
@@ -5234,10 +5258,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.timestampSlots++;
         }
         // A buffer copy is only legal outside a render pass instance, so every remembered draw is copied here.
-        if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackFrom != null) {
+        if (VERTEX_DIAGNOSTICS && !this.readbackDone) {
             for (int slot = 0; slot < this.readbackSlots; slot++) {
-                recordReadback(this.readbackFrom, this.readbackOffsets[slot], slot);
+                RegionResources region = this.readbackRegions[slot];
+                if (region == null) {
+                    continue;
+                }
+                if (region.vertexArena == null
+                        || this.readbackOffsets[slot] + this.commonVertexStride > region.vertexArena.deviceAllocatedMemoryL()) {
+                    // The slot names a range the arena does not hold: copying it is the validation error this used to
+                    // produce (VUID-vkCmdCopyBuffer-srcOffset-00113). Said rather than issued.
+                    this.readbackRefusals++;
+                    continue;
+                }
+                recordReadback(region, this.readbackOffsets[slot], slot);
             }
+            this.readbackRegionsUsed += this.readbackSlots;
+            this.readbackDone = true;
         }
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
     }
@@ -6079,6 +6116,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * screen, the world, or a frame that never got drawn.
      */
     private void dumpFrameIfRequested(int presented) {
+        // Keep the fixture's own dump fresh as well. It asks for it once, and the write happens at the next present;
+        // when the run ends before that present - which is what a capture followed by a shutdown does - the file on
+        // disk is still the early one, and the picture assertions measure a frame from before the world existed.
+        // Re-asking on a cadence bounds the age instead of depending on where the run happens to stop.
+        if (this.presentedDumpPath != null && presented % 40 == 0) {
+            this.swapchain.requestPresentedImageDump(this.presentedDumpPath);
+        }
         String directory = System.getProperty("celtium.vulkan.frameDumpDir");
         if (directory == null) {
             return;
@@ -6141,6 +6185,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         this.swapchain.requestPresentedImageDump(path);
+        this.presentedDumpPath = path;
         this.presentedImageDumpRequested = true;
         return true;
     }
@@ -6483,7 +6528,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     int[] size = textureSize(lightmapId);
                     this.lightmapTexture = celtium$registry().imageFor(lightmapId, size[0], size[1], false);
                 }
-                this.celtium$establishAtlasImage(lightmapId, this.lightmapTexture, "lightmap");
+                if (this.lightmapIdentityLogs < 4) {
+                    this.lightmapIdentityLogs++;
+                    org.soutalab.celtium.vulkan.VulkanGlTexture registryEntry =
+                            celtium$registry().get(lightmapId);
+                    record("lightmap identity: glId=" + lightmapId
+                            + " boundView=" + Long.toHexString(this.lightmapTexture.view())
+                            + " boundFull=" + this.lightmapTexture.hasFullContent()
+                            + " registryView=" + (registryEntry == null ? "none"
+                                    : Long.toHexString(registryEntry.view()))
+                            + " registryFull=" + (registryEntry == null ? "none"
+                                    : Boolean.toString(registryEntry.hasFullContent()))
+                            + " same=" + (registryEntry == this.lightmapTexture));
+                }
+                // The light map is supplied by the same call the atlas uses rather than through the announcement
+                // short-circuit: the two are 16x16 and 512x512, but what makes the difference is the path, and the
+                // measured one is this one. The announcement path (canSkipReadback) leaves the light map's image
+                // unsampleable - a device dump of it shows the noon gradient (nonZero=1024, min=14) while the terrain
+                // samples black from it, and forcing the light term to white restores the whole picture.
+                this.lightmapTexture.uploadFromGlTexture(lightmapId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                if (this.textureRegistry != null) {
+                    this.textureRegistry.markFullyInitialized(lightmapId);
+                }
                 this.lightmapSourceGlId = lightmapId;
                 int[] lightmapSize = textureSize(lightmapId);
                 record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);

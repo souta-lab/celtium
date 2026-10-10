@@ -684,6 +684,16 @@ public final class VulkanTerrainPipeline {
      *                               alignment or range rules (fail here instead of letting the validation layers or
      *                               the GPU produce undefined fog and region offsets)
      */
+    /** The pipeline handle this object created; for the audit that compares what is bound with what was written. */
+    public long pipelineHandle() {
+        return this.pipeline;
+    }
+
+    /** The descriptor set this object writes and binds; see {@link #pipelineHandle()}. */
+    public long descriptorSetHandle() {
+        return this.descriptorSet;
+    }
+
     public void bindDescriptors(VkCommandBuffer commandBuffer, long uniformBufferOffset) {
         requireAlive();
         if (commandBuffer == null) {
