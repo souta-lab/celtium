@@ -260,7 +260,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.
             this.diagnostics.add("acceptance: refusedBeforeAppend=" + this.refusedBeforeAppend
-                    + " modelDraws=" + this.modelDraws
+                    + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
+                + " descriptorRequests=" + VulkanDescriptorFault.requests()
+                + " modelDraws=" + this.modelDraws
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
@@ -1735,7 +1737,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, ui.renderPass(),
                         false, 0, 0, false, false, false);
             }
-            boolean ok = this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture) != 0L;
+            boolean ok = celtium$descriptorSet(
+                    this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture), "probe") != 0L;
             this.particleDescriptorFailureReason = this.descriptorProbe.lastFailure();
             return ok;
         } catch (Throwable error) {
@@ -2773,17 +2776,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             VulkanImmediateParticlePipeline value = this.particlePipelineCache.computeIfAbsent(particleKey,
                     k -> VulkanImmediateParticlePipeline.create(this.context, pass, true,
                             VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false));
-            descriptor = value.descriptorSetFor(texture, this.lightmapTexture); pipeline = value;
+            descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == 4) {
             VulkanImmediateItemPipeline value = this.itemPipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediateItemPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
                             state[3] != 0, state[4] != 0, state[5] != 0));
-            descriptor = value.descriptorSetFor(texture); pipeline = value;
+            descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else if (format == 3) {
             VulkanImmediateBlockPipeline value = this.blockPipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediateBlockPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
                             state[3] != 0, state[4] != 0, state[5] != 0));
-            descriptor = value.descriptorSetFor(texture, this.lightmapTexture); pipeline = value;
+            descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format >= 2) {
             java.util.Map<Long, VulkanImmediateTexturePipeline> cache = format == 9 ? this.positionTexNormalPipelineCache
                     : format == 8 ? this.positionTexColorNormalPipelineCache : format == 7 ? this.positionOnlyPipelineCache
@@ -2802,7 +2805,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
                 cache.put(key, value);
             }
-            descriptor = value.descriptorSetFor(texture); pipeline = value;
+            descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else {
             pipeline = this.immediatePipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediatePipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
@@ -4594,6 +4597,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Whether captured display lists are drawn natively (lab switch; off keeps GL replaying them). */
     private static final boolean MODEL_DRAW = Boolean.getBoolean("celtium.vulkan.modelDraw");
+
+    /**
+     * Runs a descriptor-set request through the fault switch, so the refusal path can be exercised on a real GPU.
+     * <p>
+     * The value the pipelines return is what the callers already test against zero, so an injected failure is
+     * indistinguishable from a driver refusal - which is exactly the case this is meant to cover.
+     */
+    private static long celtium$descriptorSet(long descriptorSet, String site) {
+        if (VulkanDescriptorFault.shouldFail(site)) {
+            return 0L;
+        }
+        return descriptorSet;
+    }
 
     private boolean ensureFrameTarget() {
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
