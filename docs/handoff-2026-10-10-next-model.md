@@ -4,7 +4,8 @@
 > 両者が食い違う場合は **plan.md と最新 HEAD が勝つ**。過去の経緯は `docs/history/`。
 >
 > 作業ディレクトリ：`/home/s0u7a/projects/celtium`（`main`、`origin` = https://github.com/souta-lab/celtium）
-> 引き継ぎ時 HEAD：`ab11e553a`（作業ツリーはクリーン。`git status --short` が空であることを最初に確認する）
+> 引き継ぎ時 HEAD：`ab11e553a`（その後 `22cf97647` 証拠整理、`834e6ecc9` §0.103 提示 blit 契約まで進んだ。
+> `git status --short` が空であることを最初に確認する）
 
 ---
 
@@ -15,9 +16,8 @@
 3. `docs/goal.md` の **【現在の到達点と未完】** を読む。
 4. 下の §5「次の一手」から1つ選び、**§8 の作業規律**に従って実装する。
 
-**goal の状態**：`goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`、**revision 50 / phase `paused` / activation `disarmed` / roundsStarted 636 / max 1000**。
-→ 続行するには**人間の「継続して」等の指示**が必要（`update_goal` の `action: resume`）。**勝手に complete / blocked にしない。**
-→ objective の【現在の到達点と未完】は 636 ラウンド時点の記述で、**一部が古い**（§7 に差分を列挙）。
+**goal の状態**：`goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`、**revision 54 / phase `active` / activation `armed` / roundsStarted 636 / max 1000**（2026-10-10 後半に人間の継続指示で再開し、objective を `docs/goal.md` 本文へ同期済み）。
+→ もし `disarmed` に戻っていたら、続行には**人間の「継続して」等の指示**が必要（`update_goal` の `action: resume`）。**勝手に complete / blocked にしない。**
 
 ---
 
@@ -80,11 +80,14 @@ timeout 900 python3 scripts/prism_validation.py \
 - `.celtium-work/runtime/<run>/logs/celtium-validation.json` → `rendererDebug`（**10行だけ**。拒否タリーは入らない）
 - `.celtium-work/runtime/<run>/screenshots/` → `celtium-validation.png`（GL が描いた絵）と `celtium-presented.png`（Vulkan が提示した絵）
 
-**画像比較の作法**：`presented` は**上下反転**して `validation` と比べる。
+**画像比較の作法（§0.103 で変更済み・重要）**：`celtium-presented.png` は**正立**になった。比較は**反転なし**で行う。
+resize run など「描画領域がウィンドウより小さい」場合は、提示画像の**左下 `dw×dh` 領域**（この fixture では `[H-h:H, 0:w]`）を
+スクリーンショットと比べる。旧「反転して比べる」は提示が逆さだった名残で、以降の run には適用しない。
 
 ```python
 P = np.asarray(Image.open(d+'/celtium-presented.png').convert('RGB'), dtype=float)
-S = np.asarray(Image.open(d+'/celtium-validation.png').convert('RGB').transpose(Image.FLIP_TOP_BOTTOM), dtype=float)
+S = np.asarray(Image.open(d+'/celtium-validation.png').convert('RGB'), dtype=float)
+# drawable < window の run では P = P[H-h:H, 0:w]（左下アンカー領域）に切り出してから比べる
 diff = np.abs(P-S); mask = (diff.max(axis=2) > 8)   # >8 が異なる画素の割合を報告する
 ```
 
@@ -98,7 +101,7 @@ diff = np.abs(P-S); mask = (diff.max(axis=2) > 8)   # >8 が異なる画素の�
 | **ゲームが Vulkan 所有 color/depth に直接描画（adoption）** | **既定・両GPU受入** | AMD `presentedFromVulkan=889/901`、同一vendor GL 経路と 0.072/0.05 %。Intel PASSED・0.026/0.02 % |
 | 既定フレームバッファ合成の native 化 | **受入済** | `defaultFramebufferCompositesTaken=902/run`（AMD） |
 | **通常場面（実体なし）の画素一致** | **両GPU受入** | 提示画像 vs GL の絵 = **AMD 0.001 / 0.01 %**、**Intel 0.000〜0.016 / 0.00 %** |
-| **resize（項目7）** | **本セッションで修正・受入** | §4 参照。`CELTIUM_STALL` 0件・提示 843・提示画像も書かれる・退行なし（847） |
+| **resize（項目7）** | **両GPU受入** | §0.102 で恒久 stall を解消（期間契約）、§0.103 で提示 blit を GL composite 契約へ。resize run で描画領域 vs screenshot（反転なし）= AMD 0.001 %・Intel 0.000 %、stall 0、退行 0.000 % |
 | End の dimension | 両GPU PASSED | capture 時 dimension 1 |
 | 失敗経路（fence timeout / submit 失敗） | 両方 clean・VUID 0 | `stalledStops=1` / `stalledTeardownSkips=548`、資源は解放しない設計 |
 | **entity 場面（モブあり）の残差** | **format 5（粒子系）に帰属・未解決** | AMD 1.25 / 1.43 / 1.62 %、Intel 1.33 %。**format 5 を除外すると AMD 0.32 %・Intel 0.36 %** |
@@ -150,13 +153,14 @@ bind を塞いだら**次は `GlStateManager.clear` 経由の flush が同じ待
 
 ## 5. 未完了・次の一手（優先順）
 
-### 5.1 最優先：resize 後の**提示画像が 1280x720 のまま**
-stall は解消したが、resize run で `celtium-presented.png` が **1280x720**、スクリーンショットが **1024x640** のまま。
-＝ **提示（swapchain 側）がまだ旧サイズの内容**である。ウィンドウは 1024x640 なのに 1280x720 を出しているなら、
-**伸縮・切れ**が起きている。
-- 見る場所：`ensureSwapchain()` の **out-of-date 判定**、提示画像の寸法がどこで決まるか、
-  `VulkanFrameTarget` の swapchain 再作成がウィンドウサイズに追随しているか。
-- 受入：resize run で提示画像が **1024x640** になり、スクリーンショットと比較できること。
+### 5.1 ~~resize 後の提示画像が 1280x720 のまま~~ → **解決済み（§0.103・HEAD `834e6ecc9`）**
+**実ウィンドウは 1280x720 のまま**なので提示画像が 1280x720 なのは正しい（fixture の `mc.resize()` は
+ゲームの framebuffer だけを 1024x640 にする）。実害は別にあった：**フレームを swapchain 全面へ伸縮 blit**、
+swapchain 作成が **1280x720 ハードコード＋ドライバの OOD 報告頼み**、そして提示画像が texel 順序のまま
+**実ウィンドウでは上下反転**していたこと。
+→ **修正**：提示 blit を GL composite の配置契約（**正立・1:1・左下アンカー・window clip**）へ揃え、
+swapchain extent は surface の実効 extent へ**フレーム毎に照合して即再作成**。resize run で描画領域
+vs screenshot（反転なし）＝ **AMD 0.001 %・Intel 0.000 %**、退行 **0.000 %**、stall 0、両GPU PASSED/clean/VUID 0。
 
 ### 5.2 entity 場面の format 5（粒子系）native 描画の残差
 - **帰属は確定**：format 5 を除外すると AMD 1.25〜1.62 % → **0.32 %**、Intel 1.33 % → **0.36 %**。
@@ -300,19 +304,12 @@ spectator creeper/spider/enderman 等。**存在する pass を一括で未実�
 
 ---
 
-## 10. objective の古い記述（差分）
+## 10. objective の古い記述（差分）→ **同期済み**
 
-`docs/goal.md` の【現在の到達点と未完】は 636 ラウンド時点の記述で、下記が**古い**。
-（plan.md は §0.102 まで更新済み。goal.md も同セッションで一度同期したが、その後さらに進んだ分がある）
-
-- 「Nether は両GPU PASSED」→ **誤り（既に goal 内で訂正済み）**。正しくは**未成立**。
-- format 5 の残差・entity 場面の帰属（除外で AMD 0.32 % / Intel 0.36 %）→ **未記載**。
-- model 経路 `V_now × C_compile⁻¹` で 2.19 % → **未記載**。
-- `MIRROR_GL_MIPS` 撤去 → **未記載**。
-- **resize の恒久 stall を修正・受入したこと（§0.102）** → **未記載**（これが直近の到達点）。
-- 「提示画像が 1280x720 のまま」という**新しい未解決点** → 未記載。
-
-→ **次に goal を更新するときは、plan.md §0.100〜§0.102 と §3 の表を正とする。**
+`docs/goal.md` は HEAD `834e6ecc9` 時点で plan.md §0.103 まで同期されており、
+goal objective も revision 54 で `docs/goal.md` 本文と一致させた。
+この節に挙げていた差分（format 5 帰属・model 2.19 %・`MIRROR_GL_MIPS` 撤去・resize 修正・提示サイズ問題）は
+**すべて記載済み**なので、以降は plan.md と goal.md を正とする。
 
 ---
 
