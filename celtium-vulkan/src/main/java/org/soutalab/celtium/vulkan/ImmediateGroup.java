@@ -33,6 +33,12 @@ public final class ImmediateGroup {
 
     /** Group colour for the push block; {@code null} means 1.0 - model-mesh groups carry none. */
     public float[] color;
+    /**
+     * The texture-environment constant when this group must draw through the GL_COMBINE interpolate the fixed
+     * pipeline would have used - the hurt flash and the team outline are the callers. {@code RGBA}, {@code null}
+     * when no combine was in effect. The push block encodes it as a negative alpha reference plus the RGB slots.
+     */
+    public float[] combineColor;
     /** Blend factors when the group needs them for the pipeline selection. */
     public int blendSrc;
     public int blendDst;

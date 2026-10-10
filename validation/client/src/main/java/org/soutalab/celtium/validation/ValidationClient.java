@@ -1463,7 +1463,17 @@ public final class ValidationClient {
                 // for the entity scene, in which case the mobs above stay and the capture is a coverage capture.
                 entitiesRemoved += removeNonPlayerEntities(mc);
             }
-            if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
+            // The hurt flash: keeping hurtTime non-zero on the kept mobs makes their second model pass run under the
+        // texture-env interpolate the flash is drawn through, which is the state the coverage check wants exercised.
+        if (Boolean.getBoolean("celtium.validation.hurtEntities") && worldTicks >= 150 && worldTicks <= 205) {
+            for (Object obj : mc.world.loadedEntityList) {
+                if (obj instanceof net.minecraft.entity.EntityLivingBase && obj != mc.player) {
+                    ((net.minecraft.entity.EntityLivingBase) obj).hurtTime = 10;
+                    ((net.minecraft.entity.EntityLivingBase) obj).maxHurtTime = 10;
+                }
+            }
+        }
+        if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
                 // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
                 flickerPinned = pinLightmapFlicker(mc);

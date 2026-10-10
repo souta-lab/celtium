@@ -829,6 +829,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int injectedIdleFailures;
     /** One-shot count for the injected device-lost fence result. */
     private int injectedDeviceLosses;
+    /** Caps the env-combine report so a hurt mob does not log every frame. */
+    private int envCombineLogged;
     private boolean blendObserved;
     private int observedBlendSrc = -1;
     private int observedBlendDst = -1;
@@ -1518,8 +1520,40 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * The mesh is borrowed: the captured model meshes live for the whole run and are drawn every frame, so the retire
      * drain must not free them.
      */
+    /**
+     * The texture-environment constant the fixed pipeline would mix in on the lightmap unit, or {@code null} when the
+     * environment is not set to {@code GL_INTERPOLATE}: the hurt flash and the team outline are the two vanilla
+     * effects that draw the same model twice through this combine, and the constant is their colour. Asked of GL at
+     * replay time because the caller sets it per render - it is not part of the captured list.
+     */
+    private float[] celtium$envCombineColor() {
+        try {
+            int active = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+            org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE1);
+            int combine = org.lwjgl.opengl.GL11.glGetTexEnvi(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
+                    org.lwjgl.opengl.GL13.GL_COMBINE_RGB);
+            float[] color = null;
+            if (combine == org.lwjgl.opengl.GL13.GL_INTERPOLATE) {
+                java.nio.FloatBuffer env = org.lwjgl.BufferUtils.createFloatBuffer(4);
+                org.lwjgl.opengl.GL11.glGetTexEnvfv(org.lwjgl.opengl.GL11.GL_TEXTURE_ENV,
+                        org.lwjgl.opengl.GL11.GL_TEXTURE_ENV_COLOR, env);
+                color = new float[] { env.get(0), env.get(1), env.get(2), env.get(3) };
+                if (this.envCombineLogged < 6) {
+                    this.envCombineLogged++;
+                    System.out.println("[Celtium] CELTIUM_ENV_COMBINE rgba="
+                            + round3(color[0]) + "," + round3(color[1]) + "," + round3(color[2])
+                            + "," + round3(color[3]));
+                }
+            }
+            org.lwjgl.opengl.GL13.glActiveTexture(active);
+            return color;
+        } catch (RuntimeException | LinkageError error) {
+            return null;
+        }
+    }
+
     private boolean celtium$enqueueModelMesh(VulkanDynamicMesh mesh, int texture, int[] state, long key,
-            float[] projection, float[] modelView, int quads) {
+            float[] projection, float[] modelView, int quads, float[] combineColor) {
         if (mesh == null || mesh.isEmpty()) {
             return false;
         }
@@ -1548,6 +1582,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         ImmediateGroup group = new ImmediateGroup(mesh, projection, modelView,
                 VulkanImmediateFormats.POSITION_TEX, texture, key, state, target);
         group.prepared = prepared;
+        group.combineColor = combineColor;
         group.batches = quads;
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
@@ -5429,7 +5464,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + round3(projectionNow[10]) + ")");
 
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
-                    mesh.indexCount() / 6)) {
+                    mesh.indexCount() / 6, celtium$envCombineColor())) {
                 this.modelDrawRefusals++;
                 this.modelLastRefusal = "could not queue list " + listId;
                 return false;
@@ -6181,11 +6216,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 PreparedImmediate prepared = group.prepared;
                 pushCombinedMatrixInto(group.projection, group.modelView, push, 0);
                 int[] state = group.state;
-                push.putFloat(112, Float.intBitsToFloat(state[6]));
-                float[] color = group.color;
-                push.putFloat(116, color == null ? 1 : color[0]);
-                push.putFloat(120, color == null ? 1 : color[1]);
-                push.putFloat(124, color == null ? 1 : color[2]);
+                if (group.combineColor != null) {
+                    // The fixed pipeline's texture-env interpolate, encoded into the block's spare values: a negative
+                    // alpha reference marks the combine (alpha tests use non-negative references only) and the RGB
+                    // slots carry the constant colour; the fragment shader mixes instead of discarding.
+                    push.putFloat(112, -group.combineColor[3]);
+                    push.putFloat(116, group.combineColor[0]);
+                    push.putFloat(120, group.combineColor[1]);
+                    push.putFloat(124, group.combineColor[2]);
+                } else {
+                    push.putFloat(112, Float.intBitsToFloat(state[6]));
+                    float[] color = group.color;
+                    push.putFloat(116, color == null ? 1 : color[0]);
+                    push.putFloat(120, color == null ? 1 : color[1]);
+                    push.putFloat(124, color == null ? 1 : color[2]);
+                }
                 Object pipeline = prepared.pipeline;
                 if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);

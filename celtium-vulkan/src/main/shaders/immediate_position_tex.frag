@@ -25,7 +25,12 @@ layout(push_constant) uniform PushConstants {
 
 void main() {
     vec4 colour = texture(u_Texture, v_TexCoord) * v_Color;
-    if (celtium.u_AlphaRef > 0.0 && colour.a < celtium.u_AlphaRef) {
+    if (celtium.u_AlphaRef < 0.0) {
+        // The GL_COMBINE interpolate the fixed pipeline applied for the hurt flash and the team outline: the constant
+        // sits in the colour slots and its alpha is the mix factor. Alpha comes through unchanged - the combine setup
+        // leaves it on unit 0's result.
+        colour.rgb = mix(colour.rgb, vec3(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB), -celtium.u_AlphaRef);
+    } else if (celtium.u_AlphaRef > 0.0 && colour.a < celtium.u_AlphaRef) {
         discard;
     }
     fragColor = colour;
