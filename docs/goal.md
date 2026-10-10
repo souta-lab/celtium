@@ -15,7 +15,11 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 【現在の到達点と未完】
 - terrainと複数のimmediate pipelineはnative描画を持つ。既定受付はformat 1〜9で、1 runの実測は offers 13000 / accepted 10643 / GL本体 2386（AMD・軽い世界）。線（GL_LINES系）はnative化され、AMD 797・Intel 280 accepted（変更前17）、5 run連続PASSEDで線の拒否ゼロ。format認識・受付は全vanilla coverageを意味しない。
 - per-frame presentが成立し、GL swapは停止した（263 presented / 262 swap skipped）。提示画像はGLフレームと画素単位で一致し（上下反転比較で平均絶対差0.015・最大3）、GL最終合成を止めても内容は同一（glCompositesSkipped=717/718、off比 平均絶対差0.001）。GUI/font/HUDも画像等価（HUD帯 平均絶対差0.000・>8が0.00%）。
-- lightmapの供給漏れ（format 5）は解消し、AMD/Intel両方で受入した（lightmapSuppliedOnDemand=2・失敗なし・拒否ゼロ）。Endは両GPUでcapture時dimension 1のPASSED。Netherはportalから出る修正後、両GPUでcapture時dimension -1・帰還0回のPASSEDとなり、旧NO_CAPTUREを有効な受入から外した。
+- lightmapの供給漏れ（format 5）は解消し、AMD/Intel両方で受入した（lightmapSuppliedOnDemand=2・失敗なし・拒否ゼロ）。Endは両GPUでcapture時dimension 1のPASSED。
+- **Netherは未成立**。p247-nether / p248-trace / p249-early は一時的に-1へ到達した後、GuiDownloadTerrainを経て0へ戻りNO_CAPTUREだった。**地形ダウンロード画面の残留と帰還は観測事実**で、renderer・packet/portal・fixtureのどこが根因かは未確定。**旧Nether PASSEDは有効な受入から外す**（上の【直近の実行順】4で具体的に直す）。
+- **model経路（表示リスト）のnative描画は実験フラグ側・既定off**。射影の出所をglGetFloatvから行列ミラーへ直して18.49 % → 6.35 %、モデルビューを`V_now × C_compile⁻¹`にして**2.19 %**（entity場面・7通りの実測で最良）。**entity/TESR/item/model全体のnative描画は未完**。
+- **entity場面の既定構成の残差はformat 5（粒子系）に帰属**し、両GPUで確認した（提示画像 vs 同一runのスクリーンショット: AMD 1.25 / 1.43 / 1.62 %、Intel 1.33 %。**format 5を除外するとAMD 0.32 %・Intel 0.36 %**）。差の性質は暗さで、行列・ブレンド・被覆・シェーダ・SPIR-V・mipは棄却済み。
+- **通常場面（実体なし）は両GPUで一致**（AMD 0.011/0.01 %、Intel 0.000〜0.016/0.00 %）。
 - 失敗経路は提示・線・合成の変更後も正しい。fence timeoutは検出して停止しteardownを548回スキップして資源を解放せず（stalledStops=1）、submit失敗はfixtureがFAILEDとして報告する。いずれもvalidationClean=true・VUID 0・クラッシュなし。
 - 条件(b)の残量は実測で約2割がGL。内訳はformat 2の非画面合成 709（FBO所有権がVulkanに移るまでnative化不可）、起動直後10フレームのみの80（nativeの描画先がまだ無いため本質的）、format 1/6/9の少数。lightmap分は解消済み。通常fixtureの0/frameを全sceneのreadback除去としない。
 - **ゲームの通常フレームがVulkan所有のcolor/depthで生産され、swapchainへ提示される経路が既定になった**（adoption）。AMD/IntelともフラグなしのrunでPASSED・VUID 0・GLエラーなしで、同一vendorのGL経路との画像差はAMD 0.001/0.00%・Intel 0.026/0.02%。bridgeの往復blitとGL深度変換は走らない。`-Dceltium.vulkan.adoptGameFramebuffer=false`で旧経路に戻せる。残るGL依存は「GL contextの生成」と「既定フレームバッファへ描く合成（post-present overlay待ち）」である。
