@@ -1499,13 +1499,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         long target = this.currentRenderTarget;
-        if (!this.modelMatrixLogged) {
-            // The matrices the model group is stored with, once: the row instrument in recordRenderPass stops after the first
-            // two terrain sections, so the model group was never reached there.
-            this.modelMatrixLogged = true;
-            System.out.println("[Celtium] CELTIUM_MODEL_ENQ proj=" + round3(projection[2]) + "," + round3(projection[6]) + ","
-                    + round3(projection[10]) + "," + round3(projection[14]) + " mvT=" + round3(modelView[12]) + ","
-                    + round3(modelView[13]) + "," + round3(modelView[14]));
+        if (this.modelMatrixLoggedCount < 8) {
+            // A handful of model enqueues, each saying which kind of projection it is drawn under. One row was not enough: the
+            // residual image still showed screen-space quads, so the question is whether the projection is wrong at every
+            // enqueue or only at some of them - and whether the modelview's rotation/scale rows are the ones the part was
+            // compiled with. projection[11] is -1 for a GL perspective and 0 for an orthographic projection.
+            this.modelMatrixLoggedCount++;
+            System.out.println("[Celtium] CELTIUM_MODEL_ENQ texture=" + texture
+                    + " projKind=" + (Math.abs(projection[11] + 1.0f) < 0.01f ? "perspective" : "ortho")
+                    + " proj11=" + round3(projection[11]) + " proj10=" + round3(projection[10])
+                    + " proj14=" + round3(projection[14])
+                    + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
+                    + " mvRow0=" + round3(modelView[0]) + "," + round3(modelView[1]) + "," + round3(modelView[2])
+                    + " mvScale=" + round3((float) Math.sqrt(modelView[0] * modelView[0] + modelView[1] * modelView[1]
+                            + modelView[2] * modelView[2])));
         }
         this.immediateGroups.add(new Object[] {mesh, projection, modelView,
                 Integer.valueOf(VulkanImmediateFormats.POSITION_TEX), Integer.valueOf(texture),
@@ -5091,7 +5098,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** One-shot: the distinct projection depth rows the groups of a frame draw with. */
     private int groupDepthRowsSeen;
     /** One-shot: the matrices a model group is stored with. */
-    private boolean modelMatrixLogged;
+    /** How many model enqueues have printed their matrices. */
+    private int modelMatrixLoggedCount;
     /** One-shot: the matrices an immediate group is stored with. */
     private boolean immediateMatrixLogged;
     private String lastGroupDepthRow = "";
@@ -5152,6 +5160,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // installed - "proj=0.0,0.0,-1.0,-0.05" for the model group against the terrain's perspective
             // "0,0,-1.001,-1" - which is exactly what the one-quad image showed: model quads laid out in screen space.
             // The immediate path's matrices come from this mirror for the same reason.
+            // The mirror for both, which is the best measured pairing. Taking the model-view from GL instead was tested and
+            // made the difference worse (6.35 % -> 18.30 % of the entity frame), so the live model-view is not the entity's
+            // either - both sources report the camera there. That is consistent with what the capture records: a display
+            // list stores its vertices already transformed, so the parts carry their own placement and the matrix must not
+            // put them somewhere else. What the remaining difference is belongs to the capture's side of the pairing, not to
+            // the live state.
             float[] projectionNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION).clone();
             float[] modelViewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
