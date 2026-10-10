@@ -1741,6 +1741,23 @@ public final class ValidationClient {
         // Some scenes only exist while the player looks at a block: the block-selection outline is drawn from the ray
         // trace, which needs the camera pointed at the ground. Nothing in a headless run moves the camera, so the scene
         // has to say so itself rather than assume the outline was covered.
+        // Requested two ticks before the capture so the present path writes the frame at the moment it still owns the
+        // image; asking for it at the capture itself read an image the presenter had already given back, which the
+        // validation layer refused.
+        // Two ticks before the staged capture (which happens at tick 200). The capture tick cannot be read here: it is
+        // recorded when the capture happens, so at tick 198 it is still unset.
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && worldTicks == 198) {
+            try {
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                    ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current).celtium$dumpPresentedImage(
+                            mc.gameDir.toPath().resolve("screenshots/celtium-presented.png"));
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // A measurement must never stop the tick.
+            }
+        }
         if (Boolean.getBoolean("celtium.validation.lookDown") && mc.player != null) {
             mc.player.rotationPitch = 75.0F;
             mc.player.prevRotationPitch = 75.0F;
@@ -1919,14 +1936,15 @@ public final class ValidationClient {
                                 Double.valueOf(vulkan.celtium$presentedImageMean()));
                         report.addProperty("presentedImageFramesAtCapture",
                                 Integer.valueOf(vulkan.celtium$presentedFrameCount()));
-                        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+                        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")
+                                && vulkan.celtium$presentedImageDumpWritten()) {
                             // The presented frame itself, so the image evidence does not have to come from OpenGL. It is
                             // written at the capture, next to the game's own screenshot, so the two are one frame apart at
                             // most and can be compared directly.
                             java.nio.file.Path presented = mc.gameDir.toPath()
                                     .resolve("screenshots/celtium-presented.png");
                             report.addProperty("presentedImageDumped",
-                                    Boolean.valueOf(vulkan.celtium$dumpPresentedImage(presented)));
+                                    Boolean.valueOf(vulkan.celtium$presentedImageDumpWritten()));
                             report.addProperty("presentedImagePng", "screenshots/celtium-presented.png");
                         }
                     }

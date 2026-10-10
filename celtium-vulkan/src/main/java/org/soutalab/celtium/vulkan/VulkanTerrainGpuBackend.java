@@ -694,6 +694,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int presentFailures;
     /** A completed frame's content is in the shared image and has not been presented yet. */
     private boolean lastFrameReachedQueue;
+    private boolean presentedImageDumpRequested;
     /** A presented frame has not reached the game's swap point yet, and how many swaps that skipped. */
     private boolean swapPendingFromVulkan;
     private int glSwapsSkipped;
@@ -5011,7 +5012,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * cannot be removed while that is the only picture available. Written at the capture so it belongs to the same frame.
      */
     public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
-        return this.swapchain != null && this.swapchain.dumpPresentedImage(path);
+        if (this.swapchain == null) {
+            return false;
+        }
+        this.swapchain.requestPresentedImageDump(path);
+        this.presentedImageDumpRequested = true;
+        return true;
+    }
+
+    /** {@return whether a requested presented-image dump has been written}. */
+    public boolean celtium$presentedImageDumpWritten() {
+        return this.presentedImageDumpRequested && this.swapchain != null && this.swapchain.lastDumpWritten();
     }
 
     /** {@return how many frames have been presented from Vulkan so far}. */

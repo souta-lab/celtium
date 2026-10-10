@@ -141,6 +141,9 @@ public final class VulkanSwapchain {
 
     /** The image handle the last present used, so the frame that reached the swapchain can be written out. */
     private long lastPresentedImage = VK_NULL_HANDLE;
+    /** Set by the fixture, consumed by the present path so the read happens while the image is still ours. */
+    private java.nio.file.Path pendingDumpPath;
+    private boolean lastDumpWritten;
 
     /**
      * Writes the last presented image to a PNG, and says whether it did.
@@ -149,24 +152,41 @@ public final class VulkanSwapchain {
      * that is the only image the renderer can be compared against, the GL composite has to stay. The same readback the
      * centre sample uses is used here over the whole image.
      */
-    public boolean dumpPresentedImage(java.nio.file.Path path) {
-        if (this.lastPresentedImage == VK_NULL_HANDLE || this.width <= 0 || this.height <= 0) {
+    /**
+     * Asks for the next presented image to be written to this path.
+     * <p>
+     * The write has to happen at the moment the image is still the presenter's: reading it afterwards and transitioning it
+     * from {@code PRESENT_SRC_KHR} is what the validation layer refused with "performs a layout transition on presentable
+     * VkImage ... but the image has not been acquired" when the dump was driven from the fixture instead. So the request is
+     * a flag the present path consumes, and the copy uses the same routine as the centre sample.
+     */
+    public void requestPresentedImageDump(java.nio.file.Path path) {
+        this.pendingDumpPath = path;
+    }
+
+    /** Writes the image the present just handed over, while it is still ours to read. */
+    private boolean writePresentedImage(java.nio.file.Path path, long image) {
+        if (image == VK_NULL_HANDLE || this.width <= 0 || this.height <= 0) {
             return false;
         }
-        int[] pixels = readBackBlock(this.context, this.lastPresentedImage, this.width, this.height, 0, 0, this.width,
-                this.height);
+        int[] pixels = readBackBlock(this.context, image, this.width, this.height, 0, 0, this.width, this.height);
         if (pixels == null) {
             return false;
         }
         try {
-            java.awt.image.BufferedImage image =
+            java.awt.image.BufferedImage imageOut =
                     new java.awt.image.BufferedImage(this.width, this.height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            image.setRGB(0, 0, this.width, this.height, pixels, 0, this.width);
+            imageOut.setRGB(0, 0, this.width, this.height, pixels, 0, this.width);
             java.nio.file.Files.createDirectories(path.getParent());
-            return javax.imageio.ImageIO.write(image, "png", path.toFile());
+            return javax.imageio.ImageIO.write(imageOut, "png", path.toFile());
         } catch (java.io.IOException | RuntimeException | LinkageError error) {
             return false;
         }
+    }
+
+    /** {@return whether the last dump request wrote its file}. */
+    public boolean lastDumpWritten() {
+        return this.lastDumpWritten;
     }
 
     public float lastPresentedMean() {
@@ -717,6 +737,11 @@ public final class VulkanSwapchain {
                 this.presentReadbacks++;
                 this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
                 this.lastPresentedImage = image;
+                if (this.pendingDumpPath != null) {
+                    java.nio.file.Path path = this.pendingDumpPath;
+                    this.pendingDumpPath = null;
+                    this.lastDumpWritten = writePresentedImage(path, image);
+                }
             }
             if (this.presentTraces < 4) {
                 // One line per present with the handles involved: the validation messages named the acquire semaphore

@@ -27,6 +27,33 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.35 validation エラーの原因は**私の PNG 書き出し**だった（提示中に読む形へ修正・解消）
+
+- **原因（harness の判定を読んで確定）**: `validationMessageCount=1`、
+  `severity=ERROR vkQueueSubmit(): pSubmits[0] performs a layout transition on presentable VkImage …, but the image has
+  not been acquired …`。**私が追加した `dumpPresentedImage` が、提示済み（所有権を手放した）イメージを後から遷移させていた**。
+  harness はこのメッセージで `validationClean=false` / `validationExitCode=1` を立てていた（**ゲームは exit 0・fixture は PASSED**）。
+- **修正**: 書き出しを**リクエスト方式**にした。fixture は「次の提示でこのパスへ書け」と**フラグを立てるだけ**にし、
+  **実際の読み戻しは提示処理の中（まだ所有権がある瞬間）**で行う（中心サンプルとまったく同じ位置・同じコピー処理）。
+  さらに**捕捉の2 tick 前（tick 198）**に要求する（捕捉 tick は捕捉時に初めて記録されるため、198 では未設定だった）。
+- **受入（AMD、`presentReadback`＋`dumpPresentedImage`、duration 120 s）**:
+
+| 計器 | 値 |
+|---|---|
+| `validationClean` / `validationExitCode` | **true / 0** |
+| `validationMessageCount` | **0** |
+| `fixtureStatus` | **PASSED** |
+| `presentedImageDumped` | **true** |
+| 提示 PNG とスクリーンショット（そのまま） | 平均絶対差 52.956、>8 が 94.24 %、最大 178 |
+| **同（上下反転）** | **平均絶対差 0.015、>8 が 0.00 %、最大 3** |
+
+  反転比較の残差（0.015 / 最大3）は、**書き出し要求（tick 198）と捕捉（tick 200）の2フレーム差**によるもので、
+  画素単位の一致は保たれている。
+- **意味**: **GL に依存しない画像証拠**（提示画像そのもの）が、**validation クリーンな状態で**取れるようになった。
+  これは「GL 合成を外す」ための前提である（証拠が GL のスクリーンショットに縛られなくなる）。
+- **教訓**: 計器を足したら **harness の validation 判定まで読む**。ゲームが exit 0 で fixture が PASSED でも、
+  検証層の ERROR は harness の判定を落とす。
+
 ## 0.34 **提示画像は画素単位で GL のフレームと一致**（差は行の並びだけだった）
 
 - **GL に依存しない画像証拠を作った**: `VulkanSwapchain.dumpPresentedImage(Path)`（読み戻しのコピー処理を
