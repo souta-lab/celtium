@@ -5167,6 +5167,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // put them somewhere else. What the remaining difference is belongs to the capture's side of the pairing, not to
             // the live state.
             float[] projectionNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION).clone();
+            // Identity was tried as an experiment - if the captured vertices carried their own placement, no model-view at all
+            // would be right - and it measured worse than the mirror (8.08 % against 5.80 % of the entity frame), so the
+            // camera rotation the mirror holds is needed. The mirror stays until the vertex space itself is settled.
             float[] modelViewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
             // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
