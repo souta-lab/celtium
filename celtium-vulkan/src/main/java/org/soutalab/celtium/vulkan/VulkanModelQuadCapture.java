@@ -193,6 +193,52 @@ public final class VulkanModelQuadCapture {
         return "none";
     }
 
+    /**
+     * {@return a copy of the modelview a list was compiled under}, or {@code null} when that list was never seen.
+     * <p>
+     * The stored vertices are in model space (measured: a part ranges over about +/-0.6), so the matrix they pair with is
+     * this one - the transform in effect when the list was compiled - and not the one in effect at replay, which for the
+     * model path carried no entity translation at all.
+     */
+    public static synchronized float[] matrixForList(int listId) {
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        if (geometry == null) {
+            return null;
+        }
+        return geometry.modelView.clone();
+    }
+
+    /**
+     * {@return the coordinate range of the largest list's stored vertices and its compile-time translation}.
+     * <p>
+     * Which space the vertices are in is the question the model path's residual turns on: a range of a few units means
+     * model space and the replay matrix has to place them, a range of tens or hundreds means world space and it must not.
+     */
+    public static synchronized String storedBoundsSummary() {
+        ListGeometry largest = null;
+        for (ListGeometry geometry : LISTS.values()) {
+            if (largest == null || geometry.vertices > largest.vertices) {
+                largest = geometry;
+            }
+        }
+        if (largest == null || largest.vertices == 0) {
+            return "no vertices";
+        }
+        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+        float minZ = Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+        for (int i = 0; i < largest.vertices; i++) {
+            float x = largest.positions[i * 3], y = largest.positions[i * 3 + 1], z = largest.positions[i * 3 + 2];
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+            minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+        }
+        return "list " + largest.listId + " vertices=" + largest.vertices
+                + " x=" + round(minX) + ".." + round(maxX) + " y=" + round(minY) + ".." + round(maxY)
+                + " z=" + round(minZ) + ".." + round(maxZ)
+                + " compileT=(" + round(largest.modelView[12]) + "," + round(largest.modelView[13]) + ","
+                + round(largest.modelView[14]) + ")";
+    }
+
     /** {@return the largest list's first stored vertex, as a shape sanity check}. */
     public static synchronized String firstStoredVertex() {
         ListGeometry largest = null;

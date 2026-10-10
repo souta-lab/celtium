@@ -1513,6 +1513,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " mvRow0=" + round3(modelView[0]) + "," + round3(modelView[1]) + "," + round3(modelView[2])
                     + " mvScale=" + round3((float) Math.sqrt(modelView[0] * modelView[0] + modelView[1] * modelView[1]
                             + modelView[2] * modelView[2])));
+            System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
+                    + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
         }
         this.immediateGroups.add(new Object[] {mesh, projection, modelView,
                 Integer.valueOf(VulkanImmediateFormats.POSITION_TEX), Integer.valueOf(texture),
@@ -5167,9 +5169,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // put them somewhere else. What the remaining difference is belongs to the capture's side of the pairing, not to
             // the live state.
             float[] projectionNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION).clone();
+            // The matrix the list was compiled under, which is the one its model-space vertices pair with (measured: a part
+            // ranges over about +/-0.6 while the captured translation is the entity's placement at that moment). This is
+            // what the capture has always stored and never used.
+            float[] compileMatrix = org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixForList(listId);
             // Identity was tried as an experiment - if the captured vertices carried their own placement, no model-view at all
             // would be right - and it measured worse than the mirror (8.08 % against 5.80 % of the entity frame), so the
             // camera rotation the mirror holds is needed. The mirror stays until the vertex space itself is settled.
+            // The mirror, translation and all - six pairings were measured and this one is the best (5.80 % of the entity
+            // frame against 8.08 for identity, 13.19 for the captured compile-time matrix, 18.30 for GL's live view, 18.40
+            // for the mirror's rotation with GL's translation, 18.49 with GL's projection too). Every pairing that puts a
+            // translation in is worse, which says the captured vertices are already placed; which of the six is exactly
+            // right is not settled by these, so the data itself has to be looked at next.
             float[] modelViewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW).clone();
             // The suspicion that the live projection had already been remapped was tested with a switch that copied it
             // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
