@@ -39,7 +39,7 @@
 | 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの。**GL-less flag 経路（`-Dceltium.vulkan.glless=true`）は §0.114 で起動・提示まで実測したが、窓の絵が未解決なので既定は bridge のまま** |
 | **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
 | **GPU 検証（条件 (d)）** | **AMD/Intel 両方で受入・ゲート修正済** | 描画側が選択確定時に `CELTIUM_NATIVE_DEVICE name="..." uuid=... matchedOpenGl=...` を出し、harness はこれで `--require-gpu` を判定する（device 未選択時のみ GL 文字列へ fallback、判定元を記録）。GL-less は `--render-node` では GPU を pin できず`VK_ICD_FILENAMES` が必要（pin で `vulkanDeviceCount 1`、無 pin は 3）。AMD RX 6400 と Intel UHD 630 の両方で bridge/GL-less とも PASSED・clean・VUID 0、ゲートが実デバイスを指名（Intel 実測: `gpuRequirementSource=nativeDeviceName`）。光量修正の効果も Intel で可視（GL-less band が (35.6,36.2,37.6) の黒から (102.5,63.9,58.7) へ、AMD と ±0.1・相関 0.9926）。**未検証 vendor/OS は Intel/AMD の Linux 以外すべて**。§0.118 |
-| 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
+| 実 window / compositor 出力（条件 (c)） | **未確認（ただし前提を訂正・捕獲手段は実在を実測）** | **旧記載の「`DISPLAY=:0` の root が 0×0 で合成器なし」は誤り**。実測: sway(pid 935) が `wayland-1` で稼働し、HDMI-A-4 1920×1080@60 の実モニタ出力を持ち、`ffmpeg -f x11grab -i :0.0` は 1920x1080 の実 X 画面を読める。harness の `--headless` も実 GPU の wlroots/Sway（`WLR_BACKENDS=headless`, output HEADLESS-1 1280x720）を所有し、**`grim -o HEADLESS-1` が別 run の実際のゲーム窓を 1280x720 PNG として捕獲できた**（exit 0・6781色の地形フレーム）。renderer 側には描画を magenta 全面に置き換える `-Dceltium.vulkan.presentMarker=true` があり、番号付き presented dump と組み合わせて「その frame が compositor に出た」ことを束縛できる。scanout/光子レベルの捕獲（kmsgrab 等）は DRM master 権限が無く不可。担当が marker run と通常 run を実行中。§0.121 |
 | **model 経路（表示リスト）の native 描画** | **既定 ON（§0.108）／TESR の list は未 capture** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、モデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りで最良）。既定は ON（§0.108）。**未完**: 実測 `modelMeshLists=2 / modelQuads=12`＝腕と手持ちのみ。TESR の model（エンチャント台の本）は list 自体が capture されておらず、GL fallback に落ちて GL-less では何も描かれない。`celtium$drawModelList` は mesh の無い list を `modelMissingMeshes` として名指しで数えるようにした。§0.108 |
 | **entity 場面の残差（既定構成）** | **確定: fixture のキャプチャ仕様（描画欠陥ではない）** | format 5 = 実粒子（提出元 `ParticleManager`）。残差は**提示フレームの生存粒子**が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレームの静止 FLAME 比較で format 5 の色・位置は正しく、残差は経年差のみ（§0.104） |
 | **通常場面（実体なし）の一致** | **両GPU受入** | 提示画像 vs GL の絵: **AMD 0.011 / 0.01 %**、**Intel 0.000〜0.016 / 0.00 %**（§0.77・§0.92 の撤去後も維持） |
@@ -48,6 +48,26 @@
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.121 **実測・進行中**: 条件 (c) の捕獲手段は実在する（旧前提を訂正）／glow は検証 clean・実体ありの frame で白アウトラインを確認
+
+- **条件 (c) の前提訂正（担当の実測）**: plan が長く持っていた「`DISPLAY=:0` の root が 0×0 で合成器なし」は**誤り**だった。
+  実測では sway(pid 935) が `wayland-1`（`XDG_RUNTIME_DIR=/run/user/1000`）で稼働し、`HDMI-A-4 1920×1080@60` の実モニタ、
+  Xwayland `:0 -rootless` があり、`ffmpeg -f x11grab -i :0.0` は 1920x1080 を読める。加えて harness の `--headless` は
+  実 GPU の wlroots/Sway を所有しており（`WLR_BACKENDS=headless`・`WLR_HEADLESS_OUTPUTS=1`・output HEADLESS-1 1280x720）、
+  **`grim -o HEADLESS-1` が別 run の実ゲーム窓を 1280x720 PNG として捕獲できた**（exit 0・642kB・6781色＝地形フレーム）。
+  これは「環境制約で条件 (c) は測れない」という以前の判断が誤りだったことを意味する。
+- **束縛手段**: `-Dceltium.vulkan.presentMarker=true`（present を magenta 全面 clear に置き換える既存スイッチ）と
+  番号付き presented dump（`-Dceltium.vulkan.frameDumpDir/Every`）を併用すれば、compositor に出た frame を
+  renderer 側の frame 番号に束縛できる。見つからないツール（Xvfb/weston/xwd/ImageMagick/kmsgrab 等）と、
+  kmsgrab が DRM master 権限不足で不可であることも記録した。担当が marker run と通常 run を実行中。
+- **glow（視覚証拠）**: `.celtium-work/runtime/glow2` は **validationClean=true・msgs 0**・`nonPlayerEntitiesAtCapture=9`
+  （fixture の capture 時に実体が生きている）・`CELTIUM_EXTERNAL_IMAGE published glTexture=42 image=0x12b... owner=renderer`。
+  presented frame（`screenshots/celtium-presented-world-run-13e5f87e53ccb-66d3c617.png`・distinct 51388・
+  nonBackgroundFraction 0.813）を目視すると、**実体（中央と右下の mob 形状）に白いアウトラインが付いており**、
+  アウトラインは形状の輪郭に沿っている（＝位置ずれしていない）。紫色の粒子も見える。
+  **残るのは bridge 参照との画素比較**で、担当が同じ scene の参照を取得中。判定的な受入はまだ主張しない。
+- 同 frame に**半透明の青い wedge**が写っており、wedge 欠陥が現存することも同時に確認できる。
 
 ## 0.120 **実測**: 条件 (b) の現状プロファイル（標準 GL-less allBlocks）／次に埋める native 面は format 5
 
