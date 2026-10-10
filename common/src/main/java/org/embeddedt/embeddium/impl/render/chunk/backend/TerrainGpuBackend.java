@@ -246,4 +246,31 @@ public interface TerrainGpuBackend {
      */
     default void setAlphaFunc(int glFunc, float reference) {
     }
+
+    /** {@code GlStateManager.enableLighting}/{@code disableLighting}: the fixed-function lighting switch itself. */
+    default void setLightingEnabled(boolean enabled) {
+    }
+
+    /** {@code GlStateManager.enableLight}/{@code disableLight}: per-light enable, index 0 for GL_LIGHT0 and so on. */
+    default void setLightEnabled(int index, boolean enabled) {
+    }
+
+    /**
+     * {@code GlStateManager.glLight} with {@code GL_POSITION}: the raw direction the caller passed - the mirror is
+     * responsible for folding the current modelview into it the way the driver does.
+     */
+    default void setLightPosition(int index, float x, float y, float z) {
+    }
+
+    /** {@code GlStateManager.glLight} with {@code GL_DIFFUSE}. */
+    default void setLightDiffuse(int index, float red, float green, float blue) {
+    }
+
+    /** {@code GlStateManager.glLightModel} with {@code GL_LIGHT_MODEL_AMBIENT}. */
+    default void setLightAmbient(float red, float green, float blue) {
+    }
+
+    /** {@code GlStateManager.shadeModel}: flat versus smooth, which fixed-function lighting honours per primitive. */
+    default void setShadeModel(int glMode) {
+    }
 }

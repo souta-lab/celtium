@@ -1258,6 +1258,43 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateStateCalls++;
     }
 
+    @Override
+    public void setLightingEnabled(boolean enabled) {
+        this.immediateState.lightingEnabled(enabled);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setLightEnabled(int index, boolean enabled) {
+        this.immediateState.lightEnabled(index, enabled);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setLightPosition(int index, float x, float y, float z) {
+        this.immediateState.setLightPosition(index, x, y, z);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setLightDiffuse(int index, float red, float green, float blue) {
+        this.immediateState.setLightDiffuse(index, red, green, blue);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setLightAmbient(float red, float green, float blue) {
+        this.immediateState.setLightAmbient(red, green, blue);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setShadeModel(int glMode) {
+        // GL_FLAT and GL_SMOOTH are the two the mirror distinguishes; the shader path treats per-quad normals as flat.
+        this.immediateState.shadeModel(glMode == 7424 ? VulkanGlState.SHADE_FLAT : VulkanGlState.SHADE_SMOOTH);
+        this.immediateStateCalls++;
+    }
+
     /**
      * Announces a dynamic texture's write, which arrives as a flat pixel array.
      * <p>
@@ -1550,6 +1587,65 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
+     * The lit group's push payload: five vec4 - the two light directions rotated into model space, the scene ambient,
+     * and each light's diffuse - or {@code null} when lighting is off.
+     * <p>
+     * GL lights live in eye space while the vertex shader only has model-space normals, so each eye-space direction is
+     * pre-multiplied by the inverse modelview's rotation: {@code dot(N, M^-1 * L)} equals the fixed pipeline's
+     * {@code dot(M^-T * N, L)} exactly for orthogonal transforms, which is every transform vanilla's lit draws use.
+     * A disabled light's diffuse is zeroed rather than the direction skipped - the shader's dot stays a constant.
+     */
+    private float[] celtium$lightParams(int[] state, float[] modelView) {
+        if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
+            return null;
+        }
+        // Inverse of the upper 3x3, named in row/col so the cofactors stay readable: a b c / d e f / g h i, with the
+        // modelview's column-major array addressed as a=m[0], d=m[1], g=m[2], b=m[4] and so on.
+        float a = modelView[0], d = modelView[1], g = modelView[2];
+        float b = modelView[4], e = modelView[5], h = modelView[6];
+        float c = modelView[8], f = modelView[9], i22 = modelView[10];
+        float det = a * (e * i22 - f * h) - b * (d * i22 - f * g) + c * (d * h - e * g);
+        float[] inv;
+        if (Math.abs(det) < 1.0e-8f) {
+            // A singular modelview degenerates the draw anyway; identity directions refuse nothing.
+            inv = new float[] {1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f};
+        } else {
+            float invDet = 1.0f / det;
+            inv = new float[] {
+                    (e * i22 - f * h) * invDet, (f * g - d * i22) * invDet, (d * h - e * g) * invDet,
+                    (c * h - b * i22) * invDet, (a * i22 - c * g) * invDet, (b * g - a * h) * invDet,
+                    (b * f - c * e) * invDet, (c * d - a * f) * invDet, (a * e - b * d) * invDet,
+            };
+        }
+        float[] params = new float[20];
+        float[] dirs = this.immediateState.lightDirections();
+        float[] diffuse = this.immediateState.lightDiffuse();
+        float[] ambient = this.immediateState.lightAmbient();
+        for (int i = 0; i < 2; ++i) {
+            int eye = i * 3;
+            float x = inv[0] * dirs[eye] + inv[3] * dirs[eye + 1] + inv[6] * dirs[eye + 2];
+            float y = inv[1] * dirs[eye] + inv[4] * dirs[eye + 1] + inv[7] * dirs[eye + 2];
+            float z = inv[2] * dirs[eye] + inv[5] * dirs[eye + 1] + inv[8] * dirs[eye + 2];
+            float len = (float) Math.sqrt(x * x + y * y + z * z);
+            if (len > 1.0e-6f) {
+                params[i * 4] = x / len;
+                params[i * 4 + 1] = y / len;
+                params[i * 4 + 2] = z / len;
+            }
+            int diffuseBase = 12 + i * 4;
+            if (this.immediateState.lightEnabled(i)) {
+                params[diffuseBase] = diffuse[eye];
+                params[diffuseBase + 1] = diffuse[eye + 1];
+                params[diffuseBase + 2] = diffuse[eye + 2];
+            }
+        }
+        params[8] = ambient[0];
+        params[9] = ambient[1];
+        params[10] = ambient[2];
+        return params;
+    }
+
+    /**
      * The texture-environment constant the fixed pipeline would mix in on the lightmap unit, or {@code null} when the
      * environment is not set to {@code GL_INTERPOLATE}: the hurt flash and the team outline are the two vanilla
      * effects that draw the same model twice through this combine, and the constant is their colour. Asked of GL at
@@ -1613,6 +1709,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.prepared = prepared;
         group.combineColor = combineColor;
         group.texMatrix = celtium$textureAffine();
+        group.lightParams = celtium$lightParams(state, modelView);
         group.batches = quads;
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
@@ -3000,6 +3097,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The comparison itself rather than a boolean: the glint draws at GL_EQUAL and the held item at
                 // GL_ALWAYS, neither of which a fixed LESS_OR_EQUAL pipeline would pass correctly.
                 this.immediateState.depthFunc(),
+                // Fixed-function lighting: only the normal-carrying formats (8 and 9) can act on it, but it rides the
+                // state key so a lit batch and an unlit batch never share a pipeline - or a group.
+                this.immediateState.lightingEnabled() ? 1 : 0,
         };
     }
 
@@ -3858,6 +3958,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.batches = this.currentGroupBatches;
             group.viewportValues = this.currentGroupViewportValues;
             group.texMatrix = this.currentGroupTexMatrix;
+            group.lightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
             group.stamp = new GroupStamp(this.frameId, this.targetGeneration);
             this.immediateGroups.add(group);
         } else if (this.currentImmediateMesh != null) {

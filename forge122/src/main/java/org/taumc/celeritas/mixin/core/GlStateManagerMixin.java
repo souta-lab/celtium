@@ -237,6 +237,67 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.multiplyMatrix(buffer));
     }
 
+    // Fixed-function lighting state. Item and entity rendering in 1.12.2 is lit by GL_LIGHTING (RenderHelper sets two
+    // directional lights); without these mirrors a native item draw could never reproduce the fixed-pipeline shading.
+    @Inject(method = "func_179141_d", at = @At("HEAD"), require = 0)
+    private static void celtium$enableLighting(CallbackInfo info) {
+        celtium$mirror(backend -> backend.setLightingEnabled(true));
+    }
+
+    @Inject(method = "func_179118_c", at = @At("HEAD"), require = 0)
+    private static void celtium$disableLighting(CallbackInfo info) {
+        celtium$mirror(backend -> backend.setLightingEnabled(false));
+    }
+
+    @Inject(method = "func_179085_a", at = @At("HEAD"), require = 0)
+    private static void celtium$enableLight(int index, CallbackInfo info) {
+        celtium$mirror(backend -> backend.setLightEnabled(index, true));
+    }
+
+    @Inject(method = "func_179122_b", at = @At("HEAD"), require = 0)
+    private static void celtium$disableLight(int index, CallbackInfo info) {
+        celtium$mirror(backend -> backend.setLightEnabled(index, false));
+    }
+
+    /**
+     * {@code glLight}: the pnames a lit draw actually reads are GL_POSITION (the direction, which the mirror folds the
+     * current modelview into the way the driver would) and GL_DIFFUSE. Light indices map GL_LIGHT0+index onto 0 and 1.
+     */
+    @Inject(method = "func_187438_a", at = @At("HEAD"), require = 0)
+    private static void celtium$glLight(int light, int pname, java.nio.FloatBuffer params, CallbackInfo info) {
+        int index = light - 16384; // GL_LIGHT0
+        if (index < 0 || index >= 2 || params == null || params.remaining() < 3) {
+            return;
+        }
+        int pos = params.position();
+        float x = params.get(pos);
+        float y = params.get(pos + 1);
+        float z = params.get(pos + 2);
+        if (pname == 4611) { // GL_POSITION
+            celtium$mirror(backend -> backend.setLightPosition(index, x, y, z));
+        } else if (pname == 4609) { // GL_DIFFUSE
+            celtium$mirror(backend -> backend.setLightDiffuse(index, x, y, z));
+        }
+    }
+
+    @Inject(method = "func_187424_a", at = @At("HEAD"), require = 0)
+    private static void celtium$glLightModel(int pname, java.nio.FloatBuffer params, CallbackInfo info) {
+        // 2899 is GL_LIGHT_MODEL_AMBIENT - the scene ambient term the lit eval multiplies the vertex colour by.
+        if (pname != 2899 || params == null || params.remaining() < 3) {
+            return;
+        }
+        int pos = params.position();
+        float r = params.get(pos);
+        float g = params.get(pos + 1);
+        float b = params.get(pos + 2);
+        celtium$mirror(backend -> backend.setLightAmbient(r, g, b));
+    }
+
+    @Inject(method = "func_179103_j", at = @At("HEAD"), require = 0)
+    private static void celtium$shadeModel(int mode, CallbackInfo info) {
+        celtium$mirror(backend -> backend.setShadeModel(mode));
+    }
+
     private static final int[] SOURCE_FACTORS = celtium$factorTable(GlStateManager.SourceFactor.values());
     private static final int[] DEST_FACTORS = celtium$factorTable(GlStateManager.DestFactor.values());
 

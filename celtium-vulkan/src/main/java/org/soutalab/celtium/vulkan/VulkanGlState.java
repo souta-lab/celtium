@@ -46,6 +46,14 @@ public final class VulkanGlState {
     private int alphaFunc = ALPHA_GREATER;
     private float alphaRef = 0.1f;
     private boolean lightingEnabled;
+    /** Eye-space direction each enabled light points, captured the way GL stores it: modelview times the position. */
+    private final float[] lightDirections = new float[6];
+    /** Per-light diffuse colour; GL_DIFFUSE at call time, RGB triples for lights 0 and 1. */
+    private final float[] lightDiffuse = new float[6];
+    /** The scene ambient term GL_LIGHT_MODEL_AMBIENT carries. */
+    private final float[] lightAmbient = new float[3];
+    /** Bit i set when light i is enabled; vanilla item lighting enables exactly lights 0 and 1. */
+    private int lightsEnabledMask;
     private boolean texture2dEnabled = true;
     /** The GL name of the bound texture; 0 means none, which is what the immediate path refuses to draw with. */
     private int boundTextureName;
@@ -380,6 +388,70 @@ public final class VulkanGlState {
 
     public void lightingEnabled(boolean enabled) {
         this.lightingEnabled = enabled;
+    }
+
+    public void lightEnabled(int index, boolean enabled) {
+        if (index < 0 || index >= 2) {
+            return;
+        }
+        if (enabled) {
+            this.lightsEnabledMask |= 1 << index;
+        } else {
+            this.lightsEnabledMask &= ~(1 << index);
+        }
+    }
+
+    public boolean lightEnabled(int index) {
+        return index >= 0 && index < 2 && (this.lightsEnabledMask & (1 << index)) != 0;
+    }
+
+    /**
+     * Stores a light direction exactly as the fixed pipeline keeps it: the position the caller passed, multiplied by
+     * the modelview in force at the call. A {@code w} of zero marks a directional light - which is all vanilla's item
+     * lighting uses - so only the three direction components of the transform are needed and no translation applies.
+     */
+    public void setLightPosition(int index, float x, float y, float z) {
+        if (index < 0 || index >= 2) {
+            return;
+        }
+        float[] m = matrix(MATRIX_MODE_MODELVIEW);
+        int base = index * 3;
+        this.lightDirections[base] = m[0] * x + m[4] * y + m[8] * z;
+        this.lightDirections[base + 1] = m[1] * x + m[5] * y + m[9] * z;
+        this.lightDirections[base + 2] = m[2] * x + m[6] * y + m[10] * z;
+    }
+
+    public void setLightDiffuse(int index, float r, float g, float b) {
+        if (index < 0 || index >= 2) {
+            return;
+        }
+        int base = index * 3;
+        this.lightDiffuse[base] = r;
+        this.lightDiffuse[base + 1] = g;
+        this.lightDiffuse[base + 2] = b;
+    }
+
+    public void setLightAmbient(float r, float g, float b) {
+        this.lightAmbient[0] = r;
+        this.lightAmbient[1] = g;
+        this.lightAmbient[2] = b;
+    }
+
+    /** {@return the eye-space direction of light index}, three floats starting at index*3. */
+    public float[] lightDirections() {
+        return this.lightDirections;
+    }
+
+    public float[] lightDiffuse() {
+        return this.lightDiffuse;
+    }
+
+    public float[] lightAmbient() {
+        return this.lightAmbient;
+    }
+
+    public int lightsEnabledMask() {
+        return this.lightsEnabledMask;
     }
 
     /** Records the GL name of the bound texture, as {@code GlStateManager.func_179144_i} reports it. */

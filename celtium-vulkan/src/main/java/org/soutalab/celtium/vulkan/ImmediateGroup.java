@@ -46,6 +46,12 @@ public final class ImmediateGroup {
      * shared mesh does not.
      */
     public float[] texMatrix;
+    /**
+     * The fixed-function lighting payload for a lit group: twenty floats laid out as five vec4 - the two light
+     * directions already rotated into model space, the scene ambient, and each light's diffuse. {@code null} for an
+     * unlit group, which is also how the draw loop knows whether to write the extended push range.
+     */
+    public float[] lightParams;
     /** Blend factors when the group needs them for the pipeline selection. */
     public int blendSrc;
     public int blendDst;
