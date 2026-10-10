@@ -649,7 +649,11 @@ public final class VulkanSwapchain {
             // Read the blitted image back before it is presented, so "the screen shows the frame" becomes a
             // measurement instead of an inference: the mean of a small centre patch of the presented image is compared
             // against the same patch of the game's frame in the caller's log.
-            if (PRESENT_READBACK && this.presentReadbacks < 3) {
+            // Every present while the flag is on. It used to read back only the first three, which meant the value the
+            // fixture recorded at its capture was from the run's third frame - the same "value from another moment" mistake
+            // the recording was added to fix, one level down. The flag is a diagnostic, so its cost is acceptable; the
+            // count stays for reporting and as a bound.
+            if (PRESENT_READBACK && this.presentReadbacks < 100000) {
                 this.presentReadbacks++;
                 this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
             }
