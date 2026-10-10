@@ -36,6 +36,26 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.61 entity/TESR の現状を確定（**比較場面から実体を除いている**／format 8 はカスタムプログラム束縛で拒否）
+
+- **判明した前提（コードで確認）**: 検証クライアントは**比較のため非プレイヤー実体を意図的に全除去**している
+  （`ValidationClient` の「mob spawning is not seed-deterministic」節）。＝ **標準の比較場面にはエンティティが居ない**ので、
+  `acceptedByFormat 8:0` は「entity が描けない」ではなく「**entity が供給されていない**」ことを意味する。
+- **format 8（entity レイアウト）の拒否条件（コードで確認）**: `boundProgram != 0`
+  ＝ **カスタムシェーダプログラムが束縛されている**とき拒否し、`immediateLastRefusal = "a custom shader program is bound"`。
+  `CELTIUM_ENTITY_REFUSED program=… texture=…` と `CELTIUM_ENTITY_REFUSED_SITE`（10フレームのスタック）を**一度だけ**出す計器がある。
+- **この計器はまだ一度も発火していない**（p322-gui・p344/p355/p357/p359/p360・p361 のいずれにも 0 行）。
+  ＝ **これまでの全場面で、カスタムプログラム束縛下の entity 供給が起きていない**。
+- **ポストプロセス場面（バニラ ShaderGroup）は今回発火しなかった**: `-Dceltium.validation.postprocess=true` を渡した
+  120 s の run で `CELTIUM_POSTPROCESS` が **0 行**、`POSTPROCESS` の痕跡も 0。
+  分岐は `worldTicks == 26 && !celtium$postprocess && Boolean.getBoolean("celtium.validation.postprocess")` にあり、
+  **`enabled = Boolean.getBoolean("celtium.validation")` が前提**。**発火しなかった理由は未確定**（次の計器は
+  ハンドラ入り口で `enabled`・`worldTicks`・プロパティ値を一度だけ出すこと）。
+- **受入（AMD、既定、`postprocess`＋`keepGui`、120 s）**: exit 0 / **clean** / **PASSED** / **VUID 0**、frames 850、
+  `offers 16000 / accepted 13282 / GL 本体 2745`（＝ポストプロセス無効時とほぼ同じ。**この場面でも steady-state は native**）。
+- **意味**: entity/TESR の native 化は **「拒否されている」段階ではなく「場面が無い」段階**である。
+  次は **(a) 実体を出す場面**（実体を消さない比較用の小場面）と **(b) ポストプロセスの発火確認**の2つを用意する。
+
 ## 0.60 **既定フレームバッファへ描く合成も native 化**（残る最大の GL 群 902 件/run を受理）
 
 - **考え方**: MC の合成は**画面（既定フレームバッファ）へ重ねる**もの。present は「**前のフレーム**を出す」ので、
