@@ -343,6 +343,18 @@ public final class VulkanGlTexture {
         return this.fullContentArrived;
     }
 
+    /**
+     * Records that the image has been given its whole content.
+     * <p>
+     * The registry keeps the same fact in a set of its own, and the two were written by different code: a full supply
+     * called the registry, while the descriptor decision asked this object, so the decision kept reading false however
+     * many times the image had been supplied whole. One fact, one owner: the registry's marking lands here as well until
+     * the set is retired.
+     */
+    void markFullContentArrived() {
+        this.fullContentArrived = true;
+    }
+
     public boolean uploadPatchFromPixels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer rgba) {
         requireAlive();
         if (x < 0 || y < 0 || x + pixelWidth > width || y + pixelHeight > height) {

@@ -669,6 +669,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int offTargetAccepted;
     /** Batches refused because the mirror they need has only ever received a partial write. */
     private int partialMirrorRefusals;
+    /** Mirrors that had only a partial write and were supplied whole by the offer path (audit A04). */
+    private int partialMirrorsCompleted;
     /** Batches refused by a preflight that now runs before anything is appended (audit A08). */
     private int refusedBeforeAppend;
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
@@ -2329,7 +2331,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // A texture nothing has announced yet gets its one full supply here, before the preflight that refuses when no
             // mirror exists. Entity and TESR models sample their own skins and none of the upload hooks see them, so without
             // this their offers could never be accepted however correct the rest of the path was. Once per GL id.
-            if (boundTexture != 0 && celtium$registry().get(boundTexture) == null) {
+            org.soutalab.celtium.vulkan.VulkanGlTexture existing =
+                    boundTexture == 0 ? null : celtium$registry().get(boundTexture);
+            // Two cases, one supply: no mirror at all (entity and TESR models sample their own skins and no upload hook
+            // sees them) and a mirror that has only ever received a partial write, whose content outside that patch is
+            // undefined (audit A04). The second was missing, so a partially patched texture kept every batch going to GL -
+            // measured as 801 format-5 refusals per run, all reading "the mirror for texture N has never received its
+            // full content" - while the fix was the same full upload that was already written here.
+            if (boundTexture != 0 && (existing == null || !existing.hasFullContent())) {
                 int[] size = textureSize(boundTexture);
                 if (size[0] > 0 && size[1] > 0) {
                     try {
@@ -2338,6 +2347,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         created.uploadFromGlTexture(boundTexture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                         celtium$registry().markFullyInitialized(boundTexture);
                         this.lazyMirrorSupplies++;
+                        if (existing != null) {
+                            this.partialMirrorsCompleted++;
+                        }
                     } catch (RuntimeException | LinkageError error) {
                         this.lazyMirrorFailures++;
                         this.lastLazyMirrorFailure = boundTexture + ": " + error;
@@ -3554,6 +3566,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
                 + " refusedBeforeAppend=" + this.refusedBeforeAppend
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
+                + " partialMirrorsCompleted=" + this.partialMirrorsCompleted
                 + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
                 + " offTargetPerTarget=[" + offTargetPerTarget() + "]"
                 + " otherTargetGroups=[atMainFlush=" + this.otherTargetGroupsAtMainFlush

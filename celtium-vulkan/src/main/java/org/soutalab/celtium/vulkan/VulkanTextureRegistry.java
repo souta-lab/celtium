@@ -111,8 +111,14 @@ public final class VulkanTextureRegistry {
 
     /** Records that the whole image has been filled, which a partial patch alone cannot establish. */
     public void markFullyInitialized(int glTextureId) {
-        if (glTextureId != 0 && this.entries.containsKey(Integer.valueOf(glTextureId))) {
-            this.fullyInitialized.add(Integer.valueOf(glTextureId));
+        if (glTextureId != 0) {
+            Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+            if (entry != null) {
+                this.fullyInitialized.add(Integer.valueOf(glTextureId));
+                // And on the image itself, which is what the descriptor decision reads. Writing only the set here is what
+                // kept "the mirror for texture N has never received its full content" true after a full supply.
+                entry.texture.markFullContentArrived();
+            }
         }
     }
 
