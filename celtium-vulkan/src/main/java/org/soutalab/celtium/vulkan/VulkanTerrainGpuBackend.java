@@ -2659,14 +2659,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 } else {
                     this.immediateOpaqueAccepted++;
                 }
-                // Position-only content has no colour in its vertices: the game draws it with whatever colour it had current,
-                // so that is read here, at the moment the batch is offered, and carried with the group.
-                if (formatId == 7 && this.colorMirrorHasValue) {
+                // Position-only and colourless-textured content has no colour in its vertices: the game draws it with
+                // whatever colour it had current, so that is read here, at the moment the batch is offered, and
+                // carried with the group. Formats 6 and 9 (POSITION_TEX and its normal sibling) need the same tint -
+                // they used to drop it, which is what a glColor-tinted sky or water quad would have lost.
+                if ((formatId == 7 || formatId == 6 || formatId == 9) && this.colorMirrorHasValue) {
                     // No GL query: the colour the game last set, from the same state mirror everything else uses.
                     this.colorMirrorUses++;
                     this.currentGroupColor = new float[] {this.immediateState.colorRed(),
                             this.immediateState.colorGreen(), this.immediateState.colorBlue()};
-                } else if (formatId == 7) {
+                } else if (formatId == 7 || formatId == 6 || formatId == 9) {
                     java.nio.FloatBuffer colour = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, colour);

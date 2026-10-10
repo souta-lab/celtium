@@ -32,7 +32,9 @@ void main() {
     } else {
         v_TexCoord = a_TexCoord;
     }
-    // No per-vertex colour in this format: the texture carries the colour, as it does in the game's own shader.
-    v_Color = vec4(1.0);
+    // No per-vertex colour in this format: the texture carries the colour and the current glColor tints it, exactly
+    // as the fixed pipeline multiplies. The one exception is a combine draw (negative alpha reference), where the
+    // colour slots carry the constant the fragment mixes toward - applying it here too would double the tint.
+    v_Color = celtium.u_AlphaRef < 0.0 ? vec4(1.0) : vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, 1.0);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }
