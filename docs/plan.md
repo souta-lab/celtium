@@ -61,13 +61,17 @@
   番号付き presented dump（`-Dceltium.vulkan.frameDumpDir/Every`）を併用すれば、compositor に出た frame を
   renderer 側の frame 番号に束縛できる。見つからないツール（Xvfb/weston/xwd/ImageMagick/kmsgrab 等）と、
   kmsgrab が DRM master 権限不足で不可であることも記録した。担当が marker run と通常 run を実行中。
-- **glow（視覚証拠）**: `.celtium-work/runtime/glow2` は **validationClean=true・msgs 0**・`nonPlayerEntitiesAtCapture=9`
-  （fixture の capture 時に実体が生きている）・`CELTIUM_EXTERNAL_IMAGE published glTexture=42 image=0x12b... owner=renderer`。
-  presented frame（`screenshots/celtium-presented-world-run-13e5f87e53ccb-66d3c617.png`・distinct 51388・
-  nonBackgroundFraction 0.813）を目視すると、**実体（中央と右下の mob 形状）に白いアウトラインが付いており**、
-  アウトラインは形状の輪郭に沿っている（＝位置ずれしていない）。紫色の粒子も見える。
-  **残るのは bridge 参照との画素比較**で、担当が同じ scene の参照を取得中。判定的な受入はまだ主張しない。
-- 同 frame に**半透明の青い wedge**が写っており、wedge 欠陥が現存することも同時に確認できる。
+- **glow（計器は揃ったが、絵はまだ未確認）**: `.celtium-work/runtime/glow2` は **validationClean=true・msgs 0**・
+  `nonPlayerEntitiesAtCapture=9`（capture 時に実体が生きている）・
+  `CELTIUM_EXTERNAL_IMAGE published glTexture=42 image=0x12b... owner=renderer`。presented frame は distinct 51388・
+  nonBackgroundFraction 0.813。
+  **撤回**: この frame を「実体に白いアウトラインが付いている」と記述したが、**誤読だった**。拡大（4倍・NEAREST）すると
+  そこに写っているのは mob ではなく **wedge 欠陥の暗い三角シャードと青い半透明クワッド**で、白い輪郭は存在しない
+  （「白い線」に見えたものは地形テクスチャのグリッド線と wedge の辺）。2279 個の near-white 画素のうち暗いシルエットに
+  隣接するものは **1個**という数値もこの誤読を裏づける。**glow の可視は依然として未確認**で、判定は担当が取得中の
+  bridge 参照との画素比較のみが根拠になる。
+- **wedge の新しい観測**: 上記の拡大で、wedge は「青い半透明の大きなクワッド」だけでなく
+  **黒い三角シャード**としても現れる（暗い三角形が地形・他の wedge を覆う）。担当の調査に渡す。
 
 ## 0.120 **実測**: 条件 (b) の現状プロファイル（標準 GL-less allBlocks）／次に埋める native 面は format 5
 
