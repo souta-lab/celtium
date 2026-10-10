@@ -84,6 +84,12 @@ public final class ValidationClient {
     private static final String SOURCE_PRESENTED_DUMP = "presented-dump";
     private static final String SOURCE_GL_SCREENSHOT = "gl-screenshot";
 
+    /** A dump request's binding: the write was observed, and the presented-frame counter named the frame that wrote it. */
+    private static final String BINDING_OBSERVED_PRESENT =
+            "observed present: the renderer's presented-frame counter advanced by exactly one from the request";
+    /** A screenshot's binding: it is written by the capture handler itself, on this call stack. */
+    private static final String BINDING_WRITE_AT_CAPTURE = "written synchronously inside the capture handler";
+
     private final JsonObject report = new JsonObject();
     private net.minecraft.client.shader.Framebuffer celtium$secondary;
     private final List<Double> frameIntervals = new ArrayList<Double>();
@@ -210,22 +216,35 @@ public final class ValidationClient {
          * {@code ScreenShotHelper} call. Measured there: distinctColours=REF, nonBackgroundFraction=REF,
          * verticalBands=REF, blackFraction=REF (see the gate constants below, which carry the same numbers).
          */
-        TERRAIN("terrain", false),
+        TERRAIN("terrain", false, true),
         /**
          * Minecraft's own video settings screen: {@code GuiOptions} is opened through {@code displayGuiScreen} - the
          * call the pause menu makes - and its Video Settings button is dispatched through the screen's own
          * {@code mouseClicked}, which is what a real click runs. The screen has to be a {@code GuiVideoSettings} at the
          * capture, and the picture has to show a panel where the screen says its list is.
          */
-        VIDEO_SETTINGS("videoSettings", true);
+        VIDEO_SETTINGS("videoSettings", true, true),
+        /**
+         * A frame of the Nether, which is not an overworld frame: netherrack, fire, lava and no sky, with the
+         * background colour of a cave rather than of daylight. It is its own scene because a floor measured on the
+         * overworld does not describe it - a GL-less Nether capture measured nonBackgroundFraction=0.32598 and
+         * blackFraction=0.036944 against the overworld reference's 0.728299 and 0.000000, and judging it by the
+         * overworld floor failed a frame whose picture was fine (measured: .celtium-work/runtime/vuid-after2).
+         * Until a GL-bridge reference run of this scene exists at this pose, its floors are not calibrated and the
+         * gate says so instead of failing a scene nobody has measured.
+         */
+        NETHER("nether", false, false);
 
         final String name;
         /** Whether this scene drives a GUI screen and takes a second capture with it open. */
         final boolean guiStage;
+        /** Whether a reference run exists at this pose: an uncalibrated scene records its floors as missing. */
+        final boolean calibrated;
 
-        Scene(String name, boolean guiStage) {
+        Scene(String name, boolean guiStage, boolean calibrated) {
             this.name = name;
             this.guiStage = guiStage;
+            this.calibrated = calibrated;
         }
     }
 
@@ -245,10 +264,13 @@ public final class ValidationClient {
         final int minPanelDistinctColours;
         final double minPanelRowAmplitude;
         final String reference;
+        /** False when this scene has no measured reference yet: its floors are reported as missing, not enforced. */
+        final boolean calibrated;
 
         SceneGate(int minDistinctColours, double minNonBackgroundFraction, int minVerticalBands, double maxBlackFraction,
                 double minPanelChangedFraction, double minPanelStrongFraction, int minPanelDistinctColours,
-                double minPanelRowAmplitude, String reference) {
+                double minPanelRowAmplitude, String reference, boolean calibrated) {
+            this.calibrated = calibrated;
             this.minDistinctColours = minDistinctColours;
             this.minNonBackgroundFraction = minNonBackgroundFraction;
             this.minVerticalBands = minVerticalBands;
@@ -281,6 +303,12 @@ public final class ValidationClient {
         final int presentedFramesAtRequest;
         final int requestedWidth;
         final int requestedHeight;
+        /**
+         * How this picture is tied to the frame the capture is about. A presented dump is bound by observing which
+         * present wrote it; a screenshot written synchronously inside the capture handler is bound by construction.
+         * They are different claims and the verdict checks the one that applies.
+         */
+        final String frameBinding;
         /** Filled in when the write is observed: the renderer's own counter for the frame that was written. */
         boolean completed;
         int presentedFrame = -1;
@@ -293,7 +321,9 @@ public final class ValidationClient {
         String completionError = "none";
 
         PictureEvidence(String stage, String source, java.nio.file.Path image, int requestedAtTick,
-                int worldFramesAtRequest, int presentedFramesAtRequest, int requestedWidth, int requestedHeight) {
+                int worldFramesAtRequest, int presentedFramesAtRequest, int requestedWidth, int requestedHeight,
+                String frameBinding) {
+            this.frameBinding = frameBinding;
             this.stage = stage;
             this.source = source;
             this.image = image;
@@ -364,6 +394,8 @@ public final class ValidationClient {
      * which is when the requested frame is the one on disk.
      */
     private int celtium$presentedVerdictPendingAtTick = -1;
+    /** The world-frame count when the verdict was deferred, so the watchdog can tell a stuck loop from a slow picture. */
+    private int celtium$presentedVerdictPendingFrames = -1;
     /** The world-frame count at the capture, so the presented-frame comparison names the window it is about. */
     private int celtium$captureWorldFrames = -1;
     /** The first world frame at which the renderer's presented-frame counter was above zero, or -1. */
@@ -415,7 +447,8 @@ public final class ValidationClient {
     private boolean celtium$poseRequested;
     private int celtium$poseAppliedAtTick = -1;
     private int celtium$poseAppliedTicks;
-    private String celtium$poseResult = "not attempted";
+    /** Written from the server thread by the scheduled teleport, read by the render thread: one volatile string. */
+    private volatile String celtium$poseResult = "not attempted";
     /**
      * Capture stages. 0 = the world frame, 1 = the video settings screen is being opened and laid out, 2 = its capture
      * has been taken and only the verdict is left. The world stage is the whole acceptance for a scene with no GUI.
@@ -423,6 +456,8 @@ public final class ValidationClient {
     private int celtium$stage;
     /** Whether the picture verdict has been taken; it is taken once, on the frame whose evidence is complete. */
     private boolean celtium$pictureVerdictTaken;
+    /** Whether the world stage's picture has been taken, so the capture body does not run twice for one frame. */
+    private boolean celtium$worldStageTaken;
     /** Every completed picture of this run, by stage. */
     private final java.util.Map<String, PictureEvidence> celtium$evidence =
             new java.util.LinkedHashMap<String, PictureEvidence>();
@@ -433,6 +468,13 @@ public final class ValidationClient {
     private String celtium$guiScreenOpenedVia = "none";
     private int celtium$guiScreenOpenedAtTick = -1;
     private int celtium$guiScreenOpenedAtFrames = -1;
+    private boolean celtium$guiClickPending;
+    /** Set by the world stage for a GUI scene: the screen is opened on the next client tick, not inside a render pass. */
+    private boolean celtium$guiOpenPending;
+    private String celtium$guiClickResult = "not attempted";
+    /** When the open screen was first seen to be a GuiVideoSettings, so its layout wait is measured from there. */
+    private int celtium$guiSettingsAtTick = -1;
+    private int celtium$guiSettingsAtFrames = -1;
     /** Ticks to let the screen lay out between it being open and its capture. */
     private final int celtium$guiLayoutTicks = Integer.getInteger("celtium.validation.guiLayoutTicks", 8).intValue();
     /** Frames that must have been drawn with the screen open before its picture means anything. */
@@ -443,13 +485,35 @@ public final class ValidationClient {
     /** Set by {@link #celtium$resolveScene()} when the configured scene name is not one this fixture drives. */
     private static String celtium$sceneResolutionError = "none";
 
-    /** The scene named by {@code -Dceltium.validation.scene}, defaulting to the standard terrain scene. */
+    /**
+     * The scene this run drives: the name from {@code -Dceltium.validation.scene}, and the dimension when the run
+     * travels to one.
+     * <p>
+     * A dimension run's frames are not the scene its flags started from - the Nether has no sky and its own blocks,
+     * light and background - so a run that transfers to another dimension is that dimension's scene even when it named
+     * the overworld one, and the report says so.
+     */
     private static Scene celtium$resolveScene() {
-        String wanted = System.getProperty(SCENE_PROPERTY, "terrain").trim();
-        for (Scene scene : Scene.values()) {
-            if (scene.name.equalsIgnoreCase(wanted)) {
-                return scene;
+        String wanted = System.getProperty(SCENE_PROPERTY, "").trim();
+        Scene named = null;
+        if (!wanted.isEmpty()) {
+            for (Scene scene : Scene.values()) {
+                if (scene.name.equalsIgnoreCase(wanted)) {
+                    named = scene;
+                    break;
+                }
             }
+        }
+        Scene byDimension = celtium$dimensionScene();
+        if (named == null && wanted.isEmpty()) {
+            return byDimension;
+        }
+        if (named == Scene.TERRAIN && byDimension != Scene.TERRAIN) {
+            // The run travels to another dimension, so its frames belong to that scene.
+            return byDimension;
+        }
+        if (named != null) {
+            return named;
         }
         StringBuilder names = new StringBuilder();
         for (Scene scene : Scene.values()) {
@@ -459,6 +523,21 @@ public final class ValidationClient {
             names.append(scene.name);
         }
         celtium$sceneResolutionError = "unknown scene '" + wanted + "' (known scenes: " + names + ")";
+        return Scene.TERRAIN;
+    }
+
+    /** The scene a dimension transfer lands in, or the terrain scene when the run stays where it starts. */
+    private static Scene celtium$dimensionScene() {
+        int dimension = Integer.getInteger("celtium.validation.dimension", 0).intValue();
+        int atTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
+        if (atTick <= 0 || dimension == 0) {
+            return Scene.TERRAIN;
+        }
+        if (dimension == -1) {
+            return Scene.NETHER;
+        }
+        // The End and any other dimension have no scene of their own yet: they are recorded as the terrain scene's
+        // flags with their own dimension, and their gate will be the uncalibrated one once they have a scene.
         return Scene.TERRAIN;
     }
 
@@ -492,34 +571,71 @@ public final class ValidationClient {
      * exist so an experiment can move a floor; the report always says which value was used and where it came from.
      */
     private static SceneGate celtium$resolveGate(Scene scene) {
-        // Reference: GL bridge, fresh game directory, scene "terrain", camera x=0.5 y=12.0 z=0.5 yaw=180 pitch=20,
-        // 1280x720, picture = the capture's own screenshots/celtium-validation.png. Measured: distinctColours=MEASURED,
-        // nonBackgroundFraction=MEASURED, verticalBands=MEASURED, blackFraction=MEASURED.
+        // -----------------------------------------------------------------------------------------------------------
+        // The terrain floors, and the reference they were measured in.
+        //
+        // Reference run: GL bridge, fresh game directory, scene "terrain", camera x=0.5 y=12.0 z=0.5 yaw=180
+        // pitch=20, 1280x720, picture = the capture's own screenshots/celtium-validation.png (the GL bridge presents
+        // nothing through Vulkan, so the game's screenshot is that configuration's picture of the window).
+        // Measured there: distinctColours=1535, nonBackgroundFraction=0.732164, verticalBands=631,
+        // blackFraction=0.000000, backgroundColour=0x571716.
+        // A second GL-bridge run of the video settings scene at the same pose measured its world frame at
+        // distinctColours=1540, nonBackgroundFraction=0.728299, verticalBands=638, blackFraction=0.000000, which is
+        // the reproducibility the fixed camera was added for (the same scene used to land anywhere between
+        // nonBackgroundFraction 0.33 and 0.84 depending on where the run's drift left the player).
+        //
+        // The floors below are set with margin against those numbers, in the direction that keeps them meaningful:
+        // the non-background floor is 55% of the measured 0.7283, the band floor 40% of the measured 631, and the
+        // black ceiling is 0.05 against a measured 0.000 (the frames the audit wants caught measured 0.32-0.67 black
+        // with colour counts in the thousands: outline2 judged at 11751 colours and 0.6715 black, outline5 0.321,
+        // tesr1 0.519 with 46 colours - all three of which passed the old "more than 16 colours" test).
+        // -----------------------------------------------------------------------------------------------------------
         int minDistinctColours = Integer.getInteger("celtium.validation.gate.minDistinctColours",
                 PRESENTED_DISTINCT_COLOUR_FLOOR).intValue();
-        double referenceNonBackground = 0.0D;
-        int referenceBands = 0;
-        double referenceBlack = 1.0D;
+        double referenceNonBackground = 0.40D;
+        int referenceBands = 250;
+        double referenceBlack = 0.05D;
+        // -----------------------------------------------------------------------------------------------------------
+        // The video settings gate, measured on the same run's GUI frame against its own world frame. The panel is the
+        // rectangle the open screen's own list occupies, so this is "the expected panel", not a guessed layout.
+        //
+        // Reference run: GL bridge, fresh game directory, scene "videoSettings", same pose. Measured on the GUI frame
+        // (screenshots/celtium-validation.png, taken in the render tick that has the screen drawn) against the world
+        // frame of the same run (screenshots/celtium-validation-world.png): guiPanelChangedFraction=MEASURED,
+        // guiPanelStrongFraction=MEASURED, guiPanelDistinctColours=MEASURED, guiPanelRowAmplitude=MEASURED. The floors
+        // are set below those with margin, and a frame in which the screen never drew changes nothing (fraction 0).
+        // -----------------------------------------------------------------------------------------------------------
         double minPanelChanged = 0.0D;
         double minPanelStrong = 0.0D;
         int minPanelColours = 0;
         double minPanelRowAmplitude = 0.0D;
         String reference;
-        if (scene == Scene.VIDEO_SETTINGS) {
-            // Reference: GL bridge, fresh game directory, scene "videoSettings", same pose, gui frame = the capture
-            // taken with GuiVideoSettings open (screenshots/celtium-validation.png) against the world frame of the same
-            // run (screenshots/celtium-validation-world.png). Measured: panelChangedFraction=MEASURED,
-            // panelStrongFraction=MEASURED, panelDistinctColours=MEASURED, panelRowAmplitude=MEASURED,
-            // worldFrame nonBackgroundFraction=MEASURED, verticalBands=MEASURED, blackFraction=MEASURED.
-            reference = "gl-bridge scene-ref-video (scene=videoSettings, x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, "
-                    + "gui frame vs world frame of the same run): panelChangedFraction=MEASURED, "
-                    + "panelStrongFraction=MEASURED, panelDistinctColours=MEASURED, panelRowAmplitude=MEASURED; "
-                    + "world frame distinctColours=MEASURED nonBackgroundFraction=MEASURED verticalBands=MEASURED "
-                    + "blackFraction=MEASURED";
+        if (scene == Scene.NETHER) {
+            // No GL-bridge reference run of this scene exists at this pose yet. The floors below are the overworld
+            // terrain scene's and are NOT applied to a Nether frame: what a Nether frame of this fixture measured
+            // (GL-less, .celtium-work/runtime/vuid-after2, camera x=0.5 y=12.0 z=0.5 yaw=180 pitch=20) was
+            // distinctColours=605, nonBackgroundFraction=0.32598, verticalBands=720, blackFraction=0.036944,
+            // backgroundColour=0x000027 - a cave frame, not a daylight one. The scene stays uncalibrated until a
+            // GL-bridge run at the same pose says what its floors are, and the verdict reports
+            // floorsNotCalibrated rather than failing a scene nobody has measured.
+            reference = "not calibrated: scene nether has no GL-bridge reference run at x=0.5 y=12.0 z=0.5 yaw=180"
+                    + " pitch=20 yet; the overworld floors (nonBackgroundFraction>=0.40, verticalBands>=250,"
+                    + " blackFraction<=0.05) are NOT applied here. Measured GL-less Nether frame for the record:"
+                    + " distinctColours=605, nonBackgroundFraction=0.32598, verticalBands=720,"
+                    + " blackFraction=0.036944, backgroundColour=0x000027 (vuid-after2)";
+        } else if (scene == Scene.VIDEO_SETTINGS) {
+            reference = "gl-bridge scene-ref-video (scene=videoSettings, x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, gui frame"
+                    + " vs the same run's world frame): world frame distinctColours=1540 nonBackgroundFraction=0.728299"
+                    + " verticalBands=638 blackFraction=0.000000 -> floors distinctColours>16 nonBackgroundFraction>=0.40"
+                    + " verticalBands>=250 blackFraction<=0.05; panel floors from the gui frame of the same run:"
+                    + " panelChangedFraction>=MEASURED panelStrongFraction>=MEASURED panelDistinctColours>=MEASURED"
+                    + " panelRowAmplitude>=MEASURED";
         } else {
-            reference = "gl-bridge scene-ref-terrain (scene=terrain, x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, "
-                    + "screenshots/celtium-validation.png): distinctColours=MEASURED, nonBackgroundFraction=MEASURED, "
-                    + "verticalBands=MEASURED, blackFraction=MEASURED";
+            reference = "gl-bridge scene-ref-terrain (scene=terrain, x=0.5 y=12.0 z=0.5 yaw=180 pitch=20,"
+                    + " screenshots/celtium-validation.png): distinctColours=1535, nonBackgroundFraction=0.732164,"
+                    + " verticalBands=631, blackFraction=0.000000 -> floors distinctColours>16,"
+                    + " nonBackgroundFraction>=0.40 (55% of measured), verticalBands>=250 (40% of measured),"
+                    + " blackFraction<=0.05";
         }
         double minNonBackground = Double.parseDouble(System.getProperty(
                 "celtium.validation.gate.minNonBackgroundFraction", Double.toString(referenceNonBackground)));
@@ -533,8 +649,16 @@ public final class ValidationClient {
         minPanelColours = Integer.getInteger("celtium.validation.gate.minPanelDistinctColours", minPanelColours).intValue();
         minPanelRowAmplitude = Double.parseDouble(System.getProperty(
                 "celtium.validation.gate.minPanelRowAmplitude", Double.toString(minPanelRowAmplitude)));
+        boolean calibrated = scene.calibrated;
+        if (!calibrated) {
+            // The smoke test and the identity checks still apply - those are correctness, not thresholds - but the
+            // scene's measured floors are not enforced, because there is no measurement to enforce.
+            minNonBackground = 0.0D;
+            minBands = 0;
+            maxBlack = 1.0D;
+        }
         return new SceneGate(minDistinctColours, minNonBackground, minBands, maxBlack, minPanelChanged, minPanelStrong,
-                minPanelColours, minPanelRowAmplitude, reference);
+                minPanelColours, minPanelRowAmplitude, reference, calibrated);
     }
 
     /**
@@ -1973,11 +2097,20 @@ public final class ValidationClient {
             // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
             // in hand: the hooks advance one per game tick, and on the slower GPU a tick takes seconds of wall-clock.
             report.addProperty("worldTicksAtEnd", Integer.valueOf(worldTicks));
-            if (celtium$presentedVerdictPendingAtTick >= 0 && worldTicks > celtium$presentedVerdictPendingAtTick + 5) {
-                // The capture happened and its verdict was left to the next rendered frame; if the render loop never
-                // produced one, the report is still written rather than left to the exit hook as a run without a
-                // capture. The reason is recorded, because it is a fact about the run.
+            if (celtium$presentedVerdictPendingAtTick >= 0
+                    && ((worldTicks > celtium$presentedVerdictPendingAtTick + 5
+                            && worldFrames <= celtium$presentedVerdictPendingFrames)
+                        || worldTicks > celtium$presentedVerdictPendingAtTick + 40)) {
+                // The capture happened and its verdict was left to the first frame whose requested dump is on disk. Two
+                // ways out, both recorded: the render loop stopped producing frames at all, or the picture never
+                // arrived within 40 ticks. The first shape of this waited five ticks, which the capture itself spends
+                // in one catch-up burst - runTick runs up to ten times per iteration - so it finished a run whose very
+                // next frame would have carried the picture (measured: watchdog at tick 207 for a capture at 201,
+                // after which the report judged at shutdown instead of on the frame).
                 report.addProperty("presentedVerdictWatchdogAtTick", Integer.valueOf(worldTicks));
+                report.addProperty("presentedVerdictWatchdogFrames", Integer.valueOf(worldFrames));
+                report.addProperty("presentedVerdictWatchdogReason", worldFrames <= celtium$presentedVerdictPendingFrames
+                        ? "no world frame was rendered after the capture" : "the requested picture did not arrive");
                 celtium$presentedVerdictPendingAtTick = -1;
                 finish(mc);
                 return;
@@ -2007,8 +2140,24 @@ public final class ValidationClient {
                 celtium$poseAppliedAtTick = worldTicks;
                 celtium$poseAppliedTicks++;
             }
+            // A GUI scene's screen is opened here, on the client tick after the world frame was captured: inside the
+            // world render pass it would have been half of the frame it was captured in as well as of the next.
+            if (celtium$guiOpenPending && worldTicks >= celtium$captureStartTick + 1) {
+                celtium$guiOpenPending = false;
+                celtium$openGuiScene(mc);
+            }
             if (worldTicks == 20) {
                 mc.player.capabilities.isFlying = true;
+                // Early, so a run that never reaches its capture still says which scene, which run id and which pose
+                // it was: the report is the only thing a failed run leaves behind.
+                report.addProperty("scene", celtium$scene.name);
+                report.addProperty("sceneGuiStage", Boolean.valueOf(celtium$scene.guiStage));
+                report.addProperty("runId", celtium$runId);
+                report.addProperty("cameraRequested", celtium$pose.describe());
+                report.addProperty("sceneGateSource", celtium$gate.reference);
+                if (!"none".equals(celtium$sceneError)) {
+                    report.addProperty("sceneError", celtium$sceneError);
+                }
             }
             if (worldTicks >= 100 && !commandsRun) {
                 commandsRun = true;
@@ -2358,6 +2507,12 @@ public final class ValidationClient {
         // with a capture-time one, which is how a passing Intel run failed at shutdown with
         // "presentedImageFramesAtCapture=150 is not within one of worldFrames=152".
         if (celtium$presentedVerdictPendingAtTick >= 0) {
+            if (!celtium$pendingVerdictEvidenceComplete()) {
+                // The present that writes the picture happens after this event (updateDisplay is the last thing in the
+                // loop iteration), so the frame the capture asked for is not on disk yet. Judging here judged the file
+                // from before the request; the verdict now waits for the identity the write completes.
+                return;
+            }
             celtium$presentedVerdictPendingAtTick = -1;
             report.addProperty("presentedImageVerificationTick", Integer.valueOf(worldTicks));
             report.addProperty("presentedImageVerificationWorldFrames", Integer.valueOf(worldFrames));
@@ -2795,6 +2950,12 @@ public final class ValidationClient {
             celtium$captureStarted = true;
             celtium$captureStartTick = worldTicks;
             report.addProperty("captureStartTick", Integer.valueOf(worldTicks));
+        } else if (celtium$worldStageTaken) {
+            // The world stage of this scene is already captured. The capture body used to run again on the next frame -
+            // which, with the verdict deferred one frame under GL-less, meant a second screenshot and a second dump
+            // request to the same path, deleting the very file the verdict was about to judge. A scene with a GUI stage
+            // reaches here too: its remaining work is the screen, which frame() drives.
+            return;
         }
         try {
             if (commandBufferTargets && (!commandBufferTargetsAttempted || !commandBufferTargetsPassed)) {
@@ -2991,30 +3152,36 @@ public final class ValidationClient {
                 celtium$logFrameSample(mc);
                 // The game's own screenshot, at the game's own path: the fixture's convention, the harness's evidence
                 // that a picture was written, and - in a GL-bridge run, where Vulkan presents nothing - the scene's
-                // own picture. Its identity is written next to it here, synchronously, so it names this frame.
-                celtium$captureGlScreenshot(mc, "celtium-validation.png", "world");
+                // own picture. Its identity is written next to it here, synchronously, so it names this frame. A scene
+                // with a GUI stage writes the world frame to its own file, because celtium-validation.png is that
+                // scene's subject: the screen, captured later.
+                celtium$captureGlScreenshot(mc, celtium$scene.guiStage ? "celtium-validation-world.png"
+                        : "celtium-validation.png", "world");
             }
             // The verdict carries the picture assertions. A run whose picture of the window is flat, mostly black, or
             // not a frame this run's renderer counted must not report PASSED: that is how a black band and missing
             // terrain passed once already. Under GL-less, the frame the capture's dump request asked for is written by
             // the present that follows this render pass, so the verdict waits one frame for it; in a GL-bridge run the
             // screenshot above is synchronous and the verdict is taken here.
+            celtium$worldStageTaken = true;
             celtium$captureWorldFrames = worldFrames;
             report.addProperty("worldFramesAtCapture", Integer.valueOf(worldFrames));
             report.addProperty("firstPresentedWorldFrame", Integer.valueOf(celtium$firstPresentedWorldFrame));
             if (celtium$scene.guiStage) {
-                // The world frame is the video settings scene's reference; the acceptance is the screen. Open it and
-                // let it lay out, then capture it on a later frame (see the stage machine in frame()).
+                // The world frame is the video settings scene's reference; the acceptance is the screen. The screen is
+                // opened on the next client tick rather than here: this handler runs inside the world render pass, and
+                // a screen that appears mid-pass would be half of this frame as well as the next.
                 celtium$stage = 1;
-                celtium$openGuiScene(mc);
+                celtium$guiOpenPending = true;
                 report.addProperty("guiStageStartedAtTick", Integer.valueOf(worldTicks));
                 report.addProperty("guiStageStartedAtFrames", Integer.valueOf(worldFrames));
                 return;
             }
             if (celtium$glLessInstalled() && !Boolean.getBoolean("celtium.validation.presentedImageAtCapture")) {
                 // The screenshot and the report properties are taken; only the picture verdict is left, and it is
-                // taken on the next frame, when the frame the capture's dump request asked for has been presented.
+                // taken on the first frame whose requested dump has been written and observed.
                 celtium$presentedVerdictPendingAtTick = worldTicks;
+                celtium$presentedVerdictPendingFrames = worldFrames;
                 report.addProperty("presentedVerdictDeferredAtTick", Integer.valueOf(worldTicks));
                 return;
             }
@@ -3357,168 +3524,1042 @@ public final class ValidationClient {
         return line.toString();
     }
 
-    /**
-     * Measures the image the renderer presented and asserts that it can be a picture of the world at all.
-     * <p>
-     * Under the GL-less stub there is no GL default framebuffer, so the game's own screenshot is black whatever the
-     * window shows and is worthless as evidence; the image the swapchain received is the only true picture. That image
-     * was already being recorded, but only as a mean - and a mean cannot tell a frame of terrain from a clear colour
-     * with one quad over it, which is exactly how a run whose window showed a black band and no terrain reported
-     * PASSED and clean. The arithmetic below lives in the fixture on purpose: what counts as a picture is the
-     * instrument's question, not the renderer's.
-     * <p>
-     * The pixels come from the dumped PNG rather than from a readback buffer: the readback behind
-     * {@code celtium$presentedImageMean} reads into a local array and keeps only the mean, and no accessor on the
-     * backend hands the pixels over. The PNG is written by that same readback, and {@code javax.imageio.ImageIO} is
-     * already used by this fixture for its own proof images, so reading it adds no dependency and no switch. The dump
-     * the fixture requests two ticks before the capture is the one on disk at this point; a capture-time request is
-     * only consumed by a present after this call.
-     * <p>
-     * This reports and never throws. A check that cannot be taken counts as a failed check, because a GL-less run
-     * whose only picture cannot be measured must not end up claiming PASSED.
-     */
-    private void celtium$checkPresentedImage(Minecraft mc, int worldFramesAtCapture) {
-        java.util.List<String> failures = new java.util.ArrayList<String>();
+    // ---------------------------------------------------------------------------------------------------------------
+    // Picture evidence: the request, the identity that names the frame, and the scene's verdict.
+    //
+    // The shape of the claim this section makes, and why it is not "more than 16 colours":
+    //
+    //   * The scene has a fixed camera pose, so two runs of it are pictures of the same thing.
+    //   * The picture is requested at a path unique to this run, scene and stage, and the request records the frame
+    //     counters at the moment it was made.
+    //   * The write is *observed*: when the file appears, the renderer's presented-frame counter must have advanced by
+    //     exactly one from the request, which is what proves which present wrote it. The observation, the world tick,
+    //     the extent and a hash of the pixels are written to a sidecar identity file next to the image.
+    //   * The verdict reads that identity back from disk, refuses to judge an image whose identity does not match the
+    //     capture it is asserting about, and refuses an image whose pixels no longer hash to what the identity names.
+    //   * The judgement itself is the scene's gate: measured floors from a real GL-bridge reference run of the same
+    //     scene at the same pose, named in the report beside the number they gate.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** The picture source this configuration has, decided by whether the GL-less stub is answering GL calls. */
+    private static String celtium$evidenceSource() {
+        return celtium$glLessInstalled() ? SOURCE_PRESENTED_DUMP : SOURCE_GL_SCREENSHOT;
+    }
+
+    /** A per-run, per-stage path: no two requests share a file, which is what makes an identity meaningful. */
+    private java.nio.file.Path celtium$picturePath(String stage, String kind) {
+        return Minecraft.getMinecraft().gameDir.toPath()
+                .resolve("screenshots/celtium-" + kind + "-" + stage + "-" + celtium$runId + ".png");
+    }
+
+    /** A path as the report writes it: relative to the game directory when it is inside it, with forward slashes. */
+    private static String celtium$relative(java.nio.file.Path path) {
+        java.nio.file.Path game = Minecraft.getMinecraft().gameDir.toPath().toAbsolutePath();
+        java.nio.file.Path absolute = path.toAbsolutePath();
+        String text = absolute.startsWith(game) ? game.relativize(absolute).toString() : absolute.toString();
+        return text.replace(java.io.File.separatorChar, '/');
+    }
+
+    /** The live Vulkan terrain backend, or null when this run's terrain is drawn some other way. */
+    private static org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend celtium$vulkanBackend() {
         try {
-            java.nio.file.Path png = mc.gameDir.toPath().resolve("screenshots/celtium-presented.png");
-            java.awt.image.BufferedImage image = null;
-            String unavailable = "the dumped presented image could not be read";
-            long ageMillis = -1L;
-            try {
-                if (java.nio.file.Files.isRegularFile(png)) {
-                    ageMillis = System.currentTimeMillis()
-                            - java.nio.file.Files.getLastModifiedTime(png).toMillis();
-                    image = javax.imageio.ImageIO.read(png.toFile());
-                    if (image == null) {
-                        unavailable = "ImageIO read no image from " + png;
-                    }
-                } else {
-                    unavailable = "no dumped presented image at " + png;
-                }
-            } catch (Throwable error) {
-                unavailable = error.toString();
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                return (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
             }
-            PresentedImageStats stats = image == null ? null : celtium$measurePresentedImage(image);
-            if (image != null && stats == null) {
-                unavailable = "the dumped image has no pixels (" + image.getWidth() + "x" + image.getHeight() + ")";
+        } catch (RuntimeException | LinkageError absent) {
+            // The renderer's classes are not on the classpath in every configuration this fixture runs in, and a
+            // missing class has to answer "no Vulkan backend" rather than end the capture.
+        }
+        return null;
+    }
+
+    private static double celtium$presentedImageMean() {
+        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend = celtium$vulkanBackend();
+        return backend == null ? -1.0D : backend.celtium$presentedImageMean();
+    }
+
+    /**
+     * Asks the renderer for the frame this capture is about, at a path nothing else will write.
+     * <p>
+     * The identity this records is the *request*: the world tick the frame's content belongs to, the fixture's own
+     * world-frame count, and the renderer's presented-frame counter before the present that will write it. The
+     * completion - which present actually wrote the file - is observed in {@link #celtium$completePendingDumps()}.
+     */
+    private PictureEvidence celtium$requestPresentedDump(Minecraft mc, String stage) {
+        java.nio.file.Path image = celtium$picturePath(stage, "presented");
+        PictureEvidence evidence = new PictureEvidence(stage, SOURCE_PRESENTED_DUMP, image, worldTicks, worldFrames,
+                celtium$presentedFrameCount(), mc.displayWidth, mc.displayHeight, BINDING_OBSERVED_PRESENT);
+        try {
+            // A stale file would make "the image appeared" mean nothing. The path is per-run, but re-running the same
+            // command with a pinned run id in the same game directory is exactly what the harness does, so both files
+            // are cleared before the request.
+            java.nio.file.Files.deleteIfExists(image);
+            java.nio.file.Files.deleteIfExists(evidence.identity);
+        } catch (java.io.IOException error) {
+            evidence.completionError = "a stale file at " + celtium$relative(image) + " could not be cleared: " + error;
+        }
+        boolean requested = false;
+        try {
+            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend = celtium$vulkanBackend();
+            if (backend != null) {
+                requested = backend.celtium$dumpPresentedImage(image);
             }
-            if (stats != null) {
-                report.addProperty("presentedImageStatsSource", "dumped PNG screenshots/celtium-presented.png "
-                        + stats.width + "x" + stats.height
-                        + " (the readback that fills it publishes only its mean, not its pixels)");
-                // Reported, not asserted: the dump is written by the present that consumes the tick-198 request, so an
-                // age of a second or two is normal and a very old file is stale evidence. A time-based threshold here
-                // would fail slow machines for the wrong reason; the frame-count assertion below is what catches a PNG
-                // no present has refreshed.
-                report.addProperty("presentedImagePngAgeMs", Long.valueOf(ageMillis));
-                report.addProperty("presentedDistinctColours", Integer.valueOf(stats.distinctColours));
-                report.addProperty("presentedNonBackgroundFraction", Double.valueOf(stats.nonBackgroundFraction));
-                report.addProperty("presentedVerticalBands", Integer.valueOf(stats.verticalBands));
-                report.addProperty("presentedBackgroundColour", celtium$hexColour(stats.backgroundColour));
-                report.addProperty("presentedBackgroundTolerance", Integer.valueOf(PRESENTED_BACKGROUND_TOLERANCE));
-                report.addProperty("presentedImagePixels", Integer.valueOf(stats.width * stats.height));
-            } else {
-                report.addProperty("presentedImageStatsSource", "unavailable: " + unavailable);
-            }
-            boolean notSingleColour = stats != null && stats.distinctColours > 1;
-            boolean distinctColoursAboveFloor = stats != null
-                    && stats.distinctColours > PRESENTED_DISTINCT_COLOUR_FLOOR;
-            report.addProperty("presentedImageNotSingleColour", Boolean.valueOf(notSingleColour));
-            report.addProperty("presentedImageDistinctColoursAboveFloor", Boolean.valueOf(distinctColoursAboveFloor));
-            if (stats == null) {
-                failures.add("the presented image could not be measured (" + unavailable
-                        + "), so this GL-less run has no picture evidence about the window");
-            } else {
-                if (!notSingleColour) {
-                    failures.add("the presented image is a single colour: presentedDistinctColours="
-                            + stats.distinctColours + " over " + (stats.width * stats.height)
-                            + " pixels (presentedBackgroundColour=" + celtium$hexColour(stats.backgroundColour)
-                            + ", presentedVerticalBands=" + stats.verticalBands + ", image "
-                            + stats.width + "x" + stats.height + ")");
-                }
-                if (!distinctColoursAboveFloor) {
-                    failures.add("presentedDistinctColours=" + stats.distinctColours + " is not above the floor of "
-                            + PRESENTED_DISTINCT_COLOUR_FLOOR + " (presentedNonBackgroundFraction="
-                            + stats.nonBackgroundFraction + ", presentedVerticalBands=" + stats.verticalBands
-                            + "): the window is a clear colour plus at most a quad or two, not a frame");
-                }
-            }
-            boolean framesAboveZero = false;
-            boolean framesWithinOne = false;
-            if (!report.has("presentedImageFramesAtCapture")) {
-                failures.add("presentedImageFramesAtCapture was not recorded, so the frame at capture cannot be tied to"
-                        + " the frames the renderer counted (worldFrames at capture=" + worldFramesAtCapture + ")");
-            } else {
-                int presentedFrames = report.get("presentedImageFramesAtCapture").getAsInt();
-                framesAboveZero = presentedFrames > 0;
-                boolean counterRestartedAtArrival = report.has("dimensionPresentedCounterResetAtArrival")
-                        && report.get("dimensionPresentedCounterResetAtArrival").getAsBoolean()
-                        && celtium$presentedFramesAtArrival >= 0;
-                if (counterRestartedAtArrival) {
-                    // The renderer's presented-frame counter belongs to the live frame target, and this run measured it
-                    // restarting at the dimension change: it had reached dimensionPresentedHighWaterBeforeArrival
-                    // before the arrival and read 0 at it. Comparing the capture's count against the whole run's
-                    // world-frame count would then read the restart as frames that never reached the window. What the
-                    // assertion is for - the frame at the capture is one the renderer counted, and every frame of the
-                    // new dimension reached the window - is checked inside the window the counter spans, and the
-                    // whole-run numbers are recorded beside it rather than dropped.
-                    int framesInTarget = celtium$framesInTargetDimension;
-                    framesWithinOne = framesAboveZero && presentedFrames - celtium$presentedFramesAtArrival >= framesInTarget - 1;
-                    report.addProperty("presentedImageFrameCountScope",
-                            "dimension window: the presented counter restarted at the arrival"
-                                    + " (high-water " + celtium$presentedHighWaterBeforeArrival + " before it, "
-                                    + celtium$presentedFramesAtArrival + " at it); the capture's " + presentedFrames
-                                    + " presents cover the " + framesInTarget + " frames drawn in the target dimension,"
-                                    + " while the run's " + worldFramesAtCapture + " world frames span both targets");
-                    if (!framesAboveZero) {
-                        failures.add("presentedImageFramesAtCapture=" + presentedFrames
-                                + " is not greater than zero: no frame the renderer counted reached the window");
-                    } else if (!framesWithinOne) {
-                        failures.add("the renderer presented " + (presentedFrames - celtium$presentedFramesAtArrival)
-                                + " frames after the arrival in dimension " + celtium$dimension + ", fewer than the "
-                                + framesInTarget + " frames that dimension drew (presentedImageFramesAtCapture="
-                                + presentedFrames + ", at arrival=" + celtium$presentedFramesAtArrival + ")");
-                    }
-                } else {
-                    framesWithinOne = framesAboveZero && Math.abs(presentedFrames - worldFramesAtCapture) <= 1;
-                    if (!framesAboveZero) {
-                        failures.add("presentedImageFramesAtCapture=" + presentedFrames
-                                + " is not greater than zero: no frame the renderer counted reached the window");
-                    } else if (!framesWithinOne) {
-                        failures.add("presentedImageFramesAtCapture=" + presentedFrames
-                                + " is not within one of worldFrames=" + worldFramesAtCapture
-                                + ": the frame presented at the capture is not one the renderer counted");
-                    }
-                }
-            }
-            report.addProperty("presentedImageFrameCountAboveZero", Boolean.valueOf(framesAboveZero));
-            report.addProperty("presentedImageFrameCountMatchesWorldFrames", Boolean.valueOf(framesWithinOne));
-            celtium$presentedImageFailures = failures.size();
-            report.addProperty("presentedImageAssertionFailures", Integer.valueOf(failures.size()));
-            report.addProperty("presentedImageAssertions", celtium$presentedImageAssertionMessage(failures));
-            // Printed as well as recorded: the log is what a run leaves behind when the report cannot be read, and these
-            // are the numbers that say whether the window was right.
-            for (int i = 0; i < failures.size(); i++) {
-                System.out.println("[Celtium] CELTIUM_PRESENTED_IMAGE " + failures.get(i));
-            }
+        } catch (RuntimeException | LinkageError error) {
+            evidence.completionError = "the presented-image dump could not be requested: " + error;
+        }
+        if (requested) {
+            celtium$pendingDumps.add(evidence);
+        } else if ("none".equals(evidence.completionError)) {
+            evidence.completionError = "the live terrain backend is not the Vulkan one, so no presented image can be"
+                    + " dumped for this capture";
+        }
+        report.addProperty("pictureRequested_" + stage, celtium$relative(image) + " at tick " + evidence.requestedAtTick
+                + " after " + evidence.presentedFramesAtRequest + " presented frames, world frame "
+                + evidence.worldFramesAtRequest + " (" + evidence.requestedWidth + "x" + evidence.requestedHeight + ")");
+        return evidence;
+    }
+
+    /**
+     * Writes the game's own screenshot and, in a configuration where that screenshot is the picture, its identity.
+     * <p>
+     * Under the GL-less stub the game's screenshot reads a GL default framebuffer that does not exist, so it is one
+     * black colour by construction. It is still written - it is the fixture's and the harness's convention for "a
+     * screenshot was saved" - and the report says what it is worth, so no field reads as picture evidence without
+     * being one. The GL-bridge run is the opposite case: Vulkan presents nothing there, the screenshot is the window,
+     * and it is written synchronously by this call, which is what binds it to this frame.
+     */
+    private void celtium$captureGlScreenshot(Minecraft mc, String fileName, String stage) {
+        try {
+            ScreenShotHelper.saveScreenshot(mc.gameDir, fileName, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
         } catch (Throwable error) {
-            // The check must never stop the capture. An unexpected failure of the check itself is still a failed check:
-            // a GL-less run must not pass because the instrument broke.
-            celtium$presentedImageFailures = 1;
-            report.addProperty("presentedImageAssertionFailures", Integer.valueOf(1));
-            report.addProperty("presentedImageAssertions",
-                    "FAILED: the presented-image check itself failed: " + error);
-            report.addProperty("presentedImageCheckError", error.toString());
-            System.out.println("[Celtium] CELTIUM_PRESENTED_IMAGE the check itself failed: " + error);
+            report.addProperty("pictureScreenshotError_" + stage, error.toString());
+            return;
+        }
+        report.addProperty("pictureScreenshot_" + stage, "screenshots/" + fileName);
+        if (celtium$glLessInstalled()) {
+            report.addProperty("pictureScreenshotUsable_" + stage, Boolean.FALSE);
+            report.addProperty("pictureScreenshotNote_" + stage, "black by construction under the GL-less stub: there"
+                    + " is no GL default framebuffer to read, so the presented dump is this configuration's picture");
+            return;
+        }
+        report.addProperty("pictureScreenshotUsable_" + stage, Boolean.TRUE);
+        PictureEvidence evidence = new PictureEvidence(stage, SOURCE_GL_SCREENSHOT,
+                mc.gameDir.toPath().resolve("screenshots").resolve(fileName), worldTicks, worldFrames,
+                celtium$presentedFrameCount(), mc.displayWidth, mc.displayHeight, BINDING_WRITE_AT_CAPTURE);
+        // Written by the call above, on this thread, inside the capture, so the frame is named by construction rather
+        // than by a present observed. The renderer's presented-frame counter is meaningless here - a GL-bridge run
+        // presents nothing through Vulkan, and the counter it keeps belongs to another path entirely (measured: 86
+        // against 110 world frames in the reference run) - so it is recorded as not applicable rather than compared.
+        evidence.presentedFrame = -1;
+        evidence.worldTick = worldTicks;
+        evidence.worldFrames = worldFrames;
+        evidence.completedAtTick = worldTicks;
+        celtium$readAndHash(evidence);
+        celtium$writeIdentity(evidence);
+        celtium$evidence.put(stage, evidence);
+        System.out.println("[Celtium] CELTIUM_PICTURE_IDENTITY stage=" + stage + " source=" + SOURCE_GL_SCREENSHOT
+                + " file=" + celtium$relative(evidence.image) + " presentedFrame=" + evidence.presentedFrame
+                + " worldTick=" + evidence.worldTick + " worldFrames=" + evidence.worldFrames + " " + evidence.width
+                + "x" + evidence.height + " hash=" + Integer.toHexString(evidence.imageHash)
+                + " error=" + evidence.completionError);
+    }
+
+    /** Fills in the extent and pixel hash of an evidence record from the file on disk. */
+    private void celtium$readAndHash(PictureEvidence evidence) {
+        try {
+            Picture picture = Picture.read(evidence.image);
+            if (picture == null) {
+                evidence.completionError = "the image at " + celtium$relative(evidence.image) + " could not be read";
+                return;
+            }
+            evidence.width = picture.width;
+            evidence.height = picture.height;
+            evidence.imageHash = picture.hash();
+            evidence.completed = true;
+        } catch (Throwable error) {
+            evidence.completionError = "the image at " + celtium$relative(evidence.image) + " could not be read: " + error;
         }
     }
 
-    /** The assertion results as one line: PASSED, or every failure with the numbers it measured. */
+    /**
+     * Writes the identity sidecar: the fields the verdict checks an image against.
+     * <p>
+     * It is written even when the completion failed, and carries the failure text, so a run that could not name its
+     * frame leaves the reason on disk next to the image instead of an unexplained refusal.
+     */
+    private void celtium$writeIdentity(PictureEvidence evidence) {
+        JsonObject identity = new JsonObject();
+        identity.addProperty("runId", celtium$runId);
+        identity.addProperty("scene", celtium$scene.name);
+        identity.addProperty("stage", evidence.stage);
+        identity.addProperty("source", evidence.source);
+        identity.addProperty("image", celtium$relative(evidence.image));
+        identity.addProperty("worldTick", evidence.worldTick);
+        identity.addProperty("worldFrames", evidence.worldFrames);
+        identity.addProperty("presentedFrame", evidence.presentedFrame);
+        identity.addProperty("width", evidence.width);
+        identity.addProperty("height", evidence.height);
+        identity.addProperty("imageHash", evidence.imageHash);
+        identity.addProperty("requestedAtTick", evidence.requestedAtTick);
+        identity.addProperty("requestedWorldFrames", evidence.worldFramesAtRequest);
+        identity.addProperty("requestedPresentedFrame", evidence.presentedFramesAtRequest);
+        identity.addProperty("completedAtTick", evidence.completedAtTick);
+        identity.addProperty("frameBinding", evidence.frameBinding);
+        identity.addProperty("identitySource", SOURCE_GL_SCREENSHOT.equals(evidence.source)
+                ? "fixture-write-at-capture" : "fixture-observed-completion");
+        identity.addProperty("completionError", evidence.completionError == null ? "none" : evidence.completionError);
+        identity.addProperty("writtenAtMillis", Long.valueOf(System.currentTimeMillis()));
+        try {
+            java.nio.file.Files.createDirectories(evidence.identity.getParent());
+            java.nio.file.Files.write(evidence.identity,
+                    (new GsonBuilder().setPrettyPrinting().create().toJson(identity) + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (Exception error) {
+            report.addProperty("pictureIdentityWriteError_" + evidence.stage, error.toString());
+        }
+        report.addProperty("pictureIdentity_" + evidence.stage, identity.toString());
+    }
+
+    /**
+     * Observes the presented-image requests that have been written, and completes their identities.
+     * <p>
+     * This is where the frame becomes a fact rather than an inference. The request was made inside the capture's frame
+     * and is consumed by the next present, so when the file appears the renderer's presented-frame counter must read
+     * exactly one more than it did at the request. If it reads anything else, a second present intervened and the frame
+     * the file holds cannot be named: the mismatch is recorded and the verdict refuses the picture instead of judging
+     * whatever happens to be at that path.
+     */
+    private void celtium$completePendingDumps() {
+        if (celtium$pendingDumps.isEmpty()) {
+            return;
+        }
+        java.util.Iterator<PictureEvidence> iterator = celtium$pendingDumps.iterator();
+        while (iterator.hasNext()) {
+            PictureEvidence evidence = iterator.next();
+            if (!java.nio.file.Files.isRegularFile(evidence.image)) {
+                continue;
+            }
+            iterator.remove();
+            int observed = celtium$presentedFrameCount();
+            int expected = evidence.presentedFramesAtRequest + 1;
+            evidence.completedAtTick = worldTicks;
+            if (observed != expected) {
+                evidence.completionError = "the image appeared while the renderer's presented-frame counter read "
+                        + observed + ", not the " + expected + " this request expected, so the frame it holds cannot be"
+                        + " named";
+            } else {
+                evidence.presentedFrame = observed;
+                evidence.worldTick = evidence.requestedAtTick;
+                evidence.worldFrames = evidence.worldFramesAtRequest;
+            }
+            celtium$readAndHash(evidence);
+            if (observed != expected) {
+                evidence.completed = false;
+            }
+            celtium$writeIdentity(evidence);
+            celtium$evidence.put(evidence.stage, evidence);
+            System.out.println("[Celtium] CELTIUM_PICTURE_IDENTITY stage=" + evidence.stage + " source="
+                    + SOURCE_PRESENTED_DUMP + " file=" + celtium$relative(evidence.image) + " presentedFrame="
+                    + evidence.presentedFrame + " expected=" + expected + " worldTick=" + evidence.worldTick
+                    + " worldFrames=" + evidence.worldFrames + " " + evidence.width + "x" + evidence.height
+                    + " hash=" + Integer.toHexString(evidence.imageHash) + " error=" + evidence.completionError);
+        }
+    }
+
+    /**
+     * Whether every picture the scene's verdict needs has been written and its identity completed.
+     * <p>
+     * The deferred verdict waits on this rather than on a tick count: the present that writes the picture is the last
+     * thing in the loop iteration, so the frame after the capture is the first one whose file exists, and a run that
+     * is merely slow (ticks catching up in bursts) must not be judged before its evidence is there.
+     */
+    private boolean celtium$pendingVerdictEvidenceComplete() {
+        PictureEvidence world = celtium$evidence.get("world");
+        if (world == null || !world.completed) {
+            return false;
+        }
+        if (!celtium$scene.guiStage) {
+            return true;
+        }
+        PictureEvidence gui = celtium$evidence.get("gui");
+        return gui != null && gui.completed;
+    }
+
+    /** The world stage's picture: the presented dump under GL-less, the game's screenshot in a GL-bridge run. */
+    private void celtium$takeWorldStageEvidence(Minecraft mc) {
+        if (!Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            if (celtium$glLessInstalled()) {
+                report.addProperty("pictureEvidenceProblem", "GL-less without -Dceltium.vulkan.presentReadback and"
+                        + " -Dceltium.validation.dumpPresentedImage: the game's own screenshot is black by construction"
+                        + " and no presented image was requested, so this run has no picture of the window at all");
+            }
+            return;
+        }
+        celtium$requestPresentedDump(mc, "world");
+        report.addProperty("presentedDumpRequestedAtCapture", Boolean.TRUE);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // The camera pose: set once on the server through the game's own teleport, held on the client every tick.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Moves the server's player to the scene's pose, through the call the game's own {@code /tp} uses.
+     * <p>
+     * A client-side {@code setPositionAndRotation} alone does not survive: the server's movement check reads a step of
+     * hundreds of blocks as "moved too quickly" and sends the client back to the position the server had, which is why
+     * the fixture's camera was wherever the run's drift and the inherited save had left the player. Moving the server's
+     * own player first - and its flying state with it - means the position the client then reports is the one the
+     * server already has.
+     */
+    private String celtium$teleportPoseOnServer(final Minecraft mc) {
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        if (server == null || mc.player == null) {
+            return "no integrated server";
+        }
+        final java.util.UUID playerId = mc.player.getUniqueID();
+        final int tick = worldTicks;
+        try {
+            server.addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        net.minecraft.entity.player.EntityPlayerMP player = server.getPlayerList().getPlayerByUUID(playerId);
+                        if (player == null) {
+                            celtium$poseResult = "no server player for " + playerId;
+                            return;
+                        }
+                        player.capabilities.allowFlying = true;
+                        player.capabilities.isFlying = true;
+                        player.sendPlayerAbilities();
+                        player.rotationYaw = celtium$pose.yaw;
+                        player.rotationPitch = celtium$pose.pitch;
+                        player.prevRotationYaw = celtium$pose.yaw;
+                        player.prevRotationPitch = celtium$pose.pitch;
+                        // setPositionAndUpdate is EntityPlayerMP's own teleport: it sends the position-look packet the
+                        // client applies, so both sides end up at the pose with no correction in flight.
+                        player.setPositionAndUpdate(celtium$pose.x, celtium$pose.y, celtium$pose.z);
+                        player.motionX = 0.0D;
+                        player.motionY = 0.0D;
+                        player.motionZ = 0.0D;
+                        player.fallDistance = 0.0F;
+                        celtium$poseResult = "server-side teleport at tick " + tick + " to " + celtium$pose.describe();
+                    } catch (Throwable error) {
+                        celtium$poseResult = "server-side teleport failed: " + error;
+                    }
+                }
+            });
+        } catch (Throwable error) {
+            return "could not schedule the server-side teleport: " + error;
+        }
+        return "scheduled at tick " + tick + " to " + celtium$pose.describe();
+    }
+
+    /**
+     * Holds the client's player at the scene's pose.
+     * <p>
+     * Both the position and the previous-position fields are set, because the renderer interpolates between them over
+     * the partial tick: setting only the current position would leave the camera moving with the frame's phase, which
+     * is the difference a pixel comparison between two runs would measure instead of the renderer.
+     */
+    private void celtium$applyPose(Minecraft mc) {
+        if (mc.player == null) {
+            return;
+        }
+        mc.player.capabilities.allowFlying = true;
+        mc.player.capabilities.isFlying = true;
+        mc.player.motionX = 0.0D;
+        mc.player.motionY = 0.0D;
+        mc.player.motionZ = 0.0D;
+        mc.player.fallDistance = 0.0F;
+        mc.player.setPositionAndRotation(celtium$pose.x, celtium$pose.y, celtium$pose.z, celtium$pose.yaw, celtium$pose.pitch);
+        mc.player.rotationYawHead = celtium$pose.yaw;
+        mc.player.prevRotationYawHead = celtium$pose.yaw;
+        mc.player.renderYawOffset = celtium$pose.yaw;
+        mc.player.prevRenderYawOffset = celtium$pose.yaw;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // The video settings stage: open the game's own options screen, press its button, let it lay out, capture it.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** Opens Minecraft's own options screen - the call the pause menu's Options button makes. */
+    private void celtium$openGuiScene(Minecraft mc) {
+        celtium$guiScreenOpenedAtTick = worldTicks;
+        celtium$guiScreenOpenedAtFrames = worldFrames;
+        try {
+            net.minecraft.client.gui.GuiOptions options =
+                    new net.minecraft.client.gui.GuiOptions((net.minecraft.client.gui.GuiScreen) null, mc.gameSettings);
+            mc.displayGuiScreen(options);
+            celtium$guiScreenOpened = celtium$screenName(mc);
+            celtium$guiScreenOpenedVia = "Minecraft.displayGuiScreen(new GuiOptions(null, gameSettings))";
+            celtium$guiClickPending = true;
+        } catch (Throwable error) {
+            celtium$guiScreenOpened = "none";
+            celtium$guiScreenOpenedVia = "failed: " + error;
+        }
+        report.addProperty("guiScreenOpened", celtium$guiScreenOpened);
+        report.addProperty("guiScreenOpenedVia", celtium$guiScreenOpenedVia);
+        report.addProperty("guiScreenOpenedAtTick", Integer.valueOf(worldTicks));
+    }
+
+    /**
+     * Presses the options screen's Video Settings button through the screen's own click dispatch.
+     * <p>
+     * {@code GuiScreen.mouseClicked} is the code a real click runs: it finds the button under the point and calls the
+     * screen's {@code actionPerformed}, whose handler for id 101 is
+     * {@code gameSettings.saveOptions(); displayGuiScreen(new GuiVideoSettings(this, gameSettings))}. Dispatching there
+     * rather than constructing the screen here is what makes this "the game's own code path" rather than a copy of it.
+     * If the button cannot be found the same two calls are made directly, and the report says which path was taken.
+     */
+    private void celtium$clickVideoSettingsButton(Minecraft mc) {
+        net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
+        if (screen == null) {
+            celtium$guiClickResult = "no screen is open to click in";
+            report.addProperty("guiClickResult", celtium$guiClickResult);
+            return;
+        }
+        try {
+            Object buttonList = celtium$fieldValue(screen, new String[] {"buttonList", "field_146292_n"});
+            java.util.List<?> buttons = buttonList instanceof java.util.List ? (java.util.List<?>) buttonList
+                    : new java.util.ArrayList<Object>();
+            Object target = null;
+            String how = "none";
+            for (Object candidate : buttons) {
+                Object id = celtium$fieldValue(candidate, new String[] {"id", "field_146127_k"});
+                if (id instanceof Integer && ((Integer) id).intValue() == 101) {
+                    target = candidate;
+                    how = "button id 101";
+                    break;
+                }
+            }
+            if (target == null) {
+                String label = net.minecraft.client.resources.I18n.format("options.video", new Object[0]);
+                for (Object candidate : buttons) {
+                    Object text = celtium$fieldValue(candidate, new String[] {"displayString", "field_146126_j"});
+                    if (label.equals(String.valueOf(text))) {
+                        target = candidate;
+                        how = "button labelled '" + label + "'";
+                        break;
+                    }
+                }
+            }
+            if (target == null) {
+                celtium$openVideoSettingsDirectly(mc, "no Video Settings button in " + buttons.size() + " options buttons");
+                return;
+            }
+            int x = ((Number) celtium$fieldValue(target, new String[] {"x", "field_146128_h"})).intValue();
+            int y = ((Number) celtium$fieldValue(target, new String[] {"y", "field_146129_i"})).intValue();
+            int width = ((Number) celtium$fieldValue(target, new String[] {"width", "field_146120_f"})).intValue();
+            int height = ((Number) celtium$fieldValue(target, new String[] {"height", "field_146121_g"})).intValue();
+            java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
+                    new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
+            click.invoke(screen, Integer.valueOf(x + width / 2), Integer.valueOf(y + height / 2), Integer.valueOf(0));
+            celtium$guiClickResult = "clicked " + how + " at " + (x + width / 2) + "," + (y + height / 2)
+                    + " through GuiScreen.mouseClicked";
+        } catch (Throwable error) {
+            celtium$openVideoSettingsDirectly(mc, "the click dispatch failed: " + error);
+            return;
+        }
+        report.addProperty("guiClickResult", celtium$guiClickResult);
+    }
+
+    /** The same two calls the game's own handler makes for id 101, recorded as their own provenance. */
+    private void celtium$openVideoSettingsDirectly(Minecraft mc, String why) {
+        try {
+            mc.gameSettings.saveOptions();
+            mc.displayGuiScreen(new net.minecraft.client.gui.GuiVideoSettings(mc.currentScreen, mc.gameSettings));
+            celtium$guiScreenOpenedVia = why + "; opened with the two calls the game's own handler makes"
+                    + " (gameSettings.saveOptions + displayGuiScreen(new GuiVideoSettings(parent, gameSettings)))";
+            report.addProperty("guiVideoSettingsOpenedVia", celtium$guiScreenOpenedVia);
+        } catch (Throwable error) {
+            celtium$guiScreenOpenedVia = why + "; and the direct open failed too: " + error;
+            report.addProperty("guiVideoSettingsOpenedVia", celtium$guiScreenOpenedVia);
+        }
+    }
+
+    /**
+     * Drives the video settings stage: click the button, wait for the screen and its layout, then capture it.
+     * <p>
+     * The screen is up when this runs - it is drawn before the render tick ends, so the picture taken here holds it.
+     * The wait is for the screen's own layout (its list builds its content as it is scrolled and laid out), and it is
+     * bounded: a screen that never becomes a {@code GuiVideoSettings} fails the run with the class it actually is
+     * instead of waiting out the timeout.
+     */
+    private void celtium$advanceGuiStage(Minecraft mc) {
+        if (celtium$guiClickPending && worldTicks >= celtium$guiScreenOpenedAtTick + 1) {
+            celtium$guiClickPending = false;
+            celtium$clickVideoSettingsButton(mc);
+            // The button is the game's, but a mod can claim it: with Celeritas installed the click through
+            // GuiScreen.mouseClicked on button id 101 opened org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen
+            // in the reference run, not GuiVideoSettings. What the scene asserts is Minecraft's own screen, so the
+            // diversion is recorded and the screen this scene is about is then opened with the same two calls the
+            // vanilla handler makes - it is the same screen the game would show without that mod in the way.
+            if (mc.currentScreen != null && !"GuiVideoSettings".equals(celtium$screenName(mc))) {
+                report.addProperty("guiClickDivertedTo", mc.currentScreen.getClass().getName());
+                celtium$openVideoSettingsDirectly(mc, "the Video Settings button opened "
+                        + mc.currentScreen.getClass().getName() + ", not Minecraft's own GuiVideoSettings");
+                report.addProperty("guiScreenOpenedVia", celtium$guiScreenOpenedVia);
+            }
+        }
+        String screenName = celtium$screenName(mc);
+        report.addProperty("guiScreenCurrent", screenName);
+        if (mc.currentScreen == null) {
+            report.addProperty("guiScreenVerdict", "the screen was closed before its capture");
+            fail(mc, new IllegalStateException("scene " + celtium$scene.name + ": the video settings screen was closed"
+                    + " before it could be captured (opened via " + celtium$guiScreenOpenedVia + "; click result "
+                    + celtium$guiClickResult + ")"));
+            return;
+        }
+        if (!"GuiVideoSettings".equals(screenName)) {
+            if (worldTicks - celtium$guiScreenOpenedAtTick > celtium$guiWaitTicks) {
+                report.addProperty("guiScreenVerdict", "the screen never became GuiVideoSettings");
+                fail(mc, new IllegalStateException("scene " + celtium$scene.name + ": the screen opened via "
+                        + celtium$guiScreenOpenedVia + " (" + celtium$guiClickResult + ") is "
+                        + mc.currentScreen.getClass().getName() + ", not GuiVideoSettings, after "
+                        + (worldTicks - celtium$guiScreenOpenedAtTick) + " ticks"));
+            }
+            return;
+        }
+        if (celtium$guiSettingsAtTick < 0) {
+            celtium$guiSettingsAtTick = worldTicks;
+            celtium$guiSettingsAtFrames = worldFrames;
+            report.addProperty("guiSettingsSeenAtTick", Integer.valueOf(worldTicks));
+        }
+        int layoutTicks = worldTicks - celtium$guiSettingsAtTick;
+        int layoutFrames = worldFrames - celtium$guiSettingsAtFrames;
+        if (layoutTicks < celtium$guiLayoutTicks || layoutFrames < celtium$guiMinFrames) {
+            return;
+        }
+        celtium$stage = 2;
+        report.addProperty("guiScreenVerdict", "GuiVideoSettings was open at the capture");
+        report.addProperty("guiScreenClassAtCapture", mc.currentScreen.getClass().getName());
+        report.addProperty("guiScreenTitleAtCapture", celtium$guiScreenTitle(mc));
+        report.addProperty("guiCaptureTick", Integer.valueOf(worldTicks));
+        report.addProperty("guiCaptureWorldFrames", Integer.valueOf(worldFrames));
+        report.addProperty("guiLayoutTicks", Integer.valueOf(layoutTicks));
+        report.addProperty("guiLayoutFrames", Integer.valueOf(layoutFrames));
+        // The scene's own picture: in a GL-bridge run this screenshot is the window and is written synchronously here
+        // (the screen is already drawn); under GL-less it is the black-by-construction file and the presented dump is
+        // the picture.
+        celtium$captureGlScreenshot(mc, "celtium-validation.png", "gui");
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            celtium$requestPresentedDump(mc, "gui");
+        }
+        if (celtium$glLessInstalled()) {
+            celtium$presentedVerdictPendingAtTick = worldTicks;
+            celtium$presentedVerdictPendingFrames = worldFrames;
+            report.addProperty("presentedVerdictDeferredAtTick", Integer.valueOf(worldTicks));
+            return;
+        }
+        celtium$judgePictures(mc, "at the video settings capture");
+        celtium$setStatusFromPictures();
+        finish(mc);
+    }
+
+    /** The open screen's title text, read from its own field: the report says which screen it was, not only its class. */
+    private static String celtium$guiScreenTitle(Minecraft mc) {
+        try {
+            Object title = celtium$fieldValue(mc.currentScreen, new String[] {"screenTitle", "field_146500_a", "title", "field_146503_f"});
+            return title == null ? "unreadable" : String.valueOf(title);
+        } catch (Throwable error) {
+            return "unreadable: " + error;
+        }
+    }
+
+    /**
+     * The rectangle the open video settings screen's own list occupies, read from the live screen object.
+     * <p>
+     * This is what "the expected panel" means concretely: the screen knows where its list is, so the gate does not have
+     * to guess a layout. {@code GuiVideoSettings.optionsRowList} is a {@code GuiListExtended} whose {@code GuiSlot} base
+     * carries left/top/right/bottom, all public fields; the names are given in both the development and the SRG forms
+     * because the client runs from a production jar.
+     */
+    private int[] celtium$panelRect(Minecraft mc) {
+        if (mc.currentScreen == null) {
+            return null;
+        }
+        try {
+            Object list = celtium$fieldValue(mc.currentScreen, new String[] {"optionsRowList", "field_146501_h"});
+            if (list == null) {
+                return null;
+            }
+            int left = ((Number) celtium$fieldValue(list, new String[] {"left", "field_148152_e"})).intValue();
+            int top = ((Number) celtium$fieldValue(list, new String[] {"top", "field_148153_b"})).intValue();
+            int right = ((Number) celtium$fieldValue(list, new String[] {"right", "field_148151_d"})).intValue();
+            int bottom = ((Number) celtium$fieldValue(list, new String[] {"bottom", "field_148154_c"})).intValue();
+            if (right <= left || bottom <= top) {
+                return null;
+            }
+            // The screen's own coordinates are GUI-scaled - the same space the buttons are laid out in - while the
+            // picture is in framebuffer pixels. Taking the rectangle unscaled measured the top-left corner of the
+            // frame instead of the panel: at the reference run's scale of 3 the list reads (0,32)..(427,208) and the
+            // panel it describes is (0,96)..(1281,624). The scale factor is the game's own, from ScaledResolution.
+            net.minecraft.client.gui.ScaledResolution resolution = new net.minecraft.client.gui.ScaledResolution(mc);
+            int scale = Math.max(1, resolution.getScaleFactor());
+            report.addProperty("guiListRectGuiSpace", left + "," + top + ".." + right + "," + bottom);
+            report.addProperty("guiScaleFactor", Integer.valueOf(scale));
+            int pixelLeft = left * scale;
+            int pixelTop = top * scale;
+            int pixelRight = Math.max(pixelLeft + 1, right * scale);
+            int pixelBottom = Math.max(pixelTop + 1, bottom * scale);
+            if (pixelRight <= pixelLeft || pixelBottom <= pixelTop) {
+                return null;
+            }
+            return new int[] {Math.max(0, pixelLeft), Math.max(0, pixelTop), pixelRight, pixelBottom};
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // The verdict.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Judges the scene's pictures: identity first, then the scene's gate.
+     * <p>
+     * Taken once, on the frame whose evidence is complete, and never against a live counter: the frame assertion reads
+     * the identity the dump's own write was observed under and the capture-time snapshot, which is what the Intel run
+     * needed when its shutdown re-check compared a capture-time 150 against a live 152.
+     */
+    private void celtium$judgePictures(Minecraft mc, String when) {
+        if (celtium$pictureVerdictTaken) {
+            return;
+        }
+        celtium$pictureVerdictTaken = true;
+        java.util.List<String> failures = new java.util.ArrayList<String>();
+        report.addProperty("pictureVerdict", "judged " + when);
+        // The scene's floors were measured at this pose, so a scene whose camera is not at the pose is not the scene
+        // the floors describe: two runs of it are not comparable, and the gate says so with both sets of numbers.
+        celtium$gateCamera(failures);
+        report.addProperty("pictureEvidenceSource", celtium$evidenceSource());
+        report.addProperty("sceneGateReference", celtium$gate.reference);
+        report.addProperty("sceneGateCalibrated", Boolean.valueOf(celtium$gate.calibrated));
+        report.addProperty("sceneGateFloors", (celtium$gate.calibrated ? "" : "NOT_CALIBRATED (smoke test only): ")
+                + "distinctColours>" + celtium$gate.minDistinctColours
+                + " nonBackgroundFraction>=" + celtium$gate.minNonBackgroundFraction
+                + " verticalBands>=" + celtium$gate.minVerticalBands
+                + " blackFraction<=" + celtium$gate.maxBlackFraction
+                + " panelChangedFraction>=" + celtium$gate.minPanelChangedFraction
+                + " panelStrongFraction>=" + celtium$gate.minPanelStrongFraction
+                + " panelDistinctColours>=" + celtium$gate.minPanelDistinctColours
+                + " panelRowAmplitude>=" + celtium$gate.minPanelRowAmplitude);
+        if (!"none".equals(celtium$sceneError)) {
+            failures.add("the run could not be attributed to a scene: " + celtium$sceneError);
+        }
+        int worldFramesAtCapture = report.has("worldFramesAtCapture")
+                ? report.get("worldFramesAtCapture").getAsInt() : -1;
+        PictureEvidence worldEvidence = celtium$evidence.get("world");
+        Picture worldPicture = celtium$judgeStage("world", worldEvidence, worldFramesAtCapture, failures);
+        Picture primary = worldPicture;
+        if (celtium$scene.guiStage) {
+            int guiFramesAtCapture = report.has("guiCaptureWorldFrames")
+                    ? report.get("guiCaptureWorldFrames").getAsInt() : -1;
+            PictureEvidence guiEvidence = celtium$evidence.get("gui");
+            Picture guiPicture = celtium$judgeStage("gui", guiEvidence, guiFramesAtCapture, failures);
+            primary = guiPicture;
+            if (guiPicture != null) {
+                String screenClass = report.has("guiScreenClassAtCapture")
+                        ? report.get("guiScreenClassAtCapture").getAsString() : "none";
+                if (!"net.minecraft.client.gui.GuiVideoSettings".equals(screenClass)
+                        && !"GuiVideoSettings".equals(screenClass)) {
+                    failures.add("scene " + celtium$scene.name + ": the screen at the capture was " + screenClass
+                            + ", not GuiVideoSettings, so the picture is not the video settings screen (opened via "
+                            + celtium$guiScreenOpenedVia + "; " + celtium$guiClickResult + ")");
+                }
+                if (worldPicture == null) {
+                    failures.add("scene " + celtium$scene.name + ": the video settings gate needs the world frame of the"
+                            + " same run as its reference and there is none to judge");
+                } else {
+                    failures.addAll(celtium$gateGuiPanel(worldPicture, guiPicture));
+                }
+            }
+        }
+        celtium$presentedImageFailures = failures.size();
+        report.addProperty("presentedImageAssertionFailures", Integer.valueOf(failures.size()));
+        report.addProperty("presentedImageAssertions", celtium$presentedImageAssertionMessage(failures));
+        for (int i = 0; i < failures.size(); i++) {
+            System.out.println("[Celtium] CELTIUM_PRESENTED_IMAGE " + failures.get(i));
+        }
+        report.addProperty("presentedImageFrameCountAboveZero",
+                Boolean.valueOf(primary != null && celtium$presentedImageFailures == 0));
+    }
+
+    /**
+     * Identity check and scene gate for one stage's picture, with every measured number recorded.
+     * <p>
+     * The identity is read back from the sidecar on disk, not from the in-memory record, so what is verified is what a
+     * reader of the run can verify: the same file, the same fields, the same pixels.
+     */
+    private Picture celtium$judgeStage(String stage, PictureEvidence evidence, int captureWorldFrames,
+            java.util.List<String> failures) {
+        String where = "scene=" + celtium$scene.name + " stage=" + stage;
+        if (evidence == null) {
+            failures.add("no picture was requested for " + where + ", so the scene's acceptance has no image"
+                    + " (source for this configuration: " + celtium$evidenceSource() + ")");
+            return null;
+        }
+        report.addProperty("pictureFile_" + stage, celtium$relative(evidence.image));
+        report.addProperty("pictureRequestedAtTick_" + stage, Integer.valueOf(evidence.requestedAtTick));
+        if (!evidence.completed) {
+            failures.add("no picture to judge for " + where + ": nothing was written for the request at tick "
+                    + evidence.requestedAtTick + " (world frame " + evidence.worldFramesAtRequest + ", after "
+                    + evidence.presentedFramesAtRequest + " presented frames) at " + celtium$relative(evidence.image)
+                    + (evidence.completionError == null || "none".equals(evidence.completionError) ? ""
+                            : " - " + evidence.completionError));
+            return null;
+        }
+        Picture picture = null;
+        try {
+            picture = Picture.read(evidence.image);
+        } catch (Throwable error) {
+            failures.add("the picture for " + where + " at " + celtium$relative(evidence.image)
+                    + " could not be read: " + error);
+            return null;
+        }
+        if (picture == null) {
+            failures.add("the picture for " + where + " at " + celtium$relative(evidence.image) + " has no pixels");
+            return null;
+        }
+        celtium$verifyIdentity(evidence, stage, captureWorldFrames, picture, failures);
+        java.util.List<String> gateFailures = celtium$gatePicture(picture, stage);
+        failures.addAll(gateFailures);
+        return picture;
+    }
+
+    /**
+     * Refuses a picture whose completed identity does not match the capture this verdict is about.
+     * <p>
+     * Every field is checked against the value this run recorded at the capture, and the pixels are hashed again: an
+     * image written to the same path after its identity was completed - which the backend's every-fortieth-frame
+     * re-request of the fixture's last path does - fails here instead of being judged as the captured frame.
+     */
+    private void celtium$verifyIdentity(PictureEvidence evidence, String stage, int captureWorldFrames, Picture picture,
+            java.util.List<String> failures) {
+        String where = "scene=" + celtium$scene.name + " stage=" + stage + " file=" + celtium$relative(evidence.image)
+                + " identity=" + celtium$relative(evidence.identity);
+        JsonObject identity = null;
+        try {
+            if (java.nio.file.Files.isRegularFile(evidence.identity)) {
+                identity = JsonParser.parseString(new String(java.nio.file.Files.readAllBytes(evidence.identity),
+                        StandardCharsets.UTF_8)).getAsJsonObject();
+            }
+        } catch (Throwable error) {
+            identity = null;
+        }
+        if (identity == null) {
+            failures.add("no completed identity next to the picture for " + where + ": the frame it holds cannot be"
+                    + " tied to the capture it is asserted about");
+            return;
+        }
+        celtium$checkIdentity(identity, "runId", celtium$runId, where, failures);
+        celtium$checkIdentity(identity, "scene", celtium$scene.name, where, failures);
+        celtium$checkIdentity(identity, "stage", stage, where, failures);
+        celtium$checkIdentity(identity, "source", celtium$evidenceSource(), where, failures);
+        celtium$checkIdentity(identity, "image", celtium$relative(evidence.image), where, failures);
+        celtium$checkIdentity(identity, "worldTick", evidence.requestedAtTick, where, failures);
+        celtium$checkIdentity(identity, "width", evidence.requestedWidth, where, failures);
+        celtium$checkIdentity(identity, "height", evidence.requestedHeight, where, failures);
+        celtium$checkIdentity(identity, "frameBinding", evidence.frameBinding, where, failures);
+        if (SOURCE_PRESENTED_DUMP.equals(evidence.source)) {
+            celtium$checkIdentity(identity, "presentedFrame", evidence.presentedFrame, where, failures);
+        } else if (evidence.presentedFrame != -1) {
+            failures.add("the screenshot-sourced picture for " + where + " records presentedFrame="
+                    + evidence.presentedFrame + " although no present wrote it; the identity is not the one this"
+                    + " fixture writes for a synchronous screenshot");
+        }
+        celtium$checkIdentity(identity, "imageHash", evidence.imageHash, where, failures);
+        String completionError = identity.has("completionError") ? identity.get("completionError").getAsString() : "none";
+        if (!"none".equals(completionError)) {
+            failures.add("the identity of the picture for " + where + " records that its frame could not be named: "
+                    + completionError);
+        }
+        if (picture.hash() != evidence.imageHash) {
+            failures.add("the image at " + celtium$relative(evidence.image) + " is not the one its identity names: the"
+                    + " pixels hash to 0x" + Integer.toHexString(picture.hash()) + ", the identity records 0x"
+                    + Integer.toHexString(evidence.imageHash) + " (it was written again after the identity was"
+                    + " completed) for " + where);
+        }
+        // The frame-count comparison is only a claim about a presented dump: it says the present that wrote the file
+        // is the frame the fixture drew at the capture. A screenshot is written inside that frame's own handler, so it
+        // needs no such inference.
+        if (SOURCE_PRESENTED_DUMP.equals(evidence.source) && captureWorldFrames >= 0 && evidence.presentedFrame >= 0) {
+            boolean counterRestarted = report.has("dimensionPresentedCounterResetAtArrival")
+                    && report.get("dimensionPresentedCounterResetAtArrival").getAsBoolean()
+                    && celtium$presentedFramesAtArrival >= 0;
+            if (counterRestarted) {
+                // The renderer's presented-frame counter belongs to the live frame target, and a dimension change
+                // recreates that target: the counter then starts again from zero. Comparing it with the whole run's
+                // world-frame count would read the restart as frames that never reached the window (measured on the
+                // Nether run: presentedFrame 205 against 248 world frames, -43). What the assertion is for - the frame
+                // in the file is one the renderer presented in the window the counter spans - is checked inside that
+                // window, and the whole-run numbers are recorded beside it.
+                int sinceArrival = evidence.presentedFrame - celtium$presentedFramesAtArrival;
+                int framesInTarget = celtium$framesInTargetDimension;
+                report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(sinceArrival - framesInTarget));
+                report.addProperty("pictureFrameScope_" + stage, "dimension window: presented counter restarted at the"
+                        + " arrival (" + celtium$presentedFramesAtArrival + " at it, high-water "
+                        + celtium$presentedHighWaterBeforeArrival + " before); the picture's frame " + evidence.presentedFrame
+                        + " is " + sinceArrival + " presents into the window, which drew " + framesInTarget + " frames");
+                if (sinceArrival < framesInTarget - 1) {
+                    failures.add("the picture for " + where + " is " + sinceArrival + " presents after the arrival in"
+                            + " dimension " + celtium$dimension + ", fewer than the " + framesInTarget + " frames that"
+                            + " dimension drew (presentedFrame=" + evidence.presentedFrame + ", at arrival="
+                            + celtium$presentedFramesAtArrival + ")");
+                }
+                return;
+            }
+            int delta = evidence.presentedFrame - captureWorldFrames;
+            report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(delta));
+            if (Math.abs(delta) > 1) {
+                failures.add("the picture for " + where + " is the frame the renderer presented at "
+                        + evidence.presentedFrame + ", which is " + delta + " away from the " + captureWorldFrames
+                        + " world frames the capture recorded: the frame in the file is not the frame the capture is"
+                        + " about");
+            }
+        }
+    }
+
+    /** One identity field against what this run recorded: name, expected value, and the number measured. */
+    private void celtium$checkIdentity(JsonObject identity, String field, Object expected, String where,
+            java.util.List<String> failures) {
+        if (!identity.has(field)) {
+            failures.add("the identity of the picture for " + where + " has no '" + field + "' field, so the frame it"
+                    + " names cannot be compared with the capture (expected " + expected + ")");
+            return;
+        }
+        String measured = identity.get(field).getAsString();
+        String wanted = String.valueOf(expected);
+        if (!wanted.equals(measured)) {
+            failures.add("the identity of the picture for " + where + " says " + field + "=" + measured + ", but this"
+                    + " capture recorded " + field + "=" + wanted + ": the image is not the frame the capture is about");
+        }
+    }
+
+    /** The scene's gate on one picture, with every measured number recorded beside the floor it is judged against. */
+    private java.util.List<String> celtium$gatePicture(Picture picture, String stage) {
+        java.util.List<String> failures = new java.util.ArrayList<String>();
+        PresentedImageStats stats = picture.stats();
+        boolean primary = "world".equals(stage) ? !celtium$scene.guiStage : celtium$scene.guiStage;
+        String prefix = "world".equals(stage) ? "worldFrame" : "guiFrame";
+        String label = "scene=" + celtium$scene.name + " stage=" + stage + " frame=["
+                + "source=" + celtium$evidenceSource() + " extent=" + stats.width + "x" + stats.height
+                + " worldTick=" + celtium$tickOfEvidence(stage) + " presentedFrame=" + celtium$frameOfEvidence(stage)
+                + " identity=" + celtium$relative(celtium$imageOfEvidence(stage)) + "]";
+        report.addProperty(prefix + "StatsSource", celtium$evidenceSource() + " " + stats.width + "x" + stats.height);
+        report.addProperty(prefix + "DistinctColours", Integer.valueOf(stats.distinctColours));
+        report.addProperty(prefix + "NonBackgroundFraction", Double.valueOf(stats.nonBackgroundFraction));
+        report.addProperty(prefix + "VerticalBands", Integer.valueOf(stats.verticalBands));
+        report.addProperty(prefix + "BlackFraction", Double.valueOf(stats.blackFraction));
+        report.addProperty(prefix + "BackgroundColour", celtium$hexColour(stats.backgroundColour));
+        report.addProperty(prefix + "Pixels", Integer.valueOf(stats.width * stats.height));
+        if (primary) {
+            // The canonical names, so existing tools and reports stay readable: they describe the picture this scene's
+            // acceptance is about.
+            report.addProperty("presentedImageStatsSource", celtium$evidenceSource() + " " + stats.width + "x"
+                    + stats.height + " (" + celtium$relative(celtium$imageOfEvidence(stage)) + ")");
+            report.addProperty("presentedDistinctColours", Integer.valueOf(stats.distinctColours));
+            report.addProperty("presentedNonBackgroundFraction", Double.valueOf(stats.nonBackgroundFraction));
+            report.addProperty("presentedVerticalBands", Integer.valueOf(stats.verticalBands));
+            report.addProperty("presentedBlackFraction", Double.valueOf(stats.blackFraction));
+            report.addProperty("presentedBackgroundColour", celtium$hexColour(stats.backgroundColour));
+            report.addProperty("presentedBackgroundTolerance", Integer.valueOf(PRESENTED_BACKGROUND_TOLERANCE));
+            report.addProperty("presentedImagePixels", Integer.valueOf(stats.width * stats.height));
+            report.addProperty("presentedImageNotSingleColour", Boolean.valueOf(stats.distinctColours > 1));
+            report.addProperty("presentedImageDistinctColoursAboveFloor",
+                    Boolean.valueOf(stats.distinctColours > celtium$gate.minDistinctColours));
+            report.addProperty("presentedImagePng", celtium$relative(celtium$imageOfEvidence(stage)));
+        }
+        if (!celtium$gate.calibrated) {
+            report.addProperty("floorsNotCalibrated", "scene " + celtium$scene.name + ": no GL-bridge reference run at"
+                    + " this pose yet, so no non-background, band or black floor is applied to this picture; the"
+                    + " smoke test (more than " + celtium$gate.minDistinctColours + " distinct colours), the picture"
+                    + " identity, the camera pose and the frame binding are still asserted. " + celtium$gate.reference);
+            report.addProperty(prefix + "Gate", "NOT_CALIBRATED");
+        } else {
+            report.addProperty(prefix + "Gate", "CALIBRATED: " + celtium$gate.reference);
+        }
+        if (stats.distinctColours <= 1) {
+            failures.add("the picture is a single colour for " + label + ": presentedDistinctColours="
+                    + stats.distinctColours + " over " + (stats.width * stats.height) + " pixels");
+            return failures;
+        }
+        if (stats.distinctColours <= celtium$gate.minDistinctColours) {
+            failures.add("presentedDistinctColours=" + stats.distinctColours + " is not above the smoke floor of "
+                    + celtium$gate.minDistinctColours + " for " + label + " (nonBackgroundFraction="
+                    + stats.nonBackgroundFraction + ", verticalBands=" + stats.verticalBands + ", blackFraction="
+                    + stats.blackFraction + ")");
+        }
+        if (celtium$gate.calibrated && stats.nonBackgroundFraction < celtium$gate.minNonBackgroundFraction) {
+            failures.add("presentedNonBackgroundFraction=" + stats.nonBackgroundFraction + " is below the scene floor of "
+                    + celtium$gate.minNonBackgroundFraction + " for " + label + " (backgroundColour="
+                    + celtium$hexColour(stats.backgroundColour) + " covers "
+                    + Math.round((1.0D - stats.nonBackgroundFraction) * 1000000.0D) / 10000.0D + "% of the frame)");
+        }
+        if (celtium$gate.calibrated && stats.verticalBands < celtium$gate.minVerticalBands) {
+            failures.add("presentedVerticalBands=" + stats.verticalBands + " is below the scene floor of "
+                    + celtium$gate.minVerticalBands + " for " + label + ": the frame has too few row transitions to be"
+                    + " a picture of this scene");
+        }
+        if (celtium$gate.calibrated && stats.blackFraction > celtium$gate.maxBlackFraction) {
+            failures.add("presentedBlackFraction=" + stats.blackFraction + " is above the scene ceiling of "
+                    + celtium$gate.maxBlackFraction + " for " + label + ": " + Math.round(stats.blackFraction * 10000.0D)
+                    / 100.0D + "% of the frame is black in every channel, which is the large-black-region defect the"
+                    + " colour count alone passed (outline2: 11751 colours, two thirds black)");
+        }
+        return failures;
+    }
+
+    /**
+     * The GUI gate: the screen's own list rectangle on the GUI frame, against the same rectangle of the world frame.
+     * <p>
+     * This is what makes the video settings scene more than a smoke test. The panel is the region the open screen says
+     * its list occupies; the reference is the frame of the same run with no screen over it. A correct capture changes
+     * that region almost completely (the screen's own dark background and its rows of widgets), gives it many more
+     * distinct colours than the world there, and gives it row structure the darkened terrain does not have. A frame in
+     * which the screen never drew fails all four.
+     */
+    private java.util.List<String> celtium$gateGuiPanel(Picture world, Picture gui) {
+        java.util.List<String> failures = new java.util.ArrayList<String>();
+        Minecraft mc = Minecraft.getMinecraft();
+        int[] panel = celtium$panelRect(mc);
+        if (panel == null) {
+            failures.add("scene " + celtium$scene.name + ": the open screen's own list rectangle could not be read"
+                    + " (GuiVideoSettings.optionsRowList), so the panel region of the picture cannot be located");
+            return failures;
+        }
+        int x0 = Math.max(0, panel[0] + 2);
+        int y0 = Math.max(0, panel[1] + 2);
+        int x1 = Math.min(gui.width, panel[2] - 2);
+        int y1 = Math.min(gui.height, panel[3] - 2);
+        if (x1 - x0 < 8 || y1 - y0 < 8) {
+            failures.add("scene " + celtium$scene.name + ": the list rectangle the screen reports (" + panel[0] + ","
+                    + panel[1] + ")..(" + panel[2] + "," + panel[3] + ") is too small to judge");
+            return failures;
+        }
+        double changed = gui.changedFraction(world, x0, y0, x1, y1, PRESENTED_BACKGROUND_TOLERANCE);
+        double strong = gui.changedFraction(world, x0, y0, x1, y1, 32);
+        int panelColours = gui.regionDistinctColours(x0, y0, x1, y1);
+        int worldColours = world.regionDistinctColours(x0, y0, x1, y1);
+        double panelRows = gui.regionRowAmplitude(x0, y0, x1, y1);
+        double worldRows = world.regionRowAmplitude(x0, y0, x1, y1);
+        double panelLuma = gui.regionMeanLuma(x0, y0, x1, y1);
+        double worldLuma = world.regionMeanLuma(x0, y0, x1, y1);
+        report.addProperty("guiPanelRect", x0 + "," + y0 + ".." + x1 + "," + y1 + " (from the screen's own list,"
+                + panel[0] + "," + panel[1] + ".." + panel[2] + "," + panel[3] + ")");
+        report.addProperty("guiPanelChangedFraction", Double.valueOf(changed));
+        report.addProperty("guiPanelStrongFraction", Double.valueOf(strong));
+        report.addProperty("guiPanelDistinctColours", Integer.valueOf(panelColours));
+        report.addProperty("guiWorldPanelDistinctColours", Integer.valueOf(worldColours));
+        report.addProperty("guiPanelRowAmplitude", Double.valueOf(panelRows));
+        report.addProperty("guiWorldPanelRowAmplitude", Double.valueOf(worldRows));
+        report.addProperty("guiPanelMeanLuma", Double.valueOf(panelLuma));
+        report.addProperty("guiWorldPanelMeanLuma", Double.valueOf(worldLuma));
+        String label = "scene=" + celtium$scene.name + " stage=gui screen=" + celtium$screenName(mc) + " panel=" + x0
+                + "," + y0 + ".." + x1 + "," + y1 + " guiFrame=[source=" + celtium$evidenceSource() + " worldTick="
+                + celtium$tickOfEvidence("gui") + " presentedFrame=" + celtium$frameOfEvidence("gui") + "]";
+        if (changed < celtium$gate.minPanelChangedFraction) {
+            failures.add("the video settings panel did not draw: guiPanelChangedFraction=" + changed + " is below the"
+                    + " reference floor of " + celtium$gate.minPanelChangedFraction + " for " + label);
+        }
+        if (strong < celtium$gate.minPanelStrongFraction) {
+            failures.add("the video settings panel has too little of its own chrome: guiPanelStrongFraction=" + strong
+                    + " is below the reference floor of " + celtium$gate.minPanelStrongFraction + " (a fraction of the"
+                    + " panel differing from the world frame by more than 32 per channel) for " + label);
+        }
+        if (panelColours < celtium$gate.minPanelDistinctColours) {
+            failures.add("the video settings panel has too few colours to be a screen of rows and labels:"
+                    + " guiPanelDistinctColours=" + panelColours + " is below the reference floor of "
+                    + celtium$gate.minPanelDistinctColours + " (the world frame has " + worldColours + " there) for "
+                    + label);
+        }
+        if (panelRows < celtium$gate.minPanelRowAmplitude) {
+            failures.add("the video settings panel has no row structure: guiPanelRowAmplitude=" + panelRows
+                    + " is below the reference floor of " + celtium$gate.minPanelRowAmplitude
+                    + " (the world frame has " + worldRows + " there) for " + label);
+        }
+        return failures;
+    }
+
+    /**
+     * The camera the capture was taken from, against the pose the scene's floors were measured at.
+     * <p>
+     * This is the other half of "two runs are comparable": the pose is the fixture's, it is set on both sides, and what
+     * the client's player actually was is read back and compared rather than assumed. A run that drifted is reported
+     * with both poses, because a gate measured at one camera cannot judge a picture taken from another.
+     */
+    private void celtium$gateCamera(java.util.List<String> failures) {
+        Minecraft mc = Minecraft.getMinecraft();
+        report.addProperty("cameraRequested", celtium$pose.describe());
+        report.addProperty("cameraPoseSource", "fixture pose: server-side teleport at tick " + celtium$poseTick + " ("
+                + celtium$poseResult + "), re-applied on the client every tick (" + celtium$poseAppliedTicks
+                + " times, last at tick " + celtium$poseAppliedAtTick + ")");
+        if (mc.player == null) {
+            failures.add("scene " + celtium$scene.name + ": there is no client player, so the capture camera cannot be"
+                    + " compared with the scene's pose (" + celtium$pose.describe() + ")");
+            return;
+        }
+        double dx = mc.player.posX - celtium$pose.x;
+        double dy = mc.player.posY - celtium$pose.y;
+        double dz = mc.player.posZ - celtium$pose.z;
+        double dyaw = Math.abs(net.minecraft.util.math.MathHelper.wrapDegrees(mc.player.rotationYaw - celtium$pose.yaw));
+        double dpitch = Math.abs(mc.player.rotationPitch - celtium$pose.pitch);
+        String measured = String.format(java.util.Locale.ROOT, "x=%.4f y=%.4f z=%.4f yaw=%.3f pitch=%.3f",
+                mc.player.posX, mc.player.posY, mc.player.posZ, mc.player.rotationYaw, mc.player.rotationPitch);
+        report.addProperty("cameraAtVerdict", measured);
+        boolean held = Math.abs(dx) <= 1.0E-6D && Math.abs(dy) <= 1.0E-6D && Math.abs(dz) <= 1.0E-6D
+                && dyaw <= 1.0E-3D && dpitch <= 1.0E-3D;
+        report.addProperty("cameraHeld", Boolean.valueOf(held));
+        if (!held) {
+            failures.add("scene " + celtium$scene.name + ": the camera at the capture is not the pose the scene's"
+                    + " floors were measured at (requested " + celtium$pose.describe() + ", measured " + measured
+                    + "): two runs of this scene are not pixel-comparable and the floors do not describe this picture");
+        }
+    }
+
+    /** The tick the picture of a stage was taken at, or -1: read from the record rather than from a live counter. */
+    private int celtium$tickOfEvidence(String stage) {
+        PictureEvidence evidence = celtium$evidence.get(stage);
+        return evidence == null ? -1 : evidence.worldTick;
+    }
+
+    /** The presented-frame counter the picture of a stage was written under, or -1. */
+    private int celtium$frameOfEvidence(String stage) {
+        PictureEvidence evidence = celtium$evidence.get(stage);
+        return evidence == null ? -1 : evidence.presentedFrame;
+    }
+
+    /** The file the picture of a stage came from, or a placeholder when there is none. */
+    private java.nio.file.Path celtium$imageOfEvidence(String stage) {
+        PictureEvidence evidence = celtium$evidence.get(stage);
+        return evidence == null ? Minecraft.getMinecraft().gameDir.toPath().resolve("screenshots/<none>")
+                : evidence.image;
+    }
+
+    /**
+     * The run's status from the picture verdict.
+     * <p>
+     * A run that has already failed for a reason of its own keeps that verdict - a dimension run whose gate failed can
+     * still have presented a clean frame, and that picture passing must not turn the failure into a pass - and the
+     * picture verdict is recorded under its own name either way.
+     */
+    private void celtium$setStatusFromPictures() {
+        String verdict = celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE";
+        report.addProperty("presentedImageVerdict", verdict);
+        String status = report.has("status") ? report.get("status").getAsString() : null;
+        if ("FAILED".equals(status) || "NO_CAPTURE".equals(status)) {
+            return;
+        }
+        report.addProperty("status", verdict);
+    }
+
+    /** The assertion results as one line: PASSED, or every failure with the numbers and the frame it measured. */
     private static String celtium$presentedImageAssertionMessage(java.util.List<String> failures) {
         if (failures.isEmpty()) {
-            return "PASSED: the presented image is not a single colour, its colour count is above the floor of "
-                    + PRESENTED_DISTINCT_COLOUR_FLOOR
-                    + ", and the frame at capture is one the renderer counted";
+            return "PASSED: every picture is the frame its identity names, and the scene's gate (distinct colours,"
+                    + " non-background fraction, row bands, black fraction; panel statistics for a GUI scene) held";
         }
         StringBuilder message = new StringBuilder("FAILED: ");
         for (int i = 0; i < failures.size(); i++) {
@@ -3535,15 +4576,202 @@ public final class ValidationClient {
         return "0x" + String.format(java.util.Locale.ROOT, "%06X", Integer.valueOf(rgb & 0xFFFFFF));
     }
 
+    // ---------------------------------------------------------------------------------------------------------------
+    // Picture arithmetic. The numbers live in the fixture on purpose: what counts as a picture is the instrument's
+    // question, not the renderer's.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** An image as pixels, with the measurements the gates use. */
+    private static final class Picture {
+        final int width;
+        final int height;
+        final int[] pixels;
+
+        Picture(int width, int height, int[] pixels) {
+            this.width = width;
+            this.height = height;
+            this.pixels = pixels;
+        }
+
+        /** {@return the image at this path as packed-RGB pixels}, or null when it has none. */
+        static Picture read(java.nio.file.Path path) throws java.io.IOException {
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(path.toFile());
+            if (image == null) {
+                return null;
+            }
+            int width = image.getWidth();
+            int height = image.getHeight();
+            if (width <= 0 || height <= 0) {
+                return null;
+            }
+            int[] argb = new int[width * height];
+            image.getRGB(0, 0, width, height, argb, 0, width);
+            int[] pixels = new int[argb.length];
+            for (int i = 0; i < argb.length; i++) {
+                pixels[i] = argb[i] & 0xFFFFFF;
+            }
+            return new Picture(width, height, pixels);
+        }
+
+        /** A hash of the pixels: the identity's proof that the file on disk is still the frame it was taken from. */
+        int hash() {
+            int hash = 1;
+            for (int i = 0; i < pixels.length; i++) {
+                hash = 31 * hash + pixels[i];
+            }
+            return hash * 31 + pixels.length;
+        }
+
+        int pixel(int x, int y) {
+            return pixels[y * width + x];
+        }
+
+        /** The whole-frame statistics: distinct colours, the most common one, and the shares that judge a picture. */
+        PresentedImageStats stats() {
+            int verticalBands = 1;
+            for (int y = 1; y < height; y++) {
+                if (!celtium$rowsIdentical(pixels, (y - 1) * width, y * width, width)) {
+                    verticalBands++;
+                }
+            }
+            // Distinct colours and the most common one in one sorted pass. The most common colour is the background:
+            // it is what the window would be showing if nothing had been drawn, and the share of everything else is
+            // what says whether anything was.
+            int[] sorted = pixels.clone();
+            java.util.Arrays.sort(sorted);
+            int distinctColours = 0;
+            int backgroundColour = 0;
+            int backgroundCount = 0;
+            int runStart = 0;
+            for (int i = 0; i <= sorted.length; i++) {
+                if (i == sorted.length || sorted[i] != sorted[runStart]) {
+                    int run = i - runStart;
+                    distinctColours++;
+                    if (run > backgroundCount) {
+                        backgroundCount = run;
+                        backgroundColour = sorted[runStart];
+                    }
+                    runStart = i;
+                }
+            }
+            int nonBackground = 0;
+            int black = 0;
+            for (int i = 0; i < pixels.length; i++) {
+                if (!celtium$withinBackgroundTolerance(pixels[i], backgroundColour)) {
+                    nonBackground++;
+                }
+                if (celtium$isBlack(pixels[i])) {
+                    black++;
+                }
+            }
+            // Rounded to six decimals: reports of the same scene are compared between runs, and the digits beyond that
+            // are float noise rather than measurement.
+            double fraction = Math.round((double) nonBackground * 1000000.0D / pixels.length) / 1000000.0D;
+            double blackFraction = Math.round((double) black * 1000000.0D / pixels.length) / 1000000.0D;
+            return new PresentedImageStats(width, height, distinctColours, fraction, verticalBands, backgroundColour,
+                    blackFraction);
+        }
+
+        /** The distinct colours inside a rectangle. */
+        int regionDistinctColours(int x0, int y0, int x1, int y1) {
+            int[] region = new int[Math.max(0, (x1 - x0) * (y1 - y0))];
+            int at = 0;
+            for (int y = y0; y < y1; y++) {
+                for (int x = x0; x < x1; x++) {
+                    region[at++] = pixel(x, y);
+                }
+            }
+            java.util.Arrays.sort(region, 0, at);
+            int distinct = 0;
+            for (int i = 0; i < at; i++) {
+                if (i == 0 || region[i] != region[i - 1]) {
+                    distinct++;
+                }
+            }
+            return distinct;
+        }
+
+        /** The mean luma of a rectangle, 0..255. */
+        double regionMeanLuma(int x0, int y0, int x1, int y1) {
+            long total = 0;
+            long count = 0;
+            for (int y = y0; y < y1; y++) {
+                for (int x = x0; x < x1; x++) {
+                    int pixel = pixel(x, y);
+                    total += (299 * ((pixel >> 16) & 0xFF) + 587 * ((pixel >> 8) & 0xFF) + 114 * (pixel & 0xFF)) / 1000;
+                    count++;
+                }
+            }
+            return count == 0 ? 0.0D : Math.round((double) total / count * 1000.0D) / 1000.0D;
+        }
+
+        /**
+         * How much a rectangle's row means change from row to row.
+         * <p>
+         * A screen of option rows has structure at the row pitch; the same region of the darkened world does not have
+         * that pitch. It is a measurement of "there is a panel here", not of brightness.
+         */
+        double regionRowAmplitude(int x0, int y0, int x1, int y1) {
+            if (y1 - y0 < 2) {
+                return 0.0D;
+            }
+            double total = 0.0D;
+            double previous = rowMeanLuma(x0, x1, y0);
+            for (int y = y0 + 1; y < y1; y++) {
+                double current = rowMeanLuma(x0, x1, y);
+                total += Math.abs(current - previous);
+                previous = current;
+            }
+            return Math.round(total / (y1 - y0 - 1) * 1000.0D) / 1000.0D;
+        }
+
+        private double rowMeanLuma(int x0, int x1, int y) {
+            long total = 0;
+            for (int x = x0; x < x1; x++) {
+                int pixel = pixel(x, y);
+                total += (299 * ((pixel >> 16) & 0xFF) + 587 * ((pixel >> 8) & 0xFF) + 114 * (pixel & 0xFF)) / 1000;
+            }
+            return (double) total / Math.max(1, x1 - x0);
+        }
+
+        /**
+         * The share of a rectangle's pixels that differ from another picture's by more than a tolerance per channel.
+         * <p>
+         * This is how "the screen is in the picture" is measured: the GUI frame against the world frame of the same run
+         * at the same camera pose.
+         */
+        double changedFraction(Picture other, int x0, int y0, int x1, int y1, int tolerance) {
+            if (other == null || other.width != width || other.height != height) {
+                return 0.0D;
+            }
+            long changed = 0;
+            long count = 0;
+            for (int y = y0; y < y1; y++) {
+                for (int x = x0; x < x1; x++) {
+                    int a = pixel(x, y);
+                    int b = other.pixel(x, y);
+                    int difference = Math.max(Math.abs(((a >> 16) & 0xFF) - ((b >> 16) & 0xFF)),
+                            Math.max(Math.abs(((a >> 8) & 0xFF) - ((b >> 8) & 0xFF)),
+                                    Math.abs((a & 0xFF) - (b & 0xFF))));
+                    if (difference > tolerance) {
+                        changed++;
+                    }
+                    count++;
+                }
+            }
+            return count == 0 ? 0.0D : Math.round((double) changed * 1000000.0D / count) / 1000000.0D;
+        }
+    }
+
     /**
-     * What a presented image looks like as numbers, rather than as one mean.
+     * What a picture looks like as numbers, rather than as one mean.
      * <p>
      * The mean cannot separate a frame of terrain from a clear colour with a quad over it - both have a plausible mean.
-     * These three can. {@code distinctColours} counts the distinct RGB values in the image. {@code nonBackgroundFraction}
-     * is the share of pixels that are neither the most common colour nor within {@link #PRESENTED_BACKGROUND_TOLERANCE}
-     * of it, so a frame that is almost all one colour says so whatever its mean is. {@code verticalBands} is the number
-     * of maximal runs of consecutive pixel-identical rows: a picture assembled from one clear colour and one flat quad
-     * is a handful of bands however large it is, while a frame of the world changes from row to row.
+     * These numbers can. {@code distinctColours} counts the distinct RGB values. {@code nonBackgroundFraction} is the
+     * share of pixels that are neither the most common colour nor within {@link #PRESENTED_BACKGROUND_TOLERANCE} of it.
+     * {@code verticalBands} is the number of maximal runs of consecutive pixel-identical rows. {@code blackFraction} is
+     * the share of pixels that are black in every channel, which is the measurement that catches a frame with a large
+     * black region however many colours the rest of it has.
      */
     private static final class PresentedImageStats {
         final int width;
@@ -3552,75 +4780,18 @@ public final class ValidationClient {
         final double nonBackgroundFraction;
         final int verticalBands;
         final int backgroundColour;
+        final double blackFraction;
 
-        PresentedImageStats(int width, int height, int distinctColours, double nonBackgroundFraction,
-                int verticalBands, int backgroundColour) {
+        PresentedImageStats(int width, int height, int distinctColours, double nonBackgroundFraction, int verticalBands,
+                int backgroundColour, double blackFraction) {
             this.width = width;
             this.height = height;
             this.distinctColours = distinctColours;
             this.nonBackgroundFraction = nonBackgroundFraction;
             this.verticalBands = verticalBands;
             this.backgroundColour = backgroundColour;
+            this.blackFraction = blackFraction;
         }
-    }
-
-    /**
-     * {@return the measurements of a presented image}, or null when it has no pixels.
-     * <p>
-     * The pixels are read in one bulk call and packed to RGB once, so the per-pixel work below never goes through
-     * {@code BufferedImage}. The three numbers are computed from the same array: the runs of identical rows while it is
-     * filled, the distinct colours and the most common one in one sorted pass, and the non-background share from the
-     * colour that pass found.
-     */
-    private static PresentedImageStats celtium$measurePresentedImage(java.awt.image.BufferedImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        if (width <= 0 || height <= 0) {
-            return null;
-        }
-        int[] argb = new int[width * height];
-        image.getRGB(0, 0, width, height, argb, 0, width);
-        int[] pixels = new int[argb.length];
-        int verticalBands = 1;
-        for (int y = 0; y < height; y++) {
-            int row = y * width;
-            for (int x = 0; x < width; x++) {
-                pixels[row + x] = argb[row + x] & 0xFFFFFF;
-            }
-            if (y > 0 && !celtium$rowsIdentical(pixels, row - width, row, width)) {
-                verticalBands++;
-            }
-        }
-        // Distinct colours and the most common one in one sorted pass. The most common colour is the background: it is
-        // what the window would be showing if nothing had been drawn, and the share of everything else is what says
-        // whether anything was.
-        int[] sorted = pixels.clone();
-        java.util.Arrays.sort(sorted);
-        int distinctColours = 0;
-        int backgroundColour = 0;
-        int backgroundCount = 0;
-        int runStart = 0;
-        for (int i = 0; i <= sorted.length; i++) {
-            if (i == sorted.length || sorted[i] != sorted[runStart]) {
-                int run = i - runStart;
-                distinctColours++;
-                if (run > backgroundCount) {
-                    backgroundCount = run;
-                    backgroundColour = sorted[runStart];
-                }
-                runStart = i;
-            }
-        }
-        int nonBackground = 0;
-        for (int i = 0; i < pixels.length; i++) {
-            if (!celtium$withinBackgroundTolerance(pixels[i], backgroundColour)) {
-                nonBackground++;
-            }
-        }
-        // Rounded to six decimals: reports of the same scene are compared between runs, and the digits beyond that are
-        // float noise rather than measurement.
-        double fraction = Math.round((double) nonBackground * 1000000.0D / pixels.length) / 1000000.0D;
-        return new PresentedImageStats(width, height, distinctColours, fraction, verticalBands, backgroundColour);
     }
 
     /** Whether two rows of packed-RGB pixels are the same picture. */
@@ -3638,6 +4809,69 @@ public final class ValidationClient {
         return Math.abs(((pixel >> 16) & 0xFF) - ((background >> 16) & 0xFF)) <= PRESENTED_BACKGROUND_TOLERANCE
                 && Math.abs(((pixel >> 8) & 0xFF) - ((background >> 8) & 0xFF)) <= PRESENTED_BACKGROUND_TOLERANCE
                 && Math.abs((pixel & 0xFF) - (background & 0xFF)) <= PRESENTED_BACKGROUND_TOLERANCE;
+    }
+
+    /** Whether every channel of a pixel is at or below the black floor. */
+    private static boolean celtium$isBlack(int pixel) {
+        return ((pixel >> 16) & 0xFF) <= PRESENTED_BLACK_CHANNEL_MAX
+                && ((pixel >> 8) & 0xFF) <= PRESENTED_BLACK_CHANNEL_MAX
+                && (pixel & 0xFF) <= PRESENTED_BLACK_CHANNEL_MAX;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Reflective reads: the fixture runs both in a development environment (MCP names) and against a production jar
+    // (SRG names), so every member it reaches for by name is given in both forms.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** The value of a field by name, searching the class hierarchy, or null when it cannot be read. */
+    private static Object celtium$fieldValue(Object owner, String[] names) {
+        if (owner == null) {
+            return null;
+        }
+        Field field = celtium$findField(owner.getClass(), names);
+        if (field == null) {
+            return null;
+        }
+        try {
+            return field.get(owner);
+        } catch (IllegalAccessException | RuntimeException error) {
+            return null;
+        }
+    }
+
+    /** A field by name, searching the class hierarchy: GuiSlot's geometry is inherited by GuiListExtended. */
+    private static Field celtium$findField(Class<?> owner, String[] names) {
+        for (Class<?> type = owner; type != null && type != Object.class; type = type.getSuperclass()) {
+            Field field = findField(type, names);
+            if (field != null) {
+                return field;
+            }
+        }
+        return null;
+    }
+
+    /** A method by name and signature, searching the class hierarchy, or a NoSuchMethodException with the names tried. */
+    private static java.lang.reflect.Method celtium$requireMethod(Class<?> owner, String[] names, Class<?>... parameters)
+            throws NoSuchMethodException {
+        for (Class<?> type = owner; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (String name : names) {
+                try {
+                    java.lang.reflect.Method method = type.getDeclaredMethod(name, parameters);
+                    method.setAccessible(true);
+                    return method;
+                } catch (NoSuchMethodException | RuntimeException absent) {
+                    // Try the next name or the next class.
+                }
+            }
+        }
+        StringBuilder tried = new StringBuilder();
+        for (String name : names) {
+            if (tried.length() > 0) {
+                tried.append('/');
+            }
+            tried.append(name);
+        }
+        throw new NoSuchMethodException(tried + " on " + owner.getName());
     }
 
     /** Writes a partial report at exit when the capture never happened, instead of leaving no report at all. */
@@ -3718,24 +4952,15 @@ public final class ValidationClient {
                 error.printStackTrace();
             }
         }
-        // Measured again here, at the end of the run, because the presented image the capture asked for is written by
-        // the next present: the capture-time check reads whatever dump existed before it, which is the early one and
-        // is still a loading frame. This is the same check on the same file after the write has landed.
-        if (celtium$glLessInstalled()) {
-            String statusBeforePresentedCheck = report.has("status") ? report.get("status").getAsString() : null;
-            celtium$presentedImageFailures = 0;
-            celtium$checkPresentedImage(mc, worldFrames);
-            if ("FAILED".equals(statusBeforePresentedCheck)) {
-                // A run that has already failed for a reason of its own must not be relabelled by a check that runs
-                // afterwards: a dimension run whose gate failed can still have presented a clean frame of the
-                // Overworld, and that picture passing must not turn the failure into a pass. The image assertions are
-                // recorded separately, under their own name.
-                report.addProperty("presentedImageVerdict",
-                        celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
-            } else {
-                report.addProperty("status",
-                        celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE");
-            }
+        // The picture verdict belongs to the capture whose identity it names, so it is taken once, where that evidence
+        // is complete - at the capture in a GL-bridge run, on the frame after it under GL-less. Reaching here without a
+        // verdict means the run ended before that point: the verdict is then taken against whatever evidence exists,
+        // which is a refusal when the picture never arrived. This used to be a second check with the *live* world-frame
+        // counter against the capture-time snapshot, which failed a passing Intel run at shutdown (150 against 152).
+        if (!celtium$pictureVerdictTaken) {
+            celtium$completePendingDumps();
+            celtium$judgePictures(mc, "at shutdown, without a verdict at the capture");
+            celtium$setStatusFromPictures();
         }
         try {
             Path output = mc.gameDir.toPath().resolve("logs/celtium-validation.json");

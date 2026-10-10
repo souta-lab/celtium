@@ -257,6 +257,15 @@ public final class VulkanGlTexture {
     /** Layout handshakes recorded and skipped for shared images, so a run says whether the caller's calls arrived. */
     private static long foreignLayoutTransitions;
     private static long foreignLayoutSkips;
+    /**
+     * How many handshake lines a run prints. The order matters more than the count: a hand-back recorded after the
+     * chain's forward transition and before the pass that samples the image is the ordering that leaves the sampled
+     * image in GENERAL, and it is visible only as lines in sequence. Bounded so a per-frame handshake cannot flood a
+     * log, with a periodic line afterwards so a long run still shows the counters.
+     */
+    private static final int SHARED_LAYOUT_LOGS = 24;
+    private static final int SHARED_LAYOUT_PERIODIC = 200;
+    private static int sharedLayoutLogs;
 
     /** {@return one line with the shared-image layout handshake counters}, for the run's report. */
     public static String foreignLayoutSummary() {
@@ -533,6 +542,12 @@ public final class VulkanGlTexture {
         if (this.foreignLayout == newLayout) {
             synchronized (VulkanGlTexture.class) {
                 foreignLayoutSkips++;
+                if (sharedLayoutLogs < SHARED_LAYOUT_LOGS) {
+                    sharedLayoutLogs++;
+                    System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT image=0x" + Long.toHexString(this.image)
+                            + " keep=" + layoutName(newLayout) + " skip#" + foreignLayoutSkips
+                            + " transitions=" + foreignLayoutTransitions);
+                }
             }
             return;
         }
@@ -558,6 +573,17 @@ public final class VulkanGlTexture {
         this.foreignLayout = newLayout;
         synchronized (VulkanGlTexture.class) {
             foreignLayoutTransitions++;
+            // The order of these lines against the owner's own recording is the measurement: a hand-back printed
+            // after the chain's forward transition and before the pass that samples the image is exactly the
+            // sequence that leaves a sampled image in GENERAL.
+            if (sharedLayoutLogs < SHARED_LAYOUT_LOGS
+                    || foreignLayoutTransitions % SHARED_LAYOUT_PERIODIC == 0) {
+                sharedLayoutLogs++;
+                System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT image=0x" + Long.toHexString(this.image)
+                        + " view=0x" + Long.toHexString(this.view) + " " + layoutName(oldLayout) + " -> "
+                        + layoutName(newLayout) + " cmd=0x" + Long.toHexString(commandBuffer.address())
+                        + " transition#" + foreignLayoutTransitions);
+            }
         }
     }
 

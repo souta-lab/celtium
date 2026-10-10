@@ -367,15 +367,18 @@ public final class VulkanPostChain {
         checkStandInTarget(passes);
         if (!this.pendingInit.isEmpty()) {
             // Not a second recording inside one command buffer: a non-empty set means the recording that carried
-            // these targets' first-use barrier ended without commitPasses(), so that recording never reached the
-            // queue and the images it moved are still UNDEFINED. The barriers are recorded again below.
+            // these targets' first-use barrier ended without commitPasses(). Either its command buffer was reset or
+            // abandoned - in which case the transitions never ran and the images are still UNDEFINED - or the caller
+            // does not report submissions at all. Both cases are answered the same way: the barrier goes into this
+            // recording too, because nothing here may assume the image is in GENERAL.
             this.uncommittedRecordings++;
             this.repeatInits += this.pendingInit.size();
             if (this.uncommittedRecordings <= 4) {
                 for (Target target : this.pendingInit) {
                     trace("UNCOMMITTED identity=" + target.identity + " image=0x" + hex(target.image)
                             + " recording=" + this.recordings + ": its UNDEFINED -> GENERAL barrier was recorded"
-                            + " but never submitted; it is recorded again in this recording");
+                            + " but commitPasses() did not report that recording as submitted, so it is recorded"
+                            + " again here (the caller patch is one line: commitPasses() after the submit)");
                 }
             }
         }
