@@ -2191,7 +2191,45 @@ submitImmediateBatch <- offerBatch <- WorldVertexBufferUploader.func_181679_a <-
   **まだ分離できていないので、キャンセルの既定化はしない。**
 - 受入: exit 0 / validationClean=true / PASSED（連鎖の記録を深くしただけで回帰なし）。
 
-**次の一手**: (1) 連鎖を**8フレーム**まで取り、手（`ItemRenderer` 系）とプレイヤーモデル（`RenderPlayer` 系）を分離する、
+**起点ベースのキャンセルを実装し、既定化して受入（このターン・完了）**:
+
+- **8フレームの連鎖で手とプレイヤーモデルを分離できた**:
+
+| list | 連鎖の7〜8フレーム目 | 正体 |
+|---|---|---|
+| **2, 3** | `RenderPlayer.func_177138_b` ← **`ItemRenderer.func_187456_a`** | **手持ちアイテム／手**（native が既に描いている） |
+| **4〜7+** | `ModelBiped.func_78088_a` ← **`ModelPlayer.func_78088_a`** | **プレイヤーモデル**（native 経路がまだ無い） |
+
+- **規則**: 「そのリストのコンパイル連鎖に **`ItemRenderer` が含まれる**なら、native が既に描いているので再生を取り消す」。
+  **id ではなく同一性**の規則である（`-Dceltium.vulkan.cancelHandDisplayLists=false` で旧挙動に戻せる）。
+- **同一条件の対（120 s、同一引数）で検証**:
+
+| 比較 | meanAbsDiff | 差>2の画素 | キャンセル数 |
+|---|---|---|---|
+| AMD keep vs 起点キャンセル | **0.0155** | 68（床は 0.0167） | **1066** |
+| Intel keep vs 起点キャンセル | **0.0000** | **6** | **572** |
+
+- **既定化して受入一式（7 run）**:
+
+| run | exit | validationClean | fixture | p50 | VUID | 起点キャンセル |
+|---|---|---|---|---|---|---|
+| AMD | 0 | true | **PASSED** | 16.05 ms | **0** | **1060** |
+| Intel | 0 | true | **PASSED** | 28.78 ms | **0** | **580** |
+| postprocess | 0 | true | PASSED | 16.03 ms | 0 | 1058 |
+| weather | 0 | true | PASSED | 15.80 ms | 0 | 1068 |
+| spectator spider | 0 | true | PASSED | 16.28 ms | 0 | 1044 |
+| thirdPerson＋GUI | 0 | true | PASSED | 16.05 ms | 0 | 1130 |
+| world switch | 0 | true | PASSED | 16.18 ms | 0 | 1044 |
+
+- **意味**: **run あたり約1000回（Intel で約580回）の GL display list 再生が消えた**。画像は床水準
+  （AMD 0.0155 / Intel 0.0000）、p50 も悪化していない。**呼び出し連鎖で同一性を判定する**という、
+  id やソース順に依存しない規則が入った。これは完成条件(b)（GL call を必要としない実行）への具体的前進である。
+
+**次の一手**: (1) プレイヤーモデル（`ModelPlayer` 系）の12リストは**メッシュが既にある**ので、`callList` で native 描画に
+置き換える（今は再生を残している）、(2) 置き換え後は**同じ同一性の規則**でプレイヤーモデルもキャンセル対象にできる、
+(3) その状態で三人称の画像一致を同一条件の対で確認する。
+
+**（旧メモ）** 次の一手: (1) 連鎖を**8フレーム**まで取り、手（`ItemRenderer` 系）とプレイヤーモデル（`RenderPlayer` 系）を分離する、
 (2) 分離できたら「**native が既に描いている内容のリストだけ**を取り消す」規則を実装し、既定化の可否を
 同一条件の対で判断する、(3) プレイヤーモデルの12リストはメッシュがあるので native 描画へ置き換える。
 

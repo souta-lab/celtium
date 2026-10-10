@@ -152,8 +152,10 @@ public abstract class WorldVertexBufferUploaderMixin {
             if (celtium$listIndex != 0) {
                 StackTraceElement[] celtium$stack = new Throwable().getStackTrace();
                 String celtium$origin = "unknown";
-                // Six frames: the first three name the machinery (uploader, Tessellator, TexturedQuad), the ones after
-                // that name the content - the hand, a player model part, a mob renderer.
+                // Eight frames: the first three name the machinery (uploader, Tessellator, TexturedQuad) and the next
+                // three the model pipeline (ModelBox, compileDisplayList, ModelRenderer.render). The two after that name
+                // the content - ItemRenderer for the hand, RenderPlayer for a player model part - which is what the
+                // cancellation rule needs to tell apart, since the hand is drawn natively and the player model is not.
                 int celtium$taken = 0;
                 for (StackTraceElement celtium$frame : celtium$stack) {
                     String celtium$name = celtium$frame.getClassName();
@@ -177,7 +179,7 @@ public abstract class WorldVertexBufferUploaderMixin {
                         celtium$origin = celtium$origin + " <- " + celtium$name + '.' + celtium$frame.getMethodName();
                     }
                     celtium$taken++;
-                    if (celtium$taken >= 6) {
+                    if (celtium$taken >= 8) {
                         break;
                     }
                 }

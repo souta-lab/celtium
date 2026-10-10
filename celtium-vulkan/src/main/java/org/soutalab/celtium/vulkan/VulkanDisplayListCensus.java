@@ -104,14 +104,47 @@ public final class VulkanDisplayListCensus {
         return ids;
     }
 
+    /**
+     * Whether the held-item display lists may be cancelled by their origin.
+     * <p>
+     * The origin chain separates them from other models: a list compiled through {@code ItemRenderer} is the held item,
+     * which the immediate path already draws (measured: cancelling it changes 3-4 pixels), while a list compiled through
+     * {@code ModelPlayer}/{@code ModelBiped} is the player model, which has no native pipeline yet and must keep being
+     * replayed. This is a rule about what the list is, not about which id it happens to have.
+     * <p>
+     * On by default since it was measured with matched pairs on both GPUs: AMD 0.0155 mean / 68 pixels and Intel 0.0000
+     * mean / 6 pixels against their own keep runs, while removing 1066 and 572 display-list replays per run. The
+     * property is still read, so {@code -Dceltium.vulkan.cancelHandDisplayLists=false} restores the old behaviour.
+     */
+    private static final boolean CANCEL_BY_ORIGIN = Boolean.parseBoolean(
+            System.getProperty("celtium.vulkan.cancelHandDisplayLists", "true"));
+
     /** {@return whether this list's GL replay is being cancelled, so the native path draws it instead}. */
     public static boolean cancels(int list) {
-        return CANCEL.contains(Integer.valueOf(list));
+        if (CANCEL.contains(Integer.valueOf(list))) {
+            return true;
+        }
+        if (!CANCEL_BY_ORIGIN) {
+            return false;
+        }
+        String origin = originOf(list);
+        return origin != null && origin.contains("ItemRenderer");
+    }
+
+    private static long originCancels;
+
+    /** {@return how many replays were cancelled because the list's origin says the native path already draws it}. */
+    public static synchronized long originCancels() {
+        return originCancels;
     }
 
     /** Records one cancelled replay. */
     public static synchronized void cancelled(int list) {
         cancelled++;
+        String origin = ORIGINS.get(Integer.valueOf(list));
+        if (origin != null && origin.contains("ItemRenderer")) {
+            originCancels++;
+        }
         if (cancelled <= 3) {
             System.out.println("[Celtium] CELTIUM_DISPLAY_LIST_CANCELLED list=" + list);
         }
