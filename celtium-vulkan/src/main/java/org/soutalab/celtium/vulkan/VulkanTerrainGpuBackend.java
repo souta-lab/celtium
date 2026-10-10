@@ -689,6 +689,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int presentFailures;
     /** A completed frame's content is in the shared image and has not been presented yet. */
     private boolean lastFrameReachedQueue;
+    /** Per-frame present calls that arrived, and why the last one did not present. */
+    private int presentHookCalls;
+    private String presentSkipReason = "never called";
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     private int lazyMirrorSupplies;
     private int lazyMirrorFailures;
@@ -1474,6 +1477,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " discarded=" + this.immediateGroupsDiscarded
                     + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                     + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
+                    + " presentHookCalls=" + this.presentHookCalls
+                    + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " presentedFromVulkan=" + this.framePresentedFromVulkan
                     + " presentAttempts=" + this.presentAttempts
                     + " presentFailures=" + this.presentFailures
@@ -4832,10 +4837,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * before, so a failure here cannot leave the window without a frame.
      */
     public boolean celtium$presentFrame() {
-        if (this.swapchain == null || this.frameTarget == null || this.gpuStalled) {
+        // Counted before any condition: the entry counter is what says whether the per-frame call arrives at all, which the
+        // attempt counter cannot (it is only reached after the early returns).
+        this.presentHookCalls++;
+        if (this.frameTarget == null || this.gpuStalled) {
+            this.presentSkipReason = "no frame target, or stalled";
+            return false;
+        }
+        if (!ensureSwapchain()) {
+            // The swapchain is created here rather than only by the diagnostic probe: "anything that needs to present calls
+            // this" is what that method's own contract says, and this is the second caller it was written for.
+            this.presentSkipReason = "swapchain unavailable";
             return false;
         }
         if (!this.lastFrameReachedQueue) {
+            this.presentSkipReason = "no completed frame waiting";
             // No completed frame's content is waiting in the shared image. frameSubmitReachedQueue cannot be used here:
             // it is cleared when the next frame begins, and this call happens after that.
             return false;
@@ -4844,6 +4860,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.lastFrameReachedQueue = false;
         try {
             if (!ensureFrameTarget()) {
+                this.presentSkipReason = "frame target not available";
                 return false;
             }
             this.frameTarget.beginFrame();
@@ -4855,6 +4872,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.frameTarget.endFrame();
             }
             this.presentAttempts++;
+            this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();
             if (reached) {
                 this.framePresentedFromVulkan++;

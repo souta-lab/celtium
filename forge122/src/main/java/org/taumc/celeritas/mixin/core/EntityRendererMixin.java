@@ -111,7 +111,8 @@ public abstract class EntityRendererMixin {
      * GL swap can then be skipped is the next step.
      */
     @org.spongepowered.asm.mixin.injection.Inject(method = "func_175068_a", at = @org.spongepowered.asm.mixin.injection.At("HEAD"), require = 0)
-    private void celtium$presentPreviousFrame(org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+    private void celtium$presentPreviousFrame(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();

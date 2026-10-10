@@ -250,7 +250,7 @@ public final class VulkanSwapchain {
         }
         if (!context.hasDeviceExtension("VK_KHR_swapchain")
                 || !(Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY)
-                || Boolean.getBoolean("celtium.vulkan.presentFromComposite"))) {
+                || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true")))) {
             reasons.add("the device was not created with VK_KHR_swapchain enabled (the swapchain probe enables it)");
             return null;
         }

@@ -562,7 +562,7 @@ public final class VulkanContext {
             // alone is what made a run with the probe off create no swapchain at all and look validation-clean for the
             // trivial reason that it presented nothing. It is still capability-checked below.
             if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
-                    || Boolean.getBoolean("celtium.vulkan.presentFromComposite")) {
+                    || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
                 java.util.Set<String> available = instanceExtensionNames(stack);
                 for (String candidate : new String[]{"VK_KHR_surface", "VK_KHR_xlib_surface", "VK_KHR_wayland_surface"}) {
                     if (available.contains(candidate)) {
@@ -752,7 +752,7 @@ public final class VulkanContext {
             // NullPointerException on the missing function pointer, which is exactly what the first probes hit.
             // Enabled only for the probe, and only when the device advertises it.
             if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
-                    || Boolean.getBoolean("celtium.vulkan.presentFromComposite")) {
+                    || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
                 Set<String> available = deviceExtensionNames(stack, this.physicalDevice);
                 if (available.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                     deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);

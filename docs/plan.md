@@ -27,6 +27,46 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.15 **通常フレームが Vulkan から提示されるようになった**（条件 (c) の中核受入）
+
+**根因（このターンの本体）**: 「present を有効にするか」という**同じ判定が3箇所に別々に実装**され、既定が食い違っていた。
+- backend 側は `!"false".equalsIgnoreCase(getProperty("presentFromComposite","true"))` ＝ **既定 true**、
+- `VulkanContext` の2箇所（インスタンス拡張・デバイス拡張）は `Boolean.getBoolean(...)` ＝ **既定 false**、
+- `VulkanSwapchain` の受理判定も `Boolean.getBoolean(...)` ＝ **既定 false**。
+結果、**デバイスが `VK_KHR_swapchain` 無しで作られ**、swapchain は「unavailable」で永久に作られなかった。
+**既定を1つに揃えた**（backend と同じ「明示的に false のときだけ無効」）。
+
+**併せて直した到達性の問題（すべて実測で特定）**:
+1. `celtium$presentFrame()` の per-frame 呼び出し点: 最初は `Minecraft.updateDisplay`（SRG に存在せず）→ 次に
+   `func_175068_a` HEAD に付けたが**ハンドラの署名が `(CallbackInfo)` だけ**で対象メソッド
+   `(int pass, float partialTicks, long finishTimeNano)` と不一致 → **`require=0` のため無言で適用されず**。
+   署名を合わせて解決（**コンパイル済みクラスに注釈が入っていることは `javap` で確認した**）。
+2. 入口の早期 return を「フレーム開始でリセットされる `frameSubmitReachedQueue`」で判定していた → **専用の
+   `lastFrameReachedQueue`（submit 時に立ち、提示で消費）** に分離。
+3. **swapchain を作る呼び出しが無かった**: `ensureSwapchain()` は「present する側が呼ぶ」と自分で書いてあるのに、
+   私の入口が呼んでいなかった（プローブだけが呼んでいた）。
+4. **計器の誤読を1つ訂正**: `presentAttempts=0` は「フックが発火していない」ことを意味しない（attempt は
+   `presentImage` の後でしか増えない）。**入口で無条件に増える `presentHookCalls`** を足したことで、
+   フックは 245/237 回**到達している**ことと、理由が `swapchain unavailable` であることが分離できた。
+
+**受入（AMD、軽い世界、duration 90 s）**: exit 0 / validationClean / **PASSED**、237 frames、p50 26.75 ms、**VUID 0**、クラッシュなし。
+
+| 計器 | 値 |
+|---|---|
+| `presentHookCalls` | **237**（毎フレーム到達） |
+| `presentedFromVulkan` / `presentAttempts` | **233 / 233**（`presentFailures=0`） |
+| `presentSkipReason` | **`presented`** |
+| `presentResult` | **`present image: blitted 1280x720 onto image 0 (0)`** |
+| `presentSucceeded` / `presentSubmitDone` | **true / true** |
+| **`presentedMean`** | **113.25** |
+| **GL スクリーンショットの平均** | **113.874** |
+
+**提示画像の平均（113.25）と GL 側フレームの平均（113.874）が一致** — **Vulkan の swapchain に出た画像が、このフレームの
+内容そのもの**であることの独立した裏付けである（差 0.6/255）。
+
+**まだ言わないこと**: **GL swap は止めていない**（両方が提示する。内容は同一なので実測での破綻は無いが、機構としては次段階）。
+**実 window/compositor 出力の到達**は未確認（`DISPLAY=:0` の root は 0×0）。起動直後の数フレームは提示しない（237 中 233）。
+
 ## 0.14 通常フレームからの Vulkan present に着手: 提示の入口は実装、**per-frame の呼び出し点が未解決**
 
 - **判明した bridge の全体像**（`VulkanFrameTarget` の設計コメントより）: Vulkan 所有の RGBA8 色イメージと D32 深度イメージを
