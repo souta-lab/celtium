@@ -1447,6 +1447,11 @@ public final class ValidationClient {
                 dropped.motionX = 0.0D; dropped.motionY = 0.0D; dropped.motionZ = 0.0D;
                 dropped.setNoDespawn();
                 celtium$spawnEntity(mc, dropped, 1.0D, -5.0D);
+                // A block on the crosshair's line and inside the creative reach, so the selection outline draws: the eye
+                // is ~1.62 above posY and the pitch-20-down ray crosses y~8.5 at ~3 blocks out, so a block whose top face
+                // is there is what the ray points at.
+                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px, (int) Math.floor(mc.player.posY), pz - 3),
+                        net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
             }
@@ -1990,6 +1995,15 @@ public final class ValidationClient {
                 // only exists to make the terrain comparison deterministic is skipped on request.
                 if (Boolean.getBoolean("celtium.validation.captureEntities")) {
                     report.addProperty("captureEntitiesKept", true);
+                    // What the crosshair actually hits at capture time: the selection box only draws when this is a
+                    // block, so recording it settles whether the outline was supposed to be in the frame at all.
+                    if (mc.objectMouseOver != null) {
+                        report.addProperty("selectionTarget", mc.objectMouseOver.typeOfHit
+                                + (mc.objectMouseOver.typeOfHit == net.minecraft.util.math.RayTraceResult.Type.BLOCK
+                                        ? " " + mc.objectMouseOver.getBlockPos() : ""));
+                    } else {
+                        report.addProperty("selectionTarget", "null");
+                    }
                 } else if (removeNonPlayerEntities(mc) > 0) return;
                 report.addProperty("nonPlayerEntitiesRemoved", entitiesRemoved);
                 report.addProperty("captureWidth", mc.displayWidth);
