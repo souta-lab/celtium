@@ -184,6 +184,15 @@ public final class VulkanModelQuadCapture {
         return total;
     }
 
+    /** {@return the translation of the first stored list's compile-time modelview, as "x,y,z"}. */
+    public static synchronized String firstStoredMatrixTranslation() {
+        for (ListGeometry geometry : LISTS.values()) {
+            return round(geometry.modelView[12]) + "," + round(geometry.modelView[13]) + ","
+                    + round(geometry.modelView[14]);
+        }
+        return "none";
+    }
+
     /** {@return the largest list's first stored vertex, as a shape sanity check}. */
     public static synchronized String firstStoredVertex() {
         ListGeometry largest = null;

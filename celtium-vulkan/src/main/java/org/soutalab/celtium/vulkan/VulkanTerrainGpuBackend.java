@@ -2836,6 +2836,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return asked <= this.celtium$maxLineWidth() + 0.01F;
     }
 
+    private static String round3(float value) {
+        return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
+    }
+
     private static long celtium$stateKey(int formatId, int[] state) {
         long key = formatId;
         for (int value : state) {
@@ -5038,6 +5042,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int currentImmediateTexture;
     private int modelMeshQuads;
     private String modelMeshFailure = "none";
+    /** One-shot: the state the model path is told about depth. */
+    private boolean modelStateLogged;
 
     /**
      * Draws one captured display list natively, at the moment GL would have replayed it.
@@ -5077,6 +5083,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             int[] state = celtium$captureState();
             long key = celtium$stateKey(VulkanImmediateFormats.POSITION_TEX, state);
+            if (!this.modelStateLogged) {
+                // What the model path is told about the state it draws under, once: the one-quad image showed the quads
+                // over the terrain and the sky alike, and depth is the first thing that can do that.
+                this.modelStateLogged = true;
+                System.out.println("[Celtium] CELTIUM_MODEL_STATE list=" + listId + " depthTest=" + state[3]
+                        + " depthWrite=" + state[4] + " cull=" + state[5] + " blend=" + state[0]
+                        + " glDepthTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST)
+                        + " glDepthMask=" + org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK)
+                        + " key=" + key);
+            }
             // Asked of GL here rather than taken from the immediate path's fields: a display list is replayed under the
             // matrix in effect at that moment, and the projection gets the same clip-depth remap the immediate path uses.
             float[] projectionNow = new float[16];
@@ -5087,8 +5103,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             matrixBuffer.clear();
             org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrixBuffer);
             matrixBuffer.get(modelViewNow);
+            // The suspicion that the live projection had already been remapped was tested with a switch that copied it
+            // through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the remap is right and the
+            // switch was removed rather than kept.
             float[] projectionRemapped = new float[16];
             remapClipDepth(projectionNow, projectionRemapped);
+            System.out.println("[Celtium] CELTIUM_MODEL_MATRIX list=" + listId
+                    + " liveMVt=(" + round3(modelViewNow[12]) + "," + round3(modelViewNow[13]) + ","
+                    + round3(modelViewNow[14]) + ")"
+                    + " capturedMVt=(" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredMatrixTranslation()
+                    + ")"
+                    + " liveProj=(" + round3(projectionNow[0]) + "," + round3(projectionNow[5]) + ","
+                    + round3(projectionNow[10]) + ")");
+
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
                     mesh.indexCount() / 6)) {
                 this.modelDrawRefusals++;
