@@ -1738,6 +1738,17 @@ public final class ValidationClient {
         // At or after the tick, not exactly on it: on one Intel run the exact-tick condition never matched (the tick
         // counter stepped over 150) and the scene silently did not happen - the same fragility the injected idle test
         // showed with its wait count. The flag keeps it to once.
+        // Some scenes only exist while the player looks at a block: the block-selection outline is drawn from the ray
+        // trace, which needs the camera pointed at the ground. Nothing in a headless run moves the camera, so the scene
+        // has to say so itself rather than assume the outline was covered.
+        if (Boolean.getBoolean("celtium.validation.lookDown") && mc.player != null) {
+            mc.player.rotationPitch = 75.0F;
+            mc.player.prevRotationPitch = 75.0F;
+            // The block-selection outline is only drawn while the HUD is shown: drawSelectionBox is skipped when the
+            // game's hideGUI is set, and that setting is copied from the instance's options. Without this the scene looks
+            // right and the outline is simply never submitted - measured as zero line-primitive refusals and no outline.
+            mc.gameSettings.hideGUI = false;
+        }
         if (worldTicks >= 150 && !celtium$spectator) {
             // The spectator effects the audit lists: creeper, spider and enderman each load their own post shader
             // (shaders/post/creeper.json, spider.json, invert.json) through EntityRenderer.loadEntityShader. The public

@@ -27,6 +27,23 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.23 破壊/selection overlay の場面を追加（**outline は未提供**＝レンダラ側の問題ではないと確定）
+
+- **追加した場面**: `-Dceltium.validation.lookDown=true` で**カメラを真下（pitch 75）に向け**、`hideGUI` を false にする
+  （selection outline は HUD 表示中しか描かれないため）。ヘッドレスでは誰もカメラを動かさないので、場面が自分で指定する必要がある。
+- **受入（AMD、duration 150 s）**: exit 0 / validationClean / **PASSED**、708 frames、**p50 12.09 ms**、**VUID 0**、スクリーンショット有り。
+  `acceptedByFormat 1:16`（従来 1:5）。
+- **しかし selection outline は描かれていない**: スクリーンショット中心に輪郭が見えず、**`line primitives` の拒否が 0 件**
+  ＝ `drawSelectionBox` の `GL_LINE_STRIP` バッチは**そもそも即時経路に提供されていない**。
+  **これはレンダラ側の欠陥ではない**（`VulkanImmediateDrawer.unsupportedReason` は `GL_LINES`/`GL_LINE_STRIP`/`GL_LINE_LOOP`/
+  `GL_POINTS` を**既に理由付きで拒否**しており、線は GL が描く経路になっている）。
+- **棄却した仮説（このターン）**: (a) 線を三角形として誤描画している → `expandIndices`/`unsupportedReason` を読んで**棄却**、
+  (b) 受理されているのに不可視 → **そもそも受理も提供もされていない**ため棄却、
+  (c) `hideGUI` が原因 → false にしても件数が変わらず**棄却**。
+- **次の計器（1行）**: 場面で `mc.objectMouseOver` の**種別と座標**を記録する。`typeOfHit != BLOCK` なら
+  `drawSelectionBox` の手前で止まっていることになり、そこが次の分岐点である。
+- **註**: 「破壊 overlay（掘削中のひび）」はさらに手前（ブロックを掘る操作が要る）なので、この場面では対象外。
+
 ## 0.22 spectator creeper / enderman の受入（goal 項目5が名指しする3種のうち残り2つ）
 
 - fixture には元から creeper/spider/enderman の spectator 効果（vanilla ShaderGroup の entity outline を
