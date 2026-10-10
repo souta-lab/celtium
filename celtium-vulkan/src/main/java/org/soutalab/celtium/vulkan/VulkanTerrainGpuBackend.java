@@ -3656,7 +3656,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } else if (format == 4) {
             VulkanImmediateItemPipeline value = this.itemPipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediateItemPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
-                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
+                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]),
+                            state.length > 8 && state[8] != 0));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else if (format == 3) {
             VulkanImmediateBlockPipeline value = this.blockPipelineCache.computeIfAbsent(key,
@@ -6480,7 +6481,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         catch (IllegalStateException error) { this.invalidImmediateRecords++; throw error; }
         closeCurrentImmediateGroup();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer push = stack.calloc(128);
+            // 208, not 128: the lit ITEM pipeline's block extends the shared layout by the five lighting vec4, and
+            // every other pipeline clamps to its own declared range when it pushes.
+            ByteBuffer push = stack.calloc(208);
             Iterator<ImmediateGroup> iterator = this.immediateGroups.iterator();
             while (iterator.hasNext()) {
                 ImmediateGroup group = iterator.next();
@@ -6533,6 +6536,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     push.putFloat(116, color == null ? 1 : color[0]);
                     push.putFloat(120, color == null ? 1 : color[1]);
                     push.putFloat(124, color == null ? 1 : color[2]);
+                }
+                // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every
+                // group that carries them rather than guarded per pipeline - only the lit layout reads past 128, and
+                // a lit group always arrives with its params attached.
+                float[] light = group.lightParams;
+                if (light != null) {
+                    for (int i = 0; i < 20; ++i) {
+                        push.putFloat(128 + i * 4, light[i]);
+                    }
                 }
                 Object pipeline = prepared.pipeline;
                 if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);

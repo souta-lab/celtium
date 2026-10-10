@@ -64,6 +64,9 @@ public final class SpirvShaders {
     /** Fragment module for textured immediate-mode geometry. */
     public static final String IMMEDIATE_TEX_COLOR_FRAGMENT = "immediate_tex_color.frag";
 
+    /** Vertex module for the lit variant - the fixed-function eval for the ITEM format's normal element. */
+    public static final String IMMEDIATE_TEX_COLOR_LIT_VERTEX = "immediate_tex_color_lit.vert";
+
     /** Vertex module for textured geometry with no colour: {@code POSITION_TEX}, as {@code RenderGlobal} draws sky and clouds. */
     public static final String IMMEDIATE_POSITION_VERTEX = "immediate_position.vert";
     public static final String IMMEDIATE_POSITION_FRAGMENT = "immediate_position.frag";

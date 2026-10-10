@@ -173,8 +173,12 @@ public final class VulkanImmediateTexturePipeline {
                 org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
+        ByteBuffer clamped = pushConstants.duplicate();
+        // The caller's block can be wider than this layout's declared range (the lit variant's is 208) - pushing
+        // past the range is a validation error, so only the declared bytes go out.
+        clamped.limit(Math.min(clamped.remaining(), PUSH_CONSTANT_BYTES));
         vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushConstants);
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
         LongBuffer vertexBuffer = MemoryStack.stackGet().longs(mesh.vertexBuffer());
         vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffer, MemoryStack.stackGet().longs(0L));
         vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer(), 0L, VK_INDEX_TYPE_UINT32);

@@ -51,9 +51,16 @@ public final class VulkanImmediateItemPipeline {
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
     // inside the 128 bytes Vulkan guarantees (audit S19).
     private static final int PUSH_CONSTANT_BYTES = 128;
+    /**
+     * The lit variant's block: the shared 128 plus five vec4 - two model-space light directions, the scene ambient,
+     * and each light's diffuse - matching the layout {@code immediate_tex_color_lit.vert} declares.
+     */
+    private static final int PUSH_CONSTANT_BYTES_LIT = 208;
 
     private final VulkanContext context;
     private final long renderPass;
+    /** When the vertex stage runs the fixed-function lighting eval and the normal attribute is real input. */
+    private final boolean lit;
 
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -72,7 +79,8 @@ public final class VulkanImmediateItemPipeline {
     private final int depthCompareOp;
 
     private VulkanImmediateItemPipeline(VulkanContext context, long renderPass, boolean blend, int srcFactor,
-                                           int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+                                           int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+                                           int depthCompareOp, boolean lit) {
         this.context = context;
         this.renderPass = renderPass;
         this.blend = blend;
@@ -82,6 +90,7 @@ public final class VulkanImmediateItemPipeline {
         this.depthWrite = depthWrite;
         this.cull = cull;
         this.depthCompareOp = depthCompareOp;
+        this.lit = lit;
     }
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
@@ -98,13 +107,30 @@ public final class VulkanImmediateItemPipeline {
      */
     public static VulkanImmediateItemPipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
                             boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        return create(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, depthCompareOp,
+                false);
+    }
+
+    /**
+     * The lit variant: the ITEM format's trailing normal stops being padding - it becomes the attribute the
+     * fixed-function eval shades by, and the push block grows to carry the light directions, ambient and diffuse.
+     */
+    public static VulkanImmediateItemPipeline create(VulkanContext context, long renderPass, boolean blend,
+                            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+                            int depthCompareOp, boolean lit) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
-        VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, depthCompareOp);
+        VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, blend, srcFactor,
+                dstFactor, depthTest, depthWrite, cull, depthCompareOp, lit);
         result.createPipelineLayout();
         result.createPipeline();
         return result;
+    }
+
+    /** {@return the push range this pipeline's layout declares}, so the draw clamps a wider shared block. */
+    public int pushBytes() {
+        return this.lit ? PUSH_CONSTANT_BYTES_LIT : PUSH_CONSTANT_BYTES;
     }
 
     /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
@@ -118,8 +144,12 @@ public final class VulkanImmediateItemPipeline {
                 org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
         // Both stages: the vertex stage reads the matrices and the fragment stage the alpha-test reference, and the
         // command's stage flags have to cover every stage that reads the range.
+        ByteBuffer view = pushConstants.duplicate();
+        // The shared block may be wider than this layout's declared range (the lit variant's block is) - pushing past
+        // the range is a validation error, so the view is clamped to what this pipeline declared.
+        view.limit(Math.min(view.remaining(), pushBytes()));
         vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushConstants);
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, view);
         LongBuffer vertexBuffer = MemoryStack.stackGet().longs(mesh.vertexBuffer());
         vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffer, MemoryStack.stackGet().longs(0L));
         vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer(), 0L, VK_INDEX_TYPE_UINT32);
@@ -242,7 +272,7 @@ public final class VulkanImmediateItemPipeline {
             // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
             // stages: declaring it for the vertex stage alone is a shader-interface mismatch.
             range.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                    .offset(0).size(PUSH_CONSTANT_BYTES);
+                    .offset(0).size(this.lit ? PUSH_CONSTANT_BYTES_LIT : PUSH_CONSTANT_BYTES);
             VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
                     .pSetLayouts(stack.longs(this.descriptorSetLayout))
                     .pPushConstantRanges(range);
@@ -255,7 +285,8 @@ public final class VulkanImmediateItemPipeline {
 
     private void createPipeline() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer vertexCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
+            ByteBuffer vertexCode = SpirvShaders.load(this.lit ? SpirvShaders.IMMEDIATE_TEX_COLOR_LIT_VERTEX
+                    : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
             long vertexModule = VK_NULL_HANDLE;
             long fragmentModule = VK_NULL_HANDLE;
@@ -280,7 +311,7 @@ public final class VulkanImmediateItemPipeline {
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
                 binding.get(0).binding(0).stride(VERTEX_BYTES).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
                 VkVertexInputAttributeDescription.Buffer attributes =
-                        VkVertexInputAttributeDescription.calloc(3, stack);
+                        VkVertexInputAttributeDescription.calloc(this.lit ? 4 : 3, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
                 // DefaultVertexFormats.ITEM's real order is POSITION_3F, COLOR_4UB, TEX_2F, NORMAL_3B, PADDING_1B -
                 // colour at 12 and the texture coordinates at 16, the reverse of POSITION_TEX_COLOR's tex/colour
@@ -288,6 +319,10 @@ public final class VulkanImmediateItemPipeline {
                 // because no ITEM-format batch arrived in any measured run (acceptedByFormat has been 4:0 to 4:1).
                 attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(16);
                 attributes.get(2).location(2).binding(0).format(VK_FORMAT_R8G8B8A8_UNORM).offset(12);
+                if (this.lit) {
+                    // The trailing normal, packed signed bytes the way BufferBuilder.normal writes them.
+                    attributes.get(3).location(3).binding(0).format(VK_FORMAT_R8G8B8_SNORM).offset(24);
+                }
                 VkPipelineVertexInputStateCreateInfo vertexInput =
                         VkPipelineVertexInputStateCreateInfo.calloc(stack).sType$Default()
                                 .pVertexBindingDescriptions(binding)
