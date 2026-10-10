@@ -27,6 +27,23 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.37 失敗経路の限定確認（提示・線・合成の変更後）
+
+- 提示は submit と wait を使い、線はパイプライン生成を、合成は受理ゲートを変えたので、**注入した失敗**で再確認した
+  （AMD、duration 90 s、既定＝提示・線・合成の変更が入った状態）。
+
+| run | harness | validationClean | fixture | game exit | クラッシュ | VUID | 失速の計器 |
+|---|---|---|---|---|---|---|---|
+| `failFenceWait=true` | 1 | **true** | **FAILED**（注入失敗として意図どおり） | 0 | なし | **0** | **`stalledStops=1`・`stalledTeardownSkips=548`** |
+| `failSubmits=1` | 1 | **true** | **FAILED**（同上） | 0 | なし | **0** | `stalledStops=0` |
+
+- **読み方**: **fence timeout は検出して停止し、teardown を548回スキップして資源を解放しない**
+  （計画に記録済みの 547/549 と一致）。**ゲームは exit 0・クラッシュなし・VUID 0**。
+  submit 失敗は**描画が欠けたことを fixture が FAILED として報告**する（黙って隠さない）。
+  **harness の exit 1 はこの FAILED によるもので、注入した失敗の意図された結果**である
+  （`validationClean` は true のまま＝Vulkan のエラーではない）。
+- **意味**: 提示・線・合成の変更は、**失敗時の振る舞い（停止・解放しない・報告する）を壊していない**。
+
 ## 0.36 **GL の最終合成を外しても提示内容は同一**（条件 (a) の「最終合成が native」に到達・フラグ付き）
 
 - **実装**: `-Dceltium.vulkan.skipGlComposite=true`（既定 off）。**提示済みフレームに対してのみ**（`framePresentedFromVulkan > 0`
