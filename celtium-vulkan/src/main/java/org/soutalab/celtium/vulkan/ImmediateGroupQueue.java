@@ -21,16 +21,15 @@ public final class ImmediateGroupQueue {
      *
      * @return how many groups were left behind for other targets
      */
-    public static int retireGroupsForTarget(List<Object[]> groups, long targetIdentity) {
+    public static int retireGroupsForTarget(List<ImmediateGroup> groups, long targetIdentity) {
         int kept = 0;
-        Iterator<Object[]> iterator = groups.iterator();
+        Iterator<ImmediateGroup> iterator = groups.iterator();
         while (iterator.hasNext()) {
-            Object[] group = iterator.next();
-            if (group != null && group.length > 7 && group[7] instanceof Long
-                    && ((Long) group[7]).longValue() == targetIdentity) {
+            ImmediateGroup group = iterator.next();
+            if (group != null && group.target == targetIdentity) {
                 iterator.remove();
             } else {
-                // Anything the queue cannot attribute to a target is kept: a short or malformed group must never be the reason
+                // Anything the queue cannot attribute to a target is kept: a null group must never be the reason
                 // another pass's geometry disappears.
                 kept++;
             }

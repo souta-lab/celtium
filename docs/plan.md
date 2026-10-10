@@ -46,6 +46,17 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.107 **修正・受入済み**: immediate group の `Object[]` 添字契約を型付き `ImmediateGroup` へ（goal 項目3）
+
+- `immediateGroups`/`recordedImmediateGroups`/`retiredImmediateGroups` の `Object[]`（15 slot・添字意味が 3 構築
+  site のコメントにだけ存在）を **`ImmediateGroup`**（`ImmediateGroup.java`・8 引数 ctor＋named field）へ変換。
+  `GroupStamp`・`PreparedImmediate` も同ファイルの package-private class へ集約した（契約が 1 ファイルに住む）。
+  `group[12]`=batches、`group[7]`=target、`group[14]`=stamp のような添字参照は全て named field になった。
+- `ImmediateGroupQueue.retireGroupsForTarget` は `List<ImmediateGroup>` を取る —— 「target 未帰属は残す」規則は
+  `group == null` keep で保持（malformed 配列という概念自体が型で消えた）。
+- `scripts/cpu-contract/TextureContractCheck` の A32 検査も型付きへ更新（`group(target)` ヘルパ＋null keep 検査）、
+  `CELTIUM_CPU_CONTRACT PASS` を確認。AMD `p445-grp` 標準 fixture PASSED・clean で退行なし。
+
 ## 0.106 **修正・受入済み**: texture 所有の欠損を3つ閉じる —— lightmap の per-update readback 176→2、sprite patch の in-place 化、image/view/descriptor の per-update churn 解消
 
 - **発見した3つの契約欠損（goal 項目2・texture 所有統合の内訳）**:

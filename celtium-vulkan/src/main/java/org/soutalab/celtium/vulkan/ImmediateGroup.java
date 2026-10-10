@@ -1,0 +1,94 @@
+package org.soutalab.celtium.vulkan;
+
+/**
+ * One accepted batch of immediate geometry, held from queueing through recording, submission and completion.
+ * <p>
+ * This class is the named form of the {@code Object[]} a group used to be: fifteen positional slots whose meaning lived
+ * in comments at three construction sites and in the memory of every reader. The constructor names the eight fields a
+ * group cannot exist without; the rest are assigned by name where they are produced, so the only positional contract
+ * left is the one in this file.
+ * <p>
+ * The lifecycle is unchanged: {@code immediateGroups} holds the queue, {@code recordedImmediateGroups} the groups whose
+ * draws have been recorded but not yet submitted, and {@code retiredImmediateGroups} the submitted ones whose meshes are
+ * freed only after the fence says the GPU is done with them.
+ */
+public final class ImmediateGroup {
+
+    /** The geometry: borrowed meshes (captured model groups) are owned by their lender and are not freed on retire. */
+    public final VulkanDynamicMesh mesh;
+    /** Column-major projection matrix captured at accept time. */
+    public final float[] projection;
+    /** Column-major model-view matrix captured at accept time. */
+    public final float[] modelView;
+    /** The vertex format id the group was built with. */
+    public final int formatId;
+    /** The GL texture id this group's draws sample; 0 when untextured. */
+    public final int texture;
+    /** The pipeline-state key the group was accepted under. */
+    public final long stateKey;
+    /** The decoded GL state (blend, depth, cull and friends) used to build the push block. */
+    public final int[] state;
+    /** The render target this group was accepted for: a pass retires only its own target's groups. */
+    public final long target;
+
+    /** Group colour for the push block; {@code null} means 1.0 - model-mesh groups carry none. */
+    public float[] color;
+    /** Blend factors when the group needs them for the pipeline selection. */
+    public int blendSrc;
+    public int blendDst;
+    /** The pipeline + descriptor chosen when the group was closed. */
+    public PreparedImmediate prepared;
+    /** How many OpenGL draw calls this group stands for: every counter that reports work counts batches. */
+    public int batches;
+    /** Viewport values captured at accept time for off-target passes. */
+    public int[] viewportValues;
+    /** Frame and target-generation stamp: groups of a destroyed frame target must be retired, not drawn. */
+    public GroupStamp stamp;
+
+    public ImmediateGroup(VulkanDynamicMesh mesh, float[] projection, float[] modelView, int formatId, int texture,
+            long stateKey, int[] state, long target) {
+        this.mesh = mesh;
+        this.projection = projection;
+        this.modelView = modelView;
+        this.formatId = formatId;
+        this.texture = texture;
+        this.stateKey = stateKey;
+        this.state = state;
+        this.target = target;
+    }
+}
+
+/**
+ * The frame and target generation a group was accepted under.
+ * <p>
+ * A frame target replacement destroys the render pass and pipeline a stale group was built for, so drawing it would
+ * bind the wrong thing; {@code targetGeneration} lets the draw side retire such a group instead. {@code meshBorrowed}
+ * keeps the retire path from freeing a mesh that belongs to a lender (captured model meshes are drawn every frame).
+ */
+final class GroupStamp {
+    final long frameId;
+    final int targetGeneration;
+    /** {@code true} when the mesh belongs to someone else and must not be freed when the group retires. */
+    final boolean meshBorrowed;
+
+    GroupStamp(long frameId, int targetGeneration) {
+        this(frameId, targetGeneration, false);
+    }
+
+    GroupStamp(long frameId, int targetGeneration, boolean meshBorrowed) {
+        this.frameId = frameId;
+        this.targetGeneration = targetGeneration;
+        this.meshBorrowed = meshBorrowed;
+    }
+}
+
+/** The pipeline and descriptor a closed group was prepared to draw with. */
+final class PreparedImmediate {
+    final Object pipeline;
+    final long descriptor;
+
+    PreparedImmediate(Object pipeline, long descriptor) {
+        this.pipeline = pipeline;
+        this.descriptor = descriptor;
+    }
+}

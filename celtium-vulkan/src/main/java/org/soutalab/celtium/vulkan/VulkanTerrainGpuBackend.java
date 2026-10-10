@@ -130,7 +130,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean submissionPending;
     private VulkanCommandBufferState commandState;
     private long activeImmediateTarget;
-    private final java.util.List<Object[]> recordedImmediateGroups = new java.util.ArrayList<>();
+    private final java.util.List<ImmediateGroup> recordedImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
     /**
      * When and against which frame-target generation a queued group was built.
      * <p>
@@ -142,22 +142,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * The texture generation is deliberately not part of it: a group's vertices do not become invalid when a texture is
      * re-uploaded, and dropping the draw would lose geometry. Only the target identity decides.
      */
-    private static final class GroupStamp {
-        final long frameId;
-        final int targetGeneration;
-        /** {@code true} when the mesh belongs to someone else and must not be freed when the group retires}. */
-        final boolean meshBorrowed;
-
-        GroupStamp(long frameId, int targetGeneration) {
-            this(frameId, targetGeneration, false);
-        }
-
-        GroupStamp(long frameId, int targetGeneration, boolean meshBorrowed) {
-            this.frameId = frameId;
-            this.targetGeneration = targetGeneration;
-            this.meshBorrowed = meshBorrowed;
-        }
-    }
+    // GroupStamp, PreparedImmediate and the typed group they ride in live in ImmediateGroup.java - the named form of
+    // the Object[] every group used to be.
 
     /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
     private int targetGeneration;
@@ -178,16 +164,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int[] currentGroupViewportValues;
     private PreparedImmediate currentPreparedImmediate;
 
-    private static final class PreparedImmediate {
-        final Object pipeline;
-        final long descriptor;
-        PreparedImmediate(Object pipeline, long descriptor) { this.pipeline = pipeline; this.descriptor = descriptor; }
-    }
-
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
     public long[] immediateExecutionCounters() {
         long pending = this.currentGroupUsed ? this.currentGroupBatches : 0;
-        for (Object[] group : this.immediateGroups) pending += ((Integer) group[12]).intValue();
+        for (ImmediateGroup group : this.immediateGroups) pending += group.batches;
         return new long[] {this.immediateTaken, this.immediateRecordedBatches, this.immediateSubmittedBatches,
                 this.immediateCompletedBatches, pending, this.invalidImmediateRecords, this.acceptedForOtherTargets,
                 this.offTargetRecordedBatches, this.offTargetCompletedBatches, this.immediateRetryCount};
@@ -912,7 +892,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * with an identity projection and an NDC x of -100 - geometry far off-screen. One mesh and one draw per matrix
      * pair is a correctness requirement, not an optimisation.
      */
-    private final java.util.List<Object[]> immediateGroups = new java.util.ArrayList<Object[]>();
+    private final java.util.List<ImmediateGroup> immediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanDynamicMesh currentImmediateMesh;
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
@@ -1236,7 +1216,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * concerned: the handoff submits later in the same pass, so the buffers must outlive it. Keeping one frame's
      * worth and releasing it at the next flush is enough, because a pass only starts after the previous one signalled.
      */
-    private final java.util.List<Object[]> retiredImmediateGroups = new java.util.ArrayList<Object[]>();
+    private final java.util.List<ImmediateGroup> retiredImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanImmediatePipeline immediatePipeline;
     /** The matrices in force when the pending batches were built; the flush runs a frame later. */
     private final float[] pendingProjection = new float[16];
@@ -1332,9 +1312,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * references it, flushing would open a window - four full-screen blits and two depth conversions - to protect nothing.
      */
     private boolean queuedGroupUsesTexture(int glTextureId) {
-        for (Object[] group : this.immediateGroups) {
-            if (group.length > 4 && group[4] instanceof Integer
-                    && ((Integer) group[4]).intValue() == glTextureId) {
+        for (ImmediateGroup group : this.immediateGroups) {
+            if (group.texture == glTextureId) {
                 return true;
             }
         }
@@ -1564,12 +1543,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
                     + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
         }
-        this.immediateGroups.add(new Object[] {mesh, projection, modelView,
-                Integer.valueOf(VulkanImmediateFormats.POSITION_TEX), Integer.valueOf(texture),
-                Long.valueOf(key), state, Long.valueOf(target), null,
-                Integer.valueOf(0), Integer.valueOf(0), prepared, Integer.valueOf(quads),
-                this.currentGroupViewportValues,
-                new GroupStamp(this.frameId, this.targetGeneration, true)});
+        ImmediateGroup group = new ImmediateGroup(mesh, projection, modelView,
+                VulkanImmediateFormats.POSITION_TEX, texture, key, state, target);
+        group.prepared = prepared;
+        group.batches = quads;
+        group.viewportValues = this.currentGroupViewportValues;
+        // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
+        // must not free it - which is the whole reason the stamp exists.
+        group.stamp = new GroupStamp(this.frameId, this.targetGeneration, true);
+        this.immediateGroups.add(group);
         this.immediateGroupsClosed++;
         return true;
     }
@@ -2831,14 +2813,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Frees the meshes of groups whose draw was recorded at least one full pass ago. */
     private void releaseRetiredImmediateGroups() {
-        for (Object[] group : this.retiredImmediateGroups) {
-            if (group.length > 14 && group[14] instanceof GroupStamp
-                    && ((GroupStamp) group[14]).meshBorrowed) {
+        for (ImmediateGroup group : this.retiredImmediateGroups) {
+            if (group.stamp != null
+                    && (group.stamp).meshBorrowed) {
                 // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so retiring
                 // the group must not free it.
                 continue;
             }
-            ((VulkanDynamicMesh) group[0]).delete();
+            group.mesh.delete();
         }
         this.retiredImmediateGroups.clear();
     }
@@ -2850,15 +2832,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * but is rejected by the depth test" from "never enters an accepted group", while the bounds over the whole group
      * can. The packed colour identifies the test geometry (the fixture draws with 255, 64, 64, 200).
      */
-    private void reportGroupBounds(Object[] group) {
+    private void reportGroupBounds(ImmediateGroup group) {
         if (this.immediateDiagnostics >= 6) {
             return;
         }
         this.immediateDiagnostics++;
         try {
-            VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
-            float[] projection = (float[]) group[1];
-            float[] modelView = (float[]) group[2];
+            VulkanDynamicMesh mesh = group.mesh;
+            float[] projection = group.projection;
+            float[] modelView = group.modelView;
             long base = mesh.vertexAddress();
             int vertices = mesh.vertexCount();
             float[] mvp = new float[16];
@@ -3149,8 +3131,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // and dropped, which is the same rule the refusal sites follow - name the loss rather than claim a draw that
             // cannot happen.
             int dropped = 0;
-            for (Object[] group : this.immediateGroups) {
-                dropped += ((Integer) group[12]).intValue();
+            for (ImmediateGroup group : this.immediateGroups) {
+                dropped += group.batches;
             }
             this.postAcceptDroppedGroups += dropped;
             this.immediateGroups.clear();
@@ -3192,8 +3174,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // the run ends with a verdict that says the terrain is not verified (audit: count every drop rather than
             // claim a draw that did not happen).
             int dropped = 0;
-            for (Object[] group : this.immediateGroups) {
-                dropped += ((Integer) group[12]).intValue();
+            for (ImmediateGroup group : this.immediateGroups) {
+                dropped += group.batches;
             }
             this.stalledGeometryDrops++;
             this.stalledGeometryDroppedBatches += dropped;
@@ -3216,8 +3198,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The loss is counted and named instead, so the run ends with a message and the verdict says the terrain is
             // not verified (audit: count every drop rather than claim a draw that did not happen).
             int dropped = 0;
-            for (Object[] group : this.immediateGroups) {
-                dropped += ((Integer) group[12]).intValue();
+            for (ImmediateGroup group : this.immediateGroups) {
+                dropped += group.batches;
             }
             this.stalledGeometryDrops++;
             this.stalledGeometryDroppedBatches += dropped;
@@ -3289,11 +3271,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                             "vkResetCommandBuffer(abort)");
                     this.commandState.reset();
-                    for (Object[] group : this.recordedImmediateGroups) {
-                        int batches = ((Integer) group[12]).intValue();
-                        this.pendingImmediateIndices += ((VulkanDynamicMesh) group[0]).indexCount();
+                    for (ImmediateGroup group : this.recordedImmediateGroups) {
+                        int batches = group.batches;
+                        this.pendingImmediateIndices += group.mesh.indexCount();
                         this.immediateRecordedBatches -= batches;
-                        if (((Long) group[7]).longValue() != this.mainTargetIdentity) this.offTargetRecordedBatches -= batches;
+                        if (group.target != this.mainTargetIdentity) this.offTargetRecordedBatches -= batches;
                     }
                     this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                     this.recordedImmediateGroups.clear();
@@ -3617,7 +3599,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      *
      * @return how many groups were left behind for other targets
      */
-    public static int retireGroupsForTarget(java.util.List<Object[]> groups, long targetIdentity) {
+    public static int retireGroupsForTarget(java.util.List<ImmediateGroup> groups, long targetIdentity) {
         return ImmediateGroupQueue.retireGroupsForTarget(groups, targetIdentity);
     }
 
@@ -3626,9 +3608,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** {@return how many pending non-empty groups belong to a target other than the main one}. */
     private int pendingGroupsForOtherTargets() {
         int count = 0;
-        for (Object[] group : this.immediateGroups) {
-            if (((Long) group[7]).longValue() != this.mainTargetIdentity
-                    && !((VulkanDynamicMesh) group[0]).isEmpty()) {
+        for (ImmediateGroup group : this.immediateGroups) {
+            if (group.target != this.mainTargetIdentity
+                    && !group.mesh.isEmpty()) {
                 count++;
             }
         }
@@ -3637,8 +3619,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private int countGroupsForTarget(long targetIdentity) {
         int count = 0;
-        for (Object[] group : this.immediateGroups) {
-            if (((Long) group[7]).longValue() == targetIdentity && !((VulkanDynamicMesh) group[0]).isEmpty()) {
+        for (ImmediateGroup group : this.immediateGroups) {
+            if (group.target == targetIdentity && !group.mesh.isEmpty()) {
                 count++;
             }
         }
@@ -3751,13 +3733,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                 && this.textureRegistry.get(this.currentGroupTexture) != null)
                         + " worldPass=" + this.worldPassActive);
             }
-            this.immediateGroups.add(new Object[] {this.currentImmediateMesh, projection, modelView,
-                    Integer.valueOf(this.currentGroupFormatId), Integer.valueOf(this.currentGroupTexture),
-                    Long.valueOf(this.currentGroupStateKey), this.currentGroupState,
-                    Long.valueOf(this.currentGroupTarget), this.currentGroupColor,
-                    Integer.valueOf(this.currentGroupBlendSrc), Integer.valueOf(this.currentGroupBlendDst),
-                    this.currentPreparedImmediate, Integer.valueOf(this.currentGroupBatches), this.currentGroupViewportValues,
-                    new GroupStamp(this.frameId, this.targetGeneration)});
+            ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
+                    this.currentGroupFormatId, this.currentGroupTexture,
+                    this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
+            group.color = this.currentGroupColor;
+            group.blendSrc = this.currentGroupBlendSrc;
+            group.blendDst = this.currentGroupBlendDst;
+            group.prepared = this.currentPreparedImmediate;
+            group.batches = this.currentGroupBatches;
+            group.viewportValues = this.currentGroupViewportValues;
+            group.stamp = new GroupStamp(this.frameId, this.targetGeneration);
+            this.immediateGroups.add(group);
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -3768,7 +3754,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private void discardImmediateGroups() {
         if (!waitForIdle()) return;
         releaseRetiredImmediateGroups();
-        for (Object[] group : this.immediateGroups) {
+        for (ImmediateGroup group : this.immediateGroups) {
             this.retiredImmediateGroups.add(group);
         }
         this.immediateGroups.clear();
@@ -6123,12 +6109,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         closeCurrentImmediateGroup();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ByteBuffer push = stack.calloc(128);
-            Iterator<Object[]> iterator = this.immediateGroups.iterator();
+            Iterator<ImmediateGroup> iterator = this.immediateGroups.iterator();
             while (iterator.hasNext()) {
-                Object[] group = iterator.next();
-                if (((Long) group[7]).longValue() != target) continue; // kept for its own pass
-                if (group.length > 14 && group[14] instanceof GroupStamp) {
-                    GroupStamp stamp = (GroupStamp) group[14];
+                ImmediateGroup group = iterator.next();
+                if (group.target != target) continue; // kept for its own pass
+                if (group.stamp != null) {
+                    GroupStamp stamp = group.stamp;
                     if (stamp.targetGeneration != this.targetGeneration) {
                         // Recorded against a frame target that has since been destroyed: its pipeline and render pass are
                         // gone, so drawing it would bind the wrong thing. Retired without drawing and counted; the mesh is
@@ -6140,13 +6126,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         continue;
                     }
                 }
-                VulkanDynamicMesh mesh = (VulkanDynamicMesh) group[0];
+                VulkanDynamicMesh mesh = group.mesh;
                 if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
-                PreparedImmediate prepared = (PreparedImmediate) group[11];
-                pushCombinedMatrixInto((float[]) group[1], (float[]) group[2], push, 0);
-                int[] state = (int[]) group[6];
+                PreparedImmediate prepared = group.prepared;
+                pushCombinedMatrixInto(group.projection, group.modelView, push, 0);
+                int[] state = group.state;
                 push.putFloat(112, Float.intBitsToFloat(state[6]));
-                float[] color = (float[]) group[8];
+                float[] color = group.color;
                 push.putFloat(116, color == null ? 1 : color[0]);
                 push.putFloat(120, color == null ? 1 : color[1]);
                 push.putFloat(124, color == null ? 1 : color[2]);
@@ -6156,7 +6142,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
-                int batches = ((Integer) group[12]).intValue();
+                int batches = group.batches;
                 this.immediateRecordedBatches += batches;
                 if (target != this.mainTargetIdentity) this.offTargetRecordedBatches += batches;
                 this.immediateGroupsDrawn++;
@@ -6415,8 +6401,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
             this.submissionPending = true;
             this.commandState.submitted();
-            for (Object[] group : this.recordedImmediateGroups) {
-                this.immediateSubmittedBatches += ((Integer) group[12]).intValue();
+            for (ImmediateGroup group : this.recordedImmediateGroups) {
+                this.immediateSubmittedBatches += group.batches;
                 this.retiredImmediateGroups.add(group);
             }
             this.recordedImmediateGroups.clear();
@@ -6510,10 +6496,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.submissionPending = false;
             this.commandState.completed();
-            for (Object[] group : this.retiredImmediateGroups) {
-                int batches = ((Integer) group[12]).intValue();
+            for (ImmediateGroup group : this.retiredImmediateGroups) {
+                int batches = group.batches;
                 this.immediateCompletedBatches += batches;
-                if (((Long) group[7]).longValue() != this.mainTargetIdentity) this.offTargetCompletedBatches += batches;
+                if (group.target != this.mainTargetIdentity) this.offTargetCompletedBatches += batches;
             }
             releaseRetiredImmediateGroups();
             if (this.immediateGroups.isEmpty() && this.currentImmediateMesh == null) VulkanRetireQueue.flush();

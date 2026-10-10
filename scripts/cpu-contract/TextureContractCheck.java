@@ -90,24 +90,24 @@ public final class TextureContractCheck {
     private static void checkTwoIndependentTargets() {
         long targetA = 0xAAAAL;
         long targetB = 0xBBBBL;
-        List<Object[]> groups = new ArrayList<>();
+        List<org.soutalab.celtium.vulkan.ImmediateGroup> groups = new ArrayList<>();
         groups.add(group(targetA));
         groups.add(group(targetB));
         groups.add(group(targetA));
         groups.add(group(targetB));
-        groups.add(new Object[7]); // a short array must be kept, not retired
+        groups.add(null); // a group the queue cannot attribute must be kept, not retired
 
         int kept = org.soutalab.celtium.vulkan.ImmediateGroupQueue.retireGroupsForTarget(groups, targetA);
         expect("A32 groups kept after retiring A", 3, kept);
         expect("A32 groups left in the queue", 3, groups.size());
-        for (Object[] group : groups) {
-            if (group.length > 7) {
-                expect("A32 only B remains", targetB, ((Long) group[7]).longValue());
+        for (org.soutalab.celtium.vulkan.ImmediateGroup group : groups) {
+            if (group != null) {
+                expect("A32 only B remains", targetB, group.target);
             }
         }
         int keptB = org.soutalab.celtium.vulkan.ImmediateGroupQueue.retireGroupsForTarget(groups, targetB);
         expect("A32 groups kept after retiring B", 1, keptB);
-        expect("A32 the short group survives", 1, groups.size());
+        expect("A32 the unattributable group survives", 1, groups.size());
     }
 
     private static void applyPatch(byte[] image, int imageWidth, int[][] data, int w, int h, int x, int y) {
@@ -124,10 +124,8 @@ public final class TextureContractCheck {
         }
     }
 
-    private static Object[] group(long target) {
-        Object[] group = new Object[8];
-        group[7] = Long.valueOf(target);
-        return group;
+    private static org.soutalab.celtium.vulkan.ImmediateGroup group(long target) {
+        return new org.soutalab.celtium.vulkan.ImmediateGroup(null, null, null, 0, 0, 0L, null, target);
     }
 
     private static void expect(String what, long expected, long actual) {
