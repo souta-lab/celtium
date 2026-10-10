@@ -20,6 +20,10 @@ CeltiumをMinecraft 1.12.2 / CleanroomMC専用のネイティブVulkanレンダ�
 - **model経路（表示リスト）のnative描画は実験フラグ側・既定off**。射影の出所をglGetFloatvから行列ミラーへ直して18.49 % → 6.35 %、モデルビューを`V_now × C_compile⁻¹`にして**2.19 %**（entity場面・7通りの実測で最良）。**entity/TESR/item/model全体のnative描画は未完**。
 - **entity場面の既定構成の残差はformat 5（粒子系）に帰属**し、両GPUで確認した（提示画像 vs 同一runのスクリーンショット: AMD 1.25 / 1.43 / 1.62 %、Intel 1.33 %。**format 5を除外するとAMD 0.32 %・Intel 0.36 %**）。差の性質は暗さで、行列・ブレンド・被覆・シェーダ・SPIR-V・mipは棄却済み。
 - **通常場面（実体なし）は両GPUで一致**（AMD 0.011/0.01 %、Intel 0.000〜0.016/0.00 %）。
+- **resize（計画の項目7）の恒久stallを修正し、AMDで受入した**。resizeはGPUのstalledを誘発し、`gpuStalled`は設計上クリアされないため**以降native描画と提示が全部止まっていた**（提示265 / 331 / 342、提示画像も書かれない）。原因は**フレームバッファ置換の期間中に走る順序flushの待機が失敗**すること。bindの1箇所を塞ぐと**次は`GlStateManager.clear`経由で同じ失敗**をした＝**共通項は「置換期間」**。**置換期間全体で順序flushを行わない**契約にして解消：`CELTIUM_STALL` **0件**、提示 **843**（resizeなしの785を上回る）、提示画像も書かれ、exit 0 / clean / PASSED / msgCount 0。退行確認（resizeなし）は **0.001/0.01 %**・提示847で変更前と同一。
+- **旧経路とlab flagを1つ撤去した**：`MIRROR_GL_MIPS`（GLのmip段数を写す経路、既定false、測定で5.60 %＝現行の0.16〜0.28 %より二十倍以上悪い）とその参照17箇所を削除。AMD 2場面＋Intel 1場面で退行なし。
+- **新たに観測した未解決点**：resize後、**提示画像が1280x720のまま**（スクリーンショットは1024x640）。＝stallは解消したが**提示（swapchain側）がまだ旧サイズの内容**である。次はここの追随を確認する。
+- **引き継ぎ書**：`docs/handoff-2026-10-10-next-model.md`（環境・実行手順・計器・**棄却済み仮説**・作業規律・落とし穴）。
 - 失敗経路は提示・線・合成の変更後も正しい。fence timeoutは検出して停止しteardownを548回スキップして資源を解放せず（stalledStops=1）、submit失敗はfixtureがFAILEDとして報告する。いずれもvalidationClean=true・VUID 0・クラッシュなし。
 - 条件(b)の残量は実測で約2割がGL。内訳はformat 2の非画面合成 709（FBO所有権がVulkanに移るまでnative化不可）、起動直後10フレームのみの80（nativeの描画先がまだ無いため本質的）、format 1/6/9の少数。lightmap分は解消済み。通常fixtureの0/frameを全sceneのreadback除去としない。
 - **ゲームの通常フレームがVulkan所有のcolor/depthで生産され、swapchainへ提示される経路が既定になった**（adoption）。AMD/IntelともフラグなしのrunでPASSED・VUID 0・GLエラーなしで、同一vendorのGL経路との画像差はAMD 0.001/0.00%・Intel 0.026/0.02%。bridgeの往復blitとGL深度変換は走らない。`-Dceltium.vulkan.adoptGameFramebuffer=false`で旧経路に戻せる。残るGL依存は「GL contextの生成」と「既定フレームバッファへ描く合成（post-present overlay待ち）」である。
