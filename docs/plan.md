@@ -39,6 +39,36 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.102 **修正・受入済み**: フレームバッファ置換の**期間全体**で順序 flush を行わない（resize の恒久 stall が解消）
+
+- **前節の一般化**: §0.101 は「bind の1箇所」だけを狙っていた。実際には置換の**期間中**に走る順序 flush がすべて同じ待機を持ち、
+  bind を塞ぐと**次は `GlStateManager.clear` 経由の flush が同じ場所で失敗**した（実測: stall site が
+  `celtium$noteRenderTarget` → **`celtium$clear:1314`** へ移動。提示は 342 のまま）。
+  ＝ **両者に共通なのは「置換期間」**である。
+- **実装（1契約）**:
+  - `noteBindSize(w,h)` が**サイズ不一致を検出したら `framebufferReplacing = true`**（一点物ではなく**期間**にする）。
+  - `celtium$ensureTargetForBoundFramebuffer()` が**共有 image を新サイズに用意できた時点で `false`** に戻す
+    （bind の RETURN フックが毎フレーム呼ぶので、期間は必ず閉じる）。
+  - `flushPendingBeforeGlDraw()` は**期間中は順序 flush を行わない**。保留グループは
+    **件数を数えて捨てる**（`CELTIUM_REPLACE_DROP` と `postAcceptDroppedGroups`。既存の「描けないものを描いたと言わない」規則と同じ）。
+  - `bindFramebuffer` の一点物フラグは撤去（期間が覆うため）。
+- **受入（AMD・resize あり・120 s）**:
+
+| 指標 | 修正前 | **修正後** |
+|---|---|---|
+| `CELTIUM_STALL` | 1件（恒久 stall） | **0件** |
+| `presentedFromVulkan` | 265 / 331 / 342 | **843**（resize なしの 785 を上回る） |
+| 提示画像の書き出し | **書かれない** | **書かれる** |
+| verdict | PASSED | **PASSED**（clean・msgCount 0） |
+
+  `CELTIUM_REPLACE_DROP batches=14 target=1280x720 frameId=364` ＝ 境界で捨てたのは**14バッチ**（名前をつけて数えている）。
+- **退行確認（AMD・resize なし・120 s）**: 提示画像 vs スクリーンショット **0.001 / 0.01 %**（変更前と同一）、
+  `presentedFromVulkan` **847**、exit 0 / clean / PASSED / msgCount 0。
+- **新たに観測した未解決点（記録）**: resize run で **提示画像が 1280x720 のまま**（スクリーンショットは 1024x640）。
+  ＝ **stall は解消したが、提示（swapchain 側）はまだ旧サイズの内容**である。次の焦点。
+- **次の一手（1点）**: **swapchain の再作成がウィンドウの新サイズに追随しているか**を確認する
+  （`ensureSwapchain()` の out-of-date 判定と、提示画像の寸法がどこで決まるか）。
+
 ## 0.101 修正点を確定: `bindFramebuffer` の**ターゲット切替時の flush**が resize で待機に失敗する
 
 - **読んだ事実**: `bindFramebuffer(targetIdentity, isMain)` は

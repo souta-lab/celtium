@@ -26,12 +26,18 @@ public abstract class FramebufferMixin {
 
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
-        // Point the game's own framebuffer (by identity) at the shared images. Fail-open.
+        // Announce a framebuffer replacement before the bind below, so the flush that a target change would otherwise do
+        // is skipped when the framebuffer has just been replaced at a new size: that flush's wait is what stalled the
+        // device on a mid-run resize. The adoption itself is not done here - at HEAD the bind has not happened yet, so the
+        // size read would be the previous framebuffer's; it runs in celtium$adoptAfterBind instead.
         try {
             net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
-            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
-            // The adoption is not done here: at HEAD the bind has not happened yet, so the size read below would be the
-            // previous framebuffer's. It runs in celtium$adoptAfterBind instead.
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
+                        .celtium$noteBindSize(self.framebufferWidth, self.framebufferHeight);
+            }
         } catch (RuntimeException | LinkageError ignored) {
             // A hint must never break the frame.
         }

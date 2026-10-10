@@ -798,6 +798,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int postAcceptDroppedGroups;
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
+    /**
+     * True from the moment a framebuffer replacement is announced until the shared images match the new size again.
+     * <p>
+     * A resize replaces the game framebuffer, and every ordering flush during that window waits on a device that is in
+     * the middle of the replacement; that wait failing marks the device stalled permanently, since nothing clears that
+     * flag. Measured: one mid-run resize froze the present path (presentedFromVulkan stuck at 355 against 785 for the same
+     * duration without a resize), with the stall first at the bind and, once the bind was guarded, at the clear. The
+     * window is what both have in common.
+     */
+    private boolean framebufferReplacing;
+    /** Ordering flushes skipped at a framebuffer replacement, and the batches the first of them had to drop. */
+    private int replaceBoundaryDrops;
+    private int replaceBoundaryDropBatches;
 
     /**
      * Marks the device stalled and says where from, once.
@@ -1912,8 +1925,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return factor == 0 || factor == 1 || (factor >= 0x0300 && factor <= 0x0307);
     }
 
+    /**
+     * Tells the next {@link #bindFramebuffer} that the framebuffer being bound has a different size from the shared images.
+     * <p>
+     * A resize replaces the game framebuffer, so the bind that follows is a generation change rather than a pass change.
+     * Flushing the previous pass at that point waits on a device that is in the middle of that replacement, and the wait
+     * failing marks the device stalled - permanently, by design, since nothing clears that flag. Measured: one mid-run
+     * resize froze the present path (presentedFromVulkan stuck at 355 while the same duration without a resize reached
+     * 785). There is no ordering to preserve either: the previous framebuffer's contents have already been presented.
+     */
+    public void celtium$noteBindSize(int width, int height) {
+        if (this.frameTarget != null && !this.frameTarget.matches(width, height)) {
+            this.framebufferReplacing = true;
+        }
+    }
+
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
-        if (!this.immediateWindowBusy && targetIdentity != this.currentRenderTarget) {
+        if (!this.immediateWindowBusy && targetIdentity != this.currentRenderTarget && !this.framebufferReplacing) {
             // Framebuffer.bind HEAD: the OLD framebuffer is still bound, so complete its accepted draws before switching.
             flushPendingBeforeGlDraw();
         }
@@ -3080,6 +3108,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
+        if (this.framebufferReplacing) {
+            // No ordering flush across a framebuffer replacement: the pending groups were offered for a framebuffer whose
+            // size no longer exists, and drawing them now would need the very wait that stalls the device. They are counted
+            // and dropped, which is the same rule the refusal sites follow - name the loss rather than claim a draw that
+            // cannot happen.
+            int dropped = 0;
+            for (Object[] group : this.immediateGroups) {
+                dropped += ((Integer) group[12]).intValue();
+            }
+            this.postAcceptDroppedGroups += dropped;
+            this.immediateGroups.clear();
+            this.replaceBoundaryDrops++;
+            if (this.replaceBoundaryDropBatches == 0) {
+                this.replaceBoundaryDropBatches = dropped;
+                System.out.println("[Celtium] CELTIUM_REPLACE_DROP batches=" + dropped + " target=" + this.targetWidth
+                        + "x" + this.targetHeight + " frameId=" + this.frameId);
+            }
+            return;
+        }
         // Counted here, after the emptiness check: clearOrderFlushes counts *calls* (many return early), so it cannot
         // say how many handoffs a frame really makes. The wall time is what says whether a handoff is a stall.
         this.actualFlushes++;
@@ -5486,7 +5533,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * again (265 presents against 785 in the same duration without a resize).
      */
     public boolean celtium$ensureTargetForBoundFramebuffer() {
-        return ensureFrameTarget();
+        boolean ready = ensureFrameTarget();
+        if (ready) {
+            // The shared images match the framebuffer that is bound now, so the replacement window is over and ordering
+            // flushes are meaningful again.
+            this.framebufferReplacing = false;
+        }
+        return ready;
     }
 
     public int celtium$adoptableFramebuffer(int width, int height) {
