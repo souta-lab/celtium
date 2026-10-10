@@ -25,13 +25,42 @@
 | **Nether の dimension 受入** | **両GPU PASSED（旧 NO_CAPTURE を置換）** | portal から出る修正後、capture 時 dimension **-1**・**帰還 0 回**。旧 NO_CAPTURE の証拠は history に保持 |
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
-| **条件 (b) の本体（FBO 所有権）** | **実装は動作・残り1点** | adoption 成立（`bound=gameFbo=sharedFbo=7`・`adopted=true`・差し替え時 GL error `0x0`）。残るのは**差し替え後 beginFrame までに出る保留 `0x502` の発生源1点**（§0.45〜§0.49） |
+| **条件 (b) の本体（FBO 所有権）** | **動作（フラグ、既定 off）・残り1点** | **ゲームが Vulkan 所有イメージへ直接描画し提示が成立**（`presentedFromVulkan=960`、GL エラーなし、参照フレームと 平均絶対差 0.026・>8 が 0.00 %、987 frames）。残るのは `errors=2883`（パスごとに1件）の正体1点（§0.50） |
 | 実 window / compositor 出力（条件 (c)） | **未確認** | `DISPLAY=:0` の root が 0×0 で合成器なし。不足条件は §0.30 に記録 |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
 
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.50 **ゲームが Vulkan 所有イメージへ直接描画し、提示が成立した**（(b) の本体が動作）
+
+- **原因は2つの blit の未ガードだった**（前節の続き）: `beginFrame` の呼び出し列は
+  `drainGlErrors()` → `glGetInteger` → **`glBlitNamedFramebuffer(fbo, sharedFbo, GL_COLOR_BUFFER_BIT)`** →
+  **`glBlitNamedFramebuffer(fbo, scratchFbo, GL_DEPTH_BUFFER_BIT)`** → `convertDepth`（ガード済み）→ `glCheck`。
+  adoption 後は `fbo == sharedFbo` なので**1つ目は画像の恒等 blit ＝ `GL_INVALID_OPERATION`**、2つ目も不要。
+  **ガードは前回の patch スクリプトが「直前 260 文字に `sharedGameFramebuffer` がある」と誤判定して適用を飛ばしていた**
+  （実際は分岐の記述が近くにあった）。**行単位で当てて解消**。
+- **受入（AMD、duration 120 s、`-Dceltium.vulkan.adoptGameFramebuffer=true`）**:
+
+| 計器 | 値 |
+|---|---|
+| frames | **987** |
+| **`presentedFromVulkan`** | **960**（従来は 0） |
+| **`gameFramebufferAdopted`** | 1 |
+| `firstGlError` / `frameEntryGlError` | **[null:0x0] / [null]**（GL エラーなし） |
+| `validationClean` / VUID / クラッシュ | **true / 0 / なし** |
+| **参照フレーム vs 提示画像（上下反転）** | **平均絶対差 0.026・>8 が 0.00 %** |
+| `fixtureStatus` | **FAILED**（下記の残欠陥による） |
+
+- **意味**: **ゲームが Vulkan 所有の color/depth に直接描画し、そのフレームが swapchain へ提示され、内容は GL 経路と
+  画素単位で一致する**。`beginFrame`/`endFrame` の **両方向の blit と GL 深度変換は走っていない**（＝条件 (b) の本体）。
+- **残る欠陥（fixture が FAILED にする原因・1点）**:
+  `error: the Vulkan terrain backend did not render cleanly: passes=2883 skipped=0 errors=2883 lastDraw=62`
+  ＝ **パスは全部走り（skipped=0）描画もされている（lastDraw=62）**が、**パスごとに1件のエラーが計上**されている。
+  次の計器は **この `errors` が何を数えているかを名指しすること**（パス内の例外か、endFrame のハンドオフか）。
+- **フラグ**: 既定 off のまま（`-Dceltium.vulkan.adoptGameFramebuffer=true` で有効）。**移行用の bridge を置き換える経路**
+  なので、残欠陥を閉じてから既定化を判断する。
 
 ## 0.49 **adoption は成立した**（計器で確定）。残るのは差し替え後に他所で出る保留 `GL error 0x502`
 

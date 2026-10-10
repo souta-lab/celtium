@@ -698,6 +698,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int presentFailures;
     /** Frame composites left to the present path because Vulkan had already shown the frame. */
     private int glCompositesSkipped;
+    private int gameFramebufferAdopted;
+    private boolean gameFramebufferIsShared;
+    /** The first GL error seen after the swap and the point that saw it, or null/0. */
+    private String firstGlErrorWhere;
+    private int firstGlErrorCode;
     /** A completed frame's content is in the shared image and has not been presented yet. */
     private boolean lastFrameReachedQueue;
     private boolean presentedImageDumpRequested;
@@ -1519,6 +1524,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " presentedFromVulkan=" + this.framePresentedFromVulkan
                     + " glCompositesSkipped=" + this.glCompositesSkipped
+                    + " gameFramebufferAdopted=" + this.gameFramebufferAdopted
+                    + " firstGlError=[" + this.firstGlErrorWhere + ":0x"
+                    + Integer.toHexString(this.firstGlErrorCode) + "]"
+                    + " frameEntryGlError=[" + (this.frameTarget == null ? "no-target"
+                    : String.valueOf(this.frameTarget.firstEntryGlError())) + "]"
                     + " glSwapsSkipped=" + this.glSwapsSkipped
                     + " presentAttempts=" + this.presentAttempts
                     + " presentFailures=" + this.presentFailures
@@ -5124,6 +5134,51 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.lightmapUnit = unit;
     }
 
+    /** Lab switch: point the game's main framebuffer at the shared images so it renders into them. */
+    private static final boolean ADOPT_GAME_FRAMEBUFFER =
+            Boolean.getBoolean("celtium.vulkan.adoptGameFramebuffer");
+
+    public int celtium$adoptableFramebuffer(int width, int height) {
+        if (!ADOPT_GAME_FRAMEBUFFER || this.frameTarget == null) {
+            return 0;
+        }
+        return this.frameTarget.adoptableFramebuffer(width, height);
+    }
+
+    public int celtium$adoptedColorTexture() {
+        return this.frameTarget == null ? 0 : this.frameTarget.sharedColorTexture();
+    }
+
+    public int celtium$adoptedDepthTexture() {
+        return this.frameTarget == null ? 0 : this.frameTarget.sharedDepthTexture();
+    }
+
+    public void celtium$noteFramebufferAdopted() {
+        this.gameFramebufferAdopted++;
+        this.gameFramebufferIsShared = true;
+        if (this.frameTarget != null) {
+            this.frameTarget.noteGameFramebufferAdopted();
+        }
+    }
+
+    public boolean celtium$isSharedFramebuffer(int framebufferObject) {
+        return ADOPT_GAME_FRAMEBUFFER && this.frameTarget != null
+                && this.frameTarget.isSharedFramebuffer(framebufferObject);
+    }
+
+    /**
+     * Records the first GL error seen at a named point after the swap, and where it was seen.
+     * <p>
+     * Reading a GL error clears it, so only the first probe that finds one can speak: it names the window the error was
+     * produced in. Probes after it will read zero whatever happens, which is why the point is recorded with the code.
+     */
+    public void celtium$noteGlErrorAt(String where, int error) {
+        if (error != 0 && this.firstGlErrorWhere == null) {
+            this.firstGlErrorWhere = where;
+            this.firstGlErrorCode = error;
+        }
+    }
+
     /** {@return whether the native model draw experiment is enabled}. */
     public static boolean modelDrawEnabled() {
         return MODEL_DRAW;
@@ -5203,6 +5258,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try {
             this.frameTarget = VulkanFrameTarget.create(this.context.instance(), this.context.physicalDevice(),
                     this.context.device(), this.context.queue(), this.context.queueFamilyIndex(), width, height);
+            if (this.gameFramebufferIsShared) {
+                this.frameTarget.noteGameFramebufferAdopted();
+            }
             this.targetWidth = width;
             this.targetHeight = height;
             return true;

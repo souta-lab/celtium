@@ -189,6 +189,10 @@ public final class VulkanFrameTarget {
     private SemaphorePair doneSemaphore;
 
     private int sharedFbo;
+    /** Whether the game is currently drawing into the shared images rather than its own framebuffer. */
+    private boolean sharedGameFramebuffer;
+    /** The first GL error seen at a frame entry, with the entry's name; null while none was seen. */
+    private String firstEntryGlError;
     private int scratchDepthTexture;
     private int scratchFbo;
     private int conversionProgram;
@@ -345,8 +349,51 @@ public final class VulkanFrameTarget {
         }
     }
 
+    /** Records that the game's framebuffer has been pointed at the shared images. */
+    public void noteGameFramebufferAdopted() {
+        this.gameFbo = this.sharedFbo;
+        this.gameColorTexture = this.color == null ? 0 : this.color.glTexture;
+        this.gameDepthRenderbuffer = 0;
+        this.sharedGameFramebuffer = true;
+    }
+
+    /** {@return the framebuffer object the game's main framebuffer may be pointed at}, or 0 when it may not. */
+    public int adoptableFramebuffer(int width, int height) {
+        if (sharedFbo == 0 || color == null || depth == null || color.glTexture == 0 || depth.glTexture == 0
+                || this.width != width || this.height != height) {
+            return 0;
+        }
+        return sharedFbo;
+    }
+
+    /** {@return the first GL error seen at a frame entry with its name}, or null. */
+    public String firstEntryGlError() {
+        return this.firstEntryGlError;
+    }
+
+    public int sharedColorTexture() {
+        return color == null ? 0 : color.glTexture;
+    }
+
+    public int sharedDepthTexture() {
+        return depth == null ? 0 : depth.glTexture;
+    }
+
+    public boolean isSharedFramebuffer(int framebufferObject) {
+        return framebufferObject != 0 && framebufferObject == sharedFbo;
+    }
+
     public void beginFrame() {
-        beginFrame(false);
+        // Probe B: this class's own entry, before GlState and before any of the copies below.
+        try {
+            int probe = org.lwjgl.opengl.GL11.glGetError();
+            if (probe != 0) {
+                this.firstEntryGlError = "beginFrame entry: 0x" + Integer.toHexString(probe);
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A probe must never break the frame.
+        }
+        beginFrame(true);
     }
 
     /**
@@ -398,25 +445,43 @@ public final class VulkanFrameTarget {
                         GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
                 depthRenderbuffer = glGetNamedFramebufferAttachmentParameteri(fbo, GL_DEPTH_ATTACHMENT,
                         GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-                requireVerifiedContract(fbo, colorTexture, depthRenderbuffer, "beginFrame");
-                gameFbo = fbo;
-                gameColorTexture = colorTexture;
-                gameDepthRenderbuffer = depthRenderbuffer;
+                if (fbo == sharedFbo && sharedFbo != 0) {
+                    gameFbo = fbo;
+                    gameColorTexture = color.glTexture;
+                    gameDepthRenderbuffer = 0;
+                    sharedGameFramebuffer = true;
+                } else {
+                    requireVerifiedContract(fbo, colorTexture, depthRenderbuffer, "beginFrame");
+                    gameFbo = fbo;
+                    gameColorTexture = colorTexture;
+                    gameDepthRenderbuffer = depthRenderbuffer;
+                    sharedGameFramebuffer = false;
+                }
             }
 
             long step = System.nanoTime();
+            // An identity copy is invalid, and with the game rendering into the shared images both of these are:
+            // the colour copy would be the image onto itself and the depth is already the D32 one the scratch holds.
+            if (!sharedGameFramebuffer) {
             glBlitNamedFramebuffer(fbo, sharedFbo, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
                     GL_NEAREST);
+            }
             long afterColor = System.nanoTime();
             this.tColorIn += afterColor - step;
             // The bridge's commands leave the shared colour image as a colour attachment from here on; recording it is
             // what lets the present path stop being told a layout.
             this.colorImageLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            // An identity copy is invalid, and with the game rendering into the shared images both of these are:
+            // the colour copy would be the image onto itself and the depth is already the D32 one the scratch holds.
+            if (!sharedGameFramebuffer) {
             glBlitNamedFramebuffer(fbo, scratchFbo, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
                     GL_NEAREST);
+            }
             long afterDepth = System.nanoTime();
             this.tDepthIn += afterDepth - afterColor;
-            convertDepth(scratchDepthTexture, sharedFbo);
+            if (!sharedGameFramebuffer) {
+                convertDepth(scratchDepthTexture, sharedFbo);
+            }
             this.tConvertIn += System.nanoTime() - afterDepth;
             glCheck("beginFrame: RGBA8 colour copy and D24 to D32 depth conversion [bound=" + fbo + " gameFbo=" + gameFbo + " sharedFbo=" + sharedFbo + "]");
 
@@ -660,6 +725,17 @@ public final class VulkanFrameTarget {
     }
 
     public void endFrame() {
+        // Probe B: the frame's own entry, before any of its state work, so "the bind path" and "our own begin" separate.
+        try {
+            int probe = org.lwjgl.opengl.GL11.glGetError();
+            if (probe != 0) {
+                if (this.firstEntryGlError == null) {
+                    this.firstEntryGlError = "endFrame entry: 0x" + Integer.toHexString(probe);
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A probe must never break the frame.
+        }
         checkAlive();
         if (frameAbandoned) {
             // The failure path already closed this frame without the write-back; endFrame() from the caller that was
@@ -689,8 +765,10 @@ public final class VulkanFrameTarget {
             // neither is needed for the picture the user sees. Off by default; measured with the presented image as the
             // evidence, since with this on the GL framebuffer deliberately keeps whatever it had.
             if (!SKIP_COLOR_RETURN) {
+                if (!sharedGameFramebuffer) {
                 glBlitNamedFramebuffer(sharedFbo, gameFbo, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
                         GL_NEAREST);
+                }
             }
             long afterColor = System.nanoTime();
             this.tColorOut += afterColor - step;
@@ -698,7 +776,7 @@ public final class VulkanFrameTarget {
             // so that what GL draws after this point (the hand, the GUI, entities in some orders) is depth tested
             // against the terrain. If the image does not change without it, the depth return is one of the bridge
             // operations that a native frame could drop - which is what completion condition (b) needs to know.
-            if (!SKIP_DEPTH_RETURN) {
+            if (!SKIP_DEPTH_RETURN && !sharedGameFramebuffer) {
                 convertDepth(depth.glTexture, gameFbo);
             }
             this.tConvertOut += System.nanoTime() - afterColor;
@@ -732,6 +810,12 @@ public final class VulkanFrameTarget {
         }
         if (gameFbo == 0) {
             // Nothing observed yet: only the size can be judged, the game framebuffer is validated by beginFrame().
+            return true;
+        }
+        if (sharedGameFramebuffer) {
+            // The game draws into the shared images, so the contract is about this class's own objects, which the liveness
+            // check above just passed. Judging it by the game-framebuffer contract said no (the shared depth is a texture
+            // and the contract wants a D24 renderbuffer), which rebuilt the target every frame and threw away the swap.
             return true;
         }
         return contractViolation(gameFbo, gameColorTexture, gameDepthRenderbuffer, false) == null;

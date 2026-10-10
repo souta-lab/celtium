@@ -23,6 +23,41 @@ public abstract class FramebufferMixin {
 
     @Inject(method = "func_147610_a", at = @At("HEAD"), require = 0)
     private void celtium$noteRenderTarget(boolean setViewport, CallbackInfo info) {
+        // Point the game's own framebuffer (by identity) at the shared images. Fail-open.
+        try {
+            net.minecraft.client.shader.Framebuffer self = (net.minecraft.client.shader.Framebuffer) (Object) this;
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            if (mc != null && mc.getFramebuffer() == self) {
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                    org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
+                            (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
+                    int adopted = vulkan.celtium$adoptableFramebuffer(self.framebufferWidth, self.framebufferHeight);
+                    if (adopted != 0 && self.framebufferObject != adopted) {
+                        self.framebufferObject = adopted;
+                        self.framebufferTexture = vulkan.celtium$adoptedColorTexture();
+                        self.depthBuffer = vulkan.celtium$adoptedDepthTexture();
+                        vulkan.celtium$noteFramebufferAdopted();
+                        vulkan.celtium$noteGlErrorAt("at the swap", org.lwjgl.opengl.GL11.glGetError());
+                    }
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A hint must never break the frame.
+        }
+        // Probe A: right after the game's framebuffer is bound. Reading the error clears it, so the first probe that finds
+        // one names the window it was produced in; the frame's own begin path then sees a clean state.
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend probeBackend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
+                        .celtium$noteGlErrorAt("after bindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A probe must never break the frame.
+        }
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend != null) {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
@@ -31,6 +66,17 @@ public abstract class FramebufferMixin {
     }
     @Inject(method = "func_147609_e", at = @At("HEAD"), require = 0)
     private void celtium$beforeUnbind(CallbackInfo info) {
+        // Probe A2: the other end of the same method, so "during the bind" and "before it" are told apart.
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend probeBackend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (probeBackend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) probeBackend)
+                        .celtium$noteGlErrorAt("before unbindFramebuffer", org.lwjgl.opengl.GL11.glGetError());
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A probe must never break the frame.
+        }
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend != null) backend.bindFramebuffer(0L, false);
     }
