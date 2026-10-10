@@ -1406,10 +1406,23 @@ public final class ValidationClient {
                     report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
                 }
             }
-            if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")) {
+            if (worldTicks == 60 && Boolean.getBoolean("celtium.validation.keepEntities")) {
+                // An entity scene, for the coverage that the terrain-only comparison deliberately leaves out. The mobs are
+                // named explicitly rather than left to natural spawning so the scene is the same set every run: one of each
+                // family that draws through its own path (monster model, spider legs, enderman's TESR-ish layering).
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), 2.0D, 0.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), -2.0D, 1.0D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 0.0D, 2.5D);
+                celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -2.5D, -2.0D);
+                System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
+                        + " nonPlayer=" + countNonPlayerEntities(mc));
+            }
+            if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")
+                    && !Boolean.getBoolean("celtium.validation.keepEntities")) {
                 // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
                 // non-player entity and particle well before the capture. Entity and TESR behaviour stays on the
-                // existing GL path and is deliberately outside what this comparison measures.
+                // existing GL path and is deliberately outside what this comparison measures - unless keepEntities asks
+                // for the entity scene, in which case the mobs above stay and the capture is a coverage capture.
                 entitiesRemoved += removeNonPlayerEntities(mc);
             }
             if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
@@ -1481,6 +1494,12 @@ public final class ValidationClient {
             }
         }
         return null;
+    }
+
+    /** Puts one entity next to the player, on the client world the renderer draws from. */
+    private static void celtium$spawnEntity(Minecraft mc, net.minecraft.entity.Entity entity, double dx, double dz) {
+        entity.setPosition(mc.player.posX + dx, mc.player.posY, mc.player.posZ + dz);
+        mc.world.spawnEntity(entity);
     }
 
     /** Removes every non-player entity and returns how many were removed; the player and its vehicle stay. */

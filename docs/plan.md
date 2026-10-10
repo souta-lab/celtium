@@ -36,6 +36,29 @@
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.62 **entity 場面を用意し、モデルが既定で native 描画されていることを実測**（modelDraws 14990＝取消 14990）
+
+- **fixture に実体場面を追加**: `-Dceltium.validation.keepEntities=true`。比較用の実体除去を止め、tick 60 に
+  **固定の4体**（creeper / zombie / spider / enderman）を明示的に出す（自然スポーンに任せないので毎回同じ構成）。
+  受入の証拠は計器（`CELTIUM_ENTITIES_SPAWNED tick=60 nonPlayer=4`）で、**画像比較用ではなく被覆用の場面**である。
+- **実測（AMD、既定、entity 場面、120 s）**: exit 0 / **clean** / **PASSED** / **VUID 0**、frames 859、`presentedFromVulkan=848`。
+
+| 計器 | 値 |
+|---|---|
+| **`modelDraws`** | **14990** |
+| **`displayListCancelled`** | **14990**（**全て取消＝GL の描画は抑制**） |
+| `displayListOriginCancels` | 10970 |
+| `displayListOrigins` / `displayListReplaysPassClosed` | 2 / 15885 |
+| origins | `WorldVertexBufferUploader.func_181679_a ← Tessellator`（＝表示リスト経路） |
+| `acceptedByFormat` | `5:795 6:5632 7:4988 9:78`（**8 は 0**） |
+
+- **確定（従来の記述の訂正）**: **entity/モデルは即時経路（format 8）ではなく表示リスト経路で描かれ**、
+  **既定で native が引き受けている**（`displayListCancelled == modelDraws`）。
+  ＝ 計画の「モデル専用native描画は実験フラグ側に残り」は**古い**。**実験フラグではなく既定の経路**である。
+- **format 8 が 0 の意味**: entity が「描けない」のではなく、**entity は format 8 では供給されない**（供給は表示リスト側）。
+  `CELTIUM_ENTITY_REFUSED`（カスタムプログラム束縛時の拒否）は**この場面でも発火していない**。
+- **未確認（次の受入）**: **entity 場面の画像等価**（表示リスト native と GL 描画を同一場面で比較）。次はこの比較を取る。
+
 ## 0.61 entity/TESR の現状を確定（**比較場面から実体を除いている**／format 8 はカスタムプログラム束縛で拒否）
 
 - **判明した前提（コードで確認）**: 検証クライアントは**比較のため非プレイヤー実体を意図的に全除去**している
