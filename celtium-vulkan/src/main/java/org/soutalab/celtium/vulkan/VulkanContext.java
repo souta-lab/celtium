@@ -997,7 +997,11 @@ public final class VulkanContext {
      * the no-identity path can be exercised on a machine that does have a context.
      */
     private static GlDeviceIdentity inspectOpenGl() {
-        if (Boolean.getBoolean("celtium.vulkan.withoutGlIdentity")) {
+        if (Boolean.getBoolean("celtium.vulkan.withoutGlIdentity")
+                || org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            // Either explicitly without an identity, or the GL surface is the Celtium stub: its strings say
+            // "Celtium", not a driver, so there is nothing to match against. Device selection proceeds by
+            // requirements alone.
             System.out.println("[Celtium] starting without an OpenGL device identity: no device matching, no interop");
             return null;
         }

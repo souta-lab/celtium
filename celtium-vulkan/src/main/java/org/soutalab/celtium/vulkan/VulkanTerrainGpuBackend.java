@@ -5272,7 +5272,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long lastSwapchainExtentCheck = -1L;
 
     private boolean ensureSwapchain() {
+        // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
+        // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
         long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+        if (window == 0L) {
+            try {
+                Class<?> display = Class.forName("org.lwjgl.opengl.Display");
+                window = ((Long) display.getMethod("getWindow").invoke(null)).longValue();
+            } catch (ReflectiveOperationException | LinkageError ignored) {
+                // Fall through: no window means no swapchain.
+            }
+        }
         if (window == 0L) {
             record("swapchain unavailable: no current GLFW window");
             return false;
