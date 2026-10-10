@@ -175,6 +175,16 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.translate(x, y, z));
     }
 
+    /**
+     * Texture matrices are per unit, so the mirror must know which unit a {@code glMatrixMode(GL_TEXTURE)} sequence
+     * addresses: the lightmap writes its own every frame, and without this it lands on unit 0's stack. The argument
+     * is the GL enum ({@code GL_TEXTURE0 + n}); only the unit offset is kept.
+     */
+    @Inject(method = "setActiveTexture", at = @At("HEAD"), require = 0)
+    private static void celtium$setActiveTexture(int texture, CallbackInfo info) {
+        celtium$mirror(backend -> backend.activeTextureUnit(texture - org.lwjgl.opengl.GL13.GL_TEXTURE0));
+    }
+
     @Inject(method = "func_179083_b", at = @At("HEAD"), require = 0)
     private static void celtium$viewport(int x, int y, int width, int height, CallbackInfo info) {
         TerrainGpuBackend backend = TerrainGpuBackends.current();

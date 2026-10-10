@@ -39,6 +39,13 @@ public final class ImmediateGroup {
      * when no combine was in effect. The push block encodes it as a negative alpha reference plus the RGB slots.
      */
     public float[] combineColor;
+    /**
+     * The GL texture matrix's 2D affine at accept time - {@code [a,b,c,d,tx,ty]} for {@code u'=a*u+c*v+tx,
+     * v'=b*u+d*v+ty} - or {@code null} when the texture matrix was identity. The item glint and the renderer's
+     * own texture-matrix effects ride this; it is captured per group because the matrix changes per draw while the
+     * shared mesh does not.
+     */
+    public float[] texMatrix;
     /** Blend factors when the group needs them for the pipeline selection. */
     public int blendSrc;
     public int blendDst;

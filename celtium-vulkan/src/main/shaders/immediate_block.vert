@@ -10,9 +10,9 @@ layout(push_constant) uniform PushConstants {
     // The model view is affine, so only its three rotation/translation columns are passed and the shader rebuilds the
     // fourth. With the alpha reference at 112 the whole block is 116 bytes - inside the 128 Vulkan guarantees (S19) -
     // and it is declared identically in both stages, which is what the driver requires.
-    vec4 u_MvColumn0;
-    vec4 u_MvColumn1;
-    vec4 u_MvColumn2;
+    vec4 u_TexA;
+    vec4 u_TexB;
+    vec4 u_TexPad;
     layout(offset = 112) float u_AlphaRef;
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;
@@ -36,7 +36,12 @@ layout(location = 2) // Interpolated like the fixed pipeline's texture coordinat
 
 void main() {
     v_Color = a_Color;
-    v_TexCoord = a_TexCoord;
+    if (celtium.u_TexB.z > 0.5) {
+        v_TexCoord = vec2(celtium.u_TexA.x * a_TexCoord.x + celtium.u_TexA.z * a_TexCoord.y + celtium.u_TexB.x,
+                celtium.u_TexA.y * a_TexCoord.x + celtium.u_TexA.w * a_TexCoord.y + celtium.u_TexB.y);
+    } else {
+        v_TexCoord = a_TexCoord;
+    }
     v_Lightmap = (vec2(a_LightCoord) + 8.0) / 256.0;
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

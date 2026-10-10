@@ -1518,9 +1518,15 @@ public final class ValidationClient {
                         net.minecraft.init.Blocks.CHEST.getDefaultState(), 3);
                 mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + 1, gy, pz - 7),
                         net.minecraft.init.Blocks.STANDING_SIGN.getDefaultState(), 3);
+                net.minecraft.item.ItemStack droppedStack = new net.minecraft.item.ItemStack(net.minecraft.init.Items.APPLE);
+                if (Boolean.getBoolean("celtium.validation.enchantItem")) {
+                    // An enchantment makes the item's glint pass draw: two texture-matrix-modulated passes over the
+                    // same model, which is the state the texture-matrix work exists for.
+                    droppedStack.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
+                }
                 net.minecraft.entity.item.EntityItem dropped = new net.minecraft.entity.item.EntityItem(mc.world,
                         mc.player.posX + 1.0D, gy + 0.5D, mc.player.posZ - 5.0D,
-                        new net.minecraft.item.ItemStack(net.minecraft.init.Items.APPLE));
+                        droppedStack);
                 dropped.motionX = 0.0D; dropped.motionY = 0.0D; dropped.motionZ = 0.0D;
                 dropped.setNoDespawn();
                 celtium$spawnEntity(mc, dropped, 1.0D, -5.0D);

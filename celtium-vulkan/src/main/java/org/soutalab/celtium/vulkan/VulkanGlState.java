@@ -22,7 +22,13 @@ public final class VulkanGlState {
     /** The default state Minecraft starts a frame with, as far as this renderer tracks it. */
     private final ArrayDeque<float[]> modelViewStack = new ArrayDeque<float[]>();
     private final ArrayDeque<float[]> projectionStack = new ArrayDeque<float[]>();
-    private final ArrayDeque<float[]> textureStack = new ArrayDeque<float[]>();
+    // Texture matrices are per texture unit in the fixed pipeline: glMatrixMode(GL_TEXTURE) addresses the matrix of
+    // whichever unit setActiveTexture last selected. A single shared stack let the lightmap's unit-1 transform
+    // (scale 1/256, translate 8, written every frame by enableLightmap) leak onto unit 0, where a texture-matrix
+    // read for the item glint would then report the lightmap's matrix instead. Vanilla uses units 0 and 1; other
+    // units clamp to 0, which is what an out-of-range setActiveTexture would hit anyway.
+    private final ArrayDeque<float[]> textureStack0 = new ArrayDeque<float[]>();
+    private final ArrayDeque<float[]> textureStack1 = new ArrayDeque<float[]>();
 
     private int matrixMode = MATRIX_MODE_MODELVIEW;
     private boolean blendEnabled;
@@ -98,7 +104,8 @@ public final class VulkanGlState {
     public VulkanGlState() {
         this.modelViewStack.push(identity());
         this.projectionStack.push(identity());
-        this.textureStack.push(identity());
+        this.textureStack0.push(identity());
+        this.textureStack1.push(identity());
     }
 
     /** Pushes the current matrix of the active mode; paired with {@link #popMatrix()}. */
@@ -212,6 +219,15 @@ public final class VulkanGlState {
     /** {@return a copy of the active matrix}, for the push-constant block a draw uploads. */
     public float[] matrix(int mode) {
         return copy(top(mode));
+    }
+
+    /**
+     * {@return a copy of the named texture unit's matrix}, regardless of which unit is active: the immediate path's
+     * draws all sample unit 0, so the unit-1 lightmap matrix - which the game rewrites every frame - must not read
+     * as theirs.
+     */
+    public float[] textureMatrix(int unit) {
+        return copy((unit == 1 ? this.textureStack1 : this.textureStack0).peek());
     }
 
     /**
@@ -467,7 +483,7 @@ public final class VulkanGlState {
             case MATRIX_MODE_PROJECTION:
                 return this.projectionStack;
             case MATRIX_MODE_TEXTURE:
-                return this.textureStack;
+                return this.activeTextureUnit == 1 ? this.textureStack1 : this.textureStack0;
             case MATRIX_MODE_MODELVIEW:
             default:
                 return this.modelViewStack;

@@ -280,6 +280,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
                 + " descriptorRequests=" + VulkanDescriptorFault.requests()
                 + " modelDraws=" + this.modelDraws
+                + " texMatrixGroups=" + this.texMatrixGroups
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
@@ -831,6 +832,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int injectedDeviceLosses;
     /** Caps the env-combine report so a hurt mob does not log every frame. */
     private int envCombineLogged;
+    /** The texture matrix the currently open group was accepted under; {@code null} for identity. */
+    private float[] currentGroupTexMatrix;
+    /** Groups drawn under a non-identity texture matrix - the glint and the renderer's own transforms. */
+    private int texMatrixGroups;
     private boolean blendObserved;
     private int observedBlendSrc = -1;
     private int observedBlendDst = -1;
@@ -1521,6 +1526,30 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * drain must not free them.
      */
     /**
+     * The 2D affine part of the texture matrix, or {@code null} when it is the identity. {@code matrixMode(5890)}
+     * routes glTranslate/glRotate/glScale onto the mirror's texture stack; the item glint animates its texture this
+     * way and the renderer uses the same channel for its own overlays. Only the UV transform matters, so the result
+     * is {@code [a,b,c,d,tx,ty]} in column-major terms ({@code u'=a*u+c*v+tx, v'=b*u+d*v+ty}).
+     */
+    private float[] celtium$textureAffine() {
+        try {
+            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
+            // and reading the shared stack would return whichever unit was last active.
+            float[] matrix = this.immediateState.textureMatrix(0);
+            if (matrix == null) {
+                return null;
+            }
+            float a = matrix[0], b = matrix[1], c = matrix[4], d = matrix[5], tx = matrix[12], ty = matrix[13];
+            if (a == 1.0f && b == 0.0f && c == 0.0f && d == 1.0f && tx == 0.0f && ty == 0.0f) {
+                return null;
+            }
+            return new float[] {a, b, c, d, tx, ty};
+        } catch (RuntimeException | LinkageError error) {
+            return null;
+        }
+    }
+
+    /**
      * The texture-environment constant the fixed pipeline would mix in on the lightmap unit, or {@code null} when the
      * environment is not set to {@code GL_INTERPOLATE}: the hurt flash and the team outline are the two vanilla
      * effects that draw the same model twice through this combine, and the constant is their colour. Asked of GL at
@@ -1583,6 +1612,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 VulkanImmediateFormats.POSITION_TEX, texture, key, state, target);
         group.prepared = prepared;
         group.combineColor = combineColor;
+        group.texMatrix = celtium$textureAffine();
         group.batches = quads;
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
@@ -1795,6 +1825,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.matricesDirty = true;
         this.immediateState.scale(x, y, z);
         this.immediateStateCalls++;
+    }
+
+    @Override
+    public void activeTextureUnit(int unit) {
+        this.immediateState.activeTextureUnit(unit);
     }
 
     @Override
@@ -2651,6 +2686,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
                 this.currentGroupTarget = this.currentRenderTarget;
                 this.currentGroupViewport = this.currentViewportKey;
+                this.currentGroupTexMatrix = celtium$textureAffine();
             }
             // Every preflight comes before the append (audit A08). It used to run after `copyVertices` had already put the
             // vertices in the pending mesh, so a refused batch was drawn by GL **and** left sitting in the Vulkan queue,
@@ -3789,6 +3825,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.prepared = this.currentPreparedImmediate;
             group.batches = this.currentGroupBatches;
             group.viewportValues = this.currentGroupViewportValues;
+            group.texMatrix = this.currentGroupTexMatrix;
             group.stamp = new GroupStamp(this.frameId, this.targetGeneration);
             this.immediateGroups.add(group);
         } else if (this.currentImmediateMesh != null) {
@@ -3915,6 +3952,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // the report (it is a separate list, and the report keeps ten items), while this string is the one the
                 // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
                 + " modelDraws=" + this.modelDraws
+                + " texMatrixGroups=" + this.texMatrixGroups
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
@@ -6215,6 +6253,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
                 PreparedImmediate prepared = group.prepared;
                 pushCombinedMatrixInto(group.projection, group.modelView, push, 0);
+                // The push buffer is shared by every group in this flush, so the texture-matrix slots must be
+                // rewritten per group rather than only when a matrix is present: a stale affine would otherwise leak
+                // into the next group.
+                float[] texMat = group.texMatrix;
+                if (texMat != null) {
+                    this.texMatrixGroups++;
+                    push.putFloat(64, texMat[0]);
+                    push.putFloat(68, texMat[1]);
+                    push.putFloat(72, texMat[2]);
+                    push.putFloat(76, texMat[3]);
+                    push.putFloat(80, texMat[4]);
+                    push.putFloat(84, texMat[5]);
+                    push.putFloat(88, 1.0f);
+                } else {
+                    push.putFloat(88, 0.0f);
+                }
                 int[] state = group.state;
                 if (group.combineColor != null) {
                     // The fixed pipeline's texture-env interpolate, encoded into the block's spare values: a negative

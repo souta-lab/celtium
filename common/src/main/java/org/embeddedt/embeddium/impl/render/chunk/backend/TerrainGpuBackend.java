@@ -103,6 +103,10 @@ public interface TerrainGpuBackend {
     default void scale(float x, float y, float z) {
     }
 
+    /** Mirrors {@code GlStateManager.setActiveTexture(int)}; the argument is the unit index, not the GL enum. */
+    default void activeTextureUnit(int unit) {
+    }
+
     /** Mirrors {@code GlStateManager.func_179110_a(FloatBuffer)} (multiply matrix). */
     default void multiplyMatrix(java.nio.FloatBuffer buffer) {
     }
