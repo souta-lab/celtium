@@ -110,6 +110,33 @@ public final class VulkanDisplayListCensus {
         return replaysWithFrameClosed;
     }
 
+    /**
+     * Lists whose compile was answered by the native path, recorded where the decision is made.
+     * <p>
+     * A batch accepted while {@code glNewList} is open never reaches GL - the upload hook cancels the GL body - so the list
+     * that is being compiled receives no vertices and its replay draws nothing. That is a recorded fact about a different
+     * path having taken the content, which is the only basis this renderer is allowed to cancel a replay on: matching the
+     * caller's name was a description of the caller, not evidence about the list.
+     */
+    private static final java.util.Set<Integer> COMPILED_NATIVELY = new java.util.HashSet<Integer>();
+
+    /** Records that a display list's compile was answered natively, so its GL replay holds nothing. */
+    public static synchronized void compiledNatively(int list) {
+        if (list != 0 && COMPILED_NATIVELY.add(Integer.valueOf(list)) && COMPILED_NATIVELY.size() <= 5) {
+            System.out.println("[Celtium] CELTIUM_LIST_COMPILED_NATIVELY list=" + list);
+        }
+    }
+
+    /** {@return whether this list's compile was answered natively (and therefore its GL replay is empty)}. */
+    public static synchronized boolean wasCompiledNatively(int list) {
+        return COMPILED_NATIVELY.contains(Integer.valueOf(list));
+    }
+
+    /** {@return how many lists were compiled by the native path}. */
+    public static synchronized int nativelyCompiledLists() {
+        return COMPILED_NATIVELY.size();
+    }
+
     private static final java.util.Set<Integer> CANCEL = cancelSet();
     private static long cancelled;
 
@@ -129,20 +156,6 @@ public final class VulkanDisplayListCensus {
         return ids;
     }
 
-    /**
-     * Whether the held-item display lists may be cancelled by their origin.
-     * <p>
-     * The origin chain separates them from other models: a list compiled through {@code ItemRenderer} is the held item,
-     * which the immediate path already draws (measured: cancelling it changes 3-4 pixels), while a list compiled through
-     * {@code ModelPlayer}/{@code ModelBiped} is the player model, which has no native pipeline yet and must keep being
-     * replayed. This is a rule about what the list is, not about which id it happens to have.
-     * <p>
-     * On by default since it was measured with matched pairs on both GPUs: AMD 0.0155 mean / 68 pixels and Intel 0.0000
-     * mean / 6 pixels against their own keep runs, while removing 1066 and 572 display-list replays per run. The
-     * property is still read, so {@code -Dceltium.vulkan.cancelHandDisplayLists=false} restores the old behaviour.
-     */
-    private static final boolean CANCEL_BY_ORIGIN = Boolean.parseBoolean(
-            System.getProperty("celtium.vulkan.cancelHandDisplayLists", "true"));
 
     private static final java.util.Set<Integer> TEXTURE_LOGGED = new java.util.HashSet<Integer>();
 
@@ -163,44 +176,12 @@ public final class VulkanDisplayListCensus {
         if (CANCEL.contains(Integer.valueOf(list))) {
             return true;
         }
-        if (!CANCEL_BY_ORIGIN) {
-            return false;
-        }
-        String origin = originOf(list);
-        if (origin == null) {
-            return false;
-        }
-        if (origin.contains("ItemRenderer")) {
-            return true;
-        }
-        // Lab switch: also take the player model's own display lists, which come through ModelPlayer/ModelBiped rather
-        // than ItemRenderer. Those parts have no native replacement today, so cancelling them without drawing would make
-        // the model disappear - the draw-then-cancel order in the hook is what makes this safe to try, and the switch
-        // exists to measure whether the native model actually matches before any of it becomes the default.
-        return CANCEL_MODEL_BY_ORIGIN
-                && (origin.contains("ModelPlayer") || origin.contains("ModelBiped"));
+        // The basis is the recorded compile fact: the list holds nothing because the native path answered its compile.
+        // The origin chain stays as diagnostics (it names who compiled the list) but it no longer decides anything.
+        return wasCompiledNatively(list);
     }
 
-    /**
-     * Whether this list may be cancelled even when the native model draw did not run.
-     * <p>
-     * The held item's lists go through {@code ItemRenderer}, and the immediate path already draws that content, so its
-     * display list is a duplicate: cancelling it without a native model draw is what the default did before the model
-     * draw existed, and it was measured as image-neutral on both GPUs. Turning that into "cancel only what the model
-     * draw drew" silently stopped the cancellation altogether whenever the model draw switch was off - which is the
-     * default - and the counter showed it: {@code displayListOriginCancels} went from 1060 to 0.
-     * <p>
-     * The player model's own lists are a different case and stay behind their lab switch: nothing else draws them, so
-     * cancelling without drawing would make the model disappear.
-     */
-    public static boolean cancelsWithoutDraw(int list) {
-        String origin = originOf(list);
-        return origin != null && origin.contains("ItemRenderer");
-    }
 
-    /** Whether the player model's display lists are cancelled too (lab switch, off by default). */
-    private static final boolean CANCEL_MODEL_BY_ORIGIN =
-            Boolean.getBoolean("celtium.vulkan.cancelModelDisplayLists");
 
     private static long originCancels;
 

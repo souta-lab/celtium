@@ -282,6 +282,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
                 + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
                 + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
+                + " displayListCompiledNatively=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.nativelyCompiledLists()
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
                 + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
                 + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()

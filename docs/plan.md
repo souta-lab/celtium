@@ -27,12 +27,33 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.2 構造修復 2（着手）: 取消の根拠を「記録された事実」に限定した
+
+- **goal の要求**: 取消は「対応する別経路が同じ内容を引き受けた/描いた」根拠を必要とし、**名前・counter だけで
+  描画を消さない**。従来の `cancels()` は **呼び出し元の名前**（`ItemRenderer` を含むか）で決めていた ＝ 名前ベース。
+- **名前ベースの判断を撤去した**。新しい判断は「**native のモデル描画が実際にそのリストを描いた**」か
+  「**そのリストのコンパイルが native に受理され、GL 側が空である**」のいずれかで、後者は
+  **受理が起きた場所（アップローダ）で記録**する（`CELTIUM_LIST_COMPILED_NATIVELY`）。
+- **実測（AMD、軽い世界、duration 120 s）**: `CELTIUM_LIST_COMPILED_NATIVELY` は **0 件**、
+  `displayListCancelled=0`、`displayListReplaysOpen=1542`、exit 0 / clean / **PASSED**、VUID 0、p50 16.14 ms。
+  **つまり「コンパイルが native に受理されて GL のリストが空」という仮説は反証された** —
+  display list は空ではなく、コンパイル時のバッチは受理されていない。
+- **したがって以前の「529〜1066 件の取消で画像が床水準」という成果は、正しい根拠を持っていなかった**。
+  画像が床水準だったのは事実だが、それは**「この fixture では取消対象の replay が可視の差を生まない」**ことの
+  観測であって、「別経路が内容を引き受けた」証明ではない。**証拠のない取消は既定から外した**。
+- **現在の既定**: 取消は **native モデル描画が成功したときだけ**（＝実際に描いた事実があるとき）起こる。
+  ラボフラグ由来の名前ベース分岐（`cancelHandDisplayLists` / `cancelModelDisplayLists`）は**撤去**した。
+  代償として **GL 呼び出しの削減（約1000件/run）は失われる**が、それは**根拠のない削減**だった。
+- **残る確認（次）**: 「この fixture で手/手持ちが実際に描かれているか」を `emptyHand` の対で測る
+  （描かれていないなら、取消の有無は画像に現れないという説明がつく）。format 2 の受理が 0 である事実と併せて、
+  **手/手持ちの per-frame 描画がどの経路にあるのか**を特定する。
+
 ## 0.1 構造修復キュー（goal「直近の実行順」1〜4 に対応）
 
 | # | 契約 | 状態 |
 |---|---|---|
 | 1 | texture の実体・更新・寿命を一つにする | **実装済み**（`297ce5caa`）。mip/reload/ID 再使用の確認が残る |
-| 2 | draw の queued→recorded→submitted→completed→retired と取消根拠の整合 | **未着手**。取消は「別経路が同じ内容を引き受けた」根拠を要する（名前・counter だけでは消さない） |
+| 2 | draw の queued→recorded→submitted→completed→retired と取消根拠の整合 | **一部実装**（§0.2: 取消を記録された事実に限定、名前ベースを撤去）。queued→recorded→submitted→completed→retired の target/generation 紐付けは未着手 |
 | 3 | fixture の準備→到達待ち→描画待ち→capture→report と thread/JSON 所有 | **一部実装**（capture 段階化・server task 化）。結果は volatile フィールド渡しで、**immutable snapshot 化は未完** |
 | 4 | Nether の未完を具体的に直す | **未着手**。短い trace と client/server stack で帰還・停止の地点を特定する（早い転送・budget 延長の反復はしない） |
 | 5 | plan を現状表へ戻し、経緯を history へ移す | **この文書で実施** |

@@ -67,10 +67,10 @@ public abstract class GlStateManagerMixin {
                     }
                     drawn = vulkan.celtium$drawModelList(list, boundTexture);
                 }
-                // Cancel when the native path drew this list, or when the list is one the immediate path already draws
-                // (the held item) and the model draw is switched off. Without the second case the default stopped
-                // cancelling anything at all once the model draw was introduced, which the counters showed plainly.
-                if (drawn || org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelsWithoutDraw(list)) {
+                // Cancel when the native model draw drew this list, or when the list itself holds nothing because the
+                // native path answered its compile (recorded where that decision is made). Neither branch uses the
+                // caller's name: the first is a draw that happened, the second is an empty list.
+                if (drawn || org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancels(list)) {
                     org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
                     info.cancel();
                 }
