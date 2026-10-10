@@ -30,7 +30,7 @@
 | **GUI / font / HUD** | **画像等価を受入済** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
 | **lightmap の供給漏れ（format 5）** | **解消・両GPU受入** | AMD `lightmapSuppliedOnDemand=2`・失敗なし・拒否ゼロ（§0.43）、**Intel も 2・失敗なし・拒否ゼロ・PASSED**（`p337-intel-lightmap`） |
 | End の dimension 受入 | **両GPU PASSED** | capture 時 dimension 1 |
-| **Nether の dimension 受入** | **AMD で絵を受入／validation 未受入（VUID 1件）・Intel は未実施** | `.celtium-work/nether-fix4.json`: fixture PASSED・capture 時 client/world/server すべて -1・`dimensionFramesInTarget=122`・presented PNG distinct 16543（netherrack/fire/portal 枠）。根因は fixture 側で、到着位置がポータル内＋`timeUntilPortal=0`（vanilla は cooldown を入れる）→ `Entity.onEntityUpdate` が -1 から 0 へ送り返していた。**旧「両GPU受入」の記載は撤回**（旧 PASSED は有効な受入ではない）。**未完**: `VUID-vkCmdDraw-None-09600`（post chain の記述子が GENERAL 宣言、image が UNDEFINED）が GL-less + dimension 変更で 1件/run。Intel での Nether 受入は未実施。§0.117 |
+| **Nether の dimension 受入** | **AMD で絵・validation とも受入（画像ゲートの較正のみ残）／Intel 未実施** | `.celtium-work/runtime/vuid-after2`: `validationClean=true`・msgs 0・capture 時 client/world/server すべて -1・`dimensionFramesInTarget=129`。根因は fixture 側（到着位置がポータル内＋`timeUntilPortal=0`）で修正済み。旧「両GPU受入」の記載は撤回済み。**未完**: 画像ゲートが scene 非依存の床で Nether を FAIL にする（較正中）、Intel での Nether 受入は未実施。§0.117 §0.119 |
 | 失敗経路（fence timeout / submit 失敗） | **両方とも clean・VUID 0** | fence: `stalledStops=1`・`stalledTeardownSkips=548`・解放しない。submit: fixture が FAILED として報告（§0.37） |
 | **拒否の読み方（GL-less）** | **訂正: GL-less の「拒否」は GL fallback ではない** | GL-less では GL 本体が stub の no-op なので、拒否された batch は「GL が描いた」のではなく「**どこも描いていない**」。条件 (b) の GL 残量は **bridge 構成での拒否**から読む（そこでは拒否＝GL 本体が描く）。GL-less の拒否は「native で描かれなかった量」として別に読み、内容欠落の疑いがあるもの（frame 自身の blit は swap が提示済みなので欠落ではない）と区別する。この区別をせずに GL-less の拒否数を条件 (b) の残量に数えるのは過大評価。§0.118 |
 | **条件 (b) の残量（実測）** | **約2割が GL** | 内訳: **format 2 の非画面合成 709**（FBO 所有権待ち）・**起動直後10フレームのみ 80**（本質的）・format 1/6/9 少数。lightmap 分は解消済み（§0.39/§0.41/§0.43） |
@@ -48,6 +48,30 @@
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
 実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.119 **修正・受入済み**: GL-less の layout 宣言を2箇所で正した（Nether の VUID 解消）／画像ゲートが scene 非依存だった
+
+- **VUID の正体（実測・エージェント）**: 「post chain が GENERAL 記述子で UNDEFINED を指す」という仮説は否定された。
+  該当 run で chain は一度も走っておらず（専用計装が0行・report も `postChains=0`）、`VUID-vkCmdDraw-None-09600` は
+  layer の **submit 時 first-layout 検査**（`vkCmdDraw` はハードコードされたラベル）。真因は GL-less の present で、
+  `ensureFrameTarget()` が直前に target を再構築しうる（dimension/world 変更）ため **新しい colour image が UNDEFINED**
+  なのに GENERAL を宣言していたこと。
+- **修正1**: GL-less では target 自身の記録（fresh は UNDEFINED、提出済み frame が遷移済みなら GENERAL）を答える。
+  bridge は従来どおり（GL 側が残す layout は別の問い）。
+- **修正2（修正1が生んだ新しい VUID）**: 4引数 `presentImage` は「見つけた layout に戻す」ため、UNDEFINED を渡すと
+  復元 barrier が `newLayout=UNDEFINED` になり `VUID-VkImageMemoryBarrier-newLayout-01198`。復元先を明示し
+  （source 遷移は UNDEFINED から開始可・返却は GENERAL）、owner の記録にも反映する。GENERAL と言っても内容を主張しない
+  （fresh image に内容は無く、次の frame の acquire barrier が描画可能な layout を与える）。
+- **受入（実測）**: `.celtium-work/runtime/vuid-after2`（GL-less・`dimensionAtTick=80`・`dimension=-1`）が
+  `validationClean=true`・**msgs 0**・capture 時 client/world/server すべて -1・`dimensionFramesInTarget=129`。
+- **画像ゲートの欠陥（担当へ送付済み・未修正）**: 同じ run が `FAILED_PRESENTED_IMAGE` になったが、内容は
+  **闇の Nether 洞窟**（distinct 605・blackFraction 0.037・nonBackgroundFraction 0.326・bands 720）を
+  overworld 用の床で判定していた。frame identity・per-stage dump の配管は正常（`pictureEvidenceSource=presented-dump`）。
+  指示: 床は scene ごとにし、参照 run と数値を明記する。参照未取得の scene は FAILED ではなく
+  `floorsNotCalibrated` を報告する（「参照が無い」を FAILED と呼ぶと verdict が無視される習慣になる）。
+  床を上げて通すことはしない。
+- **chain の不変条件**: target を「初期化済み」とするのは barrier を載せた buffer が実際に submit された後
+  （`commitPasses()`）。record 時点でフラグを立てるのは layout の嘘と同じ種類の誤り。
 
 ## 0.118 **修正・受入済み**: 監査バッチ（cancellation 契約・adoption 絞り込み・overlay 経路・GPU 報告）／TESR の本は描画される
 
