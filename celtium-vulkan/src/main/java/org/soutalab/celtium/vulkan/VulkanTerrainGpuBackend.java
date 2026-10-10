@@ -2244,7 +2244,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (preflightCpuStart >= 0 && preflightCpuEnd >= 0) this.preflightCpuNanos += preflightCpuEnd - preflightCpuStart;
             this.prepareImmediateCalls++;
             if (prepared == null) {
-                this.immediateLastRefusal = "pipeline or descriptor preflight failed";
+                // The reason comes from prepareImmediate, which is the one place that knows which of its conditions failed.
+                this.immediateLastRefusal = "preflight: " + this.lastPrepareFailure;
                 this.refusedBeforeAppend++;
                 flushPendingBeforeGlDraw();
                 return false;
@@ -2964,14 +2965,30 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
         long prepLookupStart = System.nanoTime();
         VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        // A fallback to this.terrainPipelineForFrame was tried here and measured preparePassFallbacks=0: the frame's world
+        // pipeline is null at the same moments, which is what says those offers belong to the composite path's own layout
+        // rule (CELTIUM_COMPOSITE_LAYOUT_REFUSED) and are not entity models being turned away. The rule was removed
+        // rather than kept as an unreachable branch; only the named failure reason below is kept, because it is what
+        // settled the question.
         this.prepTerrainPipelineNanos += System.nanoTime() - prepLookupStart;
-        if (terrain == null) return null;
+        if (terrain == null) {
+            // Every null return names its cause here, so the offer path has one reason to report instead of judging the
+            // same condition again with a message that merged three different causes.
+            this.prepareDescriptorFailures++;
+            this.lastPrepareFailure = "format=" + format + " texture=" + textureId + " (no terrain pipeline for this pass)";
+            return null;
+        }
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
         long prepRegistryStart = System.nanoTime();
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
         this.prepRegistryNanos += System.nanoTime() - prepRegistryStart;
         this.prepLookupNanos += System.nanoTime() - prepLookupStart;
-        if (format != 1 && texture == null) return null;
+        if (format != 1 && texture == null) {
+            this.prepareDescriptorFailures++;
+            this.lastPrepareFailure = "format=" + format + " texture=" + textureId
+                    + " (no mirror for this GL id; registry=" + (this.textureRegistry == null ? "absent" : "present") + ")";
+            return null;
+        }
         long pass = terrain.renderPass();
         long prepBranchStart = System.nanoTime();
         Object pipeline;

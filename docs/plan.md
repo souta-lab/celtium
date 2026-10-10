@@ -27,6 +27,26 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.12 拒否理由の確定と、前ラウンド推論の**訂正**
+
+- `prepareImmediate` の **3つの null 経路すべてが理由を記録**するようにし、offer 側の粗いメッセージ
+  （3原因を1つに潰していた）を**廃止**して理由を1箇所が持つ形にした。実測で理由が出た:
+
+  `lastPrepareFailure=[format=6 texture=23 (no terrain pipeline for this pass)]`、
+  `CELTIUM_COMPOSITE_LAYOUT_REFUSED reason=preflight: format=9 texture=25 (no terrain pipeline for this pass)`。
+
+- これを受けて「フレームの world パイプラインへフォールバック」を実装して測ったところ **`preparePassFallbacks=0`**
+  ＝ **その時点では `terrainPipelineForFrame` も null** だった。つまり
+  **format 8/9 の到着は entity/TESR のモデルではなく、合成（composite）経路自身の描画**であり、拒否は
+  **その経路の別ルール**（`CELTIUM_COMPOSITE_LAYOUT_REFUSED`）によるものである。
+- **訂正**: §0.11 の「format 8/9 が受理されない → entity/TESR が native 化されない」という推論は、
+  **この計器からは支持されない**。entity のモデルは **display list 経由**（§0.10 で既定化済み）で、
+  spider 場面の `modelDraws=1000` と画像一致（床0に対し効果20画素）がその受入である。
+- **整理**: 発火しなかったフォールバックは**到達不能として撤去**（goal の「不要になった暫定経路を残さない」）。
+  **理由を記録する計器は残す**（この問いを決めたのはそれである）。
+- **次に残る問い**: **合成経路の format 8/9 バッチ**を受理できるようにするか、その経路のルールとして
+  「対象外」と明示するか。**どちらでもない状態（理由が読めない拒否）は解消した**。
+
 ## 0.11 TESR 場面の追加と、未知テクスチャへの一度だけの全面供給
 
 - **世界に TESR ブロックを追加**した（既定の層に `minecraft:chest` と `minecraft:enchanting_table`）。TESR は display list では
