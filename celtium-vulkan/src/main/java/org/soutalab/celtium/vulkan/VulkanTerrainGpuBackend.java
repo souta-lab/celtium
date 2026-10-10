@@ -554,7 +554,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final VulkanGlState immediateState = new VulkanGlState();
     private int immediateStateCalls;
     private int immediateBatchesOffered;
-    private String immediateLastRefusal = "none";
+    private String immediateLastRefusal = "unrecorded";
     /**
      * Whether the immediate path draws, off by default.
      * <p>
@@ -1961,7 +1961,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.textureRegistry = celtium$registry();
         }
         VulkanGlTexture texture = this.textureRegistry.get(boundTexture);
+        if (this.lightmapTexture == null) {
+            ensureLightmapMirror();
+        }
         if (texture == null || this.lightmapTexture == null) {
+            this.immediateLastRefusal = "the descriptor needs the light map and texture " + boundTexture + " (lightmap="
+                    + (this.lightmapTexture != null) + " texture=" + (texture != null) + ")";
             return false;
         }
         if (!texture.hasFullContent()) {
@@ -2210,7 +2215,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         if (!supportedImmediateTarget()) {
-            this.immediateLastRefusal = "target is outside the RGBA8/D24/full-viewport bridge contract";
+            // The gate names the failing condition itself; overwriting it here is what hid which one refused 820
+            // format-2 batches in a run.
             flushPendingBeforeGlDraw();
             return false;
         }
@@ -2240,44 +2246,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        if ((formatId == 3 || formatId == 5) && this.lightmapTexture == null && this.lightmapGlId <= 0
-                && this.lightmapUnit > 0) {
-            // The id is asked of GL on the unit the mod side named, rather than remembered: the reallocation path zeroes
-            // it. The previous active unit is restored, so this is a query and not a state change.
-            try {
-                int previous = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
-                int wanted = 33984 + this.lightmapUnit;
-                if (previous != wanted) {
-                    org.lwjgl.opengl.GL13.glActiveTexture(wanted);
-                }
-                int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-                if (previous != wanted) {
-                    org.lwjgl.opengl.GL13.glActiveTexture(previous);
-                }
-                if (bound > 0) {
-                    this.lightmapGlId = bound;
-                }
-            } catch (RuntimeException | LinkageError error) {
-                this.lastLightmapSupplyFailure = "asking the light map unit failed: " + error;
-            }
-        }
-        if ((formatId == 3 || formatId == 5) && this.lightmapTexture == null && this.lightmapGlId > 0) {
-            // One full supply per id, the same rule the textures follow: the mirror is dropped when the id is reallocated
-            // and this takes it again if a batch arrives before the next announcement.
-            try {
-                int[] size = textureSize(this.lightmapGlId);
-                if (size[0] > 0 && size[1] > 0) {
-                    org.soutalab.celtium.vulkan.VulkanGlTexture established =
-                            celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
-                    established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
-                    celtium$registry().markFullyInitialized(this.lightmapGlId);
-                    this.lightmapTexture = established;
-                    this.lightmapReestablished++;
-                    this.lightmapSuppliedOnDemand++;
-                }
-            } catch (RuntimeException | LinkageError error) {
-                this.lastLightmapSupplyFailure = String.valueOf(error);
-            }
+        if (formatId == 3 || formatId == 5) {
+            ensureLightmapMirror();
         }
         if ((formatId == 3 || formatId == 5) && this.lightmapTexture == null) {
             // Which of the two conditions kept the mirror from being taken is named, so this does not end as a branch
@@ -2563,7 +2533,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
                 // refusal - before acceptance, where GL still owns the draw. The descriptor depends on the textures rather
                 // than on the pipeline's state key, so one pipeline is enough to ask the question.
-                this.immediateLastRefusal = "the particle descriptor could not be built for this lightmap";
+                // The descriptor gate names what it was missing; overwriting it here is what kept 751 format-5
+                // refusals per run reading as one unexplained sentence.
+                if (this.immediateLastRefusal == null || this.immediateLastRefusal.isEmpty()) {
+                    this.immediateLastRefusal = "the particle descriptor could not be built for this lightmap";
+                }
                 this.particleDescriptorRefusals++;
                 this.refusedBeforeAppend++;
                 // Order (S10): what is already accepted is drawn before this batch goes to GL.
@@ -3125,6 +3099,56 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Validate before acceptance; final default-FBO composite remains GL-owned, never inferred from format id. */
+    /**
+     * Takes the light map mirror again when its GL id is known but the mirror is missing.
+     * <p>
+     * One full supply per id, the same rule the textures follow: the mirror is dropped when its id is reallocated, and a
+     * batch arriving before the next announcement had no way to take it again. Both the batch preparation and the
+     * descriptor decision call this, because the decision runs first and used to refuse instead (measured: 798 format-5
+     * refusals per run, with the light map supply sitting below the decision that turned the batch away).
+     */
+    private void ensureLightmapMirror() {
+        if (this.lightmapTexture != null) {
+            return;
+        }
+        if (this.lightmapGlId <= 0 && this.lightmapUnit > 0) {
+            // The id is asked of GL on the unit the mod side named, rather than remembered: the reallocation path zeroes
+            // it. The previous active unit is restored, so this is a query and not a state change.
+            try {
+                int previous = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+                int wanted = 33984 + this.lightmapUnit;
+                if (previous != wanted) {
+                    org.lwjgl.opengl.GL13.glActiveTexture(wanted);
+                }
+                int bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                if (previous != wanted) {
+                    org.lwjgl.opengl.GL13.glActiveTexture(previous);
+                }
+                if (bound > 0) {
+                    this.lightmapGlId = bound;
+                }
+            } catch (RuntimeException | LinkageError error) {
+                this.lastLightmapSupplyFailure = "asking the light map unit failed: " + error;
+            }
+        }
+        if (this.lightmapGlId > 0) {
+            try {
+                int[] size = textureSize(this.lightmapGlId);
+                if (size[0] > 0 && size[1] > 0) {
+                    org.soutalab.celtium.vulkan.VulkanGlTexture established =
+                            celtium$registry().imageFor(this.lightmapGlId, size[0], size[1], false);
+                    established.uploadFromGlTexture(this.lightmapGlId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
+                    celtium$registry().markFullyInitialized(this.lightmapGlId);
+                    this.lightmapTexture = established;
+                    this.lightmapReestablished++;
+                    this.lightmapSuppliedOnDemand++;
+                }
+            } catch (RuntimeException | LinkageError error) {
+                this.lastLightmapSupplyFailure = String.valueOf(error);
+            }
+        }
+    }
+
     private boolean supportedImmediateTarget() {
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         if (fbo == 0) return false;
