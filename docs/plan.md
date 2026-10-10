@@ -2605,7 +2605,37 @@ this.commandState.endPass();
 - **状態**: **溶岩/火は完了**。**dimension 切替は「fixture の転送が未完成」**として残す（レンダラ側の未検証項目では
   なくなった、という区別が重要）。
 
-**次の一手**: (1) dimension 転送を**サーバーのティック終了後**に走らせる（`ServerTickEvent` の末尾か、
+**dimension 切替が AMD で動作（このターン）／Intel ではハング**:
+
+- **NPE の原因を特定して直した**。スタックトレースが
+  `Teleporter.func_180620_b(Teleporter.java:143)` を名指しし、その行は
+  **`entityIn.getLastPortalVec().y`**。`getLastPortalVec()`（SRG 名 `func_181014_aG`）は
+  **`Entity.setPortal` が埋める値**で、**ポータルを踏まずに転送した**ため null だった
+  （rotation は 20.0/180.0 と有限で、NaN 仮説は棄却済み）。
+  → 転送前に **`player.setPortal(new BlockPos(player))`** を設定するようにした。
+- **実測（duration 120 s、`dimensionAtTick=80`）**:
+
+| run | exit | validationClean | fixture | クラッシュ | VUID | frames | p50 | 転送 |
+|---|---|---|---|---|---|---|---|---|
+| **Nether（AMD、dimension=-1）** | **0** | **true** | **PASSED** | なし | **0** | 333 | 16.18 ms | **true** |
+| **End（AMD、dimension=1）** | **0** | **true** | **PASSED** | なし | **0** | 404 | 14.44 ms | **true** |
+| **Nether（Intel）** | **124** | — | **MISSING_REPORT** | なし | 0 | — | — | — |
+
+- **AMD では dimension 切替が動く**（Nether と End の両方で exit 0 / 検証エラー0 / 受入 PASSED）。
+  **溶岩/火を入れた世界より軽い**（p50 16.18/14.44 対 28.94）ことも分かった。
+- **Intel では同じ条件でハングする**（exit 124、報告なし、クラッシュログなし、VUID 0）。
+  これは**2回目の再現**（前ターンは End 転送でハング）であり、**未解決の実問題**として記録する。
+  推測はしない（レンダラ側か fixture 側かも未切り分け）。
+- **計器の注意**: `dimensionAfter` は **0 のまま**記録される。転送は **`addScheduledTask` で後から走る**ため、
+  その値を読む時点ではまだクライアント側に反映されていない。**測定のタイミングの問題**であり、
+  転送自体は `dimensionTransferred=true` で成功している。
+
+**次の一手**: (1) **Intel の dimension ハング**を調べる（サーバースレッドのスタックダンプを取る、
+  または転送を `dimensionAtTick` より早い/遅い時点にずらして再現条件を絞る）、
+  (2) `dimensionAfter` を**フレーム終了時点**で読み直して、クライアント側の反映を確認する、
+  (3) モデル描画の「頂点の実データ比較」を残件として進める。
+
+**（旧メモ）** 次の一手: (1) dimension 転送を**サーバーのティック終了後**に走らせる（`ServerTickEvent` の末尾か、
   `transferPlayerToDimension` をワーカースレッドではなくサーバースレッドで呼ぶ）ことで NPE を回避する、
   (2) 溶岩/火の**倍率の原因**を切り分ける（半透明パス・発光・アニメーションのどれか）、
   (3) モデル描画の「頂点の実データ比較」を残件として進める。

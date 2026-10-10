@@ -1127,15 +1127,70 @@ public final class ValidationClient {
                     if (serverPlayer == null) {
                         report.addProperty("dimensionError", "no server player");
                     } else if (serverPlayer.dimension != celtium$dimension) {
+                        // The transfer runs as a scheduled server task rather than inline from the client tick: the
+                        // first attempt called it from the tick hook and vanilla's transfer path dereferenced a look
+                        // vector that is only set up during the server's own player tick, which is the NPE that ended
+                        // that run. addScheduledTask runs it at the server's next safe point.
                         // worlds is a plain array indexed 0..n, not by dimension id: indexing it with -1 threw
                         // ArrayIndexOutOfBoundsException and the transfer never happened. getWorld maps the id properly.
-                        net.minecraft.world.WorldServer target = server.getWorld(celtium$dimension);
+                        final net.minecraft.world.WorldServer target = server.getWorld(celtium$dimension);
                         if (target == null) {
                             report.addProperty("dimensionError", "no world for dimension " + celtium$dimension);
                         } else {
-                            server.getPlayerList().transferPlayerToDimension(serverPlayer, celtium$dimension,
-                                    new net.minecraft.world.Teleporter(target));
-                            report.addProperty("dimensionTransferred", Boolean.TRUE);
+                            server.addScheduledTask(new Runnable() {
+                                @Override
+                                public void run() {
+                                    net.minecraft.entity.player.EntityPlayerMP player = server.getPlayerList()
+                                            .getPlayerByUUID(mc.player.getUniqueID());
+                                    if (player == null || player.dimension == celtium$dimension) {
+                                        return;
+                                    }
+                                    // Minecraft's getVectorForRotation returns null - and getLook then dereferences it - when the
+                                    // pitch is not a number, and the transfer path asks for the look vector. The values are
+                                    // recorded before they are replaced, because "the rotation was NaN" is the finding here,
+                                    // not something to paper over silently.
+                                    report.addProperty("dimensionPitchBefore", Float.toString(player.rotationPitch));
+                                    report.addProperty("dimensionYawBefore", Float.toString(player.rotationYaw));
+                                    if (Float.isNaN(player.rotationPitch) || Float.isInfinite(player.rotationPitch)) {
+                                        player.rotationPitch = 0.0F;
+                                    }
+                                    if (Float.isNaN(player.prevRotationPitch) || Float.isInfinite(player.prevRotationPitch)) {
+                                        player.prevRotationPitch = 0.0F;
+                                    }
+                                    if (Float.isNaN(player.rotationYaw) || Float.isInfinite(player.rotationYaw)) {
+                                        player.rotationYaw = 0.0F;
+                                    }
+                                    if (Float.isNaN(player.prevRotationYaw) || Float.isInfinite(player.prevRotationYaw)) {
+                                        player.prevRotationYaw = 0.0F;
+                                    }
+                                    if (Float.isNaN(player.rotationYawHead) || Float.isInfinite(player.rotationYawHead)) {
+                                        player.rotationYawHead = 0.0F;
+                                    }
+                                    // Teleporter.placeInExistingPortal reads entity.getLastPortalVec(), which is filled in by
+                                    // Entity.setPortal when an entity stands in a portal block. A transfer made without
+                                    // touching a portal leaves it null and the vanilla teleporter throws on it (the trace
+                                    // named Teleporter.func_180620_b, line 143). The player is marked as being in a portal
+                                    // at their own position, which is what the teleporter needs - and it will then build or
+                                    // find a portal at the destination, exactly as a real trip would.
+                                    player.setPortal(new net.minecraft.util.math.BlockPos(player));
+                                    try {
+                                        server.getPlayerList().transferPlayerToDimension(player, celtium$dimension,
+                                                new net.minecraft.world.Teleporter(target));
+                                        report.addProperty("dimensionTransferred", Boolean.TRUE);
+                                    } catch (Throwable error) {
+                                        report.addProperty("dimensionTransferError", String.valueOf(error));
+                                        // The message alone names a method that is not in the cached sources (a
+                                        // Forge/SRG symbol), so the frames are recorded too: they say which vanilla call
+                                        // dereferenced the null look vector.
+                                        StringBuilder trace = new StringBuilder();
+                                        StackTraceElement[] frames = error.getStackTrace();
+                                        for (int i = 0; i < frames.length && i < 8; i++) {
+                                            trace.append(frames[i].toString()).append(" | ");
+                                        }
+                                        report.addProperty("dimensionTransferTrace", trace.toString());
+                                    }
+                                }
+                            });
                         }
                     }
                     report.addProperty("dimensionAfter", Integer.valueOf(mc.player.dimension));
