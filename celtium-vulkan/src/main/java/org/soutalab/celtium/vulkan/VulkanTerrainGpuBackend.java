@@ -5048,8 +5048,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * while {@code ModelRenderer} compiled it, and a display list is replayed under the current matrix rather than the
      * one it was compiled with - also measured - so the matrix used here is the one in effect now.
      * <p>
-     * Lab switch: off by default, because this is a new draw path and the default must not change until a matched pair
-     * says the image is the same.
+     * Lab switch: off, because this is a new draw path and the default must not change until a matched pair says the
+     * image is the same. It was on for a while on the strength of terrain-only comparisons, which cannot see it: the
+     * terrain-only scenes remove every entity before the capture. The entity scene then showed the difference - with the
+     * draw on, the native path and the GL path differ on 18.49 % of the frame, and with only display list 2 taken
+     * natively the difference is still 2.10 %, so the model geometry is not right yet. Keep it off until that is 0.
      */
     public boolean celtium$drawModelList(int listId, int boundTextureId) {
         if (!MODEL_DRAW || this.modelMeshes == null || !this.frameTargetKnown) {
@@ -5306,7 +5309,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Whether captured display lists are drawn natively (lab switch; off keeps GL replaying them). */
     private static final boolean MODEL_DRAW = Boolean.parseBoolean(
-            System.getProperty("celtium.vulkan.modelDraw", "true"));
+            System.getProperty("celtium.vulkan.modelDraw", "false"));
     /** Forces the fence wait to report a timeout, so the post-submit failure path can be exercised (lab switch). */
     private static final boolean FENCE_WAIT_FAULT = Boolean.getBoolean("celtium.vulkan.failFenceWait");
 
