@@ -2023,6 +2023,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
+        // Cleared at entry so a refusal always carries its own reason. It used to keep whatever the previous call left -
+        // a successful batch sets "none" - so 886 format-2 refusals per run were tallied under a reason that described the
+        // batch before them, and the path that refused them was never named.
+        // A non-null marker rather than null: one caller dereferences the reason, and null turned a stale reason into a
+    // NullPointerException in the frame. "unrecorded" says the same thing without breaking that caller.
+    this.immediateLastRefusal = "unrecorded";
         if (REFERENCE_RENDER) {
             // Same reason as the pass entry: this method is called by the uploader hook directly, so reference mode has to
             // refuse it here as well.
