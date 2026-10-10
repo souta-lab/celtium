@@ -244,11 +244,6 @@ public abstract class WorldVertexBufferUploaderMixin {
             long batchCallCpuStarted = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
             try {
                 accepted = backend.submitImmediateBatch(format, stride, formatId, address, vertices, mode);
-                if (accepted && celtium$listIndex != 0) {
-                    // The vertices of this list's compile went to the native path and never to GL, so the list being
-                    // compiled stays empty. This is the fact the replay cancellation is allowed to rely on.
-                    org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compiledNatively(celtium$listIndex);
-                }
             } finally {
                 long batchCallTook = System.nanoTime() - batchCallStarted;
                 long batchCallCpuEnded = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();

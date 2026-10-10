@@ -310,7 +310,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " atlasReestablished=" + this.atlasReestablished
                 + " lightmapReestablished=" + this.lightmapReestablished
                 + " texturePatchCost=" + (this.textureRegistry == null ? "-" : this.textureRegistry.patchCostSummary())
-                + " displayListCompiledNatively=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.nativelyCompiledLists()
                 + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
                 + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
                 + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
@@ -4763,6 +4762,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.modelLastRefusal = String.valueOf(error);
             return false;
         }
+    }
+
+    /** {@return whether the native model draw experiment is enabled}. */
+    public static boolean modelDrawEnabled() {
+        return MODEL_DRAW;
     }
 
     /** Draws at most this many quads per list, for isolating a single quad (0 = all). */

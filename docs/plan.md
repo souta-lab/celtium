@@ -27,6 +27,31 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.6 モデル native 描画の実験を再到達可能にした（この単位・全vanilla native化の入口）
+
+**根因**: `callList` フックが **`cancels(list)` の内側でしか `drawModelList` を呼んでいなかった**。構造修復2で
+`cancels()` は「compile が native に受理された（リストが空）」だけを根拠にする形になり、その仮説は**実測で反証**されて
+いたため、**モデル native 描画は既定でも実験フラグ時でも一度も走らない**状態だった（`modelDraws=0`）。
+
+- **フックを「フラグ時は必ず描き、成功したときだけキャンセル」に直した**:
+  `if (modelDrawEnabled()) { drawn = vulkan.celtium$drawModelList(list, boundTexture); if (drawn) cancel(); }`。
+  **名前も counter も判断に入らない**（「別経路が実際に描いた」だけが根拠）。
+- **反証済みで死んでいた経路を撤去**: `COMPILED_NATIVELY` 一式（`compiledNatively` / `wasCompiledNatively` /
+  `nativelyCompiledLists` とアップローダの呼び出し）、`cancels()`、id リスト `CANCEL` / `cancelSet()`、
+  要約の `displayListCompiledNatively`。**判断の持ち主は1つ**になった。
+- **実測（AMD、軽い世界、duration 120 s）**:
+
+| run | exit | validationClean | fixture | frames | p50 | `modelDraws` | 拒否 | `displayListCancelled` | `modelMeshLists` | VUID |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **既定（フラグOFF）** | **0** | **true** | **PASSED** | 559 | 16.21 ms | **0** | 0 | **0** | — | **0** |
+| **実験（`modelDraw`＋`modelMeshBuild`、三人称）** | **0** | **true** | **PASSED** | 559 | 16.25 ms | **1396** | **0** | **1396** | **12** | **0** |
+
+  **`displayListCancelled == modelDraws`（1396 = 1396）** ＝ **成功した描画だけをキャンセル**している。
+  **既定は完全不変**（描画0・キャンセル0・p50 16.21 対 16.25）。クラッシュなし・VUID 0。
+- **検証として言えること**: 実験が再び到達可能で、取消の根拠が「実際に描いた」ことだけになっている。
+  **まだ言えないこと**: **native モデルの見た目が正しいか**（画像比較は**アニメーションを統制した場面**で行う）。
+  entity/TESR/item 全体の native 化は**未完**。
+
 ## 0.5 構造修復 3（前半・この単位）: draw の段階を target 世代に紐付ける
 
 **根因**: 5段階（queued / recorded / submitted / completed / retired）は別リストと counter で管理され、

@@ -43,10 +43,10 @@ public abstract class GlStateManagerMixin {
             // Lab switch: cancel the replay of lists the native path already draws. The sky and the stars are drawn by
             // the immediate path as POSITION_TEX, so their display lists are the first candidates - cancelling them is
             // only correct if the image does not change, which is what the flag is for measuring.
-            if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancels(list)) {
-                // Only cancel what the native path actually drew: cancelling first and drawing afterwards would remove
-                // the model whenever the draw is refused, which is exactly the failure this order avoids. The draw is
-                // behind its own lab switch and returns false while it is off, so the default path is unchanged.
+            // The experiment draws the list itself; the GL replay is cancelled only when that draw actually happened.
+            // No name and no counter takes part in the decision: "another path drew this" is the whole justification, and
+            // when the experiment is off nothing is drawn and nothing is cancelled.
+            if (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.modelDrawEnabled()) {
                 boolean drawn = false;
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -67,10 +67,7 @@ public abstract class GlStateManagerMixin {
                     }
                     drawn = vulkan.celtium$drawModelList(list, boundTexture);
                 }
-                // Cancel when the native model draw drew this list, or when the list itself holds nothing because the
-                // native path answered its compile (recorded where that decision is made). Neither branch uses the
-                // caller's name: the first is a draw that happened, the second is an empty list.
-                if (drawn || org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancels(list)) {
+                if (drawn) {
                     org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled(list);
                     info.cancel();
                 }

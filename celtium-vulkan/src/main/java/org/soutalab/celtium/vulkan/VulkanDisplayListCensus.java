@@ -110,51 +110,6 @@ public final class VulkanDisplayListCensus {
         return replaysWithFrameClosed;
     }
 
-    /**
-     * Lists whose compile was answered by the native path, recorded where the decision is made.
-     * <p>
-     * A batch accepted while {@code glNewList} is open never reaches GL - the upload hook cancels the GL body - so the list
-     * that is being compiled receives no vertices and its replay draws nothing. That is a recorded fact about a different
-     * path having taken the content, which is the only basis this renderer is allowed to cancel a replay on: matching the
-     * caller's name was a description of the caller, not evidence about the list.
-     */
-    private static final java.util.Set<Integer> COMPILED_NATIVELY = new java.util.HashSet<Integer>();
-
-    /** Records that a display list's compile was answered natively, so its GL replay holds nothing. */
-    public static synchronized void compiledNatively(int list) {
-        if (list != 0 && COMPILED_NATIVELY.add(Integer.valueOf(list)) && COMPILED_NATIVELY.size() <= 5) {
-            System.out.println("[Celtium] CELTIUM_LIST_COMPILED_NATIVELY list=" + list);
-        }
-    }
-
-    /** {@return whether this list's compile was answered natively (and therefore its GL replay is empty)}. */
-    public static synchronized boolean wasCompiledNatively(int list) {
-        return COMPILED_NATIVELY.contains(Integer.valueOf(list));
-    }
-
-    /** {@return how many lists were compiled by the native path}. */
-    public static synchronized int nativelyCompiledLists() {
-        return COMPILED_NATIVELY.size();
-    }
-
-    private static final java.util.Set<Integer> CANCEL = cancelSet();
-    private static long cancelled;
-
-    private static java.util.Set<Integer> cancelSet() {
-        String spec = System.getProperty("celtium.vulkan.cancelDisplayLists", "");
-        java.util.Set<Integer> ids = new java.util.HashSet<Integer>();
-        for (String part : spec.split(",")) {
-            String trimmed = part.trim();
-            if (!trimmed.isEmpty()) {
-                try {
-                    ids.add(Integer.valueOf(Integer.parseInt(trimmed)));
-                } catch (NumberFormatException ignored) {
-                    // A malformed entry simply does not cancel anything.
-                }
-            }
-        }
-        return ids;
-    }
 
 
     private static final java.util.Set<Integer> TEXTURE_LOGGED = new java.util.HashSet<Integer>();
@@ -170,16 +125,8 @@ public final class VulkanDisplayListCensus {
     public static synchronized boolean textureLogged(int list) {
         return !TEXTURE_LOGGED.add(Integer.valueOf(list));
     }
+    private static long cancelled;
 
-    /** {@return whether this list's GL replay is being cancelled, so the native path draws it instead}. */
-    public static boolean cancels(int list) {
-        if (CANCEL.contains(Integer.valueOf(list))) {
-            return true;
-        }
-        // The basis is the recorded compile fact: the list holds nothing because the native path answered its compile.
-        // The origin chain stays as diagnostics (it names who compiled the list) but it no longer decides anything.
-        return wasCompiledNatively(list);
-    }
 
 
 
