@@ -27,6 +27,20 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.29 native の線の **Intel 受入**（能力依存の経路なので必須の段階）
+
+- **受入（Intel、`lookDown`＋TESR 層、duration 150 s）**: exit 0 / validationClean / **PASSED**、302 frames、p50 31.49 ms、
+  **VUID 0**、クラッシュなし。**`ACCEPTED byFormat 1 = 280`**（変更前は同種の場面で 1 桁〜26）、
+  **拒否集計に `line primitives` のエントリが無い** ＝ **線は native で受理されている**。
+- **正直な計器の問題**: 新しく足した `lineBatchesNative` / `lineBatchesRefusedForWidth` / `maxLineWidth` は
+  **0 / 0 / -1.0** を返している（挙動ではなく**カウンタの置き場所とインスタンス**の問題。
+  `CELTIUM_GROUPS` 行に出したが、この行を出している実体と受理を数えている実体が同じとは限らない）。
+  **挙動の証拠は `ACCEPTED byFormat 1` の増加と拒否エントリの消滅で足りている**が、計器としては未完成と明記する。
+- **意味**: §0.28 の native 線は **AMD と Intel の両方で成立**した。`lineWidthRange` による能力判定は
+  **どちらの GPU でも 2.0 を満たした**（拒否カウンタが 0 であることと整合）。
+- **残る最大のもの**: **format 2（最終合成）**。拒否集計で `2 target is outside the RGBA8/D24/full-viewport bridge
+  contract` が 816〜817 件＝**毎フレーム1回、全画面クアッドが GL に渡っている**。
+
 ## 0.28 **native の線が成立**（format 1 の受理 17 → 797、拒否エントリ消滅）
 
 - **実装したもの**:

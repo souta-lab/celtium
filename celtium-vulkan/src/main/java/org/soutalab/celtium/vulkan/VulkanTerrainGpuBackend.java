@@ -1488,6 +1488,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " discarded=" + this.immediateGroupsDiscarded
                     + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                     + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
+                    + " lineBatchesNative=" + this.lineBatchesNative
+                    + " lineBatchesRefusedForWidth=" + this.lineBatchesRefusedForWidth
+                    + " maxLineWidth=" + this.maxLineWidth
                     + " presentHookCalls=" + this.presentHookCalls
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " presentedFromVulkan=" + this.framePresentedFromVulkan
