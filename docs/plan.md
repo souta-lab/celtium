@@ -27,6 +27,25 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.16 GL swap の停止を試みて**失敗**し、巻き戻した（失敗の記録）
+
+- **per-frame フックの正しい SRG 名が判明**: `Minecraft.updateDisplay()` = **`func_175601_h`**、その直後に呼ばれる
+  resize 判定 = **`func_175604_i`**（`srg_patched_minecraft-sources.jar` から直接取得）。
+- **試したこと**: `func_175601_h` 内の `Display.update()` 呼び出しを **`@Redirect`** で差し替え、**Vulkan が提示済みのフレームでは
+  GL swap を行わない**（events は poll し、resize 判定は同じメソッドの残りとしてそのまま走る）形にした。
+- **結果（実測1回・即失敗）**: **exit=1 / `MISSING_REPORT` / スクリーンショット無し / クラッシュログ無し**。
+  **GL swap を省くとゲームがフレームを出せなくなる**（fixture が捕捉に到達しない）。原因は未特定
+  （候補: swap を前提にしたゲーム側の待ち、`Display.update` が担うイベント/バッファ処理、fixture の捕捉段階）。
+- **対応**: **失敗した変更は保持せず巻き戻した**（goal の「停止や未到達を完了扱いしない」「失敗時に原因を追える単位を保つ」）。
+  巻き戻し後に**同じ条件で再受入**: exit 0 / clean / **PASSED**、240 frames、p50 28.06 ms、**VUID 0**、
+  **`presentedFromVulkan=235`／`presentAttempts=235`／`presentFailures=0`**、
+  `presentResult=[present image: blitted 1280x720 onto image 1 (0)]`、`presentSucceeded=true`。
+  **確立済みの「通常フレームの Vulkan 提示」は壊れていない**ことを確認した。
+- **§0.15 の記述の訂正**: 「提示画像の平均 113.25 と GL スクリーンショット平均 113.874 が一致＝独立した裏付け」は
+  **言い過ぎ**である。両者は**別の瞬間に取得**される（提示 readback は最後の提示時、スクリーンショットは捕捉時）ため、
+  今回の再受入では 140.0 対 114.1 と離れた。**同じ瞬間の比較**（提示 readback を捕捉フレームで取る）を用意するまでは、
+  内容一致の裏付けとして扱わない。
+
 ## 0.15 **通常フレームが Vulkan から提示されるようになった**（条件 (c) の中核受入）
 
 **根因（このターンの本体）**: 「present を有効にするか」という**同じ判定が3箇所に別々に実装**され、既定が食い違っていた。

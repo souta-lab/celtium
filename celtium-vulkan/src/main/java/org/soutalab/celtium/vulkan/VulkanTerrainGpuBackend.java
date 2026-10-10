@@ -4879,11 +4879,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The caller skips the game's own Display.update when this returns true, and that call is also what polls
                 // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
                 // this module because the GLFW classes are on its classpath and not on the game module's.
-                try {
-                    org.lwjgl.glfw.GLFW.glfwPollEvents();
-                } catch (RuntimeException | LinkageError ignored) {
-                    // Polling is not worth failing a presented frame over.
-                }
+                celtium$pollEvents();
             } else {
                 this.presentFailures++;
             }
@@ -4894,6 +4890,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
     }
+
+    /** Polls the window's events. The caller skips Display.update when a frame was presented, and that call polls them. */
+    public void celtium$pollEvents() {
+        try {
+            org.lwjgl.glfw.GLFW.glfwPollEvents();
+        } catch (RuntimeException | LinkageError ignored) {
+            // Polling is not worth failing a frame over.
+        }
+    }
+
 
     /** {@return whether the native model draw experiment is enabled}. */
     public static boolean modelDrawEnabled() {

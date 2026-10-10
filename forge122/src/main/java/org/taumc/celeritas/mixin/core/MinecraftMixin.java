@@ -24,4 +24,6 @@ public class MinecraftMixin {
         celeritas$renderAheadManager.endFrame();
     }
 
+
+
 }
