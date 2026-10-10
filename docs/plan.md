@@ -27,6 +27,36 @@
   **`GuiDownloadTerrain` のまま tick 148 で 0 に戻る**。**旧 Nether PASSED は有効な受入から外した**。
   地形ダウンロードの残留と帰還は**観測事実**で、renderer / packet / fixture のどこが根因かは**未確定**。
 
+## 0.30 線パイプライン変更の限定回帰（即時経路全体に触れるため）
+
+- 線の変更は **パイプライン生成・受理ゲート・キー** に触れるので、reload/resize/world switch と Intel で回帰を取った。
+
+| run | exit | validationClean | fixture | frames | p50 | VUID | クラッシュ | `line primitives` 拒否 |
+|---|---|---|---|---|---|---|---|---|
+| AMD 通常 | 0 | true | **PASSED** | 671 | 12.93 ms | 0 | なし | **なし** |
+| AMD reload | 0 | true | **PASSED** | 652 | 13.06 ms | 0 | なし | **なし** |
+| AMD resize | 0 | true | **PASSED** | 604 | 16.19 ms | 0 | なし | **なし** |
+| AMD world switch | 0 | true | **PASSED** | 667 | 12.90 ms | 0 | なし | **なし** |
+| Intel 通常 | 0 | true | **PASSED** | 249 | 39.12 ms | 0 | なし | **なし** |
+
+  **5 run すべて PASSED・VUID 0・拒否なし**。p50 も直近の水準内。**native の線は通常/reload/resize/world switch で安定**。
+
+## 0.31 format 2（最終合成）の経路を読んだ結果: **画面は既に Vulkan が出している**
+
+- `PRESENT_FROM_COMPOSITE` は**既定 true** で、format 2 の「画面合成」バッチに対して
+  `beginFrameForPresent` → ブリッジ semaphore 付き `presentImage` を行う経路が**実装済み**。ただしその前提条件
+  （`currentRenderTargetIsMain` 等）を満たさず、**format 2 は受理マスクで `target is outside the RGBA8/D24/full-viewport
+  bridge contract` として拒否**され続けている（816〜817 件/run）。
+- **しかし画面は既に Vulkan が出している**: §0.17 の per-frame present（`func_175068_a` 先頭で直前フレームを提示）が
+  毎フレーム成功し（`presentedFromVulkan` 263 等）、**GL の swap も省略**されている。つまり
+  **条件 (a) の「最終合成・present が native」という結果は、別経路で既に成立している**。
+- **残るのは冗長な GL 合成（blit）だけ**であり、それを外すには制約がある:
+  **ゲームのスクリーンショットは GL の既定フレームバッファを読む**（`Screenshot` 経由で、これが我々の画像証拠の
+  唯一の経路）。**GL の合成を止めるとスクリーンショットが黒くなり、画像比較の手段を失う**。
+  → **証拠経路を先に用意する**（Vulkan 画像の読み戻しで比較する、または提示画像 readback を捕捉フレームで取る）まで、
+  GL 合成は**意図的に残す**。これは「未着手」ではなく**順序の判断**である。
+- **計器**: `compositePresentRefusals` と format 2 の拒否件数が、この経路の状態を引き続き示す。
+
 ## 0.29 native の線の **Intel 受入**（能力依存の経路なので必須の段階）
 
 - **受入（Intel、`lookDown`＋TESR 層、duration 150 s）**: exit 0 / validationClean / **PASSED**、302 frames、p50 31.49 ms、
