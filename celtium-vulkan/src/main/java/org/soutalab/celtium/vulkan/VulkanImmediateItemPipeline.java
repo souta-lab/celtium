@@ -67,9 +67,11 @@ public final class VulkanImmediateItemPipeline {
     private final boolean depthTest;
     private final boolean depthWrite;
     private final boolean cull;
+    /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
+    private final int depthCompareOp;
 
     private VulkanImmediateItemPipeline(VulkanContext context, long renderPass, boolean blend, int srcFactor,
-                                           int dstFactor, boolean depthTest, boolean depthWrite, boolean cull) {
+                                           int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
         this.context = context;
         this.renderPass = renderPass;
         this.blend = blend;
@@ -78,12 +80,14 @@ public final class VulkanImmediateItemPipeline {
         this.depthTest = depthTest;
         this.depthWrite = depthWrite;
         this.cull = cull;
+        this.depthCompareOp = depthCompareOp;
     }
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
     public static VulkanImmediateItemPipeline create(VulkanContext context, long renderPass) {
         return create(context, renderPass, true, org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
-                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false);
+                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false,
+                VK_COMPARE_OP_LESS_OR_EQUAL);
     }
 
     /**
@@ -92,11 +96,11 @@ public final class VulkanImmediateItemPipeline {
      * state instead of forcing every batch through a single hardcoded combination.
      */
     public static VulkanImmediateItemPipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
-                            boolean depthTest, boolean depthWrite, boolean cull) {
+                            boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
-        VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull);
+        VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, depthCompareOp);
         result.createPipelineLayout();
         result.createPipeline();
         return result;
@@ -312,7 +316,7 @@ public final class VulkanImmediateItemPipeline {
                         VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default()
                                 .depthTestEnable(this.depthTest)
                                 .depthWriteEnable(this.depthWrite)
-                                .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+                                .depthCompareOp(this.depthCompareOp);
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
                         VkPipelineColorBlendAttachmentState.calloc(1, stack);
                 blendAttachment.get(0)

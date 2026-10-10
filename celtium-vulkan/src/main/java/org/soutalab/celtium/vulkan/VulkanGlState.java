@@ -37,7 +37,8 @@ public final class VulkanGlState {
     private int blendSrcAlpha = BLEND_ONE;
     private int blendDstAlpha = BLEND_ONE_MINUS_SRC_ALPHA;
     private boolean depthTestEnabled = true;
-    private int depthFunc = DEPTH_LEQUAL;
+    /** The OpenGL depth-function constant (GL_LEQUAL &c.), not an ordinal: the pipeline maps it to a compare op. */
+    private int depthFunc = 515;
     private boolean depthMask = true;
     private boolean cullEnabled;
     private int cullFace = CULL_BACK;

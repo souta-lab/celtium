@@ -1833,6 +1833,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     @Override
+    public void depthFunc(int func) {
+        this.immediateState.depthFunc(func);
+    }
+
+    @Override
     public void perspective(float fovDegrees, float aspect, float near, float far) {
         if (aspect == 0.0f || near == far) {
             return;
@@ -2136,7 +2141,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     return false;
                 }
                 this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, ui.renderPass(),
-                        false, 0, 0, false, false, false);
+                        false, 0, 0, false, false, false,
+                        org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
             }
             boolean ok = celtium$descriptorSet(
                     this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture), "probe") != 0L;
@@ -2989,7 +2995,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.immediateState.depthMask() ? 1 : 0,
                 this.immediateState.cullEnabled() ? 1 : 0,
                 Float.floatToIntBits(alphaReference),
+                // The comparison itself rather than a boolean: the glint draws at GL_EQUAL and the held item at
+                // GL_ALWAYS, neither of which a fixed LESS_OR_EQUAL pipeline would pass correctly.
+                this.immediateState.depthFunc(),
         };
+    }
+
+    /**
+     * The Vulkan compare op for one OpenGL depth function. {@code GlStateManager.depthFunc} passes the GL constant
+     * verbatim; anything outside the eight standard functions falls back to LESS_OR_EQUAL, which is what the
+     * pipeline used to bake unconditionally.
+     */
+    private static int celtium$vkCompareOp(int glFunc) {
+        switch (glFunc) {
+            case 512: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_NEVER;
+            case 513: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS;
+            case 514: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_EQUAL;
+            case 515: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
+            case 516: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_GREATER;
+            case 517: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_NOT_EQUAL;
+            case 518: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_GREATER_OR_EQUAL;
+            case 519: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_ALWAYS;
+            default: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
+        }
     }
 
     /**
@@ -3520,17 +3548,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             long particleKey = key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             VulkanImmediateParticlePipeline value = this.particlePipelineCache.computeIfAbsent(particleKey,
                     k -> VulkanImmediateParticlePipeline.create(this.context, pass, true,
-                            VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false));
+                            VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false,
+                            celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == 4) {
             VulkanImmediateItemPipeline value = this.itemPipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediateItemPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
-                            state[3] != 0, state[4] != 0, state[5] != 0));
+                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else if (format == 3) {
             VulkanImmediateBlockPipeline value = this.blockPipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediateBlockPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
-                            state[3] != 0, state[4] != 0, state[5] != 0));
+                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format >= 2) {
             java.util.Map<Long, VulkanImmediateTexturePipeline> cache = format == 9 ? this.positionTexNormalPipelineCache
@@ -3538,16 +3567,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     : format == 6 ? this.positionTexPipelineCache : this.texturedPipelineCache;
             VulkanImmediateTexturePipeline value = cache.get(key);
             if (value == null) {
+                int compareOp = celtium$vkCompareOp(state[7]);
                 value = format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 7 ? VulkanImmediateTexturePipeline.createForPosition(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 6 ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0)
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : VulkanImmediateTexturePipeline.create(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0);
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp);
                 cache.put(key, value);
             }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
@@ -3556,9 +3586,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             pipeline = (lineBatch ? this.linePipelineCache : this.immediatePipelineCache).computeIfAbsent(key,
                     k -> lineBatch
                             ? VulkanImmediatePipeline.createForLines(this.context, pass, state[0] != 0, state[1], state[2],
-                                    state[3] != 0, state[4] != 0, state[5] != 0)
+                                    state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]))
                             : VulkanImmediatePipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
-                                    state[3] != 0, state[4] != 0, state[5] != 0));
+                                    state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             if (lineBatch) {
                 this.lineBatchesNative++;
             }

@@ -107,6 +107,10 @@ public interface TerrainGpuBackend {
     default void activeTextureUnit(int unit) {
     }
 
+    /** Mirrors {@code GlStateManager.func_179143_c(int)}; the argument is the GL depth-function constant. */
+    default void depthFunc(int func) {
+    }
+
     /** Mirrors {@code GlStateManager.func_179110_a(FloatBuffer)} (multiply matrix). */
     default void multiplyMatrix(java.nio.FloatBuffer buffer) {
     }

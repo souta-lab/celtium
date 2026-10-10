@@ -127,6 +127,12 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.setColor(red, green, blue, alpha));
     }
 
+    /** The depth comparison, which the pipelines baked as LESS_OR_EQUAL until the state model carried it. */
+    @Inject(method = "func_179143_c", at = @At("HEAD"), require = 0)
+    private static void celtium$depthFunc(int func, CallbackInfo info) {
+        celtium$mirror(backend -> backend.depthFunc(func));
+    }
+
     @Inject(method = "func_179094_E", at = @At("HEAD"), require = 0)
     private static void celtium$pushMatrix(CallbackInfo info) {
         celtium$mirror(TerrainGpuBackend::pushMatrix);

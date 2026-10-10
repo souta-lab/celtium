@@ -60,9 +60,11 @@ public final class VulkanImmediatePipeline {
     private final boolean cull;
     /** Draw line lists instead of triangles: the selection outline and other line batches. */
     private final boolean lines;
+    /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
+    private final int depthCompareOp;
 
     private VulkanImmediatePipeline(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
-               boolean depthTest, boolean depthWrite, boolean cull, boolean lines) {
+               boolean depthTest, boolean depthWrite, boolean cull, boolean lines, int depthCompareOp) {
         this.context = context;
         this.renderPass = renderPass;
         this.blend = blend;
@@ -72,12 +74,14 @@ public final class VulkanImmediatePipeline {
         this.depthWrite = depthWrite;
         this.cull = cull;
         this.lines = lines;
+        this.depthCompareOp = depthCompareOp;
     }
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
     public static VulkanImmediatePipeline create(VulkanContext context, long renderPass) {
         return create(context, renderPass, true, org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
-                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false);
+                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false,
+                VK_COMPARE_OP_LESS_OR_EQUAL);
     }
 
     /**
@@ -86,8 +90,9 @@ public final class VulkanImmediatePipeline {
      * state instead of forcing every batch through a single hardcoded combination.
      */
     public static VulkanImmediatePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
-                            boolean depthTest, boolean depthWrite, boolean cull) {
-        return create(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, false);
+                            boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        return create(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, false,
+                depthCompareOp);
     }
 
     /**
@@ -99,17 +104,18 @@ public final class VulkanImmediatePipeline {
      * builds the variant it is told to.
      */
     public static VulkanImmediatePipeline createForLines(VulkanContext context, long renderPass, boolean blend,
-            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull) {
-        return create(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, true);
+            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        return create(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, true,
+                depthCompareOp);
     }
 
     private static VulkanImmediatePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor,
-            int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, boolean lines) {
+            int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, boolean lines, int depthCompareOp) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
         VulkanImmediatePipeline result = new VulkanImmediatePipeline(context, renderPass, blend, srcFactor, dstFactor,
-                depthTest, depthWrite, cull, lines);
+                depthTest, depthWrite, cull, lines, depthCompareOp);
         result.createPipelineLayout();
         result.createPipeline();
         return result;
@@ -222,7 +228,7 @@ public final class VulkanImmediatePipeline {
                         VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default()
                                 .depthTestEnable(this.depthTest)
                                 .depthWriteEnable(this.depthWrite)
-                                .depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL);
+                                .depthCompareOp(this.depthCompareOp);
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
                         VkPipelineColorBlendAttachmentState.calloc(1, stack);
                 blendAttachment.get(0)
