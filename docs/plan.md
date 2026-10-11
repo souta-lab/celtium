@@ -257,6 +257,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.271 **round 77: copy の read 事実を実測 — 読むのは chain pair、しかしその時点の attach は別 image**
+
+- **計装（Lead・`celtium$readImageRectangle` 冒頭・bounded 6行）と測定（`r75-read`・hold 60）**:
+  ```
+  CELTIUM_COPY_READ image=0x7f3060ca19b0 rect=0,0 256x256 frame=0
+    passAttached=0x7f3056fc3b00  chainPair=0x7f3060ca19b0  frameImage=0x7f3060c3fc10
+  CELTIUM_TEX_COPY_SERVED dest=20 … mean=255,255,255
+  ```
+  ＝**copy は chain pair を読んでいる**（`image == chainPair`）が、**その時点で attach されている image は別**（`passAttached` は chain pair でも frame image でもない）。
+- **意味**: copy は「今 attach されている image」ではなく**chain pair**を読む。したがって白の原因は
+  「**face が chain pair に描いた後、copy の前にその pair が消されている**」こと。
+  既報 `offTargetPairClears=[default-pair=167, chain-pair=1]` ＝**chain pair は frame に1回 clear される**。
+  その clear が **face の pass より後**に来ていれば、まさにこの観測になる。
+- **次の測定（1点）**: chain pair の clear の**frame と順序**を face の pass（`CELTIUM_DRAW_SITE`）と並べて印字し、
+  「clear が後か前か」を確定する。後なら修正は **clear を最初の非main pass に固定する**（既に `chainPairClearedFrame` があるので、
+  その clear の**記録位置**が face の pass より後になっていないかを確認する）。
+- **未了（変更なし・revert 済みのみ・ツリー緑）**: menu hold 経路の VUID・OPT-09 step(3)・BH-14・goal (e) 3段階・較正済み picture gate。
+
 ## 0.270 **round 76: copy の read 経路の実装を確認（`celtium$readImageRectangle` の readback）— 次の計装点を確定**
 
 - **コード確認（Lead）**: copy は `celtium$serveTextureCopy` から `celtium$readImageRectangle(image, x, y, w, h)` を呼び、

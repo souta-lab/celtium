@@ -11052,7 +11052,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * goes through {@code VulkanContext.beginCommands}/{@code endCommands}, which waits for the queue before allocating
      * and after submitting: that is the same route the swapchain's own presented-image readback takes.
      */
+    /** Bounded lines of the copy's read facts; a normal run prints nothing. */
+    private int celtium$copyReadLogs;
+
     private int[] celtium$readImageRectangle(long image, int x, int y, int width, int height) {
+        // The copy's own facts, so the white is decided independently of the hold leg's VUID: which image is read,
+        // its extent, the frame, and whether it is the image the current pass attached.
+        if (this.celtium$copyReadLogs < 6) {
+            this.celtium$copyReadLogs++;
+            System.out.println("[Celtium] CELTIUM_COPY_READ image=0x" + Long.toHexString(image)
+                    + " rect=" + x + "," + y + " " + width + "x" + height
+                    + " frame=" + this.frameId
+                    + " passAttached=0x" + Long.toHexString(this.passAttachedColorImage)
+                    + " chainPair=0x" + Long.toHexString(offTargetTarget() == null ? 0L
+                            : offTargetTarget().chainPairColorImage())
+                    + " frameImage=0x" + Long.toHexString(this.frameTarget == null ? 0L
+                            : this.frameTarget.colorImage()));
+        }
         long buffer = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
         long memory = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
         try (MemoryStack stack = MemoryStack.stackPush()) {
