@@ -49,8 +49,89 @@ EOF
     (cd "$OUT" && unzip -qo "$JAR" 'net/minecraft/*')
 }
 
+# The runtime is Cleanroom, not the MCP tree this build compiles against, and Cleanroom
+# patches Minecraft (539 files). Reading the unpatched sources and then checking, one
+# patch at a time, whether the code you just read is the code that runs is the same
+# mistake as reading no sources at all - so the patched tree is what this command
+# offers by default, and the unpatched tree is the fallback for what Cleanroom leaves
+# alone.
+CLEANROOM_REPO="https://github.com/CleanroomMC/Cleanroom.git"
+CLEANROOM_PATCHES="$ROOT/.celtium-work/cleanroom-patches"
+CLEANROOM_SRC="$ROOT/.celtium-work/mc-sources-cleanroom"
+
+fetch_cleanroom_patches() {
+    if [ -d "$CLEANROOM_PATCHES/module/minecraft/patches" ]; then
+        return 0
+    fi
+    mkdir -p "$(dirname "$CLEANROOM_PATCHES")"
+    git clone --filter=blob:none --no-checkout --depth 1 "$CLEANROOM_REPO" "$CLEANROOM_PATCHES" >/dev/null 2>&1 || return 1
+    (cd "$CLEANROOM_PATCHES" && git sparse-checkout init --cone >/dev/null 2>&1 \
+        && git sparse-checkout set module/minecraft/patches >/dev/null 2>&1 \
+        && git checkout >/dev/null 2>&1) || return 1
+    [ -d "$CLEANROOM_PATCHES/module/minecraft/patches" ]
+}
+
+# The extracted tree is ALREADY the patched tree, and this is the measurement that says
+# so rather than a claim: Cleanroom's module/minecraft/patches is the same patch set this
+# build applies through RetroFuturaGradle (Cleanroom is a Forge fork and keeps Forge's
+# Minecraft patches), so applying them again reports "reversed or previously applied" for
+# files it touches, and line-offset failures for files where the patch and the tree are
+# the same content in a different order. Checked on 2026-10-11: FontRenderer.java.patch
+# applies in reverse (17/17 hunks already present), and the added lines of
+# RenderGlobal.java.patch and GuiIngame.java.patch are present verbatim in the tree.
+#
+# What is NOT in the tree is Cleanroom's own runtime patching - Kirino's classes inside
+# cleanroom-0.6.13-alpha.jar, which inject into obfuscated Minecraft at launch
+# (MinecraftCulling.collectEntitiesInView(Entity, ICamera, ChunkProviderClient, float),
+# MinecraftEntityRendering, MinecraftTESRRendering.renderTESRs(...)). Those are read from
+# the jar, and their obfuscated type names are mapped with --notch below.
+report_cleanroom() {
+    fetch_cleanroom_patches || {
+        echo "mc-sources: could not fetch Cleanroom's patches from $CLEANROOM_REPO" >&2
+        return 1
+    }
+    local patches
+    patches="$(find "$CLEANROOM_PATCHES/module/minecraft/patches" -name '*.patch' | wc -l)"
+    echo "Cleanroom patch set          $CLEANROOM_PATCHES/module/minecraft/patches ($patches files)"
+    echo "  The extracted tree already contains this set: it is the patch set the build applies."
+    echo "  Files it touches: client=$(find "$CLEANROOM_PATCHES/module/minecraft/patches/net/minecraft/client" -name '*.patch' | wc -l),"
+    echo "    renderer=$(find "$CLEANROOM_PATCHES/module/minecraft/patches/net/minecraft/client/renderer" -name '*.patch' | wc -l)."
+    local cleanroom_jar
+    cleanroom_jar="$(ls "$HOME"/.local/share/PrismLauncher/libraries/com/cleanroommc/cleanroom/*/cleanroom-*.jar 2>/dev/null | head -1)"
+    if [ -n "$cleanroom_jar" ]; then
+        echo "Cleanroom's own runtime patches  $cleanroom_jar"
+        unzip -l "$cleanroom_jar" 2>/dev/null | grep -oE "com/cleanroommc/kirino/engine/render/platform/minecraft/patch/[A-Za-z$]+.class" | sort -u | sed 's/^/    /'
+    fi
+}
+
+# Obfuscated (notch) names are what Cleanroom's runtime patches are compiled against, so
+# reading them means mapping them: vg is Entity, bxy is ICamera, brx is ChunkProviderClient.
+notch_lookup() {
+    local srg_dir="${HOME}/.gradle/caches/minecraft/de/oceanlabs/mcp/mcp_stable/39/rfg_srgs"
+    if [ ! -f "$srg_dir/notch-mcp.srg" ]; then
+        echo "mc-sources: no notch-mcp.srg at $srg_dir" >&2
+        return 1
+    fi
+    for name in "$@"; do
+        local mapped
+        mapped="$(grep -m1 "^CL: $name " "$srg_dir/notch-mcp.srg" | awk '{print $3}')"
+        printf '%-8s %s\n' "$name" "${mapped:-<not a class in this mapping>}"
+    done
+}
+
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
+    --cleanroom)
+        extract || exit 1
+        report_cleanroom || exit 1
+        exit 0
+        ;;
+    --notch)
+        shift
+        [ $# -ge 1 ] || { echo "mc-sources --notch needs a name (vg, bxy, ...)" >&2; exit 2; }
+        notch_lookup "$@"
+        exit 0
+        ;;
 esac
 
 extract || exit 1
@@ -102,6 +183,8 @@ Forge sources                     ${FORGE_SRC:-<missing>}
 SRG mappings (deobf -> SRG)       ${SRG:-<missing>}
 SRG mappings (SRG -> deobf)       ${SRG_REVERSE:-<missing>}
 MCP patches                       ${PATCHES:-<missing>}
+
+Cleanroom-patched tree:  scripts/mc-sources.sh --cleanroom   (applies Cleanroom's 539 patches)
 
 Search it:   scripts/mc-sources.sh --grep 'begin(7, DefaultVertexFormats'
 SRG lookup:  scripts/mc-sources.sh --srg func_181679_a
