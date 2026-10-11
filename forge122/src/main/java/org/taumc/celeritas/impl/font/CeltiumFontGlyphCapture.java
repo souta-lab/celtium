@@ -444,7 +444,15 @@ public final class CeltiumFontGlyphCapture {
         boolean taken;
         long submitStarted = System.nanoTime();
         try {
-            taken = backend.submitImmediateBatch(format, stride, formatId, vertexAddress, MAX_VERTICES, drawMode);
+            // task-59: the backend owns a pending run and appends this quad to it, so a string's glyphs go out in a
+            // handful of calls instead of one per character (the user's session measured 1,012,751 calls and 47,246 ms
+            // inside them, 46.6 us per glyph). The run is flushed at the entry of every other submission and at every
+            // group/pass/frame boundary, which is what makes the coalescing order-safe. A backend that cannot take the
+            // append (no run, a matrix change, a stall) falls back to the per-glyph submission below, unchanged.
+            boolean appended = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    && vulkan.celtium$fontAppend(format, stride, formatId, vertexAddress, MAX_VERTICES, drawMode);
+            taken = appended
+                    || backend.submitImmediateBatch(format, stride, formatId, vertexAddress, MAX_VERTICES, drawMode);
         } catch (Throwable error) {
             refuse("submit-threw", String.valueOf(error));
             return;
@@ -602,7 +610,22 @@ public final class CeltiumFontGlyphCapture {
         return "windows=" + windows + " defaultWindows=" + defaultWindows + " unicodeWindows=" + unicodeWindows
                 + " bridgeWindows=" + bridgeWindows + " quads=" + quads + " submitted=" + submitted
                 + " accepted=" + accepted + " refused=" + refused + " submitMillis=" + (submitNanos / 1000000L)
-                + " reasons=" + REFUSALS;
+                + " reasons=" + REFUSALS + " " + batchSummary();
+    }
+
+    /**
+     * {@return the backend's account of the coalesced runs}, so "batched" is observable in the same line as the
+     * per-glyph cost it was meant to remove (task-59): runs started, quads appended, and how each run went out - by an
+     * intervening submission, at a boundary, or on a state change.
+     */
+    private static String batchSummary() {
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            return vulkan.celtium$fontBatchSummary();
+        }
+        return "fontRunsStarted=0 fontQuadsAppended=0 flushedIntervening=0 flushedBoundary=0 flushedStateChange=0"
+                + " appendMillis=0 (no coalescing backend)";
     }
 
     /**

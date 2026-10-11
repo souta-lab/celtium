@@ -133,6 +133,16 @@ public final class VulkanContext {
      * how often the unbounded path was taken; the frame path never uses it.
      */
     public static int bootstrapQueueWaits;
+    /**
+     * How long those waits took, so a session can say whether the unbounded path is where a stall or a spike comes
+     * from instead of only how often it was taken: total and worst, in milliseconds.
+     * <p>
+     * The prime suspect for the "GPU stalled" latch is a wait that never returned within the bound the frame path
+     * uses (5 s). The bootstrap waits have no bound at all, so their distribution is the measurement that says
+     * whether the unbounded path is a hazard in practice or only in principle.
+     */
+    public static long bootstrapQueueWaitMillis;
+    public static long bootstrapQueueWaitWorstMillis;
     /** Submissions whose fence did not signal within the bound: a stall, counted so it can be read after the fact. */
     public static int submitTimeouts;
     /**
@@ -324,7 +334,10 @@ public final class VulkanContext {
         // Unbounded by the API: vkQueueWaitIdle takes no timeout. Counted rather than described, so the claim that
         // the frame path is bounded and only this bootstrap path is not can be read off a run instead of argued from
         // the call sites (audit N14). The frame path waits on its own fence with a bound, and reports a stall by name.
+        // Timed as well as counted (task-60): the distribution is what says whether this path is a hazard in practice.
+        long waitStarted = System.nanoTime();
         check(vkQueueWaitIdle(this.queue), "vkQueueWaitIdle(beginCommands)");
+        celtium$recordBootstrapWait(waitStarted);
         VkCommandBuffer commandBuffer;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandBufferAllocateInfo allocate = VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
@@ -562,12 +575,14 @@ public final class VulkanContext {
                         .pCommandBuffers(stack.pointers(commandBuffer));
                 check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), "vkQueueSubmit");
                 bootstrapQueueWaits++;
+                long waitStarted = System.nanoTime();
                 // Audit B04, the bootstrap half. Once the submit succeeded the queue owns the command buffer, and the
                 // only thing that makes freeing it correct is a queue wait that confirms the queue is idle. A wait
                 // that returns VK_ERROR_DEVICE_LOST does confirm that (the device is gone; the spec treats it as
                 // SUCCESS-equivalent for pending/in-use purposes); anything else does not, and the buffer is then
                 // quarantined instead of freed.
                 int idle = vkQueueWaitIdle(this.queue);
+                celtium$recordBootstrapWait(waitStarted);
                 if (idle == VK_SUCCESS || idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                     if (idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                         submitDeviceLost++;
@@ -681,9 +696,20 @@ public final class VulkanContext {
      * <p>
      * Render thread only.
      */
+    /** Adds one bootstrap queue wait's duration to the totals task-60 reports; called from both wait sites. */
+    private static void celtium$recordBootstrapWait(long startedNanos) {
+        long millis = (System.nanoTime() - startedNanos) / 1_000_000L;
+        bootstrapQueueWaitMillis += millis;
+        if (millis > bootstrapQueueWaitWorstMillis) {
+            bootstrapQueueWaitWorstMillis = millis;
+        }
+    }
+
     public void delete() {
         if (this.device != null) {
             System.out.println("[Celtium] CELTIUM_WAIT_CENSUS bootstrapQueueWaits=" + bootstrapQueueWaits
+                    + " bootstrapQueueWaitMillis=" + bootstrapQueueWaitMillis
+                    + " bootstrapQueueWaitWorstMillis=" + bootstrapQueueWaitWorstMillis
                     + " submitTimeouts=" + submitTimeouts
                     + " " + waitOutcomeSummary()
                     + " quarantinedCommandBuffers=" + this.quarantinedCommandBuffers.size()

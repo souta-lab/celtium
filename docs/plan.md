@@ -160,6 +160,15 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   `publishedFrameTexturesSkippedForAttach` で数え、最初の1件は理由つきで記録する（黙って遷移をやめる規則は観測できないため）。
 - 受入: 現行 jar の terrain leg で `validationMessageCount=0`（leg `r12-vuid-fix` を queue）。
 
+**実測（leg `r12-splash`・compositor 連番 capture・AMD RX 6400）**: この leg の jar は `passAttachedColorImage` を含む（`javap` で確認）。
+`validationMessageCount=10` だが **`00900` クラスは 0 件**（残りは全て proj-channel の作業中 light-map:
+`vkCmdDrawIndexed(): … variable "u_Lightmap" … has never been updated via vkUpdateDescriptorSets()`）＝
+**00900 は修正が効いた**。picture は PASSED・`worldTicksAtEnd=213`。
+同じ leg の compositor frame（0.5 s 間隔・160枚）: **起動から約30秒は完全な黒（mean 0,0,0・1色）→約10秒 真っ白（255,255,255・1色）→
+9色の暗い茶 → 世界（9628色）**。＝**起動時のロード画面は依然として何も出ていない**（ユーザーの報告どおり）。
+この leg の jar は 2引数 `celtium$noteBindSize`（＝ロード画面修正前）なので、これは修正前の「before」である。
+修正後の再測（leg `r12-splash2`・現行 jar＝`celtium$noteBindSize(int,int,boolean)` と `pruneStalePublishedNames` を含む）を queue した。
+
 ### (2) ロード画面が出ない＝frame 0 で splash の composite batch が drop されていた
 
 - ユーザーのセッション（20:37:47・起動直後）の実測:

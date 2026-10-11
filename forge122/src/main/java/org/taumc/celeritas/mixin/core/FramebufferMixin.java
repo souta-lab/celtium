@@ -39,8 +39,14 @@ public abstract class FramebufferMixin {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                // Which framebuffer this is decides whether a size difference means "the shared images are being
+                // replaced". The game binds its own differently-sized framebuffers on purpose (the loading screen's is
+                // 468x1018 against the window's 854x480), and treating those as a replacement made the next ordering
+                // flush drop the pending groups - the splash's own composite among them.
+                net.minecraft.client.Minecraft owner = net.minecraft.client.Minecraft.getMinecraft();
+                boolean main = owner != null && owner.getFramebuffer() == self;
                 ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current)
-                        .celtium$noteBindSize(self.framebufferWidth, self.framebufferHeight);
+                        .celtium$noteBindSize(self.framebufferWidth, self.framebufferHeight, main);
             }
         } catch (RuntimeException | LinkageError ignored) {
             // A hint must never break the frame.

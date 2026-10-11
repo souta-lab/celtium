@@ -150,6 +150,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int publishedFrameTexturesCreated;
     private int publishedFrameTexturesUnpublished;
     /**
+     * The colour image the render pass being begun attaches, recorded when the framebuffer is chosen.
+     * <p>
+     * A published name that stands for this image must NOT be moved to the sampling layout before the pass begins. The
+     * pass declares {@code GENERAL} for attachment 0, so the transition to {@code SHADER_READ_ONLY_OPTIMAL} recorded
+     * immediately before {@code vkCmdBeginRenderPass} left the image in a layout the pass does not declare - which is
+     * exactly {@code VUID-vkCmdBeginRenderPass-initialLayout-00900}, measured as 20 messages per run and about one per
+     * frame after the first seconds, on a scene with no post chain. The published names and the attachment are the same
+     * image ({@code celtium$syncPublishedChainOutput} keeps only the names that stand for the attached pair image), so
+     * the sampling-side transition at that site was moving the image the pass was about to attach.
+     */
+    private long passAttachedColorImage;
+    /** How many published names the attach-side rule kept out of the sampling transition. */
+    private int publishedFrameTexturesSkippedForAttach;
+    /** How many published names were dropped because their image was no longer the pair's live image. */
+    private int publishedFrameTexturesStalePruned;
+    /** How many published names were re-pointed at the pair's new image instead of being dropped. */
+    private int publishedFrameTexturesRepublished;
+    /**
      * The frame in which each pair's images have been cleared, so the clear happens once per frame and not per
      * window. One per pair: two pairs are two images, and a frame that cleared one of them says nothing about the
      * other - which is exactly the mistake that would make the second window of a frame erase the first's work.
@@ -1101,6 +1119,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
     /**
+     * Window flushes that threw, and the batches they had to drop. Bounded to the frame they happened in since
+     * task-60: the count and the text are what let a reader tell a refused window from a device that stopped.
+     */
+    private int windowFlushFailures;
+    private long windowFlushFailureFrame = -1L;
+    private long windowFlushDroppedBatches;
+    private String lastWindowFlushFailure = "none";
+    /**
+     * Ordering flushes that threw ({@code flushPendingBeforeGlDraw}'s catch), with their text and the batches they had
+     * to drop. Bounded to the frame they happened in, for the same reason as the window-flush counters: this catch used
+     * to latch the renderer for the whole session, and the user's loading screen was where it did.
+     */
+    private int orderingFlushFailures;
+    private long orderingFlushDroppedBatches;
+    private String lastOrderingFlushFailure = "none";
+    /** Where the latch was set from, so a report names the origin instead of only the state (task-60). */
+    private String stallOrigin = "none";
+    /**
      * True from the moment a framebuffer replacement is announced until the shared images match the new size again.
      * <p>
      * A resize replaces the game framebuffer, and every ordering flush during that window waits on a device that is in
@@ -1127,14 +1163,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.gpuStalled = true;
             StackTraceElement[] stack = new Throwable().getStackTrace();
             String where = "unknown";
+            // The first frame outside this class says which caller's path reached the latch; the first frame inside
+            // it says which of the ten noteStalled() sites did. Recording only the outer one hid the site - measured
+            // on the loading screen's font path, where the outer frame was the font submit and the site was not the
+            // window-flush catch it was first read as.
+            String site = "unknown";
             for (StackTraceElement frame : stack) {
-                if (!frame.getClassName().startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")) {
-                    where = frame.getClassName() + '.' + frame.getMethodName() + ':' + frame.getLineNumber();
-                    break;
+                if (frame.getClassName().startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")) {
+                    if (site.equals("unknown") && !"noteStalled".equals(frame.getMethodName())) {
+                        site = frame.getMethodName() + ':' + frame.getLineNumber();
+                    }
+                    continue;
                 }
-                where = frame.getMethodName() + ':' + frame.getLineNumber();
+                where = frame.getClassName() + '.' + frame.getMethodName() + ':' + frame.getLineNumber();
+                break;
             }
-            System.out.println("[Celtium] CELTIUM_STALL site=" + where + " target=" + this.targetWidth + "x"
+            this.stallOrigin = where + " via " + site;
+            System.out.println("[Celtium] CELTIUM_STALL site=" + where + " latchSite=" + site
+                    + " target=" + this.targetWidth + "x"
                     + this.targetHeight + " frameId=" + this.frameId + " frameTargetNull=" + (this.frameTarget == null)
                     + " presentSkipReason=[" + this.presentSkipReason + "]");
         }
@@ -1208,6 +1254,56 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * failed their depth test while still counting as drawn.
      */
     private int worldPassBoundaryFlushes;
+
+    // ---- the coalesced font glyph batch (task-59) ----------------------------------------------------------------
+    //
+    // 1.12.2's FontRenderer issues one tessellator.draw() per character, so every glyph was one window, one quad and
+    // one submitImmediateBatch call - 1,012,751 of them in the user's session, 47,246 ms inside that call, 46.6 us per
+    // glyph, all of it the per-call constant (state capture, state key, registry lookup, prepareImmediate, group key,
+    // group creation, mesh append) recomputed for four vertices.
+    //
+    // The backend owns the pending run; the font appends to it. Ordering is safe by construction because the run is
+    // flushed at the ENTRY of every other submission and at every group/pass/frame boundary, so held quads are always
+    // appended before anything that came after them - never after. The counters say how each run went out, because a
+    // batching that silently changed ordering is exactly the class of change this project has been bitten by.
+    /**
+     * The batching, <b>off by default</b>: `-Dceltium.font.batching=true` enables it.
+     * <p>
+     * It was on by default and it breaks text: with it on, the menu's button labels, the rotated splash text and the
+     * copyright line render as blocks while the unscaled footer text stays legible; with `-Dceltium.font.batching=false`
+     * every string is legible on the same jar (measured, one flag apart, same build, compositor capture). Adding the
+     * matrix pair to the run's witness did not fix it, so the defect is not the transform alone and the mechanism is
+     * still open. An unverified optimisation that corrupts text is not a default: the flag stays, the code stays, and
+     * the fix lands when the mechanism is named rather than by widening the witness again.
+     */
+    private static final boolean FONT_BATCHING = "true".equalsIgnoreCase(
+            System.getProperty("celtium.font.batching", "false"));
+
+    /** The run's vertices, owned by this backend and grown as needed; the font's own buffer is copied into it. */
+    private java.nio.ByteBuffer pendingFontVertices;
+    private int pendingFontBytesUsed;
+    private int pendingFontVertexCount;
+    private Object pendingFontFormat;
+    private int pendingFontStride;
+    private int pendingFontFormatId;
+    private int pendingFontDrawMode;
+    /** The cheap state witnesses a run was started with: a change in any of them flushes it through the normal path. */
+    private int pendingFontTexture = -1;
+    private long pendingFontColorBits;
+    private boolean pendingFontAlphaTest;
+    private float pendingFontAlphaRef;
+    private boolean pendingFontActive;
+    /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
+    private final float[] pendingFontProjection = new float[16];
+    private final float[] pendingFontModelView = new float[16];
+    /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
+    private int fontBatchesFlushedIntervening;
+    private int fontBatchesFlushedBoundary;
+    private int fontBatchesFlushedStateChange;
+    /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
+    private long fontQuadsAppended;
+    private long fontBatchesStarted;
+    private long fontAppendMillis;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
@@ -3257,9 +3353,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * failing marks the device stalled - permanently, by design, since nothing clears that flag. Measured: one mid-run
      * resize froze the present path (presentedFromVulkan stuck at 355 while the same duration without a resize reached
      * 785). There is no ordering to preserve either: the previous framebuffer's contents have already been presented.
+     * <p>
+     * Only the <b>main</b> framebuffer can replace the shared images. The hint used to fire for every framebuffer whose
+     * size differed, and the game binds framebuffers of other sizes on purpose - the vanilla loading screen's own
+     * framebuffer is 468x1018 against the window's 854x480 - so the flag was set while nothing was being replaced and
+     * the next ordering flush <b>dropped the pending groups</b> instead of drawing them
+     * ({@code CELTIUM_REPLACE_DROP batches=1 target=854x480 frameId=0}, measured on the splash's own composite batch at
+     * startup). That drop is what kept the loading screen off the window. The caller says which framebuffer it is.
      */
-    public void celtium$noteBindSize(int width, int height) {
-        if (this.frameTarget != null && !this.frameTarget.matches(width, height)) {
+    public void celtium$noteBindSize(int width, int height, boolean mainFramebuffer) {
+        if (mainFramebuffer && this.frameTarget != null && !this.frameTarget.matches(width, height)) {
             this.framebufferReplacing = true;
         }
     }
@@ -3358,6 +3461,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void endWorldPass() {
+        // Pass boundary for the font batching (task-59): a held glyph run belongs to the pass it was started in, so it
+        // goes out here rather than being appended to whatever the next pass submits.
+        celtium$flushPendingFontBatch("boundary");
         this.worldPassActive = false;
         // The world-to-GUI ordering rule (task-14/37). A group offered inside the world pass tests against the depth
         // the terrain pass wrote, and that depth is only valid until the GUI stage draws. One of the GUI stage's quads
@@ -3407,6 +3513,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void captureWorldSnapshot() {
+        // Frame boundary for the font batching (task-59): a held run must not survive into the next frame.
+        celtium$flushPendingFontBatch("boundary");
         // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
         // that is per frame - the window budget, these counters - is reset here and nowhere else.
         if (this.countersFrameId >= 0) {
@@ -3552,6 +3660,162 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return this.immediateBatchesOffered;
     }
 
+    /**
+     * Appends one font glyph quad to the backend-owned pending run (task-59), instead of submitting it on its own.
+     * <p>
+     * The run is flushed before anything that came after it can be submitted - at the entry of
+     * {@link #submitImmediateBatch}, at every group/pass/frame boundary, and when one of the cheap state witnesses
+     * changes - so a held quad is always appended before later content, never after it. The witnesses are the values
+     * that can differ between two glyphs of a string without a matrix change: the bound texture, the current colour,
+     * the alpha test and its reference, the format/stride/mode. A matrix change is not batched at all: the normal path
+     * captures the matrices and the next glyph starts a new run, which keeps the run's state identical to what the
+     * first quad of the run would have been submitted with.
+     *
+     * @return whether the quad was appended; false means the caller must submit it through the normal path
+     */
+    public boolean celtium$fontAppend(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
+                                      int vertexCount, int drawMode) {
+        long started = System.nanoTime();
+        try {
+            if (!FONT_BATCHING) {
+                // The one-flag control: with batching off every glyph goes back to its own submitImmediateBatch call,
+                // so a crash or a picture change can be attributed to the coalescing rather than to the tree.
+                return false;
+            }
+            if (vertexAddress == 0L || vertexCount <= 0 || vertexStride <= 0) {
+                return false;
+            }
+            if (this.gpuStalled || this.matricesDirty || !this.currentRenderTargetIsMain) {
+                // The normal path owns the capture (matrices, stall handling, target routing); a run is only started
+                // from a state that has already been captured.
+                return false;
+            }
+            int texture = this.immediateState.texture2dEnabled()
+                    ? this.immediateState.boundTextureName() : whiteTextureId();
+            long colourBits = celtium$fontColourBits();
+            boolean alphaTest = this.immediateState.alphaTestEnabled();
+            float alphaRef = this.immediateState.alphaFuncReference();
+            if (this.pendingFontActive
+                    && !celtium$fontRunMatches(formatId, vertexStride, drawMode, texture, colourBits, alphaTest,
+                            alphaRef)) {
+                celtium$flushPendingFontBatch("state-change");
+            }
+            if (!this.pendingFontActive) {
+                this.pendingFontFormat = vertexFormat;
+                this.pendingFontStride = vertexStride;
+                this.pendingFontFormatId = formatId;
+                this.pendingFontDrawMode = drawMode;
+                this.pendingFontTexture = texture;
+                this.pendingFontColorBits = colourBits;
+                this.pendingFontAlphaTest = alphaTest;
+                this.pendingFontAlphaRef = alphaRef;
+                System.arraycopy(this.glProjection, 0, this.pendingFontProjection, 0, 16);
+                System.arraycopy(this.glModelView, 0, this.pendingFontModelView, 0, 16);
+                this.pendingFontBytesUsed = 0;
+                this.pendingFontVertexCount = 0;
+                this.pendingFontActive = true;
+                this.fontBatchesStarted++;
+            }
+            int bytes = vertexCount * vertexStride;
+            celtium$ensurePendingFontCapacity(this.pendingFontBytesUsed + bytes);
+            long destination = org.lwjgl.system.MemoryUtil.memAddress(this.pendingFontVertices, 0)
+                    + this.pendingFontBytesUsed;
+            // Copied, not aliased: the font's buffer is refilled for the next glyph.
+            org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, destination, bytes);
+            this.pendingFontBytesUsed += bytes;
+            this.pendingFontVertexCount += vertexCount;
+            this.fontQuadsAppended++;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.immediateLastRefusal = "the font run could not take a quad: " + error;
+            return false;
+        } finally {
+            this.fontAppendNanos += System.nanoTime() - started;
+        }
+    }
+
+    private long fontAppendNanos;
+
+    /** The current colour as the four float bits, packed into one long: the run's colour witness. */
+    private long celtium$fontColourBits() {
+        return ((long) Float.floatToRawIntBits(this.immediateState.colorRed()) << 48)
+                | ((long) (Float.floatToRawIntBits(this.immediateState.colorGreen()) & 0xFFFFL) << 32)
+                | ((long) (Float.floatToRawIntBits(this.immediateState.colorBlue()) & 0xFFFFL) << 16)
+                | (Float.floatToRawIntBits(this.immediateState.colorAlpha()) & 0xFFFFL);
+    }
+
+    private boolean celtium$fontRunMatches(int formatId, int stride, int drawMode, int texture, long colourBits,
+                                           boolean alphaTest, float alphaRef) {
+        // The matrix pair is part of the witness, exactly as it is for the normal path's group key (see the
+        // projection/modelView comparison in the append path): a run that spans a matrix change is drawn with one
+        // matrix for all of its quads. Leaving it out was measured as the garbled menu - the button labels, the rotated
+        // splash text and the copyright line came out as blocks while the unscaled footer text stayed legible, because
+        // the scaled and rotated draws were merged into a run opened under a different transform.
+        return this.pendingFontFormatId == formatId && this.pendingFontStride == stride
+                && this.pendingFontDrawMode == drawMode && this.pendingFontTexture == texture
+                && this.pendingFontColorBits == colourBits && this.pendingFontAlphaTest == alphaTest
+                && Float.compare(this.pendingFontAlphaRef, alphaRef) == 0
+                && java.util.Arrays.equals(this.pendingFontProjection, this.glProjection)
+                && java.util.Arrays.equals(this.pendingFontModelView, this.glModelView);
+    }
+
+    private void celtium$ensurePendingFontCapacity(int bytes) {
+        java.nio.ByteBuffer buffer = this.pendingFontVertices;
+        if (buffer != null && buffer.capacity() >= bytes) {
+            return;
+        }
+        int capacity = Math.max(4096, Integer.highestOneBit(Math.max(1, bytes)) * 2);
+        java.nio.ByteBuffer grown = org.lwjgl.system.MemoryUtil.memAlloc(capacity);
+        if (buffer != null) {
+            org.lwjgl.system.MemoryUtil.memCopy(org.lwjgl.system.MemoryUtil.memAddress(buffer, 0),
+                    org.lwjgl.system.MemoryUtil.memAddress(grown, 0), this.pendingFontBytesUsed);
+            org.lwjgl.system.MemoryUtil.memFree(buffer);
+        }
+        this.pendingFontVertices = grown;
+    }
+
+    /**
+     * Sends the pending run out through the normal submission path, and counts how it went: an intervening submission,
+     * a group/pass/frame boundary, or a state change. The run is marked inactive <em>before</em> the submission so the
+     * submission's own entry flush cannot see it again.
+     */
+    private void celtium$flushPendingFontBatch(String how) {
+        if (!this.pendingFontActive) {
+            return;
+        }
+        Object format = this.pendingFontFormat;
+        int stride = this.pendingFontStride;
+        int formatId = this.pendingFontFormatId;
+        int drawMode = this.pendingFontDrawMode;
+        int count = this.pendingFontVertexCount;
+        long address = org.lwjgl.system.MemoryUtil.memAddress(this.pendingFontVertices, 0);
+        this.pendingFontActive = false;
+        this.pendingFontBytesUsed = 0;
+        this.pendingFontVertexCount = 0;
+        if ("intervening".equals(how)) {
+            this.fontBatchesFlushedIntervening++;
+        } else if ("boundary".equals(how)) {
+            this.fontBatchesFlushedBoundary++;
+        } else {
+            this.fontBatchesFlushedStateChange++;
+        }
+        try {
+            submitImmediateBatch(format, stride, formatId, address, count, drawMode);
+        } catch (RuntimeException | LinkageError error) {
+            this.immediateLastRefusal = "the coalesced font run could not be submitted: " + error;
+        }
+    }
+
+    /** The font batching's own census, for the report: how much was coalesced and how each run went out. */
+    public String celtium$fontBatchSummary() {
+        return "fontRunsStarted=" + this.fontBatchesStarted
+                + " fontQuadsAppended=" + this.fontQuadsAppended
+                + " flushedIntervening=" + this.fontBatchesFlushedIntervening
+                + " flushedBoundary=" + this.fontBatchesFlushedBoundary
+                + " flushedStateChange=" + this.fontBatchesFlushedStateChange
+                + " appendMillis=" + (this.fontAppendNanos / 1000000L);
+    }
+
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
     }
@@ -3605,6 +3869,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     public boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                         int vertexCount, int drawMode) {
+        // The entry flush of the font batching (task-59): anything submitted while a glyph run is held means the run
+        // came before this batch, so it goes out now - before this one is appended. This is the whole ordering
+        // argument; without it a held quad would land after content that vanilla drew before it.
+        celtium$flushPendingFontBatch("intervening");
         int refusedFormat = Integer.getInteger("celtium.vulkan.refuseImmediateFormat", -1).intValue();
         if (refusedFormat >= 0 && formatId == refusedFormat) {
             // Isolation switch: which family a wrong part of the picture belongs to, asked by removing one family at
@@ -4339,11 +4607,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
                 try { flushImmediateWindow(); }
                 catch (RuntimeException | LinkageError error) {
-                    this.noteStalled();
+                    // Bounded, not latched (task-60). This catch used to call noteStalled(), which stops the renderer
+                    // for the rest of the session: measured on the loading screen's font path at frame 0, where the
+                    // latch then refused 678 of 723 draws and every later composite. A latch is only right for a
+                    // device that has genuinely stopped - and that path is the wait timeout, which still latches. A
+                    // window flush that throws is bounded to the window it belongs to: its batches are dropped and
+                    // counted, the frame is abandoned, and the next frame tries again.
+                    this.windowFlushFailures++;
+                    this.lastWindowFlushFailure = describe(error);
+                    this.windowFlushFailureFrame = this.frameId;
+                    int dropped = 0;
+                    for (ImmediateGroup group : this.immediateGroups) {
+                        dropped += group.batches;
+                    }
+                    this.windowFlushDroppedBatches += dropped;
+                    this.immediateGroups.clear();
+                    this.pendingImmediateIndices = 0;
                     // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
-                    // abandoning it keeps the next beginFrame() from reporting an open frame instead of the stall.
+                    // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
                     this.frameTarget.abandonFrame("immediate window submit failure");
-                    record("accepted geometry retained after window failure: " + describe(error));
+                    record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
+                            + "); dropped " + dropped + " accepted batches, the next frame retries"
+                            + " (windowFlushFailures=" + this.windowFlushFailures + ")");
                 }
             }
             if (this.immediateBatchesOffered % 500 == 0 && VulkanDiagnostics.enabled()) {
@@ -5056,23 +5341,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.actualFlushWorstNanos = tookNanos;
             }
         } catch (RuntimeException | LinkageError error) {
-            this.noteStalled();
-            // The ordering operation stops here and the accepted batches cannot be drawn: the device is stalled and
-            // their original OpenGL draws were cancelled when they were accepted, so there is no fallback to hand them
-            // back to. Rethrowing reached Minecraft's render loop and killed the client on the crash screen - the
-            // injected idle failure measured exit 255 with no report at all. The loss is counted and named instead, so
-            // the run ends with a verdict that says the terrain is not verified (audit: count every drop rather than
-            // claim a draw that did not happen).
+            // Bounded, not latched - the same rule the window-append catch follows (task-60). An exception in an ordering
+            // flush is not a device that has stopped, and latching here is what the user felt: their own session latched
+            // at frame 0 on the loading screen's font path (`CELTIUM_STALL site=…CeltiumFontGlyphCapture.submit:455`),
+            // after which every draw was refused for the rest of the run (79 "the GPU stalled" lines) and the window
+            // never left the loading dirt. The batches this flush held cannot be handed back - their OpenGL draws were
+            // cancelled when they were accepted - so they are counted and dropped and the next frame tries again. The
+            // latch stays reachable from the wait-timeout path, which is where a device that has genuinely stopped is
+            // detected.
+            this.orderingFlushFailures++;
+            this.lastOrderingFlushFailure = describe(error);
             int dropped = 0;
             for (ImmediateGroup group : this.immediateGroups) {
                 dropped += group.batches;
             }
-            this.stalledGeometryDrops++;
-            this.stalledGeometryDroppedBatches += dropped;
+            this.orderingFlushDroppedBatches += dropped;
             this.immediateGroups.clear();
             this.pendingImmediateIndices = 0;
-            record("flush refused after failure: dropped " + dropped + " accepted batches ("
-                    + this.stalledGeometryDroppedBatches + " total): " + describe(error));
+            record("ordering flush failed at frame " + this.frameId + ", its " + dropped
+                    + " accepted batches were dropped and the next frame retries (orderingFlushFailures="
+                    + this.orderingFlushFailures + "): " + describe(error));
         }
     }
 
@@ -5183,9 +5471,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.frameTarget.endFrame();
                     }
                     if (attempt == 1) {
-                        this.noteStalled();
+                        // Bounded, not latched (task-60). Two failed flushes of one window are the window's problem,
+                        // not evidence that the device stopped: the wait counters of the leg this was measured on
+                        // read submitTimeouts=0 and a 6 ms worst bootstrap wait, and no fence timeout was recorded.
+                        // The window's groups are dropped and counted, the frame is abandoned, and the next frame
+                        // tries again. gpuStalled stays reachable from the wait-timeout paths, which is where a
+                        // device that has genuinely stopped is detected, and stallOrigin names that origin separately.
+                        this.windowFlushFailures++;
+                        this.lastWindowFlushFailure = describe(error);
+                        this.windowFlushFailureFrame = this.frameId;
+                        int dropped = 0;
+                        for (ImmediateGroup group : this.immediateGroups) {
+                            dropped += group.batches;
+                        }
+                        for (ImmediateGroup group : this.recordedImmediateGroups) {
+                            dropped += group.batches;
+                        }
+                        this.windowFlushDroppedBatches += dropped;
+                        this.immediateGroups.clear();
+                        this.recordedImmediateGroups.clear();
+                        this.pendingImmediateIndices = 0;
                         this.frameTarget.abandonFrame("accepted geometry retained");
-                        throw new IllegalStateException("accepted geometry retained; renderer must be rebuilt", error);
+                        record("window flush failed twice at frame " + this.frameId + " ("
+                                + this.lastWindowFlushFailure + "); dropped " + dropped
+                                + " accepted batches, the next frame retries (windowFlushFailures="
+                                + this.windowFlushFailures + ")");
+                        return;
                     }
                     this.immediateRetryCount++;
                     record("retrying unsubmitted immediate window: " + describe(error));
@@ -5666,6 +5977,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // and not a skip rule: both streams are still drawn, each into an image of its own.
         boolean chainIdentity = this.currentRenderTarget != 0L;
         GllessFrameTarget offTarget = this.currentRenderTargetIsMain ? null : offTargetTarget();
+        // The image this pass attaches, so the sampling-side transition below can leave it alone. Default is the frame
+        // image, which is what both the plain path and the fallback path attach.
+        this.passAttachedColorImage = this.frameTarget.colorImage();
         if (offTarget != null) {
             try {
                 if (chainIdentity) {
@@ -5701,6 +6015,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.chainPairClears++;
                     }
                     framebuffer = ensureChainPairFramebuffer(renderPass);
+                    this.passAttachedColorImage = offTarget.chainPairColorImage();
                     // The game's own framebuffer whose draws are landing in this pair: its colour texture name is what
                     // the game composites with, and under GL-less that texture has an extent and no pixels (the stub's
                     // glTexImage2D with a null pointer records the size and no data). Publishing the pair's image under
@@ -5724,6 +6039,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.defaultPairClears++;
                     }
                     framebuffer = ensureOffTargetFramebuffer(renderPass);
+                    this.passAttachedColorImage = offTarget.offTargetColorImage();
                 }
             } catch (RuntimeException | LinkageError error) {
                 this.offTargetPassFailures++;
@@ -5776,6 +6092,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
     private void closeCurrentImmediateGroup() {
+        // Group boundary for the font batching (task-59): a held run is closed out through the normal path here, so it
+        // cannot be appended to a group that opens after it.
+        celtium$flushPendingFontBatch("boundary");
         if (this.currentImmediateMesh != null && this.currentGroupUsed) {
             float[] projection = new float[16];
             float[] modelView = new float[16];
@@ -5932,6 +6251,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " deviceWaitToken=" + this.deviceWaitToken
                 + " stalledGeometryDrops=" + this.stalledGeometryDrops
                 + " stalledGeometryDroppedBatches=" + this.stalledGeometryDroppedBatches
+                + " stallOrigin=" + (this.stallOrigin == null ? "none" : this.stallOrigin.replace(' ', '_'))
+                + " windowFlushFailures=" + this.windowFlushFailures
+                + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
+                + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
+                + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
+                        : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
+                                Math.min(200, this.lastWindowFlushFailure.length())))
+                // The ordering flush's own bounded catch: the site the user's loading screen latched at before it was
+                // bounded, so the next leg reads whether it still happens and what it throws.
+                + " orderingFlushFailures=" + this.orderingFlushFailures
+                + " orderingFlushDroppedBatches=" + this.orderingFlushDroppedBatches
+                + " lastOrderingFlushFailure=" + (this.lastOrderingFlushFailure == null ? "none"
+                        : this.lastOrderingFlushFailure.replace(' ', '_').substring(0,
+                                Math.min(200, this.lastOrderingFlushFailure.length())))
                 + " batchCallCount=" + batchCallCount
                 + " batchCallMillis=" + (batchCallNanos / 1000000L)
                 + " batchCallWorstMillis=" + (batchCallWorstNanos / 1000000L)
@@ -6091,6 +6424,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
+                + " publishedFrameTexturesCreated=" + this.publishedFrameTexturesCreated
+                + " publishedFrameTexturesUnpublished=" + this.publishedFrameTexturesUnpublished
+                // The attach-side rule's counter: a published name that stands for the image the pass attaches is kept
+                // out of the sampling-side transition, which is the VUID-00900 fix. It must be visible, because a rule
+                // that silently stops transitioning an image is indistinguishable from one that forgot to.
+                + " publishedFrameTexturesSkippedForAttach=" + this.publishedFrameTexturesSkippedForAttach
+                // A name whose image was recreated under it is unpublished at the point of use: a barrier on the freed
+                // handle was measured as a validation error followed by a SIGSEGV inside libvulkan_radeon.
+                + " publishedFrameTexturesStalePruned=" + this.publishedFrameTexturesStalePruned
+                + " publishedFrameTexturesRepublished=" + this.publishedFrameTexturesRepublished
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
                 + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
@@ -8689,12 +9032,102 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.publishedFrameTextures.isEmpty() || this.commandBuffer == null) {
             return;
         }
-        for (VulkanGlTexture published : this.publishedFrameTextures.values()) {
-            if (general) {
-                published.ensureGeneralLayout(this.commandBuffer);
-            } else {
-                published.ensureSampledLayout(this.commandBuffer);
+        celtium$pruneStalePublishedNames();
+        if (this.publishedFrameTextures.isEmpty()) {
+            return;
+        }
+        for (java.util.Map.Entry<Integer, VulkanGlTexture> entry : this.publishedFrameTextures.entrySet()) {
+            // The sampling side must not move the image this pass is about to attach: the pass declares GENERAL for
+            // attachment 0, and the transition to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass is
+            // VUID-vkCmdBeginRenderPass-initialLayout-00900. The attach-side hand-back (the `true` direction) already
+            // moved it to GENERAL for this pass; leaving it there is the whole fix. A batch that samples this same
+            // image inside the pass would be a feedback loop and is not a case this rule has to serve.
+            if (!general && this.passAttachedColorImage != 0L) {
+                Long image = this.publishedFrameImages.get(entry.getKey());
+                if (image != null && image.longValue() == this.passAttachedColorImage) {
+                    this.publishedFrameTexturesSkippedForAttach++;
+                    if (this.publishedFrameTexturesSkippedForAttach == 1) {
+                        record("published name " + entry.getKey() + " stands for the image this pass attaches (0x"
+                                + Long.toHexString(this.passAttachedColorImage) + "); the sampling-side transition"
+                                + " would leave it in SHADER_READ_ONLY under a pass that declares GENERAL, so it is"
+                                + " skipped and the attach-side hand-back keeps it in GENERAL");
+                    }
+                    continue;
+                }
             }
+            if (general) {
+                entry.getValue().ensureGeneralLayout(this.commandBuffer);
+            } else {
+                entry.getValue().ensureSampledLayout(this.commandBuffer);
+            }
+        }
+    }
+
+    /**
+     * Drops every published name whose image is no longer the pair's live image.
+     * <p>
+     * A name is published over the renderer's own image so the game's composite can sample it by the name it binds. That
+     * image is destroyed and replaced when the pair is recreated (a size change, the first real frame after the splash),
+     * and the wrapper then names freed memory. Recording a barrier on it is not a validation warning: the menu leg
+     * measured `vkCmdPipelineBarrier(): pImageMemoryBarriers[0].image Invalid VkImage Object 0x300000000030` and then a
+     * <b>SIGSEGV inside libvulkan_radeon</b> — the driver dereferenced the freed handle. The unpublish-on-recreation rule
+     * already existed ({@code celtium$syncPublishedChainOutput}), but it only ran on the chain-identity branch, so a
+     * frame that samples the name before that branch runs used the stale wrapper. This is the same rule at the point of
+     * use, so a recreated pair cannot be sampled through a name that still points at the old image.
+     */
+    private void celtium$pruneStalePublishedNames() {
+        if (this.publishedFrameTextures.isEmpty()) {
+            return;
+        }
+        GllessFrameTarget offTarget = offTargetTarget();
+        if (offTarget == null) {
+            // Not the GL-less frame target (the bridge configuration keeps its own target type): the published names are
+            // not ours to judge here.
+            return;
+        }
+        long live = offTarget.chainPairColorImage();
+        java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =
+                this.publishedFrameTextures.entrySet().iterator();
+        while (iterator.hasNext()) {
+            java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
+            Long image = this.publishedFrameImages.get(entry.getKey());
+            // A name survives only while the pair still owns the very image it names. `live == 0` means the pair has been
+            // released (teardown, or the release half of a re-creation) and then no published name can be valid: the
+            // first version of this rule kept the names in that case, and the barrier landed on the freed handle - the
+            // measured crash was this method's caller, `ensureSampledLayout` on image 0x300000000030, with the
+            // Java frame `celtium$transitionPublishedFrameTextures` under it.
+            if (image != null && live != 0L && image.longValue() == live) {
+                continue;
+            }
+            // The name's meaning is "the game framebuffer's colour texture, whose pixels the renderer serves from its
+            // pair image". When that image is recreated the name must follow it to the new one, not disappear: a draw
+            // that samples an unpublished name resolves to no view, and the measured consequence was a descriptor with
+            // `VkImageView 0x0` (invalid or destroyed) followed by VK_ERROR_DEVICE_LOST on a plain terrain leg. So the
+            // re-publication happens here, before any barrier could be recorded on the old handle, and the wrapper is
+            // replaced with one standing for the live image.
+            if (live != 0L) {
+                VulkanGlTexture republished = celtium$registry().publishExternalImage(entry.getKey().intValue(), live,
+                        offTarget.chainPairColorView(), this.targetWidth, this.targetHeight);
+                if (republished != null) {
+                    entry.setValue(republished);
+                    this.publishedFrameImages.put(entry.getKey(), Long.valueOf(live));
+                    this.publishedFrameTexturesRepublished++;
+                    continue;
+                }
+            }
+            // No live pair image at all (teardown, or the release half of a re-creation): there is nothing valid to
+            // point the name at, so it is dropped rather than left naming freed memory.
+            celtium$registry().unpublishExternalImage(entry.getKey().intValue());
+            this.publishedFrameImages.remove(entry.getKey());
+            this.publishedFrameTexturesUnpublished++;
+            this.publishedFrameTexturesStalePruned++;
+            if (this.publishedFrameTexturesStalePruned == 1) {
+                record("published name " + entry.getKey() + " named image 0x"
+                        + (image == null ? "unknown" : Long.toHexString(image.longValue()))
+                        + " which is no longer the pair's image (0x" + Long.toHexString(live)
+                        + "); unpublished before any barrier could be recorded on it");
+            }
+            iterator.remove();
         }
     }
 

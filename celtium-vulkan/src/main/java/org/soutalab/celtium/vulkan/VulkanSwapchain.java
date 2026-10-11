@@ -84,7 +84,13 @@ public final class VulkanSwapchain {
     // The request comes from the game's own option (GameSettings.enableVsync) through the Sodium option page's setter,
     // because this module does not compile against Minecraft; no push at all is treated as VSync on, which is
     // Minecraft's own default.
-    private static volatile boolean vsyncRequested = true;
+    // `null` means "nothing has told us yet", which is a state of its own: the policy's own default (VSync on,
+    // Minecraft's default) is what the swapchain is built with, but the FIRST push must always be applied and
+    // logged even when it agrees with that default. Measured on the fixture's video-settings leg: it writes
+    // `gameSettings.enableVsync = false` straight to the field at world launch, so the row's press pushed `true`
+    // and an "is it different from the default" test swallowed it - `changes=0` with no request line, while the
+    // row really had been pressed.
+    private static volatile Boolean vsyncRequested;
     private static final java.util.concurrent.atomic.AtomicLong VSYNC_REQUEST_REVISION =
             new java.util.concurrent.atomic.AtomicLong();
     /** Mode changes asked for through the option, and requested modes the surface could not offer. */
@@ -98,20 +104,23 @@ public final class VulkanSwapchain {
 
     /** Records what the player's VSync option now asks for, from the option page's own setter. */
     public static void setVSyncRequested(boolean enabled) {
-        if (vsyncRequested == enabled) {
+        if (vsyncRequested != null && vsyncRequested.booleanValue() == enabled) {
             return;
         }
-        vsyncRequested = enabled;
+        boolean first = vsyncRequested == null;
+        vsyncRequested = Boolean.valueOf(enabled);
         VSYNC_REQUEST_REVISION.incrementAndGet();
         PRESENT_MODE_CHANGES.incrementAndGet();
         System.out.println("[Celtium] CELTIUM_PRESENT_MODE_REQUEST requested="
                 + (enabled ? "vsync-on(FIFO)" : "vsync-off(MAILBOX|IMMEDIATE)") + " revision="
                 + VSYNC_REQUEST_REVISION.get() + " changes=" + PRESENT_MODE_CHANGES.get()
+                + (first ? " first=true (the option's own value now drives the policy)" : "")
                 + " (the swapchain is rebuilt on the next present)");
     }
 
     public static boolean vsyncRequested() {
-        return vsyncRequested;
+        Boolean requested = vsyncRequested;
+        return requested == null ? true : requested.booleanValue();
     }
 
     /** {@return whether this swapchain was built for a different VSync request than the current one}. */
@@ -1102,7 +1111,7 @@ public final class VulkanSwapchain {
             // fallback named and counted rather than silently ignored.
             String requested;
             String fallback = null;
-            if (vsyncRequested) {
+            if (vsyncRequested()) {
                 requested = "vsync-on(FIFO)";
                 this.presentMode = VK_PRESENT_MODE_FIFO_KHR;
             } else if (mailbox) {
@@ -1123,7 +1132,7 @@ public final class VulkanSwapchain {
                     + " supported=[" + supported + "]" + (fallback == null ? "" : " fallback=[" + fallback + "]")
                     + " fallbacks=" + PRESENT_MODE_FALLBACKS.get()
                     + " changes=" + PRESENT_MODE_CHANGES.get()
-                    + " vsyncOption=" + vsyncRequested + " fifoOffered=" + fifo
+                    + " vsyncOption=" + vsyncRequested() + " pushed=" + (vsyncRequested != null) + " fifoOffered=" + fifo
                     + " size=" + requestedWidth + "x" + requestedHeight;
             System.out.println("[Celtium] CELTIUM_PRESENT_MODE " + presentModeLine);
 

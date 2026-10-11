@@ -3115,6 +3115,14 @@ public final class ValidationClient {
                     // translation key, which is what the first version of this edit mistook it for.
                     mc.gameSettings.clouds = cloudOption;
                 }
+                // The F3 overlay, for the same reason the time and the clouds are pinned: task-59's F3-on vs F3-off
+                // pair needs the overlay really on, and the F3 key cannot be synthesised honestly - so the run sets
+                // the game's own field and the report says it was enabled through the field. Default = leave the
+                // game's value alone, so no existing leg or calibration key moves.
+                String debugOption = System.getProperty("celtium.validation.showDebugInfo", "");
+                if (!debugOption.isEmpty()) {
+                    mc.gameSettings.showDebugInfo = Boolean.parseBoolean(debugOption);
+                }
                 // Rebuilding every chunk mesh once, after the world time is pinned, answers a question the frame alone
                 // cannot: if the terrain brightens, the light level was baked into the per-vertex colour when the mesh was
                 // built and is never refreshed while that mesh lives, rather than the light map texture being wrong.
@@ -4284,6 +4292,11 @@ public final class ValidationClient {
                 report.addProperty("pinnedWorldTime", PINNED_WORLD_TIME);
                 report.addProperty("worldTimeAtCapture", mc.world.getWorldTime());
                 report.addProperty("renderCloudsRequested", Integer.getInteger("celtium.validation.renderClouds", -1));
+                report.addProperty("showDebugInfoRequested",
+                        System.getProperty("celtium.validation.showDebugInfo", "unset"));
+                report.addProperty("showDebugInfoAtCapture", Boolean.valueOf(mc.gameSettings.showDebugInfo));
+                report.addProperty("showDebugInfoSource",
+                        "set through GameSettings.showDebugInfo (the F3 key cannot be synthesised honestly)");
                 report.addProperty("renderCloudsAtCapture", mc.gameSettings.clouds);
                 // The presented image's mean, taken at the capture so it belongs to the same frame as the screenshot. The
                 // earlier comparison against the screenshot's mean was invalid because the two were sampled at different
