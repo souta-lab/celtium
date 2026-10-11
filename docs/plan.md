@@ -257,6 +257,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.256 **round 62: bind は 42/44/45-48（正しい）・group は 8 を記録＝即時捕捉が stale と確定・menu 経路に layout VUID 2件**
+
+- **1つの console で両側が揃った（Lead の `r61-bind`・`menuHoldTicks=60`）**:
+  ```
+  CELTIUM_UNIT_BIND bind texture=42 (199回) / 44 (200) / 45 (3266) / 46 (3266) / 47 (3266) / 48 (3266)
+  CELTIUM_TEX_COPY_SERVED dest=20 … mean=255,255,255
+  ```
+  ＝**game は panorama PNG（42/44/45-48）を unit 0 に bind している**のに、face の group は **`texture=8`** を記録。
+  ＝**即時 group の texture 捕捉が stale**（registry の名前→id 解決は無実）。修正は**捕捉側**:
+  group を開いた時点の `immediateState.boundTextureName()`（unit 0）を保持したまま、group 内で bound texture が変わった場合に
+  **group を閉じる/再 key する**（`celtium$stateKey` と同じ「状態は group に届く」規則）か、batch ごとに捕捉する。
+- **menu 経路の layout VUID 2件（texture-mirror の `pano-bind`）**: `validationMessageCount=2`・`validationClean=false`・
+  どちらも `VUID-vkCmdDraw-None-09600`（image が GENERAL 期待で SHADER_READ_ONLY_OPTIMAL／その逆）。publish/layout の handshake で、
+  その leg は受入を運べない。次の探索は submit 時点の image handle `0x360000000036` の ledger。
+- **受入までの残り**: (1) 捕捉側の修正、(2) menu 経路の layout 穴。mirror の replay・menu hold・copy 行・bind の正しさは全て確認済み。
+
 ## 0.255 **round 61: 最後の1点は「bind 側の id」— 既存の `CELTIUM_UNIT_BIND` の bound を上げるだけ**
 
 - **確定済み（Lead の `r59-panohold`）**: panorama PNG は **実内容で mirror**（`id=45 firstOpaque=0xff8fa3ff`・`id=46 0xff90a4ff`・
