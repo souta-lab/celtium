@@ -111,6 +111,19 @@ public final class VulkanImmediateTexturePipeline {
     private final java.util.List<Long> descriptorPools = new java.util.ArrayList<Long>();
     private long descriptorSet = VK_NULL_HANDLE;
     private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
+    /**
+     * The live texture key per GL texture name, so a superseded generation can be retired.
+     * <p>
+     * {@code setsByTextureView} is keyed by {@code texture.key()} = view ^ generation, and nothing ever removed an
+     * entry: a generation bump (a mirror refresh, a sampler rebuild, a reallocation) left the old set in the map
+     * forever, so a long session with repeated texture reloads grew the cache without bound and exhausted the finite
+     * pool - every later allocation then failed. The name index is what says which entry a new generation supersedes.
+     */
+    private final java.util.List<Long> insertionOrder = new java.util.ArrayList<Long>();
+    /** Sets retired because a newer generation of the same GL texture replaced them; counted, never silently dropped. */
+    private int descriptorSetsRetired;
+    /** The pool each retired set belongs to, so a completion-gated reset can reach it (OPT-04's release basis). */
+    private final java.util.List<Long> retiredSets = new java.util.ArrayList<Long>();
     /** Sets this pipeline has been given: the one reserved at creation plus every cached texture set. */
     private int descriptorSetsAllocated;
 
@@ -304,6 +317,18 @@ public final class VulkanImmediateTexturePipeline {
      * command in that buffer failed with "commandBuffer must be in the recording state". Returns 0 when the pool is
      * exhausted, so the caller refuses the batch instead of drawing with a stale binding.
      */
+    /**
+     * {@return the descriptor cache's live and retired counts}, so BH-22's acceptance is a number on a normal leg:
+     * a session that drives generation changes must show {@code live} converging to the live-texture count instead of
+     * growing without bound, with {@code retired} accounting for the difference.
+     */
+    public String descriptorSetCensus() {
+        return "descriptorSetsLive=" + this.setsByTextureView.size()
+                + " descriptorSetsRetired=" + this.descriptorSetsRetired
+                + " descriptorSetsAwaitingCompletion=" + this.retiredSets.size()
+                + " descriptorSetsAllocated=" + this.descriptorSetsAllocated;
+    }
+
     /** Cache hits and misses of {@link #descriptorSetFor}, so "the cache is not hitting" is measured, not assumed. */
     public static long DESCRIPTOR_HITS;
     public static long DESCRIPTOR_MISSES;
@@ -393,10 +418,25 @@ public final class VulkanImmediateTexturePipeline {
             return 0L;
         }
         censusTexture(texture);
-        Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
+        long key = texture.key();
+        Long existing = this.setsByTextureView.get(Long.valueOf(key));
         if (existing != null) {
             DESCRIPTOR_HITS++;
             return existing.longValue();
+        }
+        // A miss retires the eldest entries once the cache is at its limit. The key is view ^ generation, so a
+        // generation bump (a mirror refresh, a sampler rebuild, a reallocation) always misses and, before this, always
+        // added: nothing removed an entry, so a long session with repeated texture reloads grew the cache without
+        // bound and exhausted the finite pool. The set itself is not freed here - the command buffers that recorded it
+        // may still be in flight, and OPT-04 makes GPU completion the only basis for releasing a resource - so it goes
+        // on the retired list, counted, for a completion-gated reset.
+        while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && !this.insertionOrder.isEmpty()) {
+            Long eldest = this.insertionOrder.remove(0);
+            Long oldSet = this.setsByTextureView.remove(eldest);
+            if (oldSet != null) {
+                this.descriptorSetsRetired++;
+                this.retiredSets.add(oldSet);
+            }
         }
         // A miss allocates and writes a descriptor set. If this fires on almost every batch, the key (the texture's view)
         // is changing under us and the "cache" is really an allocation per call - which is what the 1.13 ms per
@@ -441,6 +481,14 @@ public final class VulkanImmediateTexturePipeline {
      * and in the report of the run that uses it.
      */
     public static final int DESCRIPTOR_SETS_PER_POOL = descriptorSetsPerPoolProperty();
+    /**
+     * How many live descriptor sets the cache keeps before retiring the eldest.
+     * <p>
+     * BH-22: the cache is keyed by view ^ generation and nothing removed an entry, so a generation bump always added
+     * and the pool's finite capacity was exhausted by a long session's texture reloads. The limit is the pool's own
+     * capacity, so the cache can no longer outgrow the sets that exist for it.
+     */
+    public static final int DESCRIPTOR_CACHE_LIMIT = descriptorSetsPerPoolProperty();
 
     private static int descriptorSetsPerPoolProperty() {
         int value = Integer.getInteger("celtium.vulkan.descriptorPoolSets", 64).intValue();
@@ -549,6 +597,8 @@ public final class VulkanImmediateTexturePipeline {
             this.pipeline = VK_NULL_HANDLE;
         }
         this.setsByTextureView.clear();
+        this.insertionOrder.clear();
+        this.retiredSets.clear();
         // Every pool this pipeline grew, not only the first: a set is alive in whichever pool allocated it, and a pool
         // cannot be destroyed while one of its sets is in use, which is why they share the pipeline's lifetime.
         for (int i = 0; i < this.descriptorPools.size(); i++) {
