@@ -725,6 +725,18 @@ public final class ValidationClient {
     private final int celtium$menuDumpTick =
             Integer.getInteger("celtium.validation.dumpPresentedMenuTick", 0).intValue();
     private boolean celtium$menuDumpRequested;
+    /**
+     * Client ticks to hold the title screen before any world is created, {@code -Dceltium.validation.menuHoldTicks}.
+     * <p>
+     * The panorama's acceptance is a {@code CELTIUM_TEX_COPY_SERVED ... mean=} line, and that copy is made by
+     * {@code GuiMainMenu.renderSkybox} - which needs the menu to stay up long enough to draw its cube faces and run
+     * the copy. Without a hold the world starts first and the copy never runs, so the row cannot be closed either
+     * way. This reuses the hold point the menu-phase resize already uses rather than adding a second scheduler: the
+     * same {@code return} that keeps the world from launching, for a property-driven number of ticks.
+     */
+    private final int celtium$menuHoldTicks =
+            Integer.getInteger("celtium.validation.menuHoldTicks", 0).intValue();
+    private int celtium$menuHeldTicks;
     private final int celtium$resizeMenuHoldTicks =
             Integer.getInteger("celtium.validation.resizeMenuHoldTicks", 40).intValue();
     private boolean celtium$resizeRequested;
@@ -2642,6 +2654,15 @@ public final class ValidationClient {
                     report.addProperty("resizeMenuHeldTicks", Integer.valueOf(celtium$resizeMenuHeldTicks));
                     return;
                 }
+                if (celtium$menuHoldTicks > 0 && celtium$menuHeldTicks < celtium$menuHoldTicks) {
+                    // Hold the menu, and keep holding until the requested number of client ticks has been drawn with it
+                    // up. The dump condition above fires inside this window, and so does GuiMainMenu.renderSkybox's
+                    // glCopyTexSubImage2D - which is the measurement the panorama row is waiting for.
+                    celtium$menuHeldTicks++;
+                    report.addProperty("menuHeldTicks", Integer.valueOf(celtium$menuHeldTicks));
+                    return;
+                }
+                report.addProperty("menuHoldTicksApplied", Integer.valueOf(celtium$menuHeldTicks));
                 launched = true;
                 report.addProperty("scope", "fixed flat world startup, commands and GL framebuffer observation");
                 
