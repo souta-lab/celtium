@@ -282,6 +282,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.299 **round 105: per-image doneSemaphore は「未着手・地図つき」で次 unit へ（proj-channel が runway 不足で辞退・理由を記録）**
+
+- **辞退の理由（proj-channel・記録に値する）**: 受入が **2 leg**（較正済み terrain ＋ **resize**）である以上、
+  **実装と両 leg の検証を同時に持てる runway が無い**。このセッションは**未検証の present 経路変更のコスト**を既に示している
+  （彼らの light-map 半分は入ってすぐ戻った）し、**semaphore の誤りは「大声で失敗する」ではなく deadlock か frame 破壊**になる。
+  ＝**赤いツリーは未実装の row より悪い**。
+- **引き継ぎ地図（全て読了・未編集）**:
+  - **signal の owner**: `GllessFrameTarget.doneSemaphore` は単一 `long`（`:114`）・生成 `:277`・払い出し `doneSemaphore()` `:519`・
+    `consumeDone()` が wait `:349`・破棄 `:1421`・`doneSemaphoreOutstanding`（`:115-116`）は**まさに ownership 規則が置き換える flag 規律**。
+  - **image 数**: `VulkanSwapchain.imageCount()` `:568`。acquired index は **`presentImage` の中に既にある**（`:778` が自前 pool を index している）
+    ＝**同じ関数に写すべきパターンがある**。
+  - **present 経路**: `VulkanTerrainGpuBackend:4903` が `frameTarget.doneSemaphore()` を読み `presentImage(...)`（`:4907`）へ渡し、
+    `VulkanSwapchain:850-851` が signal。**`:4904` の wait semaphore は frame 単位のまま**。
+  - **再サイズ**: `VulkanSwapchain.createSwapchain`（`:1124`・呼び元 `:515`）＋ out-of-date/suboptimal の acquire 経路。
+    frame target に **`presentImageCount(int)`** を足し、**成功した create の後**（と数が変わった acquire の後）に配列を作り直す。
+    ＝**resize leg が踏むのはこの部分**。
+  - **counter**: per-image の signal/wait 数を残し、`doneSemaphoreOutstanding` 系の guard は**それらに置き換えて退役**させる。
+- **commit に持ち込む2文**: (1) 両 leg に `pinSections`、(2) **「consumer が保証されない flush は semaphore を signal しない」**
+  （perf-ring の撤回から。同じ欠陥クラス＝**所有権は consumer が確立するもので producer が仮定するものではない**）。`flushUploads` に触れるなら逐語で入れる。
+- **現状（変わらず緑）**: OPT-09 step(3) は緑の leg で閉止（`validationMessageCount=0`・VUID-00067 0件・`match=true`・29,065 command・checksum 一致）。
+  **per-image ownership は「次の unit」として地図つきで記録**され、ツリーには未検証の編集を入れていない。
+
 ## 0.298 **round 104: per-image present semaphore の修正手順を外部根拠で確定（resize で image 数が変わる場合は再作成が必須）**
 
 - **外部根拠（web 調査）**: [Swapchain Semaphore Reuse](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html) の規則に加え、
