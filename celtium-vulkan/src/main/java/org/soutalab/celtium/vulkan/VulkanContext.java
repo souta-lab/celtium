@@ -145,6 +145,8 @@ public final class VulkanContext {
     public static long bootstrapQueueWaitMillis;
     /** Per-submission fence waits on the bootstrap path: the bounded replacement for the queue-wide idle (BH-27). */
     public static int bootstrapSubmitWaits;
+    public static long bootstrapSubmitWaitMillis;
+    public static long bootstrapSubmitWaitWorstMillis;
     public static long bootstrapQueueWaitWorstMillis;
     /** Submissions whose fence did not signal within the bound: a stall, counted so it can be read after the fact. */
     public static int submitTimeouts;
@@ -586,7 +588,7 @@ public final class VulkanContext {
                     check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit");
                     long waitStarted = System.nanoTime();
                     int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
-                    celtium$recordBootstrapWait(waitStarted);
+                    celtium$recordBootstrapFenceWait(waitStarted);
                     if (waited == VK_SUCCESS) {
                         bootstrapSubmitWaits++;
                     } else if (waited == VK_TIMEOUT) {
@@ -711,6 +713,19 @@ public final class VulkanContext {
      * <p>
      * Render thread only.
      */
+    /**
+     * Adds one bootstrap submission fence wait's duration (BH-27). Kept apart from the queue-wait totals so a report
+     * can say which of the two happened: the queue-wide idle is now zero on the normal path, and these are the
+     * bounded per-submission waits that replaced it.
+     */
+    private static void celtium$recordBootstrapFenceWait(long startedNanos) {
+        long millis = (System.nanoTime() - startedNanos) / 1_000_000L;
+        bootstrapSubmitWaitMillis += millis;
+        if (millis > bootstrapSubmitWaitWorstMillis) {
+            bootstrapSubmitWaitWorstMillis = millis;
+        }
+    }
+
     /** Adds one bootstrap queue wait's duration to the totals task-60 reports; called from both wait sites. */
     private static void celtium$recordBootstrapWait(long startedNanos) {
         long millis = (System.nanoTime() - startedNanos) / 1_000_000L;

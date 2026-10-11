@@ -6378,6 +6378,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapQueueWaits=" + VulkanContext.bootstrapQueueWaits
                 + " bootstrapQueueWaitMillis=" + VulkanContext.bootstrapQueueWaitMillis
                 + " bootstrapQueueWaitWorstMillis=" + VulkanContext.bootstrapQueueWaitWorstMillis
+                + " bootstrapSubmitWaits=" + VulkanContext.bootstrapSubmitWaits
+                + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
+                + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
                 + " gpuStalled=" + this.gpuStalled
                 + " deviceWaitToken=" + this.deviceWaitToken
