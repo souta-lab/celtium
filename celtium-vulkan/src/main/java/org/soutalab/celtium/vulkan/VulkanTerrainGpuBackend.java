@@ -344,6 +344,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge") + " modelMissingMeshes=" + this.modelMissingMeshes
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " " + VulkanDynamicMesh.describeModel()
+                + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
                 + " modelMeshQuads=" + this.modelMeshQuads
                 + " modelMeshFailure=" + this.modelMeshFailure
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
@@ -379,6 +381,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " " + VulkanDynamicMesh.describeModel()
+                + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
                 + " modelMeshQuads=" + this.modelMeshQuads
                 + " modelMeshFailure=" + this.modelMeshFailure
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
@@ -546,13 +550,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             submitCommands();
             submitted = true;
-            if (this.postChainCommitPending) {
-                // The chain's targets are "initialized" only once the buffer carrying their barrier has actually been
-                // submitted: setting that flag at record time is the same class of lie as declaring a layout the image
-                // is not in, so the recording says so here and an abandoned recording re-records its barrier.
-                this.postChain.commitPasses();
-                this.postChainCommitPending = false;
-            }
             this.passSubmissions++;
             if (this.readbackPending) {
 
@@ -782,8 +779,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int boundHandleLogs;
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
     private int chainAdoptions;
-    /** Whether the chain recorded passes whose initialization barrier has not yet been confirmed submitted. */
-    private boolean postChainCommitPending;
+
     /** Cleared before a device-wide wait and set when it returns, so its watchdog can tell a stall from a slow wait. */
     private volatile boolean deviceWaitFinished = true;
     /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
@@ -4443,6 +4439,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
                 + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " " + VulkanDynamicMesh.describeModel()
+                + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
                 + " modelMeshQuads=" + this.modelMeshQuads
                 + " modelMeshFailure=" + this.modelMeshFailure
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
@@ -4730,6 +4728,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (!settleGpu("backend delete")) {
             // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
             return;
+        }
+        // The model meshes belong to this backend and hold buffers this device owns. settleGpu succeeded just above, so
+        // the last submission has completed and nothing more will be recorded: the release is immediate and counted as
+        // teardown, not as a free without a completed wait (audit N02).
+        if (this.modelMeshes != null) {
+            for (VulkanDynamicMesh mesh : this.modelMeshes.values()) {
+                mesh.releaseAfterIdle();
+            }
+            this.modelMeshes.clear();
         }
         // Teardown: the device has been settled above, so anything still retired can be destroyed now.
         int drained = VulkanRetireQueue.flush();
@@ -5884,36 +5891,64 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
-     * Builds a vertex mesh for every captured display list that has one, once each.
+     * Builds a vertex mesh for every captured display list whose geometry changed, and retires the meshes whose lists
+     * did (audit N02).
      * <p>
      * This is the model path's first step: the quads were captured while {@code ModelRenderer} compiled its parts into
      * display lists, and a GL display list is replayed under the current matrix (measured: the same list shows a
      * different translation at compile and replay time and still draws correctly), so the geometry only needs the
      * replay-time matrix. Building the mesh here, on the render thread at a safe point, keeps the {@code callList} hook
      * itself free of allocation. Nothing is drawn yet - the counter says how many lists have a mesh ready.
+     * <p>
+     * The unit of change is a display list's compile generation, not the number of lists in the capture. Every mesh is
+     * stamped with the generation it was built from and is reused exactly as it is while its list's generation is
+     * unchanged, so one new list no longer rebuilds every mesh in the scene and the rebuild cost stops growing with the
+     * list count. A mesh whose generation has moved on - a recompile, a delete, or an id that came back - is retired
+     * through {@link VulkanDynamicMesh#retire()}, which hands its buffers to the renderer's retire queue: they are
+     * destroyed only after a wait that succeeded, never while a command buffer recorded earlier may still name them.
+     * The table is replaced only after the whole build succeeded, so a failure leaves the previous meshes in place, and
+     * the meshes that attempt created are released before it returns.
      */
     private void celtium$buildModelMeshes() {
         if (!MODEL_MESH_BUILD) {
             return;
         }
         int[] ids = org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listIds();
-        if (ids.length == 0) {
-            return;
-        }
-        // Built once per new list rather than once in total: the capture grows as Minecraft compiles the model, and the
-        // first run built the two lists that existed at that moment and never came back for the other ten (measured
-        // modelMeshLists=2, modelMeshQuads=12 of 72 captured quads).
-        if (this.modelMeshes != null && this.modelMeshes.size() >= ids.length) {
+        if (ids.length == 0 && this.modelMeshes == null) {
+            // Nothing captured yet and nothing built: the table stays null, which the report prints as -1 rather than as
+            // a build that found no lists. An empty capture with meshes already built is not this case, because those
+            // meshes' lists are gone and are retired below.
             return;
         }
         java.util.LinkedHashMap<Integer, VulkanDynamicMesh> built =
                 new java.util.LinkedHashMap<Integer, VulkanDynamicMesh>();
-        int quads = 0;
+        java.util.LinkedHashMap<Integer, Integer> builtGenerations =
+                new java.util.LinkedHashMap<Integer, Integer>();
+        java.util.List<VulkanDynamicMesh> superseded = new java.util.ArrayList<VulkanDynamicMesh>();
+        if (this.modelMeshes != null) {
+            for (java.util.Map.Entry<Integer, VulkanDynamicMesh> entry : this.modelMeshes.entrySet()) {
+                int listId = entry.getKey().intValue();
+                VulkanDynamicMesh mesh = entry.getValue();
+                if (mesh.matches(listId, org.soutalab.celtium.vulkan.VulkanModelQuadCapture.generationOf(listId))) {
+                    // Unchanged since it was built: reused as it is, which is the point of the generation identity.
+                    built.put(entry.getKey(), mesh);
+                } else {
+                    // Recompiled, deleted or emptied: the mesh is stale from the moment its list's generation moved and
+                    // must not be drawn again. The retire is queued rather than freed here, so the frames that already
+                    // used these buffers have completed before they are destroyed.
+                    superseded.add(mesh);
+                }
+            }
+        }
         try {
             for (int id : ids) {
                 org.soutalab.celtium.vulkan.VulkanModelQuadCapture.Snapshot snapshot =
                         org.soutalab.celtium.vulkan.VulkanModelQuadCapture.snapshot(id);
                 if (snapshot == null) {
+                    continue;
+                }
+                VulkanDynamicMesh existing = built.get(Integer.valueOf(id));
+                if (existing != null && existing.matches(id, snapshot.generation)) {
                     continue;
                 }
                 VulkanDynamicMesh mesh = new VulkanDynamicMesh(this.context);
@@ -5956,7 +5991,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     mesh.index(base);
                     mesh.index(base + 2);
                     mesh.index(base + 3);
-                    quads++;
                 }
                 // The contract, checked as arithmetic rather than assumed: four vertices and six indices per quad, and
                 // the indices must address vertices this mesh actually holds. A mesh that fails is not drawn.
@@ -5974,29 +6008,58 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (this.modelMeshFailure == null) {
                         this.modelMeshFailure = failure;
                     }
-                    mesh.delete();
+                    // The mesh never reaches the table, so this is a partial build's leftovers: released here rather
+                    // than left for the next rebuild to replace (the audit's N02 failure path).
+                    mesh.discard();
                     continue;
                 }
                 built.put(Integer.valueOf(id), mesh);
+                builtGenerations.put(Integer.valueOf(id), Integer.valueOf(snapshot.generation));
             }
         } catch (RuntimeException | LinkageError error) {
-            // A failure this far out is not attributable to one list, so the previous map stays in place and the
-            // reason is kept for the report rather than leaving the scene with no models at all.
+            // A failure this far out is not attributable to one list, so the previous table stays in place - nothing
+            // above touched it - and the meshes this attempt created are released rather than leaked. Before N02 the
+            // table was replaced at the end and every newly built mesh stayed alive on this path.
             this.modelMeshFailure = String.valueOf(error);
+            for (java.util.Map.Entry<Integer, VulkanDynamicMesh> entry : built.entrySet()) {
+                VulkanDynamicMesh previous = this.modelMeshes == null ? null : this.modelMeshes.get(entry.getKey());
+                if (previous != entry.getValue()) {
+                    entry.getValue().discard();
+                }
+            }
             return;
         }
+        // Committed: the table the scene draws from is replaced in one step, every mesh in it is stamped with the
+        // generation it was built from, and only then are the superseded meshes retired. Stamping after the commit is
+        // what keeps a failed build from leaving a stamped mesh in a table that was never installed.
         this.modelMeshes = built;
+        for (java.util.Map.Entry<Integer, Integer> entry : builtGenerations.entrySet()) {
+            built.get(entry.getKey()).stamp(entry.getKey().intValue(), entry.getValue().intValue());
+        }
+        int quads = 0;
+        for (VulkanDynamicMesh mesh : built.values()) {
+            quads += mesh.indexCount() / 6;
+        }
         this.modelMeshQuads = quads;
+        for (VulkanDynamicMesh mesh : superseded) {
+            mesh.retire();
+        }
         // Printed as well as reported: the report's debug strings are assembled per configuration, and the bridge's
         // report has never carried the model counters (checked across p530-tp, ref-gl, glow-bridge3 and bridge-model,
         // all absent while the GL-less reports carry them). Without a line both configurations emit, "the models did
         // not draw" and "the counters were not collected" look identical - which is exactly the confusion this line
-        // exists to end. Bounded: the build happens when the list count grows, so a handful of lines per run.
-        if (this.modelBuildLogs < 6) {
+        // exists to end. Printed per change, bounded: the first 64 changes one by one and every hundredth after.
+        if (builtGenerations.size() > 0 || !superseded.isEmpty()) {
             this.modelBuildLogs++;
+            if (this.modelBuildLogs <= 64 || this.modelBuildLogs % 100 == 0) {
             System.out.println("[Celtium] CELTIUM_MODEL_BUILD lists=" + built.size() + " quads=" + quads
+                    + " rebuilt=" + builtGenerations.size() + " reused=" + (built.size() - builtGenerations.size())
+                    + " retired=" + superseded.size()
                     + " contractFailures=" + this.modelMeshContractFailures + " failure="
-                    + (this.modelMeshFailure == null ? "none" : this.modelMeshFailure));
+                    + (this.modelMeshFailure == null ? "none" : this.modelMeshFailure)
+                    + " " + VulkanDynamicMesh.describeModel()
+                    + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle());
+            }
         }
     }
 
@@ -6250,6 +6313,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record(reason.toString());
             return false;
         }
+        String unsupplied = this.postChain.unsuppliedInput(passes);
+        if (unsupplied != null) {
+            // N04: the chain reads an image this renderer cannot supply - under the GL bridge that is a real GL
+            // framebuffer no Vulkan image stands for. Refused before the frame opens: nothing is acquired, no
+            // semaphore is signalled, nothing is recorded, so the caller's GL chain runs on an untouched frame.
+            record("post chain refused before the frame opened: " + unsupplied);
+            return false;
+        }
         boolean submitted = false;
         try {
             this.frameTarget.beginFrame();
@@ -6261,8 +6332,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // this frame (the game can render the chain from an image an earlier frame left behind).
                 this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
             }
-            this.postChain.recordPasses(this.commandBuffer, passes);
-            this.postChainCommitPending = true;
+            int chainRecording = this.postChain.recordPasses(this.commandBuffer, passes);
             if (this.publishedChainOutput != null) {
                 // The chain has written the image and the game's composite samples it next, through a descriptor the
                 // immediate pipelines declare as SHADER_READ_ONLY_OPTIMAL. Recorded in the chain's own submission,
@@ -6273,7 +6343,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
             submitCommands();
             submitted = true;
+            // The queue accepted this submission, so the first-use barriers of *this* recording are fact - and only
+            // this recording's: the token names it, so any other submission's success (a terrain pass, the next
+            // frame, a buffer that was reset or abandoned) cannot commit these targets. N05 item 1.
+            this.postChain.commitPasses(chainRecording);
         } catch (RuntimeException | LinkageError error) {
+            VulkanGlTexture.abandonLayoutRecording(this.commandBuffer,
+                    "post chain submission failed: " + describe(error));
             record("post chain submission failed: " + describe(error));
         } finally {
             if (submitted) {
@@ -7080,6 +7156,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
             check(vkBeginCommandBuffer(this.commandBuffer, begin), "vkBeginCommandBuffer");
             this.commandState.begin();
+            // N05(2): bind every foreign-image transition recorded into this buffer to this recording. It becomes
+            // fact only when the submission that carries it is accepted; opening a recording on a handle that still
+            // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
+            VulkanGlTexture.beginLayoutRecording(this.commandBuffer);
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
@@ -7547,6 +7627,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
                         check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
+            // The queue accepted this submission, so the layouts the recording declared into it are now the truth
+            // every wrapper of those images shares. A refused submit throws before this line, leaving the recording
+            // pending for the next beginCommands() to abandon - and the next ensureGeneralLayout/ensureSampledLayout
+            // to re-record.
+            VulkanGlTexture.commitLayoutRecording(this.commandBuffer);
             this.submissionPending = true;
             this.commandState.submitted();
             for (ImmediateGroup group : this.recordedImmediateGroups) {
