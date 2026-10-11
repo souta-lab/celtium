@@ -95,6 +95,33 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.162 **fog の真因（close 時の snapshot）と、原典からの2つの訂正**
+
+### fog（担当 fog-path・測定済み）
+
+fog-on と fog-off の leg が **sky band のどの画素も違わなかった**のに、ゲートは `CELTIUM_SKY_DEGRADED fogEnabled=true fogAvailable=false` を出していた
+（「拒否をやめたゲートは fog が正しいことではない」の実例）。
+
+**機序**: `closeCurrentImmediateGroup()` が fog を group **close 時**に snapshot していた（行列と GL 状態は open 時に取っている）。
+`RenderGlobal.renderSky` は `:1337` で fog を有効化し `:1354` で無効化するため、**dome の group（fog 下で offer され、後に close）は `fog == null`** を持ち、shader の fog 分岐が no-op だった。
+`ImmediateGroup` の javadoc は per-batch capture を主張していたが、実装がそうなっていなかった——**構築順バグと同じ「状態を間違った時点で取る」型**。
+
+修正: `currentGroupFog` を group-open で捕捉（`VulkanTerrainGpuBackend:3789`）、close で使用（`:5303`）、計器 `CELTIUM_FOG_CAPTURE` を追加。
+
+### 私の format 定数の誤り（担当 pipelines が発見）
+
+`TEX_2S` は `EnumType.SHORT` で**表示名は "Short"**。"Unsigned Short" は vanilla が使わない `USHORT`。
+→ `LAYOUT_BLOCK`/`LAYOUT_PARTICLE` が誤り、**BLOCK(id3) と PARTICLE(id5) は表の作成以来ずっと拒否**されていた。
+**「雨がどの census にも現れない」の正体**。unmapped dump が形を名指し: `3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short | size=28 count=4`。
+
+### 原典からの訂正（担当 entity-models）
+
+1. **id 8 は entity/TESR の layout ではない**: `POSITION_TEX_COLOR_NORMAL`(28B, id8) の vanilla の用途は `RenderGlobal.drawWorldBorder`(:1676) と `RenderXPOrb`(:63) のみ。
+   **model/entity の layout は `OLDMODEL_POSITION_TEX_NORMAL`(24B, id9)** で、唯一の利用者は `TexturedQuad.draw`。実測で 228 個到着（捕捉 quad ごとに1つ）——
+   `TexturedQuad.draw` が `Tessellator.draw()` で終わるため、**model 幾何は compile 時に即時パスでも1回描かれる**（replay 時の display list に加えて）。
+2. **living entity は fixed-function lighting では照らされない**: `enableStandardItemLighting` は GUI/item/TESR/dragon/item-frame の経路で呼ばれ、`RenderLivingBase` には呼び出しが無い。
+   living entity が受けるのは unit 1 の lightmap（`EntityRenderer.enableLightmap()`）で、通常経路に `setLightmapTextureCoords` は無い。**TESR は `enableStandardItemLighting` を呼ぶ**（`TileEntityRendererDispatcher:125`）。
+
 ## 0.161 **GUI panel は pipeline の問題だった（texture mirror ではない）——測定で確定**
 
 担当 texture-mirror の測定: **format-6 パイプライン修正が入った jar では panel と slot 背景が GL-less の presented frame に在る**。
