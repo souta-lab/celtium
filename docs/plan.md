@@ -304,6 +304,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.307 **round 113: per-image present semaphore を着地（`cf6c968cd`）— 層あり leg で VUID 0・00067 0・deadlock なし（resize leg と submitSignalOnly leg は未了）**
+
+- **実装（Lead・3ファイル＋interface）**: `GllessFrameTarget` が **成長のみの present-wait semaphore 配列**（`presentDoneSemaphore(int)`・既存を破棄しない）と
+  **最後に signal した handle の記録**（`noteDoneSignalled`）を持ち、**`consumeDone()` はその記録された handle を wait** する。
+  `VulkanSwapchain` は **acquired image index で引いて signal** し、成功後に記録する（`setBridgeTarget` で backend から一度だけ配線）。
+  `FrameImageTarget` に default 実装を追加（配列を持たない実装は frame-close semaphore に fallback）。
+  **frame-close semaphore は frame 単位のまま**（その pair は frame 内で閉じる）。
+- **測定（`r105-perimage`・jar `d464303e`・層あり・`pinSections=60`・150 s）**: **VUID 0 行**・**`pSignalSemaphores-00067` 0 行**・
+  exit 143（`endedBy=time-limit`）＝**deadlock していない**（deadlock なら duration まで進まずハングする）。
+- **途中で赤くなった経緯も記録**: 最初の build は (a) interface に2メソッドが無い、(b) `GllessFrameTarget` への挿入が
+  `@Override public long doneSemaphore()` の**間**に入りクラス構造を壊した、の2点で赤。両方修正して緑。
+  ＝**「赤いツリーは未実装の row より悪い」**の原則どおり、**修正して緑に戻してから commit**した。
+- **未了（正直に・受入の残り2 leg）**: **resize leg**（image 数が変わる場合＝この規則が守る対象）と
+  **`submitSignalOnly` が発火する leg**（第2 producer は frame-close semaphore を signal する）。両 leg に `pinSections`。
+- **地図は §0.299／§0.303／§0.306 が揃い、実装は §0.307 で着地**。残るのは検証の2 leg。
+
 ## 0.306 **round 112: per-image 化の完全な形が判明 — consumer 側（`consumeDone`）も per-image に追従させる必要がある**
 
 - **コード確認（Lead・実装設計）**: present 経路の signal は
