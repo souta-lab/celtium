@@ -120,6 +120,11 @@ public final class VulkanContext {
     public static int bootstrapQueueWaits;
     /** Submissions whose fence did not signal within the bound: a stall, counted so it can be read after the fact. */
     public static int submitTimeouts;
+    /** Command buffers and fences whose submission timed out: never freed while the queue may still own them. */
+    private final java.util.Set<VkCommandBuffer> quarantinedCommandBuffers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<Long> quarantinedFences = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Cleared when a submission times out: a device that stopped making progress gets no further work. */
+    private volatile boolean usable = true;
     public static int submitWithSemaphoresCalls;
     public static int submitWithSemaphoresWaits;
     private VkPhysicalDeviceMemoryProperties memoryProperties;
@@ -397,17 +402,33 @@ public final class VulkanContext {
                     submit.pSignalSemaphores(stack.longs(signalHandles));
                 }
                 check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit(submitWithSemaphores)");
-                // Bounded, and it used to be Long.MAX_VALUE. This is the present path - the swapchain submits with
-                // semaphores every frame - so an unbounded wait here is a hang with no message at all when the device
-                // stops making progress, which is exactly what the audit's N14 asks to have proven rather than
-                // assumed. The timeout matches the backend's frame waits; a timeout is reported by name and the fence
-                // is left alone (never reset, never freed while the queue might still own it).
+                // From here the queue owns the command buffer and the fence. The three outcomes are kept apart,
+                // because the cleanup that is right for one is a validation error for another (audit A02):
+                //
+                //  1. a failure BEFORE the submit - the queue never saw it, so freeing the buffer and destroying the
+                //     fence is correct and is what the finally below does;
+                //  2. the fence signals - the submission completed, so the same cleanup is correct;
+                //  3. the wait times out - the submission may still be executing. Destroying its fence and freeing
+                //     its command buffer while the queue may still read them is exactly what
+                //     VUID-vkDestroyFence-fence-01120 and VUID-vkFreeCommandBuffers-pCommandBuffers-00047 describe.
+                //
+                // The bounded wait itself stays (an unbounded wait on the present path is a hang with no message),
+                // but a timeout no longer throws into the unconditional cleanup. The buffer and the fence are handed
+                // to a quarantine list, the context marks itself unusable so no further work is submitted on a device
+                // that has stopped making progress, and the failure is named.
                 int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
                 if (waited == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                     submitTimeouts++;
+                    quarantine(commandBuffer, fence);
+                    fence = VK_NULL_HANDLE;
+                    commandBuffer = null;
+                    this.usable = false;
                     throw new IllegalStateException("vkWaitForFences(submitWithSemaphores): the submission did not"
-                            + " signal within " + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L) + "s; the device has stopped"
-                            + " making progress (submitWithSemaphores timeouts=" + submitTimeouts + ")");
+                            + " signal within " + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L) + "s. The device has stopped"
+                            + " making progress: the submission's command buffer and fence are quarantined (never"
+                            + " reset, re-recorded, freed or destroyed while the queue may own them), the context is"
+                            + " marked unusable, and no further work is submitted on it"
+                            + " (submitWithSemaphores timeouts=" + submitTimeouts + ")");
                 }
                 check(waited, "vkWaitForFences(submitWithSemaphores)");
             }
@@ -415,8 +436,26 @@ public final class VulkanContext {
             if (fence != VK_NULL_HANDLE) {
                 vkDestroyFence(this.device, fence, null);
             }
-            vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+            if (commandBuffer != null) {
+                vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+            }
         }
+    }
+
+    /**
+     * Holds resources whose submission may still be executing, so nothing resets, re-records, frees or destroys them.
+     * <p>
+     * They are released only at {@link #delete()}, after a device-wide wait, which is the one place where "the queue
+     * is finished with them" is a fact rather than a hope.
+     */
+    private void quarantine(VkCommandBuffer commandBuffer, long fence) {
+        this.quarantinedCommandBuffers.add(commandBuffer);
+        this.quarantinedFences.add(Long.valueOf(fence));
+    }
+
+    /** {@return how many submissions timed out and left quarantined resources}, for the report. */
+    public static int quarantinedSubmissions() {
+        return submitTimeouts;
     }
 
     public void endCommands(VkCommandBuffer commandBuffer) {
@@ -535,6 +574,16 @@ public final class VulkanContext {
                     + " waits on its own fence with a 5s bound and reports a timeout as a stall)");
             // Every recorded copy is followed by a queue wait, so this only drains work that is already complete.
             vkDeviceWaitIdle(this.device);
+            // The quarantined submissions are released here and only here: the device-wide wait above is the one point
+            // where "the queue is finished with them" is a fact. Before this they are neither reset nor freed.
+            for (VkCommandBuffer quarantined : this.quarantinedCommandBuffers) {
+                vkFreeCommandBuffers(this.device, this.commandPool, quarantined);
+            }
+            this.quarantinedCommandBuffers.clear();
+            for (Long quarantinedFence : this.quarantinedFences) {
+                vkDestroyFence(this.device, quarantinedFence.longValue(), null);
+            }
+            this.quarantinedFences.clear();
             destroyStaging();
             if (this.commandPool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
@@ -1007,6 +1056,13 @@ public final class VulkanContext {
     private void requireUsable() {
         if (this.device == null || this.commandPool == VK_NULL_HANDLE) {
             throw new IllegalStateException("This VulkanContext has been deleted.");
+        }
+        if (!this.usable) {
+            // A submission timed out: the queue may still be executing work whose fence never signalled, so the
+            // device's state is unknown. Refusing here is the other half of quarantining the resources - a context
+            // that keeps submitting after that is how a stall turns into a validation error storm (audit A02).
+            throw new IllegalStateException("This VulkanContext is unusable: a submission timed out and its command"
+                    + " buffer and fence are quarantined (submitWithSemaphores timeouts=" + submitTimeouts + ")");
         }
     }
 
