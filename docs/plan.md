@@ -257,6 +257,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.237 **round 43: BH-16 の leg は旧 jar・ただし行順が機序を確認（clear は face の draw の後・copy の前）**
+
+- **`bh16-menu` leg は修正前の jar**（lock JSON の mod hash `3481c429`/`e2b449c7`/`e415bf3f`、現行は `ce555f18`）で `mean=255,255,255` のまま
+  ＝**修正に対する反証ではない**（再取得が必要）。
+- **しかし行順が機序を確認**: 238行 `CELTIUM_CLEAR_LATCH route=pair boundIdentity=0x738e3065`（**0x738e3065 = 1938698341
+  ＝face 自身の identity**）→ 243行 `CELTIUM_DRAW_SITE #1 target=1938698341 batches=2`（**face が描く**）→
+  **324〜328行に5つの `CELTIUM_CLEAR_LATCH route=pair`**（うち `0x62b7b4d6` は別 framebuffer）＝**draw の後・copy の前**の wipe window。
+- 次の測定: 現行 jar で同じ menu leg を取り `gameClearsDroppedForeignTarget`・`lastDroppedClearOwner`・copy の `mean=` を読む。
+  **drop 数が 0 なら clear は `applyGameClears` に到達しておらず**（latch が消費している）、wipe は frame 最初の非main pass の
+  `clearChainPair` 側ということになる（次の探索点として明記）。
+- **BH-11 の修正（`ae32bdbe7`）と font セパレータ（`51003a602`）は leg 待ち**。
+
 ## 0.236 **round 42: BH-11 の真の機序＝「draw 時に live を読む」→ group へ捕捉して修正・glyph mode 5 を独立確認**
 
 - **BH-11 の3分岐が決着（acceptance・`r36-break`）**: `polygonOffsetCalls=62`（**呼び出しは stub に届いている**）・
