@@ -32,3 +32,26 @@ unit, and the drain is what turns "never drawn" into "drawn, or dropped with a c
   `offered=677, atPass=32, drawnPasses=17` towards `offered ≈ drawn`, or the identity appears in
   `unflushedTargetGroupsDropped`; and the menu copy's mean moves off `255,255,255` if the panorama's pass now
   runs (or `unflushedTargetPassFailures` names why it does not).
+
+## Acceptance leg (taken after the change, per the Lead's instruction)
+
+`drain-accept`: GL-less, `--validate`, scene=terrain, 1280x720, layers off, jar `fog-path-drain.jar`, AMD RX 6400.
+
+| field | value |
+|---|---|
+| `presentedImageVerdict` | **PASSED** |
+| `presentedNonBackgroundFraction` | **0.759463** (identical to the pre-change legs - no regression) |
+| `worldTicksAtEnd` | 206 |
+| `unflushedTargetGroupsDropped` | **0** |
+| `unflushedTargetPassFailures` | **0** |
+| `offTargetPerTarget` | `0: offered=114, atPass=114, drawnPasses=114, pair=default-pair` / `37a8b711: offered=622, atPass=30, drawnPasses=16, pair=chain-pair` / `394c0263: offered=2, atPass=1, drawnPasses=1, pair=chain-pair` |
+
+**The row did not move** (622/30/16 against 677/32/17 before), and the drop counter is zero - so the drain is
+not inert because it drops, but because **those groups are not in `immediateGroups` when any flush runs**. The
+next measurement is therefore not "which pass draws them" but "where do they leave the queue": the candidates
+are the `recordedImmediateGroups` path (groups recorded into a pass before the flush), the
+`flushPendingBeforeGlDraw` drop path, and `closeCurrentImmediateGroup`. The counter to add is a per-target
+"groups present at flush entry" line, which separates "never present" from "present but not drawn".
+
+`validationMessageCount` is not carried by this leg's report (layers are off for the frame budget); the harness
+reported the leg clean and the picture PASSED.
