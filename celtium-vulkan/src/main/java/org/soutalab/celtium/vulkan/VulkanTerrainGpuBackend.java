@@ -1484,6 +1484,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long fontQuadsAppended;
     private long fontBatchesStarted;
     private long fontAppendMillis;
+    /**
+     * Degenerate separator vertices inserted between glyphs of a strip run (see {@code celtium$fontAppend}): the
+     * joining triangles a strip would otherwise draw between consecutive glyphs are the user-visible bars.
+     */
+    private long fontStripSeparators;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
@@ -4184,9 +4189,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.fontBatchesStarted++;
             }
             int bytes = vertexCount * vertexStride;
-            celtium$ensurePendingFontCapacity(this.pendingFontBytesUsed + bytes);
-            long destination = org.lwjgl.system.MemoryUtil.memAddress(this.pendingFontVertices, 0)
-                    + this.pendingFontBytesUsed;
+            // A strip or fan run joins consecutive glyphs: a strip of 4N vertices draws 4N-2 triangles, so the last
+            // vertices of one glyph are connected to the first of the next, and the connecting triangles are the 1-px
+            // bars the user reports in the gaps between characters. The census says this path is on a strip
+            // (modes={5=84822}), so the separator is inserted here: two degenerate vertices - a copy of the previous
+            // glyph's last vertex and a copy of the new glyph's first - make the connecting triangles zero-area, which
+            // rasterizes nothing, and the run still goes out in one call.
+            boolean needsSeparator = this.pendingFontVertexCount > 0
+                    && (drawMode == org.lwjgl.opengl.GL11.GL_TRIANGLE_STRIP
+                            || drawMode == org.lwjgl.opengl.GL11.GL_TRIANGLE_FAN);
+            int separatorBytes = needsSeparator ? 2 * vertexStride : 0;
+            celtium$ensurePendingFontCapacity(this.pendingFontBytesUsed + separatorBytes + bytes);
+            long base = org.lwjgl.system.MemoryUtil.memAddress(this.pendingFontVertices, 0);
+            if (needsSeparator) {
+                long previousVertex = base + this.pendingFontBytesUsed - vertexStride;
+                org.lwjgl.system.MemoryUtil.memCopy(previousVertex, base + this.pendingFontBytesUsed, vertexStride);
+                org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, base + this.pendingFontBytesUsed + vertexStride,
+                        vertexStride);
+                this.pendingFontBytesUsed += separatorBytes;
+                this.pendingFontVertexCount += 2;
+                this.fontStripSeparators++;
+            }
+            long destination = base + this.pendingFontBytesUsed;
             // Copied, not aliased: the font's buffer is refilled for the next glyph.
             org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, destination, bytes);
             this.pendingFontBytesUsed += bytes;
@@ -7143,6 +7167,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
                 + " offerStages=[" + offerStageSummary() + "]"
+                + " immediateDrawSiteLogged=" + this.immediateDrawSiteLogged
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
                 + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
                 + " drainedOtherTargetPasses=" + this.drainedOtherTargetPasses
@@ -10528,7 +10553,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             System.out.println("[Celtium] CELTIUM_TEX_COPY_SERVED dest=" + destName + " level=" + level
                     + " destOffset=" + xoffset + "," + yoffset + " source=" + x + "," + y + " " + width + "x" + height
                     + " readFbo=" + readFbo + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
-                    + " opaque=" + opaque + "/" + pixels.length + " served=" + (this.textureCopiesServed + 1));
+                    + " opaque=" + opaque + "/" + pixels.length + " served=" + (this.textureCopiesServed + 1)
+                    // The frame and the image this copy read, so it can be put against CELTIUM_DRAW_SITE in the same
+                    // frame: the faces draw (DRAW_SITE #1, target=1941007851) and this line reads white, and neither
+                    // carried a frame or a handle before, which left ordering unanswerable.
+                    + " frame=" + this.frameId + " readImage=0x" + Long.toHexString(image));
         }
         boolean applied = this.textureRegistry.announceFullPixels(destName, levels, width, height, xoffset, yoffset);
         if (!applied) {
