@@ -140,6 +140,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.192 **entity pair の受入（task-49）と、落ちた item が task-50 の根因を独立に裏づけた**
+
+- **task-49（fog-path）**: 参照 leg を先に取り（`t49-ref-entity`）、条件を**領域表を読む前に**比較:
+  両 leg **listed sections 64**・geometry 24/34 MiB（一致）／world frames 1788 vs 466・rebuild queue `P1=013` vs `P1=063`
+  （**一致しない**）／capture tick 1407 vs 2175。よって「**listed geometry では一致、queue 状態では不一致**」と明記。
+  領域（比・>8）: sky band **1.000,1.000,1.000 / 0.00%**・horizon 1.24%・terrain centre 1.52%・chat 0.01%・hotbar 0.00%・
+  entity cone 1.38%・**whole frame 1.000,0.999,1.006 / 0.68%**。per family: mobs 3.85%・creeper 4.66%・zombie 5.50%・spider 6.78%・
+  stone 3.07%・**blockentities/chest/sign は全て 0.00%**・**item (820,380,880,440) 0.867,0.493,0.559 / 71.31%**。
+  **item は tick 不一致のせいではない**（tick 一致の旧 pair でも 58.42%）＝**N02/task-7 の実欠陥**。
+  per-frame formats は候補のみ（参照は histogram を出さない＝参照側の限界）。
+- **この item 差は task-50 の根因を独立に裏づける**: 落ちた item の GROUND transform（translate/rotate/scale 0.5）が
+  `glMultMatrix` 経由で落ちているため**モデル尺度のまま大きく**描かれ、向き/法線も狂って**暗く**なる——fog-path の crop が示す
+  「large dark sprite vs slender item」と一致。**task-50 の前画像＝受入の基準**として記録。
+- **warm/cold split の初実測**（`driver-amd`）: cold p50 **327.3ms** / p95 1049.7・**warm は sample 0**（`frameIntervalWarmP50Ms=-1`＝
+  run が world tick 400 に到達せず）。`frameIntervalWindows` が両窓を明示するので、cold を benchmark と取り違えない。
+
 ## 0.191 **GUI アイテムが平坦なのは Forge の生 `glMultMatrix` が mirror を迂回していたため（Lead が原典で特定・task-50）**
 
 ユーザーの「アイテム画面、ブロックが枠いっぱいに表示されている」の**根因を両側の原典で確定**した（推測ではない）:

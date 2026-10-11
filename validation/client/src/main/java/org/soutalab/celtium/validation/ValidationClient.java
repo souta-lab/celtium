@@ -919,6 +919,22 @@ public final class ValidationClient {
     }
 
     /**
+     * The provenance a report carries: which run and which frame every enforced floor came from.
+     * <p>
+     * A floor with no named source is how the video settings GUI stage came to be judged by its world frame's band
+     * count: the source prose named both files without saying which floor came from which frame. This says it per
+     * stage, so a reader can re-derive each floor from the run it names.
+     */
+    private String celtium$gateSource() {
+        if (!celtium$gate.guiFloors.calibrated) {
+            return celtium$gate.reference;
+        }
+        return "world frame floors from " + celtium$gate.referenceRuns + " [the world frame of those runs: "
+                + celtium$gate.referenceNumbers + "]; GUI frame floors from " + celtium$gate.guiFloors.source
+                + " [" + celtium$gate.guiFloors.numbers + "]";
+    }
+
+    /**
      * The terrain scene's floors, measured on two GL-bridge reference runs at the fixture pose.
      * <p>
      * References (GL bridge, fresh game directory, {@code scene=terrain}, 1280x720, camera x=0.5 y=12.0 z=0.5
@@ -6097,9 +6113,15 @@ public final class ValidationClient {
         celtium$gateCamera(failures);
         report.addProperty("pictureEvidenceSource", celtium$evidenceSource());
         report.addProperty("sceneGateReference", celtium$gate.reference);
+        report.addProperty("sceneGateSource", celtium$gateSource());
         report.addProperty("sceneGateReferenceRuns", celtium$gate.referenceRuns);
         report.addProperty("sceneGateReferenceNumbers", celtium$gate.referenceNumbers);
         report.addProperty("sceneGateMargin", celtium$gate.margin);
+        report.addProperty("sceneGateGuiFloors", celtium$gate.guiFloors.calibrated
+                ? "gui stage: nonBackgroundFraction>=" + celtium$gate.guiFloors.minNonBackgroundFraction
+                        + " verticalBands>=" + celtium$gate.guiFloors.minVerticalBands + " blackFraction<="
+                        + celtium$gate.guiFloors.maxBlackFraction
+                : "gui stage: " + celtium$gate.guiFloors.source);
         report.addProperty("sceneGateCalibrated", Boolean.valueOf(celtium$gate.calibrated));
         boolean variantMeasured = celtium$variantMeasuredAtVerdict();
         celtium$gateEnforced = celtium$gate.calibrated && variantMeasured;
