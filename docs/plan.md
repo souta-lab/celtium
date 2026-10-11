@@ -257,6 +257,16 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.266 **round 72: 3つ目の仮説（per-descriptor 分岐）も棄却（VUID 2→4）・revert — 即時 descriptor 経路は VUID の owner ではない**
+
+- **仮説3**: `VulkanImmediateTexturePipeline` の descriptor を「その view が pass の attach した image と一致するときだけ GENERAL、他は SHADER_READ_ONLY」に。
+  backend が `PASS_ATTACHED_IMAGE` を pass の前後で publish/clear する形。
+- **測定（`r70-perdesc`・layers ON・menu hold 60）**: **VUID 4件**（baseline は 2件）・copy は依然白。＝**棄却**・revert（build 緑）。
+- **3つの棄却の帰結（重要）**: pass-end hand-back（2→4）・一律 GENERAL（2→20+20）・per-descriptor（2→4）。
+  **即時 descriptor 経路への変更はどれも VUID を増やすだけ**＝**baseline の2件の owner は即時経路ではない**。
+  次の探索は **terrain pass / composite 側**（pair を attach する側の barrier 記録）に移すべきで、即時側の layout 仮説は**もう試さない**。
+- **パノラマの残りはこの VUID のみ**（mirror 内容・bind・捕捉・menu hold は全て確定済み）。
+
 ## 0.265 **round 71: セッション末の回帰 leg（canon 行）— 描画カウンタは健全・picture gate は flag 依存で FAILED**
 
 - **leg `r69-canon`（terrain + keepGui + captureEntities + keepEntities・layers ON・`presentReadback`）**:
