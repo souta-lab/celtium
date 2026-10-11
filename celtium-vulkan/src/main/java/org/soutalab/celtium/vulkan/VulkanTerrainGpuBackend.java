@@ -800,8 +800,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
     private int chainAdoptions;
 
-    /** Cleared before a device-wide wait and set when it returns, so its watchdog can tell a stall from a slow wait. */
-    private volatile boolean deviceWaitFinished = true;
+    /**
+     * Token of the device-wide wait in progress, and the token whose wait has returned. Per-call rather than one
+     * shared flag: a late watchdog must be able to tell "my wait is still running" from "a later wait is running now"
+     * (audit A05).
+     */
+    private long deviceWaitToken;
+    private long deviceWaitFinishedToken = -1L;
+    private final Object deviceWaitLock = new Object();
     /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
     private long currentFramebufferIdentity;
     private int chainAdoptionsRefused;
@@ -984,6 +990,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
+    /**
+     * Diagnostic only: the per-group projected NDC bounds that {@link #reportGroupBounds} computes.
+     * <p>
+     * That method is the instrument a "geometry drawn in the wrong place" defect wants - vertex 0 cannot tell
+     * "projects on-screen but is rejected by the depth test" from "never enters an accepted group", while the bounds
+     * over the whole group can - and it had no caller. It is called here behind this switch so the default output is
+     * exactly what it was: with the switch off, nothing calls it and no line is printed.
+     * <p>
+     * {@code -Dceltium.vulkan.groupBoundsFormat=<id>} reports one layout instead of every layout (which is what one
+     * wedged frame needs: 8000 groups of every format bury the six that matter), and
+     * {@code -Dceltium.vulkan.groupBoundsCount=<n>} raises the six-sample cap.
+     */
+    private static final boolean GROUP_BOUNDS_DIAGNOSTICS =
+            Boolean.getBoolean("celtium.vulkan.groupBounds");
+    private static final int GROUP_BOUNDS_FORMAT =
+            Integer.getInteger("celtium.vulkan.groupBoundsFormat", -1).intValue();
+    private static final int GROUP_BOUNDS_LIMIT =
+            Integer.getInteger("celtium.vulkan.groupBoundsCount", 200).intValue();
+    /**
+     * Diagnostic only: {@code CELTIUM_IMMEDIATE_ENQ} for every group instead of the first eight.
+     * <p>
+     * The first eight groups belong to the loading screen, so a run could not say which matrices the frame the defect
+     * is in was drawn with. Off by default, and {@code -Dceltium.vulkan.enqFormat=<id>} narrows it to one layout.
+     */
+    private static final boolean ENQ_ALL_GROUPS =
+            Boolean.getBoolean("celtium.vulkan.enqAll");
+    private static final int ENQ_FORMAT =
+            Integer.getInteger("celtium.vulkan.enqFormat", -1).intValue();
     private int crossPassComparisonsSkipped;
     private boolean mirrorMidSetup;
     private int midSetupComparisonsSkipped;
@@ -3323,7 +3357,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * can. The packed colour identifies the test geometry (the fixture draws with 255, 64, 64, 200).
      */
     private void reportGroupBounds(ImmediateGroup group) {
-        if (this.immediateDiagnostics >= 6) {
+        if (GROUP_BOUNDS_FORMAT >= 0 && group.formatId != GROUP_BOUNDS_FORMAT) {
+            // The format filter is checked before the cap so that a run narrowed to one layout is not spent on the
+            // first six groups of every other layout.
+            return;
+        }
+        int limit = GROUP_BOUNDS_DIAGNOSTICS ? GROUP_BOUNDS_LIMIT : 6;
+        if (this.immediateDiagnostics >= limit) {
             return;
         }
         this.immediateDiagnostics++;
@@ -3373,9 +3413,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             String bounds = behind == vertices ? "all behind the camera"
                     : String.format("x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f] behind=%d",
                             minX, maxX, minY, maxY, minZ, maxZ, behind);
+            String colour = "0x" + Integer.toHexString(MemoryUtil.memGetInt(base + 12));
+            // On stdout as well as in the report: the report keeps only the last recorded line, and the question this
+            // answers - which groups an artefact frame is made of - is a sequence, not a sample. frame/group tie the
+            // line to the frame dump the PNG is of, and the projection's own columns say whether the group was
+            // captured with the world perspective, an ortho, or a stale stack.
+            System.out.println("[Celtium] CELTIUM_GROUP_BOUNDS frame=" + this.frameId
+                    + " group=" + this.immediateGroupsClosed + " fmt=" + group.formatId
+                    + " worldPass=" + this.worldPassActive + " target=" + group.target
+                    + " texture=" + group.texture + " batches=" + group.batches
+                    + " vertices=" + vertices + " indices=" + mesh.indexCount()
+                    + " colour0=" + colour
+                    + " proj=[m00=" + fmt3(projection[0]) + " m11=" + fmt3(projection[5])
+                    + " m22=" + fmt3(projection[10]) + " m32=" + fmt3(projection[14]) + "]"
+                    + " ndc " + bounds);
             record("group " + this.immediateDiagnostics + ": vertices=" + vertices
-                    + " indices=" + mesh.indexCount() + " colour0=0x"
-                    + Integer.toHexString(MemoryUtil.memGetInt(base + 12))
+                    + " indices=" + mesh.indexCount() + " colour0=" + colour
                     + " proj=[m00=" + projection[0] + " m11=" + projection[5] + "] ndc " + bounds);
         } catch (RuntimeException | LinkageError error) {
             record("group diagnostic failed: " + describe(error));
@@ -4405,15 +4458,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + "\n  raw proj=[" + round3(this.glProjection[0]) + "," + round3(this.glProjection[5]) + ","
                         + round3(this.glProjection[10]) + "," + round3(this.glProjection[14]) + "]");
             }
-            if (this.immediateMatrixLogged < 8) {
+            if (this.immediateMatrixLogged < 8
+                    || (ENQ_ALL_GROUPS && (ENQ_FORMAT < 0 || ENQ_FORMAT == this.currentGroupFormatId))) {
                 // The immediate path's own matrices and batch identity, for the first few groups: the first one was normal,
-                // so the groups that draw the dark squares have to be found among the others.
+                // so the groups that draw the dark squares have to be found among the others. With
+                // -Dceltium.vulkan.enqAll the print covers every group (optionally one format), because the first eight
+                // belong to the loading screen and cannot say which matrices the frame an artefact is in was drawn with.
                 this.immediateMatrixLogged++;
-                System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ proj=" + round3(projection[2]) + ","
+                System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ frame=" + this.frameId
+                        + " group=" + this.immediateGroupsClosed + " proj=" + round3(projection[2]) + ","
                         + round3(projection[6]) + "," + round3(projection[10]) + "," + round3(projection[14])
                         + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
                         + " fmt=" + this.currentGroupFormatId + " texture=" + this.currentGroupTexture
                         + " batches=" + this.currentGroupBatches
+                        + " target=" + this.currentGroupTarget
                         + " mirrored=" + (this.textureRegistry != null && this.currentGroupTexture != 0
                                 && this.textureRegistry.get(this.currentGroupTexture) != null)
                         + " worldPass=" + this.worldPassActive);
@@ -4431,6 +4489,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.lightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
             group.stamp = new GroupStamp(this.frameId, this.targetGeneration);
             this.immediateGroups.add(group);
+            if (GROUP_BOUNDS_DIAGNOSTICS) {
+                // Off by default: with the switch off this method keeps the "no caller" property it had, and no line
+                // reaches stdout or the report, so runs on the default flags stay comparable with older artifacts.
+                reportGroupBounds(group);
+            }
         } else if (this.currentImmediateMesh != null) {
             this.currentImmediateMesh.delete();
         }
@@ -7886,7 +7949,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
-        this.deviceWaitFinished = true;
+        synchronized (this.deviceWaitLock) {
+            // This call's wait returned: answer its own token so a late watchdog for it cannot call it a stall.
+            this.deviceWaitFinishedToken = this.deviceWaitToken;
+        }
         if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
             this.noteStalled();
             throw new IllegalStateException("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
@@ -7906,22 +7972,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * firing once, so a normal run costs one short-lived thread per teardown.
      */
     private void celtium$watchDeviceWait(String reason) {
+        // Per-call token, not a shared boolean (audit A05). With one flag, a watchdog from an earlier wait that fires
+        // late reads the flag a NEWER wait has already cleared and declares a stall for a wait that has only just
+        // started - a false stall, and a false stall is expensive here because gpuStalled makes every later path
+        // refuse to release resources. Each call takes the next token and only the watchdog holding the current one
+        // may report; the wait's completion sets the token to "finished", so a late watchdog finds its own call
+        // already answered.
+        long token = ++this.deviceWaitToken;
         Thread watchdog = new Thread(() -> {
             try {
                 Thread.sleep(IDLE_TIMEOUT_NANOS / 1_000_000L);
             } catch (InterruptedException interrupted) {
                 return;
             }
-            boolean fired = !this.deviceWaitFinished;
-            if (fired) {
+            synchronized (this.deviceWaitLock) {
+                if (this.deviceWaitToken != token || this.deviceWaitFinishedToken == token) {
+                    // Either a later wait has taken over (this watchdog is stale) or this call's wait already
+                    // returned. Neither is a stall, and saying so is the whole point of the token.
+                    return;
+                }
+                this.deviceWaitFinishedToken = token;
                 this.gpuStalled = true;
                 record("settleGpu(" + reason + "): vkDeviceWaitIdle has not returned after "
-                        + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s; the device has stopped making progress."
-                        + " No recorded work is reset, re-recorded or freed from here on.");
+                        + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s (wait token " + token
+                        + "); the device has stopped making progress. No recorded work is reset, re-recorded or"
+                        + " freed from here on.");
             }
         }, "celtium-device-wait-watchdog");
         watchdog.setDaemon(true);
-        this.deviceWaitFinished = false;
         watchdog.start();
     }
 
