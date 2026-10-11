@@ -89,6 +89,53 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.135 **金脈: 実行時パッチ（Kirino）をデコンパイルして判明 — この runtime は entity outline を描いていない**
+
+CFR（`/tmp/cfr.jar`、Maven Central から取得）で `cleanroom-0.6.13-alpha.jar` 内の Kirino クラスを Java に戻して読んだ。
+`KirinoConfigHub.Runtime` は `enable = true`・**`enableRenderDelegate = true`**（既定）で、**Kirino の render delegate が world 描画を駆動している**。
+
+### 1. `MinecraftEntityRendering.renderEntities(...)` は outline を集めて**捨てている**
+
+```java
+ArrayList<vg> outlineEntities = new ArrayList<vg>();
+for (vg entity : this.cullingPatch.entitiesInView) {
+    ...
+    renderManager.a(entity, partialTicks, false);
+    if (this.isEntityOutlineActive(entity, renderViewEntity, player, camera, gameSettings)) {
+        outlineEntities.add(entity);          // ← 集める
+    }
+    ...
+}
+entityRenderer.h();                            // ← ここで終わり
+```
+
+**`outlineEntities` はその後どこからも使われない**——vanilla の `RenderGlobal.renderEntities` が行う
+「outline framebuffer を bind し、`entityOutlineShader.render()` を呼び、戻す」処理が無い。
+
+### 2. 裏取り（全数）
+
+- `cleanroom-0.6.13-alpha.jar` 内に **"outline" を含むファイルは 0 件**。
+- world render を置き換えている `KirinoClientCore` に `entityOutline*` / `loadShader` / `ShaderGroup` の参照は無し
+  （`B.c("outline")` は **Profiler のセクション名**で、中身はブロック選択枠の描画）。
+- Kirino は camera/projection も自分で駆動しており、**`Project.gluPerspective` を直接呼ぶ**（`KirinoClientCore` 160/165行）。
+
+### 3. これが意味すること（戦略判断）
+
+- glow シーンの `postChains=0`・`entityOutlineFramebuffer` が一度も bind されないのは、**私たちの renderer の欠陥ではなく、
+  この runtime の patched render path が outline pass を実行していない**ため。glow 担当の「in-frustum の光る entity が居ないから」は**誤った説明**で、
+  list は実際に作られ、ただ捨てられている。
+- したがって監査 N04 の「GL-less outline が正しい画像であること」は、**この runtime のままでは観測不能**。
+  選択肢は (a) Cleanroom 側の対応を待つ、(b) **私たちが outline pass を native で実装する**、(c) render delegate を切る（設定は見つかっていない・既定 true）。
+- goal は「バニラの ShaderGroup・spectator 効果・**entity outline 等は本体機能であり、この延期を理由に省略しない**」と定めているので、
+  **(b) が目標に沿う道**。`MinecraftCulling.entitiesInView` は public フィールドで、対象 entity の集合は読める。
+  自前で silhouette → blur → composite を native に描けば、runtime が描かない glow を私たちが供給できる。
+- **射影チャネルの再設計**にも効く: Kirino 自身が `Project.gluPerspective` を呼ぶため、私の撤回したフックは
+  「vanilla の1回」ではなく「Kirino の複数回」も拾っていた。次に設計する時はこの経路を前提にする。
+
+**方法の記録**: 実行時パッチは難読化名でコンパイルされているが、`scripts/mc-sources.sh --notch vg bxy brx` で
+`notch-mcp.srg` から名前を引ける（`vg`=Entity・`bxy`=ICamera・`brx`=ChunkProviderClient・`bsb`=WorldClient）。
+デコンパイラは `curl -sL https://repo1.maven.org/maven2/org/benf/cfr/0.152/cfr-0.152.jar` で取得できる。
+
 ## 0.134 **フル監査（2026-10-11 10:58）の受領と処置**
 
 監査は新規5件（P1 3・P2 2）と、所有権の穴3箇所、N01〜N17 の再監査、保持すべき改善の一覧を出した。
