@@ -62,6 +62,17 @@ public final class CeltiumFontGlyphCapture {
     /** 3 floats position, 2 floats texture coordinates, 4 unsigned bytes colour. */
     private static final int STRIDE = 24;
     private static final int MAX_VERTICES = 4;
+    /**
+     * Which draw mode the glyphs actually arrive as, counted per submission.
+     * <p>
+     * The coalesced run draws its accumulated vertices in one call with the run's mode. A run whose mode is a
+     * triangle strip or fan joins consecutive glyphs (a strip of 4N vertices draws 4N-2 triangles, connecting one
+     * glyph's last vertices to the next glyph's first), which is the shape of the 1-px bars the user reports in the
+     * gaps between characters. Quads do not join. The census is what says which of the two this path is on - the
+     * mode is read from the game's own glBegin, and this file must not assume it.
+     */
+    private static final java.util.Map<Integer, Integer> MODE_CENSUS = new java.util.concurrent.ConcurrentHashMap<>();
+
 
     /** One glyph's worth of vertices, written per glyph and handed to the backend by address. */
     private static final ByteBuffer VERTEX = ByteBuffer.allocateDirect(STRIDE * MAX_VERTICES)
@@ -436,6 +447,7 @@ public final class CeltiumFontGlyphCapture {
             vertexAddress = MemoryUtil.memAddress(VERTEX);
         }
         submitted++;
+        MODE_CENSUS.merge(Integer.valueOf(drawMode), Integer.valueOf(1), Integer::sum);
         if (MATRIX_PROBE && matrixProbeLines < 12 && (submitted < 4 || submitted % 2000 == 0)) {
             matrixProbeLines++;
             System.out.println("[Celtium] CELTIUM_FONT_GLYPH_MATRIX submitted=" + submitted + " quad=(" + positionX[0]
@@ -610,7 +622,7 @@ public final class CeltiumFontGlyphCapture {
         return "windows=" + windows + " defaultWindows=" + defaultWindows + " unicodeWindows=" + unicodeWindows
                 + " bridgeWindows=" + bridgeWindows + " quads=" + quads + " submitted=" + submitted
                 + " accepted=" + accepted + " refused=" + refused + " submitMillis=" + (submitNanos / 1000000L)
-                + " reasons=" + REFUSALS + " " + batchSummary();
+                + " reasons=" + REFUSALS + " modes=" + MODE_CENSUS + " " + batchSummary();
     }
 
     /**
