@@ -1070,6 +1070,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** How many captures arrived and how many groups carried one into the push block, for the night measurement. */
     private int lightmapCoordCalls;
     private int lightmapCoordGroups;
+    /**
+     * Groups offered outside the world pass whose light-map coordinate is the full-bright pair instead of the captured
+     * one. Named so the fix is visible in the same census as the capture it replaces: at zero the rule did not fire and
+     * a hotbar item is still drawn with the world's light, whatever the picture looks like.
+     */
+    private int lightmapFullBrightGroups;
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
@@ -1563,6 +1569,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * model-mesh path already used.
      */
     private float[] currentGroupLightParams;
+    /**
+     * The light-map coordinate the group being built was offered with, decided at acceptance rather than at close.
+     * <p>
+     * The timing is the whole point: {@code endWorldPass()} clears {@code worldPassActive} <em>before</em> it flushes
+     * the groups the world pass left pending (the flag at {@code :3650}, the flush at {@code :3665}), so a decision
+     * read at close time would classify those world groups as GUI-stage and draw the hand and the entities
+     * full-bright. Read here, at the moment the batch was offered, it is the same rule the colour, the lighting
+     * payload and the fog already follow.
+     */
+    private float[] currentGroupLightmapCoords;
     /** {@code -Dceltium.vulkan.alphaTest=false} turns the immediate path's alpha test off, for measurements. */
     private static final boolean ALPHA_TEST_ENABLED = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.alphaTest", "true"));
@@ -1585,6 +1601,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             System.getProperty("celtium.vulkan.immediateBlendEquation", "true"));
     private static final boolean IMMEDIATE_COLOR_MASK = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.immediateColorMask", "true"));
+    /**
+     * {@code -Dceltium.vulkan.alphaFuncOverride=<GL enum>} substitutes the alpha comparison function for a measurement
+     * leg (BH-03). Default 0 = off, which is the shipped behaviour: the captured comparison is used. Vanilla asks for
+     * GL_GREATER everywhere it calls {@code GlStateManager.alphaFunc}, so this is the only way to put a second
+     * comparison in front of the same shader and see whether the selector is honoured.
+     */
+    private static final int ALPHA_FUNC_OVERRIDE =
+            Integer.getInteger("celtium.vulkan.alphaFuncOverride", 0).intValue();
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
@@ -1839,7 +1863,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** The thread's CPU time right now, or -1 when unsupported. */
+    /**
+     * Whether the per-batch CPU split is measured at all.
+     * <p>
+     * OPT-01: the split costs two {@code getCurrentThreadCpuTime()} calls per immediate batch (preflight, group
+     * creation, append and flush each take a start and an end), and it is instrumentation, not rendering. It is off by
+     * default so a performance run measures the renderer rather than the meter; a run that wants the split turns it on
+     * with {@code -Dceltium.vulkan.cpuSplit=true} and reports it as an instrumented run, which is the distinction
+     * OPT-01's acceptance asks for.
+     */
+    public static final boolean CPU_SPLIT = Boolean.parseBoolean(
+            System.getProperty("celtium.vulkan.cpuSplit", "false"));
+
     public static long threadCpuNanos() {
+        if (!CPU_SPLIT) {
+            return -1L;
+        }
         return THREAD_CPU_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() : -1L;
     }
     public static long batchCallOpeningNanos;
@@ -2881,6 +2920,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.combineColor = combineColor;
         group.texMatrix = celtium$textureAffine();
         group.lightParams = celtium$lightParams(state, modelView);
+        // The captured coordinate, deliberately, even outside the world pass: the only model-path content the GUI stage
+        // draws is the inventory's player model, and vanilla lights that one by the world on purpose - GuiInventory
+        // draws it with the light-map unit enabled and RenderManager.renderEntity sets the coordinate from the entity
+        // (GuiInventory.java:154-165). celtium$lightmapForGroup() is therefore for the immediate path, where the GUI
+        // items arrive; forcing it here would brighten the player model in a dark place, which is not what vanilla does.
         group.lightmapCoords = lightmapCoordKnown() ? lightmapCoords() : null;
         group.fog = celtium$fogSnapshot();
         group.batches = quads;
@@ -4689,6 +4733,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // two lines above while that state is still the live one. Reading it at close time instead let a later
                 // light change shade vertices that had already been accepted.
                 this.currentGroupLightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
+                // The light-map coordinate belongs to the batch as well, and it is decided here rather than at close
+                // for the same reason and one more: this is the only moment at which `worldPassActive` still describes
+                // the pass the batch was offered in (see currentGroupLightmapCoords).
+                this.currentGroupLightmapCoords = celtium$lightmapForGroup();
                 // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can, and it
                 // has to be counted here rather than where the flag is read for pipeline selection: at flush time the state
                 // belongs to the group being flushed and blending is on for the whole family, which made the first version of
@@ -5276,6 +5324,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // The one-flag controls. Each keeps the captured state but substitutes the value the pipeline baked before the
         // finding was fixed, so a single build can be run twice and the picture compared against itself rather than
         // against another build's picture - the difference between the legs is then the state and nothing else.
+        //
+        // The counters below are taken from the *captured* values, before these substitutions: a control leg has to
+        // report the same "the game asked for this" numbers as the fixed leg, or the one number that says the state
+        // arrived at all would read zero exactly in the leg that uses it as a control.
+        int capturedSourceAlpha = sourceAlpha;
+        int capturedDestinationAlpha = destinationAlpha;
+        int capturedWriteMask = writeMask;
+        int capturedColorOp = colorOp;
+        int capturedAlphaOp = alphaOp;
         if (!IMMEDIATE_BLEND_ALPHA) {
             sourceAlpha = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE;
             destinationAlpha = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -5292,6 +5349,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // shader's `alphaRef > 0.0` guard could not: for GL_GREATER and a reference of 0 the discard is *not* off.
         int alphaFunction = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
                 ? this.immediateState.alphaFunc() : 0;
+        // The measurement switch for the comparison-function half of BH-03: vanilla's own code only ever asks for
+        // GL_GREATER (read in the sources - every `GlStateManager.alphaFunc` call in the client passes 516), so a
+        // non-GREATER comparison cannot be reached from the game's own state in this fixture. This substitutes the
+        // comparison for the batches whose test is enabled, leaving the reference and the enable alone, so one build
+        // can be run at GREATER, LESS and ALWAYS and the crops compared with each other. A batch with the test
+        // disabled keeps the 0 that means "disabled" - otherwise the flag would switch the test on where the game
+        // switched it off, and the leg would measure two changes at once.
+        if (alphaFunction != 0 && ALPHA_FUNC_OVERRIDE != 0) {
+            alphaFunction = ALPHA_FUNC_OVERRIDE;
+        }
         // BH-08's per-batch proof, counted here where the group's own state is taken rather than at draw time, where
         // it would be the flush's state.
         if (this.immediateState.cullEnabled()) {
@@ -5302,18 +5369,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // BH-07/BH-10/BH-03's own per-batch counts, at the same instant and for the same reason: a batch whose alpha
         // pair is not the pair the pipelines used to bake is the case the finding is about, and "the state reached the
         // key" is only readable if the number of batches that carried a different one is on the report.
+        // Taken from the captured values (see above), so a control leg reports the same arrival numbers as the
+        // fixed leg rather than zeroes that would read as "the state never arrived".
         if (blend) {
-            if (sourceAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE
-                    || destinationAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
+            if (capturedSourceAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE
+                    || capturedDestinationAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
                 this.blendAlphaNonDefaultGroups++;
             }
             this.blendGroups++;
         }
-        if (writeMask != VulkanColorBlendState.allChannels()) {
+        if (capturedWriteMask != VulkanColorBlendState.allChannels()) {
             this.partialColorMaskGroups++;
-            this.lastPartialColorMask = writeMask;
+            this.lastPartialColorMask = capturedWriteMask;
         }
-        if (colorOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD || alphaOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD) {
+        if (capturedColorOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD
+                || capturedAlphaOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD) {
             this.nonAddBlendEquationGroups++;
         }
         if (alphaFunction != 0) {
@@ -6662,7 +6732,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.texMatrix = this.currentGroupTexMatrix;
             // BH-05: the payload captured when this group was opened, not one rebuilt from the live light state now.
             group.lightParams = this.currentGroupLightParams;
-            group.lightmapCoords = lightmapCoordKnown() ? lightmapCoords() : null;
+            // The coordinate captured when the group was opened, not the live one: a group the world pass left pending
+            // is flushed by endWorldPass after that method has already cleared worldPassActive, so the live value here
+            // would say "GUI stage" about the hand and the entities. See currentGroupLightmapCoords.
+            group.lightmapCoords = this.currentGroupLightmapCoords;
             // The state captured when the group was opened, not the live state: see currentGroupFog.
             group.fog = this.currentGroupFog;
             celtium$noteFogCaptureDrift(group);
@@ -6985,6 +7058,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
                 // reading them here is what makes a zero that cannot move (no increment site) visible as such.
                 + " immediateGroupsDrawn=" + this.immediateGroupsDrawn
+                // The light-map census, printed here because the two counters it is read with had no reporting site at
+                // all: lightmapCoordGroups counts the groups whose captured coordinate reached the push block and
+                // lightmapFullBrightGroups the GUI-stage groups that were given the full-bright pair instead. A
+                // hotbar leg that reports the capture without the second number cannot say which coordinate was drawn.
+                + " lightmapCoordCalls=" + this.lightmapCoordCalls
+                + " lightmapCoordGroups=" + this.lightmapCoordGroups
+                + " lightmapFullBrightGroups=" + this.lightmapFullBrightGroups
                 + " immediateGroupsDiscarded=" + this.immediateGroupsDiscarded
                 + " immediateGroupsKeptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                 + " immediateDeferredNextFrame=" + this.immediateDeferredNextFrame
@@ -10384,6 +10464,42 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The light-map coordinate pair the last capture stored, as {x, y}. */
     private float[] lightmapCoords() {
         return new float[] {this.lightmapCoordX, this.lightmapCoordY};
+    }
+
+    /**
+     * The full-bright light-map coordinate, the pair {@code GuiContainer.java:107} sets before it draws its items:
+     * {@code OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, 240.0F, 240.0F)}. The light map's
+     * texel there is its brightest, which is what "GUI items are drawn full-bright" is in a renderer whose lit layouts
+     * always sample the light map.
+     */
+    private static final float[] FULL_BRIGHT_LIGHTMAP = {240.0F, 240.0F};
+
+    /**
+     * The light-map coordinate a group offered now must be drawn with: the captured world light inside the world pass,
+     * the full-bright pair outside it.
+     * <p>
+     * Real OpenGL modulates a draw by the light map only where the light-map texture unit is enabled, and
+     * {@code EntityRenderer} enables it in three places - {@code RenderGlobal.renderEntities}
+     * ({@code RenderGlobal.java:1166}/{@code :1205}), the first-person hand ({@code EntityRenderer.java:825}/{@code :827},
+     * inside {@code renderWorldPass}) and the block-entity section ({@code EntityRenderer.java:1434}/{@code :1403}).
+     * Every one of them is inside the world pass; the GUI stage draws with that unit disabled, so a hotbar or inventory
+     * item is never darkened by the light level under real GL - and the container says so explicitly for its items
+     * ({@code GuiContainer.java:107} sets 240,240 before drawing them). This renderer's lit layouts always sample the
+     * light map, so outside the world pass the coordinate has to be the full-bright one: otherwise the coordinate the
+     * world last set - the player's own light ({@code ItemRenderer.setLightmap()}), or the last entity's - reaches the
+     * hotbar, and a GUI item in a dark place is drawn with the cave's light.
+     * <p>
+     * Inside the world pass the captured coordinate is kept: the hand is world-lit on purpose
+     * ({@code ItemRenderer.setLightmap()} reads {@code world.getCombinedLight} at the player's eye and is called from
+     * {@code renderHand}, which {@code renderWorldPass} calls at {@code EntityRenderer.java:1492}), and so are the
+     * entities and the block entities.
+     */
+    private float[] celtium$lightmapForGroup() {
+        if (!this.worldPassActive) {
+            this.lightmapFullBrightGroups++;
+            return FULL_BRIGHT_LIGHTMAP;
+        }
+        return lightmapCoordKnown() ? lightmapCoords() : null;
     }
 
     /**

@@ -55,7 +55,11 @@ void main() {
     // modulates unit 1 with, and the coordinate is the pair the game set for this entity. Everything else here is the
     // fixed-function lighting, which is a function of the normal and the light directions and so is identical at noon
     // and at midnight - which is why the batch stayed bright without this line.
-    vec3 lightmap = texture(u_Lightmap, celtium.u_LightCoord / 256.0).rgb;
+    // The same conversion the particle family uses, and the one vanilla's unit-1 texture matrix performs
+    // (scale 1/256, translate 8/256): a raw light coordinate of 0 must land on the centre of the light map's first
+    // texel (0.5/16 = 8/256), not on its corner. Dividing without the +8 bias sampled half a texel off, which on a
+    // 16x16 light map is the neighbouring texel at the boundaries.
+    vec3 lightmap = texture(u_Lightmap, (celtium.u_LightCoord + 8.0) / 256.0).rgb;
     v_Color = vec4(a_Color.rgb * lit * lightmap, a_Color.a);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }

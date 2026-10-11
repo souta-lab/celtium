@@ -95,6 +95,20 @@ public final class VulkanArena {
      * backends must express ranges the same way.
      */
     private final int stride;
+    /**
+     * The arena's allocation granularity in bytes: {@code lcm(4, stride)}.
+     * <p>
+     * BH-01: the capacity used to be rounded to 4 bytes and the free ranges were left at whatever the split produced,
+     * while {@link Segment#getOffset()} divides the byte offset by the stride. With a 24-byte compact vertex and a
+     * 524,288-byte initial capacity (524,288 mod 24 = 8) the last range started at a non-multiple of the stride, the
+     * division truncated it, and the vertices were read from the wrong field boundary - silently wrong geometry rather
+     * than a refusal. Every boundary of the arena - the capacity, both ends of every free range, and the tail appended
+     * by a grow - is now a multiple of this unit, so a segment's offset is always a whole number of elements.
+     * <p>
+     * It is {@code lcm} and not the stride alone because the copy alignment Vulkan requires is 4 bytes: a stride of 6
+     * (a hypothetical packed format) would otherwise leave boundaries that align to the format but not to the API.
+     */
+    private final int alignUnit;
     private int capacity;
     private int used;
     private boolean deleted;
@@ -124,7 +138,8 @@ public final class VulkanArena {
         this.context = context;
         this.usageFlags = usageFlags;
         this.stride = stride;
-        this.capacity = alignUp4Int(initialCapacityBytes);
+        this.alignUnit = lcm4And(stride);
+        this.capacity = alignUpTo(initialCapacityBytes, this.alignUnit);
         this.buffer = new VulkanBuffer(context, this.capacity, usageFlags);
         this.head = new Segment(this, 0, this.capacity);
         this.head.free = true;
@@ -146,10 +161,7 @@ public final class VulkanArena {
         }
         // Ranges are rounded to whole stride elements so that a later offset stays aligned for the vertex format,
         // exactly like the OpenGL arena, whose allocation unit is the stride.
-        int needed = alignUp4Int(byteSize);
-        if (this.stride > 1) {
-            needed = ((needed + this.stride - 1) / this.stride) * this.stride;
-        }
+        int needed = alignUpTo(alignUp4Int(byteSize), this.alignUnit);
         Segment free = findFree(needed);
         if (free == null) {
             grow(needed);
@@ -161,18 +173,28 @@ public final class VulkanArena {
             }
         }
         Segment result;
-        if (free.length == needed) {
+        // The exact-fit branch may only hand out the range whole when its own start is on the alignment unit. A free
+        // tail appended by a grow starts at the previous capacity, and the buffer's real size is a multiple of the
+        // driver's alignment rather than of this arena's unit, so an unaligned start is reachable on a second grow; the
+        // split branch below then trims the range down to an aligned element instead of trusting its offset.
+        if (free.length == needed && free.offset % this.alignUnit == 0) {
             free.free = false;
             result = free;
         } else {
-            // Split from the end so the chosen range keeps its offset and the two ranges stay adjacent.
-            result = new Segment(this, free.end() - needed, needed);
+            // Split from the end so the chosen range keeps its offset and the two ranges stay adjacent. BH-01: the
+            // split point is pulled down to the arena's alignment unit, so the new range starts at a whole element and
+            // the free range in front of it keeps a length that is a multiple of that unit. Without this the remainder
+            // of an unaligned capacity landed at the *start* of every later range, and getOffset()'s division dropped
+            // it - the vertices were then read one field out of step.
+            int start = alignDownTo(free.end() - needed, this.alignUnit);
+            int alignedNeeded = free.end() - start;
+            result = new Segment(this, start, alignedNeeded);
             result.prev = free;
             result.next = free.next;
             if (result.next != null) {
                 result.next.prev = result;
             }
-            free.length -= needed;
+            free.length = start - free.offset;
             free.next = result;
         }
         this.used += result.length;
@@ -583,6 +605,42 @@ public final class VulkanArena {
             throw new IllegalArgumentException("A size of " + value + " bytes is too large for a Vulkan arena.");
         }
         return (int) aligned;
+    }
+
+    /** {@code lcm(4, stride)}, bounded to what an int can hold. BH-01: the arena's boundary unit. */
+    private static int lcm4And(int stride) {
+        int a = 4;
+        int b = stride;
+        while (b != 0) {
+            int t = a % b;
+            a = b;
+            b = t;
+        }
+        long lcm = (4L / a) * (long) stride;
+        if (lcm > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("A stride of " + stride + " bytes is too large for a Vulkan arena.");
+        }
+        return (int) lcm;
+    }
+
+    /** Rounds {@code value} up to the next multiple of {@code unit}, which is assumed positive. */
+    private static int alignUpTo(int value, int unit) {
+        if (unit <= 1) {
+            return value;
+        }
+        long aligned = ((long) value + unit - 1) / unit * unit;
+        if (aligned > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("A size of " + value + " bytes is too large for a Vulkan arena.");
+        }
+        return (int) aligned;
+    }
+
+    /** Rounds {@code value} down to a multiple of {@code unit}, which is assumed positive. */
+    private static int alignDownTo(int value, int unit) {
+        if (unit <= 1) {
+            return value;
+        }
+        return value / unit * unit;
     }
 
     /**

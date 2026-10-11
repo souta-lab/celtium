@@ -542,6 +542,10 @@ public final class VulkanGlState {
     private static long bindsOnOtherUnits;
     private static long bindsOnUnitZero;
 
+    /** Bounded log of the first unit switches and the first binds that carry their unit, so BH-06's half is named. */
+    private static int unitLogs;
+    private static final int UNIT_LOG_LIMIT = 24;
+
     /** {@return how many binds arrived on a unit other than 0, against how many on unit 0}. */
     public static String perUnitBindCensus() {
         return "bindsOnUnit0=" + bindsOnUnitZero + " bindsOnOtherUnits=" + bindsOnOtherUnits
@@ -555,6 +559,12 @@ public final class VulkanGlState {
             bindsOnUnitZero++;
         } else {
             bindsOnOtherUnits++;
+        }
+        if (unitLogs < UNIT_LOG_LIMIT) {
+            unitLogs++;
+            System.out.println("[Celtium] CELTIUM_UNIT_BIND bind texture=" + glTextureId
+                    + " activeUnit=" + this.activeTextureUnit + " bindsOnUnit0=" + bindsOnUnitZero
+                    + " bindsOnOtherUnits=" + bindsOnOtherUnits);
         }
         this.boundTextureByUnit[unitIndex(this.activeTextureUnit)] = glTextureId;
         // Kept in step for the single-value readers that predate the per-unit model (the field is otherwise unused).
@@ -636,6 +646,12 @@ public final class VulkanGlState {
 
     public void activeTextureUnit(int unit) {
         this.activeTextureUnit = unit;
+        if (unitLogs < UNIT_LOG_LIMIT) {
+            unitLogs++;
+            System.out.println("[Celtium] CELTIUM_UNIT_SWITCH unit=" + unit
+                    + " (the mirror's active unit; a switch the game makes that is absent here is a hook the"
+                    + " mirror does not see)");
+        }
     }
 
     /**
