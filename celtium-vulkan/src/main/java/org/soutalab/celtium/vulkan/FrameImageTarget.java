@@ -9,6 +9,23 @@ import org.lwjgl.vulkan.VkCommandBuffer;
  * semaphores are signaled and consumed by Vulkan submissions alone, so this contract stays identical either way.
  */
 public interface FrameImageTarget {
+    /**
+     * {@return whether the bridge's done semaphore already has a signal in flight}.
+     * <p>
+     * A binary semaphore may only be signalled again after its previous signal has been waited on. The present path
+     * can present twice before an {@code endFrame} consumed the first signal, and the second signal is
+     * {@code VUID-vkQueueSubmit-pSignalSemaphores-00067} - measured as ten messages in one leg on the present path,
+     * with the semaphore traced to this pair rather than the swapchain's. Defaults are the safe side for an
+     * implementation that has no such pair.
+     */
+    default boolean doneSemaphoreSignalOutstanding() {
+        return false;
+    }
+
+    /** Records that a submission has signalled the done semaphore and nothing has waited on it yet. */
+    default void noteDoneSemaphoreSignalled() {
+    }
+
 
     /**
      * Marks the frame open: under the shared target the game framebuffer's content is copied in and the

@@ -299,8 +299,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long scissorBoundarySplits;
     /** Groups closed because a light's direction or colour changed without the lighting enable moving. */
     private long lightParamBoundarySplits;
-    /** Of those, the ones whose group was lit - the case where the payload actually reaches the shader. */
-    private long lightParamLitBoundarySplits;
     /** The lighting generation the open group was created under; see {@code VulkanGlState.lightGeneration()}. */
     private long currentGroupLightGeneration;
     /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
@@ -2145,6 +2143,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * frame.
      */
     private boolean frameSubmitReachedQueue;
+    /** Times a present skipped the bridge semaphore pair because its done signal was still outstanding. */
+    private int presentBridgeSignalOutstanding;
     private int emptyFrameReleases;
 
     /**
@@ -4902,6 +4902,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.frameTarget.beginFrameForPresent();
                     long bridgeWait = this.frameTarget.waitSemaphore();
                     long bridgeDone = this.frameTarget.doneSemaphore();
+                    // A binary semaphore may only be signalled again after its previous signal has been waited on, and
+                    // the present submit is the only producer of this pair's done signal while endFrame is its only
+                    // consumer. When a previous signal is still outstanding - a re-present, or a second
+                    // beginFrameForPresent before the wait - presenting with the bridge pair would signal it twice and
+                    // the layer reports VUID-vkQueueSubmit-pSignalSemaphores-00067, measured as ten messages in one
+                    // leg with the semaphore traced to this pair rather than the swapchain's. Presenting without the
+                    // bridge pair is what the other two call sites already do, so the fallback is a shape the path
+                    // has, and it is counted rather than silent.
+                    if (this.frameTarget.doneSemaphoreSignalOutstanding()) {
+                        this.presentBridgeSignalOutstanding++;
+                        bridgeWait = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+                        bridgeDone = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+                    } else if (bridgeDone != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                        this.frameTarget.noteDoneSemaphoreSignalled();
+                    }
                     int sourceLayout = this.frameTarget.colorImageLayout();
                     int restoredLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
                     String result = this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(), sourceLayout,
@@ -5191,18 +5206,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             // BH-05's remaining half: a light that moved without its enable bit moving. O(1) - the generation is a
             // counter, not a comparison of the twenty-float payload, which is why this can run on every batch.
+            //
+            // Only a *lit* group is split, and that is not an optimisation shortcut but the condition itself: the
+            // payload is written into the push block only for a group that carries one (`celtium$lightParams` returns
+            // null when the lighting enable is off), so a light-value change cannot alter an unlit group's draw at
+            // all. Measured before this condition: 416/425/316 splits per run, of which 2 closed a lit group - i.e.
+            // ~414 group splits per run bought nothing. The enable is in the state key, so a lit batch can never join
+            // an unlit group anyway, which is why testing the open group's own enable is enough.
             boolean lightParamsMoved = this.currentImmediateMesh != null
+                    && this.currentGroupState.length > 8 && this.currentGroupState[8] != 0
                     && this.immediateState.lightGeneration() != this.currentGroupLightGeneration;
             if (lightParamsMoved) {
                 this.lightParamBoundarySplits++;
-                // Whether the group being closed was a *lit* one: only a lit group's payload reaches the shader, so
-                // the split that matters is the one where the batch that opened the group carried lighting. A scene
-                // where every light move is already bracketed by an enable/disable toggle (vanilla's own item path is)
-                // splits on the state key anyway, and this counter is what says whether the generation adds anything
-                // there rather than being a cost with no correctness behind it.
-                if (this.currentGroupState.length > 8 && this.currentGroupState[8] != 0) {
-                    this.lightParamLitBoundarySplits++;
-                }
             }
             if (this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
@@ -7529,7 +7544,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " nonAddBlendEquationGroups=" + this.nonAddBlendEquationGroups
                 + " scissorBoundarySplits=" + this.scissorBoundarySplits
                 + " lightParamBoundarySplits=" + this.lightParamBoundarySplits
-                + " lightParamLitBoundarySplits=" + this.lightParamLitBoundarySplits
                 + " scissorCapturedGroups=" + this.scissorCapturedGroups
                 + " alphaFuncGroups=" + this.alphaFuncGroups
                 + " nonGreaterAlphaFuncGroups=" + this.nonGreaterAlphaFuncGroups

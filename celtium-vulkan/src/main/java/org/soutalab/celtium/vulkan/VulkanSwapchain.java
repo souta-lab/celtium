@@ -69,6 +69,8 @@ public final class VulkanSwapchain {
     private int acquireSemaphoreCursor;
     /** One render-finished semaphore per image, paired with the acquire ones: the presentation waits on these. */
     private long[] renderFinishedSemaphores;
+    /** Times the render-finished pool was rebuilt because the swapchain's image count changed. */
+    private int renderFinishedPoolRebuilds;
     private int renderFinishedCursor;
     private int presentTraces;
     /** Partly built semaphore pools that were rolled back instead of abandoned (BH-20), for the report. */
@@ -964,8 +966,20 @@ public final class VulkanSwapchain {
 
     /** {@return the render-finished semaphore for a swapchain image}, created alongside the acquire pool on first use. */
     private long renderFinishedFor(MemoryStack stack, int imageIndex) {
+        // One semaphore per swapchain image, and the pool is rebuilt when that count changes: a pool sized for an
+        // earlier swapchain makes imageIndex % length map two images onto one binary semaphore, and a semaphore
+        // signalled while it is still signalled is VUID-vkQueueSubmit-pSignalSemaphores-00067 - measured as ten such
+        // messages in one leg on the present path. The Vulkan guide names this exact shape: allocate one
+        // submit-finished semaphore per swapchain image rather than per in-flight frame.
+        if (this.renderFinishedSemaphores != null && this.renderFinishedSemaphores.length != this.images.length) {
+            for (long semaphore : this.renderFinishedSemaphores) {
+                vkDestroySemaphore(this.context.device(), semaphore, null);
+            }
+            this.renderFinishedSemaphores = null;
+            this.renderFinishedPoolRebuilds++;
+        }
         if (this.renderFinishedSemaphores == null) {
-            int count = Math.max(2, this.images.length);
+            int count = this.images.length;
             long[] pool = new long[count];
             LongBuffer semaphore = stack.mallocLong(1);
             for (int i = 0; i < count; i++) {
@@ -982,7 +996,10 @@ public final class VulkanSwapchain {
             }
             this.renderFinishedSemaphores = pool;
         }
-        return this.renderFinishedSemaphores[imageIndex % this.renderFinishedSemaphores.length];
+        // The index is the acquired image index and the pool has one semaphore per image, so no modulo: a modulo here
+        // is what let two images share a semaphore when the pool and the swapchain disagreed on the count.
+        return this.renderFinishedSemaphores[imageIndex < this.renderFinishedSemaphores.length
+                ? imageIndex : imageIndex % this.renderFinishedSemaphores.length];
     }
 
     /** Moves the source image out of the transfer layout, back to the layout its owner uses it in. */

@@ -604,6 +604,17 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Whether this stub answers GL calls in this process. When it does there is no GL device identity to read -
      * the renderer's strings are ours, not a driver's.
      */
+    /**
+     * BH-03's one-flag control: the alpha comparison function the immediate path applies, overriding whatever the game
+     * set. {@code -Dceltium.glstub.alphaFuncOverride=<GL enum>} (GL_LEQUAL 0x0203, GL_ALWAYS 0x0207, ...), with 0
+     * meaning "use the game's own function". It exists because the game sets its own functions and a fixture knob for
+     * every piece of GL state is what this avoids: the same jar, scene and crop can then be compared under two
+     * functions, which is how the shader's comparison switch is verified rather than assumed.
+     */
+    public static int alphaFuncOverride() {
+        return Integer.getInteger("celtium.glstub.alphaFuncOverride", 0).intValue();
+    }
+
     public static boolean isInstalled() {
         return installed != null;
     }

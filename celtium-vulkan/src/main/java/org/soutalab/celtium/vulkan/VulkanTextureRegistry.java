@@ -135,6 +135,10 @@ public final class VulkanTextureRegistry {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.mirrorCapturedLevels", "true"));
     private static final boolean PATCH_MIP_LEVELS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.patchMipLevels", "true"));
+    /** Bounded lifecycle log budget and the frame serial both paths print, so announce and forget can be ordered. */
+    private static int lifecycleLogs;
+    private static final int LIFECYCLE_LOG_LIMIT = 64;
+    private int lifecycleSerial;
     /** Wrap answers that came from the GL default because the game never set that pname on that texture. */
     private static int wrapDefaultsUsed;
     /** The GL texture ids that reach the readback refresh, recorded once each. */
@@ -527,10 +531,13 @@ public final class VulkanTextureRegistry {
     }
 
     public void announceImage(int glTextureId, java.awt.image.BufferedImage image) {
-        if (glTextureId == 8 || glTextureId == 20) {
-            // Bounded lifecycle line for the panorama/splash name: which of the three branches is true needs the
-            // announce and the forget ordered against each other, not inferred.
+        // Bounded lifecycle lines with a frame number: the open question is whether a BufferedImage announcement ever
+        // arrives for a name an int[] upload previously filled (the panorama PNGs' names were filled by the splash's
+        // white dynamic texture). Ordered against the int[] path's own line, this answers it without a hypothesis.
+        if (lifecycleLogs < LIFECYCLE_LOG_LIMIT) {
+            lifecycleLogs++;
             System.out.println("[Celtium] CELTIUM_LIFECYCLE announceImage id=" + glTextureId
+                    + " seq=" + (++this.lifecycleSerial)
                     + " size=" + (image == null ? "null" : image.getWidth() + "x" + image.getHeight())
                     + " hasEntry=" + this.entries.containsKey(Integer.valueOf(glTextureId)));
         }
@@ -1388,8 +1395,10 @@ public final class VulkanTextureRegistry {
      * retire queue because a frame that was already recorded may still reference it.
      */
     public void forgetTexture(int glTextureId) {
-        if (glTextureId == 8 || glTextureId == 20) {
+        if (lifecycleLogs < LIFECYCLE_LOG_LIMIT) {
+            lifecycleLogs++;
             System.out.println("[Celtium] CELTIUM_LIFECYCLE forgetTexture id=" + glTextureId
+                    + " seq=" + (++this.lifecycleSerial)
                     + " hadEntry=" + this.entries.containsKey(Integer.valueOf(glTextureId))
                     + " announcedUnconsumed=" + announcementUnconsumed(Integer.valueOf(glTextureId)));
         }

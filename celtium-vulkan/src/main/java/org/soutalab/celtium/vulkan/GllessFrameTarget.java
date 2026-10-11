@@ -112,6 +112,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private int abandonedWaitFailures;
     private String lastAbandonedWaitFailure = "none";
     private long doneSemaphore;
+    /** Whether the done semaphore has a signal in flight; cleared by the wait-only submission below. */
+    private boolean doneSemaphoreOutstanding;
 
     /**
      * The default-framebuffer pair: created by {@link #ensureOffTarget(int, int)} on first use, replaced when the
@@ -318,6 +320,25 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * {@return whether the bridge's done semaphore already has a signal in flight}.
+     * <p>
+     * A binary semaphore may only be signalled again after its previous signal has been waited on, and the rule is
+     * written in this file's own documentation. The present path can present twice before an {@code endFrame}
+     * consumed the first signal - a re-present or a second {@code beginFrame} - and the second signal is
+     * {@code VUID-vkQueueSubmit-pSignalSemaphores-00067}, measured as ten messages in one leg on the present path
+     * with the semaphore traced to this pair rather than the swapchain's. The present path asks this before handing
+     * the semaphore to the present submit, the same way {@code VulkanContext} gates its upload batch.
+     */
+    public boolean doneSemaphoreSignalOutstanding() {
+        return this.doneSemaphoreOutstanding;
+    }
+
+    /** Records that a submission has signalled the done semaphore and nothing has waited on it yet. */
+    public void noteDoneSemaphoreSignalled() {
+        this.doneSemaphoreOutstanding = true;
+    }
+
+    /**
      * A submission that only waits on {@link #doneSemaphore()}: the frame's last submission signals it, so this
      * consumes the signal and resets the semaphore for the next frame - the job GL's wait did under the shared
      * target.
@@ -326,6 +347,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         try (MemoryStack stack = stackPush()) {
             LongBuffer wait = stack.mallocLong(1);
             wait.put(0, this.doneSemaphore);
+            // The wait below is what makes the next signal legal: this is the one place the bridge's done semaphore
+            // is consumed, so clearing the flag here keeps the invariant in the target that owns the semaphore.
+            this.doneSemaphoreOutstanding = false;
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                     .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
                     .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));

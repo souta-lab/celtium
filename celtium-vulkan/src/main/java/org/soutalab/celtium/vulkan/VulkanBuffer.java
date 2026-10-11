@@ -113,9 +113,9 @@ public final class VulkanBuffer {
             throw new IllegalArgumentException("A read of " + length + " bytes does not fit the destination buffer of "
                     + destination.size() + " bytes.");
         }
-        // A copy of this buffer may still be pending in the frame's upload batch, and this read has to see it: the
-        // batch is submitted and waited for here rather than assuming it already went out (OPT-07).
-        this.context.flushUploads();
+        // A copy of this buffer may still be pending, or in flight, in the frame's upload batch, and this read has to
+        // see it: the batch is submitted and waited for here rather than assuming it already went out.
+        this.context.settleUploads();
         VkCommandBuffer commandBuffer = this.context.beginCommands();
         try {
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -154,11 +154,11 @@ public final class VulkanBuffer {
         if (requiredBytes <= this.size) {
             return;
         }
-        // A copy into this buffer may still be pending in the frame's upload batch. It is submitted now, while the
-        // handle it resolves to is still the current one, because the copy-out below reads this buffer's contents and
-        // the old buffer is destroyed at the end of this call. Growth is rare (a handful per run), so this does not
-        // put a per-copy wait back into the upload path.
-        this.context.flushUploads();
+        // A copy into this buffer may still be pending, or already submitted and in flight, in the frame's upload
+        // batch. Both are settled here, while the handle the copies resolve to is still the current one: the copy-out
+        // below reads this buffer's contents and the old buffer is destroyed at the end of this call. Growth is rare
+        // (a handful per run), so this does not put a per-copy wait back into the upload path.
+        this.context.settleUploads();
         long newSize = VulkanContext.alignUp4(requiredBytes);
         long oldHandle = this.handle;
         long oldMemory = this.memory;
@@ -207,6 +207,10 @@ public final class VulkanBuffer {
      * the logical device frees its children implicitly). Render thread only.
      */
     public void delete() {
+        // A copy already submitted by the frame's upload batch may still be reading or writing this buffer. The batch
+        // is confirmed complete before the handle goes away; that is the destination half of the rule the asynchronous
+        // batch needs, and it costs a wait only where a batch happens to be in flight (teardown, eviction, reload).
+        this.context.awaitUploads();
         VkDevice device = this.context.device();
         if (device == null) {
             this.handle = VK_NULL_HANDLE;

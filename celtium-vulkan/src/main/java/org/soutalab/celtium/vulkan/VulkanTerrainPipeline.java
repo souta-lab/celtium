@@ -279,6 +279,24 @@ public final class VulkanTerrainPipeline {
     /** The maxLod the cached {@link #atlasSampler} was created with, so a reload that changes it rebuilds. */
     private int atlasSamplerMaxLod;
 
+    /**
+     * BH-32's own line: the maxLod the terrain pass's block-atlas sampler is actually created with, the configured
+     * value it was derived from, and the mirror's level count it was clamped to. Printed on each change (bounded), so a
+     * leg shows the sampler following the atlas that is mirrored rather than a constant - and so a reload that changes
+     * the level count shows up as a rebuild instead of being inferred.
+     */
+    private static int atlasSamplerReports;
+
+    private static void celtium$reportAtlasSamplerMaxLod(int effective, int mirrorLevels, String source) {
+        if (atlasSamplerReports >= 6) {
+            return;
+        }
+        atlasSamplerReports++;
+        System.out.println("[Celtium] CELTIUM_ATLAS_SAMPLER maxLod=" + effective
+                + " configured=" + ATLAS_MAX_LOD + " mirrorLevels=" + mirrorLevels + " source=" + source);
+    }
+
+
     private long uniformsSize;
     private int uniformsRange;
 
@@ -812,6 +830,9 @@ public final class VulkanTerrainPipeline {
             effectiveMaxLod = mirrorLevels - 1;
         }
         if (effectiveMaxLod <= 1) {
+            // BH-32: the value is reported even on this path, so a leg can quote the effective maxLod the terrain pass
+            // draws with instead of inferring it from the mirror's level count. Bounded to the first few transitions.
+            celtium$reportAtlasSamplerMaxLod(effectiveMaxLod, mirrorLevels, "mirror-sampler");
             return atlas.sampler();
         }
         if (this.atlasSampler == 0L || this.atlasSamplerMaxLod != effectiveMaxLod) {
@@ -820,6 +841,7 @@ public final class VulkanTerrainPipeline {
                 this.atlasSampler = 0L;
             }
             this.atlasSamplerMaxLod = effectiveMaxLod;
+            celtium$reportAtlasSamplerMaxLod(effectiveMaxLod, mirrorLevels, "rebuilt");
         }
         if (this.atlasSampler == 0L) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
