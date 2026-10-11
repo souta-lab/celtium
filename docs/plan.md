@@ -95,6 +95,19 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.148 **goal 本文の更新は人間ターン待ち（方針どおり）**
+
+`docs/goal.md` は本セッションの撤回・受入を反映済み（`f7ad1a29d`）。一方 **objective 本文は revision 66 のままで、
+「glow は chain 専用 image へ設計変更中」「wedge は3候補から識別」という記述が既に古い**（実際は chain が走り、wedge の原因は測定済み）。
+
+goal tool は編集を拒否した: **objective の edit は top-level agent への直接の人間ターンを要する**。今ラウンドは自動継続なので該当しない。
+**これは方針どおりの動作**であり、回避せずに記録する。次に人間ターンが来た時に、以下を反映する:
+
+- 到達点: N03/N10/N07/N08/N17/N05・A01〜A05・所有権ギャップ4つが受入済み。outline chain は実行確認（画の受入が残る）。
+- 撤回: 「runtime は outline を描かない」・「注入4つは死んでいる」（`CELTIUM_RENDERENTITIES calls=3` で反証）。
+- wedge: 原因は `renderSky` の月 quad の固定回転。残りは sky 回転が modelview に載らない理由。
+- 規律に追加: **デコンパイルの読みだけで「死んでいる/置き換えられている」と結論しない**（計器で確かめる）。
+
 ## 0.147 **N17 の画像側を実証（fault を bind の後へ追加）**
 
 監査の指摘は正確だった: 既存の fault は `vkAllocateMemory` の**前**に発火するため、証拠として引用された run の image ハンドルは**stale**で、
