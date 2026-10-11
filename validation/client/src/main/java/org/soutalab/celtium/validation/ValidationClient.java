@@ -3954,10 +3954,20 @@ public final class ValidationClient {
             // the same enableStandardItemLighting the dropped item uses, at a size the comparison can see. Set this
             // early so the ~10-tick equip animation has finished and the hand sits still at the capture. Enchanted
             // adds the glint pass on top.
-            net.minecraft.item.ItemStack inHand = new net.minecraft.item.ItemStack(
-                    net.minecraft.init.Items.APPLE);
-            if ("enchanted".equals(held)) {
-                inHand.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
+            net.minecraft.item.ItemStack inHand;
+            if ("chest".equals(held)) {
+                // A TESR item, and the one the hotbar's light-map rule exists for: RenderItem.renderItem sends an item
+                // whose model isBuiltInRenderer() through getTileEntityItemStackRenderer().renderByItem
+                // (RenderItem.java:144-148), which is the model path rather than the ITEM batch, and it is lit with the
+                // captured world coordinate. In the hotbar that coordinate is the world's, while real OpenGL draws it
+                // with the light-map unit disabled - so this value is what makes "a chest in the hotbar darkens in a
+                // dark place" measurable instead of source-derived.
+                inHand = new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.CHEST);
+            } else {
+                inHand = new net.minecraft.item.ItemStack(net.minecraft.init.Items.APPLE);
+                if ("enchanted".equals(held)) {
+                    inHand.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
+                }
             }
             mc.player.setHeldItem(net.minecraft.util.EnumHand.MAIN_HAND, inHand);
             report.addProperty("heldItem", held);

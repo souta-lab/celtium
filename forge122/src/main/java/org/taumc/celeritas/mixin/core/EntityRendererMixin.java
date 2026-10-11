@@ -94,6 +94,40 @@ public abstract class EntityRendererMixin {
         }
     }
 
+    /**
+     * The light-map texture unit was enabled - the entity pass ({@code RenderGlobal.renderEntities}), the first-person
+     * hand, or the block-entity section. The unit is what real OpenGL modulates a draw by, so the backend needs this to
+     * tell a world-lit draw from one the light map does not reach at all (the whole GUI stage, where the unit is off).
+     * <p>
+     * {@code func_180436_i} is {@code EntityRenderer.enableLightmap} in the SRG table, resolved there rather than
+     * guessed: a wrong name here is silently dropped under {@code require = 0}, and the two counters the backend keeps
+     * ({@code lightmapUnitEnables}/{@code lightmapUnitDisables} in the verification summary) are what make that visible
+     * - the rule itself defaults to "enabled", so a dropped injection leaves the captured coordinate in place instead
+     * of drawing every entity full-bright.
+     */
+    @Inject(method = "func_180436_i", at = @At("HEAD"), require = 0)
+    private void celtium$lightmapUnitOn(org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.setLightmapUnitEnabled(true);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** {@code func_175072_h} is {@code EntityRenderer.disableLightmap}: see {@link #celtium$lightmapUnitOn}. */
+    @Inject(method = "func_175072_h", at = @At("HEAD"), require = 0)
+    private void celtium$lightmapUnitOff(org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.setLightmapUnitEnabled(false);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     @Inject(method = "func_78481_a", at = @At("RETURN"), require = 0)
     private void celtium$reportFieldOfView(float partialTicks, boolean useFovSetting,
             CallbackInfoReturnable<Float> info) {

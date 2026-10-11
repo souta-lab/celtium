@@ -278,6 +278,21 @@ public interface TerrainGpuBackend {
     /** Consume/copy native output data before the caller deletes those outputs. */
     void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results, Runnable graphUpdateTrigger);
 
+    /**
+     * {@return the sections whose geometry the last {@link #uploadMeshes} call could not put on the GPU}, consuming the
+     * list.
+     * <p>
+     * BH-25: an upload that fails for a region is caught so that a resource failure cannot end the run, but the caller
+     * then committed every result as built - section info, translucency state, the build token cleared and
+     * {@code lastBuiltFrame} advanced - for sections the GPU holds no geometry for. Nothing re-submits a section that
+     * reads as built, so the missing chunks were permanent. The backend names the sections it failed to upload and the
+     * caller leaves exactly those un-committed, which keeps them in the rebuild queue. The default is empty for a
+     * backend with no such failure mode.
+     */
+    default java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> consumeFailedUploads() {
+        return java.util.Collections.emptySet();
+    }
+
     void updateRegions();
 
     void updateTimings();
@@ -317,6 +332,14 @@ public interface TerrainGpuBackend {
 
     /** {@code GlStateManager.enableLight}/{@code disableLight}: per-light enable, index 0 for GL_LIGHT0 and so on. */
     default void setLightEnabled(int index, boolean enabled) {
+    }
+
+    /**
+     * {@code EntityRenderer.enableLightmap()}/{@code disableLightmap()}: the light-map texture unit was enabled or
+     * disabled. A backend that always samples the light map needs this to know when real OpenGL would not have - the
+     * unit is on for the entity pass, the hand and the block entities, and off for the whole GUI stage.
+     */
+    default void setLightmapUnitEnabled(boolean enabled) {
     }
 
     /**
