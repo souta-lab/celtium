@@ -305,6 +305,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.316 **round 122: 配布の前提を訂正 — vanilla の `bindTexture` は既に short-circuit している（原典で確認）**
+
+- **原典の確認（web 調査・1.12.2 の `GlStateManager.func_179144_i`）**:
+  ```java
+  public static void func_179144_i(int p_179144_0_) {
+     if (p_179144_0_ != field_179174_p[field_179162_o].field_179059_b) {
+        field_179174_p[field_179162_o].field_179059_b = p_179144_0_;
+        GL11.glBindTexture(3553, p_179144_0_);
+     }
+  }
+  ```
+  ＝**vanilla が既に「同じ texture なら GL 呼び出しをしない」を実装している**（1.8 の GlStateManager 導入時からの設計）。
+  参照: [GlStateManager（1.9 MCP ソース）](https://github.com/CircuitLord/Minecraft-1.9-MCP/blob/master/temp/src/minecraft/net/minecraft/client/renderer/GlStateManager.java)・
+  [1.8 の GlStateManager 解説](https://www.minecraftforum.net/forums/mapping-and-modding-java-edition/minecraft-mods/modification-development/2231761-opengl-calls-glstatemanager)・
+  [冗長 state change の一般論](https://community.khronos.org/t/redundant-texture-switches/53432)。
+- **訂正（前 round の配布の前提が誤り）**: §0.315 で glyph-fix に「変化しない bind の short-circuit」を依頼したが、
+  **それは vanilla に既に存在する**。我々の hook が呼ばれるのは**texture が実際に変わったときだけ**なので、
+  **「redundant bind を省く」unit は不要**（実装しても二重の short-circuit になる）。
+- **では 3.17 µs/glyph は何か（次の問いの立て直し）**: `TextureManager.bindTexture` → `GlStateManager.bindTexture` の
+  **呼び出し連鎖そのもの**（毎 glyph に `ResourceLocation` を引き、`TextureManager` の map を引き、`GlStateManager` の state を読み、
+  我々の hook を通る）と、**`renderStringAtPos` の per-character 仕事**（`charmap.indexOf`）。
+  ＝**次の実験は「bind が実際に何回 GL/stub に到達しているか」を数えること**（既存の `CELTIUM_UNIT_BIND` があるので**新しい計器は不要**）。
+  到達回数が少なければ連鎖の側、多ければ vanilla 側の per-character 仕事が主因と確定する。
+- **glyph-fix へ訂正を送付**（誤った unit を走らせない）。
+
 ## 0.315 **round 121: F3 の次の unit を配布・主要mod対応（goal C）の互換入口を外部資料で整理**
 
 - **配布（Lead→glyph-fix）**: F3 の次の実験は**自分の数値が指す1点** — `renderDefaultChar` の**毎 glyph の `bindTexture` が我々の hook を通る**ので、
