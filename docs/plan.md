@@ -107,6 +107,19 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.169 **ユーザーの起動は「真っ黒なウィンドウ」——client-memory 頂点配列が全拒否**
+
+ユーザーのインスタンスは `instance.cfg` に **`-Dceltium.vulkan.glless=true`** を持つ（＝手動起動は GL-less・fixture なし・validation client なし）。
+そのログは `CELTIUM_DRAWARRAYS ... refused=[no GL_ARRAY_BUFFER is bound (the pointer would be client memory, which the stub does not mirror)]` を
+**1024 → 1,048,576** まで積み上げ、`CELTIUM_SWAPPOINT` は 2700 に達する。
+
+私がユーザーの **Wayland セッションで再現**した: swapchain は生きており image 0..3 を acquire/present している
+＝**ウィンドウは存在しフレームを受け取っている**。そして**メインメニューとローディング画面の描画が全て拒否**されている
+——頂点が**クライアントメモリ**にあり、stub が mirror していないため。**ユーザーが見たのは「中身の無いウィンドウ」**で、それは「ウィンドウが出ない」と読める。
+
+**この発見の意味**: fixture のシーンは全て VBO 経由の batch なので、**プレイヤーが最初に出会う描画クラスが全ての受入 run から見えていなかった**。
+task-15 として測定ごと起票し、push の最優先に置いた——**人が使えるレンダラか、fixture だけが使えるレンダラかの差**。
+
 ## 0.168 **video settings は動作している（受入・ユーザー明示要件）**
 
 ユーザーが完成条件に名指しした video settings を、私が GL-less（fixture の `videoSettings` scene）と
