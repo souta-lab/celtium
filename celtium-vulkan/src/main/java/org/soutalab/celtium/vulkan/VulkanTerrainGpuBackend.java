@@ -5899,8 +5899,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     quadLimit = MODEL_QUAD_LIMIT;
                 }
                 for (int quad = 0; quad < quadLimit; quad++) {
-                    int base = mesh.nextVertex();
+                    // nextVertex() belongs INSIDE the loop: it starts a new vertex and returns its index, and every
+                    // put* call writes the vertex it started. Calling it once per quad and then writing four times
+                    // overwrote one vertex with the quad's four corners, so a quad contributed ONE vertex while the
+                    // indices still asked for base..base+3 - a count of Q instead of 4Q and indices past the end of
+                    // the buffer. That is the corruption the shards and wedges in the presented frames were made of,
+                    // and it is upstream of every matrix, topology and depth question the same frames raised.
+                    int base = mesh.vertexCount();
                     for (int vertex = 0; vertex < 4; vertex++) {
+                        int started = mesh.nextVertex();
+                        if (vertex == 0) {
+                            base = started;
+                        } else if (started != base + vertex) {
+                            throw new IllegalStateException("model mesh vertex contract: quad " + quad + " vertex "
+                                    + vertex + " started at " + started + ", expected " + (base + vertex));
+                        }
                         int source = (quad * 4 + vertex) * 3;
                         mesh.putPosition(snapshot.positions[source], snapshot.positions[source + 1],
                                 snapshot.positions[source + 2]);
@@ -5913,6 +5926,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     mesh.index(base + 2);
                     mesh.index(base + 3);
                     quads++;
+                }
+                // The contract, checked as arithmetic rather than assumed: four vertices and six indices per quad, and
+                // the indices must address vertices this mesh actually holds. A mesh that fails this is not drawn.
+                if (mesh.vertexCount() != quadLimit * 4 || mesh.indexCount() != quadLimit * 6) {
+                    throw new IllegalStateException("model mesh contract for list " + id + ": " + quadLimit
+                            + " quads produced " + mesh.vertexCount() + " vertices and " + mesh.indexCount()
+                            + " indices, expected " + (quadLimit * 4) + " and " + (quadLimit * 6));
                 }
                 built.put(Integer.valueOf(id), mesh);
             }
