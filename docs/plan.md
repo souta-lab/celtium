@@ -89,6 +89,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.138 **決着: terrain 入口は生きている（1カウンタで確定）／GL-less allBlocks は PASSED に復帰**
+
+§0.137 で残した「terrain はどの入口から描かれているのか」を、`renderBlockLayer` のカウンタで決めた。
+
+```
+CELTIUM_BLOCKLAYER calls=1 layer=Solid pass=2
+CELTIUM_BLOCKLAYER calls=3 layer=Cutout pass=2
+```
+
+→ **`RenderGlobalMixin.renderBlockLayer` は実行されている**。Kirino の engine は Celeritas の chunk-layer 経路を（名前ベースの走査では見えなかった形で）通っている。
+したがって**死んでいるのは entity/TESR の4注入だけ**で、terrain 経路は健全。名前で見つからなかった理由は未解明のままだが、
+**「入口が生きているか」という問いには答えが出た**（推測を1カウンタで置き換えた形）。
+
+**同じ run の画像**: `worldFrameNonBackgroundFraction=0.732916`・`presentedImageVerdict=PASSED`・`presentedDistinctColours=10048`。
+＝**フック撤回後の GL-less allBlocks はゲートを通る**（退行前の水準に戻った）。
+
+**残る死んだ注入（4）**: `RenderGlobal.renderEntities` ×2・`EntityRenderer.renderWorldPass` ×2。
+Cleanroom 専用なので、re-target するか根拠つきで外すかを決める（§0.136/§0.137）。
+
 ## 0.137 **死んだ注入の全数掃引と、未解決の1点（terrain の入口）**
 
 §0.136 の掃引を続けた結果。
