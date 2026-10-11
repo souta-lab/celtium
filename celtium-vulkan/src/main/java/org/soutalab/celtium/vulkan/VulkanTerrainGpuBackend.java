@@ -2726,6 +2726,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // compiled with. projection[11] is -1 for a GL perspective and 0 for an orthographic projection.
             this.modelMatrixLoggedCount++;
             System.out.println("[Celtium] CELTIUM_MODEL_ENQ texture=" + texture
+                    // The target the group is stamped with, against the main identity: a model group whose target is not
+                    // the one the window draws is kept in the queue instead of drawn (`immediateGroupsKeptForOtherTargets`),
+                    // which is the shape of "accepted and never drawn" that the format histograms show for id4 and id9.
+                    + " target=0x" + Long.toHexString(target) + " main=0x" + Long.toHexString(this.mainTargetIdentity)
+                    + " mainBound=" + this.currentRenderTargetIsMain
                     + " projKind=" + (Math.abs(projection[11] + 1.0f) < 0.01f ? "perspective" : "ortho")
                     + " proj11=" + round3(projection[11]) + " proj10=" + round3(projection[10])
                     + " proj14=" + round3(projection[14])
