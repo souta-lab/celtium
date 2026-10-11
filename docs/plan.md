@@ -257,6 +257,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.267 **round 73: VUID は menu 経路だけ（terrain leg は 0件）— 探索範囲が menu の pass に確定**
+
+- **測定（既存 leg の比較・Lead）**:
+  ```
+  r69-canon   (terrain + keepGui + captureEntities + keepEntities, layers ON)  VUID = 0
+  r70-perdesc (menu hold 60, layers ON)                                        VUID = 2  VUID-vkCmdDraw-None-09600
+  r66-layout  (menu hold 60, layers ON)                                        VUID = 2  同上
+  ```
+  ＝**terrain 経路は完全に clean**、VUID は **menu 経路だけ**。パノラマの白と VUID は同じ経路に閉じている。
+- **3棄却＋この比較から確定した探索範囲**: menu の `recordImmediateOnlyPass`（standalone UI pass）が pair を attach する側の barrier 記録。
+  即時 descriptor 側の layout 仮説は**全て棄却済み**（2→4 / 2→20+20 / 2→4）なので再試行しない。
+- **次の測定（menu の pass 内の遷移を数える）**: `chainPairColorImage()` について
+  「どの barrier がどの oldLayout→newLayout で記録されたか」を bounded に印字し、
+  VUID を出した draw の直前の layout を確定する。その上で **attach 側の barrier が tracked layout を使う**ようにする
+  （frame image が `:753` で行っているのと同じ形・texture-mirror の change list）。
+- **パノラマの他要素（mirror 内容・bind・捕捉・menu hold）は全て確定済み**なので、この1点が閉じれば row が閉じる。
+
 ## 0.266 **round 72: 3つ目の仮説（per-descriptor 分岐）も棄却（VUID 2→4）・revert — 即時 descriptor 経路は VUID の owner ではない**
 
 - **仮説3**: `VulkanImmediateTexturePipeline` の descriptor を「その view が pass の attach した image と一致するときだけ GENERAL、他は SHADER_READ_ONLY」に。
