@@ -257,6 +257,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.246 **round 52: パノラマの discard 仮説を原典で棄却・「image に届いていない」vs「clear と同じ色を書いている」の分離実験へ**
+
+- **原典確認（Lead）**: `immediate_tex_color.frag` は
+  `colour = texture × v_Color` → `u_AlphaRef < 0` なら combine（定数色との mix）→ そうでなければ
+  `alphaFunc = int(u_MvColumn2.y+0.5)` で `alphaFunc != 0` のときだけ discard → fog を mix → `fragColor = colour`。
+  face の group は **`alphaFunc=0`＝shader 自身の「test 無効」マーカー**、**`alphaRef=0.0`＝combine 分岐に入らない**ため
+  **discard は起きない**。`blend=0` なので fragment は `texture × v_Color` を書き、`colour0=0x0` なら**黒**になるはず。
+  しかし copy が読むのは **pair の clear 色（白 `(1,1,1,0)`）**＝**draw が image に何も書いていない**ように見える。
+- **分離実験（fog-path へ依頼）**: face の fragment 出力を**他に存在しない色**にする — (a) `-Dceltium.vulkan.debugMagentaFormat=2` で
+  `fragColor = vec4(1,0,1,1)` の shader variant、(b) より安価に **push block の捕捉色をマゼンタへ強制**して copy mean を読む。
+  mean がマゼンタへ動けば **draw は image に届いており原因は頂点色が 0**、白のままなら **pass が attach されていても draw が届いていない**
+  → 次は group が描かれた pipeline（fmt=2 の `drawnByFormat`・その pipeline の vertex layout と stride の一致）を疑う。
+  同じ leg で **group の stride と mesh の vertexCount の比較**も印字する（stride 不一致は色属性を誤った offset から読む＝
+  非ゼロの draw が見えない別経路）。
+- **device feature の前提は `04375d685` で実装済み**（`indirect=[…]` を contract に追加）。
+
 ## 0.245 **round 51: device feature の前提を実装（`pEnabledFeatures`）・パノラマは viewport 仮説も弱まり「alpha test / descriptor」へ**
 
 - **device feature の前提（Lead・`04375d685`）**: `createDevice` の `VkDeviceCreateInfo` に **`pEnabledFeatures` が無く全ての optional feature が off**
