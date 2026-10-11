@@ -104,6 +104,19 @@ public final class VulkanHostBuffer {
 
     private void create() {
         VkDevice device = this.context.device();
+        try {
+            celtium$create(device);
+        } catch (RuntimeException | Error error) {
+            // The allocations happen in order - buffer, memory, bind, map - so a failure part way through leaves the
+            // earlier ones alive: the fault injection before vkAllocateMemory is exactly that case, a buffer created
+            // with no memory behind it. delete() releases whatever exists and is idempotent, so the partial state is
+            // released here rather than leaked (audit ownership gap).
+            delete();
+            throw error;
+        }
+    }
+
+    private void celtium$create(VkDevice device) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack).sType$Default()
                     .size(this.size)
