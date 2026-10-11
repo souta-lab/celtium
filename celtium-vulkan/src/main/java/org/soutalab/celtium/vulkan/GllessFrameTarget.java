@@ -741,6 +741,25 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * Which image a bound framebuffer's draws actually render into, as the backend routes them - not which pair an
+     * identity <em>would</em> take if it were off-target. The two answers differ for the main framebuffer, and the
+     * census used to print only the second: the game's main framebuffer identity is a non-zero
+     * {@code System.identityHashCode}, so a bind census line read {@code main=true pair=chain-pair}, which conflates
+     * "this is the delivered image" with "these draws go to the outline pair". The routing itself never had that
+     * ambiguity - {@code VulkanTerrainGpuBackend} keys it on the main flag, {@code offTarget = !currentRenderTargetIsMain}
+     * - so this is the label that was wrong, and this method is the one place the two questions are separated:
+     * the main framebuffer renders into the frame image, identity 0 into {@link #defaultPair} and every other
+     * non-main identity into {@link #chainPair}.
+     *
+     * @param identity the framebuffer identity the game bound
+     * @param isMain   whether that framebuffer is the game's own main one ({@code mc.getFramebuffer()})
+     * @return "frame-image", "default-pair" or "chain-pair"
+     */
+    public static String routeLabelForBinding(long identity, boolean isMain) {
+        return isMain ? "frame-image" : pairLabelForIdentity(identity);
+    }
+
+    /**
      * One owned colour+depth pair and its whole lifecycle: created on first use at the size the caller asks for,
      * replaced when that size changes, cleared once per frame from UNDEFINED, and released by {@link #delete()}.
      * <p>

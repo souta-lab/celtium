@@ -36,6 +36,11 @@ done
 trap 'rm -f "$lock"' EXIT
 
 export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-25-openjdk-amd64}"
-exec "$root/gradlew" -p "$root/build-1122" "${@:-:forge122:packageJar :forge122:validationRemapJar}" \
+# A default has to be two arguments, not one string: `"${@:-a b}"` passes "a b" as a single task name and Gradle answers
+# "project 'packageJar ' not found".
+if [ "$#" -eq 0 ]; then
+    set -- :forge122:packageJar :forge122:validationRemapJar
+fi
+exec "$root/gradlew" -p "$root/build-1122" "$@" \
     --console=plain --no-daemon \
     "-Porg.gradle.java.installations.paths=$JAVA_HOME,$root/.celtium-work/jdks/21/jdk-21.0.12.1+1,$root/.celtium-work/jdks/8/jdk8u504-b01"

@@ -282,6 +282,19 @@ public interface TerrainGpuBackend {
     default void setAlphaFunc(int glFunc, float reference) {
     }
 
+    /**
+     * Mirrors {@code GlStateManager.enableAlpha()}/{@code disableAlpha()} ({@code func_179141_d}/{@code func_179118_c}).
+     * <p>
+     * The enable is a state of its own and not a property of the function: the game enables the test for cutout content
+     * and disables it again for the GUI, the font and anything drawn with a gradient, and a backend that only recorded
+     * the comparison would keep testing after the game turned it off. Both this and {@link #setAlphaFunc} are needed
+     * for the alpha contract to be complete - the pair shipped with the two hooks in {@code GlStateManagerMixin}
+     * pointing at {@code enableAlpha}/{@code disableAlpha} under the lighting handlers' names, so the test never
+     * arrived and the mirror's lighting flag was driven by the font and gradient alpha calls instead.
+     */
+    default void setAlphaTestEnabled(boolean enabled) {
+    }
+
     /** {@code GlStateManager.enableLighting}/{@code disableLighting}: the fixed-function lighting switch itself. */
     default void setLightingEnabled(boolean enabled) {
     }

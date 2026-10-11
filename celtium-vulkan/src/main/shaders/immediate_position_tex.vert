@@ -10,7 +10,12 @@ layout(push_constant) uniform PushConstants {
     // while the model view arrives already multiplied into u_ProjectionMatrix.
     vec4 u_TexA;
     vec4 u_TexB;
-    vec4 u_TexPad;
+    // 96: the current colour's alpha. This layout has no colour element (POSITION_TEX and POSITION_TEX_NORMAL), so the
+    // game's current colour arrives in the push block - RGB at 116/120/124 and its alpha here, in the first float of the
+    // third dead column. Without it the fragment alpha was hardcoded 1.0: the underwater overlay
+    // (ItemRenderer.renderWaterOverlayTexture, color(f,f,f,0.5) with SRC_ALPHA/ONE_MINUS_SRC_ALPHA) drew as an opaque
+    // quad over the whole frame under GL-less. The third column was u_TexPad and nothing read it.
+    layout(offset = 96) float u_ColorA;
     layout(offset = 112) float u_AlphaRef;
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;
@@ -58,7 +63,8 @@ void main() {
     // No per-vertex colour in this format: the texture carries the colour and the current glColor tints it, exactly
     // as the fixed pipeline multiplies. The one exception is a combine draw (negative alpha reference), where the
     // colour slots carry the constant the fragment mixes toward - applying it here too would double the tint.
-    v_Color = celtium.u_AlphaRef < 0.0 ? vec4(1.0) : vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, 1.0);
+    v_Color = celtium.u_AlphaRef < 0.0 ? vec4(1.0)
+            : vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, celtium.u_ColorA);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
     // Mode 0 means "no fog for this batch", and the rows above are then whatever the previous group left in the shared
     // push block, so the coordinate is not computed at all in that case.

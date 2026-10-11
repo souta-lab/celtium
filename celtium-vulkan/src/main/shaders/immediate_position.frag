@@ -20,9 +20,11 @@ layout(location = 1) in float v_FogDistance;
 
 layout(push_constant) uniform PushConstants {
     mat4 u_ProjectionMatrix;
-    vec4 u_MvColumn0;
-    vec4 u_MvColumn1;
-    vec4 u_MvColumn2;
+    vec4 u_MvColumn0;   // 64, dead
+    vec4 u_MvColumn1;   // 80, dead
+    // 96: the current colour's alpha, which the vertex stage has already put into v_Color.a. Declared here so both
+    // stages describe the same block; this stage reads the interpolated value, not the slot.
+    layout(offset = 96) float u_ColorA;
     layout(offset = 112) float u_AlphaRef;
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;

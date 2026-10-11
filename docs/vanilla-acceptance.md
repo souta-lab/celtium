@@ -1,200 +1,274 @@
 # Vanilla acceptance table — one row per vanilla stage
 
-Owner of this file: **worker A, the independent verifier** of the vanilla-completion push. The rule
-this file follows is the one in `AGENTS.md`: every status carries the measurement that decides it,
-and a status without a measurement is written as `U` (unverified), not as "working".
+Owner: **acceptance** (task-10), the independent verifier of the vanilla-completion push. This file
+fixes nothing; it says, per stage, what is implemented, locally verified, unverified or
+unimplemented, and names the measurement behind each word. A status without a measurement is `U`,
+not "working".
 
-Read `docs/handoff-vanilla-completion.md` first. Two things in this file are corrections to that
-brief's premises, and both were measured, not argued:
+**Directive of 2026-10-11 13:5x: the bridge leg is no longer used. GL-less only.** The reference is
+therefore one of two things, and every row says which:
 
-1. **The bridge leg currently renders no world at all.** It has drawn no terrain since 09:47
-   today. The cause is in this tree, not in the fixture and not in world generation. §1.
-2. **The bridge runs that "passed" passed on chat and toast pixels.** `nonBackgroundFraction`
-   is measured against the frame's most common colour, so a sky-only frame with a chat block over
-   it scores 0.81 against a floor of 0.40. §2.
+- **`stored`** — a picture or a calibrated floor that already exists on disk, taken before today's
+  defects (the bridge-era reference pictures, and the floors calibrated from them). It is evidence of
+  what vanilla drew, and it is not re-run.
+- **`self`** — a GL-less self-comparison: one jar, one flag apart (fog on/off, weather on/off,
+  clouds on/off). The only comparison that can attribute a change to a flag.
+- **`none`** — no reference exists, so the row is `U`.
 
-Because of (1) and (2), the only honest bridge terrain reference in this workspace is the pair of
-01:15/09:11 runs, and even those are not an independent OpenGL reference for terrain: their terrain
-was drawn by Celtium's own Vulkan terrain backend (`passes=661`/`1566`, `skipped=0`), the same code
-the GL-less leg runs. The bridge leg differs from the GL-less leg in its frame target and present
-path, not in who draws the terrain.
+A GL-less run compared against another GL-less run on a *different* jar is not a comparison and is
+not used here. Every bridge-leg statement below is history or provenance of a stored picture.
 
-## 1. The bridge leg draws no terrain — confirmed, with the experiment that separates tree from fixture and world
+Status vocabulary, used strictly: **V** verified locally (a named run's picture or counter decides
+it, and I looked at the crop or counter); **W** wrong (implemented, measured, disagrees with the
+reference); **M** measured missing (pixels a stage should produce are absent, with the crop or
+counter that shows the absence); **U** unverified (no measurement decides it, with the reason and the
+knob that would); **X** unimplemented.
 
-**What is measured.** Every bridge-leg run (`glVendor=AMD` in its report; the GL-less leg reports
-`glVendor=Celtium`) carries a Vulkan terrain pass counter. Its value over today:
+Read `docs/handoff-vanilla-completion.md` first. Two of its premises were wrong when it was written;
+§1 and §2 correct them.
 
-| bridge run | mtime | jar | nonBg | `passes` | `skipped` | bg | verdict |
-|---|---|---|---|---|---|---|---|
-| `regr2-bridge` | 01:12 | (not kept) | 0.730838 | 719 | 0 | 0x571716 | FAILED (identity, since fixed) |
-| `scene-ref-terrain` | 01:15 | (not kept) | 0.732164 | 661 | 0 | 0x571716 | FAILED (identity) |
-| `glow-bridge5` | 09:02 | `b63a8a85312027d5` | 0.748878 | 909 | 0 | 0x571716 | PASSED |
-| `bridge-model` | 09:47 | `6bb26fee7ce1b65e` | 0.149201 | 0 | 447 | 0xB3CFFF | FAILED |
-| `n03-x-terrainbridge` | 11:56 | `0c90f819f6456c4f` | 0.505074 | 0 | 1068 | 0xB2CEFE | PASSED |
-| `n03-ae-terrain-bridge` | 12:23 | `216cd6284a3c22f7` | 0.813402 | 0 | 936 | 0x5A6880 | PASSED |
-| `van-bridge2` | 12:59 | `ac347ff1f98e56ad` | 0.153832 | 0 | 1122 | 0xB3CFFF | FAILED |
+## 0. This revision
 
-`skipReason=translucent:_no_pipeline` in all of them, and the same report contains one copy per
-attempt of
+Revision of 2026-10-11 ~14:05 JST. What changed since the first table (13:13):
+
+1. **The bridge leg drew no terrain from 09:47 until `0fddd6ccf`, and the defect is fixed.** Its
+   cause was a depth-format contract that only the GL-less configuration ever chose from. §1a. Every
+   bridge "PASSED" in that window scored its floor on a chat block over a sky-only frame. §2.
+2. **The oldest stored references are still valid**: the pre-defect pictures (`scene-floors/terrain-a`
+   09:11, `glow-bridge5` 09:02, `scene-ref-terrain` 01:15) were taken while the bridge still drew the
+   world, and they are what "vanilla drew" is measured against. §1b.
+3. **A fresh stored reference and a matched GL-less leg were taken on one jar**
+   (`acc2-ref-bridge` 13:44 + `acc2-glless` 13:47, both jar `b074fbb9b659729e`, fixture
+   `0355ffcd40c22a24`). Result: **the entire frame difference is the sky.** Below row 300, four pixels
+   of 460800 differ. §6, §3 rows 1/3/5/19.
+4. **The harness now arbitrates the single game slot itself** (`67cf6f806`: lock file in
+   `.celtium-work/game-slot` holding the owner's pid, `--slot-wait` default 900 s, stale reclaim,
+   released on every exit path) after three concurrency incidents in ten minutes (13:39:20 two
+   GL-less instances; 13:44 three). Runs taken under concurrency are not admissible. §4.
+5. **A jar the Prism instance keeps in its own `mods/` is never copied into a test game directory**
+   (`8ae2e64f8`, after `5c9bec7a1`), whatever a worker names its frozen copy. Verified copy-only
+   without launching a game. §1b.
+
+## 1. The terrain reference
+
+### 1a. What was wrong, and why older bridge evidence is void
+
+From 09:47 until `0fddd6ccf` (13:14) every bridge run carried
+`passes=0 skipped=N skipReason=translucent:_no_pipeline` and one copy per attempt of
 
 ```
 pipeline for solid|cutout_mipped|translucent failed:
   IllegalStateException: the depth format was asked for before anything chose one
 ```
 
-**The mechanism.** `VulkanDepthFormat.chosen()` (no-arg) throws when nothing has chosen yet
-(`VulkanDepthFormat.java:87`). The only caller that *chooses* is `GllessFrameTarget.java:187`
-(`chosen(physicalDevice)`) — GL-less only. `VulkanTerrainPipeline.java:901` uses the no-arg form.
-So in the bridge leg no one ever chooses, every terrain pipeline creation throws, and every terrain
-pass is skipped: Celeritas reports `solid - 46 sections` in the same frame whose Vulkan pass count
-is 0. The throw and the choosing were both introduced by `9655ff681` "depth: choose the format from
-the device instead of fixing it" (09:30). The first bridge run after it, `bridge-model` (09:47), is
-the first sky-only bridge frame. `plan.md` N10 owns this; its row calls the change "AMD では無影響と
-実測", which measured *which format the chooser picks* (`scripts/vulkan_depth_format_probe.py`) — it
-never ran a bridge leg, so it could not observe that nothing calls the chooser there. `plan.md:51`'s
-claim that "GL-less target と terrain pipeline が同じ決定を共有" holds only under GL-less.
+`VulkanDepthFormat.chosen()` (no-arg) threw when nothing had chosen, and the only caller that
+*chose* was `GllessFrameTarget` - GL-less only. So in the bridge leg every terrain pipeline creation
+threw and every terrain pass was skipped, while Celeritas reported its sections. The separating
+experiment (same fixture, scene, pose, flags, GPU, fresh directory; only the renderer jar differs)
+is `.celtium-work/acceptance/bridge-ab.sh`:
 
-**The experiment that separates tree from fixture from world generation.** Same fixture, same
-scene, same pose, same flags, same GPU, fresh game directory per run, one minute apart; only the
-renderer jar differs. Script: `.celtium-work/acceptance/bridge-ab.sh`.
+| run | celtium jar | fixture | passes/skipped | nonBg | distinct | verdict |
+|---|---|---|---|---|---|---|
+| `a-acc-curjar-bridge` | `b874f92393f79b46` | `105598e0f89be16d` | 0 / 120 | 0.160747 | 104 | FAILED |
+| `a-acc-oldjar-bridge` | `b63a8a85312027d5` | `105598e0f89be16d` | 242 / 0 | 0.735010 | 1534 | PASSED |
 
-| run | celtium jar | fixture | `passes` | depth-format throws | nonBg | distinct | bg | verdict |
+**Void as terrain evidence**: `n03-x-terrainbridge` (0/1068, nonBg 0.505074, *PASSED*),
+`n03-ae-terrain-bridge` (0/936, 0.813402, *PASSED*), `skyfix-bridge1` (0/288, 0.149229),
+`posefix-bridge` (0/177, 0.192509), `posefix2` (0/645, 0.522616), `jei-br` (0/930, 0.888320),
+`van-bridge` (0/498, 0.166317), `van-bridge2` (0/1122, 0.153832), `m-entity-bridge` (0/636,
+0.268383), `bridge-model` (0/447, 0.149201), `a-acc-curjar-bridge` (0/120, 0.160747). Any bridge run
+whose `celtium/vulkan-check` line has `passes=0` is void for terrain whatever its verdict.
+
+### 1b. The stored references, and the fresh one
+
+| stored picture | time | jar | passes/skipped | distinct | nonBg | bands | bg | verdict |
 |---|---|---|---|---|---|---|---|---|
-| `a-acc-curjar-bridge` | `b874f92393f79b46` (current tree) | `105598e0f89be16d` | 0 / skipped 120 | 120 | 0.160747 | 104 | 0xB3CFFF | FAILED |
-| `a-acc-oldjar-bridge` | `b63a8a85312027d5` (09:02 era) | `105598e0f89be16d` (same) | 242 / skipped 0 | 0 | 0.735010 | 1534 | 0x571716 | PASSED |
+| `scene-ref-terrain` | 01:15 | (not kept) | 661 / 0 | 1535 | 0.732164 | - | `0x571716` | FAILED (identity, since fixed) |
+| `glow-bridge5` | 09:02 | `b63a8a85312027d5` | 909 / 0 | 1819 | 0.748878 | - | `0x571716` | PASSED |
+| `scene-floors/terrain-a` | 09:11 | `478cf85555ec37a9` | 1566 / 0 | 1536 | 0.727735 | - | `0x571716` | PASSED |
+| `a-acc-oldjar-bridge` | 13:13 | `b63a8a85312027d5` | 242 / 0 | 1534 | 0.735010 | - | `0x571716` | PASSED |
+| `depthfix-bridge` | 13:16 | `0b8707888510d0c9` | 138 / 0 | 1534 | 0.744563 | 617 | `0x571716` | PASSED |
+| **`acc2-ref-bridge`** | **13:44** | **`b074fbb9b659729e`** | **159 / 0** | **1534** | **0.744563** | **617** | **`0x571716`** | **PASSED** |
 
-Both runs: AMD RX 6400 (RADV NAVI24), bridge leg, scene=terrain, `x=0.5 y=12.0 z=0.5 yaw=180
-pitch=20`, tick 200, 1280x720. Pictures: the current jar's is 28346 bytes, 82.10% of its pixels
-exactly `(179,207,255)`, mode the sky colour; the old jar's is 110741 bytes, 24.52% `(87,23,22)`
-(ground), 16.73% `(179,207,255)` (sky), 1534 distinct colours.
+All AMD RX 6400 (RADV NAVI24), scene `terrain`, pose
+`x=0.5000 y=12.0000 z=0.5000 yaw=180.000 pitch=20.000`, `captureStartTick=200`,
+`sceneCalibrationKeyMatches=true`. `acc2-ref-bridge`'s screenshot is **byte-identical** to
+`depthfix-bridge`'s, taken 28 minutes apart on different jar builds, one of them with two other game
+instances running: the stored picture is deterministic and reproducible, so a GL-less leg can be
+compared against it without re-running the bridge.
 
-- **Tree, not fixture**: the fixture is byte-identical between the two runs, and the old jar passes
-  the current fixture's floors (`PASSED`, `nonBg=0.735010`). A fixture defect cannot make the
-  terrain pipelines throw in one leg and not the other; the leg is selected by a JVM property the
-  tree reads.
-- **Tree, not world generation**: a fresh game directory is generated for each run, and the old jar
-  renders the world in its own fresh directory. The world is there.
-- Corroborating, not required: the GL-less leg of the same minutes (`van-glless` 12:56,
-  `n03-ag-jei-glless` 12:25) runs the same fixture and draws the same flat world with
-  `passes=904/931`, `skipped=0`.
+**Standing caveat.** The bridge leg's terrain is *also* Celtium's Vulkan terrain backend (every
+report says `Terrain Backend: vulkan`, and these pictures have `passes` in the hundreds). A stored
+bridge picture is therefore a regression reference for terrain, not an independent-OpenGL one. The
+stages it *is* independent for are the ones real GL draws in the bridge: sky dome/stars/horizon,
+HUD/GUI, chat, items and entity models.
 
-**State of the tree at the time of writing.** The defect is still in the working tree: the only
-caller of `VulkanDepthFormat.chosen(device)` is still `GllessFrameTarget`
-(`GllessFrameTarget.java:212`), and `VulkanTerrainPipeline.java:901` still uses the throwing no-arg
-form. Commit `0fddd6ccf` records this finding; it is a record, not a fix. The tree's built jar
-changed repeatedly while I measured it (`765ff5296a992952`, then `b874f92393f79b46` for the A/B's
-current-jar run at 13:13, then `03c627cc52c8e566`), so every run's jar hash above is the hash of the
-jar that run actually loaded, and a re-run must quote its own.
+**Frozen jars and hashes.** `.celtium-work/acceptance/frozen/` holds the pair used below:
+celtium `b074fbb9b659729e` and fixture `0355ffcd40c22a24`. Two facts about those hashes, both
+measured: the **celtium** jar is reproducible (a rebuild with unchanged sources gives the same
+sha256; entries are timestamp-normalised to 1980-02-01), while the **fixture** jar is not (entries
+carry real timestamps: two rebuilds with no source change gave `348b5747b02251a5` then
+`0355ffcd40c22a24`). Quote the fixture hash as the bytes that ran, never as "the same fixture
+build". A frozen copy can also be a commit behind: `ff68da097c102e47` was frozen by another worker as
+"tree `95d74bac6`", but that commit is 13:31:48 and a build of it is `b074fbb9b659729e`; the format
+table, `POSITION_NORMAL` (id 10), the sky `glDrawArrays` path and the projection mirror landed in it.
 
-**Consequence for every other worker.** Any comparison whose bridge side is a run after 09:47 is a
-comparison against sky plus whatever HUD the frame happens to contain. Do not use `n03-x`,
-`n03-ae`, `n03-af`, `n03-ah`, `n03-ai`, `n03-aj`, `skyfix-bridge1`, `posefix-bridge`, `posefix2`,
-`jei-br`, `van-bridge`, `m-entity-bridge`, `van-bridge2` as a terrain reference.
+## 2. Why the gate did not catch the missing terrain
 
-## 2. Why the gate did not catch it: the floor is satisfied by a chat block
+`worldFrameNonBackgroundFraction` counts pixels differing (tolerance 8) from the frame's **most
+common colour**. A sky-only frame's mode is the sky, so the chat block, the toast, the tutorial box
+and the arm all count as non-background.
 
-`nonBackgroundFraction` counts the pixels that differ (tolerance 8) from the frame's **most common
-colour**. A sky-only frame's most common colour is the sky, so *every* non-sky pixel counts as
-non-background — including the chat block, the toast and the hand.
-
-- `n03-ae-terrain-bridge` (12:23): mode `(90,104,128)` at 10.1% = the chat background;
-  `worldFrameDistinctColours=732`; `nonBg=0.813402`; verdict PASSED. Its own picture shows a sky,
-  a chat block, the tutorial toast, the hotbar and the player's arm — **no terrain**.
-- `van-bridge2` (12:59): mode `(179,207,255)` at 82.8%; `distinct=96`; `nonBg=0.153832`; FAILED.
-  Same absence of terrain; the difference is that this fixture run's chat had faded.
-- The GL-less leg in the same minutes: `distinct=17400`, mode `(87,23,22)` = ground,
+- `n03-ae-terrain-bridge`: mode `(90,104,128)` at 10.1 % = the chat background; `distinct=732`;
+  `nonBg=0.813402`; `PASSED`, with no terrain in its own picture.
+- `van-bridge2`: mode `(179,207,255)` at 82.8 %; `distinct=96`; `nonBg=0.153832`; FAILED - same
+  missing terrain, chat faded.
+- The GL-less leg of the same minutes: `distinct=17400`, mode `(87,23,22)` = ground,
   `nonBg=0.841242`.
 
-So `presentedImageVerdict=PASSED` on a bridge run today means "the frame is not one flat colour and
-contains a chat block", not "the world is drawn". `distinctColours` and the modal colour separate
-the two cases; the fraction alone does not. A useful extra floor is "the modal colour must not be
-the sky colour" or "distinctColours > 1000", but that is a fixture change and not mine to make; it
-is reported to the owner (N06, `ValidationClient`).
+Hence "the bridge reference must have `nonBg >= 0.4`" (task-2/3/7/9 briefs) admits two void runs
+(0.505, 0.813) and is not a validity test. A modal-colour test or `distinctColours > 1000` would be;
+that is a fixture change (`ValidationClient`, N06) and is reported, not made, by me.
 
 ## 3. The table
 
-Columns: **status** / **evidence** / **owner**. Status vocabulary, used strictly:
+| # | vanilla stage | status | reference | evidence | owner |
+|---|---|---|---|---|---|
+| 1 | terrain / chunk layers | **V** | stored | `acc2-glless` (13:47 GL-less, jar `b074fbb9b659729e`, fixture `0355ffcd40c22a24`, AMD RX 6400, scene=terrain, pose `0.5/12/0.5 yaw 180 pitch 20`, `captureStartTick=200`, `sceneCalibrationKeyMatches=true`, `PASSED`, `passes=1063 skipped=0 lastSections=28`) against the stored `acc2-ref-bridge` picture (same jar): terrain centre `(320,300,960,640)` **1 pixel of 204800** differs >8; bottom-left 1; bottom-right **0**; whole frame 28.4 % (261692 px) **all of it in the sky/horizon bands**. Means equal to 1 decimal in every region below row 300. Crops `.celtium-work/acceptance/crops/acc2/`. Caveat §1b: a regression check, not an independent-GL one. | terrain backend; depth-format defect = N10, fixed |
+| 2 | sky dome | **W** | stored | Same pair. Sky band `(0,0,1280,120)`: **153600 of 153600 px (100 %)** differ >8, mean 38.1; GL-less is the **single colour** `(120,167,255)` where the stored picture has the dome's gradient `(158.1,192.9,255)` at the top. The path exists (`RenderGlobal.renderSky` → `VertexBuffer.drawArrays` → `glDrawArrays`, landed in `95d74bac6`, gate `celtium.glstub.skyFrameGate` default `capability`) and its census in this run is `glDrawArraysCalls=667 drawn=157 vertices=106132 empty=0 refused=510 pureBlueGroups=0`, refused by reason `no GL_ARRAY_BUFFER is bound (the pointer would be client memory, which the stub does not mirror)`. The star group is refused by the gate itself: `CELTIUM_SKY_REFUSAL buffer=17 count=3120 gate=capability fogEnabled=false clearColor=(0.425,0.492,0.607,0.0) colour=(0.046,0.046,0.046,0.046)`. The blue-wing artefact is gone (`pureBlueGroups=0`). | sky-draws (task-3), pipelines (task-6) |
+| 3 | stars | **U** | none | `pinnedWorldTime=6000` in every report (noon, star brightness 0 by construction); no counter distinguishes a star draw. The one candidate is the refused group above (`colour alpha 0.046` = the mirrored star alpha, refused because the position shaders hardcode alpha 1.0). Needs a night scene flag, which does not exist. | sky-draws (task-3), pipelines (task-6) |
+| 4 | horizon plane | **W/U** | stored | Same pair. Horizon band `(0,120,1280,300)`: **108089 of 230400 px (46.9 %)** differ >8, mean 55.1; GL-less `(129.9,135.0,170.3)` vs stored `(161.1,173.2,208.8)`. Whether that is the dome's lower gradient or the horizon plane is not separable from this pair: both live in the same band and the same gated path. | sky-draws (task-3) |
+| 5 | clouds | **U** | none | A counter defect, measured: in `acc2-glless` and in `ww-gl-cloud` (13:38, jar `ff68da097c102e47`) format 8 reaches `128/128` in the **first** histogram line and never changes again, while every other id grows - i.e. the cloud batches are submitted in frame 1 and never again (`weather-water`'s measurement; I read the same sequence in both reports). No cloud pixel is identified in any GL-less picture. A self-comparison (`renderClouds` on/off, one jar) is the experiment that would decide it. | weather-water (task-9) |
+| 6 | water surface | **U** | none | `ww-br-water`/`ww-gl-water` (13:37/13:38, jar `ff68da097c102e47`): both `UNCALIBRATED_PRESENTED_IMAGE` (new pose - correct, not a failure), and the bottom band `(600,720)` has the **same mean in both** `(82.1,107.1,50.4)` = grass. The GL-less picture shows flat sky over grass with no water-tinted pixel, so the run does not demonstrate water drawn or missing. Needs the camera in/over the water layer and a named crop. | weather-water (task-9) |
+| 7 | weather (rain/snow) | **U** | self (not yet taken) | `ww-br-base` (13:36) vs `ww-gl-base` (13:37), same jar `ff68da097c102e47`, `weather=true particles=true`: both `PASSED`; my stage comparison gives sky 87.9 % >8 (mean 12.8), horizon 40.2 %, terrain centre 8.8 % (mean 3.6), whole frame 29.9 % (mean 7.4). Rain is stochastic between runs, so no attribution is possible without a one-flag control: weather on vs off, one jar, one tick. | weather-water (task-9) |
+| 8 | particles | **U** | none | No format 5 in the GL-less runs that ask for particles: `ww-gl-base`'s histogram is `id0=99/0 id1=2/2 id2=33266/33266 id6=584/584 id7=537/528 id9=12/12` (no id5) and its `rendererDebug` has no particle line; `acc2-glless` likewise (`5:0` in `CELTIUM_ACCEPTED byFormat`). But `fogoff` (13:18, no particle flag) has `id5=48/48`, so "format 5 = particles" is not one-to-one as used, or that scene spawned none. Either way the pair does not support a particle claim. | weather-water (task-9), pipelines (task-6) |
+| 9 | entities (models, renderers) | **U** | none | `m-entity-glless` (12:58, jar `ac347ff1f98e56ad`) `modelDraws=2477 modelMeshLists=38 modelQuads=228`, accepted format 9 = 228, but its only bridge twin is `UNCALIBRATED` **and** `passes=0` (void, §1a). The current attempt (`entity-runs/ent-glless` + `ent-bridge`, 13:39-13:44) ran **while two other game instances were up**, so per `AGENTS.md` its timings and pixels are inadmissible. No honest entity comparison exists on the current tree. | entity-models (task-7) |
+| 10 | TESR / block entities | **U** | none | `-Dceltium.validation.enchantItem=true` was last set by `p519-lookdown` (10-10 19:34), jar not kept; no run today. `plan.md` §0.118's enchant-table match is on an older jar and does not reproduce here. | entity-models (task-7) |
+| 11 | items (item models / GUI stacks) | **W/U** | stored | `jei-gl` (12:40 GL-less, jar `3a94b9dd3140…`, accepted format 4 = 4424) vs `jei-br` (12:40 bridge, same jar, `passes=0`): `compare_jei_pair.py` - inventory panel `(420,120,860,600)` **94.7 %** of pixels differ >8 (mean 89.6), whole frame 92.9 %. The *class* of difference (panel/slot backgrounds absent, item models present) is §0.157's finding; the numbers are from a pre-integration jar and the bridge leg is void for terrain, so this row needs a GL-less-only re-take. | gui-stage (task-5), pipelines (task-6) |
+| 12 | GUI / HUD (hotbar, panels, slot backgrounds) | **M** | stored | Crop `(480,650)-(800,720)`, jar `216cd6284a3c22f7` both legs, tick 200: GL-less `n03-ac-terrain-deco` shows **terrain only** - no hotbar frame, no slots, no selection highlight; stored `n03-ae-terrain-bridge` shows the vanilla hotbar with 9 slots and the first highlighted. Stacked crop `.celtium-work/acceptance/crops/hotbar-glless-top-bridge-bottom.png`, which I looked at. The stored leg is void for terrain, so only the *presence* of the hotbar is decidable, not the mean colours under it. | gui-stage (task-5), texture-mirror (task-4) |
+| 13 | chat | **W** | stored | Same pair: the **text** is drawn in both legs (same wrapped white text, same region - the N03 font path works); the **background quad is missing** under GL-less. Crop `.celtium-work/acceptance/crops/chat-glless-top-bridge-bottom.png`. Region means `(0,320,660,620)` `(89.2,65.6,85.5)` GL-less vs `(123.6,134.1,152.4)` stored - contaminated by the void stored terrain; read the crop. | gui-stage (task-5), texture-mirror (task-4) |
+| 14 | crosshair | **M** | stored | Crop `(600,320)-(680,400)` of the same pair, `.celtium-work/acceptance/crops/crosshair-glless-top-bridge-bottom.png` (I looked at it): the stored leg shows the dark crosshair at frame centre; the GL-less leg shows terrain and text with **no crosshair**. | gui-stage (task-5) |
+| 15 | selection outline (block selection box) | **U** | none | No run measures it: `allBlocks` was last set by `alive-again` (GL-less, no reference), no counter names the box, and the fixture has no knob that pins `drawSelectionBox`. | not attributed |
+| 16 | block-breaking overlay | **U** | none | `-Dceltium.validation.breakBlock=true` exists in the fixture; the newest run that set it is `p471-all` (10-10 17:26), jar not kept; no run today, no counter. | not attributed |
+| 17 | fog | **W** | self | Two runs one flag apart on one jar (`03c627cc52c8e566`, fixture `105598e0f89be16d`, scene=terrain): `fogoff` (13:18, `-Dceltium.vulkan.immediateFog=false`) `PASSED`, `distinct=1471 nonBg=0.667682`, `passes=459`; `fogon` (13:19, default, i.e. `immediateFog=true` at `VulkanTerrainGpuBackend.java:1603`) **`status=NO_CAPTURE`, no picture, no verdict**. So on that jar the shipped default captured nothing and only the off-switch passed. Separately, the terrain's distant fog matches a stored reference (0.2 % of the horizon band) while the sky's fog ramp is absent. | fog-path (task-2) |
+| 18 | final composite / present | **V (composite) / W (content)** | stored | `acc2-glless`: `presentedImageVerdict=PASSED`, 0 assertion failures, `pictureEvidenceSource=presented-dump`, `presentedImageFrameCountAboveZero=true`. **The composite is faithful**: against the stored picture of the same jar the difference below row 300 is 4 pixels of 460800, and the whole-frame difference (261692 px, mean 20.1) is exactly the sky band (153600) plus the horizon band (108089). No darkening, no offset: the earlier "global darkening" reading was a GUI frame compared against a world frame, and this pair confirms it. Content is still incomplete because the sky is (row 2). `postChains=0 postPasses=0` in every run I read, so post-processing chains are **X** here. | frame-composite (task-8) |
+| 19 | text / font (N03) | **V** | stored | `plan.md` §0.144 (`quads=52406 submitted=52406 accepted=52406 refused=0`, `unicodeWindows=40548`) plus the JEI pair's crops, where the text is the same size and position in both legs (I read those crops). Row 13's missing box is not the font. | font / N03 |
 
-- `V` verified locally: a measurement at a named scene/pose/tick against a bridge picture, and I
-  looked at the crop or the counter that decides it.
-- `W` wrong: implemented, measured, and the measurement disagrees with the reference.
-- `M` measured missing: the pixels a stage should produce are absent in a frame that should have
-  them, with the counter or crop that shows the absence.
-- `U` unverified: no measurement exists that decides it, with the reason.
-- `X` unimplemented: no code path / deliberately gated off.
+Cross-cutting counters from `acc2-glless`, which is the most recent GL-less run I read in full:
 
-| # | vanilla stage | status | evidence (run, jar, GPU, scene, pose, tick, verdict, counter or crop) | owner |
-|---|---|---|---|---|
-| 1 | terrain / chunk layers (GL-less) | **V** | `van-glless` GL-less, jar `ac347ff1f98e56ad`, AMD RX 6400, scene=terrain, `x=0.5 y=12.0 z=0.5 yaw=180 pitch=20`, tick 205, `PASSED`, `passes=904 skipped=0` vs bridge `scene-floors/terrain-a` (jar `478cf85555ec37a9`, same pose, tick 200, `nonBg=0.727735`): `vanilla_stage_compare.py` — terrain centre `(320,300,960,640)` 1 pixel of 204800 differs by >8; bottom-left 1 px; bottom-right 0 px; mean RGB equal to 1 decimal in every region below the sky. Crops `.celtium-work/acceptance/crops/terrain/`. **Caveat: the bridge's terrain is also Vulkan (`passes=1566`), so this is a regression check, not an independent-GL check.** | terrain backend; depth-format defect = N10 |
-| 2 | terrain / chunk layers (bridge) | **W** | `a-acc-curjar-bridge` jar `b874f92393f79b46`, fixture `105598e0f89be16d`, AMD, bridge, tick 200: `passes=0 skipped=120 skipReason=translucent:_no_pipeline`, 120× depth-format exception, `nonBg=0.160747`, `distinct=104`, verdict FAILED. §1. | N10 (`VulkanDepthFormat`, `GllessFrameTarget`, `VulkanTerrainPipeline`) |
-| 3 | sky dome | **W/X** | Row means every 20 px, 1280×720: GL-less `van-glless` rows 0–210 are the **single colour** `(179,207,255)` — a clear colour, no dome gradient; bridge `scene-floors/terrain-a` rows 0–140 are a **gradient** `(149,186,255)→(179,207,255)` then flat; GL-less `n03-ac-terrain-deco` (jar `216cd6284a3c22f7`, tick 200) rows 0–200 are a dark, strongly
-varying sky — `(78,88,169)` at y=0, darkest `(42,47,130)` at y=60, `(140,159,215)` at y=160–200 —
-**plus large blue wedges across it**. Three different skies in three runs, so nothing here matches. The path that draws it is the `glDrawArrays` one the brief says is gated off because it produced ~174,000 pure-blue pixels; `n03-ac`'s wedges are that path switched on. `sky band (top)` region differ: 87.8% gl-less vs bridge-then. | sky worker (`RenderGlobal.renderSky` via `VertexBuffer.drawArrays`); plan §0.133–0.135 |
-| 4 | stars | **U** | No run can decide it: the fixture pins `worldTime=6000` (noon, `pinnedWorldTime=6000` in every report), where vanilla's star brightness is 0, and no counter distinguishes a star draw. The `starVBO` path is part of the gated-off `glDrawArrays` group (row 3). | sky worker |
-| 5 | horizon plane | **U/X** | Same gated path as the sky dome. In `van-glless` there is no dark horizon band (rows 140–210 are exactly the sky colour); in `scene-floors/terrain-a` the dome gradient reaches that same colour at the horizon, which is also what a missing horizon plane looks like. Not separable from row 3 with the runs that exist. | sky worker |
-| 6 | clouds | **U** | No measured frame contains a cloud pixel in either leg (`scene-floors/terrain-a`, `van-glless`, `a-acc-oldjar-bridge` all show a clean sky), and no run on disk sets `renderClouds`; the run directories' `options.txt` is empty. A run with clouds explicitly on, compared against the bridge-then reference, is the experiment that would decide it. | not attributed in the sources I read |
-| 7 | water surface | **U** | The fixture's flat-stack scene contains no water block (`sceneVariant="default flat stack"`, `worldLayers` default bedrock/dirt/grass), and no run in `.celtium-work/` names water. `VulkanImmediateTexturePipeline`'s own comment says format 6 carries "the water surface" among others, so the layout has a branch; nothing measures it. | format-6 owner (`VulkanImmediateTexturePipeline`) |
-| 8 | weather (rain/snow) | **U** | The knob exists (`-Dceltium.validation.weather=true`) and 172 runs set it, but the newest is `p490-kitchen` (10-10 18:12) and its jar was not kept; **no run today sets it**. Nothing on the current tree measures it. | format-6 owner |
-| 9 | particles | **U (counter yes, picture no)** | Format 5 is implemented and accepted under GL-less on the current tree: `particles` 09:08 `id5=76/76`, `n03-ac-terrain-deco` 12:21 `id5=108/108`, `van-glless` 12:56 `id5=115/115`, `particleDescriptorRefusals=0` in all. There is no bridge picture comparison with particles on for any run whose jar was kept; `docs/history/2026-10-11-format5-particle-probe.md` is the owner's instrument. | format-5 / particle owner |
-| 10 | entities (models, renderers) | **U (counter yes, picture no)** | `m-entity-glless` 12:58 GL-less jar `ac347ff1f98e56ad` tick 200: `modelDraws=2477 modelMeshLists=38 modelQuads=228`, accepted format 9 = 228. Its bridge twin `m-entity-bridge` (12:59) is `UNCALIBRATED_PRESENTED_IMAGE` (variant differs) **and** has no terrain, so it cannot serve as the comparison. `plan.md` §0.104/§0.118 record matches on older jars. | N01/N02 (`VulkanDynamicMesh`, `VulkanModelQuadCapture`) |
-| 11 | TESR / block entities | **U** | `-Dceltium.validation.enchantItem=true` was last set by `p519-lookdown` (10-10 19:34), jar not kept; no run today. The enchant-table claim in `plan.md` §0.118 is on an older jar and I could not reproduce it here. | N02 owner |
-| 12 | items (item models / GUI item stacks) | **W** | `jei-gl` 12:40 GL-less accepted format 4 (ITEM) 4424 batches; `jei-br` 12:41 bridge. `scripts/cpu-contract/compare_jei_pair.py`: inventory panel `(420,120,860,600)` **94.7% of pixels differ by >8** (mean 89.6), JEI item count 100.0%, whole frame 92.9%. The two legs' screens do not agree. | item-8/GUI owner; format 4 pipeline |
-| 13 | GUI / HUD (hotbar, panels, slot backgrounds) | **M** | Crop `(480,650)-(800,720)`, same jar `216cd6284a3c22f7`, same calibration key (both `sceneCalibrationKeyMatches=true`), tick 200: GL-less `n03-ac-terrain-deco` shows **terrain only** — no hotbar frame, no slots, no selection highlight; bridge `n03-ae-terrain-bridge` shows the vanilla hotbar with 9 slots and the first slot highlighted. Region means: GL-less `(101.8,22.7,22.0)` (ground) vs bridge `(78.8,82.9,78.1)` (slot frame). Crop: `.celtium-work/acceptance/crops/hotbar-glless-top-bridge-bottom.png`. This is the texture-mirror staleness the brief names. | GUI/texture owner (`VulkanGlTexture` mirror refresh) |
-| 14 | chat | **W** | Same pair and crops. The **text** is drawn in both legs (identical wrapped white text over the same region); the **background quad is missing** under GL-less — `n03-ac` shows text over terrain, `n03-ae` shows the vanilla dark box. Region `chat block (0,320,660,620)` mean `(89.2,65.6,85.5)` GL-less vs `(123.6,134.1,152.4)` bridge. The font path (N03) is the part that works. | N03 (font) for text; GUI/quads owner for the box |
-| 15 | crosshair | **M** | Crop `(600,320)-(680,400)` of the same pair: bridge `n03-ae` shows the crosshair (dark plus at frame centre) over the chat; GL-less `n03-ac` shows terrain and text, **no crosshair**. Crop: `.celtium-work/acceptance/crops/crosshair-glless-top-bridge-bottom.png`. | GUI/HUD quads owner |
-| 16 | selection outline (block selection box) | **U** | No run measures it: `allBlocks` was last set by `alive-again` (10-15, GL-less, no bridge twin); the box needs `drawSelectionBox` and neither leg's report counts it. `plan.md` §0.137 lists `drawSelectionBox(...)` among the injection sweep and does not close it. | not attributed |
-| 17 | block-breaking overlay | **U** | `-Dceltium.validation.breakBlock=true` was set by two runs, newest `p471-all` (10-10 17:26), jar not kept; no run today, no counter. | not attributed |
-| 18 | fog | **W (partial)** | `fogModeSource=mirror` in every report (both legs), so the *parameter* is mirrored; the distant-terrain region matches the bridge-then (`horizon band (0,120,1280,300)`: 460 of 230400 px differ = 0.2%, mean RGB equal to 1 decimal). But the sky's fog ramp is absent: GL-less rows 0–210 are flat `(179,207,255)` where the bridge-then ramps `(149,186,255)→(179,207,255)`. The brief's "no fog at all in the immediate path (`TerrainGpuBackend` has no `setFog*`)" is consistent with the sky measurement and not contradicted by the terrain one (the terrain's fog is the terrain pipeline's, not the immediate path's). | fog/immediate owner |
-| 19 | final composite / present | **V (presence) / W (content)** | GL-less `van-glless`: `presentSucceeded=true presentSubmitDone=true compositePresentRefusals=0 presentedImageFrameCountAboveZero=true`, and the presented dump is the picture that contains the world (row 1). Content is incomplete by rows 3–15: the composite carries terrain + chat text and not the HUD, crosshair, sky dome or GUI. `postChains=0 postPasses=0` in every run I read, so post-processing chains are **X** (unimplemented) — `plan.md` §0.143–0.145 shows an `entity_outline` chain executing in a `glow` scene, which is not a post chain in these runs. | present/compositor owner; N04/N05 for post chains |
+- `CELTIUM_ACCEPTED byFormat=[0:0 1:2 2:49052 … 4:3 5:0 6:888 7:792 8:128 9:12 10:0]` - id 10
+  (`POSITION_NORMAL`, added in `95d74bac6`) accepted **0**; id 5 accepted **0**; id 8 frozen at 128.
+- `CELTIUM_REFUSALS_BY_FORMAT {0 format 0 (unmapped) not in celtium.vulkan.immediateFormats=112}`
+  and the histogram's `id0=122/0`: **112-122 batches per run are refused as an unmapped format**.
+  Under GL-less a refused batch is drawn by nobody. A missing counter is not a missing draw, but
+  here the counter is present and the acceptance is zero, so those batches are missing until the
+  format table takes them.
+- `CELTIUM_DRAWARRAYS glDrawArraysCalls=667 drawn=157 refused=510`.
+- `CELTIUM_NOOP_CENSUS noopEntryPoints=46 noopCalls=582181 top=[glTexCoord2f=199184 glVertex3f=199184
+  glEnd=49796 glBegin=49796 …]` - cumulative over the whole process, so it includes the menus and
+  loading screens and must not be read as in-world text; named here so nobody re-derives it.
 
-Cross-cutting counter, all runs above: `refusedBeforeAppend` is 0 in the GL-less runs and 6249 in
-`van-bridge2`; `acceptedByFormat` is `1:2,2:37704,3:0,4:3,5:115,6:777,7:512,8:0,9:12` in
-`van-glless` and all-zero in `van-bridge2` — i.e. under the bridge leg Celtium's *immediate* path
-accepts nothing, because that leg's immediate calls are answered by real GL. This is why the bridge
-leg is a usable reference for the immediate-mode stages (GUI, items, sky as GL draws it) and not for
-terrain, which both legs route to the same Vulkan backend.
+## 4. Claims contradicted by measurement
 
-## 4. Claims I could not verify, and claims the evidence contradicts
+- **`plan.md` line 51 / N10**: the capability-based depth format was "no effect on AMD, measured" and
+  "the GL-less target and the terrain pipeline share the same decision". The measurement behind it
+  reported which format the chooser *would* pick and never ran a bridge leg, where nothing called the
+  chooser. True about the format, false about the configuration. §1a.
+- **"`n03-ae-terrain-bridge` passed"** as a usable reference: `PASSED` at `nonBg=0.813402` on a
+  sky-only frame whose mode was the chat background. §2.
+- **"a bridge run with `nonBg >= 0.4` is usable"**: two void runs scored 0.505 and 0.813. §2.
+- **"the bridge leg draws with real OpenGL and is the reference"**: not for the world - every bridge
+  report says `Terrain Backend: vulkan`. §1b.
+- **"the GL-less frame is globally darker"** (task-8's brief): it was a GUI frame compared against a
+  world frame. Against the stored picture of the same jar, the terrain centre differs by 1 px of
+  204800, the bottom-right corner by 0, the HUD strip by 0, the hotbar strip by 0, the tooltip by 0,
+  the chat block by 2, and every whole-frame difference is in the sky and horizon bands. No
+  darkening, no offset. Independently reproduced by me on two stored references (`acc2-ref-bridge`
+  and `scene-floors/terrain-a`, §6).
+- **"rain (format 5) is absent from every histogram"**: it is absent from the runs that set
+  `weather=true` (and from `acc2-glless`), but `fogoff`, which sets no particle flag, has
+  `id5=48/48`. The claim holds for the weather scene only.
+- **"clouds are accepted in frame 1 only"**: confirmed by me in two independent runs
+  (`acc2-glless`, `ww-gl-cloud`): id 8 reaches 128 and never changes while every other id grows.
+- **Jar hashes as content identity**: the celtium jar is reproducible, the fixture jar is not. §1b.
+- **Concurrency**: 13:39:20 two GL-less instances (`entity-runs/ent-glless`, `runtime/p2-glu-on`);
+  13:44 three (`fc8-br`, `tm-glless1`, `acc2-ref-bridge`). Those runs' timings and pixels are not
+  admissible; the slot lock (`67cf6f806`) is the fix.
+- **A transient broken harness**: at 13:45 my GL-less leg died with `SyntaxError: invalid syntax` at
+  `prism_validation.py:297` while the file was mid-edit. Read that as "the instrument was being
+  edited", not as a result; the leg was re-taken and is the one quoted above.
 
-**Contradicted by measurement.**
+## 5. Claims I could not verify (no measurement exists)
 
-- `plan.md` line 51 and N10's row: the depth-format contract is "no impact on AMD, measured" and
-  "the GL-less target and the terrain pipeline share the same decision". On AMD's bridge leg the
-  decision is never made, all terrain pipelines throw, and no terrain is drawn. §1.
-- "`n03-ae-terrain-bridge` passed" as evidence of a good reference (`PASSED` at 12:23). It passed on
-  a chat block over sky with `passes=0`; its picture contains no terrain. §2.
-- `plan.md` §0.126's "the bridge model-draw regression was not established" is right that a missing
-  counter is not a missing draw. The bridge's *terrain* regression is established by a counter that
-  does exist (`passes=0 skipped=N` plus the exception text, plus the A/B with a jar that draws it).
-- The brief's "the GL bridge leg draws with real OpenGL and is the reference" is not true for the
-  world: both legs' terrain goes through Celtium's Vulkan terrain backend
-  (`Terrain Backend: vulkan` in the debug lines of every run I read, bridge included), and the
-  bridge reference's own terrain run has `passes=1566`.
+- **stars** (row 3): no night scene; the fixture pins `worldTime=6000`.
+- **clouds, water, weather, particles** (rows 5-8): the pairs that exist do not isolate their stage
+  (identical 222-row profile in the cloud and water GL-less frames, grass in both water legs, no
+  format 5 in the particle leg).
+- **entities and TESR** (rows 9-10): the one current attempt ran concurrently; the older reference is
+  uncalibrated and void for terrain.
+- **selection outline, block-breaking overlay** (rows 15-16): no run today, no counter.
+- **post-processing chains** (row 18): `postChains=0 postPasses=0` in every run I read.
+- **the panel floor counters** (`panelChangedFraction`, `panelStrongFraction`,
+  `panelDistinctColours`): they appear in `sceneGateFloors` but I found no run whose report carries
+  their measured values.
+- **anything not in a run's own report or in a crop I opened**: where a teammate's run is the source,
+  §3 says so; I did not re-run their jar.
 
-**Could not verify (no measurement exists).**
+## 6. The matched pair, in full
 
-- stars, horizon, clouds, water, weather (rows 4,5,6,7,8): no run on the current tree exercises them
-  or contains them; §3 names the knob and the last run that set it, where one exists.
-- entities and TESR against the bridge on the current tree (rows 10,11): counters exist and are
-  non-zero under GL-less, but the bridge twin that would be the comparison is either uncalibrated or
-  missing terrain.
-- selection outline and block-breaking overlay (rows 16,17): no run today, no counter.
-- The `surface=` / panel floor counters (`panelChangedFraction`, `panelStrongFraction`,
-  `panelDistinctColours`) appear in `sceneGateFloors` but I found no run whose report carries their
-  measured values, so `plan.md`'s panel-floor claims are `U` from where I sit.
+Same jar both legs (`b074fbb9b659729e`), same fixture (`0355ffcd40c22a24`), same GPU, scene, pose and
+tick; the only difference is `-Dceltium.vulkan.glless=true`, and the GL-less leg took the slot after
+the harness lock existed (`67cf6f806`). GL-less: `worldFrameDistinctColours=1477`,
+`nonBg=0.72661`, `verticalBands=509`, `blackFraction=0.0`, `bg=0x571716`, `passes=1063 skipped=0`,
+`presentedImageVerdict=PASSED`. `scripts/cpu-contract/vanilla_stage_compare.py` between the GL-less
+presented dump and the stored bridge screenshot:
 
-**Not mine to fix, reported instead.** The depth-format call ordering (row 2) is a renderer change;
-I did not touch renderer sources. The gate's floor being satisfiable by a chat block (§2) is a
-fixture change (`ValidationClient`).
+| stage | mean | >8 | pixels>8 | GL-less mean rgb | stored mean rgb |
+|---|---|---|---|---|---|
+| sky band (top) | 38.108 | 100.0000 % | 153600 | (120.0,167.0,255.0) | (158.1,192.9,255.0) |
+| horizon band | 55.067 | 46.9136 % | 108089 | (129.9,135.0,170.3) | (161.1,173.2,208.8) |
+| terrain centre | 0.001 | 0.0005 % | **1** | (103.1,66.4,60.7) | (103.1,66.4,60.7) |
+| bottom-left corner | 0.000 | 0.0020 % | 1 | (101.9,56.2,51.6) | (101.9,56.2,51.6) |
+| bottom-right corner | 0.000 | 0.0000 % | **0** | (101.9,56.2,51.6) | (101.9,56.2,51.6) |
+| hud strip (bottom) | 0.000 | 0.0000 % | **0** | (101.6,27.8,26.2) | (101.6,27.8,26.2) |
+| chat block | 0.000 | 0.0010 % | 2 | (101.7,63.6,58.1) | (101.7,63.6,58.1) |
+| hotbar strip | 0.000 | 0.0000 % | **0** | (103.6,23.2,22.2) | (103.6,23.2,22.2) |
+| tooltip region | 0.000 | 0.0000 % | **0** | (103.6,64.9,59.6) | (103.6,64.9,59.6) |
+| whole frame | 20.119 | 28.3954 % | 261692 | (112.3,96.5,117.1) | (126.4,110.3,126.7) |
 
-## 5. Instruments and artifacts
+Crops: `.celtium-work/acceptance/crops/acc2/`.
 
-- `.celtium-work/acceptance/bridge-ab.sh` — the A/B in §1. Reproduce:
-  `bash .celtium-work/acceptance/bridge-ab.sh` (it takes the single game slot for ~8 minutes).
-- `.celtium-work/acceptance/crops/terrain/` — `vanilla_stage_compare.py` crops for
-  `van-glless` vs `scene-floors/terrain-a`.
-- `.celtium-work/acceptance/crops/n03ac-vs-n03ae/`, and the stacked pairs
-  `hotbar-…png`, `crosshair-…png`, `chat-…png` (GL-less on top, bridge below).
-- Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py`,
-  `scripts/cpu-contract/compare_jei_pair.py`, the reports' `rendererDebug` lines, and the
-  `passes/skipped/skipReason` counter in `celtium/vulkan-check`.
+The same shape on the older stored reference (`van-glless` GL-less 12:56, jar `ac347ff1f98e56ad` vs
+`scene-floors/terrain-a` 09:11, jar `478cf85555ec37a9`) - **a different jar on each side, so this is a
+corroboration of the terrain result, not a valid comparison by the current rule**: terrain centre
+1 px of 204800, bottom-left 1, bottom-right 0, hud strip 0, chat block 2, tooltip 0, horizon 460
+(0.2 %), sky band 134870 (87.8 %), whole frame 135333 (14.68 %). The terrain and composite results
+repeat across two jars and two months of tree state; the sky difference does not.
+
+## 7. Instruments and artifacts
+
+Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py` (per-stage diff, both sides' mean
+colours, crops), `scripts/cpu-contract/compare_jei_pair.py`, the reports' `rendererDebug` lines, the
+per-format histogram (`immediate formats offered/accepted: idN=x/y`), `celtium/vulkan-check`
+(`passes skipped lastDraw lastSections skipReason`), `CELTIUM_ACCEPTED byFormat=`,
+`CELTIUM_DRAWARRAYS`, `CELTIUM_REFUSALS_BY_FORMAT`, `CELTIUM_SKY_REFUSAL`, `CELTIUM_NOOP_CENSUS`.
+
+Added by me, all read-only or under `.celtium-work/acceptance/`:
+
+- `rep.py` - prints the fields this table quotes from a run's own `logs/celtium-validation.json` plus
+  its lock file. Every number in §1, §3 and §6 comes from this reader, not from an ad-hoc grep.
+- `acc2-pair.sh` - the matched pair, frozen jars in `frozen/`, one leg selectable
+  (`pair|bridge|glless`).
+- `acc2-compare.sh` - the stage comparison and counters for that pair.
+- `bridge-ab.sh` - the A/B in §1a (inherited).
+- Crops: `crops/acc2/` (the pair above), `crops/terrain-recheck/` (the older stored reference),
+  `crops/hotbar-…png`, `crops/crosshair-…png`, `crops/chat-…png`, `crops/ww-base/`.
+
+Instrument controls I ran, so the numbers can be trusted:
+
+- same image twice → 0 px >8 in every region (zero-control);
+- two stored bridge runs of the same scene, 28 min apart → **byte-identical**;
+- two different poses → 100 % of pixels >8 (the comparator does not silently zero a real difference);
+- my own recomputation of the fixture's `worldFrameNonBackgroundFraction` from the presented PNGs of
+  `ww-gl-cloud`/`ww-gl-water` reproduces 0.308333 and 0.691667 exactly - the instrument reads what it
+  claims.

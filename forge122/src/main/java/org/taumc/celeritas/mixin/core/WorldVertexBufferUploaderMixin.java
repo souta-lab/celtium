@@ -69,7 +69,7 @@ public abstract class WorldVertexBufferUploaderMixin {
      * One element is {@code count,usage,type}, elements separated by a space - the text a reader of the log already knows
      * from the format dumps, and the text {@link org.soutalab.celtium.vulkan.VulkanImmediateFormats#layout} is keyed on. The
      * mapping used to compare element objects one at a time in a chain of branches, which is the shape that could not tell
-     * the 28-byte normal layout from the 32-byte one: the list was the same and the width was never asked about.
+     * the 24-byte normal layout from the 28-byte one: the list was the same and the width was never asked about.
      */
     private static String celtium$signature(VertexFormat format) {
         StringBuilder text = new StringBuilder();
@@ -86,7 +86,7 @@ public abstract class WorldVertexBufferUploaderMixin {
      * {@return the id of the layout, or 0 when no known layout has this element list and width}.
      * <p>
      * The width is passed with the list because two of vanilla's own formats differ in nothing else: {@code
-     * POSITION_TEX_COLOR_NORMAL} is 32 bytes and {@code POSITION_TEX_NORMAL} is 28, and the second used to be answered with
+     * POSITION_TEX_COLOR_NORMAL} is 28 bytes and {@code POSITION_TEX_NORMAL} is 24, and the second used to be answered with
      * the first's id and then refused by the backend for carrying the wrong stride.
      */
     private static int celtium$mappedId(VertexFormat format) {
@@ -466,7 +466,7 @@ public abstract class WorldVertexBufferUploaderMixin {
      * {@return the text an unmapped format is filed under}, which is the element list and the width.
      * <p>
      * The width is in the key because it is part of what a layout is: two entries whose lists differ only in element order
-     * would otherwise share a line, and the 28/32-byte pair is exactly that case.
+     * would otherwise share a line, and the 24/28-byte pair is exactly that case.
      */
     private static String celtium$describeUnmapped(VertexFormat format) {
         if (format == null) {

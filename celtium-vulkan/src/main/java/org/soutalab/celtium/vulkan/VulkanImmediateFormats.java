@@ -31,9 +31,10 @@ package org.soutalab.celtium.vulkan;
  * POSITION_TEX_LMAP_COLOR          pos3f tex2f lightmap2s col4ub                      28   -   refused by name, unused in vanilla
  *
  * The widths are the runtime ones: vanilla's {@code VertexFormat.addElement} advances by the element's own
- * {@code getSize()} and pads nothing, so a 3-byte normal and a 1-byte padding really do make POSITION_NORMAL 16 bytes
- * rather than the 17 a stride rounded to four would suggest, and ITEM is 28 rather than 32. They were read back from the
- * game's own {@code DefaultVertexFormats} through its {@code getSize()}, not computed from the element list here.
+ * {@code getSize()} and pads nothing, so a 3-byte normal and a 1-byte padding make {@code POSITION_NORMAL} 16 bytes with
+ * no rounding at all, {@code POSITION_TEX_NORMAL} 24 and {@code ITEM} 28 rather than the multiples of four an
+ * aligned-stride table would give them. They were read back from the game's own {@code DefaultVertexFormats} through its
+ * {@code getSize()}, not computed from the element list here.
  * </pre>
  * Three rows are worth a sentence each, because all three were wrong before this table existed:
  * <ul>
@@ -53,6 +54,47 @@ package org.soutalab.celtium.vulkan;
  * swapped; answering a 28-byte vertex with the particle pipeline because the width matches - and it does match, 28 - is
  * exactly the kind of guess this table exists to stop. The uploader refuses it by name.</li>
  * </ul>
+ * <h2>The sweep: what the game actually hands to {@code BufferBuilder.begin}</h2>
+ * The table above is every format {@code DefaultVertexFormats} declares. This is what the decompiled Minecraft and Forge
+ * sources pass to {@code begin}/{@code func_181668_a}, counted, so a row that is declared but never drawn is not
+ * confused with one that is drawn:
+ * <pre>
+ * format                            Minecraft call sites  Forge call sites  id
+ * POSITION_TEX_COLOR                29 + 1 (mode 5)       5                  2
+ * POSITION_TEX                      25                    2                  6
+ * POSITION_COLOR                    12+8+8+3+2 (modes 5/7/3/6/1)  1            1
+ * POSITION                          6                     0                  7
+ * POSITION_TEX_NORMAL               4                     0                  9
+ * BLOCK                             4                     2                  3
+ * PARTICLE_POSITION_TEX_COLOR_LMAP  3                     0                  5
+ * POSITION_TEX_COLOR_NORMAL         2                     0                  8
+ * ITEM                              2                     1                  4
+ * POSITION_NORMAL                   1 ({@code Render.renderOffsetAABB})  0    10
+ * OLDMODEL_POSITION_TEX_NORMAL      1                     0                  9
+ * POSITION_TEX_LMAP_COLOR           0                     0                  refused by name
+ * the 32-byte particle layout       2 ({@code ParticleExplosionLarge},
+ *                                     {@code ParticleSweepAttack})           refused by name
+ * </pre>
+ * The last two rows are the refusals, and both are refused rather than answered with a pipeline that only has the width
+ * in common with them:
+ * <ul>
+ * <li>{@code POSITION_TEX_LMAP_COLOR} is declared and referenced nowhere (above).</li>
+ * <li>The 32-byte particle layout is built inline -
+ * {@code new VertexFormat().addElement(POSITION_3F).addElement(TEX_2F).addElement(COLOR_4UB).addElement(TEX_2S)
+ * .addElement(NORMAL_3B).addElement(PADDING_1B)}, 12+8+4+4+3+1 - by {@code ParticleExplosionLarge} and
+ * {@code ParticleSweepAttack} and by nothing else. It is the particle layout with a normal and its padding appended,
+ * so the particle pipeline's four attributes would land on the right offsets at the wrong stride; it is left refused
+ * until something draws it, and no scene in this workspace does.</li>
+ * <li>The {@code RealmsDefaultVertexFormat} copies resolve through the same lists as their standard namesakes -
+ * {@code RealmsBufferBuilder.begin} forwards to the real {@code BufferBuilder} - except
+ * {@code POSITION_TEX2_COLOR}, whose second UV element is {@code TEX_2S} at index 1, which is text-identical to
+ * {@code POSITION_TEX_LMAP_COLOR} and refused with it.</li>
+ * </ul>
+ * One thing this key does not see, stated so it is not mistaken for a complete identity: {@code toString()} omits an
+ * element's index, so a mod format carrying a second <em>float</em> UV element at index 1 would read exactly like
+ * {@code POSITION_TEX} at the same width. No vanilla format does that, the two {@code TEX_2S} lists above are the ones
+ * that differ only by index and both are refused, and the uploader's unmapped-shape dump prints the indices beside the
+ * text so such a format would be visible if one ever arrives.
  */
 public final class VulkanImmediateFormats {
 
@@ -113,10 +155,15 @@ public final class VulkanImmediateFormats {
      * DefaultVertexFormats' static block gives each format's element order, and VertexFormatElement gives the names
      * (usage: Position, Normal, Vertex Color, UV, Padding; type: Float, Unsigned Byte, Byte, Unsigned Short).
      *
-     * Two things about the text are worth stating because they are easy to get wrong from memory. The light map element
-     * is TEX_2S, whose *usage* is UV and whose type is SHORT, so it reads "2,UV,Unsigned Short" - there is no "Lightmap"
-     * usage in this class - and the index that distinguishes it from TEX_2F is not part of toString(), so BLOCK and
-     * PARTICLE are told apart by the order of their elements rather than by that one.
+     * One thing about the text is worth stating because it was got wrong once and it cost two layouts their ids. The
+     * light map element is {@code TEX_2S}, built as {@code new VertexFormatElement(1, EnumType.SHORT, EnumUsage.UV, 2)};
+     * its usage is UV (there is no "Lightmap" usage in this class, so the first name is "UV") and its type is
+     * <b>SHORT</b>, whose display name is "Short" - not USHORT, whose display name is "Unsigned Short". So it reads
+     * "2,UV,Short". The two constants below said "2,UV,Unsigned Short" from the day the table was written, which meant
+     * BLOCK and PARTICLE could never match: both arrivals were answered id 0 and refused, measured as
+     * {@code id0=138/0} with the shape dumped as {@code 2,UV,Short} while no id3 or id5 appeared at all. The element
+     * index that distinguishes TEX_2S from TEX_2F is not part of toString(), so BLOCK and PARTICLE are told apart by
+     * the order of their elements rather than by that one.
      */
     public static final String LAYOUT_POSITION = "3,Position,Float";
     public static final String LAYOUT_POSITION_COLOR =
@@ -131,11 +178,11 @@ public final class VulkanImmediateFormats {
     public static final String LAYOUT_POSITION_TEX_COLOR_NORMAL =
             "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 3,Normal,Byte 1,Padding,Byte";
     public static final String LAYOUT_BLOCK =
-            "3,Position,Float 4,Vertex Color,Unsigned Byte 2,UV,Float 2,UV,Unsigned Short";
+            "3,Position,Float 4,Vertex Color,Unsigned Byte 2,UV,Float 2,UV,Short";
     public static final String LAYOUT_ITEM =
             "3,Position,Float 4,Vertex Color,Unsigned Byte 2,UV,Float 3,Normal,Byte 1,Padding,Byte";
     public static final String LAYOUT_PARTICLE =
-            "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Unsigned Short";
+            "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short";
 
     public static int layout(String elements, int size, int count) {
         if (elements == null) {

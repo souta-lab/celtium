@@ -1137,11 +1137,19 @@ public final class VulkanTextureRegistry {
             return;
         }
         this.mirrorSourceLogs++;
+        Entry filled = this.entries.get(id);
+        // The mirror's own identity and content state are on the line because they are what the other two instruments
+        // are keyed by: the mirror dump names its PNGs by the object's identity hash, and "full=" is the image's own
+        // fact rather than the registry's bookkeeping - the pair that tells "this image holds whole content" from
+        // "the set says initialized and the image never received anything". Without them a
+        // mirror-gl-1-256x256-*.png could not be tied to the GL name whose fill put those pixels there.
         System.out.println("[Celtium] CELTIUM_MIRROR_SOURCE id=" + glTextureId + " source=" + source
                 + " size=" + width + "x" + height + " content=" + contentOf(rgba, width, height)
                 + " announced=" + countFor(this.announcementsById, id)
                 + " droppedAnnouncements=" + countFor(this.droppedAnnouncementsById, id)
                 + " hasEntry=" + this.entries.containsKey(id) + " stale=" + this.staleIds.contains(id)
+                + (filled == null ? "" : " obj=" + Integer.toHexString(System.identityHashCode(filled.texture))
+                        + " full=" + filled.texture.hasFullContent())
                 + " glLess=" + CeltiumGlStub.isInstalled());
     }
 

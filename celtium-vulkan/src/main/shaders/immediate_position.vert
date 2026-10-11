@@ -10,9 +10,14 @@ layout(push_constant) uniform PushConstants {
     // The region the model-view columns once occupied is dead in this shader: nothing reads it, and the model view
     // arrives already multiplied into u_ProjectionMatrix. The writer still fills it (with the texture matrix, or with
     // zero), so it stays declared for the layout to match its fragment stage.
-    vec4 u_MvColumn0;
-    vec4 u_MvColumn1;
-    vec4 u_MvColumn2;
+    vec4 u_MvColumn0;   // 64, dead
+    vec4 u_MvColumn1;   // 80, dead
+    // 96: the current colour's alpha. This layout has no colour element (POSITION and POSITION_NORMAL), so the game's
+    // current colour arrives in the push block - RGB at 116/120/124 and its alpha in the first float of the third dead
+    // column. Without this the fragment alpha was hardcoded 1.0, which drew a batch the game had coloured with a
+    // translucent alpha as if it were opaque: weather-water measured the underwater overlay (POSITION_TEX with
+    // color(f,f,f,0.5), blended SRC_ALPHA/ONE_MINUS_SRC_ALPHA) as an opaque quad over the whole frame.
+    layout(offset = 96) float u_ColorA;
     layout(offset = 112) float u_AlphaRef;
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;
@@ -53,7 +58,7 @@ void main() {
     // rebuild the model view from the three columns with a hardcoded fourth; when the writer started sending the product and
     // zeroing the columns, that rebuild became a zero matrix and every position-only vertex collapsed to the translation point.
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
-    v_Color = vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, 1.0);
+    v_Color = vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, celtium.u_ColorA);
     // Mode 0 means "no fog for this batch", and the rows above are then whatever the previous group left in the shared
     // push block, so the coordinate is not computed at all in that case.
     v_FogDistance = (int(celtium.u_FogParams.w + 0.5) & 7) == 0 ? 0.0 : celtiumFogDistance(a_Position);

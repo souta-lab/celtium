@@ -775,6 +775,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * mirror was kept because there is no GL" from "the mirror was dropped and the draw had nothing".
      */
     private int textureInvalidationsKeptGlless;
+    /**
+     * Whether a GL-less invalidation keeps the mirror instead of marking it for a re-read that cannot happen.
+     * <p>
+     * The behaviour is the default; the switch exists as a measurement control, not as a way to run the renderer. The
+     * question the panel's absence raised is whether format 6 draws nothing because their mirror is empty or because
+     * the colourless pipeline reads the vertex buffer with the wrong layout, and both candidates moved between the
+     * 12:52 run and this one. Two runs of one jar with only this flag apart separate them: with {@code false} the
+     * invalidation takes the same path it took before the GL-less branch existed
+     * ({@code VulkanTextureRegistry.invalidate} plus the direct atlas/light-map refresh), so a picture that still
+     * shows the panel answers "the mirror path was not the missing piece" and names the pipeline as the cause.
+     */
+    private static final boolean GLESS_KEEPS_INVALIDATIONS =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glessKeepsInvalidations", "true"));
     private int animatedImageFills;
     private int directMirrorFromAnnouncement;
     /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
@@ -1144,6 +1157,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean currentGroupUsed;
     private int currentGroupFormatId;
     private int[] currentGroupState = new int[7];
+    /**
+     * The fog state at the moment the group was opened, beside {@code currentGroupState} and
+     * {@code currentGroupModelView} and for the same reason.
+     * <p>
+     * Read at close time instead, it was the state of whatever the renderer had reached by then: {@code
+     * RenderGlobal.renderSky} enables fog for the sky dome and disables it again a few statements later
+     * ({@code RenderGlobal.java:1337} and {@code :1354}), so a group that was offered under fog and closed after the
+     * disable came out with {@code fog == null} and the shaders' fog branch a no-op. Measured on the sky dome: the
+     * band kept the dome's own flat colour (120,167,255) in both the fog-on and the fog-off leg, where vanilla ramps
+     * to the fog colour (179,207,255) - i.e. the flag made no difference to the picture at all.
+     */
+    private float[] currentGroupFog;
     /** The colour GL had current when a position-only batch was offered; null for every other format. */
     private float[] currentGroupColor;
     /** {@code -Dceltium.vulkan.alphaTest=false} turns the immediate path's alpha test off, for measurements. */
@@ -1167,10 +1192,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     /**
-     * One pipeline per state for {@code POSITION_NORMAL}: seventeen-byte vertices.
+     * One pipeline per state for {@code POSITION_NORMAL}: sixteen-byte vertices.
      * <p>
      * It cannot share the position-only cache: the two differ in their vertex binding's stride, which is baked into the
-     * pipeline, and 17 is not a width any other layout has. Its one user is the white box {@code Render.renderOffsetAABB}
+     * pipeline, and 16 is not a width any other layout has. Its one user is the white box {@code Render.renderOffsetAABB}
      * draws for a renderer-less entity, so an empty cache here means that box is not drawn.
      */
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionNormalPipelineCache =
@@ -1231,6 +1256,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             start = comma + 1;
         }
         return false;
+    }
+
+    /**
+     * {@return whether the layout's pipeline declares no texture coordinate at all}, so a batch that cannot sample is
+     * not refused for a texture it does not read.
+     * <p>
+     * Two layouts are in this class: {@code POSITION} (7), the sky dome, the stars and the horizon plane, and
+     * {@code POSITION_NORMAL} (10), the white box {@code Render.renderOffsetAABB} draws for a renderer-less entity.
+     * Their shaders declare no sampler and their pipelines no texture attribute, so the texture that happens to be
+     * bound when they arrive is irrelevant to the picture - and the guards below use that: a missing binding or a
+     * mirror that cannot be built is not a reason to refuse them, and "textured batch with no texture bound" was
+     * simply false for them. Both are drawn with the 1x1 white stand-in instead, the same substitution the
+     * texturing-disabled case already makes.
+     */
+    private static boolean celtium$layoutHasNoTexture(int formatId) {
+        return formatId == VulkanImmediateFormats.POSITION
+                || formatId == VulkanImmediateFormats.POSITION_NORMAL;
     }
 
     /**
@@ -1521,6 +1563,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateStateCalls++;
     }
 
+    /**
+     * The alpha test, which had no implementation at all.
+     * <p>
+     * The interface declared both halves as no-ops and the hook that feeds the comparison was named for
+     * {@code alphaFunc}, so the mirrored state kept {@code alphaTestEnabled=false} and a reference of 0 for every
+     * batch: {@code celtium$captureState} read {@code ALPHA_TEST_ENABLED && alphaTestEnabled() ? reference : 0.0f},
+     * which is 0 whatever the game asked for. Position-only and texture-family cutout batches are the ones that read
+     * it, so this is the state half of the same defect as the mis-named hooks in {@code GlStateManagerMixin}.
+     */
+    @Override
+    public void setAlphaFunc(int glFunc, float reference) {
+        this.immediateState.alphaFunc(glFunc, reference);
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setAlphaTestEnabled(boolean enabled) {
+        this.immediateState.alphaTestEnabled(enabled);
+        this.immediateStateCalls++;
+    }
+
     @Override
     public void setLightingEnabled(boolean enabled) {
         this.immediateState.lightingEnabled(enabled);
@@ -1747,6 +1810,40 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
+     * Records that a group's fog was captured at offer time while the live state at close time says something else.
+     * <p>
+     * This is the instrument for the defect the sky band measured: the snapshot used to be taken at close time, and
+     * {@code RenderGlobal.renderSky} disables the fog a few statements after the dome draw, so a fogged group closed
+     * later carried no fog and the picture was flat in both legs. The counter is bounded and named
+     * {@code CELTIUM_FOG_CAPTURE} in the report; a run whose captured and live selectors agree prints nothing.
+     */
+    private static final int FOG_CAPTURE_LOG_LIMIT =
+            Integer.getInteger("celtium.vulkan.fogCaptureLog", 4).intValue();
+    private int fogCaptureDriftLogged;
+
+    private void celtium$noteFogCaptureDrift(ImmediateGroup group) {
+        if (this.fogCaptureDriftLogged >= FOG_CAPTURE_LOG_LIMIT) {
+            return;
+        }
+        int captured = group.fog == null ? 0 : (int) group.fog[0];
+        int live = celtium$fogSelector();
+        boolean shadowed = group.fog != null && group.lightParams != null;
+        if (captured == live && !shadowed) {
+            return;
+        }
+        this.fogCaptureDriftLogged++;
+        System.out.println("[Celtium] CELTIUM_FOG_CAPTURE frame=" + this.frameId + " fmt=" + group.formatId
+                + " batches=" + group.batches + " capturedSelector=" + captured + " liveSelector=" + live
+                + " lightParams=" + (group.lightParams != null)
+                + " fogEnabledNow=" + this.fogEnabled + " fogMirrored=" + this.fogMirrored
+                + " reason=[" + (shadowed
+                        ? "the group carries the lit payload at 128..207 as well as a fog snapshot, and the lit payload"
+                        + " is written last, so this group's fog block is shadowed"
+                        : "the group was offered under one fog state and closed under another; the offered one is what"
+                        + " the batch was drawn with") + "]");
+    }
+
+    /**
      * Writes the fog block (128..207) for one group into the shared push buffer.
      * <p>
      * The block layout, matching the fragment shaders' declaration: {@code u_FogColor} at 128 (rgb plus the blend
@@ -1961,7 +2058,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // The predicate is the GL provider, not the frame target: textures are uploaded while the game registers them,
         // which is before any frame target exists, so a frame-target check would answer "GL is there" for exactly the
         // uploads that matter. isInstalled() is true from the moment the stub takes over the GL entry points.
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        // The control switch is what separates the two candidate causes of a missing format-6 draw; see
+        // GLESS_KEEPS_INVALIDATIONS.
+        if (GLESS_KEEPS_INVALIDATIONS && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             this.textureInvalidationsKeptGlless++;
             celtium$reportGllessInvalidation(glTextureId);
             return;
@@ -2344,17 +2443,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * turn into pixels (a compressed payload, a format/type pair it does not model), and each of those is a texture
      * whose mirror has no source except the announcement. A non-zero value is the measurement that justifies keeping
      * announcements alive across a delete-and-reallocate.
+     * <p>
+     * The mirror economy is on the same line, because the question the GUI raised is answered by three numbers and not
+     * by one: {@code cost}'s {@code glLess[fromAnnouncement, fromCapture, noContent]} says which source filled a
+     * mirror and how often none could, {@code lazySupply} says how often a batch had to hand the whole image over
+     * before the preflight (a mirror that never reports whole content is supplied again and again), and
+     * {@code partialRefusals} is the format-5 gate that refuses exactly that state. Printed on the first and then
+     * every hundredth kept invalidation, so a run that reaches the world carries them without an animated texture
+     * flooding the log.
      */
     private void celtium$reportGllessInvalidation(int glTextureId) {
         int kept = this.textureInvalidationsKeptGlless;
-        if (kept != 1 && kept % 500 != 0) {
+        if (kept != 1 && kept % 100 != 0) {
             return;
         }
         System.out.println("[Celtium] CELTIUM_GLESS_INVALIDATE kept=" + kept + " glTexture=" + glTextureId
                 + " atlasGlId=" + this.atlasSourceGlId + " lightmapGlId=" + this.lightmapSourceGlId
+                + " lazySupply=" + this.lazyMirrorSupplies + "/" + this.lazyMirrorFailures
+                + " partialRefusals=" + this.partialMirrorRefusals + " partialCompleted=" + this.partialMirrorsCompleted
                 + (this.textureRegistry == null ? " registry=none"
                         : " retainedAnnouncements=" + this.textureRegistry.retainedAnnouncements()
-                        + " fills=[" + this.textureRegistry.mirrorSourceSummary() + "]")
+                        + " fills=[" + this.textureRegistry.mirrorSourceSummary() + "]"
+                        + " cost=[" + this.textureRegistry.patchCostSummary() + "]")
                 + " " + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureCaptureSummary()
                 + " (no GL readback exists under the stub: a mirror is refreshed from the announced image the game"
                 + " handed over, which now survives the texture's own delete-and-reallocate, and otherwise from the"
@@ -2910,8 +3020,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // ever bound in this run. The chain pair is fed by exactly those identities - the entity outline's target is
         // the measured one - so a run whose census has only 0 and main cannot exercise that route, and the report has
         // to say that instead of leaving a zero counter to be read as "no draws arrived".
+        // The route column is the one the backend actually takes, not the pair an identity would take if it were
+        // off-target: the main framebuffer's identity is non-zero, so the old "pair=" column read
+        // "main=true pair=chain-pair" - a label that named an image no main-identity draw goes to. The rule and this
+        // separation live in GllessFrameTarget.routeLabelForBinding.
         if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
             record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
+                    + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
                     + " pair=" + pairOfOffTargetIdentity(targetIdentity)
                     + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
         }
@@ -3503,7 +3618,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         this.offerStage = 8;
-        if (formatId >= 2 && this.immediateState.boundTextureName() == 0) {
+        if (formatId >= 2 && this.immediateState.boundTextureName() == 0 && !celtium$layoutHasNoTexture(formatId)) {
             this.immediateLastRefusal = "textured batch with no texture bound";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             this.flushPendingBeforeGlDraw();
@@ -3542,10 +3657,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.flushPendingBeforeGlDraw();
                 return false;
             }
-            if (!this.immediateState.texture2dEnabled()) {
+            if (!this.immediateState.texture2dEnabled() || celtium$layoutHasNoTexture(formatId)) {
                 // Vanilla draws the sky with texturing switched off and the gradient in the vertex colours. Sampling
                 // the texture that happens to be bound then washes that out - measured as the sky going flat, 74.7% of
                 // the top third of the frame differing. A white 1x1 mirror leaves the vertex colours as they are.
+                // The same substitution covers the layouts that have no texture coordinate at all (POSITION and
+                // POSITION_NORMAL): their shaders declare no sampler, so any image is correct, and the white one is the
+                // only one this path is guaranteed to be able to mirror.
                 boundTexture = whiteTextureId();
             }
             long matrixCopyStart = System.nanoTime();
@@ -3558,6 +3676,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.matrixCopyNanos += System.nanoTime() - matrixCopyStart;
             long captureStart = System.nanoTime();
+            reconcileOverlayEnableState();
             int[] state = celtium$captureState();
             this.captureStateNanos += System.nanoTime() - captureStart;
             long keyStart = System.nanoTime();
@@ -3642,6 +3761,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupTarget = this.currentRenderTarget;
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
+                this.currentGroupFog = null;
                 this.currentGroupBatches = 0;
                 this.currentGroupViewportValues = currentViewport();
                 this.currentPreparedImmediate = prepared;
@@ -3664,6 +3784,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupState = state.clone();
                 this.groupCloneNanos += System.nanoTime() - cloneStart;
                 this.groupCloneCount++;
+                // The fog this batch was offered under, taken here for the same reason the state above is: at this
+                // moment the live fog state is the batch's own, and by the time the group closes the game may have
+                // bracketed the batch with enable/disable (the sky dome is exactly that case).
+                this.currentGroupFog = celtium$fogSnapshot();
                 // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can, and it
                 // has to be counted here rather than where the flag is read for pipeline selection: at flush time the state
                 // belongs to the group being flushed and blending is on for the whole family, which made the first version of
@@ -3680,18 +3804,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // whatever colour it had current, so that is read here, at the moment the batch is offered, and
                 // carried with the group. Formats 6 and 9 (POSITION_TEX and its normal sibling) need the same tint -
                 // they used to drop it, which is what a glColor-tinted sky or water quad would have lost.
+                // The alpha is carried too, as the fourth element. The colourless shaders multiplied the texture by
+                // the current RGB and hardcoded the fragment alpha to 1.0, so a blended draw in one of these layouts
+                // came out opaque: measured on the underwater overlay (ItemRenderer.renderWaterOverlayTexture, a
+                // full-screen POSITION_TEX quad drawn with SRC_ALPHA/ONE_MINUS_SRC_ALPHA and
+                // GlStateManager.color(f, f, f, 0.5F) where f is the light at the eye - 0 five blocks under water),
+                // the whole frame was one colour, pure black, against a dark blue underwater scene under real GL.
+                // It is also what the stub's own refusal text said for another draw: "the group colour's alpha is
+                // 0.046 ... the position shaders hardcode the fragment alpha to 1.0, so this translucent batch would
+                // be drawn opaque". The four elements reach the shaders at offset 96 (the block's spare vec4, which
+                // nothing reads today): writing the alpha is only half the fix, the two colourless vertex shaders
+                // have to read it.
                 if ((formatId == 7 || formatId == 6 || formatId == 9) && this.colorMirrorHasValue) {
                     // No GL query: the colour the game last set, from the same state mirror everything else uses.
                     this.colorMirrorUses++;
                     this.currentGroupColor = new float[] {this.immediateState.colorRed(),
-                            this.immediateState.colorGreen(), this.immediateState.colorBlue()};
+                            this.immediateState.colorGreen(), this.immediateState.colorBlue(),
+                            this.immediateState.colorAlpha()};
                 } else if (formatId == 7 || formatId == 6 || formatId == 9) {
                     java.nio.FloatBuffer colour = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, colour);
-                        this.currentGroupColor = new float[] {colour.get(0), colour.get(1), colour.get(2)};
+                        this.currentGroupColor = new float[] {colour.get(0), colour.get(1), colour.get(2),
+                                colour.get(3)};
                     } catch (RuntimeException | LinkageError error) {
-                        this.currentGroupColor = new float[] {1.0f, 1.0f, 1.0f};
+                        this.currentGroupColor = new float[] {1.0f, 1.0f, 1.0f, 1.0f};
                     } finally {
                         org.lwjgl.system.MemoryUtil.memFree(colour);
                     }
@@ -3928,6 +4065,39 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
+     * The captured drawing state of a group as one bracketed field, for {@code CELTIUM_GROUP_BOUNDS}.
+     * <p>
+     * The array is {@code celtium$captureState}'s own layout - {@code {blend, srcFactor, dstFactor, depthTest,
+     * depthWrite, cull, alphaReference, depthFunc, lighting}} - and it is printed here because the NDC bounds next to
+     * it cannot tell "the geometry is not where the panel is" from "the geometry is exactly where the panel is and the
+     * depth test rejected it". The second needs the state, and the state was not in any per-group line.
+     */
+    private static String stateText(int[] state) {
+        if (state == null || state.length < 8) {
+            return "[none]";
+        }
+        return "[blend=" + state[0] + " src=" + state[1] + " dst=" + state[2]
+                + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + state[5]
+                + " alphaRef=" + Float.intBitsToFloat(state[6]) + " depthFunc=" + state[7]
+                // The other copy of the same facts. The mirror is fed at the head of every hooked GlStateManager
+                // call; the GL enable record behind glIsEnabled is fed by whatever glEnable/glDisable the game
+                // issues, including any that does not go through GlStateManager at all. Printing the two beside
+                // each other is what separates "the renderer drew with the state the game set" from "the mirror
+                // and GL disagree", and a disagreement is invisible in either copy read on its own.
+                + " glBlend=" + glEnabled(org.lwjgl.opengl.GL11.GL_BLEND)
+                + " glDepthTest=" + glEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST) + "]";
+    }
+
+    /** The GL enable record's answer for one capability, or {@code ?} when the query itself is unavailable. */
+    private static String glEnabled(int capability) {
+        try {
+            return org.lwjgl.opengl.GL11.glIsEnabled(capability) ? "on" : "off";
+        } catch (RuntimeException | LinkageError error) {
+            return "?";
+        }
+    }
+
+    /**
      * Reports the projected NDC bounds of a group and the colour of its first vertex.
      * <p>
      * This is the narrower diagnostic the previous round called for: vertex 0 alone cannot tell "projects on-screen
@@ -4043,8 +4213,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " texture=" + group.texture + " batches=" + group.batches
                     + " vertices=" + vertices + " indices=" + mesh.indexCount()
                     + " colour0=" + colour
-                    + " proj=[m00=" + fmt3(projection[0]) + " m11=" + fmt3(projection[5])
-                    + " m22=" + fmt3(projection[10]) + " m32=" + fmt3(projection[14]) + "]"
+                    // round3, not fmt3: the GUI's ortho has m00 = 2/ScaledWidth, which at the pinned pose is
+                    // 0.00469 - a *correct* GUI projection and a collapsed one both print "0.00" under fmt3's two
+                    // decimals, so the field could not answer the one question it exists for. The trap is the same
+                    // shape as the 16-byte-stride and pointerStride=1 readings: the instrument did not read what it
+                    // looked like it read. m11 = -2/ScaledHeight = -0.00833 is the second tell.
+                    + " proj=[m00=" + round3(projection[0]) + " m11=" + round3(projection[5])
+                    + " m22=" + round3(projection[10]) + " m32=" + round3(projection[14]) + "]"
+                    // The drawing state the group was captured with, which is what decides whether a group that
+                    // measures on-screen can still be rejected: a depth-tested quad drawn after the world pass is
+                    // tested against the world's depth unless something cleared the depth attachment in between.
+                    + " state=" + stateText(group.state)
                     + " ndc " + bounds + chain);
             record("group " + this.immediateDiagnostics + ": vertices=" + vertices
                     + " indices=" + mesh.indexCount() + " colour0=" + colour
@@ -5121,7 +5300,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.viewportValues = this.currentGroupViewportValues;
             group.texMatrix = this.currentGroupTexMatrix;
             group.lightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
-            group.fog = celtium$fogSnapshot();
+            // The state captured when the group was opened, not the live state: see currentGroupFog.
+            group.fog = this.currentGroupFog;
+            celtium$noteFogCaptureDrift(group);
             group.stamp = new GroupStamp(this.frameId, this.targetGeneration);
             this.immediateGroups.add(group);
             if (GROUP_BOUNDS_DIAGNOSTICS) {
@@ -5253,6 +5434,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " presentSubmitDone=" + (this.swapchain != null && this.swapchain.lastPresentSubmitDone())
                 + " depthFormat=" + org.soutalab.celtium.vulkan.VulkanDepthFormat.chosenName()
                 + " depthFormatDecision=[" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + "]"
+                // Which leg of the clear-attribution A/B this run is. On by default; the control leg sets
+                // -Dceltium.vulkan.gameClearLatch=false, and a reader of one report must be able to tell which is
+                // which without a log. Surfaced here and not in diagnostics(): that list is not part of the report.
+                + " gameClearLatch=" + (celtium$gameClearLatchEnabled() ? "on" : "off")
                 + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
@@ -6404,9 +6589,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * {@code clearOffTarget} / {@code clearChainPair} with exactly those values (transparent black, depth 1). What
      * this method must not do is let that request reach the frame image, which is what it did.
      */
+    /**
+     * Lab switch for the clear-attribution latch, on by default, and the control the latch has to be measured against.
+     * <p>
+     * Off is the pre-latch behaviour: nothing consumes the stub's pending clears at a framebuffer change, so
+     * {@code GllessFrameTarget.applyGameClears} reads whatever mask and live {@code glClearColor} are pending at the
+     * <em>next</em> window acquire - which for the entity-outline framebuffer is its transparent black, applied to the
+     * delivered image mid-frame. The latch has to be shown to change the picture, not just to compile, and this is how
+     * one jar produces both legs: same build, same scene, same fixture, one property apart. The two runs and what they
+     * measured are named in the task-8 report.
+     * <p>
+     * It is a nullable Boolean rather than a primitive so the report can say "the latch was on by default" instead of
+     * reading a false as if it had been asked for.
+     */
+    private static final String GAME_CLEAR_LATCH_PROPERTY = "celtium.vulkan.gameClearLatch";
+
+    /** {@return whether the clear-attribution latch is enabled for this process}, defaulting to on. */
+    private static boolean celtium$gameClearLatchEnabled() {
+        return !"false".equalsIgnoreCase(System.getProperty(GAME_CLEAR_LATCH_PROPERTY, "true"));
+    }
+
     private void celtium$latchGameClearAtTargetChange() {
         if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             // The bridge leg has real GL: it clears for itself, and the stub's request is not this path's to consume.
+            return;
+        }
+        if (!celtium$gameClearLatchEnabled()) {
+            // Control leg: leave the request pending, exactly as it was before this latch existed, so the live read
+            // in applyGameClears makes the decision at the next acquire.
             return;
         }
         GllessFrameTarget glless = offTargetTarget();
@@ -8331,6 +8541,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     push.putFloat(116, color == null ? 1 : color[0]);
                     push.putFloat(120, color == null ? 1 : color[1]);
                     push.putFloat(124, color == null ? 1 : color[2]);
+                    // The current colour's alpha, in the block's spare vec4 at 96. Written for every group rather
+                    // than only the colourless ones, for the same reason as the texture matrix above: the push buffer
+                    // is shared by the whole flush, so a stale value would leak into the next group. Nothing reads
+                    // 96 yet - the two colourless vertex shaders have to be changed to use it - but the value has to
+                    // be there for that to be a one-line change on their side.
+                    push.putFloat(96, color == null || color.length < 4 ? 1.0f : color[3]);
                 }
                 // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every
                 // group that carries them rather than guarded per pipeline - only the lit layout reads past 128, and

@@ -350,14 +350,39 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.multiplyMatrix(buffer));
     }
 
+    /**
+     * The alpha test's enable pair, and the lighting pair, on the names the SRG table actually gives them.
+     * <p>
+     * <b>Corrected.</b> The two hooks that used to stand here were named {@code celtium$enableLighting} /
+     * {@code celtium$disableLighting} but injected into {@code func_179141_d} / {@code func_179118_c}, which
+     * {@code scripts/mc-sources.sh --srg} resolves as {@code enableAlpha} / {@code disableAlpha} - so the alpha test
+     * was never mirrored (the mirror's {@code alphaTestEnabled} stayed false and {@code celtium$captureState} read a
+     * reference of 0 for every batch), while the mirror's lighting flag was driven by the font and
+     * {@code drawGradientRect}'s alpha calls. The real lighting pair is {@code func_179145_e} /
+     * {@code func_179140_f}, and it was not hooked at all.
+     * <p>
+     * The name and the target are now checked against the table rather than against the handler's own name: every
+     * other {@code @Inject} in this class was audited the same way in the same pass and resolved to the method its
+     * handler claims (the audit and its result are in the task report).
+     */
+    @Inject(method = "func_179141_d", at = @At("HEAD"), require = 0)
+    private static void celtium$enableAlpha(CallbackInfo info) {
+        celtium$mirror(backend -> backend.setAlphaTestEnabled(true));
+    }
+
+    @Inject(method = "func_179118_c", at = @At("HEAD"), require = 0)
+    private static void celtium$disableAlpha(CallbackInfo info) {
+        celtium$mirror(backend -> backend.setAlphaTestEnabled(false));
+    }
+
     // Fixed-function lighting state. Item and entity rendering in 1.12.2 is lit by GL_LIGHTING (RenderHelper sets two
     // directional lights); without these mirrors a native item draw could never reproduce the fixed-pipeline shading.
-    @Inject(method = "func_179141_d", at = @At("HEAD"), require = 0)
+    @Inject(method = "func_179145_e", at = @At("HEAD"), require = 0)
     private static void celtium$enableLighting(CallbackInfo info) {
         celtium$mirror(backend -> backend.setLightingEnabled(true));
     }
 
-    @Inject(method = "func_179118_c", at = @At("HEAD"), require = 0)
+    @Inject(method = "func_179140_f", at = @At("HEAD"), require = 0)
     private static void celtium$disableLighting(CallbackInfo info) {
         celtium$mirror(backend -> backend.setLightingEnabled(false));
     }
