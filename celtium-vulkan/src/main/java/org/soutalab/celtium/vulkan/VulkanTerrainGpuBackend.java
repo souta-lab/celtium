@@ -7180,13 +7180,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
-        // The pass is over, so nothing is attached any more - and a draw outside a pass samples published names
-        // through a descriptor that declares SHADER_READ_ONLY_OPTIMAL. The hand-back only ran immediately before the
-        // next vkCmdBeginRenderPass, so between the two a sampling draw saw GENERAL: measured as
-        // VUID-vkCmdDraw-None-09600 on the pair image in both directions. The attach-side skip must not apply here,
-        // hence the clear first.
-        this.passAttachedColorImage = 0L;
-        celtium$transitionPublishedFrameTextures(false);
     }
 
     /**
@@ -8833,10 +8826,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
-        // Same hand-back as the immediate-only window's pass end: a published name must not stay in GENERAL for a
-        // sampling draw that runs before the next pass begins.
-        this.passAttachedColorImage = 0L;
-        celtium$transitionPublishedFrameTextures(false);
         if (timestampSlot >= 0) {
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, this.timestampPool,
                     (timestampSlot * 2) + 1);
