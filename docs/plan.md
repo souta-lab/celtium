@@ -145,6 +145,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.220 **round 27: FAILED ゲートの正体は「picture が届かなかった」（readback 未指定）・font overhaul の実現可能性（bitmap sheet で TTF 無し）**
+
+- **`FAILED_PRESENTED_IMAGE` の内訳（実測・`r26-entity`）**: `presentedImageMeanAtCapture=-1.0`・
+  `presentedVerdictWatchdogReason="the requested picture did not arrive"`・`presentedVerdictWatchdogFrames=117`・
+  `presentedImageFramesAtCapture=95`・`presentedDumpRequestedAtCapture=true`・`presentedImageAssertionFailures=1`
+  （`FAILED: no picture was requested for scene=terrain stage=world`）。
+  ＝**frame が一様だったのではなく、presented 画像の readback が届いていない**。私の leg は
+  `-Dceltium.vulkan.presentReadback=true` を渡していなかった（acceptance の成功 leg は渡している）。
+  再測 leg `r27-entity` を同 flag 付きで起動済み。**失敗ゲートは証拠のまま**で、原因は「絵が無い」ではなく
+  「絵を要求した経路が動いていない」——測定の誤りを立証したので、そこだけ切り分ける。
+- **font overhaul の実現可能性（weather-water の原典確認）**: 1.12.2 の font は **bitmap sheet**
+  （`Minecraft.java:523` が `textures/font/ascii.png` を読み、`FontRenderer.java:160-187` が画像の alpha から
+  `charWidth[256]` を計算、unicode は `font/glyph_sizes.bin`）。**assets に TTF/OTF は無い**ので「4x で再ラスタライズ」は
+  同じ bitmap の拡大にしかならず、「自前 atlas」は glyph rasteriser ＋ metrics 再導出を伴う**新しい subsystem**で、
+  唯一「文字が悪くなる」方向に振れ得る変更。したがって実現可能な滑らかさは:
+  (1) **font mirror の sampler reach**（filter は既に linear。task-26 の `SAMPLER_MAX_LOD = 1` が sheet の mip を
+  level 1 で止めている）＝per-texture の sampler reach を font に与える（texture-mirror の file・着手中）、
+  (2) subpixel 配置は **game 側の parity break**（vanilla は整数配置）なので較正 pair 付きの独立判断、
+  (3) 生成 atlas は subsystem として metrics と受入を持たせる。
+  **速度面は既に達成済み**（1 glyph 57.9 → 0.65 µs、F3-on p50 16,414.7 → 595.6 ms）で、残る F3 費用は glyph 経路ではない
+  （128,000 glyph × 0.65 µs = 595 ms frame のうち 83 ms）。
+- **goal 編集は自動継続 round では拒否される**（"requires a direct human turn on a top-level agent"）。
+  objective は revision 14 のままで、font overhaul と item 3 の更新内容は `docs/goal.md` と本 plan に記録済み。
+  次にユーザーの直接 turn があるときに goal を同期する。
+
 ## 0.219 **round 26: エンティティ不可視の根因を特定・修正（push block 208→216）・font overhaul を聖典に追加**
 
 - **根因（acceptance の実測 + Lead の修正）**: `drawPendingImmediate` の push block が **208 byte** なのに、
