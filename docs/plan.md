@@ -257,6 +257,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.242 **round 48: パノラマの最有力候補を「face の pass が何も書いていない」へ（clip 修正の時期が合う）**
+
+- **推論（Lead）**: fog-path の完了事実は順序・ルーティング・解決を消した。残る数字は
+  **copy が face の pass と同一 handle を読む**（`readImage == passImage == 0x…4b20`）・**間に6 submission 完了**・
+  window flush は `submitCommands()` → `waitForIdle()`（`:6323-6324`）で**submit 済みかつ完了**・geometry は非空（`vertices=8 indices=12 batches=2`）。
+  それでも白なら、**queue で失われたのではなく draw 自体が何も書いていない**（clip で消えた or 退化）。
+- **clip が具体的容疑者で時期も合う**: `9c7626783` で clip 矩形の y 反転を除去・無条件化。blend-state の実測では旧反転形が
+  GL box `(0,276,639,84)` を `0,360` として適用していた（＝**鏡像のバンドに着地**）。その状態で menu の face が scissor されれば
+  **完全に clip されて image は clear のまま**＝観測と一致。fog-path の `comp-menu` leg は**この修正前**。
+- **次の測定**: 現行 jar（`c68ecefa`・clip 修正＋clear 分類＋video-options 修正入り）で menu leg を再取得し、
+  `CELTIUM_TEX_COPY_SERVED … mean=`・`passImage`/`readImage`・`immediateScissoredGroups`/`scissorCapturedGroups`・
+  face の group の `CELTIUM_GROUP_SCISSOR` を読む。mean が 255 から動けば clip が原因でパノラマは閉じる。
+  動かなければ次は **face の viewport**、per-window 記録は第3候補に下がる。
+- **BH-22・videoSettings 修正・BH-32 の状態は前 round のとおり**（`1b4bb12bd`・`28e3c3335`・`9c7626783`）。
+
 ## 0.241 **round 47: videoSettings の真因を修正（0 範囲 slider）・BH-22 の退役と census・パノラマは「窓の破棄」へ**
 
 - **videoSettings の真因（gui-stage の unwrap → Lead の修正・`28e3c3335`）**:
