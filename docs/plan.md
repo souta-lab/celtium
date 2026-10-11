@@ -304,6 +304,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.304 **round 110: 現行 tree の回帰確認 leg — 層ありで VUID 0 行（セッション約30 commit 後の確認）**
+
+- **測定（Lead の `r102-regress`・jar `77d15a69`・`glless=true` + `validation=true` + `presentReadback=true` + `pinSections=60`・150 s）**:
+  **`VUID` 0行**・exit 143（**harness の duration 上限による正常終了**であり crash ではない・`endedBy=time-limit`・elapsed 150.4 s）。
+  ＝**このセッションで入れた約30 commit の後も、層ありで validation 違反が出ていない**。
+- **セッションの主な変更（すべて commit 済み・revert 済みのみ残置）**: frame arena と upload batching（OPT-05/07）・indirect terrain（OPT-09）・
+  clear 分類・clip の no-flip 化・polygon offset の group 捕捉（BH-11）・font セパレータ・BH-22 の退役・BH-32 の maxLod・
+  device feature の有効化・`ensureFramebuffer` の settle guard（OPT-04）・semaphore flag の結果ベース化・
+  `pinSections` fixture・BH-03 の override hook・`CELTIUM_ATLAS_SAMPLER`／lifecycle 計装。
+- **未了（変わらず・地図あり）**: per-image `doneSemaphore`（§0.299 の地図＋§0.303 の第2 producer の判断）・BH-14・
+  goal (e) の変更/復元/reload 段階・`scissorCapturedGroups=0`・F3 の bind short-circuit。
+
 ## 0.303 **round 109: per-image 化の地図に欠けていた1点 — `submitSignalOnly()` は image index を持たない第2の producer**
 
 - **コード確認（Lead・実装前の読解）**: `GllessFrameTarget.doneSemaphore`（`:114`）の **producer は2つ**ある。
