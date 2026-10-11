@@ -196,6 +196,8 @@ public final class VulkanPostChain {
     private int staleCommits;
     /** Recordings that carried a first-use barrier and were never reported as submitted before the next one began. */
     private int uncommittedRecordings;
+    /** Recordings refused because the descriptor ring would have wrapped inside them (audit N16). */
+    private int ringExhaustions;
     /** How many targets were recorded a barrier again after an earlier recording of theirs was not submitted. */
     private int repeatInits;
     /** Bounded trace budget: {@link #trace} prints at most this many lines over the chain's whole life. */
@@ -222,6 +224,13 @@ public final class VulkanPostChain {
      * buffer, so updating one is legal whenever the buffer that last bound it has completed. */
     private final long[] setRing = new long[32];
     private int setCursor;
+    /**
+     * How many ring sets the recording in progress has taken. The ring is only safe if a set is updated after the
+     * command buffer that last bound it has completed, and that stops being true the moment the cursor wraps inside a
+     * single recording: the set pass 33 takes is the one pass 1 bound, and updating it changes what the pending
+     * recording reads. The counter is what makes the wrap visible instead of silent (audit N16).
+     */
+    private int setsThisRecording;
 
     private VulkanPostChain(VulkanContext context, FrameImageTarget frameTarget, long renderPass, long setLayout,
             long descriptorPool, long sampler, int maxPushConstants) {
@@ -456,6 +465,9 @@ public final class VulkanPostChain {
         this.pendingInit.clear();
         this.recordings++;
         this.pendingRecording = this.recordings;
+        // A recording starts here, so the ring budget is this recording's: what earlier recordings took is already
+        // behind a submitted (or abandoned) command buffer and plays no part in this one's safety.
+        this.setsThisRecording = 0;
 
         List<String> details = new ArrayList<>();
         boolean interesting = false;
@@ -791,6 +803,8 @@ public final class VulkanPostChain {
                 + ", postStaleCommits=" + this.staleCommits
                 + ", postUncommittedRecordings=" + this.uncommittedRecordings
                 + ", postRepeatInits=" + this.repeatInits
+                + ", postRingExhaustions=" + this.ringExhaustions
+                + ", postRingCapacity=" + this.setRing.length
                 + ", postAdoptedIds=[" + adoptedIds + "]";
     }
 
@@ -906,8 +920,20 @@ public final class VulkanPostChain {
      */
     private long descriptorSet(long inView, long auxView) {
         VkDevice device = this.context.device();
+        if (this.setsThisRecording >= this.setRing.length) {
+            // Refused rather than wrapped. The alternative is to update a set that a not-yet-submitted recording
+            // already bound, which changes the image a pass reads and shows up as a wrong glow rather than as an
+            // error - the shape of failure this project keeps having to un-learn. Nothing has been updated here, so
+            // the caller can still hand the frame back to GL, which is what the caller's catch does with the
+            // UnsuppliedInputException next to it.
+            this.ringExhaustions++;
+            throw new IllegalStateException("post chain descriptor ring exhausted: " + this.setRing.length
+                    + " sets are already bound by the recording in progress (recording=" + this.pendingRecording
+                    + ", passes so far=" + this.setsThisRecording + ")");
+        }
         long set = this.setRing[this.setCursor];
         this.setCursor = (this.setCursor + 1) % this.setRing.length;
+        this.setsThisRecording++;
         try (MemoryStack stack = stackPush()) {
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(2, stack);
             VkDescriptorImageInfo.Buffer inInfo = VkDescriptorImageInfo.calloc(1, stack);
