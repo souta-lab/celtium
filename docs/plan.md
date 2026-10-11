@@ -140,6 +140,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.198 **lag の計器が届いた・audio は独立欠陥ではなく lag の症状（機序を明記）・item 修正の視覚確認**
+
+- **`bootstrapQueueWaits` が summary に届いた**（pipelines・`VulkanTerrainGpuBackend:6036` と upload 量の対）。
+  これで task-51/53 の「まず測る」が可能になった。cold leg は **world tick 120-200（chunk build 窓）で 0.8〜1.7 s/frame**、
+  upload 経路は `beginCommands()` の `vkQueueWaitIdle` で**segment ごとに queue を drain** する。
+- **audio のとぎれは独立欠陥ではなく lag の症状**（機序）: サウンドマネージャの供給は**クライアント thread の tick**
+  （=フレーム）で進むため、フレームが 0.5〜1.5 s かかると OpenAL のバッファが枯れて途切れる。
+  **つまり lag を直せば audio も直る**——別々の修正を積まない。task-53 の受入はこの相関を数字で示すこと。
+- **item 修正の視覚確認（Lead・現行 jar）**: `ww25-itemtransform` の kept frame（sha256 `f5789cfc5ea2d23b…`）で
+  inventory の block アイコンが**等角 3D**（stone/bricks/gold ore の面陰影）・hotbar に apple/stick/sword/player head、
+  背景の world も正常（地平線が直線＝**投影が二乗されていない**）。`t45-entity-hurt` の kept frame（`a2ecfbbf0a899fbe…`）では
+  zombie/creeper/spider と**ドロップ apple が正しい小ささ**＝GROUND transform が同じ owner で届いている。
+  両 leg の `glRenderer` は **driver summary**（`driverName="radv" driverID=3(MESA_RADV)…`）＝task-46 の着地を実機で確認。
+
 ## 0.197 **実プレイ第3報: 直った4件と残る5件（night lightmap・glyph particle・lag/audio・loading・item 解像度・ログの opengl 表記）**
 
 ユーザーの実プレイ報告（jar `8c5d7b96` 期）:
