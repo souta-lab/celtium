@@ -76,7 +76,14 @@ public abstract class CloudDrawProbeMixin {
                 + " cloudHeight=" + (mc.world == null ? -1.0F : mc.world.provider.getCloudHeight())
                 + " rainStrength=" + (mc.world == null ? -1.0F : mc.world.getRainStrength(partialTicks))
                 + " pitchedUp=" + (mc.getRenderViewEntity() == null ? 0.0F
-                        : mc.getRenderViewEntity().rotationPitch));
+                        : mc.getRenderViewEntity().rotationPitch)
+                // The hook vanilla asks first, whose true answer means "a mod took the clouds over" and stops the
+                // method before either branch: the measurement that separates "the game never ran the cloud code"
+                // from "the code ran and the batch was dropped on the way to the immediate path", which no counter
+                // in the renderer can tell apart on its own.
+                + " forgeHookTakesClouds="
+                + net.minecraftforge.fml.client.FMLClientHandler.instance()
+                        .renderClouds(0, partialTicks));
     }
 
     /** The uploader delta for the call whose head was just seen; bounded prints, same switch. */

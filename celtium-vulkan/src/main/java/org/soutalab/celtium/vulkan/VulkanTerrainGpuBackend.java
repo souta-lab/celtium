@@ -2324,7 +2324,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (mesh == null || mesh.isEmpty()) {
             return false;
         }
-        PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.POSITION_TEX, texture, key, state);
+        // ITEM, because that is the format whose pipeline evaluates the fixed-function lighting: its lit variant reads
+        // the vertex normal and the push block's five vec4 (the two light directions in model space, the scene ambient
+        // and each light's diffuse) and multiplies the result into the vertex colour. The vertex stride is the same 28
+        // bytes the check at the top of prepareImmediate compares against, so the mesh built above is what it wants.
+        PreparedImmediate prepared = prepareImmediate(VulkanImmediateFormats.ITEM, texture, key, state);
         if (prepared == null || prepared.pipeline == null) {
             return false;
         }
@@ -2347,7 +2351,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
         }
         ImmediateGroup group = new ImmediateGroup(mesh, projection, modelView,
-                VulkanImmediateFormats.POSITION_TEX, texture, key, state, target);
+                VulkanImmediateFormats.ITEM, texture, key, state, target);
         group.prepared = prepared;
         group.combineColor = combineColor;
         group.texMatrix = celtium$textureAffine();
@@ -3676,7 +3680,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.matrixCopyNanos += System.nanoTime() - matrixCopyStart;
             long captureStart = System.nanoTime();
-            reconcileOverlayEnableState();
             int[] state = celtium$captureState();
             this.captureStateNanos += System.nanoTime() - captureStart;
             long keyStart = System.nanoTime();
@@ -4079,13 +4082,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return "[blend=" + state[0] + " src=" + state[1] + " dst=" + state[2]
                 + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + state[5]
                 + " alphaRef=" + Float.intBitsToFloat(state[6]) + " depthFunc=" + state[7]
-                // The other copy of the same facts. The mirror is fed at the head of every hooked GlStateManager
-                // call; the GL enable record behind glIsEnabled is fed by whatever glEnable/glDisable the game
-                // issues, including any that does not go through GlStateManager at all. Printing the two beside
-                // each other is what separates "the renderer drew with the state the game set" from "the mirror
-                // and GL disagree", and a disagreement is invisible in either copy read on its own.
+                // The other copy of the same facts, and the trap in reading it. The mirror is fed at the head of
+                // every hooked GlStateManager call; the GL enable record behind glIsEnabled is fed by whatever
+                // glEnable/glDisable the game issues, including any that does not go through GlStateManager at all.
+                // **The two halves are read at different instants**: the state fields are the group's captured copy,
+                // taken when its first batch was offered, while glBlend/glDepthTest are read here, when the group is
+                // closed - which can be a later batch and even a later frame. A line whose halves disagree therefore
+                // says "the state moved between the offer and the close" at least as often as it says "the mirror is
+                // wrong", and only a comparison taken at the offer itself can tell those apart. Measured the hard way:
+                // 146 groups printed `blend=0 ... glBlend=on`, which looked like a broken mirror; a reconcile that
+                // compared the two *at the offer* found the blend bit already agreeing and left every GUI pixel
+                // unchanged, so the reading was an artefact of the instrument, not a defect.
                 + " glBlend=" + glEnabled(org.lwjgl.opengl.GL11.GL_BLEND)
-                + " glDepthTest=" + glEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST) + "]";
+                + " glDepthTest=" + glEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST)
+                + " (gl* read at close, the state fields at the offer)" + "]";
     }
 
     /** The GL enable record's answer for one capability, or {@code ?} when the query itself is unavailable. */
@@ -4202,6 +4212,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " uv=[" + uvs + "]"
                         + " clip=[" + perVertex + "]"
                         + " rot=[" + this.currentGroupRotations + "]";
+            } else if (group.formatId == VulkanImmediateFormats.ITEM && !this.worldPassActive) {
+                // The GUI item family, added 2026-10-11: RenderItem draws a GUI item through
+                // BufferBuilder.begin(7, DefaultVertexFormats.ITEM) - id 4 - so a sprite that comes out at the wrong
+                // size is either this group's model-view (its scale is exactly diag(16,-16,16) with a translation of
+                // (x+8, y+8, 100+zLevel), from RenderItem.setupGuiTransform) or the ITEM layout being read at the
+                // wrong stride. The model-view is printed here so the two are told apart from one line: a wrong scale
+                // shows in mv[0]/mv[5], a wrong stride shows in verts=[...] while mv stays 16/-16.
+                chain = " mv=" + matrixText(modelView)
+                        + " verts=[" + positions + "]"
+                        + " uv=[" + uvs + "]"
+                        + " clip=[" + perVertex + "]"
+                        + " rot=[" + this.currentGroupRotations + "]";
             }
             // On stdout as well as in the report: the report keeps only the last recorded line, and the question this
             // answers - which groups an artefact frame is made of - is a sequence, not a sample. frame/group tie the
@@ -4240,67 +4262,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * and using it would draw with a blend or depth combination the batch never asked for. The array is
      * {blend, srcFactor, dstFactor, depthTest, depthWrite, cull} with the factors already in Vulkan form.
      */
-    /**
-     * Whether the mirrored enable bits are reconciled with the GL enable record outside the world pass.
-     * <p>
-     * Default on. {@code -Dceltium.vulkan.overlayGlState=false} restores the previous behaviour exactly, so a run
-     * can compare the two without a second build.
-     */
-    private static final boolean OVERLAY_GL_STATE =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.overlayGlState", "true"));
-    /** Groups whose blend enable the GL record corrected, and the same for the depth test and culling. */
-    private int overlayBlendCorrections;
-    private int overlayDepthCorrections;
-    private int overlayCullCorrections;
-
-    /**
-     * Takes the enable bits from the GL enable record for a batch that is not part of the world pass.
-     * <p>
-     * Measured, not assumed: the mirror is fed at the head of every hooked {@code GlStateManager} call, and the GL
-     * enable record is fed by the {@code glEnable}/{@code glDisable} the game's own code issues. They are two copies
-     * of one fact, and a run that printed both side by side on every group found them disagreeing in <b>both</b>
-     * directions - 146 groups per run where the mirror said blending was off and GL said on, and 322 the other way
-     * (formats 1, 2, 4, 6, 7 and 8). The first is what the JEI category label exposes: its fourteen glyph quads are
-     * {@code POSITION_TEX_COLOR} with the mirror reporting {@code blend=0}, so the whole glyph quad is written
-     * instead of only the glyph's coverage, and the label comes out as black cells with the letters showing through
-     * where the same fixture, tick and code drawn by GL shows dark letters on the light label strip.
-     * <p>
-     * Outside the world pass the GL record is the authority, because it is the state the batch would really have been
-     * drawn with: the same reasoning the matrix capture already follows when it stops reading GL only after the two
-     * were measured to agree. Here they do not agree, so the record wins and each correction is counted - a run says
-     * how often the mirror was wrong rather than leaving it to be inferred from a picture. The world pass is left
-     * alone: its state has its own owners and a per-batch query there is the cost the plan calls dominant.
-     */
-    private void reconcileOverlayEnableState() {
-        if (!OVERLAY_GL_STATE || this.worldPassActive) {
-            return;
-        }
-        int glBlend = glEnableState(org.lwjgl.opengl.GL11.GL_BLEND);
-        if (glBlend >= 0 && (glBlend != 0) != this.immediateState.blendEnabled()) {
-            this.immediateState.blendEnabled(glBlend != 0);
-            this.overlayBlendCorrections++;
-        }
-        int glDepth = glEnableState(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
-        if (glDepth >= 0 && (glDepth != 0) != this.immediateState.depthTestEnabled()) {
-            this.immediateState.depthTestEnabled(glDepth != 0);
-            this.overlayDepthCorrections++;
-        }
-        int glCull = glEnableState(org.lwjgl.opengl.GL11.GL_CULL_FACE);
-        if (glCull >= 0 && (glCull != 0) != this.immediateState.cullEnabled()) {
-            this.immediateState.cullEnabled(glCull != 0);
-            this.overlayCullCorrections++;
-        }
-    }
-
-    /** {@code 1}/{@code 0} for an enabled/disabled capability, or {@code -1} when the query is unavailable. */
-    private static int glEnableState(int capability) {
-        try {
-            return org.lwjgl.opengl.GL11.glIsEnabled(capability) ? 1 : 0;
-        } catch (RuntimeException | LinkageError error) {
-            return -1;
-        }
-    }
-
     private int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
 
@@ -5569,11 +5530,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
                 + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
-                // How often the mirrored enable bits disagreed with the GL enable record outside the world pass, and
-                // were corrected from it. Zero is the interesting value: it says the two copies agreed.
-                + " overlayGlState=" + OVERLAY_GL_STATE + " overlayBlendCorrections=" + this.overlayBlendCorrections
-                + " overlayDepthCorrections=" + this.overlayDepthCorrections
-                + " overlayCullCorrections=" + this.overlayCullCorrections
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " acceptedByFormat=1:" + this.acceptedByFormat[1] + ",2:" + this.acceptedByFormat[2]
                 + ",3:" + this.acceptedByFormat[3] + ",4:" + this.acceptedByFormat[4] + ",5:" + this.acceptedByFormat[5]
@@ -7178,11 +7134,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // catch below can only discard what the table already holds, and this mesh is not in it yet (audit
                 // ownership gap - the model builder leaked the one mesh it was in the middle of building).
                 pending = mesh;
-                // The capture holds position and texture coordinates, which is the twenty-byte POSITION_TEX layout the
-                // sky and clouds already use. The normal the quad carried is not in the mesh: for the vanilla entity
-                // path the lighting comes from the light map, and the pipeline for this layout ignores a trailing
-                // element anyway - whether that is enough for entities is the next question, not this one.
-                mesh.begin(new VulkanDynamicMesh.Layout(20, 0, 12, -1, -1, -1));
+                // The ITEM layout: position, colour, texture, normal, padding - 28 bytes, the same one the dropped item
+                // is drawn through. The colour is the material the fixed-function lighting evaluates (glColorMaterial
+                // AMBIENT_AND_DIFFUSE, and vanilla draws a model with the current colour = white), and the normal is the
+                // quad's own, carried by the capture since the first quad and discarded by every mesh before this.
+                //
+                // Measured, and this is why the layout changed: the native model draw was 1.2-1.6x brighter than the
+                // upstream Celeritas reference on every entity family while the ITEM-drawn apple matched at 0.98. The
+                // term is the fixed-function lighting, which IS in effect for entities - `RenderHelper
+                // .enableStandardItemLighting()` is called immediately before `renderEntities` (EntityRenderer:1397-1402)
+                // - and the twenty-byte POSITION_TEX pipeline has no lighting term at all. The light map, which was the
+                // first candidate, was measured on this run and is nearly white at the scene's light level
+                // (raw=(128,240) -> mapped=(0.531,0.969) -> factor 0.988), so it is not what the 1.3x was.
+                mesh.begin(new VulkanDynamicMesh.Layout(28, 0, 16, 12, 24, -1));
                 // A limit on how many quads go into the mesh, so a single quad can be drawn on its own: if one quad comes
                 // out as a quad the mesh and draw path are sound and the capture is what is wrong, and if it comes out as
                 // a triangle the fault is on this side. That is the question the stray triangles leave open.
@@ -7210,6 +7174,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         mesh.putPosition(snapshot.positions[source], snapshot.positions[source + 1],
                                 snapshot.positions[source + 2]);
                         mesh.putUv(snapshot.uvs[(quad * 4 + vertex) * 2], snapshot.uvs[(quad * 4 + vertex) * 2 + 1]);
+                        // White: what glColor holds when vanilla draws a model, and the material the lighting scales.
+                        mesh.putColor(255, 255, 255, 255);
+                        // One normal per quad, as vanilla submits it (flat shading, one normal for all four vertices).
+                        mesh.putNormal(snapshot.normals[quad * 3], snapshot.normals[quad * 3 + 1],
+                                snapshot.normals[quad * 3 + 2]);
                     }
                     mesh.index(base);
                     mesh.index(base + 1);
@@ -7419,7 +7388,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return false;
             }
             int[] state = celtium$captureState();
-            long key = celtium$stateKey(VulkanImmediateFormats.POSITION_TEX, state);
+            long key = celtium$stateKey(VulkanImmediateFormats.ITEM, state);
             if (!this.modelStateLogged) {
                 // What the model path is told about the state it draws under, once: the one-quad image showed the quads
                 // over the terrain and the sky alike, and depth is the first thing that can do that.

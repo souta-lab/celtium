@@ -66,9 +66,21 @@ Measured in `tm2-on` (`CELTIUM_MIRROR_SOURCE`, first line per name and source):
 Picture: the panel occupies exactly `x 357..923, y 165..554` in the stored GL reference
 (`jei-br` tick 60, `GuiContainerCreative`, GL) and in both GL-less legs; the panel-face band
 `(380,470,920,540)` differs from that reference by mean 2.59 / 4.5 % of pixels > 8 (the residual
-is the item row clipped at the crop's top edge). The item grid itself differs between the two
-runs because the item list's content/scroll differs an hour apart — a fixture-state difference,
-not a rendering one; the slot frames and panel face match.
+is the item row clipped at the crop's top edge).
+
+**Correction, and a finding that is not this task's.** The first version of this note attributed
+the 29.96 mean difference in `slot_grid` to the item list's content or scroll differing between
+runs an hour apart. That is wrong, and the measurement that says so is the upstream Celeritas
+reference leg (`tm3-ref`, upstream `989ebf2e`, same fixture, scene, pose and tick, GL): inside
+the GUI rect `(357,165)-(923,554)` it is **pixel-identical to the 12:41 bridge picture** (mean
+absolute difference 0.000, 0.000 % of pixels > 8), so the reference GUI is not run-dependent.
+The difference is systematic and it is the **item sprites**: in the first slot cell
+`(372,200)-(442,270)` the reference's coloured sprite spans 53x54 px (x 389..441, y 216..269)
+and the GL-less one spans 67x60 px (x 375..441, y 210..269), while the slot frames and the panel
+are at identical pixels — the ITEM-format (id 4) geometry in the GUI stage is drawn about a
+quarter larger under GL-less. That belongs to the GUI stage / item pipeline / item-model owners,
+not to the texture mirror; it is recorded here because it was found by this comparison and the
+crop is in the evidence directory (`upstream-vs-on/slot1_ref_left_cand_right.png`).
 
 Before/after on the panel-face band: the 12:52 GL-less run (`jei-invfix2`, no format-6 fix, no
 WIP) reads mean 122.68 / 99.96 % of pixels > 8 against the same stored reference; `tm2-on` reads
@@ -86,7 +98,7 @@ WIP) reads mean 122.68 / 99.96 % of pixels > 8 against the same stored reference
   identity hash, which is what the mirror dump's file names are made of) and `full=`, so a
   dumped mirror PNG can be tied to the GL name whose fill produced it.
 
-## Open defect found on this path, not fixed (outside this task's write scope)
+## Open defect found on this path — fixed in the follow-up
 
 `CeltiumGlStub.undefinedLevel` zero-fills a level allocated with a NULL data pointer and files it
 as a capture; `VulkanTextureRegistry.fillFromCapture` then treats that surface as content and
@@ -96,9 +108,13 @@ announcement replaced it; the capture census reads `undefined=22` at the first k
 invalidation and `undefined=34` at the hundredth. A frame-sized mirror then
 claims whole content while holding only zeros. For the light map the announcement corrects it one
 hook later, so no picture in this run depended on it; a texture whose pixels arrive only through
-the stub capture would draw transparent and claim whole content. Refusing those honestly needs a
-per-level "did the game write pixels here" answer from the stub; `CeltiumGlStub` is not one of
-this task's files, so it is reported rather than patched.
+the stub capture would draw transparent and claim whole content.
+
+Fixed after the Lead opened the follow-up: the stub now carries the per-level fact
+(`TexCapture.gamePixels`, set by a full upload and by a patch, clear for an undefined allocation,
+exposed as `CeltiumGlStub.textureLevelHasGamePixels`), and both consumers refuse a surface with no
+game pixels — see `2026-10-11-texture-capture-provenance.md`. The sentence above about what the
+defect would have cost stands; the "not fixed" part does not.
 
 ## Verified and not verified
 
@@ -112,12 +128,18 @@ Not verified: the light map's per-frame refresh compared against GL over time (1
 `announced-int[]` fills happened; one content sample was taken); animated atlas sprites
 frame-by-frame (`CELTIUM_MIRROR_PATCH` applies with `reachUnwritten=0`, no picture comparison);
 entity/TESR skins (no entities in this scene); particles/format 5 (none in this scene); the two
-1280x720 capture-filled mirrors (ids 3/42); mod GUI sheets beyond 124/129.
+1280x720 capture-filled mirrors (ids 3/42 — their content is now refused rather than invented, but
+who samples those names is still open); mod GUI sheets beyond 124/129.
 
 ## The reference leg
 
-Upstream Celeritas `989ebf2e` alone crashes at startup: the fixture jar's `ValidationClient`
-carries hard references to `org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend`, FML's
-annotation gathering loads the class, and without the celtium jar it is
-`NoClassDefFoundError` (`tm2-ref`, exit 255, `MISSING_REPORT` after 8.7 s). The stored GL
-picture above is therefore used as the reference; it is the same screen class as the candidate.
+The first attempt crashed: the fixture jar's `ValidationClient` carried hard references to
+`org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend`, FML's annotation gathering loaded the class,
+and without the celtium jar it was `NoClassDefFoundError` (`tm2-ref`, exit 255, `MISSING_REPORT`
+after 8.7 s). Commit `87768069a` made the fixture standalone (reflective backend calls) and the
+leg works: `tm3-ref`, upstream Celeritas `989ebf2e`, AMD RX 6400, scene=terrain, pose
+x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, tick 60, `GuiContainerCreative`,
+`worldFrameNonBackgroundFraction=0.88832`, `distinctColours=8149`, picture
+`screenshots/celtium-at-tick-60.png`. Inside the GUI rect `(357,165)-(923,554)` that picture is
+pixel-identical to the 12:41 bridge picture (mean 0.000), which is what makes the stored
+comparison above valid after all.

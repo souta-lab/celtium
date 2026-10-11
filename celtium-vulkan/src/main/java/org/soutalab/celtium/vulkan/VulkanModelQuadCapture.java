@@ -524,13 +524,23 @@ public final class VulkanModelQuadCapture {
         public final int quads;
         public final float[] positions;
         public final float[] uvs;
+        /**
+         * The plane normal each quad was submitted with, three floats per quad.
+         * <p>
+         * Carried because the native model draw needs it now: vanilla renders entities with
+         * {@code RenderHelper.enableStandardItemLighting()} in effect ({@code EntityRenderer:1397-1402}, immediately
+         * before {@code renderEntities}), so the normal is the input the fixed-function lighting evaluates per face.
+         * It was captured from the first quad on and thrown away by every mesh built before this.
+         */
+        public final float[] normals;
 
-        Snapshot(int listId, int generation, int quads, float[] positions, float[] uvs) {
+        Snapshot(int listId, int generation, int quads, float[] positions, float[] uvs, float[] normals) {
             this.listId = listId;
             this.generation = generation;
             this.quads = quads;
             this.positions = positions;
             this.uvs = uvs;
+            this.normals = normals;
         }
     }
 
@@ -657,9 +667,11 @@ public final class VulkanModelQuadCapture {
         int floats = geometry.quads * 4;
         float[] positions = new float[floats * 3];
         float[] uvs = new float[floats * 2];
+        float[] normals = new float[geometry.quads * 3];
         System.arraycopy(geometry.positions, 0, positions, 0, positions.length);
         System.arraycopy(geometry.uvs, 0, uvs, 0, uvs.length);
-        return new Snapshot(geometry.listId, geometry.generation, geometry.quads, positions, uvs);
+        System.arraycopy(geometry.normals, 0, normals, 0, normals.length);
+        return new Snapshot(geometry.listId, geometry.generation, geometry.quads, positions, uvs, normals);
     }
 
     /** {@return every captured list id, for the renderer to walk}. */

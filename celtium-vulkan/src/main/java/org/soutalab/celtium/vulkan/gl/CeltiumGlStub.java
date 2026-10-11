@@ -1314,6 +1314,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " empty=" + DRAWARRAY_EMPTY.get()
                 + " refused=" + DRAWARRAY_REFUSED.get()
                 + " pureBlueGroups=" + DRAWARRAY_PURE_BLUE.get()
+                + " clientMemoryDecoded=" + clientPointerAccepted
+                + " readableRanges=" + readableMappingRanges
+                + " mappingFailure=" + readableMappingFailure
                 + " first=[" + drawArrayFirst + "]"
                 + " refusedByReason=[" + (reasons.length() == 0 ? "none" : reasons.toString()) + "]";
     }
@@ -2244,44 +2247,68 @@ public final class CeltiumGlStub implements FunctionProvider {
         Integer boundName = this.bufferBindings.get(Integer.valueOf(GL_ARRAY_BUFFER));
         int buffer = boundName == null ? 0 : boundName.intValue();
         ByteBuffer storage = buffer == 0 ? null : this.bufferStore.get(Integer.valueOf(buffer));
+        // No array buffer bound means the pointer glVertexPointer was handed is a **client address**, not an offset
+        // into GL-owned storage: the vertices are process memory the game wrote, and under a stub there is no GL object
+        // to mirror them from. That is the main menu, the loading screen and every GUI-only frame - measured in the
+        // user's own launch as a million refusals of exactly this shape while the swapchain presented 2700 frames,
+        // i.e. a window with nothing in it. The read is the same read a driver performs for the same call; what this
+        // class adds is the guard below, because a stale pointer would fault the process and a blank menu is the
+        // lesser failure.
+        boolean clientMemory = buffer == 0;
         long offset = this.vertexPointerOffset;
         long end = 0L;
+        long asked = 0L;
+        int formatId = 0;
         String reason = null;
-        if (storage == null) {
-            reason = buffer == 0
-                    ? "no GL_ARRAY_BUFFER is bound (the pointer would be client memory, which the stub does not mirror)"
-                    : "the bound array buffer " + buffer + " has no mirrored storage";
+        if (storage == null && !clientMemory) {
+            reason = "the bound array buffer " + buffer + " has no mirrored storage";
         } else if (!this.enables.getOrDefault(Integer.valueOf(GL_VERTEX_ARRAY), Boolean.FALSE).booleanValue()) {
             reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
         } else if (mode != GL_QUADS) {
             reason = "draw mode " + mode + " is not handled (only 7 = GL_QUADS)";
-        } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
-                || this.vertexPointerStride != POSITION_STRIDE) {
-            // The pointer state is the contract: format 7 is three floats per vertex, and anything else is a
-            // different format whose bytes read as positions would be wrong rather than absent.
+        } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT) {
             reason = "vertex pointer size=" + this.vertexPointerSize + " type=0x"
-                    + Integer.toHexString(this.vertexPointerType) + " stride=" + this.vertexPointerStride
-                    + " is not the position-only float3/" + POSITION_STRIDE + " this path decodes";
+                    + Integer.toHexString(this.vertexPointerType)
+                    + " is not the float3 position every layout this path decodes uses";
         } else {
-            String extra = celtium$otherClientArrays();
-            if (extra != null) {
-                // Those arrays are enabled, so GL would have drawn attributes this format does not carry. Refused:
-                // an absent sky is visible, a sky drawn from the wrong offsets is not.
-                reason = "client arrays are enabled that format 7 does not read: " + extra;
+            String[] layoutRefusal = new String[1];
+            formatId = celtium$drawArrayFormat(this.vertexPointerStride, celtium$otherArrayMask(), layoutRefusal);
+            reason = layoutRefusal[0];
+            if (reason == null && clientMemory && offset == 0L) {
+                reason = "the client vertex pointer is null, so there is no vertex array to read";
             }
         }
         if (reason == null && (first < 0 || offset < 0L)) {
             reason = "first=" + first + " and pointer offset=" + offset + " must not be negative";
         }
         if (reason == null) {
-            end = offset + (long) first * POSITION_STRIDE + (long) count * POSITION_STRIDE;
-            if (end > storage.capacity()) {
-                reason = "the draw reads to byte " + end + " of a " + storage.capacity() + "-byte buffer";
+            asked = (long) first * this.vertexPointerStride + (long) count * this.vertexPointerStride;
+            if (clientMemory) {
+                // There is no capacity to compare against: a client pointer carries no length. Two bounds are
+                // available and both are used - a cap on how much one draw may ask for, and the process's own
+                // readable mappings, so a pointer that is not backed by readable memory is refused by name instead
+                // of being dereferenced.
+                if (asked > MAX_CLIENT_DRAW_BYTES) {
+                    reason = "the draw asks for " + asked + " bytes of client memory, over the "
+                            + MAX_CLIENT_DRAW_BYTES + "-byte cap one draw may read";
+                } else if (!celtium$readableMapping(offset, asked)) {
+                    reason = "the client pointer 0x" + Long.toHexString(offset) + " + " + asked
+                            + " bytes is not inside a readable mapping of this process";
+                }
+            } else {
+                end = offset + asked;
+                if (end > storage.capacity()) {
+                    reason = "the draw reads to byte " + end + " of a " + storage.capacity() + "-byte buffer";
+                }
             }
+        }
+        if (reason == null) {
+            celtium$noteClientTuple(clientMemory, buffer, count, formatId);
         }
         long address = 0L;
         if (reason == null) {
-            address = memAddress(storage, 0) + offset + (long) first * POSITION_STRIDE;
+            int stride = this.vertexPointerStride;
+            address = (clientMemory ? offset : memAddress(storage, 0) + offset) + (long) first * stride;
             TerrainGpuBackend backend;
             try {
                 // Resolved here rather than held as a field: this class is installed when the window is created, the
@@ -2315,7 +2342,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 try {
                     // null vertexFormat: the backend keys this batch on the format id and never reads the object.
                     // A refused batch is drawn by nobody under the GL-less window, which is why the reason is kept.
-                    taken = backend.submitImmediateBatch(null, POSITION_STRIDE, VERTEX_FORMAT_POSITION, address,
+                    // The stride and the format are the decoded batch's own now, not the position-only pair: the
+                    // client-memory path the menu and the loading screen use is stride 16 (POSITION_COLOR, id 1), and
+                    // Forge's cloud VBO is stride 24 (POSITION_TEX_COLOR, id 2) - both carry attributes the format-7
+                    // shader would read as the next vertex's position.
+                    taken = backend.submitImmediateBatch(null, this.vertexPointerStride, formatId, address,
                             count, mode);
                 } catch (RuntimeException | LinkageError error) {
                     taken = false;
@@ -2333,23 +2364,24 @@ public final class CeltiumGlStub implements FunctionProvider {
                         // look the same in the frame and are different findings.
                         StringBuilder vertices = new StringBuilder();
                         for (int i = 0; i < 4 && i < count; i++) {
-                            long at = address + (long) i * POSITION_STRIDE;
+                            long at = address + (long) i * this.vertexPointerStride;
                             vertices.append(i == 0 ? "" : " ").append('(')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at))).append(',')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 4))).append(',')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 8))).append(')');
                         }
                         System.out.println("[Celtium] CELTIUM_DRAWARRAY_LAYOUT first=" + first + " count=" + count
-                                + " stride=" + POSITION_STRIDE + " format=" + VERTEX_FORMAT_POSITION + " mode=" + mode
-                                + " buffer=" + buffer + " pointerOffset=" + offset
+                                + " stride=" + this.vertexPointerStride + " format=" + formatId + " mode=" + mode
+                                + " buffer=" + buffer + " clientMemory=" + clientMemory + " pointerOffset=" + offset
                                 + " pointerSize=" + this.vertexPointerSize + " pointerType=0x"
                                 + Integer.toHexString(this.vertexPointerType) + " pointerStride="
-                                + this.vertexPointerStride + " v0..v3=[" + vertices + "] "
+                                + this.vertexPointerStride + " otherArrays=" + celtium$otherArrayNames()
+                                + " v0..v3=[" + vertices + "] "
                                 + celtium$mirroredMatrices(backend)
                                 + " texture2dEnabled=" + this.enables.getOrDefault(Integer.valueOf(GL_TEXTURE_2D), Boolean.FALSE)
                                 + " site=[" + celtium$callSite(10) + "]");
                         drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
-                                + POSITION_STRIDE + " format=" + VERTEX_FORMAT_POSITION + " buffer=" + buffer
+                                + this.vertexPointerStride + " format=" + formatId + " buffer=" + buffer
                                 + " pointerOffset=" + offset + " address=0x" + Long.toHexString(address);
                     }
                     celtium$reportDrawArrays();
@@ -2385,6 +2417,249 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
         }
         return enabled.length() == 0 ? null : enabled.toString();
+    }
+
+    /**
+     * {@return the enabled client arrays besides the vertex array, as a bit mask}: bit 0 normal, bit 1 colour, bit 2
+     * texture coordinates. The layout table below keys on it, because a stride alone does not name a format: 16 bytes
+     * is POSITION_COLOR with the colour array on and POSITION_NORMAL with the normal array on, and 24 is
+     * POSITION_TEX_COLOR with colour and 24 is POSITION_TEX_NORMAL with a normal.
+     */
+    private int celtium$otherArrayMask() {
+        int mask = 0;
+        if (this.enables.getOrDefault(Integer.valueOf(GL_NORMAL_ARRAY), Boolean.FALSE).booleanValue()) {
+            mask |= 1;
+        }
+        if (this.enables.getOrDefault(Integer.valueOf(GL_COLOR_ARRAY), Boolean.FALSE).booleanValue()) {
+            mask |= 2;
+        }
+        if (this.enables.getOrDefault(Integer.valueOf(GL_TEXTURE_COORD_ARRAY), Boolean.FALSE).booleanValue()) {
+            mask |= 4;
+        }
+        return mask;
+    }
+
+    /** The same mask as text, for the refusal and layout lines. */
+    private String celtium$otherArrayNames() {
+        String text = celtium$otherClientArrays();
+        return text == null ? "none" : text;
+    }
+
+    /** How many bytes of client memory one draw may read: a bound on a pointer whose true length is unknown. */
+    private static final long MAX_CLIENT_DRAW_BYTES = 32L * 1024L * 1024L;
+
+    /**
+     * The layouts this decoder hands to the immediate path, chosen by the vertex pointer's stride and the client
+     * arrays that are enabled, with the format id the immediate path is asked for.
+     * <p>
+     * Three tuples are measured, and each one is a real call site rather than a guess:
+     * <ul>
+     * <li>{@code stride 12, no other array} - the sky dome and the horizon plane, {@code VertexBuffer.drawArrays(7)}
+     * after {@code glVertexPointer(3, GL_FLOAT, 12, 0)}. This is the case the class decoded before.</li>
+     * <li>{@code stride 24} with colour and texture - Forge's cloud renderer. {@code FMLClientHandler.renderClouds}
+     * calls {@code CloudRenderer.render}, which draws {@code vbo.func_177358_a(GL_QUADS)} from a 24-byte
+     * POSITION_TEX_COLOR vertex, so the clouds stopped reaching vanilla's fancy path after the VBO was built and this
+     * draw was refused for its stride (52 refusals at about one per frame).</li>
+     * <li>{@code stride 16} with colour - the main menu and the loading screen, whose client-memory pointers are
+     * float3 with stride 16 at real process addresses (four distinct tuples in the user's own launch log).</li>
+     * </ul>
+     * Anything else is refused by name with the tuple and the enabled arrays on the line, because a wrong layout is a
+     * wrong picture with nothing in the frame to say so - the same rule the position-only case has always followed.
+     */
+    private int celtium$drawArrayFormat(int stride, int otherArrays, String[] refusalOut) {
+        int id = 0;
+        String what = null;
+        if (stride == POSITION_STRIDE && otherArrays == 0) {
+            id = VERTEX_FORMAT_POSITION;             // 7: position, colour from the mirror
+        } else if (stride == 16 && otherArrays == 2) {
+            id = FORMAT_POSITION_COLOR;              // 1: position and a 4-byte colour in the vertex
+        } else if (stride == 16 && otherArrays == 1) {
+            id = FORMAT_POSITION_NORMAL;             // 10: position and a normal
+        } else if (stride == 20 && otherArrays == 4) {
+            id = FORMAT_POSITION_TEX;                // 6: position and texture
+        } else if (stride == 24 && otherArrays == 6) {
+            id = FORMAT_POSITION_TEX_COLOR;          // 2: position, texture and colour - Forge's clouds
+        } else if (stride == 24 && otherArrays == 5) {
+            id = FORMAT_POSITION_TEX_NORMAL;         // 9: position, texture and a normal
+        } else {
+            what = "stride " + stride + " with client arrays [" + celtium$otherArrayNames()
+                    + "] is not a layout this decode knows";
+        }
+        if (what != null) {
+            refusalOut[0] = what;
+            return 0;
+        }
+        refusalOut[0] = null;
+        return id;
+    }
+
+    /** The immediate path's format ids, named here so the table above reads as a table. */
+    private static final int FORMAT_POSITION_COLOR = 1;
+    private static final int FORMAT_POSITION_TEX_COLOR = 2;
+    private static final int FORMAT_POSITION_TEX = 6;
+    private static final int FORMAT_POSITION_TEX_NORMAL = 9;
+    private static final int FORMAT_POSITION_NORMAL = 10;
+
+    /**
+     * {@return whether {@code [address, address + bytes)} lies inside one readable mapping of this process}.
+     * <p>
+     * A client pointer carries no length and no owner: it is a process address the game wrote, and dereferencing one
+     * that is stale, freed or never valid faults the JVM, which is a worse outcome than the blank menu this task
+     * exists to fix. So the mapping list the kernel already keeps is read once and cached, and a draw is only decoded
+     * when the whole range it asks for is inside a single readable mapping. A miss refreshes the list once, because a
+     * buffer allocated since the last read is a legitimate miss; a second miss for the same address is a refusal, and
+     * the refresh rate is bounded so a run cannot turn a bad pointer into a parsing loop.
+     * <p>
+     * Linux-only by construction ({@code /proc/self/maps}); where that file cannot be read this returns false, so the
+     * client-memory case stays a named refusal rather than becoming an unguarded read.
+     */
+    private boolean celtium$readableMapping(long address, long bytes) {
+        if (address <= 0L || bytes <= 0L) {
+            return false;
+        }
+        long end;
+        try {
+            end = Math.addExact(address, bytes);
+        } catch (ArithmeticException overflow) {
+            return false;
+        }
+        ReadableRange[] ranges = this.readableRanges;
+        if (ranges == null || celtium$inRange(ranges, address, end) < 0) {
+            ranges = celtium$refreshReadableMappings();
+            int hit = celtium$inRange(ranges, address, end);
+            if (hit < 0) {
+                return false;
+            }
+            this.readableRanges = ranges;
+        }
+        clientPointerAccepted++;
+        return true;
+    }
+
+    /** The index of the range containing {@code [start,end)}, or -1. */
+    private static int celtium$inRange(ReadableRange[] ranges, long start, long end) {
+        int low = 0;
+        int high = ranges.length - 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            ReadableRange range = ranges[mid];
+            if (end <= range.start) {
+                high = mid - 1;
+            } else if (start >= range.end) {
+                low = mid + 1;
+            } else if (start >= range.start && end <= range.end) {
+                return mid;
+            } else {
+                // Overlaps the mapping but is not contained in it: straddles two mappings, which is not readable as
+                // one contiguous run.
+                return -1;
+            }
+        }
+        return -1;
+    }
+
+    /** One readable mapping: {@code [start, end)}. */
+    private static final class ReadableRange {
+        final long start;
+        final long end;
+
+        ReadableRange(long start, long end) {
+            this.start = start;
+            this.end = end;
+        }
+    }
+
+    /** The cached mapping list, refreshed on a miss; volatile because the list is replaced, never mutated. */
+    private volatile ReadableRange[] readableRanges;
+    /** How often the list has been re-read, and when the last read happened: a bound on the refresh rate. */
+    private int readableMappingRefreshes;
+    private long readableMappingLastRefreshNanos;
+    private static final int READABLE_MAPPING_REFRESH_LIMIT = 64;
+    private static final long READABLE_MAPPING_REFRESH_INTERVAL_NANOS = 100L * 1000L * 1000L;
+
+    private ReadableRange[] celtium$refreshReadableMappings() {
+        long now = System.nanoTime();
+        if (this.readableMappingRefreshes >= READABLE_MAPPING_REFRESH_LIMIT
+                || now - this.readableMappingLastRefreshNanos < READABLE_MAPPING_REFRESH_INTERVAL_NANOS) {
+            ReadableRange[] current = this.readableRanges;
+            return current == null ? new ReadableRange[0] : current;
+        }
+        this.readableMappingRefreshes++;
+        this.readableMappingLastRefreshNanos = now;
+        java.util.List<ReadableRange> ranges = new java.util.ArrayList<ReadableRange>();
+        try {
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(new java.io.FileInputStream("/proc/self/maps"), "US-ASCII"));
+            try {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    // "7f0a1c000000-7f0a1c021000 rw-p 00000000 00:00 0 ..." - the permission field is the second.
+                    int dash = line.indexOf('-');
+                    int space = line.indexOf(' ');
+                    if (dash <= 0 || space <= dash + 1 || space + 1 >= line.length()) {
+                        continue;
+                    }
+                    if (line.charAt(space + 1) != 'r') {
+                        continue;
+                    }
+                    long start = Long.parseUnsignedLong(line.substring(0, dash).trim(), 16);
+                    long stop = Long.parseUnsignedLong(line.substring(dash + 1, space).trim(), 16);
+                    if (stop > start) {
+                        ranges.add(new ReadableRange(start, stop));
+                    }
+                }
+            } finally {
+                reader.close();
+            }
+        } catch (java.io.IOException | RuntimeException error) {
+            readableMappingFailure = String.valueOf(error);
+            return new ReadableRange[0];
+        }
+        java.util.Collections.sort(ranges, new java.util.Comparator<ReadableRange>() {
+            @Override
+            public int compare(ReadableRange left, ReadableRange right) {
+                return Long.compare(left.start, right.start);
+            }
+        });
+        ReadableRange[] array = ranges.toArray(new ReadableRange[0]);
+        this.readableRanges = array;
+        readableMappingRanges = array.length;
+        return array;
+    }
+
+    /**
+     * Diagnostics for the mapping guard: how many client-memory draws it let through, how many readable ranges the
+     * last read of {@code /proc/self/maps} found, and why that read failed if it did. Static because the census line is
+     * static, and one process has one mapping list.
+     */
+    private static volatile long clientPointerAccepted;
+    private static volatile int readableMappingRanges = -1;
+    private static volatile String readableMappingFailure = "none";
+
+    /**
+     * One line per distinct (client, stride, format, count) tuple that reaches the backend, bounded, printed once.
+     * <p>
+     * The client-memory case is new and its layouts come from a user's launch rather than from this fixture, so what it
+     * decodes has to be attributable in the census: a line here says which stride and format the draw was answered
+     * with, and the array-buffer case keeps its own {@code CELTIUM_DRAWARRAY_LAYOUT} line at the first accepted draw.
+     */
+    private static final java.util.Set<String> CLIENT_TUPLES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private void celtium$noteClientTuple(boolean clientMemory, int buffer, int count, int formatId) {
+        if (!clientMemory || CLIENT_TUPLES.size() >= 12) {
+            return;
+        }
+        String key = this.vertexPointerStride + "/" + formatId + "/" + celtium$otherArrayMask();
+        if (!CLIENT_TUPLES.add(key)) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY stride=" + this.vertexPointerStride
+                + " format=" + formatId + " otherArrays=" + celtium$otherArrayNames()
+                + " count=" + count + " pointer=0x" + Long.toHexString(this.vertexPointerOffset)
+                + " readableRanges=" + readableMappingRanges
+                + " mappingFailure=" + readableMappingFailure
+                + " site=[" + celtium$callSite(8) + "]");
     }
 
     /** Distinct (size,type,stride) vertex-pointer tuples already described, bounded to twelve lines. */

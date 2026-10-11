@@ -519,6 +519,8 @@ public final class ValidationClient {
     private int celtium$guiScreenOpenedAtTick = -1;
     private int celtium$guiScreenOpenedAtFrames = -1;
     private boolean celtium$guiClickPending;
+    /** Set once the video settings screen's own buttons have been exercised for the functional acceptance. */
+    private boolean celtium$videoSettingsExercised;
     /** Set by the world stage for a GUI scene: the screen is opened on the next client tick, not inside a render pass. */
     private boolean celtium$guiOpenPending;
     private String celtium$guiClickResult = "not attempted";
@@ -4519,6 +4521,208 @@ public final class ValidationClient {
     }
 
     /** The same two calls the game's own handler makes for id 101, recorded as their own provenance. */
+    /**
+     * The functional half of the video settings acceptance: press one of the screen's own setting buttons through its
+     * click dispatch and read the setting before and after.
+     * <p>
+     * The picture half says the screen is drawn; it cannot say the screen works. A video settings screen whose rows are
+     * painted but whose buttons do nothing looks right in a screenshot and is broken to a player, so the two halves are
+     * measured separately: the button is found by its label in the screen's own button list, the click goes through
+     * {@code GuiScreen.mouseClicked} (the code a real click runs, which finds the button under the point and calls its
+     * handler), and the game's own setting is read either side of it. The setting chosen is the first of a list of
+     * vanilla ones that the screen actually shows, so the test is about the screen rather than about a button id.
+     */
+    private void celtium$exerciseVideoSettings(Minecraft mc) {
+        net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
+        if (screen == null) {
+            report.addProperty("videoSettingsFunction", "no screen is open to press a setting in");
+            return;
+        }
+        report.addProperty("videoSettingsFunctionScreen", screen.getClass().getName());
+        // The screen this runtime shows keeps its widgets in a controller rather than in GuiScreen.buttonList - the
+        // vanilla GuiVideoSettings the scene is compared against holds nothing but Done (measured: one button), because
+        // this mod takes the video settings UI over. So the functional acceptance drives the controller: press inside
+        // the option area through the screen's own mouse dispatch and read whether a control took the press
+        // (hasPendingChanges), then press the controller's own Apply and read whether the change was committed.
+        Object controller = celtium$fieldValue(screen, new String[] {"controller"});
+        if (controller == null) {
+            report.addProperty("videoSettingsFunction", "the screen has no controller to press");
+            return;
+        }
+        boolean pending = celtium$pendingChanges(controller);
+        report.addProperty("videoSettingsFunctionPendingBefore", Boolean.valueOf(pending));
+        // The widgets are the controller's frame's own control elements, each with its own rectangle - guessing points
+        // in the screen missed all of them (five presses, no control took one), which is why the coordinates come from
+        // the controls rather than from the middle of the screen.
+        Object frame = celtium$fieldValue(controller, new String[] {"frame"});
+        Object elements = frame == null ? null : celtium$fieldValue(frame, new String[] {"controlElements"});
+        if (!(elements instanceof java.util.List)) {
+            report.addProperty("videoSettingsFunction", "the controller's frame has no control elements to press");
+            return;
+        }
+        int pressed = 0;
+        String pressedLabel = "none";
+        // The widget is asked directly, with the mod's own InteractionContext singleton, because the screen reads the
+        // global mouse state in func_146274_d rather than the coordinates a caller passes: eight controls took no press
+        // that way. ControlElement.mouseClicked(ctx, x, y, button) is the same entry point the screen's dispatch would
+        // reach, so this is the widget's own handler running, not a copy of it.
+        Object context = null;
+        try {
+            Class<?> vintage = Class.forName("org.taumc.celeritas.impl.gui.VintageInteractionContext");
+            context = vintage.getField("INSTANCE").get(null);
+        } catch (ReflectiveOperationException | LinkageError absent) {
+            report.addProperty("videoSettingsFunction", "the mod's interaction context is not on the classpath: " + absent);
+            return;
+        }
+        Object optionBefore = null;
+        for (Object element : (java.util.List<?>) elements) {
+            optionBefore = celtium$optionValue(element);
+            Object dim = celtium$fieldValue(element, new String[] {"dim"});
+            int cx;
+            int cy;
+            if (dim != null) {
+                Object centerX = celtium$invokeNoArg(dim, new String[] {"getCenterX", "centerX"});
+                Object centerY = celtium$invokeNoArg(dim, new String[] {"getCenterY", "centerY"});
+                if (!(centerX instanceof Number) || !(centerY instanceof Number)) {
+                    continue;
+                }
+                cx = ((Number) centerX).intValue();
+                cy = ((Number) centerY).intValue();
+            } else {
+                Object xValue = celtium$fieldValue(element, new String[] {"x", "field_146128_h"});
+                Object yValue = celtium$fieldValue(element, new String[] {"y", "field_146129_i"});
+                Object wValue = celtium$fieldValue(element, new String[] {"width", "field_146120_f"});
+                Object hValue = celtium$fieldValue(element, new String[] {"height", "field_146121_g"});
+                if (!(xValue instanceof Number) || !(yValue instanceof Number) || !(wValue instanceof Number)
+                        || !(hValue instanceof Number)) {
+                    continue;
+                }
+                cx = ((Number) xValue).intValue() + ((Number) wValue).intValue() / 2;
+                cy = ((Number) yValue).intValue() + ((Number) hValue).intValue() / 2;
+            }
+            try {
+                java.lang.reflect.Method press = null;
+                for (Class<?> type = element.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+                    for (java.lang.reflect.Method candidate : type.getDeclaredMethods()) {
+                        if (candidate.getName().equals("mouseClicked") && candidate.getParameterCount() == 4) {
+                            press = candidate;
+                            break;
+                        }
+                    }
+                    if (press != null) {
+                        break;
+                    }
+                }
+                if (press == null) {
+                    continue;
+                }
+                press.setAccessible(true);
+                press.invoke(element, context, Integer.valueOf(cx), Integer.valueOf(cy), Integer.valueOf(0));
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+                report.addProperty("videoSettingsFunction", "the control press threw: " + error);
+                return;
+            }
+            pressed++;
+            Object label = celtium$fieldValue(element, new String[] {"name", "text", "label"});
+            pressedLabel = label == null ? element.getClass().getSimpleName() : String.valueOf(label);
+            // The option's own value is the evidence, not the controller's pending flag: that flag is refreshed in
+            // updateControls during the controller's render, so it is still false at the moment a press returns, while
+            // the control's handler has already written the new value into the option it belongs to. Reading the value
+            // is what a player would observe, and it does not depend on when the next frame happens.
+            Object after = celtium$optionValue(element);
+            if (after != null && !after.equals(optionBefore)) {
+                report.addProperty("videoSettingsFunctionOption", String.valueOf(label));
+                report.addProperty("videoSettingsFunctionBefore", String.valueOf(optionBefore));
+                report.addProperty("videoSettingsFunctionAfter", String.valueOf(after));
+                report.addProperty("videoSettingsFunctionChanged", Boolean.TRUE);
+                report.addProperty("videoSettingsFunctionApplied",
+                        "the control's own handler changed its option: \"" + optionBefore + "\" -> \"" + after + "\"");
+                report.addProperty("videoSettingsFunction",
+                        "the screen's own control changed a setting after " + pressed + " press(es): \"" + label
+                                + "\" \"" + optionBefore + "\" -> \"" + after + "\"");
+                report.addProperty("videoSettingsFunctionControl", pressedLabel);
+                report.addProperty("videoSettingsFunctionControls", Integer.valueOf(((java.util.List<?>) elements).size()));
+                return;
+            }
+            if (celtium$pendingChanges(controller)) {
+                break;
+            }
+        }
+        report.addProperty("videoSettingsFunctionControls", Integer.valueOf(((java.util.List<?>) elements).size()));
+        report.addProperty("videoSettingsFunctionControl", pressedLabel);
+        report.addProperty("videoSettingsFunctionControls", Integer.valueOf(((java.util.List<?>) elements).size()));
+        boolean responded = celtium$pendingChanges(controller);
+        report.addProperty("videoSettingsFunctionPressed", Integer.valueOf(pressed));
+        report.addProperty("videoSettingsFunctionControlResponded", Boolean.valueOf(responded));
+        if (!responded) {
+            report.addProperty("videoSettingsFunction",
+                    "no control in the screen took a press at any of the " + pressed + " points tried");
+            return;
+        }
+        // The screen's own Apply: pressing it is what commits a change, and whether the pending state clears is
+        // whether the control's value actually went somewhere.
+        Object apply = celtium$fieldValue(controller, new String[] {"applyButton"});
+        String applied = "the controller has no apply button to press";
+        if (apply != null) {
+            int x = ((Number) celtium$fieldValue(apply, new String[] {"x", "field_146128_h"})).intValue();
+            int y = ((Number) celtium$fieldValue(apply, new String[] {"y", "field_146129_i"})).intValue();
+            int width = ((Number) celtium$fieldValue(apply, new String[] {"width", "field_146120_f"})).intValue();
+            int height = ((Number) celtium$fieldValue(apply, new String[] {"height", "field_146121_g"})).intValue();
+            try {
+                java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
+                        new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
+                click.setAccessible(true);
+                click.invoke(screen, Integer.valueOf(x + width / 2), Integer.valueOf(y + height / 2),
+                        Integer.valueOf(0));
+                java.lang.reflect.Method release = celtium$requireMethod(screen.getClass(),
+                        new String[] {"mouseReleased", "func_146286_b"}, int.class, int.class, int.class);
+                release.setAccessible(true);
+                release.invoke(screen, Integer.valueOf(x + width / 2), Integer.valueOf(y + height / 2),
+                        Integer.valueOf(0));
+                applied = celtium$pendingChanges(controller)
+                        ? "the Apply button was pressed and the change is still pending"
+                        : "the Apply button was pressed and the change was committed";
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+                applied = "the Apply click threw: " + error;
+            }
+        }
+        report.addProperty("videoSettingsFunctionApplied", applied);
+        report.addProperty("videoSettingsFunctionChanged", Boolean.TRUE);
+        report.addProperty("videoSettingsFunction",
+                "the screen's own control took a press after " + pressed + " click(s) and " + applied);
+    }
+
+    /** The value the control's option currently holds, or null when it cannot be read. */
+    private static Object celtium$optionValue(Object element) {
+        Object option = celtium$invokeNoArg(element, new String[] {"getOption"});
+        return option == null ? null : celtium$invokeNoArg(option, new String[] {"getValue", "value"});
+    }
+
+    /** Calls a no-argument accessor by reflection, or null when there is no such method. */
+    private static Object celtium$invokeNoArg(Object owner, String[] names) {
+        if (owner == null) {
+            return null;
+        }
+        for (Class<?> type = owner.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            for (String name : names) {
+                try {
+                    java.lang.reflect.Method method = type.getDeclaredMethod(name);
+                    method.setAccessible(true);
+                    return method.invoke(owner);
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError absent) {
+                    // Try the next name or the next class in the hierarchy.
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Whether the mod's video options controller is holding an uncommitted change, or false when it cannot be read. */
+    private static boolean celtium$pendingChanges(Object controller) {
+        Object pending = celtium$fieldValue(controller, new String[] {"hasPendingChanges"});
+        return pending instanceof Boolean && ((Boolean) pending).booleanValue();
+    }
+
     private void celtium$openVideoSettingsDirectly(Minecraft mc, String why) {
         try {
             mc.gameSettings.saveOptions();
@@ -4544,6 +4748,12 @@ public final class ValidationClient {
         if (celtium$guiClickPending && worldTicks >= celtium$guiScreenOpenedAtTick + 1) {
             celtium$guiClickPending = false;
             celtium$clickVideoSettingsButton(mc);
+            // The screen the game's own click just opened is the video settings UI a player sees and presses - in this
+            // runtime that is Celeritas' screen, and the vanilla GuiVideoSettings this scene is compared against later
+            // holds nothing but Done (measured: one button, "Done", so there is nothing in it to press). The functional
+            // acceptance is therefore taken here, on the screen the game's own path produced, and the picture half
+            // stays where it was.
+            celtium$exerciseVideoSettings(mc);
             // The button is the game's, but a mod can claim it: with Celeritas installed the click through
             // GuiScreen.mouseClicked on button id 101 opened org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen
             // in the reference run, not GuiVideoSettings. What the scene asserts is Minecraft's own screen, so the
