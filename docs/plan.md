@@ -274,6 +274,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.286 **round 92: 決定的 — `passImage == readImage`（copy は正しい image を読む）・それでも全白＝draw が白を書いている**
+
+- **測定（Lead・既存 2 leg の比較）**:
+  ```
+  r90-cmp    passImage=0x7f0d78c74e20   readImage=0x7f0d78c74e20   mean=255,255,255
+  hold-menu  passImage=0x7f6b74829930   readImage=0x7f6b74829930   mean=255,255,255
+  ```
+  ＝**両 leg で `passImage == readImage`**。**copy は pass が attach した image そのものを読んでいる**。
+- **これで「draw の image ≠ read の image」仮説も棄却**。確定した事実の組み合わせは:
+  **faces は 24,738 batch 描画され（拒否・破棄 0）・copy はその image を読み・readback は 65536 画素すべて白**。
+  ＝**draw 自体が白を書いている**（image に何も届かないのではなく、白が届いている）。
+- **帰結**: fragment は `texture × v_Color` で、`vertexColour0=0xffffffff`（不透明白）＝**出力は texture の内容**。
+  白が書かれるなら **descriptor が bind している texture が白**であることになる。group は 45/46/48/49/50 を記録しているが、
+  **descriptor が実際に bind する mirror が白**（splash の白い `int[]` で後から埋め直された等）でありうる。
+- **次の測定（1点・bounded）**: **descriptor 構築時（`descriptorSetFor`）に `texture.key()`・`texture.width()/height()` と
+  その mirror の先頭画素**を印字し、group が記録した texture id と突き合わせる。
+  「group の id の mirror が白」なら announcement/mirror の側、「descriptor が別の texture を bind」なら descriptor 側。
+- **棄却済みの一覧（再試行しない）**: pass 終了 hand-back・一律 GENERAL・per-descriptor 分岐・serve 前 flush・「描かれていない」・「flush されない」・
+  「draw の image ≠ read の image」。
+
 ## 0.285 **round 91: BH-14 の偵察を記録（全 site が identity 非依存・一回で切るための手順）＋外部の互換/配布の参考**
 
 - **BH-14 の偵察（sky-draws・実装は未着手・理由つき）**: **pair を触る全 site が identity 非依存**で、clears・publication・post-chain・readback に
