@@ -127,6 +127,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
     private static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
     private static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
+    private static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -192,6 +193,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glGetBooleanv", R_VOID, SEM_GET_BOOLEANV, A_INT, A_PTR);
         fn("glEnable", R_VOID, SEM_ENABLE, A_INT);
         fn("glDisable", R_VOID, SEM_DISABLE, A_INT);
+        // BH-09: Celeritas' own UI clips with GL11.glScissor directly (VintageDrawContext.enableScissor), so the
+        // rectangle must be recorded rather than dropped - it was in the NOOP table, which is why a scroll list could
+        // not be clipped. The enable bit is not a second mirror: scissorTest() reads the same enables map that
+        // glEnable/glDisable write.
+        fn("glScissor", R_VOID, SEM_SCISSOR, A_INT, A_INT, A_INT, A_INT);
         fn("glEnablei", R_VOID, SEM_ENABLE, A_INT, A_INT);
         fn("glDisablei", R_VOID, SEM_DISABLE, A_INT, A_INT);
         // ---- deletion: retire names so glIs* answers go false (names are never reissued - GL does not require it)
@@ -383,7 +389,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glClearBufferuiv", "glStencilFunc", "glStencilFuncSeparate", "glStencilOp", "glStencilOpSeparate",
                 "glStencilMask", "glStencilMaskSeparate", "glCullFace", "glFrontFace", "glPolygonMode",
                 "glPolygonOffset", "glPointSize", "glPrimitiveRestartIndex", "glProvokingVertex",
-                "glSampleCoverage", "glSampleMaski", "glScissor", "glLogicOp", "glHint",
+                "glSampleCoverage", "glSampleMaski", "glLogicOp", "glHint",
                 "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers", "glClampColor",
                 "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glLightf", "glLightfv",
                 "glLighti", "glLightiv", "glLightModelf", "glLightModelfv", "glLightModeli", "glLightModeliv",
@@ -555,6 +561,33 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static boolean isInstalled() {
         return installed != null;
+    }
+
+    /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
+    private static final int GL_SCISSOR_TEST = 0x0C11;
+
+    /** The game's clip rectangle as glScissor last set it, in GL's bottom-left coordinates. */
+    private final int[] scissorBox = new int[4];
+
+    /** Whether glScissor has been called at all: a box of zeros is a legal clip, so the call is what is recorded. */
+    private volatile boolean scissorCalled;
+
+    /** {@return the game's clip rectangle}, or {@code null} when glScissor has not been called in this process. */
+    public static int[] scissorBox() {
+        CeltiumGlStub stub = installed;
+        if (stub == null || !stub.scissorCalled) {
+            return null;
+        }
+        return new int[] {stub.scissorBox[0], stub.scissorBox[1], stub.scissorBox[2], stub.scissorBox[3]};
+    }
+
+    /**
+     * {@return whether GL_SCISSOR_TEST is enabled}. Read from the same {@code enables} map glEnable/glDisable write,
+     * so there is one state rather than a mirror that can drift from it.
+     */
+    public static boolean scissorTest() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.enables.getOrDefault(Integer.valueOf(GL_SCISSOR_TEST), Boolean.FALSE).booleanValue();
     }
 
     /** The stream the exit census is written to: the process's own stdout, not the logger Forge put in front of it. */
@@ -1102,6 +1135,16 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_DISABLE:
                 this.enables.put(Integer.valueOf((int) a0), Boolean.FALSE);
+                return 0L;
+            case SEM_SCISSOR:
+                // GL's rectangle is in the window's own coordinates, bottom-left origin. The Vulkan scissor needs the
+                // top-left flip, which the backend applies where the group's rectangle becomes the scissor - the raw
+                // values are recorded here so the one place that knows the target's height does that arithmetic.
+                this.scissorBox[0] = (int) c[0];
+                this.scissorBox[1] = (int) c[1];
+                this.scissorBox[2] = (int) c[2];
+                this.scissorBox[3] = (int) c[3];
+                this.scissorCalled = true;
                 return 0L;
             case SEM_GET_INTEGERV:
                 getInts((int) a0, a1, fn);

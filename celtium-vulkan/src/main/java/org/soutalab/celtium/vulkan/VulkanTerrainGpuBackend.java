@@ -1140,6 +1140,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int windowFlushFailures;
     private long windowFlushFailureFrame = -1L;
     private long windowFlushDroppedBatches;
+    /**
+     * Batches a failed window flush puts back on the queue instead of throwing away.
+     * <p>
+     * The frame is abandoned either way, so nothing that was already recorded into it survives; but a group whose
+     * recording never reached the queue has not been drawn, and clearing it here is what erased every entity and
+     * held-item batch of the window - measured as {@code id4 28 accepted / 0 drawn} and {@code id9 228 / 0} with no
+     * loss column in the per-format histogram to show it. Paired with {@link #windowFlushDroppedBatches}: a group is
+     * either drawn, or retained here, or counted as dropped there.
+     */
+    private long windowFlushRetainedBatches;
     private String lastWindowFlushFailure = "none";
     /**
      * Ordering flushes that threw ({@code flushPendingBeforeGlDraw}'s catch), with their text and the batches they had
@@ -4741,20 +4751,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // window flush that throws is bounded to the window it belongs to: its batches are dropped and
                     // counted, the frame is abandoned, and the next frame tries again.
                     this.windowFlushFailures++;
-                    this.lastWindowFlushFailure = describe(error);
+                    this.lastWindowFlushFailure = describeWithOrigin(error);
                     this.windowFlushFailureFrame = this.frameId;
-                    int dropped = 0;
-                    for (ImmediateGroup group : this.immediateGroups) {
-                        dropped += group.batches;
+                    // Retained, not dropped. The frame is abandoned, so a group whose recording already sits in the
+                    // abandoned command buffer has to be recorded again - and the abort branch's own contract is the
+                    // pattern: take the recording's counters back off, add its indices back, and put it at the front of
+                    // the queue. The unrecorded remainder never left the queue and stays where it is. Clearing the
+                    // whole queue here is what erased the window's entity and held-item batches; the drop was counted,
+                    // but the per-format histogram has no loss column, so it read as "accepted and never drawn".
+                    for (ImmediateGroup group : this.recordedImmediateGroups) {
+                        int batches = group.batches;
+                        this.pendingImmediateIndices += group.mesh.indexCount();
+                        this.immediateRecordedBatches -= batches;
+                        if (group.target != this.mainTargetIdentity) this.offTargetRecordedBatches -= batches;
                     }
-                    this.windowFlushDroppedBatches += dropped;
-                    this.immediateGroups.clear();
-                    this.pendingImmediateIndices = 0;
+                    this.immediateGroups.addAll(0, this.recordedImmediateGroups);
+                    this.recordedImmediateGroups.clear();
+                    int retained = 0;
+                    for (ImmediateGroup group : this.immediateGroups) {
+                        retained += group.batches;
+                    }
+                    this.windowFlushRetainedBatches += retained;
                     // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
                     // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
                     this.frameTarget.abandonFrame("immediate window submit failure");
                     record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
-                            + "); dropped " + dropped + " accepted batches, the next frame retries"
+                            + "); retained " + retained + " accepted batches, none dropped, the next frame retries"
                             + " (windowFlushFailures=" + this.windowFlushFailures + ")");
                 }
             }
@@ -5631,23 +5653,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         // tries again. gpuStalled stays reachable from the wait-timeout paths, which is where a
                         // device that has genuinely stopped is detected, and stallOrigin names that origin separately.
                         this.windowFlushFailures++;
-                        this.lastWindowFlushFailure = describe(error);
+                        this.lastWindowFlushFailure = describeWithOrigin(error);
                         this.windowFlushFailureFrame = this.frameId;
-                        int dropped = 0;
+                        // Retained, not dropped, and this is the site the measurement actually reaches: the abort
+                        // branch above has already taken the recording's counters off and re-queued it, so everything
+                        // still queued here is a group that has not been drawn. Clearing it is what erased every
+                        // entity and held-item batch of the window - id4 33 accepted / 0 drawn, id9 228 / 0 - while the
+                        // per-format histogram has no loss column to show it. The frame is abandoned either way, so
+                        // the next attempt re-records these groups; a group is now drawn, retained or counted.
+                        int retained = 0;
                         for (ImmediateGroup group : this.immediateGroups) {
-                            dropped += group.batches;
+                            retained += group.batches;
                         }
-                        for (ImmediateGroup group : this.recordedImmediateGroups) {
-                            dropped += group.batches;
-                        }
-                        this.windowFlushDroppedBatches += dropped;
-                        this.immediateGroups.clear();
-                        this.recordedImmediateGroups.clear();
-                        this.pendingImmediateIndices = 0;
+                        this.windowFlushRetainedBatches += retained;
                         this.frameTarget.abandonFrame("accepted geometry retained");
                         record("window flush failed twice at frame " + this.frameId + " ("
-                                + this.lastWindowFlushFailure + "); dropped " + dropped
-                                + " accepted batches, the next frame retries (windowFlushFailures="
+                                + this.lastWindowFlushFailure + "); retained " + retained
+                                + " accepted batches, none dropped, the next frame retries (windowFlushFailures="
                                 + this.windowFlushFailures + ")");
                         return;
                     }
@@ -6421,6 +6443,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " windowFlushFailures=" + this.windowFlushFailures
                 + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
                 + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
+                + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
                 + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
                         : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
                                 Math.min(200, this.lastWindowFlushFailure.length())))
@@ -10698,9 +10721,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         catch (IllegalStateException error) { this.invalidImmediateRecords++; throw error; }
         closeCurrentImmediateGroup();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            // 208, not 128: the lit ITEM pipeline's block extends the shared layout by the five lighting vec4, and
-            // every other pipeline clamps to its own declared range when it pushes.
-            ByteBuffer push = stack.calloc(208);
+            // 216, not 208: the lit ITEM pipeline's block is five lighting vec4 (128..207) *plus* the light-map
+            // coordinate pair at 208..215, and every other pipeline clamps to its own declared range when it pushes.
+            // The buffer was 208 while the light-coordinate write below targets 208 and 212, so drawing any group that
+            // carried light-map coordinates - the model and item batches, exactly - threw IndexOutOfBoundsException out
+            // of the window flush; the catch then cleared the whole immediate queue, which is the measured reason
+            // id4/id9 were accepted and never drawn (windowFlushFailures=64, windowFlushDroppedBatches=9680,
+            // drawnByFormat id4=0 id9=0).
+            ByteBuffer push = stack.calloc(216);
             Iterator<ImmediateGroup> iterator = this.immediateGroups.iterator();
             while (iterator.hasNext()) {
                 ImmediateGroup group = iterator.next();
@@ -10748,8 +10776,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (prepared.textureKey != 0L && group.texture != 0) {
                     VulkanGlTexture currentTexture = celtium$registry().get(group.texture);
                     if (currentTexture != null && currentTexture.key() != prepared.textureKey) {
-                        long rebuilt = prepared.pipeline instanceof VulkanImmediateTexturePipeline texturePipeline
-                                ? texturePipeline.descriptorSetFor(currentTexture) : 0L;
+                        // The rebuild has to know which family the group belongs to. The textured family needs only its
+                        // own texture; a lit ITEM group - the model path's batch - declares a second binding for the
+                        // light map, so rebuilding it with the one-texture call would produce a set the pipeline cannot
+                        // sample and a descriptor-validity error. That is why the model groups were refused here while
+                        // every other family was rebuilt: measured as modelDraws=1485 with drawnByFormat[4]=0, every
+                        // entity and held-item group retired at this line in the frame it was enqueued. The lit variant
+                        // is rebuilt with the same light map the prepare used.
+                        long rebuilt;
+                        if (prepared.pipeline instanceof VulkanImmediateTexturePipeline texturePipeline) {
+                            rebuilt = texturePipeline.descriptorSetFor(currentTexture);
+                        } else if (prepared.pipeline instanceof VulkanImmediateItemPipeline itemPipeline) {
+                            rebuilt = itemPipeline.lit()
+                                    ? itemPipeline.descriptorSetFor(currentTexture, this.lightmapTexture)
+                                    : itemPipeline.descriptorSetFor(currentTexture);
+                        } else {
+                            rebuilt = 0L;
+                        }
                         if (rebuilt != 0L) {
                             prepared = new PreparedImmediate(prepared.pipeline, rebuilt, currentTexture.key());
                             this.staleGroupDescriptorsRebuilt++;
@@ -11622,6 +11665,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private static String describe(Throwable error) {
         return error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
+    }
+
+    /**
+     * {@link #describe} plus where it was thrown, for the one failure path whose cause is invisible without it.
+     * <p>
+     * The immediate window's flush catches this: measured on the entity leg, {@code windowFlushFailures=1} at frame 69
+     * with 15,113 batches dropped - every format 4 and 9 group of the window, which is the entity and held-item path -
+     * and {@code lastWindowFlushFailure} read only {@code IndexOutOfBoundsException: null}, because a message-less
+     * exception prints as "null". The class alone cannot name the array, so the first frames of the stack travel with
+     * it. Bounded to five frames: this runs once per failure.
+     */
+    private static String describeWithOrigin(Throwable error) {
+        StringBuilder line = new StringBuilder(describe(error));
+        StackTraceElement[] frames = error.getStackTrace();
+        for (int i = 0; i < frames.length && i < 5; i++) {
+            line.append(i == 0 ? " at " : " <- ").append(frames[i].getClassName()).append('.')
+                    .append(frames[i].getMethodName()).append(':').append(frames[i].getLineNumber());
+        }
+        return line.toString();
     }
 
     private static void check(int result, String operation) {
