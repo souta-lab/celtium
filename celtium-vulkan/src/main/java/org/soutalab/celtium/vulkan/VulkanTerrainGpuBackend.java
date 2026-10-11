@@ -3738,7 +3738,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         int batches = group.batches;
                         this.pendingImmediateIndices += group.mesh.indexCount();
                         this.immediateRecordedBatches -= batches;
-                        if (group.target != this.mainTargetIdentity) this.offTargetRecordedBatches -= batches;
+                        if (!celtium$isMainTarget(group.target)) this.offTargetRecordedBatches -= batches;
                     }
                     this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                     this.recordedImmediateGroups.clear();
@@ -4101,11 +4101,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
     /** {@return how many non-empty pending groups belong to a target}, counted when a pass is about to run. */
+    /**
+     * Whether a framebuffer identity is the screen.
+     * <p>
+     * Identity 0 is the default framebuffer, and under the GL-less window that IS the screen: there is no GL context
+     * for the game to draw its finished frame into, so the frame image stands in for it. The frame mixin reports the
+     * unbind that leads there as {@code bindFramebuffer(0L, false)} - not "main" - and the off-target routing took
+     * that at face value: every draw the game issued with no Framebuffer bound, which includes its per-frame
+     * finished-frame composite, was sent to the renderer's off-target pair. That pair is also the image the
+     * entity-outline chain adopts as its input, so the chain was handed a copy of the whole frame instead of the
+     * silhouette and the composite added a dimmed mirrored copy of the scene over it. Measured before this:
+     * offTargetByTarget=[0:104 368534084:24] on a 105-frame run. The game's own main framebuffer keeps its identity,
+     * so both are "main" and every filter asks this instead of comparing one field.
+     */
+    private boolean celtium$isMainTarget(long identity) {
+        return identity == 0L || identity == this.mainTargetIdentity;
+    }
+
     /** {@return how many pending non-empty groups belong to a target other than the main one}. */
     private int pendingGroupsForOtherTargets() {
         int count = 0;
         for (ImmediateGroup group : this.immediateGroups) {
-            if (group.target != this.mainTargetIdentity
+            if (!celtium$isMainTarget(group.target)
                     && !group.mesh.isEmpty()) {
                 count++;
             }
@@ -4159,7 +4176,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // Which image this pass draws into: the frame's, or - for a framebuffer the game bound that is not the main
         // one - the renderer's own off-target pair. Without this the silhouette is painted onto the scene.
         long framebuffer;
-        GllessFrameTarget offTarget = this.currentRenderTargetIsMain ? null : offTargetTarget();
+        // The screen is the frame image: identity 0 counts as main for the same reason the field exists.
+        GllessFrameTarget offTarget = celtium$isMainTarget(this.currentRenderTarget)
+                ? null : offTargetTarget();
         if (offTarget != null) {
             try {
                 offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
@@ -6314,7 +6333,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private void adoptChainFramebuffer(int identity, int width, int height, GllessFrameTarget glless) {
         long[] reported = identity == 0 ? null : framebufferColorTexture(identity);
-        if (reported == null || width <= 0 || height <= 0 || identity == (int) this.mainTargetIdentity) {
+        if (reported == null || width <= 0 || height <= 0 || celtium$isMainTarget(identity)) {
             return;
         }
         if (!glless.offTargetMatches(width, height)) {
@@ -7268,7 +7287,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
                 int batches = group.batches;
                 this.immediateRecordedBatches += batches;
-                if (target != this.mainTargetIdentity) this.offTargetRecordedBatches += batches;
+                if (!celtium$isMainTarget(target)) this.offTargetRecordedBatches += batches;
                 this.immediateGroupsDrawn++;
                 this.immediateFlushes++;
                 this.frameDrawn++;
@@ -7651,7 +7670,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             for (ImmediateGroup group : this.retiredImmediateGroups) {
                 int batches = group.batches;
                 this.immediateCompletedBatches += batches;
-                if (group.target != this.mainTargetIdentity) this.offTargetCompletedBatches += batches;
+                if (!celtium$isMainTarget(group.target)) this.offTargetCompletedBatches += batches;
             }
             releaseRetiredImmediateGroups();
             if (this.immediateGroups.isEmpty() && this.currentImmediateMesh == null) VulkanRetireQueue.flush();
