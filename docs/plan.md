@@ -186,6 +186,37 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.224 **round 29-32: 状態契約の統合（BH-07/10）・BH-08/11/12/13 着地・OPT-01・font artifact の測定**
+
+- **BH-07/BH-10 統合（blend-state・commit `2e49ce0f2`）**: `VulkanColorBlendState` が enable・RGB/alpha 4因子・2 equation・
+  **write mask** を保持し、`celtium$captureState` は **stub の記録**から読む（`GlStateManager.blendFunc` は `GL11.glBlendFunc`
+  直呼び、`tryBlendFuncSeparate` は `OpenGlHelper` 経由＝全 caller が落ちる唯一の場所）。state key に折り込まれるため
+  alpha 因子や write mask だけが違う batch は別パイプライン・別 group になる。全即時パイプラインの blend attachment が mask を取る。
+- **BH-11（z-fighting・Lead 実装）**: stub が `glPolygonOffset` を記録、5つの即時パイプラインが `VK_DYNAMIC_STATE_DEPTH_BIAS`＋
+  `depthBiasEnable`（**rasterization state**）を宣言、backend が **全 group で** `vkCmdSetDepthBias` を発行（GL units→Vulkan
+  constant factor・GL factor→Vulkan slope factor・符号はそのまま）。`immediateDepthBiasedGroups` が到達数を数える。
+  **VUID-07834**（dynamic 宣言したのに呼ばない）は proj-channel の leg で検出し、全 group 発行に直して解消。
+- **BH-12（選択枠・釣り竿の糸・Lead 実装）**: 線分 batch を**拒否せず描く**。2px 要求は 1.0 で描き `lineBatchesNarrowed` が数える。
+  `formatId == 1` 制限を撤去。GL-less では拒否＝誰も描かないため。
+- **BH-13（proj-channel）**: `celtium$setGroupViewport` の full-target 早期 return が dynamic viewport を残していた問題を修正。
+  `drawnByFormat` id4 0→7430・id9 0→228・`groupViewportSets=4072`。
+- **BH-08（proj-channel）**: `cullEnabledGroups=2128` / `cullDisabledGroups=3205`＝**39.9% の group が cull 有効**。
+  修正前は enabled 列が run 全体で 0 になり得た（`glEnable(GL_CULL_FACE)` は記録済みだが読まれず、face/winding は no-op だった）。
+- **BH-03 比較関数（weather-water）**: 選択子は **offset 100（`u_MvColumn2.y`）**。fragment が GL_NEVER..ALWAYS を実装し、
+  `0` は「テスト無効」を意味する（GL enum に 0 は無い）。**fragment が offset 96 に第2メンバーを宣言すると
+  spirv-val が重複として拒否**（`vkCreateShaderModule` 失敗＝全 leg が真っ黒）なので、既存列から読む形にした。
+- **OPT-01（Lead）**: `threadCpuNanos` が毎回 `ManagementFactory.getThreadMXBean()` を解決していた（即時 batch あたり2回）。
+  static に1回解決へ変更＝**計器自身を性能測定から除く**。
+- **perf の判断（perf-ring・commit `c96a1fdd7`）**: BH-27 後半（staging ring）は**測定により却下**。最悪 frame は
+  `worldTick=1` の 1350ms で内訳は world 生成（`regions=0 draws=0 uploaded=0B`）、upload の fence 待ちは run 全体で **48ms**
+  ＝ring が消せる上限は ~1ms/frame（cold p50 70〜151ms）。加えて instrument の欠陥2つ（slow frame が先着順・phase 行の誤マッチ）を修正。
+  次は `docs/performance_plan.md` の **OPT-05/07**（frame arena・copy の batch）を perf-ring が担当。
+- **font artifact（glyph-fix・commit `71d155483`）**: UV セル境界説は**測定で棄却**（`mag=NEAREST min=NEAREST maxLod=0` では
+  inset は no-op）。texel 一致検査は 449/449 stroke・0/769 空 texel 描画＝**glyph 幾何は正しい**。artifact は F3 背景矩形内の
+  **1px 縦バー**（±6..12 輝度）で、最有力は font run のバッファ再利用（`-Dceltium.font.batching=false` の一旗実験が次）。
+- **BLOCKER 2つを Lead が修復**: `glBlendFuncSeparate` の4引数 case が `a2/a3` 参照（dispatch は `a0/a1` のみ）→ `c[2]/c[3]`。
+  および上記の push-constant 重複。どちらも「ビルドは通るが全 leg が描かない」種類。
+
 ## 0.222 **round 28: 聖典 item 2/3 を独立測定で受入・BH-09 完成（backend の scissor intersection）**
 
 - **item 3（エンティティ/HUD）受入（acceptance の独立 leg・jar `65a3e7f4`）**:
