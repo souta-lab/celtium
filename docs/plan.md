@@ -304,6 +304,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.305 **round 111: goal 文書の同期を修正（live は revision 27・roundsStarted 103）**
+
+- **live の goal（API で確認）**: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`・**revision 27**・phase **active**・activation **armed**・
+  **roundsStarted 103**・**maxGoalRounds 1000**。objective 文は不変（goal は目標のみを保持するというユーザー指示どおり）。
+- **修正**: `docs/goal.md` は **revision 16** のまま、`docs/plan.md` の冒頭は **revision 1** のままで、
+  **goal が「同期せよ」と求めている2文書が両方 stale** だった。両方を live の値に合わせた（objective 文は触らない）。
+- **配布準備（goal D）の外部参考（web 調査）**: Vulkan アプリの配布では
+  **(1) loader の扱い（system / bundle / hybrid）・(2) 必要 extension を文書化し起動時に検査し fallback を持つ・
+  (3) SPIR-V を事前コンパイルして同梱・(4) 最小 Vulkan 版と feature を明記**が定型
+  （[Vulkan の Packaging and Distribution](https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.html)・
+  [Vulkan Versions & Porting Guide](https://docs.vulkan.org/guide/latest/versions.html) の「**最小 Vulkan 版を明記**」「**版ではなく feature を検出**」）。
+  Forge mod 側は `mods.toml` の `license`・`version`・`[[dependencies]]` と、
+  バージョン規約 `MCVERSION-MAJORMOD.MAJORAPI.MINOR.PATCH`
+  （[Forge の mods.toml](https://docs.minecraftforge.net/en/1.20.x/gettingstarted/modfiles/)・[Forge の versioning](https://docs.minecraftforge.net/en/latest/gettingstarted/versioning/)）。
+  ＝**Celtium の配布物に必要な項目**（ライセンス・Celeritas 由来の credits・F3 の device/driver 表示・最小能力・Java 条件・
+  既知問題・未検証 OS/GPU）はこの定型と一致しており、**「版ではなく feature で選ぶ」は goal の仕様5と同義**。
+
 ## 0.304 **round 110: 現行 tree の回帰確認 leg — 層ありで VUID 0 行（セッション約30 commit 後の確認）**
 
 - **測定（Lead の `r102-regress`・jar `77d15a69`・`glless=true` + `validation=true` + `presentReadback=true` + `pinSections=60`・150 s）**:
