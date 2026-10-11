@@ -257,6 +257,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.251 **round 57: パノラマ PNG の mirror は正しい（id 45-49）・face が sample する id 8 は splash の残骸＝「名前→id 解決」が真の容疑者**
+
+- **原典と計器の突き合わせ（Lead）**:
+  - `GuiMainMenu:448` は cube ごとに `TITLE_PANORAMA_PATHS[k]`（`panorama_0..5.png`）を bind
+  - `CELTIUM_MIRROR_SOURCE` の **id 45〜49 は `source=announcement` で実内容**（`firstOpaque=0xff8fa3ff` 等）＝**panorama PNG は正しく mirror されている**
+  - face の group は **`texture=8`** を運び、id 8 は **splash の logo**（`Minecraft:980` の `DynamicTexture(ImageIO.read(...))`、後に Forge の
+    `SplashProgress.clearVanillaResources`（`:595`）が削除）
+  - `BufferedImage` 経路の hook は**存在し名前も正しい**: `TextureUtilMixin:130` が `func_110989_a` に注入し、
+    `scripts/mc-sources.sh --srg uploadTextureImageAllocate` が `func_110989_a` = `uploadTextureImageAllocate(ILjava/awt/image/BufferedImage;ZZ)I` を確認
+- **結論**: mirror の内容欠陥ではなく、**face の batch が運ぶ id が 8（splash の残骸）で 45-49 ではない**こと。
+  容疑者は **bind 経路の「テクスチャ名 → GL id」解決**（`TextureManager.bindTexture` → `getGlTextureId`）を即時 group に取り込む箇所。
+- **確認測定（texture-mirror へ配布）**: 同じ menu leg で6つの `panorama_N.png` の location について bind が解決する id と group の `texture=` を並べる。
+  bind が 45-49 で group が 8 なら**捕捉が誤り**（stale な last-bound 値）、bind 自体が 8 なら**registry の名前マッピング**が容疑者（彼らのファイル）。
+- **受入は不変**: copy の `mean=` が 255 から動き menu crop にパノラマが出る。
+
 ## 0.250 **round 56: id 8 は splash の dynamic texture（caller census が確定）＝名前の再利用と mirror の残存**
 
 - **caller census の結果（texture-mirror・`pano-caller`・jar `bb480811a`・`validationClean=true`）**:
