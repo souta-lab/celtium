@@ -257,6 +257,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.260 **round 66: layout VUID の形を特定（`vkCmdDraw` 側＝pass が pair を GENERAL のまま残し、後続の draw が SHADER_READ_ONLY descriptor で sample する）**
+
+- **コード追跡（Lead）**: pair の hand-back は既に存在する — `celtium$transitionPublishedFrameTextures(boolean general)`（定義 `:10364`）が
+  `publishedFrameTextures` の各名前に barrier を記録し、`:7089`（clear/attach の前・`true`＝GENERAL へ）と `:7166`/`:8638`（`false`＝sampling へ）/
+  `:10043`（`true`）から呼ばれている。コメント自身が `vkCmdBeginRenderPass` の `initialLayout` VUID を避ける設計を説明している。
+- **しかし観測された VUID は `vkCmdDraw-None-09600`**（`vkCmdBeginRenderPass` ではない）＝**draw が descriptor で期待する layout と、
+  その時点の image layout が一致していない**。pass が pair を **GENERAL のまま残し**、後続の draw が
+  **`SHADER_READ_ONLY_OPTIMAL` を宣言した descriptor** でそれを sample すると、この VUID が両方向に出る（`validationMessageCount=2`）。
+- **修正方向（次に着手する担当へ）**: pass が pair を attach した後、**その pair を sample する draw より前に SHADER_READ_ONLY へ戻す** barrier を
+  記録する（`celtium$transitionPublishedFrameTextures(false)` がその役だが、`:7089` の `true` の後に `false` が来ていない経路がある）。
+  または descriptor 側の `imageLayout` を実際の layout に合わせる。**texture-mirror の change list**（`chainPairLayout` フィールド＋
+  `noteChainPairLayout`＋barrier site の `oldLayout` 根拠化・off-target pair も同様）が正しい形で、受入は
+  `validationMessageCount=0` かつ copy の `mean=` が 255 から動くこと（handle `0x360000000036` は copy 行が印字）。
+- **未確定**: どの経路で `false` が欠けているか（`:7089` の後・`:10043` の後・composite の bind 後）。次の測定は
+  `CELTIUM_READ_RESOLVE`／publish 行に **その時点の pair layout** を載せ、VUID を出した draw の直前に並べること。
+
 ## 0.259 **round 65: layout handshake の具体的な在処を特定（frame image は layout を記録・chain pair は記録していない）**
 
 - **コード確認（Lead）**: `GllessFrameTarget` は **frame image の layout を記録している**
