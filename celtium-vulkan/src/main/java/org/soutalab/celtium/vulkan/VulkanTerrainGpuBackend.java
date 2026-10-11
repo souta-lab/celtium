@@ -7104,6 +7104,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         }
                         this.chainPairClearedFrame = this.frameId;
                         this.chainPairClears++;
+                        // Order against the faces' own pass: the copy reads this pair and the faces drew into it, so
+                        // a clear that lands after their DRAW_SITE is what leaves the copy white.
+                        if (this.chainPairClearLogs < 6) {
+                            this.chainPairClearLogs++;
+                            System.out.println("[Celtium] CELTIUM_CHAIN_PAIR_CLEAR frame=" + this.frameId
+                                    + " site=" + this.immediateDrawSite
+                                    + " drawsSoFar=" + this.immediateGroupsDrawn
+                                    + " windowsThisFrame=" + this.immediateWindowsThisFrame);
+                        }
                         celtium$noteChainPairClear("first-non-main-pass");
                     }
                     framebuffer = ensureChainPairFramebuffer(renderPass);

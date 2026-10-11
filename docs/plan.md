@@ -257,6 +257,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.272 **round 78: chain pair の clear は copy より前（frame 0・行 269 対 838）— clear は wipe ではない**
+
+- **計装（Lead・`recordImmediateOnlyPass` の clear 地点）と測定（`r76-order`・hold 60）**: console の行順は
+  ```
+  269  CELTIUM_CHAIN_PAIR_CLEAR frame=0   (recordImmediateOnlyPass:7111)
+  270  CELTIUM_CHAIN_CLEAR frame=0        (celtium$noteChainPairClear:2173)
+  838  CELTIUM_COPY_READ image=0x… chainPair=0x… frame=0
+  839  CELTIUM_TEX_COPY_SERVED dest=20 … mean=255,255,255
+  ```
+  ＝**chain pair の clear は copy より数百行前**（同じ frame 0 の早い段階）。したがって
+  **「clear が face の描画後に来て内容を消す」という前ラウンドの推定は、この leg では成り立たない**（clear は copy より前）。
+- **未取得の比較**: face の `CELTIUM_DRAW_SITE` はこの leg で `enqAll` を渡していないため出ていない。
+  **clear と face の pass の前後関係は、`-Dceltium.vulkan.enqAll=true` を足した同一 leg で確定する**（次の1点）。
+- **この leg で確定したこと**: 白の原因は「clear が後」ではない。残る候補は (a) face の pass が clear より前（＝内容が clear で消える）、
+  (b) face の pass が copy に届いていない、(c) readback が別の mip/layer を読む。**(a) は enqAll leg で即決できる。**
+- **計装は残す**（`CELTIUM_CHAIN_PAIR_CLEAR`・bounded 6行・`chainPairClearLogs` は既存 field を共用）。
+
 ## 0.271 **round 77: copy の read 事実を実測 — 読むのは chain pair、しかしその時点の attach は別 image**
 
 - **計装（Lead・`celtium$readImageRectangle` 冒頭・bounded 6行）と測定（`r75-read`・hold 60）**:
