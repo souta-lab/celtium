@@ -257,6 +257,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.268 **round 74: 重要な訂正 — VUID は menu hold の leg だけに出る（hold なしの menu leg は 0件）＝白い copy と VUID は独立**
+
+- **既存 leg の比較（Lead）**:
+  ```
+  chain-menu  (menu, hold なし)      VUID = 0
+  pano-life   (menu)                 VUID = 0
+  alpha-on    (menu)                 VUID = 0
+  pano-bind   (menu hold 40)         VUID = 2   VUID-vkCmdDraw-None-09600
+  pano-fix    (menu hold 40)         VUID = 2   同上
+  r66-layout  (menu hold 60)         VUID = 2
+  r70-perdesc (menu hold 60)         VUID = 2
+  ```
+  ＝**VUID は `menuHoldTicks` を使う leg にだけ出る**（hold なしの menu leg はすべて 0）。
+- **訂正**: 以前「この VUID がパノラマの白と見える背景の間の最後の1枚」と書いたが**誤り**。
+  **白い copy は VUID=0 の leg（`chain-menu`・`pano-life`・`alpha-on`）でも出ている**＝**両者は独立**。
+  VUID は **hold 経路（world なしで menu フレームを繰り返す）が露呈させる別の問題**で、パノラマの白の原因ではない。
+- **次の測定（白の側）**: **hold なしの menu leg** を**現行 jar（replay 修正入り）**で取り、`CELTIUM_TEX_COPY_SERVED … mean=` を読む。
+  それでも白なら **copy の read 経路**（`readFbo=0` が何を読むか・readback の実装）が次の容疑者で、layout 仮説は完全に死ぬ。
+- **VUID 側（別 unit）**: hold 経路のみに出るので、まず `menuHoldTicks` の実装（world 生成前の menu フレーム）が
+  どの pass を開いているかを確認し、hold なしとの差を1行で説明できるようにする。
+
 ## 0.267 **round 73: VUID は menu 経路だけ（terrain leg は 0件）— 探索範囲が menu の pass に確定**
 
 - **測定（既存 leg の比較・Lead）**:
