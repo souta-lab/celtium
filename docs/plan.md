@@ -304,6 +304,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.306 **round 112: per-image 化の完全な形が判明 — consumer 側（`consumeDone`）も per-image に追従させる必要がある**
+
+- **コード確認（Lead・実装設計）**: present 経路の signal は
+  `VulkanSwapchain` の `this.context.submitWithSemaphores(commands, new long[]{acquire, bridgeWaitSemaphore}, new long[]{renderFinished, bridgeDoneSemaphore})` の
+  **2つ目の signal**。この semaphore の **consumer は `GllessFrameTarget.endFrame()` → `consumeDone()`**（`doneSemaphore` を wait する wait-only submission）。
+  ＝**producer 側だけを per-image にすると、`consumeDone` が待つ semaphore が signal されず deadlock する**。
+- **これが §0.299／§0.303 にも欠けていた最後の1点**。完全な形は次の5点セット:
+  1. `GllessFrameTarget` に **per-image の present-done semaphore 配列**（`presentDoneSemaphore(int imageIndex)`・**成長のみ**＝既存 semaphore を破棄しないので in-flight を壊さない）。
+  2. `VulkanSwapchain` が **acquired image index** で引く（signal 側）。
+  3. **frame target が「最後に signal した done semaphore」を記録**（`noteDoneSignalled(handle)`）。
+  4. **`consumeDone()` はその記録された handle を wait する**（`submitSignalOnly` 経路は従来どおり `doneSemaphore` を signal して記録する）。
+  5. **`doneSemaphoreOutstanding` 系の guard は退役**（per-image の所有権が規則そのものになるため）。
+- **成長のみの配列を選ぶ理由**: swapchain 再作成で image 数が変わる場合、**既存の semaphore を破棄すると in-flight の present が参照している可能性**がある
+  （Khronos の swapchain recreation sample は「古い swapchain の semaphore の破棄は最初の新 present が完了するまで遅延させる」としている）。
+  **成長のみなら破棄が不要**で、この遅延問題を構造的に回避できる。
+- **受入（3 leg）**: 較正済み terrain leg（`validationMessageCount=0`）・**resize leg**・**`submitSignalOnly` が発火する leg**。両 leg に `pinSections`。
+- **現状**: 緑（VUID 0件・層あり回帰 leg も 0行・OPT-09 step(3) 閉止）。**未検証の編集は入れない**。
+
 ## 0.305 **round 111: goal 文書の同期を修正（live は revision 27・roundsStarted 103）**
 
 - **live の goal（API で確認）**: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`・**revision 27**・phase **active**・activation **armed**・
