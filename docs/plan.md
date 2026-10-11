@@ -257,6 +257,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.240 **round 46: videoSettings の throw を名指しできるように（wrapper を unwrap）・BH-32 実装・chain-menu の追確認**
+
+- **videoSettings の欠陥（gui-stage の診断＋Lead の実装・`38b685b0d`）**: fixture は `mouseClicked` を**反射で呼ぶ**ため catch が握るのは
+  `InvocationTargetException` の**wrapper**で、`toString()` に cause が出ない＝`guiScreenOpenedVia` は「throw があった」ことしか記録できなかった。
+  **wrapper を unwrap**し、cause を**一度だけ stack つきで印字**（`CELTIUM_GUI_CLICK_FAILED`・flag で bounded）、fallback 記録も cause を使う。
+  候補集合は `CeleritasVideoOptionsScreen` コンストラクタの4つの page builder で、特に `CommonOptionPages.performance(CeleritasVintage.options())`
+  が mod state を読む唯一のもの。gui-stage の task-31 pair では同じ click が**成功していた**ので**回帰**。
+  受入: leg が `guiScreenOpenedVia` に Celeritas screen を記録・`scissorCapturedGroups > 0`・crop `(180,80,1100,624)` がその画面。
+- **BH-32 実装（Lead・`9c7626783`）**: terrain atlas sampler の `maxLod` を `min(configured, atlas.mipLevels()-1)` に。
+  cached sampler を値で key し、reload で存在しない level を読まない。受入は weather-water が `patchLevels` census と mipmap 設定差の leg で取る。
+- **chain-menu leg の追確認（fog-path）**: `CELTIUM_CHAIN_CLEAR frame=0 site=first-non-main-pass image=0x…2f50 target=1938698341 onMain=false
+  activeTarget=0 windowsThisFrame=0 lastTerrainPassFrame=-1`、`passImage=0x…2f50`（face の pass が attach した image と一致）。
+  ＝**pair の clear は face の pass より前**で、copy は同じ image を読む。残るのは記録と実行のギャップ（copy 時点の完了事実で分離）。
+- **未着手のまま明記**: BH-14（identity ごとの pair）・BH-17（UBO）・BH-22・BH-35・BH-36/OPT-09・OPT-08・F3 の残ラグ。
+
 ## 0.239 **round 45: font バー受入（ユーザーの 1x crop で 26/36→0）・readback 暗転の回帰を routing 判定で解消・パノラマは「記録と実行のギャップ」へ**
 
 - **font セパレータ受入（glyph-fix・`8fcaf5802`）**: `modes={5=1223657}`（run は strip のまま）・
