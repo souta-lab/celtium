@@ -282,6 +282,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.295 **round 101: semaphore の producer は3経路のいずれでもないと測定で確定・flag を「意図」から「結果」へ（`5d508be38`）**
+
+- **測定（proj-channel・同一 jar 規律・`opt09d-close` と `opt09e-close`）**: **どちらも `validationMessageCount=10`**・
+  どちらも picture gate `PASSED`・どちらも handle **`0x1eb00000001eb`**（最初の赤 leg と同一）＝
+  **boot をまたいで同じ handle**＝**決定的な生成順であって race ではない**。swapchain の semaphore は各 leg の present trace で `0x4e`–`0x53`。
+  ＝**guard を入れても・drain を入れても・consumer が消費を報告しても数は動かない**＝**producer はこの3経路のいずれでもない**。
+- **着地した修正（proj-channel）**: composite の present submit が `waitSemaphore()` を wait しているのに target へ報告していなかったため、
+  **「signal outstanding か」の flag が正常な frame の後も true のまま**だった＝**stale**。`noteWaitConsumed()` を submit の隣に追加（この欠陥と独立に正しい）。
+- **撤回された仮説（proj-channel）**: `endFrame()` での drain。**方向が逆**（flag は outstanding ではなく stale）で、
+  既に消費済みの semaphore に wait を submit すると**次 frame の signal を消費して pair 全体が1 frame ずれる**。測定が動かなかったので撤去。
+- **Lead が着地（`5d508be38`）**: done semaphore には **producer が2つ**（`presentImage` の submit と `submitSignalOnly`）あり、
+  flag は **`presentImage` の前に**立てていたため、**submit しなかった present が「起きなかった signal」を主張**し、次の producer を抑止していた。
+  **`lastPresentSubmitDone()` を見て present の後で記録**するよう変更＝**意図ではなく結果**。
+- **次の一手**: 数が動かなければ、**2つの producer が signal の所有権で食い違っている**ことが残る。不変条件を
+  **frame target の1箇所**に置く（`submitSignalOnly` を唯一の producer にするか、target が両方を gate するか）のが本筋で、
+  proj-channel に leg と判断を依頼。**緑の leg 1本で OPT-09 step(3) が閉じる**（等価性は測定済み）。
+
 ## 0.294 **round 100: 外部参考（goal C/D 用）— 同世代の実装が同じ設計に到達している**
 
 - **Sodium の MC 26.2 port（Blaze3D 内で Vulkan 経路を持つ）**: `GLDrawContext` / **`VKMultiDrawContext`**（push constants を uniform 代わり・`EXT_multi_draw`）/
