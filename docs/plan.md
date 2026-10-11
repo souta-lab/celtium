@@ -145,6 +145,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.217 **round 21: entity は「受理されたが描かれない」（id9/id4）・HUD は出ている（fixture の hideGUI が罠）・splash group は off-screen**
+
+- **acceptance の決定的測定（`r18h-cand`/`r18h-ref`・jar `6a89906b`・`keepGui=true captureEntities=true`）**:
+  - **HUD は出ている**: hotbar strip (367,654)-(913,720) が参照比 **mean|d| 1.81・差 0.2%**、id2 は 1698/1702 描画。
+    ＝**私が指定した flag に fixture の罠があった**（`hideGUI = !keepGui`・`captureEntities` 無しだと実体を消す）。
+  - **entity と一人称 item は「受理されたが1つも描かれない」**: `acceptedByFormat` は **id4=45・id9=228**、
+    `drawnByFormat` は **id4=0・id9=0**（合計 3000 受理・2712 描画）。`modelDraws=2469`・`modelDrawRefusals=0`・
+    `postAcceptDroppedGroups=0`・`discarded=0`・`immediateGroupsPending=3` ＝**group が捨てられているのではなく、
+    accept と record の間で id4/id9 が落ちている**。
+  - **format id の訂正（原典）**: `TexturedQuad:66` は `DefaultVertexFormats.OLDMODEL_POSITION_TEX_NORMAL` を使い、
+    これは **id9** に対応する（id8 ではない）。**mob モデルは全て id9 で届く**。id8=0 は entity と無関係。
+  - 画像: entity band (450,150)-(850,400) が参照と **62%** 差、一人称 hand (960,500)-(1280,720) が **92%** 差。
+- **splash group の NDC（Lead・`r21-bounds`）**: `CELTIUM_GROUP_BOUNDS frame=0 group=1 fmt=2 target=743315227 texture=8
+  batches=2 vertices=8 indices=12 proj=[m00=0.005 m11=-0.008 m22=0.0 m32=-0.5…]`。
+  ortho は `l=0 r=427 b=240`（splash 自身の 256x256 スケール）と `l=0 r=1281 b=720`（frame）。
+  **splash の group は受理されている**（group=2 の composite も）。白の残件は「group が pass に到達しない」側。
+- **次の一手**: id4/id9 が accept 後に record されない経路（`submitImmediateBatchTimed` → group append → `drawPendingImmediate`）
+  を、format 別の accept/record カウンタで追う。entity-models/pipelines にこの数値を渡した。
+
 ## 0.216 **round 19: 起動の白は「白でクリアされた frame に何も描かれていない」・world の id1 拒否は mode 3（LINE_STRIP）**
 
 - **ロード画面（Lead 実測・jar `55542e67`）**: 起動 leg で `CELTIUM_EXTERNAL_IMAGE published glTexture=6 … size=1280x720` が
