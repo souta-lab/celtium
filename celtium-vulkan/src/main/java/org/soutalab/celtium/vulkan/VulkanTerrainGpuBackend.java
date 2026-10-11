@@ -10070,11 +10070,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private boolean ensureFrameTarget() {
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // No GL framebuffer objects exist to introspect: the owned target is sized by the drawable, which the
-            // stub reports as the last glViewport. The main framebuffer's own size wins when the game has reported it,
-            // because the viewport is whatever framebuffer was bound last - an off-target bind would otherwise resize the
-            // frame target to the off-target's extent and rebuild it (destroying the pairs and unpublishing the names
-            // published over them, which is the white loading screen).
+            // The window's own framebuffer size is what the frame target must match: it is the drawable the swapchain
+            // presents, and it does not move when the game binds one of its own framebuffers. Sizing from the GL viewport
+            // instead adopted whatever framebuffer was bound last - the splash's own FBO during startup - so the target
+            // (and with it the pairs and every name published over them) was created at the wrong size and then rebuilt
+            // when the main framebuffer arrived, which threw the splash's pixels away and left the composite sampling an
+            // empty image: the white loading screen. The main framebuffer's reported size is the second choice, the
+            // viewport the last.
+            int[] window = windowFramebufferSize();
+            if (window[0] > 0 && window[1] > 0) {
+                return ensureFrameTarget(window[0], window[1]);
+            }
             int[] drawable = currentViewport();
             int width = this.mainFramebufferWidth > 0 ? this.mainFramebufferWidth : drawable[2];
             int height = this.mainFramebufferHeight > 0 ? this.mainFramebufferHeight : drawable[3];
@@ -10181,6 +10187,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         IntBuffer viewport = org.lwjgl.BufferUtils.createIntBuffer(4);
         org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
         return new int[] { viewport.get(0), viewport.get(1), viewport.get(2), viewport.get(3) };
+    }
+
+    /**
+     * {@return the GLFW window's framebuffer size}, or {@code {0, 0}} when the window is unknown or has no drawable.
+     * <p>
+     * The window handle is the current context under a real GL configuration and comes from {@code Display} under the
+     * GL-less window, where there is no context to ask (reflective, because celtium-vulkan does not depend on the
+     * lwjglxx shim). This is the size the frame target must have: it is the drawable the swapchain presents.
+     */
+    private static int[] windowFramebufferSize() {
+        long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+        if (window == 0L) {
+            try {
+                Class<?> display = Class.forName("org.lwjgl.opengl.Display");
+                window = ((Long) display.getMethod("getWindow").invoke(null)).longValue();
+            } catch (ReflectiveOperationException | LinkageError ignored) {
+                // No window handle from here; the caller falls back to the framebuffer or the viewport.
+            }
+        }
+        if (window == 0L) {
+            return new int[] {0, 0};
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer width = stack.mallocInt(1);
+            IntBuffer height = stack.mallocInt(1);
+            org.lwjgl.glfw.GLFW.glfwGetFramebufferSize(window, width, height);
+            return new int[] {width.get(0), height.get(0)};
+        }
     }
 
     private void refreshTextures() {
