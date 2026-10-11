@@ -37,6 +37,7 @@
 | **video settings 画面** | **self-consistency 受入** | `guiScreenClassAtCapture=CeleritasVideoOptionsScreen`・panel crop 587 distinct colours。same-screen upstream 参照は**存在し得ない**（diverter は我々の tree）と明記 |
 | **light-params 境界** | **lit-only 化で受入** | terrain 416→**17**・videoSettings 425→**2**（両 leg clean） |
 | **BH-10（雲）** | **counter で受入・絵は不可** | Fancy clouds 506 対 368 partialColorMaskGroups・159 group が zero mask を得る。雲 scene の scatter は **r=0.945**（frame phase が動く）ため絵では解像しない |
+| **per-image present-wait semaphore** | **実装済・resize 受入済み** | frame 単位の単一 semaphore を present の wait に渡していたのを、**swapchain image 数で引く成長のみの配列**に変更（`cf6c968cd`）。**window 1280x720 → 1024x640 の実 resize で `glfwWindowSizeAtEnd=1024x640`・VUID 0・hang なし**（`r111-resize`・`resizeViaCompositor=true`）。**frame-close pairing のみ未取得**（`submitSignalOnly` は fixture で到達不能・counter 可視化済み） |
 | **semaphore VUID（P1）** | **閉じた** | 10件 → **0件**（`5d508be38`＝done semaphore の flag を present の結果で記録）。**latent な misuse は残置起票**: `doneSemaphore` が frame 単位のまま present の wait semaphore に渡っており、Khronos の規則は image 数配列＋acquired index |
 
 | 性能 | **着地** | OPT-05（hostBuffers 6 for 8316 groups）・OPT-07(b)（`uploadSubmitWaitsAtEnd` 31343→6910）・**OPT-09（1086 indirect call が 17,651 draw を運ぶ＝16.3:1・fallback 0・VUID 0）**・BH-22（descriptor cache 退役＋census）・BH-32（atlas sampler の maxLod を level 数に追従） |
