@@ -97,6 +97,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
     private static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
     private static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
+    private static final int SEM_TEX_ENV_I = 47;      // (target,pname,param) -> texture-env int, per active unit
+    private static final int SEM_TEX_ENV_F = 48;      // (target,pname,param) -> texture-env float
+    private static final int SEM_TEX_ENV_FV = 49;     // (target,pname,values) -> texture-env float array
+    private static final int SEM_GET_TEX_ENV_I = 50;  // (target,pname,out) -> the recorded int
+    private static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
+    private static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
+    private static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
     private static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
     private static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
     private static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
@@ -269,6 +276,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glTexSubImage2D", R_VOID, SEM_TEXSUBIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
         fn("glPixelStorei", R_VOID, SEM_PIXEL_STORE, A_INT, A_INT);
         fn("glViewport", R_VOID, SEM_VIEWPORT, A_INT, A_INT, A_INT, A_INT);
+        // Texture-environment state. The stub used to no-op all of it, so the two queries the renderer asks - the
+        // combine mode and the environment colour, both on the lightmap unit - returned zero and the hurt flash was
+        // invisible to the instrument as well as to the frame (measured by entity-models: the reference shifts the
+        // zombie head from (78.9,123.7,87.7) to (117.3,105.0,79.4) and ours moves by at most 1.8).
+        fn("glTexEnvi", R_VOID, SEM_TEX_ENV_I, A_INT, A_INT, A_INT);
+        fn("glTexEnviv", R_VOID, SEM_TEX_ENV_I, A_INT, A_INT, A_PTR);
+        fn("glTexEnvf", R_VOID, SEM_TEX_ENV_F, A_INT, A_INT, A_FLOAT);
+        fn("glTexEnvfv", R_VOID, SEM_TEX_ENV_FV, A_INT, A_INT, A_PTR);
+        fn("glGetTexEnvi", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
+        fn("glGetTexEnviv", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
+        fn("glGetTexEnvfv", R_VOID, SEM_GET_TEX_ENV_FV, A_INT, A_INT, A_PTR);
+        // Copy-from-framebuffer. The main menu's panorama is built with these: renderSkybox draws the six 256x256
+        // cube faces into the window and copies each into the skybox texture, and the blur passes copy their own
+        // targets. Registered rather than left in the no-op list so the request is named and counted: under GL-less
+        // there is no GL framebuffer to read the pixels from, so what is missing is a readback of the renderer's own
+        // image for the bound read framebuffer, which is a different component's resource.
+        fn("glCopyTexImage2D", R_VOID, SEM_COPY_TEX_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
+        fn("glCopyTexSubImage2D", R_VOID, SEM_COPY_TEX_SUB_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
         fn("glBindFramebuffer", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
         fn("glBindFramebufferEXT", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
         fn("glBindFramebufferARB", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
@@ -346,7 +371,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glCallLists",
                 "glListBase", "glRenderMode", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
                 "glPushName", "glPopName", "glLoadName", "glRasterPos2f", "glRasterPos3f", "glBitmap",
-                "glCopyPixels", "glDrawPixels", "glReadPixels", "glCopyTexImage2D", "glCopyTexSubImage2D",
+                "glCopyPixels", "glDrawPixels", "glReadPixels",
                 "glBlitFramebuffer", "glFramebufferTexture2D", "glFramebufferTexture", "glFramebufferTexture1D",
                 "glFramebufferTexture3D", "glFramebufferTextureLayer", "glFramebufferRenderbuffer",
                 "glRenderbufferStorage", "glRenderbufferStorageMultisample",
@@ -1082,6 +1107,29 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_VIEWPORT:
                 this.viewportW = (int) c[2];
                 this.viewportH = (int) c[3];
+                return 0L;
+            case SEM_TEX_ENV_I:
+                celtium$setTexEnvInt((int) c[0], (int) c[1], (int) c[2]);
+                return 0L;
+            case SEM_TEX_ENV_F:
+                celtium$setTexEnvInt((int) c[0], (int) c[1], (int) c[2]);
+                return 0L;
+            case SEM_TEX_ENV_FV:
+                celtium$setTexEnvFloats((int) c[0], (int) c[1], c[2]);
+                return 0L;
+            case SEM_GET_TEX_ENV_I:
+                celtium$getTexEnvInt((int) c[0], (int) c[1], c[2]);
+                return 0L;
+            case SEM_GET_TEX_ENV_FV:
+                celtium$getTexEnvFloats((int) c[0], (int) c[1], c[2]);
+                return 0L;
+            case SEM_COPY_TEX_IMAGE:
+                celtium$noteTextureCopy(fn.name, (int) c[0], (int) c[1], 0, 0, (int) c[3], (int) c[4],
+                        (int) c[5], (int) c[6]);
+                return 0L;
+            case SEM_COPY_TEX_SUB_IMAGE:
+                celtium$noteTextureCopy(fn.name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
+                        (int) c[5], (int) c[6], (int) c[7]);
                 return 0L;
             case SEM_BIND_FRAMEBUFFER:
                 bindFramebuffer((int) a0, (int) a1);
@@ -2168,6 +2216,125 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     // ---- client-array drawing: the one GL drawing entry point that leaves this class for the frame ---------------
+
+    // ---- texture environment, per texture unit -------------------------------------------------------------------
+    //
+    // GL keeps one environment per unit; vanilla's hurt flash switches to the lightmap unit and sets an INTERPOLATE
+    // combine with a constant colour there, then asks it back when it builds the immediate batch's combine state. The
+    // stub records what the game set instead of answering from GL, which under GL-less has nothing to answer from.
+    private static final int GL_TEXTURE_ENV = 0x2300;
+    private static final int GL_TEXTURE_ENV_MODE = 0x2200;
+    private static final int GL_COMBINE_RGB = 0x8571;
+    private static final int GL_COMBINE_ALPHA = 0x8572;
+    private static final int GL_TEXTURE_ENV_COLOR = 0x2201;
+    private static final int GL_MODULATE = 0x2100;
+    /** One mode per unit; the default is the fixed pipeline's MODULATE. */
+    private final int[] texEnvMode = new int[32];
+    private final int[] texEnvCombineRgb = new int[32];
+    private final int[] texEnvCombineAlpha = new int[32];
+    /** RGBA environment colour per unit; the default is transparent black, as GL's is. */
+    private final float[][] texEnvColor = new float[32][4];
+
+    private int celtium$texUnit() {
+        return this.activeTexture >= 0 && this.activeTexture < 32 ? this.activeTexture : 0;
+    }
+
+    private void celtium$setTexEnvInt(int target, int pname, int param) {
+        if (target != GL_TEXTURE_ENV) {
+            return;
+        }
+        int unit = celtium$texUnit();
+        switch (pname) {
+            case GL_TEXTURE_ENV_MODE:
+                this.texEnvMode[unit] = param;
+                break;
+            case GL_COMBINE_RGB:
+                this.texEnvCombineRgb[unit] = param;
+                break;
+            case GL_COMBINE_ALPHA:
+                this.texEnvCombineAlpha[unit] = param;
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void celtium$setTexEnvFloats(int target, int pname, long values) {
+        if (target != GL_TEXTURE_ENV || values == 0L) {
+            return;
+        }
+        if (pname == GL_TEXTURE_ENV_COLOR) {
+            int unit = celtium$texUnit();
+            for (int i = 0; i < 4; i++) {
+                this.texEnvColor[unit][i] = MemoryUtil.memGetFloat(values + (long) i * 4L);
+            }
+        }
+    }
+
+    private void celtium$getTexEnvInt(int target, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int unit = celtium$texUnit();
+        int value;
+        if (pname == GL_COMBINE_RGB) {
+            value = this.texEnvCombineRgb[unit];
+        } else if (pname == GL_COMBINE_ALPHA) {
+            value = this.texEnvCombineAlpha[unit];
+        } else if (pname == GL_TEXTURE_ENV_MODE) {
+            value = this.texEnvMode[unit] == 0 ? GL_MODULATE : this.texEnvMode[unit];
+        } else {
+            value = 0;
+        }
+        celtium$putInt(out, value);
+    }
+
+    private void celtium$getTexEnvFloats(int target, int pname, long out) {
+        if (out == 0L) {
+            return;
+        }
+        int unit = celtium$texUnit();
+        float[] colour = this.texEnvColor[unit];
+        for (int i = 0; i < 4; i++) {
+            MemoryUtil.memPutFloat(out + (long) i * 4L, colour[i]);
+        }
+    }
+
+    // ---- copy-from-framebuffer: named, counted, and refused for a stated reason --------------------------------
+    //
+    // What the request is (measured shape): the main menu's panorama renders six 256x256 faces into the window and
+    // copies each into the skybox texture, and its blur pass copies between its own targets. What it needs is pixels
+    // of the framebuffer bound for reading. Under the GL-less window that framebuffer is the renderer's own image
+    // (drawFbo/readFbo 0, or the shared pair), and this class has no readback of it: the only readback in the tree is
+    // the presented-image dump, which writes a whole frame to a file at the swap point. So the copy is recorded and
+    // refused by name here, with the destination and the source rectangle, and the *source* side is the piece another
+    // component has to provide - a synchronous rectangle read of the owned image for the bound read framebuffer. When
+    // that exists, this handler is where the pixels would be uploaded into the destination level's mirror, the same
+    // way glTexSubImage2D already is.
+    private long textureCopyRequests;
+    private static final java.util.Set<String> TEXTURE_COPY_SHAPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private void celtium$noteTextureCopy(String name, int target, int level, int xoffset, int yoffset,
+                                          int x, int y, int width, int height) {
+        this.textureCopyRequests++;
+        Integer dest = this.textureBindings.get(Long.valueOf(texBindKey(target)));
+        String key = name + "/" + target + "/" + width + "x" + height + "/readFbo=" + this.readFbo;
+        if (TEXTURE_COPY_SHAPES.size() < 8 && TEXTURE_COPY_SHAPES.add(key)) {
+            System.out.println("[Celtium] CELTIUM_TEX_COPY " + name
+                    + " target=0x" + Integer.toHexString(target) + " level=" + level
+                    + " dest=" + (dest == null ? 0 : dest.intValue())
+                    + " destOffset=" + xoffset + "," + yoffset
+                    + " source=" + x + "," + y + " " + width + "x" + height
+                    + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+                    + " servedFrom=refused-no-owned-image-readback requests=" + this.textureCopyRequests
+                    + " site=[" + celtium$callSite(8) + "]");
+        }
+    }
+
+    private static void celtium$putInt(long address, int value) {
+        MemoryUtil.memPutInt(address, value);
+    }
 
     /** GL_ARRAY_BUFFER: the binding a client vertex pointer is an offset into (not a client address). */
     private static final int GL_ARRAY_BUFFER = 0x8892;

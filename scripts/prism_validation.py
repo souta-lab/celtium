@@ -169,6 +169,8 @@ def main():
                         help="Seconds to wait for the single-game slot; the slot is a lock file in .celtium-work/game-slot")
     parser.add_argument("--headless", action="store_true", help="Use an isolated GPU-rendered Sway/Xwayland display")
     parser.add_argument("--render-node", type=Path, help="Explicit DRM render node for the headless compositor")
+    parser.add_argument("--window-size", default="1280x720",
+                        help="Window size the game is asked for (WxH, default 1280x720 = the headless output)")
     parser.add_argument("--require-gpu", help="Require this substring in the fixture's actual GL renderer")
     args = parser.parse_args()
     if sys.platform != "linux" or platform.machine() != "x86_64":
@@ -316,12 +318,24 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
     player = "CeltiumValidation"
     player_uuid = uuid.UUID(bytes=hashlib.md5(("OfflinePlayer:" + player).encode("utf-8")).digest(), version=3).hex
     validation_args = ["-Dceltium.validation=true"] if args.validate else []
+    # The window the game is asked for. It used to be hard-coded 1280x720, which is the headless compositor's output
+    # size and therefore the only size any placement measurement could be taken at - while the operator's own window
+    # is 1920x1080, and the presented frame's placement at that size is exactly what the "the menu is shifted" report
+    # is about. `--window-size WxH` lets a leg start at the size in question.
+    window_size = args.window_size.lower().split("x")
+    if len(window_size) != 2:
+        parser.error("--window-size must be WxH, e.g. 1920x1080")
+    try:
+        window_width = int(window_size[0])
+        window_height = int(window_size[1])
+    except ValueError:
+        parser.error("--window-size must be WxH with integer values, e.g. 1920x1080")
     command = [str(java), "-Xms512m", "-Xmx2g", "--enable-native-access=ALL-UNNAMED",
                *jvm_args, *args.jvm_arg, *validation_args, "-cp", ":".join(cp), main_class,
                "--username", player, "--version", "1.12.2", "--gameDir", str(game),
                "--assetsDir", str(assets), "--assetIndex", asset_index,
                "--uuid", player_uuid, "--accessToken", "0", "--userType", "legacy",
-               "--versionType", "release", "--width", "1280", "--height", "720"]
+               "--versionType", "release", "--width", str(window_width), "--height", str(window_height)]
     for tweaker in tweakers:
         command.extend(["--tweakClass", tweaker])
     (game / "validation-command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")

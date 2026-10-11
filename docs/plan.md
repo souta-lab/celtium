@@ -26,15 +26,23 @@
 **ユーザー構成（Prism instance・fixture なし・validation client なし・`-Dceltium.vulkan.glless=true`）でメインメニューが描かれ、compositor 出力から撮れた**:
 `.celtium-work/ww-menu-caps/compositor-0018.png`（1280x720・44,841 B・sha256 `ade674e0be57ea63…`・私が開いて確認＝ロゴ・splash 文言・3ボタン・Options/Quit・footer 14 mods）。
 `CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0 reasons=[]`・`CELTIUM_PRESENT hookCalls=3900 presented=3899 failures=0 swapsSkipped=3899`。
-**残り**: panorama 背景は灰色——`drawFbo=0`（window）に **256x256 の sub-rect viewport** で描かれる batch を viewport 不一致として拒否しているため
-（FBO 説は否定・修正は「拒否ではなく Vulkan viewport/scissor として適用」）。**task-15 継続**。 |
+**残り**: panorama 背景は灰色。原因は特定済み——`GuiMainMenu.renderSkybox` が 6面を 256x256 で描いたあと
+**`glCopyTexSubImage2D` で skybox texture へコピー**するが、stub はその形を mirror しないので texture が空のまま。
+**viewport 側は解決**（最新 run で `CELTIUM_COMPOSITE_REFUSED` **0件**・`defaultFramebufferCompositesTaken=37`・
+`CELTIUM_GROUP_VIEWPORT gl=0,0 256x256 clipped=0,464 256x256 target=1280x720`＝sub-rect が原点反転付きで適用）。
+**task-15 継続**（weather-water が copy の mirror を実装中）。 |
 | **Intel UHD 630（GL-less の第2 vendor）** | **受入済み（task-11 完了）** | Intel で **GL-less と参照の両 leg が PASSED**（`intel-glless` / `intel-ref`・AMD と同じ fixture/pose/tick・`validationClean=true`・VUID 0・`fixtureStatus=PASSED`）。**rows 0-200 の 256,000 画素で 8 を超える差は 0**（mean 0.453・max 4）、AMD の GL-less と Intel の GL-less は **0 画素差**（rows 0-200）・terrain 帯で 4 画素。`depthFormat=D32_SFLOAT`（両社とも候補1/6＝**fallback 候補は未行使**）。**device を決めるのは `VK_ICD_FILENAMES`**（pin で `vulkanDeviceCount=1`・無 pin は 3、`matchedOpenGl=false`）。**Intel 未検証**: 星/地平線 plane（fixture 制約）・depth fallback 候補・GUI/item/entity 段・resize/device loss・性能。`docs/history/2026-10-11-intel-uhd630-leg.md` |
 | **参照 leg の取り直し（task-22 準備）** | **完了** | upstream Celeritas `d12425eaaf184e79`＋凍結 fixture `acfb62b16ed70ac3`・AMD・pose 0.5/12/0.5 yaw180 pitch20・tick 200: terrain `nonBg 0.761173` PASSED／entity `0.774399` UNCALIBRATED（variant 差＝正しい）／inventory `0.888320` UNCALIBRATED。**harness は instance.cfg の JvmArgs を読まない**（`patches/*.json` の `+jvmArgs` と `--jvm-arg` のみ）＝instance.cfg はユーザーの手動起動専用（16:0x に空へ変更されていたのを `-Dceltium.vulkan.glless=true` へ復元） |
 | **空（dome+星+地平線）** | **受入済み（task-3 完了）** | GL-less vs upstream Celeritas で **rows 0-199 の 256,000 画素のうち 8 を超える差は 0**（max 4）。行平均が参照と 0.1 カウントまで一致、63色が両側で同一。gate は両分岐とも削除。**地平線 plane と星はこの fixture では行使不可**（flat world の `getHorizon()`=0／worldTime 固定で星輝度 0）と明記 |
 | **entity/TESR モデル** | **受入済み（task-7/12 完了）** | モデル経路は正常（228/228 quad・拒否0・family 名を捕捉）。**真因は固定機能ライティング**（`EntityRenderer:1397-1402` が `enableStandardItemLighting` を renderEntities 直前に呼ぶ）。修正後 per-family 比 **0.98〜1.07**（以前 1.2〜1.6）。残差: spider の赤目 layer・hurt flash の combine・lightmap 未適用（この scene では 0.988 で不可視） |
 | **雨/粒子（id5）** | **受入済み** | format 定数の誤り（`Short` を `Unsigned Short`）を修正 → `id5=142/142`・**id0 消滅**。参照との sky band 差 77.6% → **21.3%**。粒子の**画**は fixture 制約（炎が chest/enchanting table の層の中に spawn）で行使不可と明記 |
 | **水** | **受入済み** | 色なし shader の alpha 1.0 固定 → 水中 overlay が全画面不透明（`black 1.0・1色`）。修正後 `black 0.325・475色`、**参照との差 0.42%**（deep water 0.008%） |
-| **video settings（機能）** | **一部確立** | ゲーム自身のクリック経路で開く ✓（`guiClickResult = clicked button id 101`）。この runtime の UI は **Celeritas の画面**で、vanilla `GuiVideoSettings` は "Done" 1つだけ。controller に 8 control＋apply/close/undo。**押下は widget 自身の `mouseClicked` を呼ぶ形に実装**（option の値の前後比較で判定） |
+| **video settings（機能）** | **機能側は確立（監査B08を閉じた）** | `vs-apply4`（GL-less）: **操作した画面＝撮影した画面**（`net.minecraft.client.gui.GuiVideoSettings` / "Video Settings"）で、
+option **`RENDER_CLOUDS` を "Clouds: Fancy" → "Clouds: OFF"** へ、**画面自身の `mouseClicked`+`mouseReleased`** で押して変更。
+**Apply**: `Done (id 200)` を同じ経路で押下（handler が `gameSettings.saveOptions()`）。
+**settings file が実際に変化**: `+renderClouds:false -renderClouds:true`。
+**画面を開き直すと "Clouds: OFF" のまま**（保存が効いている）。撮影用に元へ戻す処理も入れた。
+**残り**: この画面の**画**を同一 variant の参照と比較（保存参照が無いため現在は UNCALIBRATED）。 |
 | **雲** | **機序特定・未修正（task-13）** | Forge の `CloudRenderer` が引き取り、24バイト頂点で stub が拒否（52/run＝1フレーム1回）。「frame 1 のみ受理」は VBO 構築前の vanilla 経路 |
 | **client-memory 描画** | **未修正（task-15・ユーザーの起動ブロッカー）** | メニュー/ローディング画面の全描画が `no GL_ARRAY_BUFFER is bound` で拒否（1024→1,048,576）。swapchain は生きて image 0..3 を present＝**ウィンドウは在るが中身が無い**。pointer は有効な JVM アドレス・stride 16 |
 | **地平線直下の terrain 帯** | **未修正（task-16）** | rows 200-320 が 62/94.75/41.66% 差。**fog ではない**（per-pixel fog 係数が channel 不整合・自社 bridge 時代の run と画素一致）。参照は平坦（std 0.02-0.08）・私たちは縞（std 58-63）・参照の端が約3行遠い |
@@ -124,6 +132,46 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **ミキシン間で直接メソッドを呼ばない**（メソッドは対象クラスへマージされるため起動時 `NoClassDefFoundError`。§0.121 の経緯）。
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
+
+## 0.178 **この時間帯の実測（task-14 の結論・task-33 の等価比較・Intel 3場面・mod cohort）**
+
+- **メニューの「ズレ」は解消（ユーザー解像度で実証）**: frame-composite の `resizeworld1080` が
+  compositor 出力を **1920x1080** へ変え、`CELTIUM_WINDOW_SIZE_CHANGED tick=121 from=1280x720 to=1920x1080`・
+  `resizeObservedAtTick=127`・report に **「the surface extent no longer matches the 1280x720 swapchain
+  (window framebuffer is 1920x1080), rebuilding it」**。提示 dump は **1920x1080（2,073,600 px）**で
+  **私が開いて確認＝sky/horizon/terrain が画像全面を占め、ズレも黒帯も無い**
+  （`.celtium-work/runtime/lc-resizeworld1080/screenshots/celtium-presented-world-run-…-kept.png`・sha256 `eb6ac395a28d9312…`）。
+  verdict が UNCALIBRATED なのは較正キーが解像度を含むため（正直な表示）。
+  **注意**: 私の `lead-1920` は `--validate` を付け忘れて fixture が有効化されておらず、何も行使していなかった（私の誤り）。
+  harness に `--window-size WxH` を追加（既定 1280x720）。
+- **world-switch の scope も検証**: `wswitch4` で `pictureFrameDelta_world=1`＋whole-run −24 を併記・PASSED・
+  `presentedCounterRestarts=1`・`groupsDiscardedAtWorldTeardown=1`（B10 の world epoch が実際に発火）。
+- **task-14（pipelines）の結論: group drop ではない**。同一 jar・同一 flags・1フラグ差:
+  `-Dceltium.vulkan.positionNormalDepthTest=false`（POSITION_NORMAL pipeline のみ depth off）で
+  box 窓（x520-600, y400-480）の near-white が **90 → 3,936 画素**。**フラグメントが depth test で棄却されている**。
+  `acceptedByFormat[10]=62`＝`drawnByFormat[10]=62`・`immediateGroupsDiscarded=0`・`postAcceptDroppedGroups=0`、
+  `CELTIUM_DRAW_SITE` は全件 `site=immediate-only-window / passOpen=true / onMain=true`。
+  保持系3計器（`keptForOtherTargets`/`deferredNextFrame`/`refusedWindowBudget`）は**増加siteが存在しない**（summary に出して可視化）。
+  次の分離: format 2/6/7 の group bounds を出して「terrain と box の間に depth を書く全画面quad」を名指しするか、
+  1画素 depth readback。
+- **task-33（fog-path）の等価比較**: 両 leg PASSED・`pictureFrameDelta_world=0`・条件 `built-stable`。
+  しかし **我々 listedSections=22（113 world frames・P1=073）／参照 32（295 frames・P1=112）** で
+  **どちらも queue が残ったまま「安定」と判定**していた（30 frame の窓では偽の plateau）。
+  → `captureCondition=sections captureSections=41 captureMinWorldFrames=295` で再測定中。
+  **22 vs 32 を culling 欠陥と呼ばない**。
+- **Intel（sky-draws・task-23 完了）**: entity / inventory / videoSettings の3場面とも描画（entity 0.75% over 8・
+  hotbar 0.00%・videoSettings mean 0.978）。**Intel の upstream 参照自体が videoSettings の床を満たさない**
+  （bands 229<250・black 0.068>0.05・panel 125<4000）＝較正の vendor 移植性が問い。
+- **mod cohort（acceptance）**: `mod3-jei` が **JEI を読み込み**（43 JEI 行・`jeiScreenOpenedAtTick=32`）・
+  `pictureFrameDelta_world=0`・UNCALIBRATED（保存参照が `screen=none` のため）。**recipe 版が継続中**。
+- **inventory の 48% は variant 差ではない**（acceptance が `sceneCalibrationKey` 完全一致を確認）→ gui-stage へ。
+  hotbar strip は **0 px** で、sky band 83.4%・chat block 64.7% と段ごとに違う＝「GUI段が全体的に違う」ではない。
+- **雲（task-13・weather-water）**: stub の decode が `glDrawArrays` の **205/256 call を描画**（752,088 頂点。以前 23/17,992）。
+  cloud band は参照の mean に対し **1.7/1.8/0.4**。
+- **panorama の残り**: stub が `glCopyTexImage2D`/`glCopyTexSubImage2D` を**名前つき拒否**として登録
+  （`CELTIUM_TEX_COPY`・`servedFrom=refused-no-owned-image-readback`）。**read 側は frame-composite の task-36**
+  （owned colour image の矩形読み出し）。foreign FBO は名前つき拒否のまま。
+- **instance のライブラリだけで world まで走るか**を検証中（`lead-instworld`・`--library` なし）。
 
 ## 0.177 **ユーザーの「真っ白な窓」の真因＝instance に lwjgl-vulkan が無い／ズレの修正／監査タスクの起動**
 

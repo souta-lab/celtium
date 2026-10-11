@@ -509,12 +509,22 @@ public final class VulkanContext {
      */
     private void quarantine(VkCommandBuffer commandBuffer, long fence) {
         this.quarantinedCommandBuffers.add(commandBuffer);
+        QUARANTINED_COUNTS[0] = this.quarantinedCommandBuffers.size();
+        QUARANTINED_COUNTS[1] = this.quarantinedFences.size();
         if (fence != VK_NULL_HANDLE) {
             // A bootstrap-path submission carries no fence: the queue wait is the only completion signal there, and on
             // a non-confirming result the command buffer alone is held.
             this.quarantinedFences.add(Long.valueOf(fence));
         }
     }
+
+    /** {@return the quarantined command buffers and fences still held, for the report}. */
+    public static int[] quarantinedResourceCounts() {
+        return new int[] {QUARANTINED_COUNTS[0], QUARANTINED_COUNTS[1]};
+    }
+
+    /** Live counts, updated by {@link #quarantine} - the sets themselves are per context, the report is static. */
+    private static final int[] QUARANTINED_COUNTS = new int[2];
 
     /** {@return how many submissions timed out and left quarantined resources}, for the report. */
     public static int quarantinedSubmissions() {
@@ -742,6 +752,7 @@ public final class VulkanContext {
         matchPhysicalDevice(openGl);
         createLogicalDevice();
         createQueueAndCommandPool();
+        reportDeviceContractIfReady();
         this.memoryProperties = VkPhysicalDeviceMemoryProperties.calloc();
         vkGetPhysicalDeviceMemoryProperties(this.physicalDevice, this.memoryProperties);
     }
@@ -949,12 +960,14 @@ public final class VulkanContext {
                             + " is missing required interop device extensions: " + String.join(", ", missing) + ".");
                 }
             }
-            reportDeviceContract(stack, extensions);
+            this.advertisedDeviceExtensions = extensions;
         }
     }
 
     /** Devices passed over because the interop path requires the fd-sharing extensions and they lack them. */
     private List<String> skippedForInteropExtensions;
+    /** The extensions the chosen device advertised, kept until the contract line can be printed with the queue. */
+    private Set<String> advertisedDeviceExtensions;
     /** The device extensions this context actually enabled, named in the contract line rather than implied. */
     private List<String> enabledDeviceExtensions = new ArrayList<String>();
     /** The frame target's colour format and sample count: two of the native contract's fixed terms. */
@@ -990,7 +1003,11 @@ public final class VulkanContext {
                 || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
             required.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         }
+        // Choosing it here is the same device the renderer will use, and it makes the contract line name the format
+        // instead of "unresolved" (the chooser is idempotent and registers the device on first use).
+        int depthFormat = VulkanDepthFormat.chosen(this.physicalDevice);
         required.add("color=" + COLOR_FORMAT_NAME + " depth=" + VulkanDepthFormat.chosenName()
+                + "(0x" + Integer.toHexString(depthFormat) + ")"
                 + " samples=" + REQUIRED_SAMPLES);
         int pushConstantLimit = properties.limits().maxPushConstantsSize();
         System.out.println("[Celtium] CELTIUM_DEVICE_CONTRACT name=\"" + this.deviceName + "\" uuid=" + this.deviceUuid
@@ -1008,6 +1025,17 @@ public final class VulkanContext {
                 + " swapchain=" + extensions.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME) + "]"
                 + (this.skippedForInteropExtensions == null ? ""
                         : " skippedForInteropExtensions=[" + String.join(", ", this.skippedForInteropExtensions) + "]"));
+    }
+
+    /** Prints the device contract once the queue family is chosen, so the line can name it. */
+    private void reportDeviceContractIfReady() {
+        if (this.advertisedDeviceExtensions == null) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            reportDeviceContract(stack, this.advertisedDeviceExtensions);
+            this.advertisedDeviceExtensions = null;
+        }
     }
 
     private void createLogicalDevice() {
@@ -1090,6 +1118,15 @@ public final class VulkanContext {
         }
     }
 
+    /**
+     * Test-only switch that hides the two interop fd extensions from the advertised set, so the "device without them"
+     * configuration can be exercised on a device that has them (audit B02's acceptance asks for exactly that profile).
+     * It removes them from the *enumeration* rather than skipping the check, so both directions are exercised by the
+     * same code: on the interop path such a device is now skipped as a candidate, and on the GL-less path it is
+     * selected and the contract line reports the fd extensions as not required and not enabled.
+     */
+    private static final String HIDE_FD_EXTENSIONS_PROPERTY = "celtium.vulkan.hideExternalFdExtensions";
+
     private static Set<String> deviceExtensionNames(MemoryStack stack, VkPhysicalDevice device) {
         IntBuffer count = stack.ints(0);
         check(vkEnumerateDeviceExtensionProperties(device, (String) null, count, null),
@@ -1104,6 +1141,10 @@ public final class VulkanContext {
             for (int i = 0; i < count.get(0); i++) {
                 names.add(properties.get(i).extensionNameString());
             }
+        }
+        if (Boolean.getBoolean(HIDE_FD_EXTENSIONS_PROPERTY)) {
+            names.remove(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+            names.remove(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
         }
         return names;
     }

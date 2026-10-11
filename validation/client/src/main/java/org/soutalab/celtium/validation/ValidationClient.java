@@ -109,6 +109,56 @@ public final class ValidationClient {
     private int celtium$captureStartTick = -1;
     private int celtium$interopAtTick = -1;
     /**
+     * When the world stage is captured.
+     * <p>
+     * The default is {@code tick}: the first frame at or after tick 200, which is the condition every stored reference
+     * leg in this project was captured under, so it stays the default and the older evidence stays reproducible. The
+     * opt-in value is {@code built}, and it exists because a tick is not a build state: the terrain's render list only
+     * lists a section whose geometry has been built
+     * ({@code VisibleChunkCollector.visit}, {@code common/.../lists/VisibleChunkCollector.java:69-76}) and the build
+     * budget is per frame ({@code RenderSectionManager.getTargetQueueSize()}), so a leg that renders fewer frames per
+     * tick arrives at tick 200 with less of the world built. Measured on this fixture: 43-48 world frames listed 14-15
+     * sections, 106 and 162 frames listed 34, and the upstream reference listed 41 after 483 frames - the near-horizon
+     * band was comparing two build states, not two renderers.
+     * <p>
+     * {@code built} waits until the listed-section count in the renderer's own debug strings has been unchanged for
+     * {@link #CAPTURE_STABLE_FRAMES} consecutive frames, and falls back to {@link #CAPTURE_DEADLINE_TICK} so a plateau
+     * that never arrives cannot leave a run with no report. Both conditions write the same build-state fields, so a
+     * tick-captured run still says what it captured.
+     * <p>
+     * <b>Why {@code sections} exists as well.</b> Measured on the first {@code built} pair: both legs fired
+     * {@code built-stable} and still differed - the candidate listed 22 sections and 15 MiB of geometry after 113 world
+     * frames, the reference 32 and 22 MiB after 295. A stable count is not a built world: this scene's default stack
+     * carries water, lava and fire, which keep changing blocks, so the rebuild queue never drains (P1 73 and 112 at
+     * those captures) and the count plateaus at whatever churn phase the leg happens to be in. {@code sections}
+     * therefore targets the build state itself: capture when the listed-section count reaches
+     * {@link #CAPTURE_SECTIONS}, which is the reference's own settled count, so both legs are compared with the same
+     * amount of built geometry. A leg that never reaches it falls back to the deadline and says so.
+     */
+    private static final String CAPTURE_CONDITION =
+            System.getProperty("celtium.validation.captureCondition", "tick").trim().toLowerCase(java.util.Locale.ROOT);
+    /** Consecutive frames the listed-section count must hold still before {@code built} captures. */
+    private static final int CAPTURE_STABLE_FRAMES =
+            Integer.getInteger("celtium.validation.captureStableFrames", 30).intValue();
+    /** The listed-section count {@code sections} waits for; 0 disables that condition. */
+    private static final int CAPTURE_SECTIONS =
+            Integer.getInteger("celtium.validation.captureSections", 0).intValue();
+    /** The tick at which {@code built} and {@code sections} give up waiting and capture anyway. */
+    private static final int CAPTURE_DEADLINE_TICK =
+            Integer.getInteger("celtium.validation.captureDeadlineTick", 400).intValue();
+    /**
+     * World frames that must have been rendered before any condition may fire; 0 disables the floor.
+     * <p>
+     * The build budget is per frame, so two legs are only comparable when they have had the same number of build
+     * opportunities. The first {@code built} pair fired at 113 and 295 frames and therefore compared 22 sections with
+     * 32; this floor is the knob that equalises the opportunity count.
+     */
+    private static final int CAPTURE_MIN_WORLD_FRAMES =
+            Integer.getInteger("celtium.validation.captureMinWorldFrames", 0).intValue();
+    private int celtium$captureStableFrames;
+    private int celtium$captureLastListed = -1;
+    private String celtium$captureConditionFired = "tick";
+    /**
      * What the server task did, handed to the client thread through volatile fields rather than by writing the report
      * from the server thread: the JSON object belongs to the render thread, and the interesting question is whether the
      * client actually arrives, not whether a task was scheduled.
@@ -509,6 +559,29 @@ public final class ValidationClient {
      * {@link #celtium$resizeMenuHoldTicks} ticks so those frames are drawn at the new size.
      */
     private final boolean celtium$resizeDuringMenu = Boolean.getBoolean("celtium.validation.resizeDuringMenu");
+    /**
+     * Also ask the compositor to change the size of the output the window is on.
+     * <p>
+     * Under {@code --headless} the game runs tiled on sway's {@code HEADLESS-1} output, and a tiling compositor does not
+     * honour a client's own size request: measured, {@code glfwSetWindowSize} to 1024x640 left
+     * {@code framebufferSizeAtEnd=1280x720}, so the resize transition the renderer has to survive was never reached.
+     * Changing the output's mode resizes the windows on it, which is the same event a user's window manager produces
+     * when the window edge is dragged. Off by default: it is a property of this headless rig, not of the renderer.
+     */
+    private final boolean celtium$resizeViaCompositor =
+            Boolean.getBoolean("celtium.validation.resizeViaCompositor");
+    /** The sway output the window is on; {@code HEADLESS-1} is the name the headless recipe declares. */
+    private final String celtium$resizeOutput = System.getProperty("celtium.validation.resizeOutput", "HEADLESS-1");
+    /**
+     * Client ticks since the fixture started, and the tick at which to dump a menu frame.
+     * <p>
+     * A separate counter from {@code worldTicks} on purpose: the title screen is up before any world exists, so a
+     * menu-phase request keyed on world ticks never fires. 0 disables the menu dump.
+     */
+    private int celtium$clientTicks;
+    private final int celtium$menuDumpTick =
+            Integer.getInteger("celtium.validation.dumpPresentedMenuTick", 0).intValue();
+    private boolean celtium$menuDumpRequested;
     private final int celtium$resizeMenuHoldTicks =
             Integer.getInteger("celtium.validation.resizeMenuHoldTicks", 40).intValue();
     private boolean celtium$resizeRequested;
@@ -1055,7 +1128,7 @@ public final class ValidationClient {
         StringBuilder variant = new StringBuilder();
         String[] flags = {"celtium.validation.keepEntities", "celtium.validation.captureEntities",
                 "celtium.validation.glowEntities", "celtium.validation.spawnEntities",
-                "celtium.validation.rendererlessEntities"};
+                "celtium.validation.rendererlessEntities", "celtium.validation.spawnEntitiesAfterTransfer"};
         for (String flag : flags) {
             if (Boolean.getBoolean(flag)) {
                 if (variant.length() > 0) {
@@ -1238,6 +1311,12 @@ public final class ValidationClient {
      */
     private boolean celtium$flyingSet;
     private boolean celtium$entitiesSpawned;
+    /**
+     * The entity set of a dimension scene, spawned once after the client has arrived in the target dimension
+     * ({@code celtium.validation.spawnEntitiesAfterTransfer}). The tick-60 set is in the overworld and cannot be
+     * moved by the transfer, so a scene whose camera is at the target dimension's own pose had no entity in frame.
+     */
+    private boolean celtium$entitiesSpawnedAfterTransfer;
     /** The renderer-less entity of {@code celtium.validation.rendererlessEntities}, spawned once at tick 60. */
     private boolean celtium$rendererlessSpawned;
     private boolean celtium$wallBuilt;
@@ -2262,9 +2341,22 @@ public final class ValidationClient {
     public void tick(TickEvent.ClientTickEvent event) {
         if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
+        celtium$clientTicks++;
         // N02 acceptance probe: display-list add/recompile/delete/re-use, off unless -Dceltium.validation.modelLifecycle.
         ModelListLifecycleProbe.tick(mc, worldTicks);
         celtium$sampleFramebufferSize(mc);
+        // A menu-phase presented dump. The world-gated dump below is measured in world ticks, so on a leg whose point is
+        // the window at the title screen - the user's own 1920x1080 window is the case - it can never fire: there is no
+        // world and the counter stays 0. This one is keyed on client ticks and only fires while no world exists yet, so
+        // it can only ever be a menu frame. Off unless the property is set; its stage is not one the verdict judges.
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$menuDumpRequested
+                && celtium$menuDumpTick > 0 && worldTicks == 0 && celtium$clientTicks >= celtium$menuDumpTick
+                && mc.currentScreen instanceof GuiMainMenu) {
+            celtium$menuDumpRequested = true;
+            report.addProperty("menuDumpClientTick", Integer.valueOf(celtium$clientTicks));
+            report.addProperty("menuDumpWindowSize", mc.displayWidth + "x" + mc.displayHeight);
+            celtium$requestPresentedDump(mc, "menu");
+        }
         try {
             if (!launched && mc.currentScreen instanceof GuiMainMenu) {
                 // The menu-phase resize: ask for the new size while the title screen is up, and hold the world launch
@@ -2432,6 +2524,27 @@ public final class ValidationClient {
                         + " presentedHighWater=" + celtium$presentedHighWaterBeforeArrival
                         + " clientWorldId=" + Integer.toHexString(System.identityHashCode(mc.world))
                         + " placement=[" + celtium$arrivalPlacement + "]");
+            }
+            // The entity set of a dimension scene, spawned where the player actually is once the client is in the
+            // target dimension. The tick-60 set is spawned in the overworld and the transfer leaves it there: the
+            // Nether legs measured 0 mob pixels in the whole frame (both legs, task-21 `e11-on`/`e11-ref`) while the
+            // model path still drew 794 times, which is why the light map on the model batch was unmeasurable - the
+            // scene with the dark light map was the one scene whose entity set was 58 blocks below the camera.
+            // Same four families, same offsets, same tick on both sides; opt-in because it changes the picture and so
+            // the scene's calibration key, and pinned because at y=70 there is nothing under them.
+            if (celtium$dimensionAtTick > 0 && celtium$arrivedAtTick >= 0 && !celtium$entitiesSpawnedAfterTransfer
+                    && mc.player != null && mc.world != null && mc.player.dimension == celtium$dimension
+                    && Boolean.getBoolean("celtium.validation.keepEntities")
+                    && Boolean.getBoolean("celtium.validation.spawnEntitiesAfterTransfer")) {
+                celtium$entitiesSpawnedAfterTransfer = true;
+                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
+                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -10.0D);
+                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -8.0D);
+                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -12.0D);
+                System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED_AFTER_TRANSFER tick=" + worldTicks
+                        + " dimension=" + mc.player.dimension + " arrivedAt=" + celtium$arrivedAtTick
+                        + " pose=" + (int) mc.player.posX + "," + (int) mc.player.posY + "," + (int) mc.player.posZ
+                        + " nonPlayer=" + countNonPlayerEntities(mc));
             }
             // Per-tick dimension trace while a dimension run is in flight: the Nether run arrived at tick 81 and was
             // back in dimension 0 by the capture, and a single reading cannot say when or why. The server side is asked
@@ -2948,6 +3061,31 @@ public final class ValidationClient {
         mc.world.spawnEntity(entity);
     }
 
+    /**
+     * Puts one entity at the player's current position and holds it there, for the entity set a dimension scene
+     * spawns after the transfer.
+     * <p>
+     * The same offsets as {@link #celtium$spawnEntity}, and the same freeze (no AI, persistence), plus one thing that
+     * scene needs: gravity off. The Nether camera stands at y=70 with nothing under it, so a mob spawned at the eye's
+     * level would fall for the rest of the run and every tick would be a different scene - the same reason the mobs
+     * are frozen at all. It is a fixture-side pin, identical in both legs, and it is what makes the dark light map
+     * measurable on a mob that stays where it was put.
+     */
+    private static void celtium$spawnPinnedEntity(Minecraft mc, net.minecraft.entity.Entity entity, double dx,
+            double dz) {
+        entity.setPosition(mc.player.posX + dx, mc.player.posY, mc.player.posZ + dz);
+        entity.motionX = 0.0D;
+        entity.motionY = 0.0D;
+        entity.motionZ = 0.0D;
+        entity.setNoGravity(true);
+        if (entity instanceof net.minecraft.entity.EntityLiving) {
+            net.minecraft.entity.EntityLiving living = (net.minecraft.entity.EntityLiving) entity;
+            living.setNoAI(true);
+            living.enablePersistence();
+        }
+        mc.world.spawnEntity(entity);
+    }
+
     /** Removes every non-player entity and returns how many were removed; the player and its vehicle stay. */
     private static int removeNonPlayerEntities(Minecraft mc) {
         if (mc.world == null || mc.player == null) return 0;
@@ -3167,6 +3305,151 @@ public final class ValidationClient {
         }
         net.minecraft.tileentity.TileEntity tile = mc.world.getTileEntity(pos);
         return tile == null || !tile.canRenderBreaking();
+    }
+
+    /**
+     * The world renderer's own debug strings, or {@code null} when no world renderer is active.
+     * <p>
+     * The same source the report reads at the capture, and deliberately so: the reference leg has no celtium backend
+     * to ask, and a build-state condition that could only be read from our own renderer would be a condition the
+     * reference could not satisfy.
+     */
+    private java.util.List<String> celtium$rendererDebugLines() {
+        try {
+            Class<?> rendererClass = Class.forName("org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer");
+            Object renderer = rendererClass.getMethod("instanceNullable").invoke(null);
+            if (renderer == null) {
+                return null;
+            }
+            Object lines = rendererClass.getMethod("getDebugStrings").invoke(renderer);
+            if (!(lines instanceof java.util.List)) {
+                return null;
+            }
+            java.util.List<String> result = new java.util.ArrayList<String>();
+            for (Object line : (java.util.List<?>) lines) {
+                result.add(String.valueOf(line));
+            }
+            return result;
+        } catch (Throwable unavailable) {
+            // A run without a world renderer is a run this condition cannot judge; the caller falls back to the tick.
+            return null;
+        }
+    }
+
+    /** The largest per-pass section count in the renderer's debug strings, or -1 when no such line is present. */
+    private static int celtium$listedSections(java.util.List<String> lines) {
+        if (lines == null) {
+            return -1;
+        }
+        int most = -1;
+        java.util.regex.Matcher sections = java.util.regex.Pattern.compile("- (\\d+) sections").matcher("");
+        for (String line : lines) {
+            sections.reset(line);
+            if (sections.find()) {
+                try {
+                    most = Math.max(most, Integer.parseInt(sections.group(1)));
+                } catch (NumberFormatException ignored) {
+                    // A line that says "sections" without a number is not a count.
+                }
+            }
+        }
+        return most;
+    }
+
+    /**
+     * The build state as one report-ready string: the listed sections, the rebuild queue's three depths and the
+     * geometry the backend holds. Written under both capture conditions, so a tick-captured run says what it caught.
+     */
+    private static String celtium$buildState(java.util.List<String> lines) {
+        if (lines == null) {
+            return "unread: no world renderer debug strings";
+        }
+        String sections = "sections=none";
+        String queues = "queues=none";
+        String geometry = "geometry=none";
+        java.util.regex.Matcher sectionMatcher = java.util.regex.Pattern.compile("- (\\d+) sections").matcher("");
+        java.util.regex.Matcher queueMatcher = java.util.regex.Pattern
+                .compile("Chunk Queues: U=(\\d+) \\(P0=(\\d+) \\| P1=(\\d+) \\| P2=(\\d+)\\) S=(\\d+)/(\\d+)\\)?").matcher("");
+        java.util.regex.Matcher geometryMatcher = java.util.regex.Pattern.compile("G: (\\d+)/(\\d+), I: (\\d+)/(\\d+) MiB").matcher("");
+        int most = -1;
+        for (String line : lines) {
+            sectionMatcher.reset(line);
+            if (sectionMatcher.find()) {
+                try {
+                    most = Math.max(most, Integer.parseInt(sectionMatcher.group(1)));
+                } catch (NumberFormatException ignored) {
+                    // Not a count.
+                }
+            }
+            queueMatcher.reset(line);
+            if (queueMatcher.find()) {
+                queues = "U=" + queueMatcher.group(1) + " P0=" + queueMatcher.group(2) + " P1=" + queueMatcher.group(3)
+                        + " P2=" + queueMatcher.group(4) + " S=" + queueMatcher.group(5) + "/" + queueMatcher.group(6);
+            }
+            geometryMatcher.reset(line);
+            if (geometryMatcher.find()) {
+                geometry = "deviceUsed=" + geometryMatcher.group(1) + " deviceAllocated=" + geometryMatcher.group(2)
+                        + " indexUsed=" + geometryMatcher.group(3) + " indexAllocated=" + geometryMatcher.group(4) + " MiB";
+            }
+        }
+        if (most >= 0) {
+            sections = "listedSections=" + most;
+        }
+        return sections + " " + queues + " " + geometry;
+    }
+
+    /**
+     * Whether the world stage should be captured on this frame; see {@link #CAPTURE_CONDITION}.
+     * <p>
+     * Called once per frame from {@link #frame}. Under {@code built} it counts consecutive frames whose listed-section
+     * count is unchanged and fires at {@link #CAPTURE_STABLE_FRAMES}; a count that never settles falls back to
+     * {@link #CAPTURE_DEADLINE_TICK} rather than ending the run with no report.
+     */
+    private boolean celtium$captureDue() {
+        if (worldTicks < 200 || worldFrames < CAPTURE_MIN_WORLD_FRAMES) {
+            return false;
+        }
+        if ("sections".equals(CAPTURE_CONDITION)) {
+            java.util.List<String> sectionLines = celtium$rendererDebugLines();
+            int listed = celtium$listedSections(sectionLines);
+            if (CAPTURE_SECTIONS > 0 && listed >= CAPTURE_SECTIONS) {
+                celtium$captureConditionFired = "sections-target";
+                return true;
+            }
+            if (worldTicks >= CAPTURE_DEADLINE_TICK) {
+                celtium$captureConditionFired = "sections-deadline (listed " + listed + " of " + CAPTURE_SECTIONS + ")";
+                return true;
+            }
+            return false;
+        }
+        if (!"built".equals(CAPTURE_CONDITION)) {
+            celtium$captureConditionFired = "tick";
+            return true;
+        }
+        java.util.List<String> lines = celtium$rendererDebugLines();
+        int listed = celtium$listedSections(lines);
+        if (listed < 0) {
+            if (worldTicks >= CAPTURE_DEADLINE_TICK) {
+                celtium$captureConditionFired = "built-deadline (no section count in the debug strings)";
+                return true;
+            }
+            return false;
+        }
+        if (listed == celtium$captureLastListed) {
+            celtium$captureStableFrames++;
+        } else {
+            celtium$captureLastListed = listed;
+            celtium$captureStableFrames = 0;
+        }
+        if (celtium$captureStableFrames >= CAPTURE_STABLE_FRAMES) {
+            celtium$captureConditionFired = "built-stable";
+            return true;
+        }
+        if (worldTicks >= CAPTURE_DEADLINE_TICK) {
+            celtium$captureConditionFired = "built-deadline";
+            return true;
+        }
+        return false;
     }
 
     @SubscribeEvent
@@ -3548,7 +3831,9 @@ public final class ValidationClient {
         // GUI-visible comparison: animated textures advance per tick, so a run whose capture lands a tick later shows
         // different water, lava and fire frames, and that alone measured as a larger difference than any renderer
         // question this project was asking. One tick is one image.
-        if (worldTicks < 200) return;
+        // The capture condition, not one exact tick: `tick` keeps the "first frame at or after 200" every stored
+        // reference was taken under, `built` waits for the listed-section count to settle. See CAPTURE_CONDITION.
+        if (!celtium$captureDue()) return;
         if (celtium$dimensionAtTick > 0) {
             // Fail closed: a run that asked for another dimension and did not get there must not report PASSED. The
             // previous acceptance did exactly that - dimensionAfter stayed 0 while the report said PASSED - because
@@ -3650,6 +3935,18 @@ public final class ValidationClient {
             celtium$captureStarted = true;
             celtium$captureStartTick = worldTicks;
             report.addProperty("captureStartTick", Integer.valueOf(worldTicks));
+            // The build state this capture landed in, under both conditions: a tick-captured run says what it caught,
+            // and two legs can only be compared if both say it.
+            java.util.List<String> captureLines = celtium$rendererDebugLines();
+            report.addProperty("captureCondition", celtium$captureConditionFired);
+            report.addProperty("captureConditionRequested", CAPTURE_CONDITION);
+            report.addProperty("captureStableFrames", Integer.valueOf(celtium$captureStableFrames));
+            report.addProperty("captureStableFramesRequired", Integer.valueOf(CAPTURE_STABLE_FRAMES));
+            report.addProperty("captureSectionsTarget", Integer.valueOf(CAPTURE_SECTIONS));
+            report.addProperty("captureMinWorldFrames", Integer.valueOf(CAPTURE_MIN_WORLD_FRAMES));
+            report.addProperty("captureListedSections", Integer.valueOf(celtium$listedSections(captureLines)));
+            report.addProperty("captureBuildState", celtium$buildState(captureLines));
+            report.addProperty("captureWorldFrames", Integer.valueOf(worldFrames));
         } else if (celtium$worldStageTaken) {
             // The world stage of this scene is already captured. The capture body used to run again on the next frame -
             // which, with the verdict deferred one frame under GL-less, meant a second screenshot and a second dump
@@ -4284,11 +4581,59 @@ public final class ValidationClient {
         report.addProperty("resizeReason", why);
         report.addProperty("resizeWindowFrom", beforeWidth + "x" + beforeHeight);
         report.addProperty("resizeWindowTo", size[0] + "x" + size[1]);
+        // The client's request is a request: on this rig the tiling compositor decides, so the same tick asks the
+        // compositor as well. The two are recorded separately because "GLFW was told" and "the window is now that size"
+        // are the two halves the earlier run could not tell apart.
+        if (celtium$resizeViaCompositor) {
+            String result = celtium$resizeCompositorOutput(size[0], size[1]);
+            report.addProperty("resizeCompositorResult", result);
+            celtium$resizeTrace("CELTIUM_RESIZE_COMPOSITOR tick=" + worldTicks + " " + result);
+            System.out.println("[Celtium] CELTIUM_RESIZE_COMPOSITOR tick=" + worldTicks + " why=" + why + " " + result);
+        }
         celtium$resizeTrace("CELTIUM_RESIZE_REQUEST tick=" + worldTicks + " why=" + why + " window=" + window
                 + " from=" + beforeWidth + "x" + beforeHeight + " to=" + size[0] + "x" + size[1]);
         System.out.println("[Celtium] CELTIUM_RESIZE_REQUEST tick=" + worldTicks + " why=" + why
                 + " from=" + beforeWidth + "x" + beforeHeight + " to=" + size[0] + "x" + size[1]);
         return true;
+    }
+
+    /**
+     * Resizes the compositor's output, which is the only way the window changes size under a tiling compositor.
+     * <p>
+     * Returns a one-line result for the report rather than throwing: a rig without a sway session is a run that could
+     * not exercise the transition, which is a finding, not a crash.
+     */
+    private String celtium$resizeCompositorOutput(int width, int height) {
+        String socket = System.getenv("SWAYSOCK");
+        if (socket == null || socket.isEmpty()) {
+            return "no SWAYSOCK: not a headless sway session";
+        }
+        String mode = width + "x" + height + "@60Hz";
+        try {
+            ProcessBuilder builder = new ProcessBuilder("swaymsg", "-s", socket, "output", celtium$resizeOutput,
+                    "mode", mode);
+            builder.redirectErrorStream(true);
+            Process process = builder.start();
+            StringBuilder output = new StringBuilder();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    process.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null && output.length() < 512) {
+                    output.append(line.trim()).append(' ');
+                }
+            }
+            if (!process.waitFor(5L, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return "swaymsg " + mode + " timed out";
+            }
+            return "mode=" + mode + " exit=" + process.exitValue() + " out="
+                    + output.toString().replace('\n', ' ').trim();
+        } catch (java.io.IOException error) {
+            return "swaymsg failed: " + error;
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return "swaymsg interrupted";
+        }
     }
 
     /**
@@ -5407,6 +5752,14 @@ public final class ValidationClient {
                         + mc.currentScreen.getClass().getName() + ", not Minecraft's own GuiVideoSettings");
                 report.addProperty("guiScreenOpenedVia", celtium$guiScreenOpenedVia);
             }
+        }
+        // The functional chain closes and reopens the screen on purpose (Done saves and closes, then the game's own
+        // button opens it again), so on those intermediate ticks the open screen is deliberately *not* the video
+        // settings screen. Driving the chain before the screen-name checks keeps that wait from firing on a tick the
+        // chain itself caused - measured: without this the run failed with "the screen never became GuiVideoSettings"
+        // one tick after the Done press, with the option already saved to options.txt.
+        if (celtium$vsStep >= 0 && celtium$vsStep < 99 && !celtium$runVideoSettingsChain(mc)) {
+            return;
         }
         String screenName = celtium$screenName(mc);
         report.addProperty("guiScreenCurrent", screenName);

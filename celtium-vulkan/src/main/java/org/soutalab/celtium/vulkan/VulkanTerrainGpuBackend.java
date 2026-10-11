@@ -4759,6 +4759,58 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return count;
     }
 
+    /**
+     * Releases every immediate pipeline the backend built against a render pass, and empties the caches.
+     * <p>
+     * Each of these objects names a render pass at creation: the world's terrain pass for a world frame, the standalone
+     * UI pass for a menu frame. The cache key is the draw state alone and does not include it, so a cache cannot outlive
+     * the world whose pass it was built for - {@link VulkanTerrainPipeline#delete()} destroys the terrain render pass,
+     * and a reused entry would name it. This is called from the world-leave path and from the backend's own teardown;
+     * because each map is emptied here, the second call finds nothing and releases nothing again, which is what makes
+     * the release exactly-once on both paths.
+     * <p>
+     * The UI pipeline is not part of this: it is built against the standalone UI render pass, which the window keeps.
+     */
+    private int celtium$releaseImmediatePipelines() {
+        int released = 0;
+        for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
+            released += releaseDirect(block == null ? null : () -> block.delete());
+        }
+        this.blockPipelineCache.clear();
+        for (VulkanImmediateParticlePipeline particle : this.particlePipelineCache.values()) {
+            released += releaseDirect(particle == null ? null : () -> particle.delete());
+        }
+        this.particlePipelineCache.clear();
+        // Each entry is a pipeline layout, a descriptor set layout and one or more descriptor pools, and a pool cannot
+        // be destroyed while a set allocated from it is alive, so a cache dropped without this leaks the whole family.
+        released += releaseImmediatePipelineCache(this.immediatePipelineCache);
+        released += releaseImmediatePipelineCache(this.linePipelineCache);
+        released += releaseTexturePipelineCache(this.positionTexColorNormalPipelineCache);
+        released += releaseTexturePipelineCache(this.positionTexNormalPipelineCache);
+        released += releaseTexturePipelineCache(this.positionOnlyPipelineCache);
+        released += releaseTexturePipelineCache(this.positionNormalPipelineCache);
+        released += releaseTexturePipelineCache(this.positionTexPipelineCache);
+        released += releaseTexturePipelineCache(this.texturedPipelineCache);
+        for (VulkanImmediateItemPipeline item : this.itemPipelineCache.values()) {
+            released += releaseDirect(item == null ? null : () -> item.delete());
+        }
+        this.itemPipelineCache.clear();
+        released += releaseDirect(this.immediatePipeline == null ? null : () -> this.immediatePipeline.delete());
+        this.immediatePipeline = null;
+        released += releaseImmediateMesh(this.isolationMesh);
+        this.isolationMesh = null;
+        released += releaseDirect(this.descriptorProbe == null ? null : () -> this.descriptorProbe.delete());
+        this.descriptorProbe = null;
+        // The UI test quad's pipeline is built in drawUiTestQuad against the terrain pass, not against the standalone UI
+        // pass the window keeps, and it draws into the terrain colour image - so it belongs to this set, whatever its
+        // name suggests. Its mesh is created with it and is used by nothing else.
+        released += releaseDirect(this.uiPipeline == null ? null : () -> this.uiPipeline.delete());
+        this.uiPipeline = null;
+        released += releaseImmediateMesh(this.uiMesh);
+        this.uiMesh = null;
+        return released;
+    }
+
     /** The viewport key that means "the whole render target", packed the same way {@code viewport} packs it. */
     private long fullTargetViewportKey() {
         return ((long) 0 << 42) ^ ((long) 0 << 21) ^ ((long) this.targetWidth << 10) ^ (long) this.targetHeight;
@@ -5870,6 +5922,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixDump[" + (this.matrixDump == null ? "none" : this.matrixDump) + "]"
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)
+                // Audit B03/B04: what the descriptor pools did (pools, growths, sets, cached texture keys,
+                // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
+                // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
+                // in every run, and "the counter is in a log line nobody read" is how a bound stays invisible.
+                + " immediateDescriptors=[" + VulkanImmediateTexturePipeline.descriptorPoolSummary() + "]"
+                + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
+                + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
+                + " fences=" + VulkanContext.quarantinedResourceCounts()[1] + "]"
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
                 + ",gluPerspective:" + this.mirroredGluPerspectives + ",gluSkipped:"
                 + this.skippedGluPerspectives + ",gluSites:" + this.gluPerspectiveShapes.size()
@@ -6068,11 +6128,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Releases the resources that belong to the world renderer and leaves the device alive.
      * <p>
      * Every resource here is created from the world's render pass configuration or from its regions - the region
-     * buffers, the per-pass pipelines, the model meshes, the shared index buffers and the terrain uniform buffer. The
+     * buffers, the per-pass pipelines, the model meshes, the shared index buffers and the terrain uniform buffer, and the
+     * immediate pipelines whose caches are keyed by draw state rather than by the pass they were built for. The
      * ones the window keeps are the device and its command resources, the standalone UI render pass, the frame target
      * and the swapchain, the texture registry and its mirrors, and the readback image: those are what a menu frame
      * draws into and presents from. The uniforms and the pipelines are rebuilt on demand by the terrain path, so the
      * next world recreates them from the configuration the adoption hands over.
+     * <p>
+     * The world's lifetime also ends for the queue: a group accepted under this world is retired here rather than left
+     * for the next draw, and the world epoch it carries is bumped so that nothing accepted before the next adoption can
+     * be drawn against this world's freed buffers. That is the audit's B10 gap - the target generation says nothing
+     * about a world, because the frame target survives one.
      */
     private void celtium$releaseWorldResources() {
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
@@ -6107,6 +6173,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             pipeline.delete();
         }
         this.pipelines.clear();
+        // The immediate caches are built against the terrain pass that was just destroyed, so they belong to this world
+        // as much as the pipelines do: a state-keyed entry kept across a world change would name a dead render pass. The
+        // queued groups that held references to them were retired above, so nothing here is still pointing at them.
+        int immediate = celtium$releaseImmediatePipelines();
+        if (immediate > 0) {
+            record("world teardown released " + immediate + " immediate pipeline(s) built for the world's render pass");
+        }
         for (VulkanBuffer buffer : this.sharedIndexBuffers.values()) {
             buffer.delete();
         }
@@ -6233,43 +6306,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         released += releaseImmediateMesh(this.currentImmediateMesh);
         this.currentImmediateMesh = null;
-        for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
-            released += releaseDirect(block == null ? null : () -> block.delete());
-        }
-        this.blockPipelineCache.clear();
-        for (VulkanImmediateParticlePipeline particle : this.particlePipelineCache.values()) {
-            released += releaseDirect(particle == null ? null : () -> particle.delete());
-        }
-        this.particlePipelineCache.clear();
-        // The rest of the immediate pipeline families: each is a pipeline layout, a descriptor set layout and one or
-        // more descriptor pools, and a pool cannot be destroyed while a set allocated from it is alive, so a cache that
-        // is dropped without this leaks the whole family per backend. They are grouped here because they share one
-        // owner (this backend) and one lifetime (the device); the isolation pass's own pipeline and mesh belong to the
-        // same lifetime and are not part of any map.
-        released += releaseImmediatePipelineCache(this.immediatePipelineCache);
-        released += releaseImmediatePipelineCache(this.linePipelineCache);
-        released += releaseTexturePipelineCache(this.positionTexColorNormalPipelineCache);
-        released += releaseTexturePipelineCache(this.positionTexNormalPipelineCache);
-        released += releaseTexturePipelineCache(this.positionOnlyPipelineCache);
-        released += releaseTexturePipelineCache(this.positionNormalPipelineCache);
-        released += releaseTexturePipelineCache(this.positionTexPipelineCache);
-        released += releaseTexturePipelineCache(this.texturedPipelineCache);
-        for (VulkanImmediateItemPipeline item : this.itemPipelineCache.values()) {
-            released += releaseDirect(item == null ? null : () -> item.delete());
-        }
-        this.itemPipelineCache.clear();
-        released += releaseDirect(this.immediatePipeline == null ? null : () -> this.immediatePipeline.delete());
-        this.immediatePipeline = null;
-        released += releaseImmediateMesh(this.isolationMesh);
-        this.isolationMesh = null;
-        released += releaseDirect(this.descriptorProbe == null ? null : () -> this.descriptorProbe.delete());
-        this.descriptorProbe = null;
-        if (this.uiPipeline != null) {
-            released += releaseDirect(() -> this.uiPipeline.delete());
-        }
-        this.uiPipeline = null;
-        released += releaseImmediateMesh(this.uiMesh);
-        this.uiMesh = null;
+        // The immediate pipeline caches, the isolation pass's pipeline and mesh, the descriptor probe and the UI test
+        // quad's pipeline and mesh are one set: everything the immediate path built against a render pass. They are
+        // released by the same call the world-leave path makes, so the two lifetimes cannot drift apart.
+        released += celtium$releaseImmediatePipelines();
         if (this.textureRegistry != null) {
             this.textureRegistry.delete();
             this.textureRegistry = null;
@@ -7657,6 +7697,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // all absent while the GL-less reports carry them). Without a line both configurations emit, "the models did
         // not draw" and "the counters were not collected" look identical - which is exactly the confusion this line
         // exists to end. Printed per change, bounded: the first 64 changes one by one and every hundredth after.
+        // The off-target aggregate, printed from the frame's build as the counters move: the off-target replays are the
+        // entity-outline pass's, and whether they are enqueued or refused is the question the picture cannot answer on
+        // its own ("a missing counter is not a missing draw" applies to the queue as much as to a census).
+        if (this.modelOffTargetCalls != this.modelOffTargetReported) {
+            this.modelOffTargetReported = this.modelOffTargetCalls;
+            if (this.modelOffTargetReports < 24 || this.modelOffTargetCalls % 64 == 0) {
+                this.modelOffTargetReports++;
+                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + this.modelOffTargetCalls
+                        + " drawn=" + this.modelOffTargetDraws
+                        + " missingMeshes=" + this.modelMissingMeshes
+                        + " refusals=" + this.modelDrawRefusals
+                        + " lastRefusal=[" + this.modelLastRefusal + "]");
+            }
+        }
         if (builtGenerations.size() > 0 || !superseded.isEmpty()) {
             this.modelBuildLogs++;
             if (this.modelBuildLogs <= 64 || this.modelBuildLogs % 100 == 0) {
@@ -7721,6 +7775,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** One-shot: the matrices a model group is stored with. */
     /** How many model enqueues have printed their matrices. */
     private int modelMatrixLoggedCount;
+    /** Model replays that arrived for a target other than the main one: the outline pass's, and anything else off-target. */
+    private int modelOffTargetCalls;
+    private int modelOffTargetDraws;
+    private final java.util.Set<String> modelOffTargetLogged = new java.util.HashSet<String>();
+    private int modelOffTargetLogs;
+    /** The last off-target call count printed from the build, and how many such lines have printed. */
+    private int modelOffTargetReported = -1;
+    private int modelOffTargetReports;
+    /** The bound on {@link #modelOffTargetLogs}: the entity scene has one list set per off-target pass. */
+    private static final int MODEL_OFFTARGET_LOG_LIMIT = 24;
     /** Display lists seen replayed under a texture other than their compile texture, so a layer prints once. */
     private final java.util.Set<String> modelLayerLogged = new java.util.HashSet<String>();
     private int modelLayerLogs;
@@ -7767,6 +7831,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * natively the difference is still 2.10 %, so the model geometry is not right yet. Keep it off until that is 0.
      */
     public boolean celtium$drawModelList(int listId, int boundTextureId) {
+        // Which render target each model replay lands on. The entity-outline pass binds its own framebuffer, sets
+        // renderOutlines and re-runs the same display lists through RenderLivingBase.renderModel
+        // (`RenderGlobal.java:683-694`), so the mobs' geometry arrives here with a target that is not the main one, and
+        // the group is stamped with it. A replay that is refused leaves the outline target empty and the glow invisible,
+        // and no counter distinguishes "refused here" from "never called": this line does.
+        long callTarget = this.currentRenderTarget;
+        boolean offTargetCall = callTarget != this.mainTargetIdentity;
+        if (offTargetCall) {
+            this.modelOffTargetCalls++;
+            if (this.modelOffTargetLogged.add(listId + "@" + callTarget)
+                    && this.modelOffTargetLogs < MODEL_OFFTARGET_LOG_LIMIT) {
+                this.modelOffTargetLogs++;
+                VulkanDynamicMesh looked = this.modelMeshes == null
+                        ? null : this.modelMeshes.get(Integer.valueOf(listId));
+                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId
+                        + " target=" + callTarget + " main=" + this.mainTargetIdentity
+                        + " modelDraw=" + MODEL_DRAW + " frameTargetKnown=" + this.frameTargetKnown
+                        + " meshes=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                        + " inTable=" + (looked != null) + " verts=" + (looked == null ? -1 : looked.vertexCount()));
+            }
+            if (this.modelOffTargetCalls == 1 || this.modelOffTargetCalls % 32 == 0) {
+                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + this.modelOffTargetCalls
+                        + " drawn=" + this.modelOffTargetDraws
+                        + " missingMeshes=" + this.modelMissingMeshes
+                        + " refusals=" + this.modelDrawRefusals
+                        + " lastRefusal=[" + this.modelLastRefusal + "]");
+            }
+        }
         if (!MODEL_DRAW || this.modelMeshes == null || !this.frameTargetKnown) {
             return false;
         }
@@ -7886,6 +7978,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Queued, not drawn: the draw happens in the window's pass, and the group counters (submitted/completed) are
             // what show that the queued batch was actually drawn. The caller cancels the GL replay on this basis.
             this.modelDraws++;
+            if (offTargetCall) {
+                this.modelOffTargetDraws++;
+            }
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.modelDrawRefusals++;

@@ -411,8 +411,24 @@ public final class VulkanImmediateTexturePipeline {
 
     // ---- the descriptor pool: one per 64 sets, grown on demand (audit B03) ----------------------------------------
 
-    /** Sets one pool holds: 64 COMBINED_IMAGE_SAMPLER descriptors, one per set. */
-    public static final int DESCRIPTOR_SETS_PER_POOL = 64;
+    /** A pool smaller than this cannot hold the one set allocated at pipeline creation. */
+    private static final int VULKAN_MINIMUM_SETS_PER_POOL = 1;
+    /**
+     * Sets one pool holds: 64 COMBINED_IMAGE_SAMPLER descriptors, one per set.
+     * <p>
+     * {@code -Dceltium.vulkan.descriptorPoolSets=<n>} lowers it so the growth path can be exercised by a scene that
+     * does not hold 64 distinct keys: the growth mechanism, the counters and the no-refusal property are the same,
+     * only the point at which they are reached moves. It is a control check, not a tuning knob, and it is named here
+     * and in the report of the run that uses it.
+     */
+    public static final int DESCRIPTOR_SETS_PER_POOL = descriptorSetsPerPoolProperty();
+
+    private static int descriptorSetsPerPoolProperty() {
+        int value = Integer.getInteger("celtium.vulkan.descriptorPoolSets", 64).intValue();
+        return value <= 0 ? VULKAN_MINIMUM_SETS_PER_POOL : Math.min(value, 64);
+    }
+
+
     /** How many pools a pipeline may create before an allocation is refused rather than grown for. */
     public static final int DESCRIPTOR_POOL_LIMIT = 64;
     /** Pool creations, growths beyond the first, sets handed out and refusals - reported, not inferred. */
@@ -453,6 +469,10 @@ public final class VulkanImmediateTexturePipeline {
             DESCRIPTOR_POOLS_CREATED.incrementAndGet();
             if (this.descriptorPools.size() > 1) {
                 DESCRIPTOR_POOL_GROWTHS.incrementAndGet();
+                // One line per growth, bounded by DESCRIPTOR_POOL_LIMIT: a scene that reaches the old 64-set ceiling
+                // says so in the log, with the aggregate counts, instead of only refusing batches (audit B03).
+                System.out.println("[Celtium] CELTIUM_IMMEDIATE_DESCRIPTORS grew to "
+                        + this.descriptorPools.size() + " pools for this pipeline: " + descriptorPoolSummary());
             }
             return poolHandle.get(0);
         }

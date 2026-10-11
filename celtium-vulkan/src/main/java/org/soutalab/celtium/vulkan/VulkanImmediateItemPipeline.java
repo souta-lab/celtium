@@ -247,6 +247,9 @@ public final class VulkanImmediateItemPipeline {
             VulkanImmediateTexturePipeline.DESCRIPTOR_POOLS_CREATED.incrementAndGet();
             if (this.descriptorPools.size() > 1) {
                 VulkanImmediateTexturePipeline.DESCRIPTOR_POOL_GROWTHS.incrementAndGet();
+                System.out.println("[Celtium] CELTIUM_IMMEDIATE_DESCRIPTORS item pipeline grew to "
+                        + this.descriptorPools.size() + " pools: "
+                        + VulkanImmediateTexturePipeline.descriptorPoolSummary());
             }
             return poolHandle.get(0);
         }

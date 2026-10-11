@@ -282,7 +282,8 @@ fixture changes (`ValidationClient`, N06), reported by me and not made.
 | 19 | text / font (N03) | **V** | stored | `plan.md` §0.144 (`quads=52406 submitted=52406 accepted=52406 refused=0`, `unicodeWindows=40548`) plus the JEI pair's crops, where the text is the same size and position in both legs (I read them). Row 13's missing box is not the font. | font / N03 |
 | 20 | video settings (the screen, its widgets and its own frame) | **U** | stored (void for terrain) | The scene exists in the fixture: `VIDEO_SETTINGS("videoSettings", true, true)` - `GuiVideoSettings` opened through `displayGuiScreen` and clicked, with a GUI stage and its own gate; knob `-Dceltium.validation.scene=videoSettings`. Stored references exist (`scene-floors/video-a` 09:11, `video-b` 09:12, `scene-ref-video2` 01:18). **35 runs in the workspace use the scene, and none of them is current**: the newest are `n03-u-clean`, `n03-v-cleanbridge`, `n03-z-final`, `n03-aa-accept`, `n03-ab-accept-ja` (11:49-12:15) and `n03-ak-jei-vs35` (12:31), every one `FAILED_PRESENTED_IMAGE`, none after the depth fix, no Celeritas leg. So the user-named stage is unmeasured on the current tree; the experiment is one GL-less leg and one Celeritas leg of the same scene, and the fixture already knows how to drive it. | gui-stage (task-5), fixture |
 | 21 | Intel UHD 630 leg (condition (d) on the GL-less path) | **U** | none | 153 reports in the workspace carry an Intel GL renderer (`Mesa Intel(R) UHD Graphics 630 (CFL GT2)`), and **0 of them set `-Dceltium.vulkan.glless=true`**: no Intel leg of the GL-less path has ever been taken. The newest Intel run is `intel-layout-glow` (09:01 today, `FAILED_PRESENTED_IMAGE`, pre-depth-fix, bridge leg), so nothing on the current tree says whether the Vulkan path works on Intel at all. Owner: task-11 (sky-draws). | sky-draws (task-11) |
-| 22 | the user's own launch: menu and loading screen (task-22) | **U** (menu content verified on a harness leg; the swapchain-fix check in flight) | none - the user's configuration through the harness, with a harness capture as cross-check | Menu content: the Lead's `.celtium-work/ww-menu-caps/compositor-0018.png` is 1280x720, sha256 `ade674e0be57ea63…`, **889 distinct colours**, 720 distinct rows, not uniform, and I measured its predecessor `compositor-0000.png` as **uniform black (1 colour)** - a quantified before/after of "a window with nothing in it" (harness leg, jar `eed0f86f03402db5`). The Prism-launcher attempt (`user-prism-launch-check`, instance jar `bf5a4e144965d83b`) is **not** the user's configuration: a GUI launcher cannot be driven headlessly, its captures are the launcher's modal, and its log shows `CELTIUM_WINDOW_RENDERER failed: attempt=1..8`. Shifted-menu fix (jar `8f3b34b68a1b2b80ad74`, in the instance since 16:42): independent check `user-real-real-resize` - a real-session launch (no `--headless`), grim on the window rectangle at 1280x720 then 1920x1080, distinct colours / black fraction / edge means, plus the game log's surface-extent rebuild record. §6b. | acceptance (task-22); menu fix = task-15; extent fix = Lead |
+| 22 | the user's own launch: menu and loading screen (task-22) | **V** (menu drawn and presented; the resize check in flight) | none - the user's configuration through the harness, with the Lead's capture as cross-check | Run `user-cfg-menu` (harness, no fixture, no validation client, explicit `--mod`, jar `8f3b34b68a1b2b80ad74`): 180 captures in `.celtium-work/acceptance/user-cfg-menu-caps/`, the game window mapped and photographed (`windows=[('Cleanroom', {x:0,y:0,width:1280,height:720})]`, `gamePid=2212088`). Best `compositor-0154.png`, sha256 `cfe88914b237a1dd…`, 46250 bytes, **921 distinct colours**, 720 distinct rows, mean (113.902,113.654,114.204); uniform black (1 colour) through capture 0040, then 731 at 0060 and 696-921 after. Log: `CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0 reasons=[]`, `CELTIUM_PRESENT hookCalls=2 attempts=1 presented=1 failures=0 swapsSkipped=1`, `CELTIUM_SWAPPOINT calls=1..3`, all three glless lines, **VUID 0**. Independent cross-check: the Lead's `ww-menu` capture `compositor-0018.png` (sha256 `ade674e0be57ea63…`) at **889 distinct colours**, its predecessor uniform black. The Prism-launcher attempt is not the user's configuration (§6b). Shifted-menu fix (jar `8f3b34b68a1b2b80ad74`): check `user-real-real-resize2` in flight. | acceptance (task-22); menu fix = task-15; extent fix = Lead |
+| 23 | mod cohort on the current jar (JEI; AppleSkin+MapWriter) | **V** (mods load and their UI draws) / verdict UNCALIBRATED | celeritas (reference leg in flight) | GL-less, jar `609eb69a9064df05`, fixture `f5b041ae841b2585`, AMD RX 6400, scene=terrain, pose `0.5/12/0.5 yaw 180 pitch 20`. `mod3-jei` (JEI `e592b0019aa0cd32`, `jeiScreen`+`keepInventoryScreen`, capture tick 201): verdict `UNCALIBRATED_PRESENTED_IMAGE` (correct - the `screen=jei+keep` variant has no calibrated reference), `validationClean=true`, `validationMessageCount=0`, **VUID 0**, `distinct=5210`, `nonBg=0.92124`, `bg=0x8B8B8B`; per-format histogram `id1=564/564 id2=32393/32392 **id4=5916/5916** id5=55/55 id6=1579/1579 id7=463/463 id9=30/30` (format 4 = ITEM, i.e. the JEI grid). Crops `.celtium-work/acceptance/crops/mod3-jei/`: panel `(420,120,860,600)` 2670 distinct, mode `(139,139,139)` 16.5 %; tooltip `(560,280,880,400)` 654 distinct, white text 9.5 %; I looked at the panel crop - the JEI item grid, the "...ding Blocks" category label, the "**Gold Ore**" tooltip, the player slots and the hotbar are all drawn. Honest framing: the past cohort (`mod3-glless-jei` 01:10:56, `mod5-bridge-jei`, `mod6-bridge-hudmods`) is past evidence and **all three were FAILED_PRESENTED_IMAGE**; the current cohort has not been compared against a Celeritas reference with the same mods yet (`mod3-jei-recipe`, `mod3-hud` and a Celeritas+JEI leg in flight). | gui-stage (task-5), pipelines (task-6), acceptance |
 
 ### 3a. Jar provenance per row
 
@@ -363,6 +364,16 @@ Cross-cutting counters from `acc2-glless`, the most recent GL-less run I read in
 - **Concurrency**: 13:39:20 two GL-less instances (`entity-runs/ent-glless`, `runtime/p2-glu-on`);
   13:44 three (`fc8-br`, `tm-glless1`, `acc2-ref-bridge`). Those runs' timings and pixels are not
   admissible; the slot lock (`67cf6f806`) is the fix.
+- **An instrument fix, not a renderer finding**: my first real-session leg found no game window
+  because the Xwayland window has **no class and is titled "Cleanroom"** (read from the compositor
+  capture record: `windows=[('Cleanroom', {x:0,y:0,width:1280,height:720})]`), while the matcher
+  looked for class `Cleanroom` or "Minecraft" in the title. The honest instrument accepts **any window
+  that was not there before the launch**. The real-session path was then dropped in favour of the
+  headless compositor-resize path (`resizeDuringMenu` + `resizeViaCompositor`), because a window
+  appearing on the operator's desktop is the thing the user complained about.
+- **An orphaned game instance ran for ~15 minutes**: pid 2204233, a leftover of a harness whose
+  launcher died at 16:49, overlapped other workers' legs until the Lead killed it. Any leg from that
+  window (roughly 16:49-17:05) is suspect and is not used as a reference here.
 - **Two harness wrinkles, both measured and one now fixed**: at 13:45 the GL-less leg died with
   `SyntaxError: invalid syntax` at `prism_validation.py:297` while the file was mid-edit - read that
   as "the instrument was being edited", not as a result; and a run killed while *waiting* for the
@@ -558,25 +569,41 @@ same directory's `compositor-0000.png` is **uniform black (1 distinct colour)**,
 with nothing in it") in one capture directory; it is a *harness* leg on jar `eed0f86f03402db5`
 (`ww-menu`), not a Prism launch, so it supports the menu row without being it.
 
-**The swapchain/surface-extent fix, and the check it needs (jar `8f3b34b68a1b2b80ad74`).** The user
-reported the menu drawn but **shifted**, with its right side and logo cut off, unchanged by
+**The swapchain/surface-extent fix, verified on the headless compositor (jar `609eb69a9064df05`).**
+The user reported the menu drawn but **shifted**, right side and logo cut off, unchanged by
 fullscreen. Cause, diagnosed by the Lead: `ensureSwapchain`'s surface-extent test was gated on
 `frameId`, a *world-frame* counter, so a window resized while the menu was up kept the swapchain from
-its first present and the bottom-anchored unscaled blit showed only the frame's lower left. The fix
-is in jar `8f3b34b68a1b2b80ad74`, installed into the user's instance (16:42, frozen here as
-`frozen/user-real-8f3b34b6.jar`). The independent check is a **real-session launch** (no `--headless`,
-so the window is real): `.celtium-work/acceptance/user-real.py` launches the user's configuration
-through `prism_validation.py` with `--force-x11` and no headless compositor, waits for the Cleanroom
-window in the *user's own* sway tree (matching class `Cleanroom`, not Prism's console window whose
-title also contains the instance name), photographs the window rectangle with `grim -g`, floats and
-resizes it to 1920x1080, photographs again, and measures both: distinct colours, distinct rows,
-uniformity, pure-black fraction and the mean colour of each edge band against the centre. It also
-reads the game's own log for the surface-extent rebuild record. Run `user-real-real-resize`; the
-result is recorded here when it lands.
+its first present and the bottom-anchored unscaled blit showed only the frame's lower left. The
+independent check is `resize-menu` (`.celtium-work/acceptance/resize-headless.sh`): the fixture drives
+the transition headlessly with `-Dceltium.validation.resizeDuringMenu=true` and
+`resizeViaCompositor=true`, which runs `swaymsg output HEADLESS-1 mode WxH@60Hz`, and
+`compositor_capture.py` photographs the output throughout. Measured:
 
-**Second attempt, with the instance's jar refreshed to `4b913f91a9b3b032`:** `user-prism-verdict`
-(150 s) is in flight; it records the instance's mod hashes itself, so the row will name the jar the
-user's own launch actually loaded. The verdict leg is `user-prism-verdict`, not the harness legs.
+| evidence | value |
+|---|---|
+| `resizeCompositorResult` | `mode=1920x1080@60Hz exit=0 out=[ { "success": true } ]` |
+| `resizeReason` / `resizeRequestedAtTick` / `resizeMenuHeldTicks` | `menu` / 0 / 40 |
+| `resizeWindowFrom` → `resizeWindowTo` | `1280x720` → `1920x1080` |
+| `CELTIUM_RESIZE_OBSERVED` | `tick=0 from=1280x720 to=1920x1080` |
+| `CELTIUM_PRESENT` | `blitted 1280x720 onto image 0`, then **`blitted 1920x1080 onto image 1`** |
+| final report `swapchain` | `platform=x11 format=44 … size=1920x1080` |
+| capture coverage at 1920x1080 (`compositor-0040/0042`) | black fraction **0.0**, top edge `(150.3,187.6,255.0)` sky, bottom `(103.5,23.0,22.1)` ground, left/right content |
+| capture coverage at 1280x720 (`user-cfg-menu` `compositor-0154`) | black fraction 0.0222, top `(247.9,247.9,247.9)`, bottom `(45.7,…)`, left/right content |
+
+So the presented frame follows the window size and fills it at both sizes. One honest gap: in
+`resize-menu` the mode change fires at tick 0, before the menu has content, so the 1280x720 *content*
+evidence comes from the separate `user-cfg-menu` leg rather than from the same run; a leg with
+`resizeAtTick` in the world would give both sizes in one series, and that is not taken. The
+real-session path (`user-real.py`) was dropped in favour of this one - a window on the operator's
+desktop is the thing the user complained about - and its first attempt failed on an instrument bug
+(the Xwayland window has no class and is titled "Cleanroom"), which is recorded in §4 as an
+instrument fix.
+
+**The Prism-launcher path was dropped, not re-run.** A second `user-prism-verdict` leg was queued and
+then stopped, because the correction above makes the approach invalid rather than merely unlucky: a
+GUI launcher cannot be driven headlessly, so its captures can never be the game's window. The
+user-configuration row is taken through the harness with the user's instance, an explicit `--mod`, no
+fixture and no validation client, in its own capture directory.
 
 ### 6c. The task-22 harness legs: GL-less against the ref3 Celeritas references
 
@@ -621,6 +648,16 @@ comparison on the counter-reset jar. The **horizon band remains the largest sky-
 centre's ~2.7-3.1 % at mean <2 counts is the stable Celtium-vs-Celeritas terrain difference first
 measured in §6a. The inventory scene is the one that does not match: 48 % of the frame differs, and
 the sky band behind the GUI is 83.4 % different, while the hotbar strip is 0 px in all three scenes.
+
+**The inventory difference is same-variant, checked before it is called a defect.** The two reports'
+`sceneCalibrationKey` are identical - `… entities=none screen=jei+keep guiScale=3` - on the same
+fixture `acfb62b16ed70ac3`, the same pose and both `captureStartTick=200`, and both are
+`UNCALIBRATED_PRESENTED_IMAGE` because the stored reference key is `screen=none` (so neither can
+match by construction). The flags differ only in the candidate's Celtium-only properties
+(`vulkan.glless`, `vulkan.validation`, `vulkan.presentReadback`, `validation.dumpPresentedImage`),
+inert in a Celeritas leg, and in the reference's `validation.screenshotAtTick=60`, which writes an
+extra `celtium-at-tick-60.png` and does not change the tick-200 picture. So the 48 % is a GUI-stage
+difference, not a variant artefact, and it is routed to gui-stage with those numbers.
 
 ## 7. Instruments and artifacts
 
