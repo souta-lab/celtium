@@ -89,6 +89,38 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.133 **原典の正体を確定**: tree は既にパッチ済みで、真の差分は Cleanroom 自身の実行時パッチ（Kirino）
+
+「パッチ適用済みの deobf を既定にしろ」という指摘を受けて確定させた。
+
+### 1. Cleanroom の MC パッチ＝私たちが既に当てているパッチ集
+
+Cleanroom のリポジトリは `module/minecraft/patches/`（**539ファイル**、`.mappings.json` は `mcp:stable_39-1.12`）を持つ。
+**これは Forge のパッチ集そのもの**（Cleanroom は Forge fork）で、私たちの RFG ビルドが既に適用している。実測で確認:
+
+- `client/gui/FontRenderer.java.patch` は **逆適用（17/17 hunk が既に存在）**＝内容一致。
+- `RenderGlobal.java.patch` / `GuiIngame.java.patch` の**追加行が tree に逐語で存在**（行番号ずれで patch は失敗するが内容は同じ）。
+
+→ **MC 本体について1ファイルずつ「実行時と違うか」を確認する必要は無い**。tree はパッチ済み。
+`scripts/mc-sources.sh --cleanroom` がこの事実とパッチ集の場所を報告する。
+
+### 2. 真の差分: Cleanroom 自身の実行時パッチ（Kirino）
+
+`cleanroom-0.6.13-alpha.jar` 内の **Kirino**（Cleanroom の描画エンジン）が**難読化名で MC に注入**する:
+
+| クラス | 対象（notch→MCP） |
+|---|---|
+| `MinecraftCulling.collectEntitiesInView(vg, bxy, brx, float)` | `Entity`・`ICamera`・`ChunkProviderClient` |
+| `MinecraftEntityRendering` | vanilla の entity ループ再実装（`countEntitiesTotal/Rendered/Hidden` を持つ） |
+| `MinecraftTESRRendering.renderTESRs(vg, bxy, …, float, int)` | **TESR ループの置き換え** |
+
+**毎 run 有効**（`latest.log`: `kirino_engine`/`kirino_ecs`/`kirino_gl` が初期化）。
+
+**意味**: 「TESR の list は capture されていない」「glow の outline は in-frustum の光る entity が居るときだけ埋まる」は
+**vanilla のコードについての結論**であり、実行時は Kirino の culling/entity/TESR ループが動いている。
+`postChains=0`・`entityOutlineFramebuffer` が一度も bind されない件は **Kirino を読んでから**でないと説明にならない。
+notch→MCP は `scripts/mc-sources.sh --notch vg bxy brx`（`notch-mcp.srg`）。
+
 ## 0.132 **P1 修正: glyph の頂点アドレスが「書いた最後の1バイトの先」を指していた**
 
 監査（`CELTIUM_AUDIT_20261011_1058_URGENT_GLYPH_POINTER_CX`）の指摘を実測で確認し、`aa041c2d4` で修正した。
