@@ -25,6 +25,8 @@ import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkPhysicalDeviceIDProperties;
+import org.lwjgl.vulkan.KHRDriverProperties;
+import org.lwjgl.vulkan.VkPhysicalDeviceDriverProperties;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 import org.lwjgl.vulkan.VkPhysicalDeviceProperties;
 import org.lwjgl.vulkan.VkPhysicalDeviceProperties2;
@@ -111,6 +113,9 @@ public final class VulkanContext {
     private int queueFamilyIndex = -1;
     private String deviceName;
     private String deviceUuid;
+    /** The device's own Vulkan API version and type, kept for the driver/contract lines. */
+    private int deviceApiVersion;
+    private int deviceType = -1;
     private long commandPool = VK_NULL_HANDLE;
 
     /**
@@ -919,6 +924,8 @@ public final class VulkanContext {
                 org.soutalab.celtium.vulkan.VulkanDepthFormat.noteDevice(candidate);
                 this.deviceName = properties.properties().deviceNameString();
                 this.deviceUuid = uuid;
+                this.deviceApiVersion = apiVersion;
+                this.deviceType = properties.properties().deviceType();
                 break;
             }
             if (this.physicalDevice == null) {
@@ -1025,6 +1032,126 @@ public final class VulkanContext {
                 + " swapchain=" + extensions.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME) + "]"
                 + (this.skippedForInteropExtensions == null ? ""
                         : " skippedForInteropExtensions=[" + String.join(", ", this.skippedForInteropExtensions) + "]"));
+        reportDriverInfo(stack);
+    }
+
+    // ---- what is rendering right now: the real driver, from the device that renders (task-46) ----------------
+
+    /** The rendering device's own identity, queried once and named in one line. "unavailable" when it cannot be. */
+    private static volatile String driverLine = "unavailable";
+    private static volatile String driverName = "unavailable";
+    private static volatile String driverVersion = "unavailable";
+    private static volatile String deviceLine = "unavailable";
+
+    /**
+     * {@return the driver-info summary} - the values behind F3 and {@code GL_RENDERER}: device name, uuid, device
+     * type, Vulkan API version and the driver's own {@code driverName}/{@code driverID}/{@code driverInfo}/
+     * {@code driverVersion} from {@code VkPhysicalDeviceDriverProperties}, taken from the physical device this
+     * context actually created a logical device from.
+     * <p>
+     * This is deliberately not the GL bootstrap probe's {@code glRenderer}/{@code vulkanDevice}: that probe answers a
+     * different and earlier question (which GL identity exists and what may be shared with it by fd) and the plan
+     * records that its result must not be read as the live renderer's state. The authoritative line for "what renders
+     * now" is {@code CELTIUM_DRIVER_INFO} below, printed from the live context.
+     */
+    public static String driverSummary() {
+        return driverLine;
+    }
+
+    /** {@return the driver's own name} ({@code driverName}), or "unavailable". */
+    public static String driverName() {
+        return driverName;
+    }
+
+    /** {@return the rendering device and its API version}, or "unavailable". */
+    public static String deviceSummary() {
+        return deviceLine;
+    }
+
+    /**
+     * Queries {@code VkPhysicalDeviceDriverProperties} (core in Vulkan 1.2, which this context requires) and prints
+     * {@code CELTIUM_DRIVER_INFO}. A value the driver does not fill in is reported as "unavailable" - never as a stub
+     * string, because a driver string that is not the driver's own is worse than a missing one.
+     */
+    private void reportDriverInfo(MemoryStack stack) {
+        String name = "unavailable";
+        String info = "unavailable";
+        int id = -1;
+        long version = 0L;
+        try {
+            VkPhysicalDeviceDriverProperties driver =
+                    VkPhysicalDeviceDriverProperties.calloc(stack).sType$Default();
+            VkPhysicalDeviceProperties2 properties = VkPhysicalDeviceProperties2.calloc(stack).sType$Default()
+                    .pNext(driver.address());
+            vkGetPhysicalDeviceProperties2(this.physicalDevice, properties);
+            if (driver.driverNameString() != null && !driver.driverNameString().isEmpty()) {
+                name = driver.driverNameString();
+            }
+            if (driver.driverInfoString() != null && !driver.driverInfoString().isEmpty()) {
+                info = driver.driverInfoString();
+            }
+            id = driver.driverID();
+            version = Integer.toUnsignedLong(driver.driverVersion());
+        } catch (RuntimeException | LinkageError error) {
+            name = "unavailable (" + error.getClass().getSimpleName() + ")";
+        }
+        String versionText = decodeDriverVersion(id, version);
+        driverName = name;
+        driverVersion = versionText;
+        deviceLine = this.deviceName + " api=" + VK_VERSION_MAJOR(this.deviceApiVersion) + "."
+                + VK_VERSION_MINOR(this.deviceApiVersion) + " type=" + this.deviceType;
+        driverLine = "driverName=\"" + name + "\" driverID=" + id + "(" + driverIdName(id) + ")"
+                + " driverInfo=\"" + info + "\" driverVersion=" + version + "(" + versionText + ")"
+                + " device=\"" + this.deviceName + "\" uuid=" + this.deviceUuid
+                + " type=" + this.deviceType
+                + " apiVersion=" + VK_VERSION_MAJOR(this.deviceApiVersion) + "."
+                + VK_VERSION_MINOR(this.deviceApiVersion) + "."
+                + VK_VERSION_PATCH(this.deviceApiVersion);
+        System.out.println("[Celtium] CELTIUM_DRIVER_INFO " + driverLine);
+    }
+
+    /** {@return the {@code VkDriverId} as its name}, or the number when it is not one this build knows. */
+    private static String driverIdName(int id) {
+        switch (id) {
+            case KHRDriverProperties.VK_DRIVER_ID_AMD_PROPRIETARY_KHR: return "AMD_PROPRIETARY";
+            case KHRDriverProperties.VK_DRIVER_ID_AMD_OPEN_SOURCE_KHR: return "AMD_OPEN_SOURCE";
+            case KHRDriverProperties.VK_DRIVER_ID_MESA_RADV_KHR: return "MESA_RADV";
+            case KHRDriverProperties.VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR: return "NVIDIA_PROPRIETARY";
+            case KHRDriverProperties.VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS_KHR: return "INTEL_PROPRIETARY_WINDOWS";
+            case KHRDriverProperties.VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA_KHR: return "INTEL_OPEN_SOURCE_MESA";
+            case KHRDriverProperties.VK_DRIVER_ID_MESA_LLVMPIPE_KHR: return "MESA_LLVMPIPE";
+            case KHRDriverProperties.VK_DRIVER_ID_MESA_DOZEN_KHR: return "MESA_DOZEN";
+            case KHRDriverProperties.VK_DRIVER_ID_MESA_NVK_KHR: return "MESA_NVK";
+            default: return "unknown";
+        }
+    }
+
+    /**
+     * {@return {@code driverVersion} decoded the way its vendor encodes it} - the whole point of naming the ID first.
+     * <p>
+     * The raw number is meaningless without it: Mesa's drivers (RADV, ANV, llvmpipe) report their own version as
+     * {@code VK_MAKE_VERSION(major, minor, patch)}, while NVIDIA packs {@code (major << 22) | (minor << 14) |
+     * (subminor << 6) | patch} and AMD's proprietary driver packs its own layout. Anything else is reported raw with
+     * "encoding not decoded" rather than guessed at.
+     */
+    private static String decodeDriverVersion(int id, long version) {
+        if (id < 0) {
+            return "unavailable";
+        }
+        if (id == KHRDriverProperties.VK_DRIVER_ID_MESA_RADV_KHR
+                || id == KHRDriverProperties.VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA_KHR
+                || id == KHRDriverProperties.VK_DRIVER_ID_AMD_OPEN_SOURCE_KHR
+                || id == KHRDriverProperties.VK_DRIVER_ID_MESA_LLVMPIPE_KHR
+                || id == KHRDriverProperties.VK_DRIVER_ID_MESA_DOZEN_KHR
+                || id == KHRDriverProperties.VK_DRIVER_ID_MESA_NVK_KHR) {
+            return VK_VERSION_MAJOR((int) version) + "." + VK_VERSION_MINOR((int) version) + "."
+                    + VK_VERSION_PATCH((int) version) + " (mesa vk-version layout)";
+        }
+        if (id == KHRDriverProperties.VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR) {
+            return ((version >> 22) & 0x3FFL) + "." + ((version >> 14) & 0xFFL) + "."
+                    + ((version >> 6) & 0xFFL) + "." + (version & 0x3FL) + " (nvidia layout)";
+        }
+        return version + " (encoding not decoded for this driverID)";
     }
 
     /** Prints the device contract once the queue family is chosen, so the line can name it. */

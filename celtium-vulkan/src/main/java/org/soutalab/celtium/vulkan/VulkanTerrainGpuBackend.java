@@ -6056,6 +6056,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
                 // in every run, and "the counter is in a log line nobody read" is how a bound stays invisible.
                 + " immediateDescriptors=[" + VulkanImmediateTexturePipeline.descriptorPoolSummary() + "]"
+                // Task-46: the authoritative "what renders now" fields - the real driver, from the device that
+                // renders. The old GL bootstrap probe also has a glRenderer/vulkanDevice pair and those describe a
+                // different, earlier question (the GL identity and the interop contract); this is the live one.
+                + " driverInfo=[" + VulkanContext.driverSummary() + "]"
                 + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
                 + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
                 + " fences=" + VulkanContext.quarantinedResourceCounts()[1] + "]"
@@ -8229,6 +8233,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameTarget.recordReleaseBarriers(this.commandBuffer);
             submitCommands();
             submitted = true;
+            // The chain's effect on the picture, asked where it can still be attributed: one readback of the frame image
+            // immediately after this submission, before anything later in the frame can overwrite it, and one of the
+            // adopted chain pair when there is one. Off unless -Dceltium.vulkan.chainFrameDump=true.
+            celtium$dumpImagesAtChainTime();
             // The queue accepted this submission, so the first-use barriers of *this* recording are fact - and only
             // this recording's: the token names it, so any other submission's success (a terrain pass, the next
             // frame, a buffer that was reset or abandoned) cannot commit these targets. N05 item 1.
@@ -8695,6 +8703,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int textureCopiesRefused;
     /** How many served copies have printed their rectangle's statistics (bounded, for the picture question). */
     private int textureCopySamples;
+    /** How many chain-time image dumps have been written (bounded; see {@code celtium$dumpImagesAtChainTime}). */
+    private int chainFrameDumps;
     /**
      * The frame the served-copy set belongs to, and the destination rectangles already served in it.
      * <p>
@@ -8820,6 +8830,84 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.textureCopiesServedThisFrame.add(Long.valueOf(copyKey));
         this.textureCopiesServed++;
         return "served";
+    }
+
+    /**
+     * One-shot readback of the frame image and of the adopted chain pair immediately after the chain's submission.
+     * <p>
+     * The question it answers is where a post chain's effect goes: the passes demonstrably run ({@code postChains},
+     * {@code postPasses}, {@code postTargets}) and the presented picture still shows no blur, so either the frame image
+     * holds the chain's output at this point - and the loss is later, in the present or composite path - or it does not,
+     * and the passes' writes are not landing in the image the chain's output target claims. Both answers name the next
+     * owner. The readback is the same one the texture-copy path uses, of the whole image, and it is synchronous because
+     * it has to see this submission and nothing after it. Off unless
+     * {@code -Dceltium.vulkan.chainFrameDump=true}; the path comes from
+     * {@code -Dceltium.vulkan.chainFrameDumpPath} (default {@code /tmp/celtium-chain-frame.png}) and the count from
+     * {@code -Dceltium.vulkan.chainFrameDumps} (default 1).
+     */
+    private void celtium$dumpImagesAtChainTime() {
+        if (!Boolean.getBoolean("celtium.vulkan.chainFrameDump")) {
+            return;
+        }
+        if (this.chainFrameDumps >= Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue()) {
+            return;
+        }
+        this.chainFrameDumps++;
+        if (!waitForIdle()) {
+            record("chain frame dump skipped: the GPU did not confirm the chain submission");
+            return;
+        }
+        String base = System.getProperty("celtium.vulkan.chainFrameDumpPath", "/tmp/celtium-chain-frame.png");
+        if (this.frameTarget != null) {
+            celtium$dumpOwnedImage("frame", this.frameTarget.colorImage(), base);
+        }
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless != null && glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
+            celtium$dumpOwnedImage("chain-pair", glless.chainPairColorImage(), base);
+        }
+    }
+
+    /** Reads one owned image out and writes it, with its mean and opaque fraction on the line that names it. */
+    private void celtium$dumpOwnedImage(String stage, long image, String base) {
+        if (image == 0L || this.targetWidth <= 0 || this.targetHeight <= 0) {
+            return;
+        }
+        int[] pixels = celtium$readImageRectangle(image, 0, 0, this.targetWidth, this.targetHeight);
+        if (pixels == null) {
+            System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " readback=failed");
+            return;
+        }
+        long red = 0L;
+        long green = 0L;
+        long blue = 0L;
+        int opaque = 0;
+        for (int pixel : pixels) {
+            red += (pixel >> 16) & 0xFF;
+            green += (pixel >> 8) & 0xFF;
+            blue += pixel & 0xFF;
+            if (((pixel >>> 24) & 0xFF) >= 0x80) {
+                opaque++;
+            }
+        }
+        int count = Math.max(1, pixels.length);
+        java.nio.file.Path path = java.nio.file.Paths.get(stage.equals("frame") ? base
+                : base.replaceFirst("\\.png$", "") + "-" + stage + ".png");
+        boolean written = false;
+        try {
+            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(this.targetWidth, this.targetHeight,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            out.setRGB(0, 0, this.targetWidth, this.targetHeight, pixels, 0, this.targetWidth);
+            if (path.getParent() != null) {
+                java.nio.file.Files.createDirectories(path.getParent());
+            }
+            written = javax.imageio.ImageIO.write(out, "png", path.toFile());
+        } catch (java.io.IOException | RuntimeException | LinkageError error) {
+            record("chain frame dump write failed: " + describe(error));
+        }
+        System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " path=" + path
+                + " written=" + written + " " + this.targetWidth + "x" + this.targetHeight
+                + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
+                + " opaque=" + opaque + "/" + pixels.length + " frame=" + this.frameId);
     }
 
     /** {@return the image a copy's read framebuffer names, or 0 when this renderer does not own it}. */

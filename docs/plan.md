@@ -133,6 +133,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.188 **F3 の実機表示が動いた（Intel 1920x1080 menu）・splash の install 前倒し・B09 owned-buffer**
+
+- **Intel の 1920x1080 menu leg（task-40・sky-draws）**: `resizeCompositorResult mode=1920x1080@60Hz exit=0 success`・
+  `resizeObservedAtTick=0`・`menuDumpWindowSize=1920x1080`・`worldFrameBlackFraction=0.0`・`pictureFrameDelta_world=0`。
+  **`glRenderer = "Intel(R) UHD Graphics 630 (CFL GT2) via Celtium Vulkan"`**——weather-water の stub 経由の
+  実 device 表示が **Intel でも**出ることを実測（task-46 はさらに driver name/info/version を実値にする）。
+- **splash の install 前倒し（weather-water）**: `MinecraftMixin` が `createDisplay` RETURN と `runTick` HEAD の
+  2 injector で同じ latch を叩き、行に `stage=createDisplay|runTick` を出す。`startGame` は
+  `createDisplay`(505) → `beginMinecraftLoading`(514) → `SplashProgress.drawVanillaScreen`(517) → `Minecraft.drawSplashScreen`(959-1005)
+  → `updateDisplay()`（present hook と同じ `func_175601_h`）の順なので、splash の3 batch（背景 quad・logo quad・
+  `framebufferRender` composite）が **backend 不在で拒否されなくなる**。期待: その3件が `no terrain backend is installed`
+  から消えて decode される。`framebufferRender` の redirect は**採らない**（vanilla を特別扱いして owned-image 欠落を隠すため）。
+- **B09 owned-buffer 入口（weather-water）**: stub に `publishClientArrayBuffer`（thread-local・consume-once）＋
+  `ClientArrayBufferOwnershipMixin`（`WorldVertexBufferUploader.func_181679_a` 内の `func_187439_f` INVOKE で publish。
+  HEAD にしない理由: 同 mixin が HEAD で body を cancel するため、実際に描かない batch にも publish してしまう）。
+  census は `ownedBufferDecoded`/`pointerOnlyDecoded`/`ownedBufferMismatch` を追加（`clientMemoryDecoded` は総数のまま）。
+  `/proc` guard は**所有権でも寿命でもない**と明記し、非 Linux でも game 自身の buffer は decode できる形にした。
+
 ## 0.187 **実プレイ フィードバック（18:24 JST）の backlog 化と、ログ flood の修正（Lead）**
 
 ユーザーが自分の instance で実プレイし、**terrain/entity/空/雲が正常に描画される**ことを確認（これは前進として記録する。
