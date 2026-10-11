@@ -1,10 +1,15 @@
-# Celtium goal — 2026-10-12 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 13, phase active / activation armed / roundsStarted 25 / maxGoalRounds 256）
+# Celtium goal — 2026-10-12 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 16, phase active / activation armed / roundsStarted 27 / maxGoalRounds 256）
 
 goal ID: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`
 
-## 聖典・最優先の修正対象（2026-10-12 ユーザー指示・goal revision 13 へ反映済み）
+**persisted goal は目標のみを保持する**（ユーザー指示 2026-10-12: goal は俺が喋らないと変えられないので、目標だけにしろ）。
+goal revision 16 の objective は「完成目標 + 直近の必須修正3件 + 詳細はリポジトリの聖典に従う」の短い形で、
+**詳細な仕様・優先順・受入・作業規律・証拠の扱いはこのファイル・`docs/plan.md`・`AGENTS.md`・
+`docs/history/2026-10-11-code-bughunt.md` が聖典**である。以下はその詳細側（goal から移した canon）。
 
-**以下の3つが全部直るまで「戻らない」。報告・受入・修正を止めない。3件程度の修正で終えない。**
+## 聖典・最優先の修正対象（2026-10-12 ユーザー指示）
+
+**以下が全部直るまで「戻らない」。報告・受入・修正を止めない。3件程度の修正で終えない。**
 
 1. **`docs/history/2026-10-11-code-bughunt.md` の37件（BH-01〜BH-37）を全部閉じる。**
    担当割り当て・進捗・受入は `docs/plan.md` に置く。P1から順に、各件を
@@ -13,15 +18,20 @@ goal ID: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`
    参照比 mean|d| **1.86**・差 0.2%。未再現なら再現条件を特定し、再現したら修正する。
    font counter は `refused=0` を維持する。
 3. **エンティティとHUDが見えない問題。** HUD は受入済み（参照一致 1.86）。エンティティ/一人称の
-   手持ちは未解決で、実測は `acceptedByFormat` id4=28・id9=228 に対し `drawnByFormat` id4=0・id9=0、
-   `modelDraws=1485`・`modelDrawRefusals=0`、そして model group は `target=main identity`・
-   `mainBound=true`・`keptForOtherTargets=0`・`discarded=0` なのに描かれない。次は
-   「window flush 失敗時の全消し（`VulkanTerrainGpuBackend:4744-4756`, `windowFlushDroppedBatches`）」か
-   「`discardImmediateGroups`（`:6370+`）」のどちらが group を黙って消すかを特定し、
-   **group は必ず「描かれるか、落ちたと数えられるか」のどちらか**になる契約へ直す。
-   受入は entity band と一人称 hand が上流参照（`d12425eaaf184e79`・同一 scene/pose/tick）に一致し、
-   id4/id9 が drawn ヒストグラムで非0、`validationMessageCount=0`、HUD/terrain 不変。
-   leg は `keepEntities=true` と `captureEntities=true` の**両方**が必要。
+   手持ちは根因を**特定・修正済み**: `drawPendingImmediate` の push block が 208 byte なのに lit ITEM の
+   light-map 座標を offset 208/212 に書いていたため、light-map 座標を持つ group（＝model/item の batch）を
+   描くたびに `IndexOutOfBoundsException` が window flush から飛び、catch が即時キュー全体を clear していた
+   （修正前 `windowFlushFailures=64`・`windowFlushDroppedBatches=9680`・`drawnByFormat` id4=0/id9=0）。
+   修正後: `windowFlushFailures=0`・`immediateGroupsDrawn=5297`・**`drawnByFormat` id4=17940・id9=228**、
+   presented frame に**一人称の腕**が出る。**残り**: presented frame での entity band / hand の参照一致を閉じる。
+4. **font renderer の overhaul（Smooth Font 的実装・ユーザー提案）。** 原典確認の結果、1.12.2 の font は
+   **bitmap sheet**（`Minecraft.java:523` が `textures/font/ascii.png`、`FontRenderer.java:160-187` が alpha から
+   `charWidth` を算出、unicode は `font/glyph_sizes.bin`）で **TTF/OTF が assets に無い**。したがって
+   「4x 再ラスタライズ」は同じ bitmap の拡大、「自前 atlas」は glyph rasteriser ＋ metrics 再導出を伴う
+   新 subsystem で唯一「文字が悪くなる」方向に振れ得る。実現可能な滑らかさは **font mirror の sampler reach**
+   （filter は既に linear、task-26 の `SAMPLER_MAX_LOD=1` が sheet の mip を level 1 で止めている）で、
+   texture-mirror に着手中。subpixel 配置は game 側の parity break として較正 pair 付きで独立判断、
+   生成 atlas は metrics 込みの subsystem。**速度面は既に達成済み**（1 glyph 57.9 → 0.65 µs）。
 
 **注意**: この未較正 scene は boot 間の画素ノイズ床が **23.5%**（proj-channel 実測）なので、
 絵の主張は較正済み leg（key が一致する参照）でのみ行う。ノイズ床以下の差分を修正の証拠にしない。
