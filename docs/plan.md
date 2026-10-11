@@ -89,6 +89,36 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.137 **死んだ注入の全数掃引と、未解決の1点（terrain の入口）**
+
+§0.136 の掃引を続けた結果。
+
+### 死んでいる注入（確定）
+
+| 注入先 | 数 | 根拠 |
+|---|---|---|
+| `RenderGlobal.renderEntities` | 2 | 呼び出し元は `EntityRenderer.renderWorld` 1400/1466 行のみで、その `renderWorld` を Kirino が置き換え |
+| `EntityRenderer.renderWorldPass`（`func_175068_a`） | 2 | **Kirino のクラス群に `renderWorldPass` / `func_175068_a` の参照が0件**（jar 内 448 kirino クラスを走査） |
+
+→ `RenderGlobalMixin` の4注入はこの runtime では一度も走らない。**「動いているつもりで一度も走らないフック」**。
+
+### Kirino が `RenderGlobal` に実際に行う呼び出し（notch 名で確認）
+
+`KirinoClientCore` 内の `MINECRAFT.g.*` は4種類のみ:
+`renderSky(partialTicks, 2)`・`drawSelectionBox(...)`・4引数の雲系・2引数のもの。
+**`renderBlockLayer` 相当（BlockRenderLayer を取る呼び出し）は見つかっていない**。
+
+### 未解決（正直に）
+
+**私たちの terrain はこの runtime でどの入口から描かれているのか**が未確定。
+- 計測上は terrain は描かれている（`celtium/vulkan-check passes=1109 skipped=0 errors=0`、画にも床がある）。
+- しかし Kirino が `renderBlockLayer` を呼ぶ形跡が見つからない。
+- 可能性: (a) Kirino の `RENDER_OPAQUE` フェーズが Celeritas の経路を別名で叩いている、(b) 別の入口（`SimpleWorldRenderer` 経由）、(c) 私の走査が notch 名の取りこぼしをしている。
+
+**次の計測（安い）**: `RenderGlobalMixin.renderBlockLayer`（114行）に**呼び出し回数カウンタ**を1つ足し、レポートに載せる。
+0 なら入口が違うので実際の入口を特定する（Kirino の `RENDER_OPAQUE` 実装を読む）。1以上なら私たちの terrain 経路は生きており、
+死んでいるのは entity/TESR の2経路だけ、と確定する。**推測で埋めず、この1カウンタで決める。**
+
 ## 0.136 **金脈続き: Kirino は `EntityRenderer.renderWorld` ごと置き換えており、私たちの `renderEntities` 注入2つは死んでいる**
 
 `KirinoClientCore` をデコンパイルして判明した決定的な事実。
