@@ -108,6 +108,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
     private static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
     private static final int SEM_TEX_PARAM_IV_DSA = 57; // (texture,pname,values) -> the same, from an array
+    private static final int SEM_MULT_MATRIX = 58;     // (matrix) -> multiply the active matrix of the mirror
+    private static final int SEM_MATRIX_MODE = 59;     // (mode) -> which stack glMultMatrix* multiplies
     private static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
     private static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
     private static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
@@ -313,6 +315,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glTextureParameterfv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
         fn("glTextureParameterIiv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
         fn("glTextureParameterIuiv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
+        // Matrix multiplication that never goes through GlStateManager. Forge's item transform is the measured case:
+        // ForgeHooksClient.handleCameraTransforms -> multiplyCurrentGlMatrix -> GL11.glMultMatrix(matrixBuf)
+        // (ForgeHooksClient.java:425-455), so the item's 30/225-degree rotation reached the stub's no-op list while
+        // every GlStateManager-routed matrix call reached the mirror - the mirror kept the GUI ortho as the group's
+        // modelview and all six faces of a block projected onto one square (the user's flat slot icon). The same entry
+        // point is what the GLU perspective helper uses: org.lwjglx.util.glu.Project.gluPerspective calls
+        // GL11.glMultMatrixf at two sites (javap of lwjglxx-1.1.22), so this hook is also the projection channel's
+        // missing link - glMatrixMode is recorded here so the census says which stack the multiply landed on.
+        fn("glMultMatrixf", R_VOID, SEM_MULT_MATRIX, A_PTR);
+        fn("glMultMatrixd", R_VOID, SEM_MULT_MATRIX, A_PTR);
+        fn("glMatrixMode", R_VOID, SEM_MATRIX_MODE, A_INT);
         // Copy-from-framebuffer. The main menu's panorama is built with these: renderSkybox draws the six 256x256
         // cube faces into the window and copies each into the skybox texture, and the blur passes copy their own
         // targets. Registered rather than left in the no-op list so the request is named and counted: under GL-less
@@ -377,8 +390,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glShadeModel", "glFogf", "glFogfv", "glFogi", "glFogiv", "glTexEnvi", "glTexEnvf", "glTexEnviv",
                 "glTexEnvfv", "glTexGeni", "glTexGenf", "glTexGeniv", "glTexGenfv", "glAlphaFunc", "glNormal3f",
                 "glNormal3b", "glNormal3fv", "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glSecondaryColor3f",
-                "glTexCoord2f", "glMultiTexCoord2f", "glVertex3f", "glBegin", "glEnd", "glMatrixMode",
-                "glLoadIdentity", "glLoadMatrixf", "glLoadMatrixd", "glMultMatrixf", "glMultMatrixd", "glPushMatrix",
+                "glTexCoord2f", "glMultiTexCoord2f", "glVertex3f", "glBegin", "glEnd",
+                "glLoadIdentity", "glLoadMatrixf", "glLoadMatrixd", "glPushMatrix",
                 "glPopMatrix", "glOrtho", "glFrustum", "glTranslatef", "glTranslated", "glRotatef", "glRotated",
                 "glScalef", "glScaled", "glGenerateMipmap", "glSamplerParameteri",
                 "glSamplerParameterf", "glSamplerParameteriv", "glSamplerParameterIiv", "glSamplerParameterIuiv",

@@ -8235,8 +8235,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             submitted = true;
             // The chain's effect on the picture, asked where it can still be attributed: one readback of the frame image
             // immediately after this submission, before anything later in the frame can overwrite it, and one of the
-            // adopted chain pair when there is one. Off unless -Dceltium.vulkan.chainFrameDump=true.
-            celtium$dumpImagesAtChainTime();
+            // adopted chain pair when there is one. Off unless -Dceltium.vulkan.chainFrameDump=true. The passes go in
+            // with it: a run holds several chains, and a sharp frame image after a chain whose output target is not
+            // `main` is expected rather than evidence, so every dump line names the chain it took.
+            celtium$dumpImagesAtChainTime(passes);
             // The queue accepted this submission, so the first-use barriers of *this* recording are fact - and only
             // this recording's: the token names it, so any other submission's success (a terrain pass, the next
             // frame, a buffer that was reset or abandoned) cannot commit these targets. N05 item 1.

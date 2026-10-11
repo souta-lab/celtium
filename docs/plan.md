@@ -140,6 +140,33 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.194 **Intel 1920x1080 menu 受入・driver 情報の実値（両 vendor）・world-crash の一部は script 欠落の可能性**
+
+- **task-40 完了（sky-draws・Intel）**: 1920x1080 menu が窓を満たす（`resizeWindowFrom 1280x720 → 1920x1080`・
+  `resizeCompositorResult=mode=1920x1080@60Hz exit=0 success`・`glfwWindowSizeAtEnd=1920x1080`・kept dump は **1920x1080**・
+  black 9.59%・449色・nonBackground 0.9718。下帯 72.40% black は**panorama の暗い下三分の一**で footer 文字が枠内にある＝穴ではない。
+  同 leg の world dump は 1920x1080・**black 0.0000%**）。terrain は **PASSED**（`sceneCalibrationKeyMatches=true`・nonBg 0.761032）で
+  保存済み Intel 参照に対し **rows 0-120 と 0-200 が 0 px >8**（mean 0.733/0.453・max 4）・rows 200-260 21.75%（silhouette・AMD と同形）・
+  rows 260-720 **6 px**。**未検証**: 同 tree の Intel 参照 leg（slot 待ちで未起動）・Intel の遷移/panorama copy/glow/B05・
+  B04 の wait-failure・F3 文字列の end-to-end・1920x1080 以外の resize。
+- **Intel の `CELTIUM_DEVICE_CONTRACT`**: `deviceType=1 apiVersion=1.4 required=[api>=1.2, queue=graphics+transfer, VK_KHR_swapchain,
+  color=R8G8B8A8_UNORM depth=D32_SFLOAT samples=1] **fdInterop=false** enabledDeviceExtensions=[VK_KHR_swapchain]
+  limits=[maxPushConstantsSize=256 immediatePushBytes=208 maxImageDimension2D=16384] **advertised=[externalMemoryFd=true
+  externalSemaphoreFd=true swapchain=true]**`——B02 の第2 vendor（fd 拡張は advertise されているが要求も有効化もしていない）。
+- **task-46 実装・両 vendor 実測**: `VkPhysicalDeviceDriverProperties`＋`driverVersion` を**実描画 device**から取得し、
+  `CELTIUM_DRIVER_INFO`／`driverInfo=[…]` として出す。AMD `driverName="radv" driverID=3(MESA_RADV) driverInfo="Mesa 26.2.4-1"
+  driverVersion=109060100(26.2.4)`、Intel `driverName="Intel open-source Mesa driver" driverID=6 driverInfo="Mesa 26.2.4-1"`。
+  **「今描いているのは何か」の権威行は `CELTIUM_DRIVER_INFO`**（GL bootstrap probe の `glRenderer`/`vulkanDevice` は
+  以前の identity/interop の問いで、混同しない）。両 leg PASSED・VUID 0。
+- **ユーザーのセッションの切り分け**: 18:27 のログに **`Celtium stub GL` は0件**＝fallback ではなく**配線済みで device も取得済み**。
+  欠けていたのは**driver identity**（`CELTIUM_DRIVER_INFO` が無い＝何も `VkPhysicalDeviceDriverProperties` を問い合わせていなかった）。
+  → stub の `celtium$nativeRendererName()` を `driverSummary()` にし、device 不在時は **"unavailable"** にする（承認済み・
+  weather-water のファイルなので task-50 の編集と衝突させない）。
+- **process 発見（重要）**: `VK_LAYER_PATH` を渡し忘れた leg は device 作成に失敗し、その下流が
+  `World.getSkyColorBody:1608` ← `EntityRenderer.func_78466_h:1910` の NPE になる。**同じ形が `compcap-marker`・`p538-glless`・
+  `ww15-gl-terrain`・`ww16-pre-window` にある**——tree の退行ではなく**script の export 欠落**の可能性が高く、確認中。
+  （plan が「world-crash」として記録している一部は script 欠陥かもしれない。）
+
 ## 0.193 **設定画面の背景は修正・検証済み（ユーザー苦情の1つが閉じた）・poison pair が overlay の読み先を確定**
 
 - **texture-mirror（task-39 part 4）**: videoSettings の GUI frame を保存済み upstream 参照（`vs-pic-ref`・実 GL）と比較し、
