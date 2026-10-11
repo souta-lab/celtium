@@ -95,6 +95,47 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.150 **訂正: wedge の局在は計器バグだった／レポートのカメラは描かれたカメラではない**
+
+担当が §0.139 の局在を**計器で反証**した（これが本プロジェクトで繰り返し学んでいる基準）。
+
+### 1. 計器が誤った stride を読んでいた
+
+`reportGroupBounds` は頂点を `VulkanImmediatePipeline.VERTEX_BYTES`（**16バイト**）で読んでいたが、
+immediate group は呼び出し側の頂点をそのままコピーし**自分の stride を mesh layout に記録する**——POSITION_TEX は **20バイト**。
+したがって頂点1〜3は**他の頂点のテクスチャデータの内側**から読まれ、「月が画面を覆う `ndc x[-41.70..0.00]`」は**読みの artefact** だった。
+
+**group 自身の stride で再測定**（同一 scene・同一カメラ・同一フラグ）:
+
+```
+太陽 group: ndc ALL BEHIND (4/4)
+月 group:   ndc x[-0.89..0.89] y[-8.09..-2.08] z=1.00 behind=0
+```
+
+**両方とも不可視**＝vanilla がその pose で描く姿そのもの。
+
+### 2. 行列は vanilla のもの（行列単位で一致）
+
+group の modelview は `Rx(20°)·Ry(-90°)` に厳密一致。計器の `rot=` は**両方の回転が1回ずつ順序どおり**届いたことを示し、
+**非ゼロの celestial angle での第2の検査**でもゲームが渡した値（282.4°≡-77.6°）を符号・大きさとも復元。
+**欠落・二重適用・順序誤り・別スタックのいずれでもない** → `VulkanTerrainGpuBackend`/`VulkanGlState` に**変更の正当性は無い**。
+
+### 3. レポートのカメラ ≠ 描かれたカメラ（より広い問題）
+
+`allBlocks`/`lookDown` の上書きは `RenderTickEvent` の **END**（フレーム描画の後）で走り、`celtium$applyPose`（ClientTickEvent）が
+次の render 前に scene pose を再適用する。よって **レポートが pitch -14 と言っても renderer は +20 を描いている**
+（mirror と frame の両方で実測: 地面/空の境界が rows 240-276、-14 なら row 473）。
+→ **「pinned pose」の主張と pose で key された床は、どちらの意味かを明記する必要がある**。前担当の太陽/月の判定基準は
+実際に描かれた pose では**反転している**。
+
+### 4. 実際に画にあるもの（残る作業）
+
+**左上・右上の紺色の重なり多边形**＋**それ以前からある magenta の筋**。翼は **12:11 の jar** で出現し、
+その間の唯一の描画変更は**他担当の `glDrawArrays` 経路（sky dome・horizon plane・stars を format 7 で提出）**。
+**私たちの即時パスには fog が無い**——bridge では fog がそれらを空に見せている。担当へ「計測で帰属を確かめ、fog/state を見る」よう送付（revert は求めていない）。
+
+**結論: wedge は閉じていない。閉じたように見えたのは局在が誤っていたから**で、残る artefact は今まさに作られている別の経路のもの。
+
 ## 0.149 **sky 回転修正の中間状態（担当の計器が modelview を印字）**
 
 担当の診断 run を読んだ（報告を待たずに）:
