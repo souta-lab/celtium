@@ -1194,6 +1194,26 @@ public final class VulkanContext {
     private boolean drawIndirectFirstInstanceSupported;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
     private int maxDrawIndirectCount;
+
+    /** {@return whether the device was created with {@code multiDrawIndirect} enabled}. */
+    public boolean multiDrawIndirectEnabled() {
+        return this.multiDrawIndirectSupported;
+    }
+
+    /**
+     * {@return whether the device was created with {@code drawIndirectFirstInstance} enabled}.
+     * <p>
+     * The terrain indirect path keeps {@code firstInstance = 0} either way, so this is reported rather than required;
+     * it is what a path that wanted to instance across sections would need.
+     */
+    public boolean drawIndirectFirstInstanceEnabled() {
+        return this.drawIndirectFirstInstanceSupported;
+    }
+
+    /** {@return the device's {@code maxDrawIndirectCount}}; 0 means the limit was never read (OPT-09's clamp). */
+    public int maxDrawIndirectCount() {
+        return this.maxDrawIndirectCount;
+    }
     /** The frame target's colour format and sample count: two of the native contract's fixed terms. */
     private static final String COLOR_FORMAT_NAME = "R8G8B8A8_UNORM";
     private static final int REQUIRED_SAMPLES = 1;

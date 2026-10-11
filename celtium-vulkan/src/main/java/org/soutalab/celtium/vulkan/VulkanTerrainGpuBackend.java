@@ -2642,8 +2642,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.lastTerrainIndirectFallback = "the device was not created with multiDrawIndirect";
             return false;
         }
-        int maxDraws = this.context.maxDrawIndirectCount();
-        if (maxDraws <= 0) {
+        // Unsigned, because the limit is a uint32: RADV reports 0xFFFFFFFF ("no small bound"), which reads as -1 as a
+        // signed int and is not a negative draw count. Only a true 0 means "not reported", and then the direct path is
+        // the honest answer.
+        long maxDraws = this.context.maxDrawIndirectCount() & 0xFFFFFFFFL;
+        if (maxDraws == 0L) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "maxDrawIndirectCount is unknown (0)";
             return false;
@@ -2691,7 +2694,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long address = MemoryUtil.memAddress(packets);
         int first = 0;
         while (first < size) {
-            int count = Math.min(maxDraws, size - first);
+            int count = (int) Math.min(maxDraws, (long) (size - first));
             if (count != size - first) {
                 this.terrainIndirectClampEvents++;
             }
