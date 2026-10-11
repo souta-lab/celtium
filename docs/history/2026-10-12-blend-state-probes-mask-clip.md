@@ -80,3 +80,39 @@ probe の GL box は緑 `(0,276,639,84)`・黄 `(639,189,642,87)`。backend は
   Celeritas 自身の `VintageDrawContext` だけ）。したがって clip の検証は probe で行った。
 - probe 脚は `FAILED_PRESENTED_IMAGE`（`validationClean=true`・`validationMessageCount=0`）。
   **gate は正しい**: probe が terrain scene の較正参照に無い矩形を描くのだから、その scene の絵ではない。
+
+
+## 7. 追補（同じ日の第2ラウンド）
+
+### 7.1 雲 scene が BH-10 を示せない理由（名指し）
+
+- **depth-only pass は frame に居る**: `CELTIUM_GROUP_BOUNDS` の group 行が
+  `fmt=2 worldPass=true batches=1 vertices=5104 state=[blend=1 src=6 dst=7 srcA=1 dstA=0 **mask=0x0** …]`
+  ＝ Fancy 雲の depth-only pass（毎フレーム1 group、format 2、world pass）。`colorMaskHistogram` の
+  0x0 スロットはこの group である（`drawnByFormat[8]=0` なので format 8 ではない）。
+- **scene の床が flag の効果より大きい**: 同一 jar・同一旗の2走（bs32 vs bs33、jar `edccbb6d`）で
+  rows 60-140 は raw 73.5 %、**一様項（+7.6,+10.0,+14.3）を引いても 40.5 %**。
+  同じ jar の control vs fixed（bs31 vs bs32）は raw 20.5 %、**一様項を引くと 2.2 %**。
+  つまり flag の構造的な差は scene のばらつきの **1/18**。
+- **ばらつきの正体**: sky の明るさは **capture が tick 200 のどのフレームで起きたか**に追従する。
+  6 脚（雲あり・pitch -30）で `captureWorldFrames` と sky 平均の相関は **r = 0.945**
+  （frames 87 → 133.4、frames 172 → 144.6）。fixture は tick を固定するがフレーム位相は固定しないので、
+  partial tick が走ごとに違い、sky gradient / sun brightness が帯全体を ~+10/255 動かす。
+  雲は動いていない（最良整数アラインメントは (0,0)、dy=0）。
+- 参考: `clouds.png` は alpha==255 が 20.4 %、0<alpha<255 が 79.6 % なので、depth-only pass の色書きが
+  原理的に見えないわけではない。**見えないのは scene のノイズが 18 倍大きいから**である。
+
+### 7.2 light-params boundary は lit のみに絞った（測定つき）
+
+`celtium$lightParams` は lighting enable が off の group に `null` を返し、payload は push block に
+書かれない。したがって「light 値が動いた」だけで group を閉じるのは、unlit group では**意味のない分割**だった。
+実測（lit 条件を入れる前 / 後、同一 scene・同一 fixture）:
+
+| 脚 | `lightParamBoundarySplits` |
+|---|---|
+| terrain (bs34 → bs37) | 416 → **17** |
+| videoSettings (bs35 → bs38) | 425 → **2** |
+
+両脚とも `validationClean=true`・`validationMessageCount=0`。条件は最適化ではなく定義そのもの
+（payload を持たない group は light 値の影響を受けない）。残る 2-17 が boundary が守っている実例で、
+crop で示すには「lit の即時描画を fixture が持たない」ため合成 probe が要る（現状の probe quad は unlit）。
