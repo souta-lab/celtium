@@ -1,9 +1,19 @@
-# Celtium goal — 2026-10-11 更新（revision 66, phase active / activation armed（本文はこのセッションの撤回を反映済み・§0.148））
+# Celtium goal — 2026-10-11 更新（live revision 75, phase active / activation armed（本文はこのセッションの撤回を反映済み・§0.148））
 
 goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
 
 このファイルは goal の objective と同期する。status・優先順・受入の現状表は `docs/plan.md`（単一の管理場所）、
 証拠と経緯は `docs/history/`、監査起点は `docs/audit-2026-10-09-third.md` と `docs/history/2026-10-11-full-audit-0903.md`。
+
+**現状（plan.md §0.175〜§0.177 が最新）**: GL context なしで通常起動のメインメニューが
+**compositor 出力から撮れる**ところまで到達（`.celtium-work/ww-menu-caps/compositor-0018.png`）。
+ユーザー自身の起動が真っ白だった真因は **instance に `org.lwjgl.vulkan` が無いこと**で、instance へ
+`org.lwjgl:lwjgl-vulkan:3.4.1` を追加して解消（instance のライブラリだけで renderer が作られることを実測）。
+メニューの「ズレ」は `ensureSwapchain` の extent 検査が world frame 境界の `frameId` に gate されていたためで、
+present ごとの検査へ修正。frame identity ゲートは presented カウンタの world 採用時リセットで閉じた
+（`pictureFrameDelta_world=0`・GL-less 受入 leg が PASSED）。未了は panorama 背景（`glCopyTexSubImage2D` の mirror）、
+地平線帯（build 状態差・mip 内容）、block 破壊 overlay、group drop、雲、可視 glow、監査 B01〜B12 の残り、
+mod cohort、Intel の残り場面。
 
 ## 維持する仕様（不変）
 - Cleanroom 専用。通常 Forge（旧 Java/LWJGL2）や他 Forge+lwjgl3ify/RFB 構成の起動互換は提供対象外。

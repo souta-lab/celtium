@@ -125,6 +125,52 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.177 **ユーザーの「真っ白な窓」の真因＝instance に lwjgl-vulkan が無い／ズレの修正／監査タスクの起動**
+
+### ユーザー構成で何が起きていたか（確定）
+
+**ユーザーの Prism instance の `patches/org.lwjgl3.json` は `org.lwjgl.vulkan` を1つも持っていない**
+（lwjgl / glfw / opengl / stb / tinyfd / jemalloc / openal のみ）。だから **`createForWindow` が
+`NoClassDefFoundError: org/lwjgl/vulkan/VkDebugUtilsMessengerCallbackEXTI` で落ち、renderer が作られず、
+窓は真っ白のまま音楽だけ鳴る**——これが「ロード画面もメニュー画面もない」の正体。
+**harness は `--library lwjgl-vulkan-3.4.1.jar` を足していたので再現しなかった**（＝harness と実起動の差）。
+**私が追加した cause chain 表示**（`CELTIUM_WINDOW_RENDERER failed: … <- NoClassDefFoundError <- ClassNotFoundException`）が
+これを名指しした。instance へ `org.lwjgl:lwjgl-vulkan:3.4.1` を追加（実 SHA-1 `d0601fdc38890755e5638048c14cc0f7b990964b`）。
+**注意**: 追加時に私が仮の SHA-1 を書いたため harness が ~7分 全 run を拒否した（`Library does not match the profile SHA-1`）。
+実 SHA-1 へ修正済みで `Locked 101 library jars and 3 mods`。**配布条件として「lwjgl-vulkan が必要」を docs に書く必要がある**。
+
+### メニューの「ズレ」（ユーザー報告）と修正
+
+`ensureSwapchain` の surface extent 検査が **`frameId` gate**（world frame 境界でしか進まない）だったため、
+**menu 中の resize で swapchain が最初の present のサイズのまま**残り、左下アンカー・無スケールの blit が
+frame の左下だけを出していた。**present ごとに検査**する形へ修正（jar `8f3b34b6`→以降）。
+weather-water が viewport/clip 修正入り jar `5da2e2b6` の **headless menu capture** で
+**メニューが窓を満たす**（ロゴ中央・footer 左下・切れ無し）ことを確認（`.celtium-work/ww-menu-run4-caps/compositor-0008.png`
+sha256 `f3c476d0e66ad1c9…`）。**panorama 背景はまだ灰色**——`GuiMainMenu` が 6面を描いて `glCopyTexSubImage2D` で
+コピーする経路が stub に mirror 無し（次の段）。
+
+### その他の確定（この時間帯）
+
+- **frame identity ゲートは閉じた**: presented カウンタを world 採用時にリセット → **`pictureFrameDelta_world=0`**（`ww12-gl-terrain`・PASSED）。
+  acceptance の `cand3-terrain` も **PASSED**（distinct 2054・nonBg 0.759463・sky band 0/153600 差）。
+  **world-switch の −37 は fixture の scope 問題**として task-28 が修正中。
+- **音**: harness の全 run で `ALSOFT_DRIVERS=null`（従来は `--headless` のみ）。ユーザーが「音楽だけ鳴ってうるさい」と報告したため。
+- **task-14（pipelines）**: 受理・close・rasterize 済みの group は **draw call まで到達している**
+  （`acceptedByFormat[10]=62 / drawnByFormat[10]=62`・`site=immediate-only-window`・`passOpen=true`）。
+  queue drop 系の計器（`keptForOtherTargets`/`deferredNextFrame`/`refusedWindowBudget`）は**増加siteが存在しない**。
+  深さ拒否の実験（`positionNormalDepthTest=false`）で「depth で落ちている」か「image に届いていない」かを分離中。
+- **task-16（fog-path）**: 帯の残差は culling ではなく **build 状態の差**（同一 tick で我々 34 sections／参照 483 world frames で 41 sections・
+  23 MiB vs 29 MiB）。**距離を広げない**。→ **task-33**: 既定は `tick` のまま、`captureCondition=built` を opt-in にして
+  **同じ build 状態で比較**する（stored 参照を壊さないため）。
+- **task-21（entity-models）完了**: per-family 0.97〜1.04・sky は sky-only 列で **0/256,000**（scene 内の mob 頭で 488/256,000、全て x 461..662）。
+  hurt flash は **検出も不能**（stub が `glGetTexEnvi`/`glGetTexEnvfv` を登録せず 0 を返す＋lit ITEM fragment に INTERPOLATE 分岐が無い）→
+  stub は weather-water・shader は task-29。lightmap は fixture 制約で未行使 → **task-35**。
+  spider 赤目は task-27 で修正済み（`blend=1(1,1)`）。
+- **task-23（sky-draws）完了**: Intel で entity/inventory/videoSettings の3場面とも描画を確認（entity 0.75% over 8・
+  inventory hotbar 0.00%・videoSettings mean 0.978）。**Intel の未受入**: gate-accepted  verdict・dump identity（旧 jar の +20 は reset 前）・
+  videoSettings の床が vendor 移植でない（**Intel の upstream 参照自体が床を満たさない**: bands 229<250・black 0.068>0.05・
+  panel 125<4000）→ 較正の見直し候補。
+
 ## 0.176 **ユーザー監査（15:54）のB01〜B12をownerへ割当て、通常起動のズレを修正**
 
 **監査**: `docs/history/2026-10-11-full-audit-1554.md`（証拠は `.celtium-work/audits/2026-10-11-1554/`・**公開gitへは入れない**）。
