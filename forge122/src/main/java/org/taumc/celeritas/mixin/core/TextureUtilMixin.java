@@ -24,6 +24,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public class TextureUtilMixin {
 
     private static int celtium$hooked;
+    /** Bounded caller census for the int[] upload path; see the injection below. */
+    private static int celtium$uploadCallerLogs;
     private static int celtium$firstUploads;
     private static int celtium$repeats;
     private static final java.util.Set<Integer> celtium$seen = new java.util.HashSet<Integer>();
@@ -71,6 +73,22 @@ public class TextureUtilMixin {
     private static void celtium$announceUploadedPixels(int glTextureId, int[] data, int width, int height,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         try {
+            // BH-36/panorama: a bounded caller census for the int[] path, because "the game uploaded white" and "our
+            // path filled white" are the same mirror line otherwise. id 8 and 20 both report
+            // source=announced-int[] content=opaque=65536/65536 firstOpaque=0xffffffff with announced=0.
+            if (celtium$uploadCallerLogs < 16) {
+                celtium$uploadCallerLogs++;
+                StackTraceElement[] frames = Thread.currentThread().getStackTrace();
+                StringBuilder caller = new StringBuilder();
+                for (int i = 2; i < Math.min(frames.length, 7); i++) {
+                    caller.append(frames[i].getClassName().replaceAll(".*\\.", "")).append('.')
+                            .append(frames[i].getMethodName()).append(':').append(frames[i].getLineNumber())
+                            .append(" <- ");
+                }
+                int first = data != null && data.length > 0 ? data[0] : 0;
+                System.out.println("[Celtium] CELTIUM_UPLOAD_CALLER id=" + glTextureId + " " + width + "x" + height
+                        + " first=0x" + Integer.toHexString(first) + " callers=[" + caller + "]");
+            }
             // A full upload allocates this id's content from scratch, which is what a resource reload, a re-stitch or a
             // reused id all look like from here. The size goes along so a same-size write is treated as the content
             // update it is - a DynamicTexture refresh - rather than a new identity, which is what keeps the light map's
@@ -134,6 +152,12 @@ public class TextureUtilMixin {
                 // built from it rather than from a readback of what GL received.
                 backend.announceTextureUpload(glTextureId, image);
                 backend.invalidateTexture(glTextureId);
+            } else {
+                // The menu's panorama PNGs load before the backend exists, and this guard used to drop their
+                // announcements silently: measured, announceImage never fired for the panorama's ids while
+                // forgetTexture did, so the reused name kept the splash logo's white fill and the panorama sampled
+                // white. Kept until a backend installs, which replays it.
+                TerrainGpuBackends.notePendingTextureUpload(glTextureId, image);
             }
         } catch (Throwable ignored) {
             // A bookkeeping hint must never break a texture upload: if anything goes wrong the mirror simply keeps
