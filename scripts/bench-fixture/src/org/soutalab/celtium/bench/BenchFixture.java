@@ -504,19 +504,23 @@ public final class BenchFixture {
         if (server == null || mc.player == null) {
             return "no integrated server";
         }
-        final java.util.UUID playerId = mc.player.getUniqueID();
         final int tick = worldTicks;
         try {
             server.addScheduledTask(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        net.minecraft.entity.player.EntityPlayerMP player =
-                                server.getPlayerList().getPlayerByUUID(playerId);
-                        if (player == null) {
-                            poseResult = "no server player for " + playerId;
+                        // The singleplayer player list, not a UUID lookup: `EntityPlayerSP.getUniqueID()` is
+                        // inherited from Entity, and the derived MCP->SRG mapping does not rewrite the call site
+                        // (javac emits the static receiver type), so it survives as an unmapped name and throws
+                        // NoSuchMethodError at runtime. Every member used here is one the mapping rewrote.
+                        java.util.List<net.minecraft.entity.player.EntityPlayerMP> players =
+                                server.getServer().getPlayerList().getPlayers();
+                        if (players.isEmpty()) {
+                            poseResult = "server player list is empty";
                             return;
                         }
+                        net.minecraft.entity.player.EntityPlayerMP player = players.get(0);
                         player.capabilities.allowFlying = true;
                         player.capabilities.isFlying = true;
                         player.sendPlayerAbilities();

@@ -81,6 +81,12 @@ LWJGL_JARS = [
     LIBS / "org/lwjgl/lwjgl-opengl/3.4.1/lwjgl-opengl-3.4.1.jar",
     LIBS / "org/lwjgl/lwjgl/3.4.1-unsafe/lwjgl-3.4.1-unsafe.jar",
 ]
+# `IntegratedServer.addScheduledTask` is declared to return a Guava `ListenableFuture`, so the type has to
+# be resolvable to compile against it even though the call's result is ignored. The game ships Guava at
+# runtime; this is the same jar for the compiler only.
+COMPILE_ONLY_JARS = [
+    LIBS / "com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar",
+]
 
 CELTIUM_JAR = ROOT / "forge122/build/libs/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar"
 BASELINE_JAR = (ROOT / ".celtium-work/upstream-baseline/forge122/build/libs/"
@@ -342,7 +348,7 @@ def compile_fixture(java, javac):
     sources = sorted(FIXTURE_SRC.rglob("*.java"))
     if not sources:
         raise SystemExit("no benchmark fixture sources under %s" % FIXTURE_SRC)
-    for jar in [MCP_JAR] + LWJGL_JARS:
+    for jar in [MCP_JAR] + LWJGL_JARS + COMPILE_ONLY_JARS:
         if not jar.is_file():
             raise SystemExit(
                 "the compile classpath is missing %s\n"
@@ -357,7 +363,7 @@ def compile_fixture(java, javac):
     if classes.exists():
         shutil.rmtree(classes)
     classes.mkdir(parents=True)
-    classpath = os.pathsep.join(str(jar) for jar in [MCP_JAR] + LWJGL_JARS)
+    classpath = os.pathsep.join(str(jar) for jar in [MCP_JAR] + LWJGL_JARS + COMPILE_ONLY_JARS)
     command = [str(javac), "-nowarn", "-cp", classpath, "-d", str(classes)] + [str(p) for p in sources]
     print("compiling the benchmark fixture against the mapped Minecraft/Forge jar")
     result = subprocess.run(command, capture_output=True, text=True)
@@ -401,6 +407,11 @@ def compile_fixture(java, javac):
         encoding="utf-8")
     subprocess.run([build_jar, "--create", "--file", str(jar_path), "--manifest", str(manifest),
                     "-C", str(classes), "."], check=True, capture_output=True)
+    kept = sorted({name for entry in remap_report.values() for name in entry["leftWithTheirOwnName"]})
+    if kept:
+        # A Minecraft member the mapping leaves alone is a runtime NoSuchMethodError waiting to happen,
+        # so the names are printed rather than counted.
+        print("fixture members left with their own name: %s" % ", ".join(kept))
     print("fixture jar: %s (%d bytes, sha256 %s, %d members remapped MCP->SRG)"
           % (jar_path, jar_path.stat().st_size, digest(jar_path)[:16],
              sum(len(entry["renamed"]) for entry in remap_report.values())))
@@ -409,6 +420,7 @@ def compile_fixture(java, javac):
                       "mappedMinecraftSha256": digest(MCP_JAR),
                       "srgMinecraft": str(SRG_JAR), "srgMinecraftSha256": digest(SRG_JAR),
                       "remappedMembers": sum(len(entry["renamed"]) for entry in remap_report.values()),
+                      "leftWithTheirOwnName": kept,
                       "mappingClasses": mapping["classCount"],
                       "sources": [str(p) for p in sources]}
 
@@ -813,6 +825,46 @@ def run_configuration(config_key, run_ordinal, args, bench_jar, out_root, pinned
     return record
 
 
+def cap_verdict(record):
+    """Is a run's frame interval a render cost, or a floor imposed outside the renderer?
+
+    A frame time that sits on the 60 Hz presentation interval with a nearly constant distribution is not
+    a measure of how long the renderer takes; a frame time well below that interval is. The distinction
+    is the difference between a result and an artefact, so it is computed from the samples rather than
+    left to the reader.
+    """
+    stats = record.get("frameStatistics") or {}
+    fixture = record.get("fixture") or {}
+    p50 = stats.get("p50Ms")
+    p95 = stats.get("p95Ms")
+    vsync_ms = 1000.0 / 60.0  # the headless compositor's output is 1280x720@60Hz
+    cap_fps = fixture.get("framelimitAtEnd") or fixture.get("framelimitAtStart")
+    cap_ms = (1000.0 / cap_fps) if cap_fps else None
+    if not p50:
+        return {"verdict": "no samples", "p50Ms": p50, "p95Ms": p95, "spreadMs": None,
+                "presentationIntervalMs": vsync_ms, "frameCapMs": cap_ms,
+                "detail": "the run produced no measured frames"}
+    spread = (p95 - p50) if p95 is not None else None
+    on_interval = abs(p50 - vsync_ms) <= vsync_ms * 0.06
+    tight = spread is not None and spread <= 1.5
+    if on_interval and tight:
+        verdict = "presentation-floor"
+        detail = ("p50 %.3f ms is within 6%% of the 16.667 ms 60 Hz interval and p95-p50 is only %.2f ms, "
+                  "so this frame interval is a floor imposed outside the renderer (swap, compositor or "
+                  "limiter), not a render cost" % (p50, spread))
+    elif p50 < vsync_ms * 0.94:
+        verdict = "render-cost"
+        detail = ("p50 %.3f ms is %.0f%% below the 16.667 ms 60 Hz interval, so the frame time is the "
+                  "render cost rather than a floor" % (p50, 100.0 * (1.0 - p50 / vsync_ms)))
+    else:
+        verdict = "inconclusive"
+        detail = ("p50 %.3f ms is near the 16.667 ms 60 Hz interval but the distribution is not tight "
+                  "(p95-p50 = %s ms), so it is neither a clean floor nor a clean cost"
+                  % (p50, ("%.2f" % spread) if spread is not None else "n/a"))
+    return {"verdict": verdict, "p50Ms": p50, "p95Ms": p95, "spreadMs": spread,
+            "presentationIntervalMs": vsync_ms, "frameCapMs": cap_ms, "detail": detail}
+
+
 def describe_caps(record, args):
     """Whether the frame cap, the vsync flag and the compositor could have bound this run."""
     fixture = record.get("fixture") or {}
@@ -841,6 +893,7 @@ def describe_caps(record, args):
         "vsyncAppliedHow": fixture.get("vsyncAppliedHow"),
         "compositorRefreshHz": 60,
         "note": "; ".join(note) if note else "no measured frames, so no cap verdict",
+        "verdict": cap_verdict(record),
     }
 
 
@@ -1115,6 +1168,12 @@ def controls_audit(runs, args):
 
 # --------------------------------------------------------------------------- markdown
 
+def shorten(text, limit=180):
+    """One debug string per row is a table cell, not a data dump: the full text is in the run's own log."""
+    text = str(text)
+    return text if len(text) <= limit else text[:limit] + "... [%d chars total]" % len(text)
+
+
 def fmt(value, digits=2, suffix=""):
     if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
         return "n/a"
@@ -1133,6 +1192,9 @@ def render_markdown(results, args):
     add("")
     add("Generated by `scripts/benchmark_celtium.py` (this file is regenerated; the interpretation lives "
         "in the hand-written document beside it). No claim of a speed-up is made by this file.")
+    if results.get("mergeWarning"):
+        add("")
+        add("> **Merged document:** " + results["mergeWarning"])
     add("")
     add("## Host and build")
     add("")
@@ -1258,13 +1320,12 @@ def render_markdown(results, args):
                "queue": "%s/%s/%s" % (row.get("queueStart"), row.get("queueEnd"), row.get("queueMax")),
                "status": row["status"], "terrain": row["terrainBackend"] or "n/a"})
     add("")
-    add("Frame-cap context per run:")
+    add("Frame-cap / presentation-floor verdict per run:")
     add("")
     for run in measured:
-        caps = run.get("achievedFpsVersusCaps")
-        if not caps:
-            continue
-        add("- run %s `%s`: %s" % (run.get("ordinal"), run["config"], caps["note"]))
+        verdict = cap_verdict(run)
+        add("- run %s `%s`: **%s** - %s" % (run.get("ordinal"), run["config"], verdict["verdict"],
+                                            verdict["detail"]))
     add("")
 
     add("## Selected GPU (from the renderer's own line)")
@@ -1428,7 +1489,8 @@ def render_markdown(results, args):
         add("| %s | `%s` | %s/%s | %s/%s | %s | %s |"
             % (run.get("ordinal"), run["config"], memory.get("geometryUsedMib"),
                memory.get("geometryAllocatedMib"), memory.get("indexUsedMib"),
-               memory.get("indexAllocatedMib"), memory.get("buffers"), transfer or "n/a"))
+               memory.get("indexAllocatedMib"), memory.get("buffers"),
+               shorten(transfer) if transfer else "n/a"))
     add("")
 
     add("## Deltas")
@@ -1505,6 +1567,14 @@ def main():
     parser.add_argument("--out", type=Path, help="results JSON (default .celtium-work/bench/results-<stamp>.json)")
     parser.add_argument("--markdown", type=Path, help="generated evidence markdown path")
     parser.add_argument("--only", help="run only this configuration key (still respects the idle gate)")
+    parser.add_argument("--from-results", type=Path,
+                        help="re-render the evidence markdown from an existing results JSON instead of "
+                             "running anything")
+    parser.add_argument("--merge-out", type=Path, help="where a --merge-results document is written")
+    parser.add_argument("--merge-results",
+                        help="comma-separated results JSONs to combine into one evidence document; the "
+                             "runs keep their own jar hashes and window loads, the deltas and the load "
+                             "gate are recomputed over the union")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--extra-jvm-arg", action="append", default=[])
     args = parser.parse_args()
@@ -1525,6 +1595,76 @@ def main():
         args.camera_pose = [float(part) for part in camera]
     except ValueError:
         parser.error("--camera values must be numbers")
+
+    if args.merge_results:
+        sources = [Path(part.strip()) for part in args.merge_results.split(",") if part.strip()]
+        merged_runs = []
+        reference_method = None
+        hashes_by_config = {}
+        for source in sources:
+            document = json.loads(source.read_text())
+            for key, cfg in (document["method"].get("configurations") or {}).items():
+                hashes_by_config.setdefault(key, {})[cfg.get("jarSha256")] = source.name
+            if reference_method is None:
+                reference_method = document["method"]
+                merged_host = document["host"]
+                merged_fixture = document["fixtureBuild"]
+            for run in document["runs"]:
+                run = dict(run)
+                run["sourceStamp"] = document.get("stamp")
+                run["sourceResults"] = str(source)
+                merged_runs.append(run)
+        for index, run in enumerate(merged_runs, start=1):
+            run["sourceOrdinal"] = run.get("ordinal")
+            run["ordinal"] = index
+        mixed = {key: sorted(hashes) for key, hashes in hashes_by_config.items() if len(hashes) > 1}
+        merge_warning = None
+        if mixed:
+            merge_warning = ("these configurations were measured with more than one jar in this merged "
+                             "document, so their rows are not a single-build comparison: "
+                             + "; ".join("%s = %s" % (key, ", ".join(hashes))
+                                         for key, hashes in sorted(mixed.items())))
+            print("WARNING: " + merge_warning)
+        context = load_context(merged_runs, args)
+        deltas, baseline_key, delta_error = pair_deltas(merged_runs, args)
+        audit = controls_audit(merged_runs, args)
+        merged = {
+            "schemaVersion": 2,
+            "scope": "merged evidence from " + ", ".join(str(source) for source in sources),
+            "stamp": "merged-%s-of-%d-documents" % (time.strftime("%Y%m%d-%H%M%S"), len(sources)),
+            "host": merged_host,
+            "method": reference_method,
+            "fixtureBuild": merged_fixture,
+            "launcher": json.loads(sources[0].read_text()).get("launcher"),
+            "runs": merged_runs,
+            "table": comparison_rows(merged_runs),
+            "deltas": {"baseline": baseline_key, "rows": deltas, "error": delta_error,
+                       "loadBalanced": context.get("balanced"), "loadReason": context.get("reason")},
+            "controls": {"audit": audit, "load": context},
+            "limits": json.loads(sources[0].read_text()).get("limits", []),
+            "mergeWarning": merge_warning,
+        }
+        out_json = args.merge_out or (WORK / ("results-merged-%s.json" % time.strftime("%Y%m%d-%H%M%S")))
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+        out_json.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+        markdown_path = args.markdown or (ROOT / "docs" / ("performance-%s-evidence.md"
+                                                           % time.strftime("%Y-%m-%d")))
+        markdown_path.parent.mkdir(parents=True, exist_ok=True)
+        markdown_path.write_text(render_markdown(merged, args), encoding="utf-8")
+        print("merged %d runs from %d documents: %s" % (len(merged_runs), len(sources), out_json))
+        print("evidence: %s" % markdown_path)
+        print("load gate: %s" % context.get("reason"))
+        print("controls: %s" % audit["note"])
+        return 0
+
+    if args.from_results:
+        results = json.loads(Path(args.from_results).read_text())
+        markdown_path = args.markdown or (ROOT / "docs" / ("performance-%s-evidence.md"
+                                                           % time.strftime("%Y-%m-%d")))
+        markdown_path.parent.mkdir(parents=True, exist_ok=True)
+        markdown_path.write_text(render_markdown(results, args), encoding="utf-8")
+        print("evidence re-rendered from %s: %s" % (args.from_results, markdown_path))
+        return 0
 
     bench_jar, fixture_build = compile_fixture(args.java, args.javac)
     pinned = {key: pin_jar(key, args) for key in keys}
