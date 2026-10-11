@@ -3411,6 +3411,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.framebufferColorTextures.put(Long.valueOf(framebufferIdentity),
                 new long[] { colorTexture, width, height });
+        if (framebufferIdentity == this.mainTargetIdentity && width > 0 && height > 0) {
+            // The game's main framebuffer's own size, which is what the frame target must be: the GL viewport is set per
+            // framebuffer bind, so sizing the target from it can adopt an off-target's extent (the loading screen's own
+            // framebuffer is the measured case) and rebuild the target - which destroys the pairs and unpublishes every
+            // name published over them, leaving the composite to sample an empty mirror (the white loading screen).
+            this.mainFramebufferWidth = width;
+            this.mainFramebufferHeight = height;
+        }
         // The last framebuffer the game bound is the one it is rendering into, which is what the overlay-vs-blit
         // question needs; the alternative - asking GL - is exactly what the GL-less stub cannot answer.
         this.currentFramebufferIdentity = framebufferIdentity;
@@ -10063,9 +10071,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean ensureFrameTarget() {
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             // No GL framebuffer objects exist to introspect: the owned target is sized by the drawable, which the
-            // stub reports as the last glViewport.
+            // stub reports as the last glViewport. The main framebuffer's own size wins when the game has reported it,
+            // because the viewport is whatever framebuffer was bound last - an off-target bind would otherwise resize the
+            // frame target to the off-target's extent and rebuild it (destroying the pairs and unpublishing the names
+            // published over them, which is the white loading screen).
             int[] drawable = currentViewport();
-            return ensureFrameTarget(drawable[2], drawable[3]);
+            int width = this.mainFramebufferWidth > 0 ? this.mainFramebufferWidth : drawable[2];
+            int height = this.mainFramebufferHeight > 0 ? this.mainFramebufferHeight : drawable[3];
+            return ensureFrameTarget(width, height);
         }
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         if (fbo == 0) return false;
@@ -11285,6 +11298,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int IDLE_WAIT_RETRIES = 3;
     private int idleWaitTimeouts;
     private int idleWaitRetries;
+    /** The game's main framebuffer's own size, reported on its bind; 0 until it has been reported. */
+    private int mainFramebufferWidth;
+    private int mainFramebufferHeight;
 
     // ------------------------------------------------------------------ shared resources
 

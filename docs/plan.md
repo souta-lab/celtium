@@ -145,6 +145,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.214 **round 16 の独立検証（acceptance・jar `e5508fd5`）とロード画面の最終原因**
+
+- **font batching（ON で）検証済み**: menu のボタンが `Singleplayer`/`Multiplayer`/`Mods` と可読（自前 compositor capture）、
+  `accepted=704273 refused=0`（修正前は `accepted=0 refused=100%`）、**0.45 µs/glyph**（私の実測 0.35、off は 59）。
+- **device lost 連鎖**: `r16-world` **PASSED**・`validationMessageCount=0`・0 assertion・`worldTicksAtEnd=207`・
+  `presentedDistinctColours=2058`・nonBg **0.759463**・628 bands・black 0.0。
+  `staleGroupDescriptorsRebuilt=17`・`staleGroupRefusals=0`・`publishedFrameTexturesStalePruned=18`・`Republished=0`
+  ＝**stale な group の再構築が実際に行使されている**（prune 経路は安全、re-point 経路は未行使）。
+- **F3 pair（現行 jar）**: F3 off p50 **83.2 ms**（38 sample・29,214 glyph windows）／F3 on p50 **304.8 ms**（13 sample・704,273 windows）
+  ＝**3.7倍**・同 tick で frame 数 2.7分の1・glyph 量 24倍。**glyph の submit 費用は消えた**ので、残る F3 費用は別の場所。
+- **ログ量**: 通常起動で census 0行・全425行（CELTIUM 185）＝以前 2152/1479。validation run では従来どおり出る。
+- **ロード画面の最終原因（fog-path 実測）**: 一様な白は**消えた**（黒 → 14色 → 4,411 → 8,757 → 15,000+ と world が構築される）。
+  ただし capture 21 に出るのは**地形構築中の world frame**（空・雲・crosshair・hotbar）で、
+  **vanilla の loading screen 自身（dirt 背景・"Loading terrain…"・progress bar）は依然として出ていない**。
+  原因は `SplashProgressMixin.celtium$skipSplashUnderGlless`（`forge122/.../mixin/core/SplashProgressMixin.java:18`）が
+  GL-less で **Forge の SplashProgress を cancel している**こと＝**描かれていない**。publish/drop の寿命ではない。
+  次の一手: cancel をやめる（GL-less 安全な splash を即時パスで描く）か、map→最初の present の間を埋める。
+- **ユーザーの world 不具合（実測）**: ログに `CELTIUM_MODEL_MISSING list=… texture=… (no captured mesh for this display list;
+  the GL body runs and there is no context)` ＝**entity の display list から mesh が捕捉されていない**（entity 不可視の直接原因）。
+  GUI 欠落は未帰属（次 round で format ヒストグラムと pass 構成を取る）。
+
 ## 0.213 **round 16: 一回の timeout で latch しない（resize 回帰）・font batching の機序と 0.35 µs/glyph・ロード画面の残件**
 
 - **resize 回帰の根因（frame-composite 実測・Lead 修正）**: `resizeworld-r` は resize 自体は成功（`resizeObservedAtTick=123`・
