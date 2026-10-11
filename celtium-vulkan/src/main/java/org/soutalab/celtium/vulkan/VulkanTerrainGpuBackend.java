@@ -2581,15 +2581,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.offerStage = 1;
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode) && formatId == 1) {
-            // Lines are refused by design unless the device can draw the width OpenGL asked for. The selection outline is
-            // the batch this covers: it is POSITION_COLOR (format 1) and OpenGL draws it with glLineWidth(2.0), which
-            // Vulkan can only honour with the optional wideLines feature.
-            if (this.celtium$lineWidthSupported()) {
+            // Lines are refused by design unless this renderer can draw the width OpenGL asked for. The selection
+            // outline is the batch this covers: it is POSITION_COLOR (format 1) and OpenGL draws it with
+            // glLineWidth(2.0).
+            //
+            // The question is what THIS renderer draws, not what the device could draw: every immediate pipeline is
+            // built with .lineWidth(1.0f) as a static state, so a device with wideLines and a maximum of 8 would have
+            // passed the old test and then drawn the outline one pixel wide while OpenGL drew two - an accepted batch
+            // whose pixels differ, which is worse than a refusal because nothing reports it. The gate now asks for the
+            // width that is actually implemented, and the refusal names that.
+            float askedWidth = this.celtium$requestedLineWidth();
+            if (askedWidth <= 1.0F + 0.01F) {
                 reason = null;
             } else {
                 this.lineBatchesRefusedForWidth++;
-                reason = "line width " + "> device maximum " + this.celtium$maxLineWidth()
-                        + " (wideLines) - drawn by OpenGL";
+                reason = "line width " + askedWidth + " > the 1.0 this renderer draws (device maximum "
+                        + this.celtium$maxLineWidth() + " with wideLines) - drawn by OpenGL";
             }
         }
         if (reason != null) {
@@ -3397,16 +3404,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** {@return whether a line batch that OpenGL asked this width for can be drawn by the line pipeline}. */
-    private boolean celtium$lineWidthSupported() {
-        float asked = 1.0F;
+    /** {@return the line width OpenGL currently has set}, or 1.0 when it cannot be read. */
+    private float celtium$requestedLineWidth() {
         try {
             java.nio.FloatBuffer width = org.lwjgl.BufferUtils.createFloatBuffer(1);
             org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_LINE_WIDTH, width);
-            asked = width.get(0);
+            return width.get(0);
         } catch (RuntimeException | LinkageError ignored) {
-            asked = 1.0F;
+            return 1.0F;
         }
-        return asked <= this.celtium$maxLineWidth() + 0.01F;
     }
 
     private static String round3(float value) {
