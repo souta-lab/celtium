@@ -194,10 +194,17 @@ def main():
         parser.error("The test directory must be separate from the source instance")
     # Never merge another experiment or source game with these test writes.
     game.mkdir(parents=True, exist_ok=False)
+    # A jar the caller supplies with --mod is not copied from the instance, even when the instance has one with the
+    # same name. It used to be a hard error ("Test mod would overwrite a copied mod"), which was right when the instance
+    # was never expected to hold one - but the user keeps a build in their instance mods to launch the game themselves,
+    # and that made every test run fail at startup with the jar in place. The caller's jar wins for the names it names;
+    # a genuine collision between two supplied files is still an error below.
+    supplied = {mod.name for mod in args.mod}
     for name in ("mods", "config", "resourcepacks"):
         source = source_game / name
         if source.is_dir():
-            shutil.copytree(source, game / name)
+            ignore = shutil.ignore_patterns(*supplied) if (name == "mods" and supplied) else None
+            shutil.copytree(source, game / name, ignore=ignore)
     (game / "mods").mkdir(exist_ok=True)
     for mod in args.mod:
         target = game / "mods" / mod.name
