@@ -4,7 +4,7 @@
 
 > **描画backendの決定（2026-10-10）:** Vulkan直結を維持する。SDL GPUへの全面移行は行わない。Angelicaはshader変換・model/TESR/文字のbatch化・状態と資源寿命の設計/試験を部品ごとに比較する。現在のGL除去と主要mod対応を優先し、影の実装は上記gateを満たしてから。汎用GLエミュレーションを新たな主backendにしない。
 
-> goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 59, phase active / activation armed）。
+> goal: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 61, phase active / activation armed）。
 > 全文は `docs/goal.md`。構造修復の方針は **`docs/handoff-structure-recovery-2026-10-10.md`**、
 > 直近の原因候補は `docs/hints-2026-10-10-nether.md`。監査起点は `docs/audit-2026-10-09-third.md`。
 > **round ごとの経緯と旧測定は `docs/history/plan-round-log-until-2026-10-10.md` に移した**（削除していない）。
