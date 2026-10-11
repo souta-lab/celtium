@@ -104,6 +104,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
     private static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
     private static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
+    private static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
+    private static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
+    private static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
+    private static final int SEM_TEX_PARAM_IV_DSA = 57; // (texture,pname,values) -> the same, from an array
     private static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
     private static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
     private static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
@@ -220,8 +224,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glGetNamedFramebufferAttachmentParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
         fn("glGetFramebufferAttachmentParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
         fn("glGetTexLevelParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetTexParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetTexParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
         fn("glGetShaderiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
         fn("glGetProgramiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
         fn("glGetShaderInfoLog", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
@@ -287,6 +289,30 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glGetTexEnvi", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
         fn("glGetTexEnviv", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
         fn("glGetTexEnvfv", R_VOID, SEM_GET_TEX_ENV_FV, A_INT, A_INT, A_PTR);
+        // Texture parameters: the filter and wrap state GL keeps per texture object. These used to be in the no-op
+        // list, so every texture answered the same hardcoded value and the real one was gone - measured as the
+        // options background sampling CLAMP_TO_EDGE where vanilla tiles it with REPEAT (GuiOptions.drawBackground
+        // and Cleanroom's patched GuiSlot.drawContainerBackground both draw it with UVs up to height/32), and the
+        // sky faces likewise. Recorded per texture *name* rather than per binding because the queries that need it
+        // (the mirror's wrap read, the DSA glGetTextureParameter*) name the texture, not the unit.
+        fn("glTexParameteri", R_VOID, SEM_TEX_PARAM_I, A_INT, A_INT, A_INT);
+        fn("glTexParameterf", R_VOID, SEM_TEX_PARAM_I, A_INT, A_INT, A_FLOAT);
+        fn("glTexParameteriv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
+        fn("glTexParameterfv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
+        fn("glTexParameterIiv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
+        fn("glTexParameterIuiv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
+        fn("glGetTexParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        fn("glGetTexParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        fn("glGetTexParameterIiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        fn("glGetTexParameterIuiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        // The DSA forms name the texture directly: the modern mirror path asks with glGetTextureParameteri (LWJGL
+        // answers that over glGetTextureParameteriv) and sets with glTextureParameteri.
+        fn("glTextureParameteri", R_VOID, SEM_TEX_PARAM_I_DSA, A_INT, A_INT, A_INT);
+        fn("glTextureParameterf", R_VOID, SEM_TEX_PARAM_I_DSA, A_INT, A_INT, A_FLOAT);
+        fn("glTextureParameteriv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
+        fn("glTextureParameterfv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
+        fn("glTextureParameterIiv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
+        fn("glTextureParameterIuiv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
         // Copy-from-framebuffer. The main menu's panorama is built with these: renderSkybox draws the six 256x256
         // cube faces into the window and copies each into the skybox texture, and the blur passes copy their own
         // targets. Registered rather than left in the no-op list so the request is named and counted: under GL-less
@@ -354,8 +380,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glTexCoord2f", "glMultiTexCoord2f", "glVertex3f", "glBegin", "glEnd", "glMatrixMode",
                 "glLoadIdentity", "glLoadMatrixf", "glLoadMatrixd", "glMultMatrixf", "glMultMatrixd", "glPushMatrix",
                 "glPopMatrix", "glOrtho", "glFrustum", "glTranslatef", "glTranslated", "glRotatef", "glRotated",
-                "glScalef", "glScaled", "glTexParameteri", "glTexParameterf", "glTexParameteriv", "glTexParameterfv",
-                "glTexParameterIiv", "glTexParameterIuiv", "glGenerateMipmap", "glSamplerParameteri",
+                "glScalef", "glScaled", "glGenerateMipmap", "glSamplerParameteri",
                 "glSamplerParameterf", "glSamplerParameteriv", "glSamplerParameterIiv", "glSamplerParameterIuiv",
                 "glAttachShader", "glDetachShader", "glBindAttribLocation", "glBindFragDataLocation",
                 "glLinkProgram", "glValidateProgram", "glShaderSource", "glCompileShader", "glUniform1i",
@@ -388,7 +413,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glNamedFramebufferRenderbuffer", "glNamedRenderbufferStorage",
                 "glTextureImage2DEXT",
                 "glTextureSubImage2D", "glNamedTexImage2DEXT", "glNamedCopyTexSubImage2DEXT", "glTextureStorage2D",
-                "glTextureParameteriv", "glTextureParameteri", "glGenerateTextureMipmap", "glBindTextureUnit",
+                "glGenerateTextureMipmap", "glBindTextureUnit",
                 "glBindImageTexture", "glTexBuffer", "glTexBufferRange",
                 "glUniformBlockBinding",
                 "glUseProgramStages", "glActiveShaderProgram", "glProgramUniform1i", "glProgramUniform1f",
@@ -2324,6 +2349,226 @@ public final class CeltiumGlStub implements FunctionProvider {
         float[] colour = this.texEnvColor[unit];
         for (int i = 0; i < 4; i++) {
             MemoryUtil.memPutFloat(out + (long) i * 4L, colour[i]);
+        }
+    }
+
+    // ---- texture parameters, per texture object ----------------------------------------------------------------
+    //
+    // GL keeps the filter and wrap state on the texture object, and the game sets it through
+    // {@code GlStateManager.glTexParameteri -> GL11.glTexParameteri}: TextureUtil.setTextureClamped/setTextureBlurMipmap
+    // for every uploaded texture, AbstractTexture.setBlurMipmapDirect, Framebuffer's attachment filters and
+    // RenderGlobal's sky texture. The stub used to no-op every setter and answer every query with one hardcoded pair,
+    // so the mirror's sampler was built CLAMP_TO_EDGE for textures the game had asked to REPEAT. Vanilla depends on
+    // the difference: GuiOptions.drawBackground and Cleanroom's patched GuiSlot.drawContainerBackground draw
+    // textures/gui/options_background.png with UVs up to height/32, which tiles only under REPEAT - and that texture
+    // is given exactly that by TextureUtil.uploadTextureImageAllocate(..., clamp=false) ->
+    // setTextureClamped(false) -> glTexParameteri(GL_TEXTURE_WRAP_S/T, 0x2901).
+    //
+    // The record is keyed by texture *name* and pname rather than by binding, because the reads that need it name the
+    // texture: the mirror's wrap/filter query is the DSA glGetTextureParameter*, which carries the name, and it may
+    // run on a different unit than the one that set the parameter. Deleted names are never reissued by this stub, so
+    // a record left behind by glDeleteTextures cannot be read as a later texture's state.
+    private static final int GL_TEXTURE_MAG_FILTER = 0x2800;
+    private static final int GL_TEXTURE_MIN_FILTER = 0x2801;
+    private static final int GL_TEXTURE_WRAP_S = 0x2802;
+    private static final int GL_TEXTURE_WRAP_T = 0x2803;
+    /** GL_TEXTURE_BORDER_COLOR is a four-component vector; a scalar record cannot hold it, so it is not recorded. */
+    private static final int GL_TEXTURE_BORDER_COLOR = 0x1004;
+    /** GL's initial state for a fresh texture object: the answer when the game never set the pname. */
+    private static final int GL_LINEAR = 0x2601;
+    private static final int GL_NEAREST_MIPMAP_LINEAR = 0x2702;
+    private static final int GL_REPEAT = 0x2901;
+    private static final int GL_CLAMP_TO_EDGE = 0x812F;
+    private static final int GL_NEAREST = 0x2600;
+
+    /** Recorded values, keyed {@code (textureName << 32) | pname}. Bounded: past the limit the call is counted. */
+    private final Map<Long, Integer> texParams = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger texParamCalls =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger texParamUnbound =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger texParamOverflow =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger texParamQueries =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final int TEX_PARAM_RECORD_LIMIT = 1 << 16;
+    /** The distinct (name,pname,value) triples the {@code CELTIUM_TEX_PARAM} instrument has named. Bounded. */
+    private static final java.util.Set<String> TEX_PARAM_SHAPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<String> TEX_PARAM_QUERY_SHAPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static long texParamKey(int textureName, int pname) {
+        return ((long) textureName << 32) | (pname & 0xFFFFFFFFL);
+    }
+
+    private static String texParamPname(int pname) {
+        switch (pname) {
+            case GL_TEXTURE_MAG_FILTER: return "MAG_FILTER";
+            case GL_TEXTURE_MIN_FILTER: return "MIN_FILTER";
+            case GL_TEXTURE_WRAP_S: return "WRAP_S";
+            case GL_TEXTURE_WRAP_T: return "WRAP_T";
+            default: return "pname";
+        }
+    }
+
+    private static String texParamValue(int value) {
+        switch (value) {
+            case GL_REPEAT: return "REPEAT";
+            case GL_CLAMP_TO_EDGE: return "CLAMP_TO_EDGE";
+            case GL_LINEAR: return "LINEAR";
+            case GL_NEAREST: return "NEAREST";
+            case GL_NEAREST_MIPMAP_LINEAR: return "NEAREST_MIPMAP_LINEAR";
+            case 0x2602: return "NEAREST_MIPMAP_NEAREST";
+            case 0x2703: return "LINEAR_MIPMAP_LINEAR";
+            case 0x2701: return "LINEAR_MIPMAP_NEAREST";
+            default: return "0x" + Integer.toHexString(value);
+        }
+    }
+
+    /**
+     * Records one texture parameter. {@code textureName} is the texture the call applies to - the bound one for the
+     * non-DSA forms, the explicit first argument for the DSA ones - and a call with no texture bound (which real GL
+     * rejects with GL_INVALID_OPERATION) is counted rather than filed under a name the game never used.
+     */
+    private void celtium$setTextureParameter(int textureName, int pname, int value, String site) {
+        if (textureName <= 0) {
+            this.texParamUnbound.incrementAndGet();
+            return;
+        }
+        if (pname == GL_TEXTURE_BORDER_COLOR) {
+            return;
+        }
+        long key = texParamKey(textureName, pname);
+        if (!this.texParams.containsKey(Long.valueOf(key))
+                && this.texParams.size() >= TEX_PARAM_RECORD_LIMIT) {
+            this.texParamOverflow.incrementAndGet();
+            return;
+        }
+        this.texParams.put(Long.valueOf(key), Integer.valueOf(value));
+        int calls = this.texParamCalls.incrementAndGet();
+        if (TEX_PARAM_SHAPES.size() < 24) {
+            String shape = textureName + "/" + pname + "=" + value;
+            if (TEX_PARAM_SHAPES.add(shape)) {
+                System.out.println("[Celtium] CELTIUM_TEX_PARAM texture=" + textureName
+                        + " pname=0x" + Integer.toHexString(pname) + " (" + texParamPname(pname) + ")"
+                        + " value=0x" + Integer.toHexString(value) + " (" + texParamValue(value) + ")"
+                        + " calls=" + calls + " distinct=" + TEX_PARAM_SHAPES.size()
+                        + " site=[" + site + "]");
+            }
+        }
+    }
+
+    /** The non-DSA form: the texture bound to {@code target} on the active unit is the one the call applies to. */
+    private void celtium$setTextureParameterBound(int target, int pname, int value, String site) {
+        if (isProxyTarget(target)) {
+            // A proxy target carries no image and binds to nothing; GL accepts the call and it means nothing.
+            return;
+        }
+        Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
+        celtium$setTextureParameter(bound == null ? 0 : bound.intValue(), pname, value, site);
+    }
+
+    /**
+     * {@return the value a texture parameter query answers}: the record when the game set this pname on this texture,
+     * otherwise GL's own initial state for the four pnames a fresh texture has, and 0 for everything else.
+     * <p>
+     * The default is the honest stub answer rather than a safe one: a texture the game never parameterised really does
+     * wrap by repeating in GL, which is why the options background tiles without anyone setting a wrap on it.
+     */
+    private static int textureParameterValue(int textureName, int pname) {
+        CeltiumGlStub stub = installed;
+        if (stub != null && textureName > 0) {
+            Integer recorded = stub.texParams.get(Long.valueOf(texParamKey(textureName, pname)));
+            if (recorded != null) {
+                return recorded.intValue();
+            }
+        }
+        switch (pname) {
+            case GL_TEXTURE_WRAP_S:
+            case GL_TEXTURE_WRAP_T:
+                return GL_REPEAT;
+            case GL_TEXTURE_MAG_FILTER:
+                return GL_LINEAR;
+            case GL_TEXTURE_MIN_FILTER:
+                return GL_NEAREST_MIPMAP_LINEAR;
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * {@return the filter or wrap value recorded for this texture and pname, or -1 when the game never set it}.
+     * <p>
+     * This is the mirror's door to the record: {@link #textureParameter} answers GL's default for an unset pname,
+     * while a caller that wants to keep its own fallback (the mirror's clamp) can tell the two apart here.
+     */
+    public static int recordedTextureParameter(int textureName, int pname) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || textureName <= 0) {
+            return -1;
+        }
+        Integer recorded = stub.texParams.get(Long.valueOf(texParamKey(textureName, pname)));
+        return recorded == null ? -1 : recorded.intValue();
+    }
+
+    /**
+     * {@return the value GL would answer for this texture's pname} - the recorded value, or GL's context default when
+     * the game never set it. See {@link #recordedTextureParameter} for the recorded/absent distinction.
+     */
+    public static int textureParameter(int textureName, int pname) {
+        return textureParameterValue(textureName, pname);
+    }
+
+    /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
+    public static boolean textureParameterRecorded(int textureName, int pname) {
+        return recordedTextureParameter(textureName, pname) != -1;
+    }
+
+    /** The named texture parameters, bounded: the record census and the query answers. */
+    private static String texParamSummary() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "texture params: recorded=0 textures=0 repeat=0 clamp=0 unbound=0 overflow=0 queries=0";
+        }
+        int repeat = 0;
+        int clamp = 0;
+        for (Map.Entry<Long, Integer> entry : stub.texParams.entrySet()) {
+            int pname = (int) (entry.getKey().longValue() & 0xFFFFFFFFL);
+            if (pname != GL_TEXTURE_WRAP_S && pname != GL_TEXTURE_WRAP_T) {
+                continue;
+            }
+            if (entry.getValue().intValue() == GL_REPEAT) {
+                repeat++;
+            } else if (entry.getValue().intValue() == GL_CLAMP_TO_EDGE) {
+                clamp++;
+            }
+        }
+        java.util.Set<Integer> textures = new java.util.HashSet<>();
+        for (Long key : stub.texParams.keySet()) {
+            textures.add(Integer.valueOf((int) (key.longValue() >>> 32)));
+        }
+        return "texture params: recorded=" + stub.texParams.size() + " textures=" + textures.size()
+                + " wrapRepeat=" + repeat + " wrapClamp=" + clamp
+                + " calls=" + stub.texParamCalls.get() + " unbound=" + stub.texParamUnbound.get()
+                + " overflow=" + stub.texParamOverflow.get() + " queries=" + stub.texParamQueries.get();
+    }
+
+    /** One query answer, named once per distinct shape so a run's log says what the mirror actually asked for. */
+    private void celtium$noteTextureParameterQuery(String name, int textureName, int pname, int value, boolean recorded) {
+        this.texParamQueries.incrementAndGet();
+        if (TEX_PARAM_QUERY_SHAPES.size() >= 12) {
+            return;
+        }
+        String shape = name + "/" + textureName + "/" + pname + "=" + value + "/" + recorded;
+        if (TEX_PARAM_QUERY_SHAPES.add(shape)) {
+            System.out.println("[Celtium] CELTIUM_TEX_PARAM_QUERY " + name
+                    + " texture=" + textureName
+                    + " pname=0x" + Integer.toHexString(pname) + " (" + texParamPname(pname) + ")"
+                    + " value=0x" + Integer.toHexString(value) + " (" + texParamValue(value) + ")"
+                    + " recorded=" + recorded
+                    + " source=" + (recorded ? "stub-record" : "gl-default")
+                    + " site=[" + celtium$callSite(6) + "]");
         }
     }
 

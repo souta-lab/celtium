@@ -5960,6 +5960,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
                 + " textureCopiesServed=" + this.textureCopiesServed
                 + " textureCopiesRefused=" + this.textureCopiesRefused
+                + " textureCopiesReusedInFrame=" + this.textureCopiesReusedInFrame
+                + " textureCopyReadbacks=" + this.textureCopyReadbacks
+                + " textureCopyReadbackMillis=" + (this.textureCopyReadbackNanos / 1000000L)
                 + " lastTextureCopyRefusal=[" + this.lastTextureCopyRefusal + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
@@ -8681,6 +8684,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int textureCopiesRefused;
     /** How many served copies have printed their rectangle's statistics (bounded, for the picture question). */
     private int textureCopySamples;
+    /**
+     * The frame the served-copy set belongs to, and the destination rectangles already served in it.
+     * <p>
+     * The menu asks for the same rectangle seven times per frame; one readback answers all seven, and this set is what
+     * makes that a decision rather than a repeated cost. Cleared whenever the frame changes.
+     */
+    private long textureCopyFrame = -1L;
+    private final java.util.Set<Long> textureCopiesServedThisFrame = new java.util.HashSet<Long>();
+    private int textureCopiesReusedInFrame;
+    /** Readback submissions the copy path actually made, and the wall time they took. */
+    private int textureCopyReadbacks;
+    private long textureCopyReadbackNanos;
     private String lastTextureCopyRefusal = "none";
 
     /**
@@ -8695,6 +8710,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * in the same frame: a read that returned the previous frame's content would put the blur on the wrong pixels, and
      * the ordering is the game's, not the renderer's to defer. So the pending groups are flushed (which submits and
      * waits - the same immediate-window path an ordering flush uses) before the rectangle is read.
+     * <p>
+     * One readback per frame per destination rectangle. The menu asks for the same 256x256 region seven times a frame
+     * (GuiMainMenu.rotateAndBlurSkybox, each pass followed by three blur quads), and seven queue waits per frame is a
+     * menu that stutters: measured as the cost this method reports. The later requests in the same frame are answered
+     * from the content the first one read, which is a stated simplification - vanilla's passes each see the blur the
+     * pass before them drew - and the counter {@code textureCopiesReusedInFrame} says how many were answered that way,
+     * so the difference is visible rather than implied.
      *
      * @param destName the GL texture name the copy writes into
      * @param level    the destination level; only level 0 is served, because the mirror's patch path is level 0
@@ -8722,14 +8744,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (image == 0L) {
             return celtium$refuseTextureCopy("read framebuffer " + readFbo + " is not an image this renderer owns");
         }
+        // The frame's first request for this destination rectangle pays for the readback; the rest are answered from it.
+        long copyKey = (((long) destName) << 32) ^ (((long) level) << 28) ^ (((long) xoffset) << 20)
+                ^ (((long) yoffset) << 12) ^ (((long) x) << 8) ^ (((long) y) << 4) ^ (((long) width) << 2)
+                ^ ((long) height);
+        if (this.textureCopyFrame != this.frameId) {
+            this.textureCopyFrame = this.frameId;
+            this.textureCopiesServedThisFrame.clear();
+        }
+        if (this.textureCopyFrame == this.frameId && this.textureCopiesServedThisFrame.contains(Long.valueOf(copyKey))) {
+            this.textureCopiesReusedInFrame++;
+            this.textureCopiesServed++;
+            return "served";
+        }
         // What the game drew into that image is still queued as groups: submitting them is what makes the read the
         // frame the copy is about. flushPendingBeforeGlDraw draws into an open pass if there is one, otherwise it opens
         // and completes an immediate window, which is the same ordering boundary the game's own draw calls use.
-        flushPendingBeforeGlDraw();
+        if (!this.immediateGroups.isEmpty()) {
+            flushPendingBeforeGlDraw();
+        }
         if (!waitForIdle()) {
             return celtium$refuseTextureCopy("the GPU did not confirm the draws before the copy completed");
         }
+        long readbackStartedNanos = System.nanoTime();
         int[] pixels = celtium$readImageRectangle(image, x, y, width, height);
+        this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;
+        this.textureCopyReadbacks++;
         if (pixels == null) {
             return celtium$refuseTextureCopy("the rectangle read of the owned image failed");
         }
@@ -8766,6 +8806,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return celtium$refuseTextureCopy("the destination mirror refused the pixels: "
                     + this.textureRegistry.lastFailure());
         }
+        this.textureCopiesServedThisFrame.add(Long.valueOf(copyKey));
         this.textureCopiesServed++;
         return "served";
     }

@@ -133,6 +133,34 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.186 **ユーザーの第2報: 固まる・GUI アイテムが枠いっぱい・ロード画面が無い・F3 は stub GL**
+
+同じセッションからの追加報告。**frame time の実測が最優先**になった:
+
+| run（全て validation 付き＝ユーザー構成ではない） | p50 | p95 |
+|---|---|---|
+| `t33b-fogon` | 91.8 ms | 199.8 ms |
+| `t26` | 109.2 ms | 164.1 ms |
+| `lc-panorama` | 189.4 ms | 758.4 ms |
+| `cand3-terrain` | 261.5 ms | 1002.7 ms |
+| **upstream 参照 `ref3-terrain`** | **21.5 ms** | 87.4 ms |
+
+**以前の benchmark は GL-less p50 3.94 ms**（`docs/performance-2026-10-11.md`・validation 無し）。**20〜60倍の差**があり、
+ユーザーはそれを体感している。validation layer と `presentReadback`（毎フレーム全画面 readback）も含まれるため、
+**validation 無し・fixture のみ・854x480** の leg を queue した（`lead-perf2`）。
+
+**帰属した4点**:
+1. **固まる／非常にラグい** → task-44（frame-composite）: frame path の cost を既存計器で名指し
+   （panorama copy の1フレーム7回同期 readback・task-37 の world 境界 flush・entity-models の per-batch model flush
+   p95 1946 ms・immediate window 自体）。
+2. **GUI アイテムが枠いっぱい** → task-43（entity-models）: `.celtium-work/acceptance/crops/mod3-jei/item-grid.png` が
+   **各スロットを平坦なテクスチャが埋める**絵で、ユーザーの証言と一致。**world の item 比 ~1.0 は GUI の item を意味しない**
+   （`id4=5916/5916` は batch が届いたことしか言わない）。`RenderItem` の model view（30°/225°/1/16）が
+   group open 時の capture に乗っているかを原典で確認する。
+3. **ロード画面が無い** → Forge の SplashProgress は GL-less で skip、vanilla splash は 256x256 で描かれる
+   （frame-composite が見た「OK」の暗い画面）。weather-water へ。
+4. **F3 が stub GL** → `GL_RENDERER` が stub を返すため。`CELTIUM_NATIVE_DEVICE` の名前を overlay に出す（weather-water）。
+
 ## 0.185 **ユーザーの実起動が成功（地形・entity・空・雲が正常）——残る不満3点の帰属**
 
 ユーザーが自分の instance から起動し、**地形・entity・空・雲が正常に描画**されることを確認（log: https://mclo.gs/gB2Vtjb）。

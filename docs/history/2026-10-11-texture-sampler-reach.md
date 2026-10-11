@@ -63,9 +63,20 @@ the terrain centre 1.256 / 6.76%; with the game's own levels 6.207 / 5.86% and 0
 the S23 note in `VulkanGlTexture` ("mirrored levels 5.60% where generated levels 0.16-0.28%"), which was measured
 with the global clamp at 1.0 and against a bridge reference, not against upstream GL with the game's own reach.
 
-**Confound, stated rather than hidden**: the control differs in *both* variables (generated chain *and* reach 1),
-because the reach is only raised by the per-level path. Separating them needs a third leg - generated chain with the
-reach forced to 4 - which was not taken.
+**The confound is now closed** (task-39): a third leg forces the reach independently of the content
+(`-Dceltium.vulkan.mirrorReachOverride=4`, which applies the reach on the generated path too). All three legs are the
+same fixture, scene, pose and tick, against the same upstream reference:
+
+| leg | band rows 200-320 | terrain centre | sky rows 0-205 |
+|---|---|---|---|
+| per-level content + reach 4 (`t26`) | **6.207** / 5.86% | **0.010** / 0.02% | 0.442 / 0.00% |
+| generated chain + reach 1 (`t26-nomips`) | 26.728 / 50.00% | 1.256 / 6.76% | 0.442 / 0.00% |
+| generated chain + reach 4 (`t39-gen-reach4`) | 21.309 / 50.00% | 1.256 / 6.76% | 0.442 / 0.00% |
+
+So it is **both, and the content dominates**: the reach alone moves the band 26.728 -> 21.309 (about a quarter of the
+improvement, and the >8 fraction does not move at all - the reach changes the magnitude of the residual, not how many
+pixels differ), while the game's own per-level content takes the band to 6.207 and the terrain centre from 1.256 to
+0.010. The terrain centre is content-only: forcing the reach on a generated chain leaves it exactly at 1.256.
 
 ## The equivalence control for fog-path's terrain sampler
 
