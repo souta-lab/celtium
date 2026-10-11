@@ -257,6 +257,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.236 **round 42: BH-11 の真の機序＝「draw 時に live を読む」→ group へ捕捉して修正・glyph mode 5 を独立確認**
+
+- **BH-11 の3分岐が決着（acceptance・`r36-break`）**: `polygonOffsetCalls=62`（**呼び出しは stub に届いている**）・
+  `polygonOffsetCalled=true`・`polygonOffsetFillEnabled=false`（**report 時点のスナップショット**で、vanilla は同 frame 内で無効化するため
+  分岐の判定には使えない）・**`immediateDepthBiasedGroups=0`（overlay は frame 内にある）**。
+  **機序**: backend が **draw 時に live な flag を読んでいた**（`:11816-11817`）一方、vanilla は
+  `preRenderDamagedBlocks`/`postRenderDamagedBlocks`（`RenderGlobal.java:1914-1925`）で **overlay の draw の周りだけ** enable/disable する。
+  したがって overlay の batch を持つ group が disable 後に flush されると **false を読んで bias が一切付かない**。
+  ＝**BH-04/BH-05 と同じ accept-vs-flush の状態クラス**。
+- **修正（Lead・`ae32bdbe7`）**: polygon offset（factor/units/enable）を **group を開いた時点で捕捉**（fog・state・clip 矩形と同じ場所）し
+  `ImmediateGroup` に保存、draw site は**そこから読む**。`vkCmdSetDepthBias` は全 group で発行のまま（`depthBiasEnable` は静的宣言なので
+  動的呼び出しが無いと VUID-07834）、捕捉状態が off なら 0 を書く。
+- **glyph の mode 5 を独立確認（acceptance・`r37-f3`）**: `windows=1119596 accepted=1119596 refused=0`・
+  **`modes={5=1119596}`**・`fontRunsStarted=2433 fontQuadsAppended=1118942`。**全 window が GL_TRIANGLE_STRIP**で、
+  coalesced run（2433 run に 111万 quad）が**連続 glyph を連結**する＝ユーザーの文字間バー。`refused=0` なので損失ではなく mode が機序。
+  （計器の注意: summary は JVM shutdown hook なので、harness が terminate した leg では progress line のみ出る）
+- **BH-12 の narrowed 総数 215**・**font separator（`51003a602`）の受入待ち**・**BH-16（パノラマ）の受入待ち**。
+
 ## 0.235 **round 41: BH-16 の計器を検証サマリへ（drop 数と owner）・font セパレータの leg 待ち**
 
 - **`gameClearsDroppedForeignTarget=` と `lastDroppedClearOwner=` を検証サマリに追加（Lead・`f02ae2cce`）**:
