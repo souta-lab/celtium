@@ -257,6 +257,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.258 **round 64: A/B で「捕捉は stale ではない」と確定（group id は bind に追随）・残りは layout handshake のみ**
+
+- **A/B（texture-mirror・同一 scene・1 flag 差・jar のみ）**:
+  ```
+  pre-change  jar (pano-bind):  901× texture=46  901× 45  899× 50  899× 49  899× 48
+  post-change jar (pano-fix):  1285× texture=46 1285× 45 1283× 50 1283× 49 1283× 48
+  ```
+  ＝**menu-hold 構成では group の id は panorama PNG そのもの**で、**捕捉は stale ではない**。
+  texture-mirror が試した state-key 項は**何も直さず group を 901→1285 に分割しただけ**なので **revert**（正しい判断）。
+  Lead の `currentGroupTexture != boundTexture`（`:5155-5157`）の読みも正しいことが確認された。
+- **Lead の probe も削除（`b0cbf141d`）**: 同じ問い（offer 時の bound texture）に A/B が答えたため、ENQ 行の `boundNow` は残さない。
+- **残りは layout handshake のみ（測定済み・texture-mirror）**: copy は依然白
+  （`CELTIUM_TEX_COPY_SERVED dest=20 … mean=255,255,255 readImage=0x360000000036`）で、
+  **同じ handle に `VUID-vkCmdDraw-None-09600` が2件**（`validationMessageCount=2`・`validationClean=false`）。
+  ＝mirror の内容は正しく、bind も正しく、group の id も追随しているので、**publish/layout の handshake** が
+  「正しい mirror 内容」と「見える menu 背景」の間の最後の1枚。
+- 未確定として残る: Lead の leg で観測した stale 8 は**構成依存**（その leg では offer が bind より先）で、再現には当該構成が必要。
+
 ## 0.257 **round 63: 再利用条件は既に texture 変化で group を閉じている＝stale な 8 は「offer 時点で 8 が bound」だった**
 
 - **原典（コード）確認（Lead）**: group 再利用条件（`VulkanTerrainGpuBackend:5155-5157`）は
