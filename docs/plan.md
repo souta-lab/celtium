@@ -95,6 +95,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.155 **pose 修正の検証完了——FAIL はゲートが正しい**
+
+再試行は clean にビルドされ新 jar で走った。2つのカメラ文字列が決着させる:
+
+```
+cameraRequested: … yaw=180.000 pitch=20.000      （scene pose）
+cameraAtVerdict: … yaw=180.000 pitch=-14.000     （allBlocks 上書き）
+FAILED: the camera at the capture is not the pose the scene's floors were measured at
+        (requested … pitch=20.000, measured … pitch=-14.000)
+```
+
+**上書きが描かれるフレームを支配している**（測定 pitch は補間値ではなく上書きそのもの）。修正前は描かれた pitch が
+**キャプチャが sweep のどこに落ちるかに依存**していた——だから sky 担当の同一 jar の2 run が 0.741 と 0.851 になり、
+bridge が約 -14・GL-less が +20 を描いていた。**fixture は不一致を隠さず報告するようになった。**
+
+**そして FAIL 自体が正しい**（回避すべきものではない）: allBlocks scene は壁を収めるため意図的に pitch -14 を上書きし、
+terrain scene の床は pitch +20 で測定されている。**ゲートは「ある pose の画を別の pose の床で判定しない」と言っている**——
+監査 A03 が参照キーの追随として別方向から到達した結論と同じ。**allBlocks は別 variant・別 pose であり、ゲートするなら自身の参照 run が要る。**
+
+**残る未検証**: pose を固定した状態で翼がどう変わるか（sky 担当の crop が領域レベルだったのはまさにこの理由）。**次の測定は固定された pose で取れる。**
+
 ## 0.154 **翼を名指し（sky dome・format 7・fog 無し）／pose の跨ぎ問題**
 
 sky 担当の最終報告（測定・jar `216cd6284a3c22f7…`・AMD RX 6400・GL-less allBlocks）。
