@@ -304,6 +304,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.308 **round 114: per-image の残り2 leg を proj-channel へ配布・成長のみ配列の選択を外部根拠で裏づけ**
+
+- **配布（Lead→proj-channel）**: 未了の2 leg を依頼した。**(1) resize leg**（image 数が変わる場合＝この規則が守る対象）、
+  **(2) `submitSignalOnly` が発火する leg**（第2 producer は frame-close semaphore を signal し、`consumeDone` は**記録された handle** を待つため、
+  この変更が壊しうるのはまさにその経路）。両 leg に `pinSections`。fixture が present 失敗を作れない場合は**必要な knob を名指しする**よう指示（scene 差し替えは禁止）。
+- **成長のみ配列の選択の外部根拠**: [Swapchain Recreation](https://docs.vulkan.org/samples/latest/samples/api/swapchain_recreation/README.html) は
+  **「swapchain 再作成時、古い swapchain の semaphore の破棄は、新しい swapchain の最初の present が完了するまで遅延させねばならない」**
+  としている（image 数は変わりうるため）。**成長のみの配列は破棄が発生しないので、この遅延問題を構造的に回避**する。
+  ＝§0.307 の実装選択が、この外部根拠と一致していることを記録。
+- **現状**: `cf6c968cd` で着地・1 leg 緑（VUID 0・00067 0・deadlock なし）・build 緑・ツリーに未検証の編集なし。
+  残るのは上記2 leg のみで、**per-image ユニットは「実装済・1/3 leg 受入」**として区別して扱う（受入済みと書かない）。
+
 ## 0.307 **round 113: per-image present semaphore を着地（`cf6c968cd`）— 層あり leg で VUID 0・00067 0・deadlock なし（resize leg と submitSignalOnly leg は未了）**
 
 - **実装（Lead・3ファイル＋interface）**: `GllessFrameTarget` が **成長のみの present-wait semaphore 配列**（`presentDoneSemaphore(int)`・既存を破棄しない）と
