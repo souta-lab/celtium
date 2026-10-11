@@ -276,6 +276,8 @@ public final class VulkanTerrainPipeline {
      * the mirror's sampler is used instead. Created on the first {@code bindTextures} and owned by this pipeline.
      */
     private long atlasSampler;
+    /** The maxLod the cached {@link #atlasSampler} was created with, so a reload that changes it rebuilds. */
+    private int atlasSamplerMaxLod;
 
     private long uniformsSize;
     private int uniformsRange;
@@ -799,8 +801,25 @@ public final class VulkanTerrainPipeline {
      * from the mirror's sampler, which is the variable this exists to move.
      */
     private long atlasSamplerFor(VulkanGlTexture atlas) {
-        if (ATLAS_MAX_LOD <= 1) {
+        // BH-32: the value is the game's own mipmap setting, so it must follow the atlas that is actually mirrored
+        // rather than a constant. The mirror allocates as many levels as the GL texture has, and a texture reload can
+        // change that (the game's mipmap setting, a resource-pack switch), so the effective ceiling is the smaller of
+        // the configured value and the levels this mirror really holds - and the cached sampler is keyed by that
+        // value, so a reload that lowers the level count rebuilds it instead of reading levels that are not there.
+        int effectiveMaxLod = ATLAS_MAX_LOD;
+        int mirrorLevels = atlas.mipLevels();
+        if (mirrorLevels > 0 && mirrorLevels - 1 < effectiveMaxLod) {
+            effectiveMaxLod = mirrorLevels - 1;
+        }
+        if (effectiveMaxLod <= 1) {
             return atlas.sampler();
+        }
+        if (this.atlasSampler == 0L || this.atlasSamplerMaxLod != effectiveMaxLod) {
+            if (this.atlasSampler != 0L) {
+                org.lwjgl.vulkan.VK10.vkDestroySampler(this.context.device(), this.atlasSampler, null);
+                this.atlasSampler = 0L;
+            }
+            this.atlasSamplerMaxLod = effectiveMaxLod;
         }
         if (this.atlasSampler == 0L) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -817,7 +836,7 @@ public final class VulkanTerrainPipeline {
                         .compareEnable(false)
                         .compareOp(VK_COMPARE_OP_NEVER)
                         .minLod(0.0f)
-                        .maxLod((float) ATLAS_MAX_LOD)
+                        .maxLod((float) this.atlasSamplerMaxLod)
                         .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                         .unnormalizedCoordinates(false);
                 LongBuffer handle = stack.mallocLong(1);

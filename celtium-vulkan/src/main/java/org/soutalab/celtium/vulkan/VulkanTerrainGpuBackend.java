@@ -1723,6 +1723,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean GROUP_SCISSOR = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.groupScissor", "true"));
     /**
+     * How the game's {@code glScissor} box becomes the image's rows.
+     * <p>
+     * The shared frame image is stored bottom-up - the present blit reads it back to front to leave the swapchain
+     * image upright, and says so where it does it ({@code VulkanSwapchain} "the shared image's row 0 is the picture's
+     * bottom (GL texture order)"). GL's {@code glScissor} measures y from the bottom as well, so the box's rows in the
+     * image are {@code y .. y+h} and no flip is needed. The first version flipped it ({@code targetHeight - (y + h)}),
+     * which is the conversion for a top-down image: measured with the controlled clip probe, the rectangle landed on
+     * the mirrored band and clipped the quad away entirely (CELTIUM_GROUP_SCISSOR applied=0,360 639x84 for a quad the
+     * presented frame shows at rows 360..443, whose image rows are 276..360).
+     * <p>
+     */
+    /**
      * {@code -Dceltium.vulkan.alphaFuncOverride=<GL enum>} substitutes the alpha comparison function for a measurement
      * leg (BH-03). Default 0 = off, which is the shipped behaviour: the captured comparison is used. Vanilla asks for
      * GL_GREATER everywhere it calls {@code GlStateManager.alphaFunc}, so this is the only way to put a second
@@ -7492,6 +7504,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " itemLitGuiGroups=" + this.itemLitGuiGroups
                 + " itemUnlitGroups=" + this.itemUnlitGroups
                 + " itemUnlitGuiGroups=" + this.itemUnlitGuiGroups
+                // The strip separators, in the census as well as in the font summary. The summary is printed by a
+                // shutdown hook, and a leg whose fixture exits early loses it - measured: the font-strip2 leg has no
+                // CELTIUM_FONT_GLYPH_SUMMARY line at all, so the counter that says the degenerate vertices were
+                // inserted was unreadable exactly in the leg that needed it. This line is written during the run.
+                + " fontStripSeparators=" + this.fontStripSeparators
+                + " fontRunsStarted=" + this.fontBatchesStarted
+                + " fontQuadsAppended=" + this.fontQuadsAppended
                 + " immediateGroupsDiscarded=" + this.immediateGroupsDiscarded
                 + " immediateGroupsKeptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                 + " immediateDeferredNextFrame=" + this.immediateDeferredNextFrame
@@ -12028,7 +12047,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // whether the rectangle reached the group at all before it says how the intersection came out.
             this.scissorCapturedGroups++;
             int clipX0 = clip[0];
-            int clipY0 = this.targetHeight - (clip[1] + clip[3]);
+            // No y flip. The game measures the clip box from the bottom (GL's own convention, and
+            // VintageDrawContext.enableScissor does the same), and the shared image the scissor applies to is in GL
+            // texture order - row 0 is the picture's bottom (VulkanSwapchain blits it read back to front to leave the
+            // swapchain upright). So the box's rows in that image are y..y+h unchanged. The flipped conversion
+            // (targetHeight - (y+h)) clipped the wrong band: measured with blend-state's probe, a GL box (0,276,639,84)
+            // was applied as 0,360 and the quad vanished, while its image rows are 276..359.
+            int clipY0 = clip[1];
             int clipX1 = clipX0 + clip[2];
             int clipY1 = clipY0 + clip[3];
             int intersectX0 = Math.max(scissorX, clipX0);
@@ -12049,7 +12074,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + clip[2] + "x" + clip[3] + " groupRect=" + scissorX0 + "," + scissorY0 + " "
                         + scissorWidth0 + "x" + scissorHeight0 + " applied=" + scissorX + "," + scissorY + " "
                         + scissorWidth + "x" + scissorHeight + " target=" + this.targetWidth + "x"
-                        + this.targetHeight);
+                        + this.targetHeight
+                        // Which group carried it: the first version of this line named the rectangles and not the
+                        // batches, so "the clip is right and the quad is gone" could not be told from "the clip is
+                        // right and the batch it clipped was a different one".
+                        + " fmt=" + group.formatId + " batches=" + group.batches + " texture=" + group.texture);
             }
         }
         org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
