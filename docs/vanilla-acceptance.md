@@ -692,6 +692,22 @@ only scene where a second stage exists to be mis-sourced; the audit below covers
 | `panelRowAmplitude >= 0.25` | bridge GUI frame (9.344) | GUI panel | flatness guard, value kept, source re-named |
 | `panelMeanLuma <= 0.70x world` | **new**, from the reference | GUI panel | added because the colour floors cannot separate a drawn screen from one whose backgrounds are missing (see below) |
 
+**The floors are derived from two same-era reference runs, and the candidate corroborates them.** The GUI-frame
+numbers are identical in `vs-pic-ref` (upstream Celeritas, fixture `29f1a7d399017f66`, tick 235) and `vs47-cel`
+(upstream Celeritas, fixture `396d40cd6043ded4`, tick 235): 145 distinct colours, 229 bands, nonBg 0.672704, black
+0.068322, panel 133 colours, rowAmplitude 4.089, panel luma 57.783 against the world frame's 109.919/111.377. The
+only spread is in the panel fractions: changed 0.999189/0.999617, strong 0.990540/0.995158. The GL-less candidate
+`vs47-cand` measures the same frame to the digit (panel changed 1.0, strong 0.998936, luma 57.783 against 113.658) -
+corroboration, not the source.
+
+**One implementation trap, found by the first verification run.** The per-stage floors were first written into
+`celtium$videoSettingsGate()`, but `celtium$resolveGate()` - the override path every run goes through - rebuilt the
+gate with the 13-argument constructor, which drops `guiFloors`. The first verification run therefore still reported
+`guiFrameGateFloors nonBackgroundFraction>=0.4 verticalBands>=250 blackFraction<=0.05` and failed the candidate. The
+fix carries `measured.guiFloors` through; the run that showed it is `vs47b-cand` (fixture `5219e885d32c45f0`). A
+floor set that is built correctly and then discarded by the next layer is the same class of defect as a floor taken
+from the wrong frame, and it is why the verification leg is not optional.
+
 **Why the panel-colours floor had to be re-derived, and what replaces its discriminating power.** The stored
 reference runs' GUI frame is not the picture the completion condition is about. In the bridge leg `vs47-ref`
 (jar `f27f07f27253f79a`, tick 248) the video-settings screen draws **no backgrounds at all**: the option labels and

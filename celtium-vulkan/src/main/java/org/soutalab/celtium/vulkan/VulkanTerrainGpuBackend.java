@@ -459,6 +459,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public List<String> diagnostics() {
+        // Each call builds the current snapshot rather than appending to the last one. The audit (C13.5) measured that
+        // the list grew by a fixed block on every call, so a repeatedly queried renderer (F3, the report, a watchdog)
+        // accumulated its own history and the strings described older states as well as the current one. The stable
+        // configuration and the current counters belong in the snapshot; a history, if one is ever wanted, is a
+        // separate bounded structure and not this list.
+        this.diagnostics.clear();
         // takeTimingSummary() was written but never called, so every post-process investigation ran without the numbers
         // that say where the handoff time goes. Gated, because it is a per-report string rather than a per-frame cost.
         // Which depth format this device ended up with, and how: the choice is made once, from the device's own
@@ -6100,6 +6106,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " retiredGroupsHeld=" + this.retiredImmediateGroups.size()
                 + " lastTerrainPassFrame=" + this.lastTerrainPassFrame + " frameId=" + this.frameId
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
+                // The application side of the stub's raw glMultMatrixf arrival census. Without this print the field was
+                // an instrument with no output (proj-channel found it incremented at :3102 and printed nowhere), and
+                // "arrivals without a mirrored multiply" is the pair that says a raw call reached GL with no owner.
+                + ",mirroredMultiplies:" + this.mirroredMultiplies
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
                 + ",passSplits:" + this.passSplits + ",target:" + this.currentRenderTarget
@@ -6129,6 +6139,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // different, earlier question (the GL identity and the interop contract); this is the live one.
                 + " driverInfo=[" + VulkanContext.driverSummary() + "]"
                 + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
+                + " presentMode=[" + VulkanSwapchain.presentModeSummary()
+                + " rebuilds=" + this.presentModeRebuilds + "]"
                 + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
                 + " fences=" + VulkanContext.quarantinedResourceCounts()[1] + "]"
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
@@ -7550,7 +7562,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
      * needs to present calls this instead, so the probe is only a probe.
      */
+    /** Swapchains dropped because the VSync option changed (task-56), so the rebuild is a number, not a claim. */
+    private int presentModeRebuilds;
+
     private boolean ensureSwapchain() {
+        // The VSync option changed since this swapchain was built (task-56): the present mode is a creation parameter,
+        // so the only way to honour it is a new swapchain. Dropping it here routes the rebuild through exactly the
+        // path an out-of-date surface takes - the acquire semaphores, the per-image render-finished semaphores and the
+        // image ownership all belong to the swapchain object and are recreated with it, which is why this is safe to
+        // do between frames and not mid-acquire.
+        if (this.swapchain != null && this.swapchain.presentModeStale()) {
+            record("the VSync option changed: dropping the swapchain so the present mode is rebuilt"
+                    + " requested=" + org.soutalab.celtium.vulkan.VulkanSwapchain.vsyncRequested()
+                    + " previous=[" + this.swapchain.presentModeSummary() + "]");
+            this.swapchain.delete();
+            this.swapchain = null;
+            this.presentModeRebuilds++;
+        }
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
         // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
         long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();

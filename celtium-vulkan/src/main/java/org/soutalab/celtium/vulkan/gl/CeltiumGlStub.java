@@ -1257,7 +1257,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // call site, because a stride that does not match the sources' glVertexPointer(3, GL_FLOAT, 12, 0)
                 // is either a call this class mis-reads or a caller nobody has looked at yet, and those two need
                 // different fixes.
-                if (VERTEX_POINTER_SITES.size() < 12
+                if (org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(VERTEX_POINTER_SITES.size(), 12)
                         && VERTEX_POINTER_SITES.add(Integer.valueOf((int) c[0] * 31 + (int) c[1] * 7 + (int) c[2]))) {
                     System.out.println("[Celtium] CELTIUM_VERTEXPOINTER size=" + (int) c[0] + " type=0x"
                             + Integer.toHexString((int) c[1]) + " stride=" + (int) c[2] + " offset=" + c[3]
@@ -1425,6 +1425,11 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private static void celtium$reportDrawArrays() {
         long calls = DRAWARRAY_CALLS.get();
+        if (!org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
+            // The powers-of-two lines are the repeating half of this instrument; the exit line below is not gated, so
+            // a support log still carries the census once. See VulkanDiagnostics for why the gate exists.
+            return;
+        }
         if (calls > 0L && (calls & (calls - 1L)) == 0L) {
             System.out.println("[Celtium] CELTIUM_DRAWARRAYS " + drawArraySummary());
         }
@@ -1534,7 +1539,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private void celtium$noteMatrixMultiplyArrival(Fn fn) {
         MATRIX_MULTIPLY_ARRIVALS.incrementAndGet();
-        if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L) {
+        if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L
+                && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
             System.out.println("[Celtium] CELTIUM_MULT_MATRIX arrival-only fn=" + fn.name
                     + " mode=" + matrixModeName(this.matrixMode)
                     + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
@@ -2587,7 +2593,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         this.texParams.put(Long.valueOf(key), Integer.valueOf(value));
         int calls = this.texParamCalls.incrementAndGet();
-        if (TEX_PARAM_SHAPES.size() < 24) {
+        if (org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(TEX_PARAM_SHAPES.size(), 24)) {
             String shape = textureName + "/" + pname + "=" + value;
             if (TEX_PARAM_SHAPES.add(shape)) {
                 System.out.println("[Celtium] CELTIUM_TEX_PARAM texture=" + textureName
@@ -2715,7 +2721,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** One query answer, named once per distinct shape so a run's log says what the mirror actually asked for. */
     private void celtium$noteTextureParameterQuery(String name, int textureName, int pname, int value, boolean recorded) {
         this.texParamQueries.incrementAndGet();
-        if (TEX_PARAM_QUERY_SHAPES.size() >= 12) {
+        if (!org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(TEX_PARAM_QUERY_SHAPES.size(), 12)) {
             return;
         }
         String shape = name + "/" + textureName + "/" + pname + "=" + value + "/" + recorded;
@@ -3384,7 +3390,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private void celtium$noteClientTuple(boolean clientMemory, int buffer, int count, int formatId) {
-        if (!clientMemory || CLIENT_TUPLES.size() >= 12) {
+        if (!clientMemory
+                || !org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(CLIENT_TUPLES.size(), 12)) {
             return;
         }
         String key = this.vertexPointerStride + "/" + formatId + "/" + celtium$otherArrayMask();
@@ -3436,7 +3443,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * adds three or four lines rather than ten thousand.
      */
     private static boolean celtium$noteDrawArrayLayout(int buffer) {
-        return DRAWARRAY_LAYOUTS_LOGGED.size() < 8 && DRAWARRAY_LAYOUTS_LOGGED.add(Integer.valueOf(buffer));
+        return org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(DRAWARRAY_LAYOUTS_LOGGED.size(), 8)
+                && DRAWARRAY_LAYOUTS_LOGGED.add(Integer.valueOf(buffer));
     }
 
     /**

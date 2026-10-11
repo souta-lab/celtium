@@ -96,6 +96,12 @@ public class SodiumGameOptionPages {
                         .setBinding((opts, value) -> {
                             opts.enableVsync = value;
                             Display.setVSyncEnabled(opts.enableVsync);
+                            // Under the GL-less window there is no GL context, so the swap interval above changes
+                            // nothing: the frame interval is the Vulkan swapchain's present mode, which is a
+                            // creation parameter. Telling the swapchain is what makes the option take effect without
+                            // a restart (task-56); it rebuilds on the next present with acquire/frame ownership going
+                            // through the same out-of-date path a surface change uses.
+                            org.soutalab.celtium.vulkan.VulkanSwapchain.setVSyncRequested(opts.enableVsync);
                         }, opts -> opts.enableVsync)
                         .setImpact(OptionImpact.VARIES)
                         .build())

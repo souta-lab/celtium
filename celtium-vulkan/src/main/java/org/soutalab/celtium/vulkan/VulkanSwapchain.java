@@ -72,6 +72,59 @@ public final class VulkanSwapchain {
     private int renderFinishedCursor;
     private int presentTraces;
 
+    // ---- the present-mode contract (task-56) ---------------------------------------------------------------------
+    //
+    // VSync is a swapchain *creation* parameter, so the contract says three things: which mode means VSync on (FIFO -
+    // it queues, so the frame interval is the display's) and which means off (MAILBOX, which presents without tearing
+    // and without the FIFO queue, or IMMEDIATE as the next best thing), what happens when the surface does not offer
+    // what the player asked for (a fallback that is *named and counted*, never silently ignored), and that a change
+    // rebuilds the swapchain - a new swapchain is the only way to change the mode, and it goes through the same
+    // out-of-date path a surface change uses, so acquire and frame ownership are unchanged.
+    //
+    // The request comes from the game's own option (GameSettings.enableVsync) through the Sodium option page's setter,
+    // because this module does not compile against Minecraft; no push at all is treated as VSync on, which is
+    // Minecraft's own default.
+    private static volatile boolean vsyncRequested = true;
+    private static final java.util.concurrent.atomic.AtomicLong VSYNC_REQUEST_REVISION =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Mode changes asked for through the option, and requested modes the surface could not offer. */
+    public static final java.util.concurrent.atomic.AtomicLong PRESENT_MODE_CHANGES =
+            new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong PRESENT_MODE_FALLBACKS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static volatile String presentModeLine = "not attempted";
+    /** The request revision this swapchain was created for; a mismatch means it must be rebuilt. */
+    private long builtForRequestRevision;
+
+    /** Records what the player's VSync option now asks for, from the option page's own setter. */
+    public static void setVSyncRequested(boolean enabled) {
+        if (vsyncRequested == enabled) {
+            return;
+        }
+        vsyncRequested = enabled;
+        VSYNC_REQUEST_REVISION.incrementAndGet();
+        PRESENT_MODE_CHANGES.incrementAndGet();
+        System.out.println("[Celtium] CELTIUM_PRESENT_MODE_REQUEST requested="
+                + (enabled ? "vsync-on(FIFO)" : "vsync-off(MAILBOX|IMMEDIATE)") + " revision="
+                + VSYNC_REQUEST_REVISION.get() + " changes=" + PRESENT_MODE_CHANGES.get()
+                + " (the swapchain is rebuilt on the next present)");
+    }
+
+    public static boolean vsyncRequested() {
+        return vsyncRequested;
+    }
+
+    /** {@return whether this swapchain was built for a different VSync request than the current one}. */
+    public boolean presentModeStale() {
+        return this.builtForRequestRevision != VSYNC_REQUEST_REVISION.get();
+    }
+
+    /** {@return the last present-mode decision}, for the report. */
+    public static String presentModeSummary() {
+        return presentModeLine;
+    }
+
+
     /**
      * Whether the last acquire or present said the swapchain no longer matches the surface.
      * <p>
@@ -443,6 +496,17 @@ public final class VulkanSwapchain {
 
     public int format() {
         return this.format;
+    }
+
+    /** {@return the present mode's name}, so the contract line is readable without the numeric enum. */
+    private static String presentModeName(int mode) {
+        switch (mode) {
+            case VK_PRESENT_MODE_IMMEDIATE_KHR: return "IMMEDIATE";
+            case VK_PRESENT_MODE_MAILBOX_KHR: return "MAILBOX";
+            case VK_PRESENT_MODE_FIFO_KHR: return "FIFO";
+            case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "FIFO_RELAXED";
+            default: return "mode" + mode;
+        }
     }
 
     public int presentMode() {
@@ -1014,19 +1078,54 @@ public final class VulkanSwapchain {
             vkGetPhysicalDeviceSurfacePresentModesKHR(this.context.physicalDevice(), this.surface, count, null);
             IntBuffer modes = stack.mallocInt(count.get(0));
             vkGetPhysicalDeviceSurfacePresentModesKHR(this.context.physicalDevice(), this.surface, count, modes);
-            this.presentMode = VK_PRESENT_MODE_FIFO_KHR;
             boolean mailbox = false;
+            boolean immediate = false;
+            boolean fifo = false;
+            StringBuilder supported = new StringBuilder();
             for (int i = 0; i < modes.capacity(); i++) {
-                if (modes.get(i) == VK_PRESENT_MODE_MAILBOX_KHR) {
+                int mode = modes.get(i);
+                if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
                     mailbox = true;
+                } else if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+                    immediate = true;
+                } else if (mode == VK_PRESENT_MODE_FIFO_KHR) {
+                    fifo = true;
                 }
+                if (supported.length() > 0) {
+                    supported.append(',');
+                }
+                supported.append(presentModeName(mode));
             }
 
-            // Mailbox is preferred when the surface offers it: it presents without tearing and without the FIFO
-            // queue's latency, and it is core Vulkan, not a vendor extension.
-            if (mailbox) {
+            // The contract in one place. VSync on asks for FIFO (the only mode the spec requires every surface to
+            // offer, and what VSync means); VSync off asks for MAILBOX, then IMMEDIATE, and falls back to FIFO with the
+            // fallback named and counted rather than silently ignored.
+            String requested;
+            String fallback = null;
+            if (vsyncRequested) {
+                requested = "vsync-on(FIFO)";
+                this.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+            } else if (mailbox) {
+                requested = "vsync-off(MAILBOX|IMMEDIATE)";
                 this.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+            } else if (immediate) {
+                requested = "vsync-off(MAILBOX|IMMEDIATE)";
+                this.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+            } else {
+                requested = "vsync-off(MAILBOX|IMMEDIATE)";
+                this.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+                fallback = "the surface offers neither MAILBOX nor IMMEDIATE, so frames are queued at the display"
+                        + " rate even though VSync is off";
+                PRESENT_MODE_FALLBACKS.incrementAndGet();
             }
+            this.builtForRequestRevision = VSYNC_REQUEST_REVISION.get();
+            presentModeLine = "requested=" + requested + " chosen=" + presentModeName(this.presentMode)
+                    + " supported=[" + supported + "]" + (fallback == null ? "" : " fallback=[" + fallback + "]")
+                    + " fallbacks=" + PRESENT_MODE_FALLBACKS.get()
+                    + " changes=" + PRESENT_MODE_CHANGES.get()
+                    + " vsyncOption=" + vsyncRequested + " fifoOffered=" + fifo
+                    + " size=" + requestedWidth + "x" + requestedHeight;
+            System.out.println("[Celtium] CELTIUM_PRESENT_MODE " + presentModeLine);
 
             int[] extent = effectiveExtent(capabilities, requestedWidth, requestedHeight);
             this.width = extent[0];

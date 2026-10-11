@@ -4356,25 +4356,8 @@ public final class ValidationClient {
             report.add("camera", camera);
             report.addProperty("seed", 12345678L);
             report.addProperty("renderDistance", 8);
-            Collections.sort(frameIntervals);
-            report.addProperty("frameIntervalSampleCount", frameIntervals.size());
-            report.addProperty("frameIntervalP50Ms", percentile(0.50));
-            report.addProperty("frameIntervalP95Ms", percentile(0.95));
-            report.addProperty("frameIntervalP99Ms", percentile(0.99));
-            Collections.sort(warmFrameIntervals);
-            report.addProperty("frameIntervalWarmSampleCount", warmFrameIntervals.size());
-            report.addProperty("frameIntervalWarmP50Ms", percentile(warmFrameIntervals, 0.50));
-            report.addProperty("frameIntervalWarmP95Ms", percentile(warmFrameIntervals, 0.95));
-            report.addProperty("frameIntervalWarmP99Ms", percentile(warmFrameIntervals, 0.99));
-            report.addProperty("frameIntervalWindows",
-                    "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are"
-                            + " this one) warm=worldTicks " + Integer.getInteger("celtium.validation.warmFromTick", 400)
-                            + ".." + Integer.getInteger("celtium.validation.warmToTick", 600)
-                            + " (after the world is built; compare this one with a warmed benchmark, never the cold"
-                            + " one)");
-            report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a"
-                    + " performance benchmark; the cold window is the chunk-build window, the warm window is the"
-                    + " steady state");
+            // The interval windows are written by celtium$reportFrameIntervals, from finish(): they belong to the run
+            // and not to the picture, and writing them here left every leg that missed the capture without an interval.
             if (!interopRun) {
                 celtium$logFrameSample(mc);
                 // The game's own screenshot, at the game's own path: the fixture's convention, the harness's evidence
@@ -4423,6 +4406,39 @@ public final class ValidationClient {
     private double percentile(double fraction) {
         if (frameIntervals.isEmpty()) throw new IllegalStateException("No frame interval samples");
         return frameIntervals.get(Math.min(frameIntervals.size() - 1, (int) Math.ceil(fraction * frameIntervals.size()) - 1));
+    }
+
+    /**
+     * Writes both frame-interval windows into the report, with their sample counts and the window names.
+     * <p>
+     * Called from {@link #finish(Minecraft)} rather than from the capture: the interval is a fact about the run, and a
+     * leg that never reaches the capture (a menu-only leg, a run whose gate fails first, a duration-limited leg) came
+     * back with no interval at all when this lived in the capture block. The cold window is the chunk-build window the
+     * fixture has always sampled; the warm window starts after the world is built, and it is the only one comparable
+     * with a warmed benchmark.
+     */
+    private void celtium$reportFrameIntervals() {
+        if (report.has("frameIntervalSampleCount")) {
+            return;
+        }
+        Collections.sort(frameIntervals);
+        report.addProperty("frameIntervalSampleCount", frameIntervals.size());
+        report.addProperty("frameIntervalP50Ms", frameIntervals.isEmpty() ? -1.0D : percentile(0.50));
+        report.addProperty("frameIntervalP95Ms", frameIntervals.isEmpty() ? -1.0D : percentile(0.95));
+        report.addProperty("frameIntervalP99Ms", frameIntervals.isEmpty() ? -1.0D : percentile(0.99));
+        Collections.sort(warmFrameIntervals);
+        report.addProperty("frameIntervalWarmSampleCount", warmFrameIntervals.size());
+        report.addProperty("frameIntervalWarmP50Ms", percentile(warmFrameIntervals, 0.50));
+        report.addProperty("frameIntervalWarmP95Ms", percentile(warmFrameIntervals, 0.95));
+        report.addProperty("frameIntervalWarmP99Ms", percentile(warmFrameIntervals, 0.99));
+        report.addProperty("frameIntervalWindows",
+                "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this"
+                        + " one) warm=worldTicks " + Integer.getInteger("celtium.validation.warmFromTick", 400) + ".."
+                        + Integer.getInteger("celtium.validation.warmToTick", 600)
+                        + " (after the world is built; compare this one with a warmed benchmark, never the cold one)");
+        report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a"
+                + " performance benchmark; the cold window is the chunk-build window, the warm window is the steady"
+                + " state");
     }
 
     /**
@@ -7175,6 +7191,12 @@ public final class ValidationClient {
     private void finish(Minecraft mc) {
         finished = true;
         celtium$reportWritten = true;
+        // The frame-interval windows belong to the run, not to the picture: they used to be written inside the capture
+        // block, and a leg that never reached the capture came back with no interval at all - three legs in a row
+        // measured `worldTicksAtEnd=207` and neither `frameInterval*` nor `frameIntervalWarm*` in the report, which left
+        // the user's lag unmeasured. They are written here instead, so every run that produces a report carries both
+        // windows, with their sample counts and the window names beside them.
+        celtium$reportFrameIntervals();
         // Test-only GL resources stay alive through their same-frame captures and are released before shutdown.
         if (commandBufferTargets) {
             try {
