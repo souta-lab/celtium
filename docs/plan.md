@@ -107,6 +107,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.164 **雨/粒子（id5）の受入——format 定数の修正で id0 が消えた**
+
+同一の修正に対する2つの測定:
+
+| jar | 結果 |
+|---|---|
+| 定数修正前（`p3b-on-3`） | `CELTIUM_UNMAPPED count=38 shape=[3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short \| size=28 count=4]`・`id0=40/0` |
+| 定数修正後（`ww6-gl-base`） | **id0 なし**・**`id5=142/142`**（`sky-draws-glless` も `id5=94/94`） |
+
+修正前は**どの run のどのヒストグラムでも id5 は 0**——これが「雨がどの census にも無い」の実体だった。
+`TEX_2S` の型は `SHORT`（表示名 "Short"）で、私の2定数が `Unsigned Short` と書いていたため
+`PARTICLE_POSITION_TEX_COLOR_LMAP` に名前を与えられず、**id 無しで拒否**されていた。
+
+**見つけ方も記録に値する**: 担当 pipelines が原典に対して表を掃引し、「どの run も id3/id5 を一度も offer していない」ことに気づき、
+**mod 形式を推測せず unmapped dump を読んだ**。
+
 ## 0.163 **alpha 修正の受入（水）／参照 leg の検証**
 
 ### 水の leg（alpha 修正の before/after・同一 pose・同一 stack）
