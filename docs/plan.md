@@ -230,6 +230,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.232 **round 38: offer/accept の矛盾は terrain leg では存在しない（計器が解決）・off-target は 225 描画・verdict PASSED**
+
+- **`offerStages` leg の結果（fog-path の計器・jar `f115fe11c` 系）**:
+  `offerStages=[1:6188 2:6188 3:6188 4:6188 5:6188 6:6188 7:6188 8:6188 10:6188 11:6188]`＝**全 offer が全 stage を通る**。
+  counter も一致: `offTargetOffered=765`・`offTargetAccepted=765`・`acceptedForOtherTargets=765`。
+  **`offTargetDrawn=225`**（Lead の死んだ counter 修正が効いている）・`offTargetCopiedBack=212`・
+  `immediateGroupsDrawn=4833`・`immediateRecordedBatches=8224`（submitted=completed=8224）・
+  `flushEntries=[1bf147d1: entries=1064 groupsAtEntry=4135, 0: 196/196, 2570d541: 15/28, 3fa40416: 1/1]`・
+  `unflushedTargetGroupsDropped=0`・**`presentedImageVerdict=PASSED`**。
+  ＝**terrain 経路は健全**で、以前の「793 対 7」は別 jar か、また単位の違う counter の対だった可能性が高い（要確認）。
+  **パノラマの白は menu leg 固有の現象**なので、次の leg は menu で `offerStages`・`flushEntries`・`CELTIUM_DRAW_SITE`・copy line を同時に取る。
+- **glyph の modes census（Lead・`f61f952d5`）**: `CELTIUM_FONT_GLYPH_SUMMARY` に `modes={…}`。strip/fan なら coalesced run が
+  連続 glyph を連結する（ユーザー報告の 1px バーの形）。leg 待ち。
+- **BH-11 の3分岐（Lead・`8e765012d`）**: `polygonOffsetCalls`・`polygonOffsetFillEnabled`・`polygonOffsetCalled` を検証サマリに追加。leg 待ち。
+- **blend-state の制御 probe（`2d9b347f6`）**: write mask と clip 矩形を既知の矩形として描く probe（picture の主張が 23.5% 床に
+  埋もれる問題への対処）。
+- **BH-06（texture-mirror）**: `func_179138_g` 修正で `CELTIUM_UNIT_SWITCH` が 24 行出るようになったが、`bindsOnOtherUnits=0`
+  （unit 1 が active の間に bind が来ない）。次は `func_179144_i` の caller 計装。
+
 ## 0.231 **round 37: パノラマは「offer と accept の間の矛盾」へ再帰属・glyph の draw mode census・BH-01/BH-19 受入**
 
 - **パノラマの矛盾（fog-path・`e9f2d56e8`）**: terrain leg で `offTargetOffered=793` に対し **`acceptedForOtherTargets=7`**、
