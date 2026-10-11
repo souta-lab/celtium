@@ -11065,7 +11065,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // panorama's faces go to the chain pair and the read otherwise found uniform white.
                 this.readResolvedFromLastDrawnTarget++;
                 glless.ensureOffTarget(this.targetWidth, this.targetHeight);
-                return glless.chainPairColorImage();
+                // The identity decides which pair, exactly as it does for the draws: routeLabelForBinding sends
+                // identity 0 to the default pair and every other non-main identity to the chain pair. Returning the
+                // chain pair unconditionally read an image the last-drawn identity never wrote - measured on the
+                // menu, where the panorama's faces go to the default pair and this returned the chain pair's
+                // uniform white (`CELTIUM_TEX_COPY_SERVED … mean=255,255,255`, firstPixels all 0xffffffff).
+                if ("chain-pair".equals(GllessFrameTarget.routeLabelForBinding(this.lastDrawnOffTargetIdentity,
+                        false))) {
+                    return glless.chainPairColorImage();
+                }
+                return glless.offTargetColorImage();
             }
             glless.ensureOffTarget(this.targetWidth, this.targetHeight);
             return glless.offTargetColorImage();
