@@ -257,6 +257,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.243 **round 49: video-options 画面が開いた（受入の第一段）・パノラマは clip 仮説の leg 待ち**
+
+- **videoSettings 修正の受入（gui-stage・`vs-open2`）**: `guiClickDivertedTo = org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen`・
+  **`presentedImageVerdict=PASSED`** ＝**Celeritas の video-options 画面が実際に開いた**（0 範囲 slider の throw は消えた）。
+  `guiScreenOpenedVia` は「no Video Settings button in 0 options buttons; opened with the two calls the game's own handler makes」＝
+  fixture は直接開く経路を取った。`scissorCapturedGroups=0` は blend-state の説明どおり
+  （glScissor を呼ぶのは Forge の `GuiScrollingList` と `Celeritas` の `VintageDrawContext` のみ）で、この画面が clip しないこと自体は欠陥ではない。
+  残る受入は **goal (e)**: 設定を変更 → native 描画に反映 → 復元（reload 含む）を leg で示すこと。
+- **パノラマ**: clip 仮説（face の pass が clip で何も書いていない）の menu leg はまだ完走していない（`clip-menu.json` は `chain-menu` を指し report 無し）。
+  現行 jar で `CELTIUM_TEX_COPY_SERVED … mean=` が 255 から動くかが判定点。
+- **BH-32 の検証 leg は `PASSED`**（`ww48-bh32`）。
+
 ## 0.242 **round 48: パノラマの最有力候補を「face の pass が何も書いていない」へ（clip 修正の時期が合う）**
 
 - **推論（Lead）**: fog-path の完了事実は順序・ルーティング・解決を消した。残る数字は
