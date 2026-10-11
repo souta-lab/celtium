@@ -5637,6 +5637,10 @@ public final class ValidationClient {
             return true;
         }
         Object[] found = celtium$vsFindOptionButton(list);
+        // Which rows this screen actually holds, so "the token for VSync" is measured rather than guessed
+        // (task-56: a run asking for VSYNC still pressed GRAPHICS, i.e. the row is not on this page or not
+        // named VSYNC). Bounded to the same 64 rows the finder walks, and recorded on the first press only.
+        report.addProperty("videoSettingsRowNames", celtium$vsRowNames(list));
         if (found == null) {
             report.addProperty("videoSettingsChain", "no option button could be located in the screen's row list");
             celtium$vsStep = 99;
@@ -5913,6 +5917,58 @@ public final class ValidationClient {
             }
         }
         return fallback;
+    }
+
+    /**
+     * {@return the option rows this screen's list really holds}, as {@code NAME:label} pairs.
+     * <p>
+     * A run that asked for {@code VSYNC} still pressed GRAPHICS, which says the row is absent from this page (or
+     * named differently) rather than misspelled - so the names are read from the same {@code optionsRowList} the
+     * finder walks instead of inferred from the option enum. Bounded to the finder's own 64 rows.
+     */
+    private static String celtium$vsRowNames(Object list) {
+        StringBuilder names = new StringBuilder();
+        for (int i = 0; i < 64; i++) {
+            Object row;
+            try {
+                java.lang.reflect.Method get = null;
+                for (String methodName : new String[] {"getListEntry", "func_148180_b"}) {
+                    try {
+                        get = list.getClass().getMethod(methodName, int.class);
+                        break;
+                    } catch (NoSuchMethodException next) {
+                        // Try the other name: the production jar carries the SRG name (GuiOptionsRowList.getListEntry).
+                    }
+                }
+                if (get == null) {
+                    break;
+                }
+                get.setAccessible(true);
+                row = get.invoke(list, Integer.valueOf(i));
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError absent) {
+                break;
+            }
+            if (row == null) {
+                break;
+            }
+            for (String field : new String[] {"buttonA", "buttonB", "field_148323_b", "field_148324_c"}) {
+                Object button = celtium$fieldValue(row, new String[] {field});
+                if (button == null) {
+                    continue;
+                }
+                Object option = celtium$fieldValue(button, new String[] {"enumOptions", "field_146137_o"});
+                if (option == null) {
+                    continue;
+                }
+                if (names.length() > 0) {
+                    names.append(", ");
+                }
+                names.append(celtium$vsOptionName(option, button)).append(':')
+                        .append(String.valueOf(celtium$fieldValue(button,
+                                new String[] {"displayString", "field_146126_j"})));
+            }
+        }
+        return names.length() == 0 ? "none" : names.toString();
     }
 
     /** The option's stable name: the enum constant, falling back to the button's visible label. */
