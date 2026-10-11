@@ -257,6 +257,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.238 **round 44: BH-11 受入（counter＋絵）・BH-10 を pixel で証明・clip の y 反転バグを修正・BH-32 実装**
+
+- **BH-11 受入（acceptance・`r38-break`/`r38-control`）**: jar `9186d898`・HEAD `ae32bdbe7`・fixture `fe349299`。
+  `breakBlock=true` で **`immediateDepthBiasedGroups=48`**・`polygonOffsetCalls=96`。
+  対照（`breakSubjectOnly=true`・`breakProgressCalls=0`）は **`groups=0`・`calls=0`** ＝1フラグ分離が機能。
+  さらに**絵が動く**: 修正前後の block region は **mean|d| 18.75・29.1% の画素が >8**。旧 jar は crack が stone に**淡く混ざり**、
+  新 jar は **solid black＋赤の stage-5 highlight が face の前に立つ**。以前の「動かない」測定（`r31` 対 `r30` mean|d| 0.70）は
+  **どちらも修正前**だったため＝counter leg が「bias すべき対象が無い」と「bias が適用されていない」を分離した。
+- **BH-10 を pixel で証明（blend-state・probe）**: clouds scene は同一 jar・同一 flag の2 run で rows 60-190 が **18.4% 差**（雲が動く）ため
+  使えない。`-Dceltium.validation.stateProbes` で **左を depth-only（colorMask 全 false）・右を全チャネル**のマゼンタ quad として描き、
+  対照（`-Dceltium.vulkan.immediateColorMask=false`）は x 75..254 と 1023..1202 の両方にマゼンタ、修正側は 1023..1202 のみ
+  （depth-only 矩形は背景 (97,60,55) のまま）。`colorMaskHistogram=[0x0:397 0x7:357 0xf:6645]`。
+- **clip の y 反転バグを修正（Lead・`9c7626783`）**: `VulkanSwapchain` は shared image の row 0 が**絵の下端**（GL texture 順）であるため
+  逆順に blit する。game も GL も y を下端から測るので、**image 上の行は `y..y+h` で反転不要**。反転形（`targetHeight-(y+h)`）は
+  GL box `(0,276,639,84)` を `0,360` として適用し quad を完全に clip していた（probe の実測）。
+  **no-flip を無条件化**し flag を削除（既知の誤りへ戻す switch は罠・恒久的正しさを lab flag に依存させない）。
+  修正前の形は `-Dceltium.vulkan.groupScissor=false` で到達可能。
+- **BH-32 実装（Lead）**: terrain atlas sampler の `maxLod` を**実際に mirror された level 数**に追従させる
+  （`min(configured, atlas.mipLevels()-1)`）。cached sampler を値で key し、reload（mipmap 設定・resource pack 切替）で
+  存在しない level を読まないよう再作成する。
+- **scissor の境界分割（blend-state）**: `scissorBoundarySplits=228`・`scissorCapturedGroups=180`。
+  light-params の境界も着地（`lightParamBoundarySplits` 226-613/leg・値が実際に変わった時だけ generation を進める）。
+
 ## 0.237 **round 43: BH-16 の leg は旧 jar・ただし行順が機序を確認（clear は face の draw の後・copy の前）**
 
 - **`bh16-menu` leg は修正前の jar**（lock JSON の mod hash `3481c429`/`e2b449c7`/`e415bf3f`、現行は `ce555f18`）で `mean=255,255,255` のまま
