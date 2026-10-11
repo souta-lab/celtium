@@ -107,6 +107,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.166 **task-3（sky）完了——担当の帰属測定と、この fixture では行使できない段階**
+
+担当 sky-draws が task-3 を完了。**rows 0-199 の 256,000 画素のうち 8 を超えて異なるものは 0**（max 4・mean 0.453）、
+行平均は y0 `(149.4,187.0,255.0)` → y120-139 `(178.0,206.4,255.0)` → y140+ fog 色 `(179.0,207.0,255.0)` で参照と**0.1カウントまで一致**。
+純青画素は frame 全体で 0（以前 ~174,000）、`pureBlueGroups=0`。**gate は両分岐とも削除**（拒否は誰も描かない。拒否が残す clear 色 `(106,123,151)` は参照帯より遠い）。
+射影ガード（`celtium$projectionRefusal`）は残し、早期フレームで2回発火。`celtium$noteFogDegradation` は**報告のみ**で拒否しない。
+
+**帰属（重要）**: final vs control は rows 0-120 で 134,870 画素（dome の footprint）差、**row 260 以下は 0**。
+一方 **horizon/terrain の参照との差は dome を描いても拒否しても同じ画素数**（rows 200-260 で 57,594、260 以下で 53,593）＝**別の段階**。
+
+**この fixture では行使できない段階（担当が明記）**:
+- **地平線 plane**: 唯一の VBO 描画が `if (d3 < 0.0D)`（`RenderGlobal:1463-1480`）の中にあり、fixture の world は `WorldType.FLAT` で `getHorizon()` が 0.0、眼高 ~13.6 なので到達しない。`:1519` の無条件 `glCallList(glSkyList2)` は `glCallList(-1)` で実 GL でも no-op。
+- **星**: worldTime が tick 20 から 6000 に固定され `getStarBrightnessBody` が厳密に 0 を返すため `if (f15 > 0)` が偽。星の描画は**拒否から受理に変わった**（1 draw・3120頂点）が、**画素は未検証**。
+- **display list は replay されない**（`glCallList` は id を記録するだけ）→ `vboEnabled=false` の構成では空が出ない（ここでは vboEnabled=true）。
+
+**残る拒否（census: calls=424 drawn=125 refused=299）**: client memory のポインタ（47・stub は mirror しない＝Tessellator 自身の描画は uploader フック経由）／float3・stride 12 以外（250・`VboRenderList` の 28バイト頂点や stride 24 の preDraw ポインタ）／identity 射影（2）／他。
+
 ## 0.165 **sky band が upstream Celeritas 参照と完全一致（0/215040 画素差）**
 
 最新の GL-less presented frame と **upstream Celeritas 参照 leg**（同一 scene/pose/tick）の直接比較:
