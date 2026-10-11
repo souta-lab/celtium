@@ -843,21 +843,19 @@ draws were merged into a run opened under a different transform. **The batching 
 - row 23 (the mod cohort) - the JEI panel crop I read showed "Gold Ore" and the category label legible on jar
   `609eb69a9064df05`, so *that* jar's text was not garbled; that is one observation, not a batching control.
 
-**The re-take is in, and it does not support "the menu text is legible": the button labels are still blocks.** On
-the batching-off jar `d805718167095c51` (`r12b-menu`, user's shape, compositor capture 22:38, best frame 1437
-distinct colours) the **footer is perfectly legible** ("Minecraft 1.12.2", "MCP 9.42", "Cleanroom
-0.6.13-alpha", "14 mods loaded, 14 mods active"), the **splash text is legible** ("Follow the train, CJ!"), the
-logo draws - and **every button label is a white/blue block**: `Singleplayer`, `Multiplayer`, `Options...`,
-`Language`, `Quit Game`. The user's own live capture at 21:25:28 shows **the same state**
-(`~/Pictures/screenshot_20261011_212528.png`, 1920x1079, preserved as
-`.celtium-work/acceptance/user-live/user-menu-212528.png`, sha256 `a35c8f3e3a338812…`: garbled buttons, legible
-footer, legible splash), and the batching-ON jar produces a **byte-identical button crop**. The font counters
-differ between the two jars - batching on: `accepted=0 refused=100 %`; batching off: `accepted=334620 refused=0` -
-so the font path accepts on the current jar and the labels are still blocks: **the defect is not the batching flag
-alone**, and the Lead's one-flag control does not reproduce on this jar. The explicit-flag control
-(`r12c-menu-explicit`, `-Dceltium.font.batching=false` on the same jar) is running to close the last gap. Crops:
-`.celtium-work/acceptance/r12b-menu-evidence/` (`menu-best.png` sha256 `dbfad9b5fa7a2f4f…`, `menu-buttons.png`,
-`menu-footer.png`, `menu-splash.png`). The text rows 13/19/23 are therefore **still not re-taken as legible**.
+**The re-take, and a correction to my own first reading.** My first "batching-off" leg was on a jar that still had
+it **on**: `r12b-celtium.jar` (`d805718167095c51`, copied 22:30) compiles to
+`System.getProperty("celtium.font.batching", "true")` - I checked the bytecode after seeing the garbling, and the
+default flip (`45030e8f0`) landed in the jar built at 22:39. On that jar the menu's **button labels are blocks**
+(footer and splash legible), and **the explicit control on the same jar is legible**: `r12c-menu-explicit`
+(`-Dceltium.font.batching=false`, same jar, same leg shape, frames 95.6 % identical) shows `Singleplayer`
+(yellow, hovered), `Multiplayer` and `Mods` cleanly. The user's own 21:25:28 capture shows the garbled state, and
+their 21:57:57 capture (in-world, F3) shows legible text - both are their captures, preserved under
+`.celtium-work/acceptance/user-live/`. So the batching flag **is** the mechanism for the garbling, the default
+flip is what fixes it, and the text rows are re-takeable on a jar that carries it - which is the jar built at
+22:39 (`r12d-celtium.jar`, `5235c6b00c05758c`, bytecode default `"false"`); `r12d-menu` is that re-take and its
+crops go here when it lands. Crops of the control: `.celtium-work/acceptance/r12c-menu-evidence/menu-buttons.png`
+(legible) against `.celtium-work/acceptance/r12b-menu-evidence/menu-buttons.png` (blocks).
 
 ## 6h. The user-facing state at the start of round 12 (recorded, not re-litigated)
 
