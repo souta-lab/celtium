@@ -89,6 +89,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.147 **N17 の画像側を実証（fault を bind の後へ追加）**
+
+監査の指摘は正確だった: 既存の fault は `vkAllocateMemory` の**前**に発火するため、証拠として引用された run の image ハンドルは**stale**で、
+**そもそも image が作られていなかった**——「image は作られ memory が無い」も「image と memory が作られた後に失敗」も実証されていなかった。
+
+`vkBindImageMemory` の**後**に3つ目の fault site を追加し、実測:
+
+```
+CELTIUM_IMAGE_RELEASED image=0x70000000007 memory=0x80000000008 view=0x0 requested=512x512 bytes=[…]
+injected allocation failure after vkBindImageMemory: VulkanGlTexture
+validationClean=true   validationMessageCount=0
+```
+
+**両ハンドルが作られ、両方解放された**（view は `vkCreateImageView` の前に失敗したため 0x0）。監査が「run が無い」と言った当のケースが、
+主張ではなく測定で埋まった。frame は `FAILED_PRESENTED_IMAGE` に落ちる（テクスチャに失敗を注入したのだから当然）、validation は clean でクラッシュしない。
+
+**これで監査の所有権ギャップ3つ＋N17 の未実証点がすべて閉じた。**
+
 ## 0.146 **chain pair が実行時に使われている／計器の2つの問い**
 
 glow run の `rendererDebug` を（期待した counter ではなく）直接読んだ結果:

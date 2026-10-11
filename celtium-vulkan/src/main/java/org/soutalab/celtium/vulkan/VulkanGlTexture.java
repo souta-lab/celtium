@@ -1922,6 +1922,12 @@ public final class VulkanGlTexture {
             check(vkAllocateMemory(device, allocate, null, handle), "vkAllocateMemory(mirrored texture)");
             memory = handle.get(0);
             check(vkBindImageMemory(device, image, memory, 0L), "vkBindImageMemory(mirrored texture)");
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:afterBind")) {
+                // After the bind, so the cleanup has an image AND its memory to release. The two sites above fire
+                // before vkAllocateMemory, which is why the audit could say the image path's partial cleanup was never
+                // demonstrated: with them the handle in the log was stale and no image had been created at all (N17).
+                throw new IllegalStateException("injected allocation failure after vkBindImageMemory: VulkanGlTexture");
+            }
 
             VkImageViewCreateInfo createView = VkImageViewCreateInfo.calloc(stack).sType$Default()
                     .image(image)
