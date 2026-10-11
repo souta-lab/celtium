@@ -4,7 +4,9 @@
 
 A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2 on CleanroomMC, with existing mod compatibility as a primary goal.
 
-**Current stage: hybrid - terrain is native Vulkan on both verified GPUs, the immediate path is implemented and accepted but off by default because its image is not correct yet, and the rest of the frame (including present) is still OpenGL. See docs/plan.md for the current plan and docs/history/ for stage records.
+**Current stage: the game runs and presents from Vulkan without a GL context.** With `-Dceltium.vulkan.glless=true` the window is created with no OpenGL context at all (`GLFW_NO_API`), the game's own framebuffer is adopted into Vulkan-owned colour and depth images, and the finished frame is presented from the Vulkan swapchain; the GL swap is skipped. Measured on both verified GPUs (RX 6400 and UHD 630): the validation fixture passes with zero validation messages, and terrain, entities, items, particles and the GUI draw through native pipelines. The presented frame was bound to the compositor's output pixel-exactly (0 of 921600 pixels differing) by capturing the private headless Wayland output with `grim` - scanout itself is not measured, because that needs DRM master. The GL bridge (`-Dceltium.vulkan.glless=false`) remains available and is what mods that issue their own GL calls still go through.
+
+**What is not done, so it is not claimed:** text drawn by vanilla's font renderer does not appear under GL-less (its glyphs still go to the stubbed immediate-mode entry points - the glyph capture exists and is accepted, but the image is not verified); the entity-outline glow is incomplete under GL-less; the vanilla post-process chains run natively only where their real input image can be supplied, and are refused (falling back to GL) where it cannot; the bridge's own model draws are not separately instrumented; FBO/post-process ownership, all-block-state coverage, all entity/TESR quality and full existing-mod compatibility are open. See docs/plan.md for the current status table, priorities and acceptance, and docs/history/ for the stage records.
 
 ## Approach
 
@@ -56,7 +58,7 @@ Use JDK 25 or newer to run Gradle (required by RetroFuturaGradle 2.0.4), with JD
 
 The resulting mod is under `build-1122/build/libs/<version>/`. In-game:
 
-**Build and startup status:** Forge packaging and the 15 probe tests pass. The distributable has been checked for its mod ID, manifest, probe classes, licenses, Java 8 bytecode and absence of bundled LWJGL/native libraries. Stock Celeritas and Celtium both render a fixed flat world in Cleanroom 0.6.13-alpha on RX 6400. The commands below execute on the client thread; a missing Vulkan binding produces a diagnostic report while OpenGL stays active. See [validation](docs/validation-2026-10-08.md), [runtime reproduction](docs/runtime-validation.md) and [the Codex handoff](docs/HANDOFF.md).
+**Build and startup status:** Forge packaging and the probe tests pass. Celtium's own modules compile at `--release 21` (class major 65 or lower) and depend on no Java 22+ API; JDK 25 is used to build and to run the game, as noted above. The distributable is checked for its mod ID, manifest, licenses, Java 8 bytecode and absence of bundled LWJGL/native libraries. Cleanroom 0.6.13-alpha with LWJGL 3.4.1 on JDK 25 is the verified combination on RX 6400 and UHD 630; **no other vendor, driver or operating system has been verified.** Vulkan bindings must be on the game's classpath and match that Cleanroom installation's LWJGL version. See [validation](docs/validation-2026-10-08.md), [runtime reproduction](docs/runtime-validation.md) and [the handoff](docs/HANDOFF.md).
 
 - `/celtium` displays the active terrain backend and why it was selected.
 - `/celtium probe` queries the existing GL context and writes `logs/celtium-capabilities.json` on the render thread.
@@ -66,7 +68,11 @@ Vulkan bindings must be available on the game's classpath and match that Cleanro
 
 ## Development
 
-See [the design and effort estimate](docs/design.md) and [the implementation roadmap](docs/roadmap.md).
+See [the design and effort estimate](docs/design.md), [the implementation roadmap](docs/roadmap.md) and [the plan's status table](docs/plan.md), which is the single place the current state, priorities and acceptance are kept.
+
+### Performance
+
+Measured on RX 6400 in one flat scene with pinned controls (frame cap, vsync, render distance, camera pose and world seed read back inside the game at both window ends), 900 frames per configuration: GL-less 3.94 ms p50 (253.8 fps), GL bridge 4.89 ms p50, and the pinned Celeritas reference `989ebf2e` 16.10 ms p50. **That is not a claim that Celtium renders the scene four times faster.** The reference sat on the 60 Hz presentation interval - identical at 64 and 147 visible sections with its GPU 7.5% busy - so it never used its headroom, only Celtium publishes pass timings (there is no GPU-time comparison), and the measurement covers one scene. The numbers and the full list of what they do not show are in [docs/performance-2026-10-11.md](docs/performance-2026-10-11.md).
 
 The separate [interop experiment](docs/interop-validation.md) verifies color, D24/D32 depth conversion, bidirectional occlusion, binary semaphores, recreation and retirement on AMD and Intel, including the existing Cleanroom FBO. It does not enable Vulkan terrain. [The P2 record](docs/p2-backend-boundary.md) documents the extracted terrain GPU boundary, the fail-closed backend selection and the pixel-identical comparison against stock Celeritas on both GPUs. [The P3 bootstrap record](docs/p3-vulkan-device-bootstrap.md) documents creating a Vulkan logical device for the GL GPU's UUID on both targets, with the interop contract verified in-game. Upload, arena and SOLID rendering are next.
 
