@@ -607,11 +607,22 @@ public final class VulkanTextureRegistry {
      * a surface other than the whole one, and filling with it would mark texels that never arrived as content. A dimension
      * of 1 is not a known size - the backend's size query coerces its own 0 answer to 1 - so a placeholder mirror is still
      * established from the capture.
+     * <p>
+     * <b>A surface with no game pixels is not content, except when the game is announcing the write that fills it.</b>
+     * {@code glTexImage2D} with a NULL data pointer lays down zeros so that the sub-image writes that follow have a
+     * surface; a draw-time lookup that took those zeros for content is how two 1280x720 colour textures and the light
+     * map's first read came to hold {@code opaque=0} over {@code full=true}. But the atlas and the light map are filled
+     * through a hook that runs at the <em>head</em> of the upload call, one instruction before the write - the zero
+     * surface is then exactly the thing the announced patch is about to land on, and refusing it would cost the atlas
+     * its whole chain (measured: every later patch refused as "before initialization"). {@code gameWritesThisLevel}
+     * carries which of the two a caller is: true from the announce paths, false from every lookup.
      *
      * @param nearestFilter the filter for a mirror this call has to create; see {@link VulkanGlTexture#create}
+     * @param gameWritesThisLevel whether the game has just announced a write into this level, which is evidence that the
+     *                            surface is about to hold game pixels even though the captured surface has none yet
      * @return whether the mirror was filled
      */
-    private boolean fillFromCapture(int glTextureId, boolean nearestFilter) {
+    private boolean fillFromCapture(int glTextureId, boolean nearestFilter, boolean gameWritesThisLevel) {
         Integer id = Integer.valueOf(glTextureId);
         Entry known = this.entries.get(id);
         if (known != null && known.texture.hasFullContent()) {
@@ -622,7 +633,7 @@ public final class VulkanTextureRegistry {
         if (rgba == null) {
             return false;
         }
-        if (!CeltiumGlStub.textureLevelHasGamePixels(glTextureId, 0)) {
+        if (!gameWritesThisLevel && !CeltiumGlStub.textureLevelHasGamePixels(glTextureId, 0)) {
             // A surface exists but the game never wrote a pixel into it: it is the zero fill an allocation with a NULL
             // data pointer leaves so that later sub-image writes have somewhere to land. Copying it would mark a mirror
             // whole over an image no upload ever filled, and the sampling side would draw those zeros as content. Two
@@ -630,8 +641,8 @@ public final class VulkanTextureRegistry {
             // the mirror keeps whatever it had, and the announcement carrying the real pixels fills it as before.
             this.capturesRefusedWithoutGamePixels++;
             this.rejectPatch("GL-less mirror: the captured surface for GL texture " + glTextureId + " is " + extent[0]
-                    + "x" + extent[1] + " with no game pixels (an allocation with a NULL data pointer); a mirror is not"
-                    + " built from it");
+                    + "x" + extent[1] + " with no game pixels (an allocation with a NULL data pointer) and nothing"
+                    + " announced a write into it; a mirror is not built from it");
             return false;
         }
         try {
@@ -821,7 +832,7 @@ public final class VulkanTextureRegistry {
             // mirror before any size is asked of GL: the captured surface carries the pixels and their extent together.
             // This is what makes the block atlas work at all - it is uploaded one sprite at a time and never announced
             // whole, and a patch alone is refused below because the image's whole content never arrived.
-            if (fillFromCapture(glTextureId, nearestFilterFor(glTextureId, x, y, width, height))) {
+            if (fillFromCapture(glTextureId, nearestFilterFor(glTextureId, x, y, width, height), true)) {
                 entry = this.entries.get(glTextureId);
             }
         }
@@ -1074,7 +1085,7 @@ public final class VulkanTextureRegistry {
         // because that guard rules out creating a mirror here, the filter argument below is never read.
         Entry entry = this.entries.get(Integer.valueOf(glTextureId));
         if (entry != null && entry.texture == target) {
-            if (fillFromCapture(glTextureId, false)) {
+            if (fillFromCapture(glTextureId, false, false)) {
                 return true;
             }
             if (target.hasFullContent()) {
@@ -1444,7 +1455,7 @@ public final class VulkanTextureRegistry {
                     // The captured upload is what remains; when that is gone too the mirror keeps the content it already
                     // has, which is nothing when it never received any, and the sampling side refuses that rather than
                     // drawing texels no upload ever filled.
-                    if (fillFromCapture(glTextureId, nearestFilter)) {
+                    if (fillFromCapture(glTextureId, nearestFilter, false)) {
                         HIT_CALLS++;
                         return existing.texture;
                     }
@@ -1488,7 +1499,7 @@ public final class VulkanTextureRegistry {
             // Under the stub the readback below would copy memory GL never filled: the pixels of this process exist in
             // the game's announcements - which the block above has already handled, so there is none here - and in the
             // uploads the stub captured. The capture is asked first, and it carries the whole surface.
-            if (fillFromCapture(glTextureId, nearestFilter)) {
+            if (fillFromCapture(glTextureId, nearestFilter, false)) {
                 HIT_CALLS++;
                 return this.entries.get(Integer.valueOf(glTextureId)).texture;
             }

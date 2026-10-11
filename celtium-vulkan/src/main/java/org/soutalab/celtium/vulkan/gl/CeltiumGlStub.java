@@ -2183,14 +2183,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * immediate path's fog is per batch, not per frame.
      */
     private static final int GL_FOG = 0x0B60;
-    /**
-     * Which sky draws this path refuses, from {@code celtium.glstub.skyFrameGate}: {@code capability} (default),
-     * {@code all} (the blanket refusal this path shipped with, kept as the control) or {@code off} (draw everything the
-     * decode accepts). One flag, so the picture can be taken one flag apart on one jar; see
-     * {@link #celtium$frameChangeRefusal} for what each setting refuses and why.
-     */
-    private static final String SKY_FRAME_GATE =
-            System.getProperty("celtium.glstub.skyFrameGate", "capability").trim().toLowerCase();
     /** GL_QUADS: every {@code VertexBuffer.drawArrays} caller in the 1.12.2 sources passes 7. */
     private static final int GL_QUADS = 7;
     /**
@@ -2306,7 +2298,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                 reason = celtium$projectionRefusal(backend);
             }
             if (backend != null && reason == null) {
-                reason = celtium$frameChangeRefusal(backend, buffer, count);
+                // The two conditions that used to refuse a draw here are gone, each because the capability it named
+                // now exists - and each removal was measured rather than assumed:
+                //   the fog: the immediate path applies the fixed-function fog (u_FogColor/u_FogParams at 128..207),
+                //     and a leg on the jar that carries it shows the dome's band as a gradient identical to upstream
+                //     Celeritas' (rows 0-199: max channel difference 4, no pixel over 8, row means equal to a tenth);
+                //   the alpha: the position shaders read the colour's alpha from push-constant offset 96, so a
+                //     translucent batch is drawn in its own alpha instead of opaque (this class refused the star draw
+                //     until that slot existed).
+                // What is left is celtium$projectionRefusal above, which guards a transform rather than a capability,
+                // and the decode's own refusals. A draw that leaves here is one the immediate path can reproduce.
+                celtium$noteFogDegradation(backend, buffer, count);
             }
             if (backend != null && reason == null) {
                 boolean taken;
@@ -2461,7 +2463,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * pixels</b>, and that negative is the measurement that mattered: the group colour never was pure blue, so the
      * colour did not come from the push block at all. It came from the vertex data, read as a colour attribute by a
      * pipeline that had been built as {@code POSITION_TEX_COLOR} whatever variant it was asked for - see
-     * {@link #celtium$frameChangeRefusal} and {@code VulkanImmediateTexturePipeline.allocate}. Kept because it is
+     * {@code VulkanImmediateTexturePipeline.allocate}. Kept because it is
      * still the only counter that would catch a *deliberate* pure-blue group, but it must never again be read as
      * "the path did not paint those pixels": the instrument's premise (the drawn colour is the group colour) is
      * exactly what was false.
@@ -2542,96 +2544,29 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * Whether this batch is one the immediate path provably cannot reproduce yet, or {@code null} when it may be drawn.
-     * <p>
-     * The first version of this gate refused every draw unconditionally, because the frame measurably got worse when
-     * the path was enabled: ~174,000 pixels with red and green exactly zero against ~10,000 with format 7 refused. That
-     * measurement was right and its explanation was wrong - it was not coverage, not blend, not the frame target's
-     * alpha and not fog. It was {@code VulkanImmediateTexturePipeline}: every variant factory called
-     * {@code create(...)}, which builds the pipeline immediately, and set {@code positionOnly} /
-     * {@code positionNoTexture} afterwards, so all of them were built as the base {@code POSITION_TEX_COLOR} pipeline -
-     * three attributes, a 24-byte binding stride, and a colour attribute at byte 20. The dome's real layout is twelve
-     * bytes of position, and every coordinate of it is a multiple of 64 or +-16 (low two bytes zero), so the attribute
-     * at 20 read the vertex data itself as {@code R8G8B8A8_UNORM}: red and green exactly zero and blue in
-     * {0,64,128,160,192}, interpolated across each quad - the pure-blue pixels, in the wedges the 676-vertex index
-     * expansion makes when it is applied to a 24-byte read. That is fixed at its source, not here.
-     * <p>
-     * What is left here is one branch, and it names a capability the immediate path does not have rather than a
-     * symptom in the frame:
-     * <ul>
-     *   <li><b>The group colour's alpha.</b> The position shaders hardcode the fragment alpha,
-     *       {@code v_Color = vec4(u_ColorR, u_ColorG, u_ColorB, 1.0)} (immediate_position.vert:56), so a translucent
-     *       batch is drawn opaque. The stars are exactly that: the star draw's mirrored colour is
-     *       (0.044,0.044,0.044,0.044) - measured, and its fog bit is off while the dome's is on, which is vanilla's
-     *       own bracketing (RenderGlobal.java:1354) - and vanilla blends it with {@code SRC_ALPHA, ONE} (the additive
-     *       pair {@code tryBlendFuncSeparate} sets just before it, RenderGlobal.java:1421-1425), so at that brightness
-     *       it brightens the sky by about half a count instead of covering it with (11,11,11). This path would draw it
-     *       opaque, which is a visible dot vanilla does not have, so the batch is refused rather than drawn wrong.
-     *       That needs the push block to carry the colour's alpha into the shader, which is the pipeline's side, not
-     *       this class's.</li>
-     * </ul>
-     * <p>
-     * <b>The fog branch that used to refuse every fogged draw is gone, and the measurement that removed it is the one
-     * that had been used to justify it.</b> The branch refused a fogged batch whenever
-     * {@code TerrainGpuBackend.immediateFogAvailable()} was false, on the grounds that the draw would paint the
-     * batch's raw colour where vanilla's is the fog mix. Two things make drawing the better picture even then, and the
-     * second is the stronger one:
-     * <ul>
-     *   <li>The dome is a plane at y=+16 seen from a camera at y=12.0 (measured: the group-bounds vertex dump prints
-     *       (&-384,16,-384) as the dome's first vertex, and the fixture's own camera line is y=12.0), so every visible
-     *       fragment of it is within a few tens of blocks and vanilla's own sky there is close to the dome's raw
-     *       colour - the fog ramp only reaches the fog colour at the horizon.</li>
-     *   <li>A refusal under the GL-less window is drawn by nobody. The band then keeps whatever the frame target was
-     *       cleared to, which is <em>further</em> from the bridge than the dome's flat colour: the measured clear
-     *       colour at the dome's draw is (0.427,0.495,0.611) = (109,126,156) while the dome's own colour is
-     *       (0.471,0.655,1.0) = (120,167,255), and the bridge's sky band runs (140,179,251) at row 0 to (179,207,255)
-     *       at row 180. So refusing trades an error of at most ~40 counts per channel for one of ~95. Drawing is the
-     *       smaller error, so the draw happens and the missing capability is <em>reported</em> instead
-     *       ({@code CELTIUM_SKY_DEGRADED}) rather than turned into a hole.</li>
-     * </ul>
-     * <p>
-     * The gate is one flag so the picture can be taken one flag apart on one jar:
-     * {@code -Dceltium.glstub.skyFrameGate=capability} (default, the alpha branch above),
-     * {@code =all} (the blanket refusal this path shipped with, kept as the control) and {@code =off} (draw whatever the
-     * decode accepts, which is how the alpha refusal's own cost is measured).
-     */
-    private String celtium$frameChangeRefusal(TerrainGpuBackend backend, int buffer, int count) {
-        if ("off".equals(SKY_FRAME_GATE)) {
-            return null;
-        }
-        String reason;
-        if ("all".equals(SKY_FRAME_GATE)) {
-            reason = "the blanket gate (celtium.glstub.skyFrameGate=all) refuses every sky draw; the decode is fine"
-                    + " (buffer=" + buffer + " count=" + count + ")";
-        } else {
-            float[] colour = celtium$mirroredColour(backend);
-            if (colour == null || colour.length < 4 || !(colour[3] < 1.0F)) {
-                celtium$noteFogDegradation(backend, buffer, count);
-                return null;
-            }
-            reason = "the group colour's alpha is " + celtium$round3(colour[3]) + " (buffer=" + buffer + " count="
-                    + count + ") and the position shaders hardcode the fragment alpha to 1.0"
-                    + " (immediate_position.vert:56), so this translucent batch would be drawn opaque; the push block"
-                    + " has no alpha field yet (see CELTIUM_SKY_REFUSAL for the colour it would have been drawn in)";
-        }
-        celtium$noteSkyRefusal(backend, buffer, count, reason);
-        return reason;
-    }
-
-    /** Bounded, so a run records the degraded sky a few times instead of once per draw. */
-    private static final java.util.concurrent.atomic.AtomicInteger SKY_DEGRADED_LINES =
-            new java.util.concurrent.atomic.AtomicInteger(
-                    Integer.getInteger("celtium.glstub.skyDegradedLines", 4).intValue());
-
-    /**
      * Records that a fogged batch is being drawn by an immediate path whose fog state never arrived.
      * <p>
-     * This is the branch that used to refuse the draw, and it was inverted on purpose: the fog capability being absent
-     * means the dome will come out as a flat fill of its own colour instead of vanilla's ramp, which is closer to the
-     * bridge than the clear colour the band would keep if nobody drew it (see
-     * {@link #celtium$frameChangeRefusal}). What must not happen is the degradation passing unrecorded, because a flat
-     * sky and a fogged sky are two different findings and the frame alone cannot tell them apart - the counter that
-     * would have was a refusal.
+     * This was a refusal once, and it was inverted on purpose. The branch refused a fogged draw whenever
+     * {@code TerrainGpuBackend.immediateFogAvailable()} answered false, on the grounds that the batch would paint its
+     * raw colour where vanilla's is the fog mix. Two things made drawing the better picture even then, and the second
+     * is the stronger one:
+     * <ul>
+     *   <li>The dome is a plane at y=+16 seen from a camera at y=12.0 (measured: the decode prints
+     *       (-384,16,-384) as its first vertex, and the fixture's camera line is y=12.0), so the fragments visible in
+     *       the band are close by and vanilla's own sky there is close to the dome's raw colour - the fog ramp only
+     *       reaches the fog colour at the horizon.</li>
+     *   <li>A refusal under the GL-less window is drawn by nobody, and the band then keeps the frame target's clear
+     *       colour, which is <em>further</em> from the reference than the batch's flat colour: the measured clear colour
+     *       at the dome's draw is (0.415,0.481,0.594) = (106,123,151), the dome's own colour is
+     *       (0.45,0.626,0.956) = (115,160,244), and the reference's sky band runs (149,187,255) at row 0 to
+     *       (179,207,255) at row 140. Drawing is the smaller error, so the draw happens and the missing capability is
+     *       reported instead of turned into a hole.</li>
+     * </ul>
+     * <p>
+     * On the tree where this was measured the capability is present, so the line does not appear at all: the run's
+     * dome drew as a gradient identical to upstream Celeritas' (rows 0-199: no pixel differs by more than 8, maximum
+     * channel difference 4). The line exists for the configuration where the fog mixin does not apply - a flat sky and
+     * a fogged sky are two different findings, and the frame alone cannot tell them apart.
      */
     private void celtium$noteFogDegradation(TerrainGpuBackend backend, int buffer, int count) {
         if (!this.enables.getOrDefault(Integer.valueOf(GL_FOG), Boolean.FALSE).booleanValue()
@@ -2641,42 +2576,18 @@ public final class CeltiumGlStub implements FunctionProvider {
         float[] clear = new float[4];
         clearColor(clear);
         System.out.println("[Celtium] CELTIUM_SKY_DEGRADED buffer=" + buffer + " count=" + count
-                + " gate=" + SKY_FRAME_GATE
                 + " fogEnabled=true fogAvailable=false"
                 + " clearColor=(" + celtium$round3(clear[0]) + "," + celtium$round3(clear[1]) + ","
                 + celtium$round3(clear[2]) + "," + celtium$round3(clear[3]) + ")"
                 + " colour=(" + celtium$colourQuad(celtium$mirroredColour(backend)) + ")"
-                + " reason=[drawn anyway: the band would keep the clear colour, which is further from the bridge than"
-                + " this batch's flat colour]");
+                + " reason=[drawn anyway: the band would otherwise keep the clear colour, which is further from the"
+                + " reference than this batch's flat colour]");
     }
 
-    /** Bounded, so a run records the gate's own facts a few times instead of once per draw. */
-    private static final java.util.concurrent.atomic.AtomicInteger SKY_REFUSAL_LINES =
+    /** Bounded, so a run records the degraded sky a few times instead of once per draw. */
+    private static final java.util.concurrent.atomic.AtomicInteger SKY_DEGRADED_LINES =
             new java.util.concurrent.atomic.AtomicInteger(
-                    Integer.getInteger("celtium.glstub.skyRefusalLines", 4).intValue());
-
-    /**
-     * Prints the facts each gate decision rests on, once per bounded group of refusals.
-     * <p>
-     * The gate is a judgement about pixels, so it has to carry the values it judged: the enabled fog bit, the colour
-     * mirror the batch would have been drawn in, and the clear colour of the frame target - which is the colour the
-     * game's own {@code glClearColor} asked for and, in this scene, the fog colour the dome's fragments would have
-     * come out as. Without them the refusal line is a claim; with them it is checkable from the log alone.
-     */
-    private void celtium$noteSkyRefusal(TerrainGpuBackend backend, int buffer, int count, String reason) {
-        if (SKY_REFUSAL_LINES.getAndDecrement() <= 0) {
-            return;
-        }
-        float[] clear = new float[4];
-        clearColor(clear);
-        System.out.println("[Celtium] CELTIUM_SKY_REFUSAL buffer=" + buffer + " count=" + count
-                + " gate=" + SKY_FRAME_GATE
-                + " fogEnabled=" + this.enables.getOrDefault(Integer.valueOf(GL_FOG), Boolean.FALSE)
-                + " clearColor=(" + celtium$round3(clear[0]) + "," + celtium$round3(clear[1]) + ","
-                + celtium$round3(clear[2]) + "," + celtium$round3(clear[3]) + ")"
-                + " colour=(" + celtium$colourQuad(celtium$mirroredColour(backend)) + ")"
-                + " reason=[" + reason + "]");
-    }
+                    Integer.getInteger("celtium.glstub.skyDegradedLines", 4).intValue());
 
     /** {@return the mirrored colour as one bracketed quad of three-decimal values}, or {@code unknown}. */
     private static String celtium$colourQuad(float[] colour) {

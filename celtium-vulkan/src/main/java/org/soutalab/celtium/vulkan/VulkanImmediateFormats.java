@@ -90,6 +90,21 @@ package org.soutalab.celtium.vulkan;
  * {@code POSITION_TEX2_COLOR}, whose second UV element is {@code TEX_2S} at index 1, which is text-identical to
  * {@code POSITION_TEX_LMAP_COLOR} and refused with it.</li>
  * </ul>
+ * <h2>How this table is checked against the running game</h2>
+ * Three instruments, named so the check can be repeated rather than believed:
+ * <ul>
+ * <li>{@code celtium immediate formats offered/accepted: idN=x/y} - the per-format arrival and acceptance histogram,
+ * sized from {@link #COUNT}. A layout that is mapped but still refused shows up as {@code idN=x/0}; a layout the table
+ * cannot name never appears at all and lands in {@code id0}.</li>
+ * <li>{@code CELTIUM_UNMAPPED count=N shape=[<element text> | size=W count=C>} - the uploader's census of the shapes
+ * answered id 0, which is what names the thing the table is missing. This is the instrument that caught the two wrong
+ * constants above: the dumped text read {@code 2,UV,Short} while the constants said {@code 2,UV,Unsigned Short}, and no
+ * {@code id3} or {@code id5} row existed. Measured in that state: {@code id0=138/0 ... id6=902/902 id7=753/752
+ * id9=12/12 id10=162/162}, with the unmapped shape being PARTICLE_POSITION_TEX_COLOR_LMAP.</li>
+ * <li>{@code CELTIUM_UNMAPPED_LAYOUT ... sameElementList=[...]} - the bounded once-per-shape comparison against the
+ * standard formats, which says whether an unmapped arrival is a mod format or one of vanilla's own at a width the table
+ * disagrees about.</li>
+ * </ul>
  * One thing this key does not see, stated so it is not mistaken for a complete identity: {@code toString()} omits an
  * element's index, so a mod format carrying a second <em>float</em> UV element at index 1 would read exactly like
  * {@code POSITION_TEX} at the same width. No vanilla format does that, the two {@code TEX_2S} lists above are the ones
