@@ -200,10 +200,15 @@ def main():
     # and that made every test run fail at startup with the jar in place. The caller's jar wins for the names it names;
     # a genuine collision between two supplied files is still an error below.
     supplied = {mod.name for mod in args.mod}
+    # The instance's own copy of this project's jars is never carried into a test game dir, whatever the caller names
+    # its frozen copies. Excluding only the exact supplied names was not enough: a worker who freezes the build under a
+    # different file name (to keep two legs on one hash) then gets the instance's jar copied alongside it, and the game
+    # dies on a duplicate mod id - which cost fog-path a leg before this line existed.
+    ignored_mods = ("celtium-forge-*.jar", "celtium-validation-client-*.jar") + tuple(supplied)
     for name in ("mods", "config", "resourcepacks"):
         source = source_game / name
         if source.is_dir():
-            ignore = shutil.ignore_patterns(*supplied) if (name == "mods" and supplied) else None
+            ignore = shutil.ignore_patterns(*ignored_mods) if name == "mods" else None
             shutil.copytree(source, game / name, ignore=ignore)
     (game / "mods").mkdir(exist_ok=True)
     for mod in args.mod:
