@@ -30,7 +30,7 @@ final class VulkanUniformBuffer {
 
     VulkanUniformBuffer(VulkanContext context, long initialSize) {
         this.context = context;
-        publish(create(alignToDevice(initialSize)));
+        publish(create(alignToDevice(initialSize), "VulkanUniformBuffer:initial"));
     }
 
     long size() {
@@ -65,7 +65,16 @@ final class VulkanUniformBuffer {
         long previousMemory = this.memory;
         long previousAddress = this.mappedAddress;
 
-        Allocation replacement = create(alignToDevice(required));
+        Allocation replacement;
+        try {
+            replacement = create(alignToDevice(required), "VulkanUniformBuffer:growth");
+        } catch (RuntimeException | LinkageError failure) {
+            // The old buffer, its memory and its mapped address are untouched by create(), so the caller keeps a
+            // working buffer and only this growth is lost (BH-24). Counted, so the injection run says it happened.
+            this.growthFailures++;
+            this.lastGrowthFailure = String.valueOf(failure.getMessage());
+            throw failure;
+        }
 
         // Keep the old contents: blocks written earlier in the frame are still referenced by recorded draws.
         MemoryUtil.memCopy(previousAddress, replacement.mappedAddress, previousSize);
@@ -80,6 +89,16 @@ final class VulkanUniformBuffer {
 
     /** Successful growths, so a run says whether the replacement path was taken at all. */
     private int growths;
+    /** Growths that failed and left the previous buffer in place (BH-24), with the last failure's text. */
+    private int growthFailures;
+    private String lastGrowthFailure = "none";
+
+    /** {@return the growth outcome as one report token}, {@code growths=0 failures=0} before any growth. */
+    String growthSummary() {
+        return "growths=" + this.growths + " growthFailures=" + this.growthFailures
+                + " lastGrowthFailure=" + (this.lastGrowthFailure == null ? "none"
+                        : this.lastGrowthFailure.replace(' ', '_'));
+    }
 
     /** {@return how many times the buffer was replaced by a larger one}. */
     int growths() {
@@ -107,7 +126,7 @@ final class VulkanUniformBuffer {
      * destroyed. Nothing here writes a field of this object, which is what lets {@link #ensureCapacity} keep the old
      * allocation intact when a growth fails.
      */
-    private Allocation create(long bytes) {
+    private Allocation create(long bytes, String what) {
         Allocation allocation = new Allocation();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo create = VkBufferCreateInfo.calloc(stack).sType$Default()
@@ -133,8 +152,8 @@ final class VulkanUniformBuffer {
             VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(type);
-            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanUniformBuffer:110")) {
-                throw destroyReplacement(allocation, "injected allocation failure: VulkanUniformBuffer:110");
+            if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail(what)) {
+                throw destroyReplacement(allocation, "injected allocation failure: " + what);
             }
             try {
                 check(vkAllocateMemory(this.context.device(), allocate, null, handle), "vkAllocateMemory(uniform)");

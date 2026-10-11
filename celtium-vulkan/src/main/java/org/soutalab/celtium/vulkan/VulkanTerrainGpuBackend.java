@@ -969,6 +969,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Line batches drawn by the line pipeline, and how many were refused for their width. */
     private int lineBatchesNative;
     private int lineBatchesRefusedForWidth;
+    /**
+     * Line batches drawn at the 1.0 width this renderer implements when OpenGL asked for more (BH-12): the block
+     * selection outline asks for 2.0 and the fishing rod's line is a line batch too, and under the GL-less window a
+     * refusal draws nothing. Counted so the difference is reported rather than silent.
+     */
+    private int lineBatchesNarrowed;
     /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
     private String lastPresentResult = "none";
     /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
@@ -4084,24 +4090,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.offerStage = 1;
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
-        if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode) && formatId == 1) {
-            // Lines are refused by design unless this renderer can draw the width OpenGL asked for. The selection
-            // outline is the batch this covers: it is POSITION_COLOR (format 1) and OpenGL draws it with
-            // glLineWidth(2.0).
+        if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode)) {
+            // Lines are drawn, not refused. The refusal that used to be here was right about one thing - the
+            // pipelines are built with .lineWidth(1.0f), so a 2 px request would be drawn one pixel wide - and wrong
+            // about the consequence: under the GL-less window the refusal is not "drawn by OpenGL", it is drawn by
+            // nobody, which is why the block selection outline (glLineWidth(2.0), POSITION_COLOR) and the fishing
+            // rod's line are missing from the frame. The batch is now accepted at the width this renderer implements
+            // and the difference is *reported* instead of being silent: lineBatchesNarrowed counts the batches whose
+            // requested width was clamped, and the first few name the requested and drawn widths.
             //
-            // The question is what THIS renderer draws, not what the device could draw: every immediate pipeline is
-            // built with .lineWidth(1.0f) as a static state, so a device with wideLines and a maximum of 8 would have
-            // passed the old test and then drawn the outline one pixel wide while OpenGL drew two - an accepted batch
-            // whose pixels differ, which is worse than a refusal because nothing reports it. The gate now asks for the
-            // width that is actually implemented, and the refusal names that.
+            // The format restriction (it used to require formatId == 1) is gone with it: the fishing rod's line is a
+            // line batch of another format, and the line pipeline's own layout is what decides whether a batch fits.
             float askedWidth = this.celtium$requestedLineWidth();
-            if (askedWidth <= 1.0F + 0.01F) {
-                reason = null;
-            } else {
-                this.lineBatchesRefusedForWidth++;
-                reason = "line width " + askedWidth + " > the 1.0 this renderer draws (device maximum "
-                        + this.celtium$maxLineWidth() + " with wideLines) - drawn by OpenGL";
+            if (askedWidth > 1.0F + 0.01F) {
+                this.lineBatchesNarrowed++;
+                if (this.lineBatchesNarrowed <= 4) {
+                    System.out.println("[Celtium] CELTIUM_LINE_NARROWED requested=" + askedWidth
+                            + " drawn=1.0 (device maximum " + this.celtium$maxLineWidth()
+                            + " with wideLines) mode=" + drawMode + " format=" + formatId
+                            + " - drawn rather than refused, because a refusal draws nothing under GL-less");
+                }
             }
+            reason = null;
         }
         if (reason != null) {
             this.immediateLastRefusal = reason;
@@ -5077,6 +5087,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // alpha test's effect inside one build instead of comparing across builds.
         float alphaReference = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
                 ? this.immediateState.alphaFuncReference() : 0.0f;
+        // BH-08: the cull state the game actually set, read from the recording the stub keeps for exactly this -
+        // the capability from the same enables map glEnable/glDisable write, and the face from glCullFace. Nothing
+        // else ever wrote these two fields, so the pipeline was built with culling off for every immediate batch.
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            this.immediateState.cullEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnabled());
+            this.immediateState.cullFace(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFace());
+        }
         return new int[] {
                 blend ? 1 : 0,
                 source < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA : source,
@@ -6436,6 +6453,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapSubmitWaits=" + VulkanContext.bootstrapSubmitWaits
                 + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
+                + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
                 + " gpuStalled=" + this.gpuStalled
                 + " deviceWaitToken=" + this.deviceWaitToken
