@@ -1188,6 +1188,12 @@ public final class VulkanContext {
     private Set<String> advertisedDeviceExtensions;
     /** The device extensions this context actually enabled, named in the contract line rather than implied. */
     private List<String> enabledDeviceExtensions = new ArrayList<String>();
+    /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
+    private boolean multiDrawIndirectSupported;
+    /** Whether drawIndirectFirstInstance was reported by the device and therefore enabled at creation. */
+    private boolean drawIndirectFirstInstanceSupported;
+    /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
+    private int maxDrawIndirectCount;
     /** The frame target's colour format and sample count: two of the native contract's fixed terms. */
     private static final String COLOR_FORMAT_NAME = "R8G8B8A8_UNORM";
     private static final int REQUIRED_SAMPLES = 1;
@@ -1238,7 +1244,10 @@ public final class VulkanContext {
                 + " enabledDeviceExtensions=[" + String.join(", ", this.enabledDeviceExtensions) + "]"
                 + " limits=[maxPushConstantsSize=" + pushConstantLimit + " immediatePushBytes=" + PUSH_CONSTANT_BYTES_USED
                 + " maxImageDimension2D=" + properties.limits().maxImageDimension2D() + "]"
-                + " advertised=[externalMemoryFd=" + extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
+                + " indirect=[multiDrawIndirect=" + this.multiDrawIndirectSupported
+                + " drawIndirectFirstInstance=" + this.drawIndirectFirstInstanceSupported
+                + " maxDrawIndirectCount=" + this.maxDrawIndirectCount + "]"
+                + " advertised=[externalMemoryFd="+ extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
                 + " externalSemaphoreFd=" + extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)
                 + " swapchain=" + extensions.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME) + "]"
                 + (this.skippedForInteropExtensions == null ? ""
@@ -1433,9 +1442,26 @@ public final class VulkanContext {
             }
             names.flip();
             this.enabledDeviceExtensions = new ArrayList<String>(deviceExtensions);
+            // Optional features are opt-in at device creation: a VkDeviceCreateInfo with no pEnabledFeatures enables
+            // none of them, so a call that requires one is illegal however well the driver advertises it -
+            // vkCmdDrawIndexedIndirect needs multiDrawIndirect, for instance (OPT-09's "query AND enable"). Each
+            // feature is enabled only when the device reports it, because enabling an unsupported one fails
+            // vkCreateDevice outright, which would leave no renderer at all.
+            org.lwjgl.vulkan.VkPhysicalDeviceFeatures supportedFeatures = org.lwjgl.vulkan.VkPhysicalDeviceFeatures.calloc(stack);
+            vkGetPhysicalDeviceFeatures(this.physicalDevice, supportedFeatures);
+            org.lwjgl.vulkan.VkPhysicalDeviceFeatures enabledFeatures = org.lwjgl.vulkan.VkPhysicalDeviceFeatures.calloc(stack);
+            this.multiDrawIndirectSupported = supportedFeatures.multiDrawIndirect();
+            this.drawIndirectFirstInstanceSupported = supportedFeatures.drawIndirectFirstInstance();
+            enabledFeatures.multiDrawIndirect(this.multiDrawIndirectSupported);
+            enabledFeatures.drawIndirectFirstInstance(this.drawIndirectFirstInstanceSupported);
+            org.lwjgl.vulkan.VkPhysicalDeviceProperties deviceProperties =
+                    org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
+            vkGetPhysicalDeviceProperties(this.physicalDevice, deviceProperties);
+            this.maxDrawIndirectCount = deviceProperties.limits().maxDrawIndirectCount();
             VkDeviceCreateInfo createInfo = VkDeviceCreateInfo.calloc(stack).sType$Default()
                     .pQueueCreateInfos(queues)
-                    .ppEnabledExtensionNames(names);
+                    .ppEnabledExtensionNames(names)
+                    .pEnabledFeatures(enabledFeatures);
             PointerBuffer handle = stack.mallocPointer(1);
             check(vkCreateDevice(this.physicalDevice, createInfo, null, handle),
                     "vkCreateDevice(" + this.deviceName + ")");
