@@ -1601,9 +1601,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private static final boolean ENQ_ALL_GROUPS =
             Boolean.getBoolean("celtium.vulkan.enqAll");
-    /** {@code -Dceltium.vulkan.debugMagentaFormat=<formatId>} forces that format's fragments to magenta. */
-    private static final int DEBUG_MAGENTA_FORMAT =
-            Integer.getInteger("celtium.vulkan.debugMagentaFormat", -1).intValue();
     private static final int ENQ_FORMAT =
             Integer.getInteger("celtium.vulkan.enqFormat", -1).intValue();
     /** Lines of {@code CELTIUM_DRAW_SITE}, the draw-moment companion of {@code CELTIUM_IMMEDIATE_ENQ}. */
@@ -12073,19 +12070,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // 96 yet - the two colourless vertex shaders have to be changed to use it - but the value has to
                     // be there for that to be a one-line change on their side.
                     push.putFloat(96, color == null || color.length < 4 ? 1.0f : color[3]);
-                }
-                if (group.formatId == DEBUG_MAGENTA_FORMAT) {
-                    // The panorama's faces draw into the chain pair, the copy reads that same image, six submissions
-                    // complete in between, the geometry covers the viewport - and the copy still reads the pair's
-                    // white clear. This flag makes the group's fragment output a colour nothing else in the scene
-                    // has, without touching the shader: a negative alpha reference takes the combine branch, whose
-                    // mix factor is its negation, so the constant colour replaces the fragment outright. If the
-                    // copy's mean moves to magenta the draw reaches the image and the problem is the vertex colour;
-                    // if it stays white the draw never reaches it.
-                    push.putFloat(112, -1.0f);
-                    push.putFloat(116, 1.0f);
-                    push.putFloat(120, 0.0f);
-                    push.putFloat(124, 1.0f);
                 }
                 // BH-03: the alpha comparison function, in the spare slot at offset 100. The GL enum travels as a
                 // float, and 0 means "the test is disabled" - no GL enum is 0, so a reference of 0 stays

@@ -929,6 +929,58 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return identity == 0L ? "default-pair" : "chain-pair";
     }
 
+
+    // ---- BH-14 census: how many identities share how few images --------------------------------------------------
+    //
+    // The routing rule below sends identity 0 to the default pair and *every other* non-main identity to the chain
+    // pair, so two non-main identities in one frame draw into the same two images: one identity's clear or draw can
+    // reach the other's content between its draw and the copy that reads it. That is a fact about the ownership, not
+    // a symptom, and this census turns it into numbers the report can carry: the distinct non-main identities seen,
+    // the distinct main identities, and the largest number of identities sharing one pair. When the per-identity
+    // image lands, "widest pair" must fall to 1 and the pair count must rise to the identity count - that is the
+    // acceptance this counter exists to make readable.
+    private static final java.util.Set<Long> CENSUS_NON_MAIN = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<Long> CENSUS_MAIN = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.Map<String, java.util.Set<Long>> CENSUS_PAIR_MEMBERS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.Set<Long>>();
+
+    /** Records one routed bind: the identity, whether it is main, and which pair it therefore shares. */
+    public static void noteIdentityForCensus(long identity, boolean isMain) {
+        (isMain ? CENSUS_MAIN : CENSUS_NON_MAIN).add(Long.valueOf(identity));
+        String pair = routeLabelForBinding(identity, isMain);
+        java.util.Set<Long> members = CENSUS_PAIR_MEMBERS.get(pair);
+        if (members == null) {
+            members = java.util.concurrent.ConcurrentHashMap.newKeySet();
+            java.util.Set<Long> existing = CENSUS_PAIR_MEMBERS.putIfAbsent(pair, members);
+            if (existing != null) {
+                members = existing;
+            }
+        }
+        members.add(Long.valueOf(identity));
+    }
+
+    /** {@return the BH-14 census as one line}: identities, pairs, and the widest pair's member count. */
+    public static String identityPairCensus() {
+        int widest = 0;
+        String widestPair = "none";
+        StringBuilder pairs = new StringBuilder();
+        for (java.util.Map.Entry<String, java.util.Set<Long>> entry : CENSUS_PAIR_MEMBERS.entrySet()) {
+            if (pairs.length() > 0) {
+                pairs.append(',');
+            }
+            pairs.append(entry.getKey()).append('=').append(entry.getValue().size());
+            if (entry.getValue().size() > widest) {
+                widest = entry.getValue().size();
+                widestPair = entry.getKey();
+            }
+        }
+        return "mainIdentities=" + CENSUS_MAIN.size()
+                + " nonMainIdentities=" + CENSUS_NON_MAIN.size()
+                + " pairs=" + CENSUS_PAIR_MEMBERS.size()
+                + " widestPair=" + widestPair + "(" + widest + " identities share it)"
+                + " perPair=[" + pairs + "]";
+    }
+
     /**
      * Which image a bound framebuffer's draws actually render into, as the backend routes them - not which pair an
      * identity <em>would</em> take if it were off-target. The two answers differ for the main framebuffer, and the
