@@ -257,6 +257,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.277 **round 83: caller 連鎖が確定 — copy は panorama のもの（`GuiMainMenu.drawPanorama` → `renderSkybox` → `glCopyTexSubImage2D`）**
+
+- **測定（Lead の `r82-caller3`・window 16）**:
+  ```
+  GL11.glCopyTexSubImage2D:3793 <- GlStateManager.func_187443_a:510
+   <- GuiMainMenu.func_73968_a:417   (renderSkybox)
+   <- GuiMainMenu.func_73971_c:451   (drawPanorama)
+   <- GuiMainMenu.func_73863_a:480   (drawScreen)
+   <- ForgeHooksClient.drawScreen:399 <- EntityRenderer.func_181560_a:1183
+   <- Minecraft.func_71411_J:1109 <- Minecraft.func_99999_d:399
+  ```
+  ＝**測っている copy は確かに panorama のもの**（splash ではない）。前ラウンドの「panorama でない可能性」は**棄却**。
+- **したがって白の機序はこうなる**: `drawPanorama` は 64 cube を Tessellator 経由で offer し、その直後に `glCopyTexSubImage2D` を発行する。
+  我々の serve 経路はその時点で **pending の batch を描いていない**（`lastDrawnFrame=-1`）ので、pair は clear のまま読まれる。
+- **前ラウンドの flush 試行が効かなかった理由を次に確認する**: `flushPendingBeforeGlDraw()` がこの経路（GL draw ではない `glCopyTexSubImage2D`）で
+  pending を submit していない可能性、または `lastDrawnFrame` が別の site でしか更新されない可能性。
+  **次は `flushPendingBeforeGlDraw` の実装を読み、serve 経路から明示的に「pending を描いて submit し、完了を待つ」を呼ぶ**（`waitForIdle` だけでは描かれない）。
+- **受入**: `lastDrawnFrame == frameId` になり copy の `mean=` が 255 から動く（同じ menu-hold leg）。
+
 ## 0.276 **round 82: copy の呼び元計装を追加 — 判明した分は `GL11.glCopyTexSubImage2D` ← `GlStateManager.func_187443_a:510`、game 側の frame は window 外だった**
 
 - **計装（Lead・serve 入口の bounded caller census・BH-06 と同じ形）と測定（`r80-caller`）**:
