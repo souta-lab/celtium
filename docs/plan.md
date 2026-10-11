@@ -21,6 +21,18 @@
 **この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.92 にある（新しい節ほど新しい実測）。
 
 | 項目 | 状態 | 最新の実測（GPU・条件つき） |
+| **参照の変更（2026-10-11 14:xx）** | **bridge を廃止し upstream Celeritas 989ebf2e を参照に** | ユーザー決定「bridgeとかいらない。gllessのみでいこう」「glless vs celeritasのほうが楽だし、bridgeの保守もいらなくなる」。参照 leg は同一 fixture・同一 scene/pose/tick で `--mod .celtium-work/upstream-baseline/.../celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`＋celtium jar なし＋glless フラグなし。**検証済み**: `ref-celeritas2` = `nonBg 0.761173`・**PASSED**・2476色・tick 150 の screenshot 取得成功（§0.163） |
+| **GUI panel / slot 背景** | **修正済・測定で確定（pipeline が原因）** | format-6 パイプライン修正入りの jar で panel が presented frame に在る。1フラグ差の対照は**ビット一致**（meanAbsDiff 0.000）＝**invalidation 変更は画素中立**。mirror census: id 124/129 が announcement から充填（24224/26502 不透明 texel・stale=false・patch 拒否0）。panel 領域の参照との差は 122.678 → **2.590**、panel 端は参照と同一（x357..923 y165..554） |
+| **fog** | **真因を特定・修正を統合済み（受入 run 待ち）** | fog-on と fog-off が **sky band のどの画素も違わない**のに `CELTIUM_SKY_DEGRADED fogEnabled=true fogAvailable=false`。原因: fog を group **close 時**に snapshot（行列/GL 状態は open 時）＋ `renderSky` が `:1337` で有効化・`:1354` で無効化 → dome の group が `fog==null`。修正: open 時捕捉＋`CELTIUM_FOG_CAPTURE`（§0.162） |
+| **射影チャネル** | **実装・測定済み（自己比較）** | `mirrorGluPerspective` の1フラグ差で dome の射影が sky 自身の `gluPerspective`（far 256）に。**terrain は不変**（y[0..120]・y[240..720] が 0 画素差）、dome が地平線に 11 行近づく、純青 0。`lastSections` 23 vs 31 は反復で分離中 |
+| **GUI/HUD 段階** | **ほぼ一致（測定）** | panel rect の平均差 91.145 → **26.405**、tab row 76.337 → **9.863**、label row 137.484 → **47.936**、hotbar strip 15.186 → **6.221**（参照 = 保存 GL 画像・同一 scene/pose/tick）。残差は sky band と下記の blend 問題 |
+| **font glyph の blend** | **原因候補を測定中** | GL-less で glyph quad が `blend=0 src=0 dst=0` で捕捉され、セルが不透明になる（ラベルが黒セル＋文字抜け）。`gs-glstate` は mirror と GL が**両方向に不一致**（mirror が blend=0 で GL が on: 146 group／逆: 322 group）を実測。gui-stage が overlay 段階で GL enable record から補正（1フラグで before/after） |
+| **format 表** | **id3/id5 の拒否を修正** | `TEX_2S` は `SHORT`（表示名 "Short"）で私の定数が誤り → **BLOCK(id3)・PARTICLE(id5) が表の作成以来拒否**されていた（「雨が census に無い」の正体）。id0 の 57〜138 offer/run は全てこの1署名 |
+| **alpha（色なし variant）** | **修正済み（両半分）** | 色なし shader が fragment alpha を 1.0 に固定 → 水中 overlay（POSITION_TEX・`color(f,f,f,0.5)`・f=0）が**全画面不透明**で blackFraction 1.0。修正: `layout(offset=96) float u_ColorA`（pipelines）＋ `color[3]` push（weather-water）。**受入 run 待ち** |
+| **clear latch** | **測定済み・参照に近づく** | latch on/off の画素差は **11396 px（1.24%）で全て rows 213-238**（地平線帯）。保存参照と **latch ON がその帯で画素一致**、OFF は 32.65% が >8 の淡い空色スミア。terrain scene の blackFraction は両 leg 0.0 |
+| **テクスチャ mirror** | **受入済み（task-4 完了）** | 更新経路を step 別に記録。`kept=100` で `lazySupply=0/0 partialRefusals=0 retainedAnnouncements=11 glLess[fromAnnouncement=215 fromCapture=7 noContent=0]`、patch 拒否0・capture miss 0。**未検証**: lightmap の経時更新・アニメ sprites・entity skin・format 5・1280x720 capture mirror |
+| **チーム運用** | **確立** | 10タスク（task-1〜10）＋10メンバー。**ハーネスがゲームスロットを調停**（`67cf6f806`）・**ビルドロット**（`scripts/build.sh`）・instance の jar はコピーしない（`8ae2e64f8`）。**クリーンビルドが緑の証拠**（増分ビルドは欠落メソッドを隠した） |
+
 |---|---|---|
 | terrain / immediate の native 描画 | **実装済・両GPU受入** | 既定受付 format 1〜9。1 run の内訳: `offers 13000 / accepted 10643 / GL 本体 2386`（AMD・軽い世界） |
 | **線（GL_LINES 系）の native 化** | **受入済（AMD 797・Intel 280 accepted）** | 変更前は 17 accepted。5 run 連続 PASSED、線の拒否ゼロ |
