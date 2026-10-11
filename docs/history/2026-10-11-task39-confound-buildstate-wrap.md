@@ -38,15 +38,31 @@ sampler's own residual is a narrow strip at **rows 210-219 (959 px)**. The build
 task-26 record is the build state**; the terrain sampler's own contribution is the 959 px at rows 210-219, so it
 still should not be deleted, but the residual it fixes is 9x smaller than the earlier number suggested.
 
-## 3. The block overlay: the poison leg ran, its control did not
+## 3. The block overlay: the draw DOES sample the mirror for name 12, at the wrong region or level
 
-`t39-poison` (breakBlock + `-Dceltium.vulkan.mirrorPoisonFlat=12=FFFF00FF`) ran: `id3=4/4` accepted, the overlay
-registered (`breakProgressCalls=5`, `breakSubject=BlockPos{x=0,y=11,z=-5} minecraft:stone[variant=stone]`), verdict
-PASSED. The control (`t39-poison-control`, same flags plus `breakSubjectOnly=true`) was queued out of the slot
-window and did not run, so the question the pair answers - does the drawn pixel change when the atlas mirror's
-content is replaced, i.e. does the draw sample the mirror's image for name 12 - is **not yet answered**. One run
-remains: `run-legs.sh t39-poison-control t39-poison-control`, then compare the block region of the two poisoned
-legs. (Lead's `texMat=none` for all seven `fmt=3` groups already killed the stale-affine hypothesis.)
+Both poisoned legs ran (jar `d0781f5da1cd082d974305ee`): `t39-poison` (breakBlock +
+`-Dceltium.vulkan.mirrorPoisonFlat=12=FFFF00FF`, `id3=4/4` accepted, `breakProgressCalls=5`) and its control
+`t39-poison-control` (same flags plus `breakSubjectOnly=true`). The only difference between them is the registered
+progress, and the atlas mirror's content is a flat magenta in both.
+
+| region | overlay leg | control leg | difference |
+|---|---|---|---|
+| block (560,300)-(720,450) | (147.6, 116.4, 114.2) | **(235.8, 0.0, 235.8)** = the poison | mean 111.1, **24,000 of 24,000 px differ** |
+| block surroundings (400,200)-(880,520) | (119.8, 92.1, 92.2) | (240.6, 25.3, 249.8) | mean 116.6, 137,589 of 153,600 |
+| sky rows 0-205 | (166.7, 198.7, 255.0) | identical | **0 px** |
+
+So replacing the atlas mirror's content changes the overlay's contribution from *nothing* (with the real atlas, the
+crack is absent) to a large change (with every texel opaque, the fragments pass the alpha test and draw). **The draw
+really samples the mirror's image for name 12** - the image, the view and the descriptor are the right ones - and
+the fault is in **which region or level** it reads: with the real atlas the sampled texels' alpha is below 0.1 over
+the whole quad, so the UVs land where the atlas is transparent (the destroy-stage sprite is opaque along its cracks)
+or the sampler reads a level whose blurred alpha has fallen below the cutoff. The `texMat=none` result already
+excludes a texture-matrix affine, and the geometry/colour/blend/alphaRef/depth are all the mirrored vanilla ones.
+
+Next experiment (one pair, not taken yet): `-Dceltium.vulkan.mirrorEncode=12` with the overlay and its
+`breakSubjectOnly` control. The ramp makes every texel alpha=255 *and* writes the sampled texel's (x,y) into R,G, so
+the block's pixels read back the UVs the shader used - which separates "wrong region" from "wrong level" by
+comparing the sampled atlas coordinate against the destroy-stage sprite's own atlas rectangle.
 
 ## 4. The wrap record, consumed
 
@@ -67,10 +83,26 @@ Measured in the `videoSettings` leg (`t39-wrap`, jar `d0781f5da1cd082d974305ee`)
 `wrapDefaults=16` -> `22` - the game sets REPEAT on 38 texture parameters and CLAMP on none, so the old hardcoded
 CLAMP answer was the bug, as weather-water measured from the sources.
 
-**But the settings screen's panel is still flat**: `guiPanelDistinctColours=133` against the reference's 15,805,
-`guiPanelChangedFraction=0.999996`, verdict FAILED_PRESENTED_IMAGE (`sceneCalibrationKeyMatches=true`). The record is
-consumed and the wrap is REPEAT, yet the tiled options background does not appear - so the wrap was necessary and is
-not sufficient, and the next measurement is the panel crop of the GUI frame against the stored reference
-(`.celtium-work/runtime/vs-pic-ref`) with the mirror dump of the background texture to see which region/level it
-samples. No `CELTIUM_SAMPLER_WRAP` line fired, so no sampler was rebuilt for a changed mode - the mirrors were
-created after the record existed.
+**And the tiled background now matches the GL reference exactly.** The `videoSettings` GUI frame of the
+new leg against the stored upstream reference (`.celtium-work/runtime/vs-pic-ref`, real GL, same scene and pose), by
+region:
+
+| region | reference vs after (new jar) | reference vs before (`vs-apply4`, hardcoded CLAMP) |
+|---|---|---|
+| tiled background, left margin (20,120)-(150,620) | **mean 0.00, >8 0.00%**, 33 distinct | mean 3.55, >8 11.43%, 26 distinct |
+| tiled background, right margin (1150,120)-(1270,620) | **0.00, 0.00%**, 35 | 4.48, 17.15%, **8** |
+| tiled background, bottom band (20,620)-(1260,700) | **0.00, 0.00%**, 69 | 5.12, 24.55%, 66 |
+| options/buttons area (180,100)-(1100,600) | **0.00, 0.00%**, 103 | 1.55, 4.35%, 76 |
+
+The whole screen is bit-identical to the real GL render after the record is consumed; before it, the tiled
+background differed in 11-25% of its pixels and its distinct-colour count collapsed (8 against 35 in the right
+margin - one stretched tile). That is the user's "the settings screen's background is buggy", measured and fixed.
+
+**The scene's panel floor does not describe this state, and that is not a renderer defect.** The `videoSettings`
+gate wants `guiPanelDistinctColours >= 15,805`, and the *reference leg itself* reports `guiPanelDistinctColours=133`
+with `presentedImageVerdict=FAILED_PRESENTED_IMAGE` on the same frame that is pixel-identical to the candidate. Both
+legs are flat-panel-free (the screen is fully drawn); the floor was calibrated on a different fixture state. Handed
+to the acceptance owner as a calibration finding, not a defect.
+
+No `CELTIUM_SAMPLER_WRAP` line fired, so no sampler was rebuilt for a changed mode: the mirrors were created after
+the record existed, which is the ordering weather-water predicted for this scene.

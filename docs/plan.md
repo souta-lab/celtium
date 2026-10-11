@@ -140,6 +140,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.193 **設定画面の背景は修正・検証済み（ユーザー苦情の1つが閉じた）・poison pair が overlay の読み先を確定**
+
+- **texture-mirror（task-39 part 4）**: videoSettings の GUI frame を保存済み upstream 参照（`vs-pic-ref`・実 GL）と比較し、
+  **tiled 背景の左マージン (20,120)-(150,620)・右マージン (1150,120)-(1270,620)・下帯 (20,620)-(1260,700)・
+  buttons 領域 (180,100)-(1100,600) がすべて mean 0.00・>8 0.00%＝ビット一致**。
+  **修正前**（wrap record 消費前＝hardcoded CLAMP）は同じ領域が **11.43% / 17.15% / 24.55%** 差・
+  distinct colour が 8 対 35 に崩壊（1枚の tile が引き伸ばされていた）。**ユーザーの「設定画面の背景がバグってる」は
+  これで閉じた**（weather-water の `glTexParameter*` 記録＋texture-mirror の consumer が原因）。
+- **task-39 part 3（poison pair）**: `t39-poison`（overlay＋atlas mirror を平坦マゼンタに）vs `t39-poison-control`
+  （同 flags＋`breakSubjectOnly`）で block 領域 (560,300)-(720,450) が **24,000/24,000 px 差・mean 111.1**、周辺 137,589/153,600、
+  sky 0 px。→ **image/view/descriptor は正しい**（poison が効く）。実 atlas では quad 全体で sampled alpha が 0.1 未満＝
+  **UV が透明域に落ちているか、sampler が alpha の落ちた level を読んでいる**。`texMat=none` で affine は除外済み。
+  **次の実験**: `mirrorEncode=12`（alpha=255 かつ R,G に sampled (x,y) を符号化）で UV を読み戻し、
+  「region が違う」か「level が違う」かを destroy-stage sprite の atlas 矩形に対して分離する。
+- **gate の床の第2例**: `guiPanelDistinctColours>=15,805` は**参照 leg 自身**（`vs-pic-ref` で 133）に落ちる——
+  画素一致の frame を別 fixture 状態の床で裁いている。task-47 の provenance 監査に追加（下げない）。
+
 ## 0.192 **entity pair の受入（task-49）と、落ちた item が task-50 の根因を独立に裏づけた**
 
 - **task-49（fog-path）**: 参照 leg を先に取り（`t49-ref-entity`）、条件を**領域表を読む前に**比較:

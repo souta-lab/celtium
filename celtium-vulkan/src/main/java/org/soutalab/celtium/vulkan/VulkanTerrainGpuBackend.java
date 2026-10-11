@@ -4303,7 +4303,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     record("accepted geometry retained after window failure: " + describe(error));
                 }
             }
-            if (this.immediateBatchesOffered % 500 == 0) {
+            if (this.immediateBatchesOffered % 500 == 0 && VulkanDiagnostics.enabled()) {
                 StringBuilder histogram = new StringBuilder("immediate formats offered/accepted:");
                 for (int id = 0; id < this.immediateOfferedByFormat.length; id++) {
                     if (this.immediateOfferedByFormat[id] > 0) {
@@ -6668,7 +6668,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         this.colourBatches++;
-        if (this.colourBatches == 1 || this.colourBatches % 20 == 0) {
+        if ((this.colourBatches == 1 || this.colourBatches % 20 == 0) && VulkanDiagnostics.enabled()) {
             java.util.List<java.util.Map.Entry<Integer, Integer>> entries =
                     new java.util.ArrayList<>(colourCounts.entrySet());
             java.util.Collections.sort(entries, (a, b) -> b.getValue() - a.getValue());
@@ -7835,7 +7835,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // its own ("a missing counter is not a missing draw" applies to the queue as much as to a census).
         if (this.modelOffTargetCalls != this.modelOffTargetReported) {
             this.modelOffTargetReported = this.modelOffTargetCalls;
-            if (this.modelOffTargetReports < 24 || this.modelOffTargetCalls % 64 == 0) {
+            if ((this.modelOffTargetReports < 24 || this.modelOffTargetCalls % 64 == 0) && VulkanDiagnostics.enabled()) {
                 this.modelOffTargetReports++;
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + this.modelOffTargetCalls
                         + " drawn=" + this.modelOffTargetDraws
@@ -7846,7 +7846,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         if (builtGenerations.size() > 0 || !superseded.isEmpty()) {
             this.modelBuildLogs++;
-            if (this.modelBuildLogs <= 64 || this.modelBuildLogs % 100 == 0) {
+            if ((this.modelBuildLogs <= 64 || this.modelBuildLogs % 100 == 0) && VulkanDiagnostics.enabled()) {
             System.out.println("[Celtium] CELTIUM_MODEL_BUILD lists=" + built.size() + " quads=" + quads
                     + " rebuilt=" + builtGenerations.size() + " reused=" + (built.size() - builtGenerations.size())
                     + " retired=" + superseded.size()
@@ -7995,7 +7995,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " meshes=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                         + " inTable=" + (looked != null) + " verts=" + (looked == null ? -1 : looked.vertexCount()));
             }
-            if (this.modelOffTargetCalls == 1 || this.modelOffTargetCalls % 32 == 0) {
+            if ((this.modelOffTargetCalls == 1 || this.modelOffTargetCalls % 32 == 0) && VulkanDiagnostics.enabled()) {
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + this.modelOffTargetCalls
                         + " drawn=" + this.modelOffTargetDraws
                         + " missingMeshes=" + this.modelMissingMeshes

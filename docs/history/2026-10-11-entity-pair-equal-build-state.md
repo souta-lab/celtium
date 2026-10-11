@@ -55,9 +55,25 @@ item at the same position (crop `.celtium-work/fogpath-jar/crops/t49-item-region
 already visible in the earlier `.celtium-work/entity-m/pair-item.png`). It is **not** an artefact of the
 build-state pair's different capture ticks: on the old tick-matched pair (`cand3-entity` tick 202 vs
 `ref3-entity` tick 200) the same region is 0.816,0.581,0.617 with **58.42 %** of its pixels over 8. So it
-reproduces at matched ticks and at matched build state, and it belongs to the entity-models owner
-(task-7/N02): the item entity's model, transform or texture. Everything else in the scene matches to
-0.0-6.8 % per family.
+reproduces at matched ticks and at matched build state. Everything else in the scene matches to 0.0-6.8 %
+per family.
+
+**Root cause (found by the Lead reading Forge's side), and this section is task-50's baseline.** Forge applies
+an item's `ItemCameraTransforms` through `ForgeHooksClient.handleCameraTransforms` ->
+`multiplyCurrentGlMatrix` -> a raw `GL11.glMultMatrix` (`ForgeHooksClient.java:425-455`), which bypasses
+`GlStateManager`; `glMultMatrixf` is in the GL-less stub's no-op table, so the mirror never sees it. For a
+dropped item the missing matrix is the GROUND transform (translate/rotate/scale 0.5), so it renders at model
+scale - large - with its lighting/normal orientation wrong, which is the dark. The same missing matrix is the
+GUI item icons filling their slots and the held item's orientation. **task-50** (weather-water + pipelines)
+owns the fix with a four-case acceptance leg (GUI / first person / third person / dropped GROUND).
+
+The *before* numbers a fix has to move, all from this pair at equal build state (64 listed sections both
+legs): item region `(820,380,880,440)` mean candidate `(88.2,28.8,29.4)` against reference
+`(101.8,58.4,52.6)`, ratio `0.867,0.493,0.559`, **71.31 %** of its 3600 px over 8 (58.42 % on the
+tick-matched pair); whole frame 0.68 % over 8; every other family 0.00-6.78 %. The baseline crop is
+`.celtium-work/fogpath-jar/crops/t49-item-region.png` (candidate left, reference right, box `800,360,900,460`
+at 3x). A fix should bring the item row to the level of the block-entity rows (0.00 %) and leave the whole
+frame at or below 0.68 %.
 
 ## 5. Per-frame format rates
 
