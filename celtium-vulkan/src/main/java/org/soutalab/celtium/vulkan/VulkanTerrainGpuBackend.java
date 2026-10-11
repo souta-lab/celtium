@@ -1250,6 +1250,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int windowFlushFailures;
     private long windowFlushFailureFrame = -1L;
     private long windowFlushDroppedBatches;
+    /**
+     * OPT-09/BH-36: the terrain indirect path, off until asked for with {@code -Dceltium.vulkan.indirectTerrain=true}.
+     * <p>
+     * Off by default because the acceptance the plan names is a *comparison* - identical submitted geometry and
+     * transparent order against the direct path - and that comparison is owed (step 3). Until it exists, the flag is
+     * how the path is exercised without changing what a normal leg draws.
+     */
+    private static final boolean TERRAIN_INDIRECT_ENABLED =
+            Boolean.getBoolean("celtium.vulkan.indirectTerrain");
+    /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
+    private static final int INDIRECT_COMMAND_BYTES = 20;
+    /** The device-side buffer the packets are written into, created on first use and grown when a batch needs more. */
+    private VulkanBuffer terrainIndirectBuffer;
+    /** Batches offered to the indirect path, calls recorded, draws carried by them, and clamp events. */
+    private long terrainIndirectOffers;
+    private long terrainIndirectCalls;
+    private long terrainIndirectDraws;
+    private long terrainIndirectGrowths;
+    private long terrainIndirectClampEvents;
+    /** Batches that fell back to direct draws, and the last reason (a missing capability or a mixed index source). */
+    private long terrainIndirectFallbacks;
+    private String lastTerrainIndirectFallback = "none";
+
     /** Viewports issued per group; BH-13's counter, so "the rectangle was restored" is readable, not assumed. */
     private long groupViewportSets;
     /**
@@ -1578,6 +1601,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private static final boolean ENQ_ALL_GROUPS =
             Boolean.getBoolean("celtium.vulkan.enqAll");
+    /** {@code -Dceltium.vulkan.debugMagentaFormat=<formatId>} forces that format's fragments to magenta. */
+    private static final int DEBUG_MAGENTA_FORMAT =
+            Integer.getInteger("celtium.vulkan.debugMagentaFormat", -1).intValue();
     private static final int ENQ_FORMAT =
             Integer.getInteger("celtium.vulkan.enqFormat", -1).intValue();
     /** Lines of {@code CELTIUM_DRAW_SITE}, the draw-moment companion of {@code CELTIUM_IMMEDIATE_ENQ}. */
@@ -2156,6 +2182,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " terrainRanThisFrame=" + (this.lastTerrainPassFrame == this.frameId));
     }
 
+    /**
+     * Reads the first vertex's colour word out of the group's own vertex memory, for the bounds line.
+     * <p>
+     * The stride is the group's own, and the colour is the last four bytes of the first vertex for every format the
+     * immediate path accepts (POSITION_COLOR and POSITION_TEX_COLOR both end in the packed colour). Returns
+     * {@code none} when the mesh has no readable address, so a missing value is never read as a zero colour.
+     */
+    private String celtium$firstVertexColour(ImmediateGroup group, VulkanDynamicMesh mesh) {
+        long address = mesh.vertexAddress();
+        int stride = mesh.layout() != null ? mesh.layout().stride : VulkanImmediatePipeline.VERTEX_BYTES;
+        if (address == 0L || stride <= 0) {
+            return "none";
+        }
+        int packed = org.lwjgl.system.MemoryUtil.memGetInt(address + (stride - 4));
+        return "0x" + Integer.toHexString(packed);
+    }
+
     /** The image/frame/completion-epoch of the last recorded group, for the copy's completion fact. */
     private long lastDrawnImage;
     private long lastDrawnFrame = -1L;
@@ -2575,6 +2618,116 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * products in the vertex shader. The selector is written even when the group has no fog, because the push buffer is
      * shared by every group in a flush and a stale selector from the previous group would fog this draw.
      */
+    /**
+     * OPT-09/BH-36: records one batch's commands as indirect packets and issues them as few calls as the device's
+     * {@code maxDrawIndirectCount} allows.
+     * <p>
+     * The packet layout is Vulkan's own: {@code indexCount, instanceCount, firstIndex, vertexOffset, firstInstance},
+     * five uint32. That is exactly the mapping the plan asks for - {@code firstIndex} in index units, {@code
+     * vertexOffset} signed and in vertex units, {@code firstInstance} 0 - and it is why the batch can be expressed at
+     * all: every command of a batch shares the vertex buffer and (when the source is uniform) the index buffer, which
+     * is the one binding an indirect call cannot vary.
+     * <p>
+     * Returns false, with the reason counted, whenever the batch cannot be expressed this way: the device has no
+     * {@code multiDrawIndirect}, the limit is unknown, the source is not uniform across the batch, or the packet buffer
+     * could not be created. The caller then draws the batch directly, so the fallback is a different way to submit the
+     * same geometry rather than a drop.
+     */
+    private boolean celtium$tryIndirectBatch(MemoryStack stack, RegionResources resources,
+            VulkanMultiDrawBatch batch, boolean sortedPass,
+            ChunkPrimitiveType primitiveType) {
+        this.terrainIndirectOffers++;
+        if (!this.context.multiDrawIndirectEnabled()) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "the device was not created with multiDrawIndirect";
+            return false;
+        }
+        int maxDraws = this.context.maxDrawIndirectCount();
+        if (maxDraws <= 0) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "maxDrawIndirectCount is unknown (0)";
+            return false;
+        }
+        int size = batch.size();
+        if (size <= 0) {
+            return false;
+        }
+        // BH-02's rule, applied to the whole batch this time: one indirect call binds one index buffer, so a batch whose
+        // commands do not all read the same one is drawn directly.
+        boolean regionIndex = sortedPass;
+        if (!regionIndex) {
+            for (int i = 0; i < size; i++) {
+                if (batch.indexByteOffset(i) != 0) {
+                    this.terrainIndirectFallbacks++;
+                    this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
+                    return false;
+                }
+            }
+        }
+        if (regionIndex && resources.indexArena == null) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
+            return false;
+        }
+        int needed = size * INDIRECT_COMMAND_BYTES;
+        if (!celtium$ensureIndirectBuffer(needed)) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "the indirect packet buffer could not be created";
+            return false;
+        }
+        bindIndexBuffer(stack, regionIndex ? resources.indexArena.buffer()
+                : this.sharedIndexBuffers.get(primitiveType));
+        ByteBuffer packets = stack.calloc(needed);
+        for (int i = 0; i < size; i++) {
+            long byteOffset = batch.indexByteOffset(i);
+            packets.putInt(i * INDIRECT_COMMAND_BYTES, batch.elementCount(i));
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 4, 1);
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 8, regionIndex ? (int) (byteOffset / 4) : 0);
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 12, batch.baseVertex(i));
+            // firstInstance stays 0: drawIndirectFirstInstance is enabled only when the device reported it, and this
+            // path never needs anything but 0.
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 16, 0);
+        }
+        long address = MemoryUtil.memAddress(packets);
+        int first = 0;
+        while (first < size) {
+            int count = Math.min(maxDraws, size - first);
+            if (count != size - first) {
+                this.terrainIndirectClampEvents++;
+            }
+            long offsetBytes = (long) first * INDIRECT_COMMAND_BYTES;
+            this.terrainIndirectBuffer.write(offsetBytes, address + offsetBytes, count * INDIRECT_COMMAND_BYTES);
+            vkCmdDrawIndexedIndirect(this.commandBuffer, this.terrainIndirectBuffer.buffer(), offsetBytes, count,
+                    INDIRECT_COMMAND_BYTES);
+            this.terrainIndirectCalls++;
+            this.terrainIndirectDraws += count;
+            this.lastDrawCommands += count;
+            first += count;
+        }
+        return true;
+    }
+
+    /** Grows the indirect packet buffer to hold at least {@code bytes}; false when it could not be created. */
+    private boolean celtium$ensureIndirectBuffer(int bytes) {
+        try {
+            if (this.terrainIndirectBuffer != null && this.terrainIndirectBuffer.size() >= bytes) {
+                return true;
+            }
+            if (this.terrainIndirectBuffer != null) {
+                this.terrainIndirectBuffer.delete();
+                this.terrainIndirectBuffer = null;
+            }
+            long size = Math.max(bytes, 64L * 1024L);
+            this.terrainIndirectBuffer = new VulkanBuffer(this.context, size,
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+            this.terrainIndirectGrowths++;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.lastTerrainIndirectFallback = "indirect buffer: " + describe(error);
+            return false;
+        }
+    }
+
     private void celtium$writeFogPush(ImmediateGroup group, ByteBuffer push) {
         float[] fog = group.fog;
         if (fog == null) {
@@ -3926,6 +4079,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // off-target: the main framebuffer's identity is non-zero, so the old "pair=" column read
         // "main=true pair=chain-pair" - a label that named an image no main-identity draw goes to. The rule and this
         // separation live in GllessFrameTarget.routeLabelForBinding.
+        // BH-14: the census is fed here because this is the one place the routing rule is applied to a live bind.
+        org.soutalab.celtium.vulkan.GllessFrameTarget.noteIdentityForCensus(targetIdentity, isMain);
         if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
             record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
                     + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
@@ -5583,6 +5738,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " texture=" + group.texture + " batches=" + group.batches
                     + " vertices=" + vertices + " indices=" + mesh.indexCount()
                     + " colour0=" + colour
+                    // The attribute itself, read from the group's own vertex memory, beside the value the state
+                    // capture produced: "the attribute is zero" and "the attribute is fine and something else ate
+                    // the fragment" are different findings, and colour0 alone cannot tell them apart.
+                    + " vertexColour0=" + celtium$firstVertexColour(group, mesh)
                     // round3, not fmt3: the GUI's ortho has m00 = 2/ScaledWidth, which at the pinned pose is
                     // 0.00469 - a *correct* GUI projection and a collapsed one both print "0.00" under fmt3's two
                     // decimals, so the field could not answer the one question it exists for. The trap is the same
@@ -7321,6 +7480,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " lastUniformPreparationFailure=" + this.lastUniformPreparationFailure
                 + " regionUploadFailures=" + this.regionUploadFailures
                 + " sectionsLeftUnbuilt=" + this.sectionsLeftUnbuilt
+                + " terrainIndirect=[offers=" + this.terrainIndirectOffers
+                + " calls=" + this.terrainIndirectCalls
+                + " draws=" + this.terrainIndirectDraws
+                + " clamps=" + this.terrainIndirectClampEvents
+                + " growths=" + this.terrainIndirectGrowths
+                + " fallbacks=" + this.terrainIndirectFallbacks
+                + " lastFallback=" + this.lastTerrainIndirectFallback.replace(' ', '_') + "]"
                 + " " + org.soutalab.celtium.vulkan.VulkanArena.alignmentSummary()
                 + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
                 + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
@@ -7598,6 +7764,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // different, earlier question (the GL identity and the interop contract); this is the live one.
                 + " driverInfo=[" + VulkanContext.driverSummary() + "]"
                 + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
+                + " identityPairs=[" + org.soutalab.celtium.vulkan.GllessFrameTarget.identityPairCensus() + "]"
                 + " presentMode=[" + VulkanSwapchain.presentModeSummary()
                 + " rebuilds=" + this.presentModeRebuilds + "]"
                 + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
@@ -8587,6 +8754,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // had preceded it, which is why it was invisible most of the time. The shared quad index remains the index
             // source for every unsorted pass, whose offsets are 0 by construction.
             boolean sortedPass = pass.isSorted();
+            // OPT-09/BH-36: the batch's commands as one indirect call when the device can carry it. The index source
+            // has to be uniform across the whole batch for that to be legal - one indirect call binds one index buffer -
+            // so the batch is offered to the indirect path only when every command reads the same one, and otherwise it
+            // is drawn directly with the reason counted. BH-02's rule decides which source that is.
+            boolean indirect = false;
+            if (TERRAIN_INDIRECT_ENABLED) {
+                indirect = celtium$tryIndirectBatch(stack, resources, batch, sortedPass, primitiveType);
+            } else {
+                this.terrainIndirectFallbacks++;
+                this.lastTerrainIndirectFallback = "the indirect path is off (-Dceltium.vulkan.indirectTerrain)";
+            }
+            if (!indirect) {
             for (int command = 0; command < batch.size(); command++) {
                 long byteOffset = batch.indexByteOffset(command);
                 int firstIndex;
@@ -8616,6 +8795,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.readbackSlots++;
                 }
                 this.lastDrawCommands++;
+            }
             }
 
             this.lastSectionsDrawn += renderList.getSectionsWithGeometryCount();
@@ -11890,6 +12070,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // 96 yet - the two colourless vertex shaders have to be changed to use it - but the value has to
                     // be there for that to be a one-line change on their side.
                     push.putFloat(96, color == null || color.length < 4 ? 1.0f : color[3]);
+                }
+                if (group.formatId == DEBUG_MAGENTA_FORMAT) {
+                    // The panorama's faces draw into the chain pair, the copy reads that same image, six submissions
+                    // complete in between, the geometry covers the viewport - and the copy still reads the pair's
+                    // white clear. This flag makes the group's fragment output a colour nothing else in the scene
+                    // has, without touching the shader: a negative alpha reference takes the combine branch, whose
+                    // mix factor is its negation, so the constant colour replaces the fragment outright. If the
+                    // copy's mean moves to magenta the draw reaches the image and the problem is the vertex colour;
+                    // if it stays white the draw never reaches it.
+                    push.putFloat(112, -1.0f);
+                    push.putFloat(116, 1.0f);
+                    push.putFloat(120, 0.0f);
+                    push.putFloat(124, 1.0f);
                 }
                 // BH-03: the alpha comparison function, in the spare slot at offset 100. The GL enum travels as a
                 // float, and 0 means "the test is disabled" - no GL enum is 0, so a reference of 0 stays
