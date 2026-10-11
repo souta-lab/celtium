@@ -577,6 +577,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             // file the process was started with and stays writable through the teardown. The content is unchanged.
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 celtium$printAtExit("CELTIUM_NOOP_CENSUS " + noopCensusSummary());
+                celtium$printAtExit("CELTIUM_UNKNOWN_SYMBOLS " + unknownSymbolSummary());
                 // BH-07/BH-10: the blend and colour-write record's own census, printed only when one of the entry
                 // points was reached. Before the fix every one of these counts was zero because all five functions
                 // were in the no-op table; a run that never blends still stays silent rather than claiming a
@@ -1069,6 +1070,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         // no-op. Returning 0 would tell LWJGL capability detection the whole version or extension block is absent,
         // leaving the corresponding function pointers empty.
         int id = IDS.containsKey(name) ? IDS.get(name).intValue() : -1;
+        if (id < 0) {
+            // BH-35: a name outside the table gets a generic no-op trampoline, and until now nothing recorded which
+            // name it was - so a mod calling a GL entry point this stub does not model was swallowed with no trace at
+            // all. The census names them (most frequent first) and the strict mode prints each one as it arrives, so
+            // "unsupported" is a recorded boundary rather than a silent success.
+            celtium$noteUnknownSymbol(name);
+        }
         if (Boolean.getBoolean("celtium.glstub.trace")
                 && ("glGetError".equals(name) || "glGetIntegerv".equals(name) || "glGetString".equals(name))) {
             System.out.println("[GLSTUB] addressFor " + name + " id=" + id);
@@ -1756,6 +1764,56 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Every no-op entry point that was actually called, by name. Bounded by the table's size. */
     private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> NOOP_CALLS =
             new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    /** Entry points this stub does not model, by name; BH-35's boundary is this list, not a silent no-op. */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> UNKNOWN_SYMBOLS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+    /** Lines of the strict mode's per-call record, bounded so a hot unknown symbol cannot flood a log. */
+    private static final int STRICT_SYMBOL_LINES =
+            Integer.getInteger("celtium.vulkan.strictSymbolLines", 200).intValue();
+    private static final java.util.concurrent.atomic.AtomicInteger STRICT_SYMBOL_PRINTED =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    private static void celtium$noteUnknownSymbol(String name) {
+        java.util.concurrent.atomic.AtomicLong counter = UNKNOWN_SYMBOLS.get(name);
+        if (counter == null) {
+            counter = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong existing = UNKNOWN_SYMBOLS.putIfAbsent(name, counter);
+            if (existing != null) {
+                counter = existing;
+            }
+        }
+        counter.incrementAndGet();
+        if (Boolean.getBoolean("celtium.vulkan.strictSymbols")
+                && STRICT_SYMBOL_PRINTED.incrementAndGet() <= STRICT_SYMBOL_LINES) {
+            System.out.println("[Celtium] CELTIUM_UNKNOWN_SYMBOL " + name
+                    + " (no semantics in the table; the generic no-op trampoline answers it)");
+        }
+    }
+
+    /** {@return the unmodelled entry points that were called, most frequent first}. */
+    public static String unknownSymbolSummary() {
+        if (UNKNOWN_SYMBOLS.isEmpty()) {
+            return "none";
+        }
+        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
+                new java.util.ArrayList<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>>(
+                        UNKNOWN_SYMBOLS.entrySet());
+        entries.sort((left, right) -> Long.compare(right.getValue().get(), left.getValue().get()));
+        StringBuilder summary = new StringBuilder();
+        int shown = 0;
+        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry : entries) {
+            if (shown++ > 0) {
+                summary.append(' ');
+            }
+            summary.append(entry.getKey()).append('=').append(entry.getValue().get());
+            if (shown >= 24) {
+                summary.append(" …(").append(entries.size() - shown).append(" more)");
+                break;
+            }
+        }
+        return summary.toString();
+    }
 
     private static void celtium$noteNoop(String name) {
         java.util.concurrent.atomic.AtomicLong counter = NOOP_CALLS.get(name);

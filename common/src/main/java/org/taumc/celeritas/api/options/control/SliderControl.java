@@ -19,15 +19,31 @@ public class SliderControl implements Control<Integer> {
     }
 
     public SliderControl(Option<Integer> option, int min, int max, int interval, ControlValueFormatter mode) {
-        assertTrue(max > min, "The maximum value must be greater than the minimum value");
         assertTrue(interval > 0, "The slider interval must be greater than zero");
-        assertTrue(((max - min) % interval) == 0, "The maximum value must be divisable by the interval");
         assertTrue(mode != null, "The slider mode must not be null");
+
+        // A collapsed range is a degenerate control, not a broken page. This used to throw
+        // "The maximum value must be greater than the minimum value", and because the control is built while an
+        // options screen's pages are being constructed, one collapsed range took the whole screen down: measured as
+        // the Celeritas video-options screen failing to open (the chunk-fade row was pinned with min == max) and
+        // falling back to vanilla's. Three computed bounds can collapse the same way -
+        // computeMaxRangeForRenderDistance, ChunkBuilder.getMaxThreadCount and MuiGuiScaleHook.getMaxGuiScale - so the
+        // degradation belongs here rather than in each call site: a single-value slider whose range cannot move.
+        int effectiveMax = max;
+        if (effectiveMax <= min) {
+            effectiveMax = min;
+        }
+        int effectiveInterval = interval;
+        if (((effectiveMax - min) % effectiveInterval) != 0) {
+            // The interval must divide the range; a caller that gives a non-dividing interval gets the range's own
+            // span rather than an exception, which is the same "degrade, do not break the page" rule.
+            effectiveInterval = Math.max(1, effectiveMax - min);
+        }
 
         this.option = option;
         this.min = min;
-        this.max = max;
-        this.interval = interval;
+        this.max = effectiveMax;
+        this.interval = effectiveInterval;
         this.mode = mode;
     }
 
