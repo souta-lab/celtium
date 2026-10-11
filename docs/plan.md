@@ -95,6 +95,34 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.157 **inventory/JEI の対照が成立——画が「何が欠けているか」を名指しした**
+
+fixture の2つの欠陥を直したことで、初めて対照が取れた:
+1. **tick フックを `>=`＋once-flag へ**（16箇所。6つは新規フラグ——特に **mob spawn と allBlocks の壁**は「読む」ではなく「作る」ので、guard 無しの `>=` は毎フレーム再構築になる）。
+2. **較正キーに screen variant を追加**（`jei`/`recipe`/`keep`/`none`）。画面を開いたまま capture すると**画が変わる**のにキーに入っておらず、
+   `jeiScreen`+`keepInventoryScreen` の run が plain terrain の参照に対して `sceneCalibrationKeyMatches=true` を出していた（**A03 と同じ型の穴、別の次元**）。
+
+### 対照（同一 tick 60・同一 screen）
+
+```
+GL-less: celtium-presented-early-…-kept.png（presented dump 221KB）
+bridge : celtium-at-tick-60.png（GL screenshot 225KB）
+```
+
+**画（`.celtium-work/jei-pair/side-by-side.png`）が語ったこと**:
+- GL-less は **JEI のアイテム格子・アイテム自身・"Gold Ore" ツールチップとその文字・hotbar を描いている**
+- GL-less は **panel/slot の背景・カテゴリラベルの背景・hotbar の枠を描いていない**
+- bridge はその全てを描く
+- **文字は両 leg で内容・大きさ・位置が一致**（＝N03 が必要としていたもの）
+
+**数字の読み方**: panel 領域 94.8%・frame 全体 94.5% の画素が >8 変化——これは**欠けている背景**であってフォントではない。
+tooltip 領域は 38%（自身の暗い背景＋文字）。**「frame の 94.5% が違う」だけを読むと描画失敗に見えるが、crop と併せて読むと「1クラスの幾何が欠けている」であり、その上の文字は正しい。**
+
+### 次に名指しされた作業
+
+**GUI の単色 quad（panel/slot 背景・ラベル背景・hotbar 枠）**が欠けている。アイテム・文字・hotbar の中身は描けているので、
+欠けているのは **`Gui.drawRect` 系の POSITION_COLOR quad** のクラス。原典で使われる (mode, format) を確認し、対応表に分岐が無いなら追加する。
+
 ## 0.156 **訂正: 私の stride 読みは自分の grep の打ち切りだった／真の機序は射影**
 
 担当が確認して私を訂正した: **`pointerStride=1` はどのログにも存在しない**。16箇所すべて `pointerStride=12`。
