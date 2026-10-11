@@ -1820,6 +1820,9 @@ public final class ValidationClient {
         }
         report.addProperty("drawTestRedReadback", Integer.toHexString(redSeen));
         report.addProperty("drawTestBlueReadback", Integer.toHexString(blueSeen));
+        if (Boolean.getBoolean("celtium.validation.stateProbes")) {
+            celtium$stateProbes(client, width, height);
+        }
         net.minecraft.client.renderer.GlStateManager.enableDepth();
         net.minecraft.client.renderer.GlStateManager.enableCull();
         net.minecraft.client.renderer.GlStateManager.enableTexture2D();
@@ -1827,6 +1830,60 @@ public final class ValidationClient {
         report.addProperty("drawTestQuads", 2);
         report.addProperty("drawTestAtTick", client.player.ticksExisted);
         report.addProperty("drawTestPass", "RenderGameOverlayEvent.Post/ALL");
+    }
+
+    /**
+     * BH-10's and BH-09's controlled probes: two quads that differ from their neighbour in exactly one piece of state,
+     * drawn through the game's own GL entry points, so the question "did the state reach the pipeline" is answered by
+     * two known rectangles instead of by a scene whose clouds move between runs.
+     * <p>
+     * <b>The colour-write mask (BH-10).</b> Two magenta quads in the same band: the left one is drawn with
+     * {@code colorMask(false,false,false,false)} - the shape vanilla's Fancy cloud uses for its depth-only pass - and
+     * the right one with all channels written. With the mask honoured the left rectangle stays background; without it
+     * the left rectangle is painted, and the two legs of the same jar differ in that one rectangle. This is the
+     * measurement the real cloud pass cannot give: the cloud layer's own position moves ~18% of its band between any
+     * two runs (measured, same jar and flags: 18.4% of rows 60-190 differ), which swamps the mask's effect on the
+     * antialiased edges.
+     * <p>
+     * <b>The clip rectangle (BH-09/OPT-10).</b> A green quad spanning the middle is drawn under a left-half
+     * {@code glScissor}, then a yellow quad in the band below it under a right-half one. With the rectangle captured
+     * per group and a change of it closing the group, green shows only its left half and yellow only its right half.
+     * With the pre-fix shape (the rectangle read when the group is flushed) both batches share one group and one
+     * rectangle - the last one - so green appears on the right as well.
+     */
+    private void celtium$stateProbes(net.minecraft.client.Minecraft client, int width, int height) {
+        int scale = client.displayWidth / Math.max(1, width);
+        int left = (int) (width * 0.06D);
+        int leftEnd = (int) (width * 0.20D);
+        int right = (int) (width * 0.80D);
+        int rightEnd = (int) (width * 0.94D);
+        int bandTop = (int) (height * 0.28D);
+        int bandBottom = (int) (height * 0.42D);
+        // The mask probe: the left quad is the depth-only shape, the right one is the control.
+        net.minecraft.client.renderer.GlStateManager.colorMask(false, false, false, false);
+        net.minecraft.client.gui.Gui.drawRect(left, bandTop, leftEnd, bandBottom, 0xFFFF00FF);
+        net.minecraft.client.renderer.GlStateManager.colorMask(true, true, true, true);
+        net.minecraft.client.gui.Gui.drawRect(right, bandTop, rightEnd, bandBottom, 0xFFFF00FF);
+        report.addProperty("stateProbeMaskRect", "left " + left + "," + bandTop + "-" + leftEnd + "," + bandBottom
+                + " drawn with colorMask(false,false,false,false); right " + right + "," + bandTop + "-" + rightEnd
+                + "," + bandBottom + " with all channels");
+        // The clip probe: one rectangle per quad, and the second rectangle is the one the first quad must not get.
+        int clipTop = (int) (height * 0.50D);
+        int clipMid = (int) (height * 0.62D);
+        int clipBottom = (int) (height * 0.74D);
+        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_SCISSOR_TEST);
+        org.lwjgl.opengl.GL11.glScissor(0, client.displayHeight - clipMid * scale, (width / 2) * scale,
+                (clipMid - clipTop) * scale);
+        net.minecraft.client.gui.Gui.drawRect((int) (width * 0.25D), clipTop, (int) (width * 0.75D), clipMid,
+                0xFF00FF00);
+        org.lwjgl.opengl.GL11.glScissor((width / 2) * scale, client.displayHeight - clipBottom * scale,
+                (width - width / 2) * scale, (clipBottom - clipMid) * scale);
+        net.minecraft.client.gui.Gui.drawRect((int) (width * 0.25D), clipMid, (int) (width * 0.75D), clipBottom,
+                0xFFFFFF00);
+        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_SCISSOR_TEST);
+        report.addProperty("stateProbeClipRects", "green " + clipTop + "-" + clipMid + " under the left half, yellow "
+                + clipMid + "-" + clipBottom + " under the right half");
+        report.addProperty("stateProbesDrawn", true);
     }
 
     /**
