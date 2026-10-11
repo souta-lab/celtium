@@ -18,6 +18,23 @@
 
 ## 0. 直近の到達点（最新実測・冒頭表）
 
+> **冒頭表（このセッションの受入状況・最終更新 2026-10-12）** — 詳細と数値は下の §0.2xx に、旧測定は `docs/history/` にある。
+
+| 対象 | 状態 | 実測の要点 |
+|---|---|---|
+| entity / item の不可視 | **受入済み** | `drawnByFormat` id9 228/228・`windowFlushFailures=0`・HUD mean\|d\| 1.87・entity band 18.85・hand 21.25 |
+| 明るい entity・雲 | **受入済み** | 上流参照との比較で一致 |
+| **文字間のアーティファクト** | **受入済み** | 機序 = coalesced font run が mode 5 strip で glyph を連結。退化頂点セパレータで **バー 26/36 → 0**・`refused=0`・**0.23 µs/glyph**（基準 0.56）・texel 449/449・104/104 不変 |
+| **block entity の z-fighting** | **受入済み** | 機序 = polygon offset を draw 時に live 読み（vanilla は overlay の周りだけ enable）。group へ捕捉する修正で **`immediateDepthBiasedGroups` 48（対照 0）**・block region **mean\|d\| 18.75・29.1% の画素が >8** |
+| **ホットバー item の暗転** | **受入済み（上流参照一致）** | TESR item（chest）を night で: 参照 `(106.5,74.7,25.6)`・修正後 `(111.0,76.4,26.2)`・対照 `(82.2,48.1,16.8)`（明るい画素なし） |
+| 選択枠の欠落 | **受入済み** | `lineBatchesNarrowed` 215・outline が presented frame に存在 |
+| clip 矩形・BH-10 | **受入済み（probe で pixel 証明）** | 同一 jar・1 flag 差で green x 318..638 対 未 clip・`colorMaskHistogram=[0x0:397 0x7f:357 0xf:6645]` |
+| **動画設定が開かない** | **受入済み（画面が開く）** | 真因 = 0 範囲 slider が `SliderControl` の assert で throw。`guiClickDivertedTo=CeleritasVideoOptionsScreen`・verdict PASSED。(e) の3段階は未了 |
+| **パノラマ / ロード画面の白** | **機序確定・未修正** | mirror 内容（replay 修正済みで実内容）・bind（42/44/45-48）・捕捉（stale でない）・clear（face の draw より前）・copy の出所（panorama 自身）・pending 39・**readback は全画素白**。faces の内容がどちらの pair にも無いことが残る1点 |
+| 性能 | **着地** | OPT-05（hostBuffers 6 for 8316 groups）・OPT-07(b)（`uploadSubmitWaitsAtEnd` 31343→6910）・**OPT-09（1086 indirect call が 17,651 draw を運ぶ＝16.3:1・fallback 0・VUID 0）**・BH-22（descriptor cache 退役＋census）・BH-32（atlas sampler の maxLod を level 数に追従） |
+| 未了 | — | パノラマの最後の1点・menu hold 経路の layout VUID（hold 依存）・OPT-09 step(3)（geometry/order 比較）・BH-14 per-identity pair・goal (e) の3段階・較正済み scene での picture gate 再取得 |
+
+
 **この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.92 にある（新しい節ほど新しい実測）。
 
 | 項目 | 状態 | 最新の実測（GPU・条件つき） |
