@@ -229,3 +229,30 @@ is the per-frame overlay construction and the extra immediate groups rather than
 
 The instrument costs two `System.nanoTime()` pairs per glyph and per string (~0.3 ms/frame at this density); it is
 reported in the summary and in the progress lines, so a leg that loses the shutdown hook still carries it.
+
+## Where the 3.17 µs per glyph is: the bind chain runs once per glyph, not once per change
+
+The re-framed question was whether the vanilla glyph body's 3.17 µs is the call chain (`TextureManager.bindTexture`
+→ map lookup → `GlStateManager` state read → our hook) or `renderStringAtPos`'s per-character work. The existing
+`CELTIUM_UNIT_BIND` line already carries the answer - `bindsOnUnit0` counts the arrivals at the mirror, which are our
+hook's calls:
+
+| leg | glyph windows | `bindsOnUnit0` |
+|---|---|---|
+| `f3split` (jar `a1a3aa96`, F3 on) | 1,280,000 | **1,628,711** |
+| `f3perf-on` (jar `135f0d47`, F3 on) | 1,020,000 | **1,011,627** |
+
+The arrivals track the glyph count ~1:1, so **our hook runs once per glyph**. The per-unit cache in
+`GlStateManager.func_179144_i` (`GlStateManager.java:481-488`) skips the `GL11.glBindTexture` call, but our injection
+is at the **method HEAD** (`GlStateManagerMixin.celtium$bindTexture`,
+`@Inject(method = "func_179144_i", at = @At("HEAD"))`), so a cache hit still runs the hook: a backend lookup, a
+lambda, `immediateState.bindTexture` and two counters, ~1.6M times per run. The distinction matters because the
+*stub* records only the `GL11.glBindTexture` call the cache lets through, so "the hook only runs when the texture
+changes" is true of the stub and false of the hook.
+
+That makes a skip in the hook **not** a duplicate of vanilla's filter: vanilla's sits upstream of the hook and cannot
+stop it, and the comparison is exact per unit (`boundTextureByUnit[activeUnit] == glTextureId` means the mirror
+already holds the value, so the mirror call is a no-op). The unit was stopped before it was implemented; this
+measurement is what re-opens it. **Not established**: the cost *per arrival* - the arrivals being per-glyph is
+measured, the nanoseconds are not, and a timer inside the hook is the one instrument not built here because it sits on
+the hottest path in the game.
