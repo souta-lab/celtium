@@ -145,6 +145,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.215 **round 17-18: 起動 phase の白は残る（target サイズは機序でない）・panorama copy は「白」を served・entity の list 捕捉の穴**
+
+- **ロード画面**: frame target を**窓の drawable サイズ**で決めるよう修正（viewport は最後に bind された framebuffer のものなので、
+  起動中は splash の FBO の extent を拾っていた）。**白は変わらなかった**＝target サイズは機序ではない。
+  現状: 起動 capture 71枚で 黒(0-23) → **白(24-31・約4秒)** → menu(32+・文字可読)。
+  splash の batch は `CELTIUM_IMMEDIATE_ENQ frame=0 group=1 fmt=2 texture=8 target=<splash FBO>` として届き、
+  直後の `group=2 … texture=6 target=0`（composite）が publish 名を sample する。
+  `published glTexture=6` → **直後に dropped**（`publishedFrameTexturesRepublished=0`＝私の再指しは発火していない＝第三の drop 経路がある）。
+- **panorama（menu 背景）**: `CELTIUM_TEX_COPY_SERVED dest=20 … 256x256 readFbo=0 mean=255,255,255 opaque=65536/65536 served=1`
+  ＝**copy は served されているが、その source が一様な白**。menu の背景が灰色グラデーションなのはこのため
+  （cube face の内容ではなく白が skybox texture に入っている）。task-36 の残件は「served 元の内容」。
+- **entity**: `CELTIUM_MODEL_LIST_OPEN/CLOSE` で 24 list 捕捉（`list=147 owner=RenderPlayer` ほか・refused=0）、
+  `CELTIUM_MODEL_MESH` 64 build。ただし `CELTIUM_MODEL_MISSING list=-1/160/161`（`VulkanModelQuadCapture.quad` は
+  `TexturedQuad` からしか呼ばれないので、別経路で描かれる list は登録されない）。
+  `CELTIUM_MODEL_BOUNDS list 147 vertices=24 … quadsWithOtherMatrix=0/42`＝捕捉 quad 42 に対し mesh は 24 頂点。
+  `CELTIUM_MODEL_ENQ … projKind=ortho` は GUI item の batch（world entity ではない）。
+
 ## 0.214 **round 16 の独立検証（acceptance・jar `e5508fd5`）とロード画面の最終原因**
 
 - **font batching（ON で）検証済み**: menu のボタンが `Singleplayer`/`Multiplayer`/`Mods` と可読（自前 compositor capture）、
