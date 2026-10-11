@@ -257,6 +257,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.255 **round 61: 最後の1点は「bind 側の id」— 既存の `CELTIUM_UNIT_BIND` の bound を上げるだけ**
+
+- **確定済み（Lead の `r59-panohold`）**: panorama PNG は **実内容で mirror**（`id=45 firstOpaque=0xff8fa3ff`・`id=46 0xff90a4ff`・
+  `source=announcement size=256x256`）＝早期 announcement replay が効いている。copy も走る（`dest=20 … mean=255,255,255`）。
+- **残り**: face の group が **`texture=8`**（splash の白）を運ぶ一方 PNG は 45-49。決定に必要なのは **bind 側の id** で、
+  texture-mirror の **`CELTIUM_UNIT_BIND bind texture=N`** がまさにその計器。Lead の leg では **最初の約22 bind に bound** されていて
+  panorama の bind に到達していない（観測 id: 0,9,8,6,10,3,2,13）。
+- **次の一手（texture-mirror へ）**: その bound を上げる（または panorama id に filter する）だけで1 leg。
+  - game が **45-49 を bind** し group が 8 → **即時捕捉が stale**（修正は捕捉側）
+  - game 自体が **8 を bind** → **`TextureManager` の名前→object マッピング**（registry 側）
+- その行の他の要素（replay 修正・menu hold knob・mirror-source 行・copy 行）はすべて揃っている。
+
 ## 0.254 **round 60: menu hold で copy が走るようになり、panorama PNG の mirror は実内容になった（白は残る）**
 
 - **fixture knob 着地（gui-stage・`81d29010a`）**: `-Dceltium.validation.menuHoldTicks=N` が **world 生成前に `GuiMainMenu` を N client tick 保持**
