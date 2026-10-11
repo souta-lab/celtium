@@ -831,6 +831,22 @@ these legs), and the inventory screen: the route used the pause menu to video se
 path needs its JEI flag. The loading screen is skipped under GL-less by design
 (`CELTIUM_GLLESS splash progress skipped (no shared GL context)`).
 
+## 6g. The font-batching caveat on every text row (round-11)
+
+The user reports the menu text garbled, and the Lead measured it as a one-flag control:
+`-Dceltium.font.batching=false` renders every label, the rotated splash text and the copyright line legibly, while
+with batching on they render as blocks - the run's state witness was missing the matrix pair, so scaled and rotated
+draws were merged into a run opened under a different transform. Until the witness-fix leg lands, **any text row
+measured on a jar with batching on is invalid** and must not be read as verified. In this table that touches:
+
+- row 13 (chat) - "the text is drawn in both legs" was read from crops of a jar whose batching state is not recorded;
+- row 19 (font / N03) - its `quads/submitted/accepted` counters are from `plan.md` §0.144, before batching;
+- row 23 (the mod cohort) - the JEI panel crop I read showed "Gold Ore" and the category label legible on jar
+  `609eb69a9064df05`, so *that* jar's text was not garbled; that is one observation, not a batching control.
+
+They stay in the table with their numbers, marked invalid-for-text until a leg on a jar with the witness fix
+re-takes them.
+
 ## 7. Instruments and artifacts
 
 Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py`, `compare_jei_pair.py`, the
