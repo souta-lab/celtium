@@ -10779,7 +10779,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         .append(frames[i].getMethodName()).append(':').append(frames[i].getLineNumber()).append(" <- ");
             }
             System.out.println("[Celtium] CELTIUM_COPY_CALLER dest=" + destName + " " + width + "x" + height
-                    + " frame=" + this.frameId + " callers=[" + caller + "]");
+                    + " frame=" + this.frameId
+                    // What the flush would see, so which of its two early returns fired is a fact: an empty queue
+                    // means the cubes' offers arrive after this copy, a busy window means it must wait instead.
+                    + " windowBusy=" + this.immediateWindowBusy
+                    + " groups=" + this.immediateGroups.size()
+                    + " recorded=" + this.recordedImmediateGroups.size()
+                    + " groupBatches=" + this.currentGroupBatches
+                    + " callers=[" + caller + "]");
         }
         if (level != 0) {
             // The mirror's patch path carries level 0 only (announceFullPixels walks data[level] from 0 and stops at the

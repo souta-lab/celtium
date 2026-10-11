@@ -257,6 +257,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.279 **round 85: 決定的 — copy 時点で `groups=39` が pending・`windowBusy=false`、しかし readback は全画素白、そして read image ≠ pass が attach した image**
+
+- **測定（Lead の `r83-state`・hold 60）**:
+  ```
+  CELTIUM_COPY_CALLER … windowBusy=false  groups=39  recorded=0  groupBatches=1
+  CELTIUM_TEX_COPY_SERVED … mean=255,255,255  readImage=0x7f7b3cc74380
+      passAttached=0x7f7b33945040  lastDrawnFrame=-1  firstPixels=[ffffffff×4]  nonWhite=0
+  ```
+- **3つの確定事実**:
+  1. **flush の早期 return はどちらも発火しない**（`windowBusy=false`・`groups=39`）＝pending はそこにある。
+  2. **readback は 65536 画素すべて純白**（`nonWhite=0`）。
+  3. **`readImage`（chain pair）≠ `passAttached`**（pass が attach している image は別）＝**pass は pair ではない image に描いている**。
+- **帰結**: 白の原因は「pending が描かれない」ではなく、**copy が読む image（chain pair）が、pass が実際に描いている image と別**であること。
+  `lastDrawnFrame=-1` は**flush 経路が更新しない counter**であり、証拠として使えない（「counter の不在は描画の不在ではない」）。
+- **修正方向**: `celtium$ownedReadImage(readFbo)` の解決が **game の framebuffer が実際に書き込まれている image** を返すようにする
+  （identity→image の対応が `passAttached` 側と食い違っている）。次は `readFbo=0` の解決規則と、その identity の pass が attach した image を突き合わせる。
+- **計装は残置**（`CELTIUM_COPY_READ`・`CELTIUM_COPY_CALLER`＋state・`CELTIUM_CHAIN_PAIR_CLEAR`・firstPixels/nonWhite）。
+
 ## 0.278 **round 84: `flushPendingBeforeGlDraw` の早期 return 条件が容疑者（`immediateWindowBusy` / `immediateGroups` 空）**
 
 - **実装確認（Lead）**: `flushPendingBeforeGlDraw`（`:6326`）は
