@@ -891,8 +891,38 @@ public final class ValidationClient {
         key.append(" blockSweep=").append(sweep);
         key.append(" allBlocks=").append(Boolean.getBoolean("celtium.validation.allBlocks"));
         key.append(" entities=").append(celtium$entityVariant());
+        key.append(" screen=").append(celtium$screenVariant());
         key.append(" guiScale=").append(guiScale > 0 ? Integer.toString(guiScale) : "unreadable");
         return key.toString();
+    }
+
+    /**
+     * The fixture's screen variant, as part of the key a scene's floors are measured under.
+     * <p>
+     * Keeping a screen open through the capture changes the picture - the inventory and JEI's overlay are drawn over
+     * the world - so a floor measured with no screen open does not describe it. The flags were not in the key, and a
+     * run with {@code jeiScreen} and {@code keepInventoryScreen} reported {@code sceneCalibrationKeyMatches=true}
+     * against the plain terrain reference: the same defect audit A03 found in the reference key, in a different
+     * dimension. The default, which is what the references were measured with, is "none".
+     */
+    private static String celtium$screenVariant() {
+        StringBuilder variant = new StringBuilder();
+        if (Boolean.getBoolean("celtium.validation.jeiScreen")) {
+            variant.append("jei");
+        }
+        if (Boolean.getBoolean("celtium.validation.jeiRecipe")) {
+            if (variant.length() > 0) {
+                variant.append('+');
+            }
+            variant.append("recipe");
+        }
+        if (Boolean.getBoolean("celtium.validation.keepInventoryScreen")) {
+            if (variant.length() > 0) {
+                variant.append('+');
+            }
+            variant.append("keep");
+        }
+        return variant.length() == 0 ? "none" : variant.toString();
     }
 
     /**
@@ -917,6 +947,7 @@ public final class ValidationClient {
         key.append(" blockSweep=").append(celtium$REFERENCE_BLOCK_SWEEP);
         key.append(" allBlocks=").append(celtium$REFERENCE_ALL_BLOCKS);
         key.append(" entities=").append(celtium$REFERENCE_ENTITIES);
+        key.append(" screen=").append(celtium$REFERENCE_SCREEN);
         key.append(" guiScale=").append(celtium$REFERENCE_GUI_SCALE);
         return key.toString();
     }
@@ -929,6 +960,8 @@ public final class ValidationClient {
     private static final boolean celtium$REFERENCE_ALL_BLOCKS = false;
     /** The entity variant the measured references ran with: none of the glow/keep/capture flags. */
     private static final String celtium$REFERENCE_ENTITIES = "none";
+    /** The screen variant the measured references ran with: no screen was open. */
+    private static final String celtium$REFERENCE_SCREEN = "none";
 
     /** The entity flags that change the frame, as one token: the measured references were taken with none of them. */
     private static String celtium$entityVariant() {
