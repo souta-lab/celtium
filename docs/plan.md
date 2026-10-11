@@ -170,6 +170,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.226 **OPT-08 step 1（upload batch を semaphore で frame submission へ渡す）は撤回。二重 signal の正体は upload batch 自身の semaphore と計器で確定**
+
+- **やったこと**: `flushUploads()` を「submit して待たない」形にし、binary semaphore を signal、frame の `submitCommands` がその wait を取る形にした
+  （batch の barrier は writes を available にするだけなので、可視性には wait が要る）。ring の slot は batch の fence が signal するまで予約、という所有規則は維持。
+- **失敗**: `VUID-vkQueueSubmit-pSignalSemaphores-00067`（layers ON の 2 leg で各10件）。**原因は同期ではなく signal の消費者が保証されないこと**:
+  `flushUploads()` の呼び出し元は (1) frame の `submitCommands`（消費できる）と (2) ring が埋まったときの `celtium$reserveUploadSlot` 内の early flush
+  （**同じ step で私が追加**、消費する submission が続くとは限らない）。消費者がいない signal は outstanding のまま残り、次の flush が再び signal する。
+- **trace で正体を確定**（`-Dceltium.vulkan.uploadTrace=true`・layers ON の 2 leg）: VUID 本文の handle `VkSemaphore 0x1c800000001c8` は
+  batch 自身の semaphore（`CELTIUM_UPLOAD_SIGNAL batch=N sem=0x1c800000001c8`）。trace は **連続する `signal=true`**（batch 7→8・12/13/14・28/29）を示し、
+  ring-pressure flush が支配的な leg では frame 側の trace が **0 行**＝signal を出した経路の消費者が同じ呼び出しに存在しなかった。
+  したがって同時期の `a6dbb135d`（frame 自身の wait semaphore）・`cd53bbff2`/`5d508be38`（bridge pair）は**この10件については別の semaphore を指している**。
+- **撤回（現行 HEAD・私の revert は `5d508be38` に取り込まれた）**: `flushUploads()` は submit + 自 fence wait（受理済み OPT-07 形）に戻した。
+  **残した measured win**: (a) ring が埋まったら settled 経路へ落とさず early flush（**1546/2419 copies → 3/6306 copies**、`uploadEarlyFlushesForRingPressure=136`）、
+  (b) frame 側の直列化の計器 `frameFenceWaitMillis`/`...Count`/`...WorstMillis`（OPT-08 第2 step の目標値）。
+- **検証 leg**（`chain-t51.sh`・layers ON・terrain＋keepGui＋captureEntities・`minWorldFrames=5`）: **VUID 0行・`-4`/DEVICE_LOST 0件・
+  `validationMessageCount=0`・`validationClean=true`・exit 0**（非緑は既知の画像ゲート `FAILED_PRESENTED_IMAGE` のみ）。
+  同 leg の計器: `uploadCopiesBatched=3477`・`uploadFallbackCopies=3`・`uploadFlushMillis=393`・`frameFenceWaitMillis=167`/1201 waits/worst 5 ms・
+  `frameArena regionsOpened=2809`・`hostBuffersCreated=6`。
+- **OPT-08 第2 step（2 frames in flight）の前提**: semaphore は**消費する submission から signal する**（`submitCommands` の flush からのみ signal するか、
+  timeline semaphore の単調値で outstanding 状態機械自体を消す）。加えて per-slot 資源（command buffer・fence・uniform region・
+  frame target の image/semaphore）が必要で、これは `GllessFrameTarget` 側の作業＝frame target owner との共同 unit。
+
 ## 0.225 **OPT-07 再挑戦（契約 (b): destination を flush 時に解決）は受入: 0 VUID・submit 数 −78%・待ち時間の合計は不変**
 
 - **契約 (b)**: pending copy は handle ではなく `VulkanBuffer` を保持し、`flushUploads()` が `target.buffer()` を解決する。
