@@ -147,6 +147,37 @@ public final class VulkanContext {
     public static int bootstrapSubmitWaits;
     public static long bootstrapSubmitWaitMillis;
     public static long bootstrapSubmitWaitWorstMillis;
+    /**
+     * How many submissions this process has confirmed complete, monotone, one per successful (or device-lost) fence
+     * wait (OPT-04's completion epoch).
+     * <p>
+     * Resource reuse must be decided by completion, never by a frame number having moved. This is the single number
+     * that carries that fact out of the wait sites, so a resource can record the epoch of the submission that last
+     * used it and be reused only when this counter has reached it. A device loss counts: the queue is not reading
+     * anything any more, which is the property the reuse rule actually needs.
+     */
+    public static long completedSubmissions;
+
+    /** {@return the completion epoch, the count of submissions whose completion has been confirmed}. */
+    public static long completedEpoch() {
+        return completedSubmissions;
+    }
+
+    /**
+     * Records that a fence wait confirmed a submission's completion (OPT-04).
+     * <p>
+     * The backend owns its frame fence and waits on it directly rather than through this class's helpers, so the epoch
+     * has to be advanced from both places; a lost device counts here for the same reason it counts in
+     * {@code submitWithSemaphores}: nothing is executing any more, which is the fact resource reuse needs.
+     *
+     * @param lostDevice whether the wait reported {@code VK_ERROR_DEVICE_LOST} rather than success
+     */
+    public static void noteCompletionConfirmed(boolean lostDevice) {
+        completedSubmissions++;
+        if (lostDevice) {
+            submitDeviceLost++;
+        }
+    }
     public static long bootstrapQueueWaitWorstMillis;
     /** Submissions whose fence did not signal within the bound: a stall, counted so it can be read after the fact. */
     public static int submitTimeouts;
@@ -489,8 +520,13 @@ public final class VulkanContext {
                 //                  quarantined exactly as on a timeout and the finally must not release them.
                 if (waited == VK_SUCCESS) {
                     submitCompletions++;
+                    completedSubmissions++;
                 } else if (waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                     submitDeviceLost++;
+                    // SUCCESS-equivalent for reuse (audit B04): a lost device is not executing anything any more, so
+                    // the submission is advanced in the completion epoch as well. Grouping it with "the wait did not
+                    // complete" is the mistake the audit names, and it would hold every resource forever.
+                    completedSubmissions++;
                     this.usable = false;
                     throw new IllegalStateException("vkWaitForFences(submitWithSemaphores) reported"
                             + " VK_ERROR_DEVICE_LOST: the submission is not going to complete because the device is"
@@ -591,6 +627,7 @@ public final class VulkanContext {
                     celtium$recordBootstrapFenceWait(waitStarted);
                     if (waited == VK_SUCCESS) {
                         bootstrapSubmitWaits++;
+                        completedSubmissions++;
                     } else if (waited == VK_TIMEOUT) {
                         // A submission that does not complete within the bound is the stall the frame path already
                         // reports by name; here it means the command buffer must not be freed.

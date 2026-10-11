@@ -1546,6 +1546,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private final java.util.List<ImmediateGroup> immediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanDynamicMesh currentImmediateMesh;
+    /**
+     * The immediate path's vertex and index memory for the frame being recorded (OPT-05).
+     * <p>
+     * One arena, suballocated per group, instead of two {@code VkBuffer}/{@code VkDeviceMemory}/{@code map} pairs per
+     * group (BH-28). Created on the first group of the first frame that needs it, so a run that never draws an
+     * immediate batch pays nothing. A group that does not fit even at the arena's cap promotes itself to buffers it
+     * owns rather than being dropped, and the arena's own counters say how often that happened.
+     */
+    private VulkanFrameArena frameArena;
+    /** Groups whose arena slice could not be handed out, so they allocated their own buffers: the bounded fallback. */
+    private long frameArenaFallbackGroups;
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
     private boolean currentGroupUsed;
@@ -3775,6 +3786,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.frameId++;
         this.countersFrameId = this.frameId;
+        // OPT-05: hand the frame its arena slot, and reclaim one only where GPU completion allows it. Done here
+        // because this is the frame boundary (everything per frame is reset here and nowhere else), and done after
+        // the previous window's wait, so a slot whose groups are all released is normally free by now.
+        if (this.frameArena != null) {
+            this.frameArena.beginFrame(this.frameId, VulkanContext.completedEpoch());
+        }
         this.frameAccepted = 0;
         this.frameDrawn = 0;
         reportOutOfDateState();
@@ -4695,7 +4712,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 closeCurrentImmediateGroup();
                 long groupCreateStart = System.nanoTime();
                 long groupCreateCpuStart = threadCpuNanos();
-                this.currentImmediateMesh = new VulkanDynamicMesh(this.context);
+                this.currentImmediateMesh = celtium$newImmediateMesh();
                 long groupCreateCpuEnd = threadCpuNanos();
                 this.groupCreateNanos += System.nanoTime() - groupCreateStart;
                 if (groupCreateCpuStart >= 0 && groupCreateCpuEnd >= 0) this.groupCreateCpuNanos += groupCreateCpuEnd - groupCreateCpuStart;
@@ -6708,6 +6725,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
     }
 
+    /**
+     * {@return the mesh a new immediate group writes into}: an arena slice when one can be handed out, an owning mesh
+     * when the arena's slots are all held by submissions that have not completed.
+     * <p>
+     * The fallback is bounded and counted rather than silent: a frame whose groups are still held (waiting for another
+     * render target) can leave both slots reserved, and the right answer then is the old behaviour for that group -
+     * its own buffers - not a reset of memory a later submission may still be reading, and not a dropped draw.
+     */
+    private VulkanDynamicMesh celtium$newImmediateMesh() {
+        if (this.frameArena == null) {
+            this.frameArena = new VulkanFrameArena(this.context);
+        }
+        VulkanDynamicMesh borrowed = this.frameArena.openMesh();
+        if (borrowed != null) {
+            return borrowed;
+        }
+        this.frameArenaFallbackGroups++;
+        return new VulkanDynamicMesh(this.context);
+    }
+
     /** Moves the open group into the flush list together with the matrices it was built with. */
     private void closeCurrentImmediateGroup() {
         // Group boundary for the font batching (task-59): a held run is closed out through the normal path here, so it
@@ -6872,6 +6909,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapSubmitWaits=" + VulkanContext.bootstrapSubmitWaits
                 + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
+                + " " + (this.frameArena == null ? "frameArena=not-created" : this.frameArena.describe())
+                + " frameArenaFallbackGroups=" + this.frameArenaFallbackGroups
+                + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
@@ -7449,6 +7489,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.uniforms != null) {
             this.uniforms.delete();
             this.uniforms = null;
+        }
+        // OPT-05: the frame arena's buffers are released here, not left for the next world. Every group that held a
+        // slice has been retired above (this path runs after a wait for device idle that succeeded), so nothing the
+        // queue may still read is inside them; keeping them would carry one world's immediate memory into the next.
+        if (this.frameArena != null) {
+            this.frameArena.delete();
+            this.frameArena = null;
+            this.frameArenaFallbackGroups = 0L;
         }
         record("world teardown: terrain resources released, the window device and swapchain are kept");
     }
@@ -10566,8 +10614,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * {@code renderHand}, which {@code renderWorldPass} calls at {@code EntityRenderer.java:1492}), and so are the
      * entities and the block entities.
      */
+    /**
+     * {@code -Dceltium.vulkan.lightmapFullBrightGui=false} turns the GUI-stage full-bright rule off, for measurements:
+     * the same jar, the same scene and the same tick then draw a hotbar item with the world's light, which is the
+     * "before" half of the pair without rebuilding a jar that differs in anything else.
+     */
+    private static final boolean LIGHTMAP_FULL_BRIGHT_GUI = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.lightmapFullBrightGui", "true"));
+
     private float[] celtium$lightmapForGroup() {
-        if (!this.worldPassActive) {
+        if (!this.worldPassActive && LIGHTMAP_FULL_BRIGHT_GUI) {
             this.lightmapFullBrightGroups++;
             return FULL_BRIGHT_LIGHTMAP;
         }
@@ -11864,6 +11920,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
                         check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
+            // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
+            // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
+            // that never reaches the queue must not hold a slot, and an abandon after a successful submit must.
+            if (this.frameArena != null) {
+                this.frameArena.submitted(this.frameId);
+            }
             // The queue accepted this submission, so the layouts the recording declared into it are now the truth
             // every wrapper of those images shares. A refused submit throws before this line, leaving the recording
             // pending for the next beginCommands() to abandon - and the next ensureGeneralLayout/ensureSampledLayout
@@ -12055,6 +12117,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return false;
             }
             this.submissionPending = false;
+            // OPT-04: a confirmed completion is the only basis resource reuse may rest on. The arena's slots are
+            // released here, before the retired groups below drop their slices, so a slot whose last group is freed in
+            // this same call is reclaimable at the next beginFrame.
+            VulkanContext.noteCompletionConfirmed(false);
+            if (this.frameArena != null) {
+                this.frameArena.completed(VulkanContext.completedEpoch());
+            }
             this.commandState.completed();
             for (ImmediateGroup group : this.retiredImmediateGroups) {
                 int batches = group.batches;

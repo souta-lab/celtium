@@ -3,6 +3,8 @@ package org.soutalab.celtium.vulkan;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.nio.LongBuffer;
+
 /**
  * Host-visible vertex and index streams for the geometry Minecraft builds per frame.
  * <p>
@@ -66,6 +68,16 @@ public final class VulkanDynamicMesh {
     private static final int LIFECYCLE_LOG_LIMIT = 96;
 
     private final VulkanContext context;
+    /**
+     * The frame arena this mesh borrows its slice from, or null when the mesh owns its buffers (OPT-05).
+     * <p>
+     * The immediate path creates one mesh per group; those borrow, so a group costs no {@code VkBuffer} and no
+     * {@code VkDeviceMemory}. Model meshes (the persistent cache) and the two long-lived UI meshes own theirs, because
+     * their lifetime is not a frame's.
+     */
+    private final VulkanFrameArena frameArena;
+    /** The borrowed slice, or null in owning mode. Its release is what frees the slot for a later frame. */
+    private VulkanFrameArena.Region frameRegion;
     private VulkanHostBuffer vertices;
     private VulkanHostBuffer indices;
 
@@ -117,6 +129,8 @@ public final class VulkanDynamicMesh {
             throw new IllegalArgumentException("context must not be null");
         }
         this.context = context;
+        this.frameArena = null;
+        this.frameRegion = null;
         // The first buffer is released if the second allocation fails (audit ownership gap). Without this, a mesh whose
         // index buffer could not be created leaks the vertex buffer it already made - and a mesh is created per display
         // list, so the leak scales with the model count rather than staying a one-off.
@@ -134,6 +148,22 @@ public final class VulkanDynamicMesh {
             }
             throw error;
         }
+    }
+
+    /**
+     * A mesh that writes into the frame arena instead of allocating (OPT-05).
+     * <p>
+     * Nothing is allocated here: the buffers appear when the first bytes are written, and they belong to the arena's
+     * slot, not to this mesh. The slot is not reset until the submission that reads this slice has completed and
+     * {@link #delete()} has released it, which is the ownership rule the group's own lifetime already follows.
+     */
+    VulkanDynamicMesh(VulkanFrameArena arena, VulkanFrameArena.Region region) {
+        if (arena == null || region == null) {
+            throw new IllegalArgumentException("arena and region must not be null");
+        }
+        this.context = arena.context();
+        this.frameArena = arena;
+        this.frameRegion = region;
     }
 
     /** Starts a batch; anything previously written but not drawn is discarded. */
@@ -162,7 +192,7 @@ public final class VulkanDynamicMesh {
 
     /** {@return the CPU-visible address of the first vertex}, for diagnostics only */
     public long vertexAddress() {
-        return this.vertices.mappedAddress();
+        return this.frameRegion != null ? this.frameRegion.vertexBaseAddress() : this.vertices.mappedAddress();
     }
 
     public int indexCount() {
@@ -170,24 +200,62 @@ public final class VulkanDynamicMesh {
     }
 
     public long vertexBuffer() {
+        if (this.frameRegion != null) {
+            return this.frameRegion.vertexBuffer();
+        }
         return this.vertices == null ? 0L : this.vertices.buffer();
     }
 
     public long indexBuffer() {
+        if (this.frameRegion != null) {
+            return this.frameRegion.indexBuffer();
+        }
         return this.indices == null ? 0L : this.indices.buffer();
+    }
+
+    /**
+     * {@return the byte offset this mesh's vertices are bound at inside {@link #vertexBuffer()}}.
+     * <p>
+     * Zero for an owning mesh; a slice's offset for a borrow from the frame arena. The pipeline binds the buffer at
+     * this offset and draws with {@code firstVertex = 0}, because the indices this mesh writes are already relative to
+     * its own first vertex.
+     */
+    public long vertexBindOffset() {
+        return this.frameRegion != null ? this.frameRegion.vertexByteOffset() : 0L;
+    }
+
+    /** {@return the byte offset this mesh's indices are bound at inside {@link #indexBuffer()}}. */
+    public long indexBindOffset() {
+        return this.frameRegion != null ? this.frameRegion.indexByteOffset() : 0L;
+    }
+
+    /**
+     * Binds this mesh's vertex and index streams at their own offsets and records the batch.
+     * <p>
+     * The one place that knows the binding contract, so the arena's slice offsets cannot be forgotten by one pipeline
+     * variant and not another. The caller has already bound the pipeline, the descriptor sets and the push constants,
+     * and a {@code MemoryStack} frame is open, exactly as before.
+     */
+    public void bindAndDraw(VkCommandBuffer commandBuffer) {
+        if (this.destroyed) {
+            throw new IllegalStateException("a destroyed mesh cannot be drawn");
+        }
+        LongBuffer vertexBuffers = org.lwjgl.system.MemoryStack.stackGet().longs(vertexBuffer());
+        LongBuffer vertexOffsets = org.lwjgl.system.MemoryStack.stackGet().longs(vertexBindOffset());
+        org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffers, vertexOffsets);
+        org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, indexBuffer(), indexBindOffset(),
+                org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+        draw(commandBuffer);
     }
 
     /** Appends a vertex and returns the index the caller should pass to {@link #index(int)}. */
     public int nextVertex() {
-        long required = this.vertexBytes + this.layout.stride;
-        if (required > this.vertices.size()) {
-            this.vertices.ensureCapacity(Math.max(required, this.vertices.size() * 2L));
-        }
-        long base = this.vertices.mappedAddress() + this.vertexBytes;
+        long base = vertexWriteAddress(this.vertexBytes, this.layout.stride);
         // Attributes are only written by the put* calls, so the vertex is zeroed first: a caller that skips the
         // light or normal attribute then reads a defined value instead of the previous batch's bytes.
         MemoryUtil.memSet(base, 0, this.layout.stride);
         this.vertexBytes += this.layout.stride;
+        sealFrameSlice();
         return this.vertexCount++;
     }
 
@@ -237,13 +305,11 @@ public final class VulkanDynamicMesh {
 
     /** Appends an index; the caller passes the value returned by {@link #nextVertex()}. */
     public void index(int value) {
-        long required = this.indexBytes + 4L;
-        if (required > this.indices.size()) {
-            this.indices.ensureCapacity(Math.max(required, this.indices.size() * 2L));
-        }
-        MemoryUtil.memPutInt(this.indices.mappedAddress() + this.indexBytes, value);
+        long address = indexWriteAddress(this.indexBytes, 4L);
+        MemoryUtil.memPutInt(address, value);
         this.indexBytes += 4L;
         this.indexCount++;
+        sealFrameSlice();
     }
 
     /**
@@ -253,6 +319,13 @@ public final class VulkanDynamicMesh {
      * This is the path Minecraft's immediate batches take: their vertices already are in the layout a pipeline
      * expects, so a raw copy plus generated indices is both the fastest and the least error-prone translation - no
      * per-attribute decoding that could disagree with the format the mod used.
+     * <p>
+     * The bytes and the stride are copied unchanged, which is the alignment contract this path already had and keeps:
+     * a group's slice starts on a 16-byte boundary, and every vertex inside it sits exactly where the caller's stride
+     * puts it - the same offset it would have had in a buffer of its own. That is a different contract from
+     * {@code VulkanArena}'s terrain allocation, whose size must be a multiple of the stride's own alignment unit
+     * (BH-01, {@code alignUnit = lcm(4, stride)}), because terrain addresses are divided by the stride to get a base
+     * vertex and this path never divides: it copies at the caller's stride and binds the buffer at the slice offset.
      *
      * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or no indices)
      */
@@ -265,17 +338,28 @@ public final class VulkanDynamicMesh {
         long addedVertices = (long) stride * count;
         long requiredVertices = this.vertexBytes + addedVertices;
         long requiredIndices = this.indexBytes + (long) indices.length * 4;
-        if (requiredVertices > this.vertices.size()) this.vertices.ensureCapacity(Math.max(requiredVertices, this.vertices.size() * 2));
-        if (requiredIndices > this.indices.size()) this.indices.ensureCapacity(Math.max(requiredIndices, this.indices.size() * 2));
-        MemoryUtil.memCopy(sourceAddress, this.vertices.mappedAddress() + this.vertexBytes, addedVertices);
+        boolean borrowed = this.frameRegion != null;
+        long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
+        long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
+        if (borrowed && this.frameRegion == null) {
+            // Reserving the indices promoted this mesh to buffers it owns (the arena could not hold the group), and the
+            // vertex address taken a moment ago was inside the slot that promotion abandoned: it is re-taken here, in
+            // the buffers the mesh owns now.
+            vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
+        }
+        if (vertexTarget == 0L || indexTarget == 0L) {
+            return false;
+        }
+        MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
         for (int i = 0; i < indices.length; i++) {
-            MemoryUtil.memPutInt(this.indices.mappedAddress() + this.indexBytes + (long) i * 4, indices[i] + baseVertex);
+            MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
         }
         this.layout = new Layout(stride, 0, -1, -1, -1, -1);
         this.vertexBytes = requiredVertices;
         this.indexBytes = requiredIndices;
         this.vertexCount += count;
         this.indexCount += indices.length;
+        sealFrameSlice();
         return true;
     }
 
@@ -298,6 +382,13 @@ public final class VulkanDynamicMesh {
         if (this.ownerList > 0) {
             celtium$released(this, this.retired);
         }
+        if (this.frameRegion != null) {
+            // The slice belongs to a frame arena slot, and this is the moment the group stops needing it: the slot may
+            // be reset once its submission has also completed (VulkanFrameArena.beginFrame). Idempotent in the arena,
+            // because several drop paths delete the same mesh.
+            this.frameRegion.release();
+            this.frameRegion = null;
+        }
         if (this.vertices != null) {
             this.vertices.delete();
             this.vertices = null;
@@ -305,6 +396,97 @@ public final class VulkanDynamicMesh {
         if (this.indices != null) {
             this.indices.delete();
             this.indices = null;
+        }
+    }
+
+    // ------------------------------------------------------------------ writing, in either mode
+
+    /**
+     * {@return the address {@code length} bytes are written at, {@code byteOffset} into the vertex stream}.
+     * <p>
+     * In arena mode a reservation that does not fit promotes this mesh to buffers it owns
+     * ({@link #celtium$promoteFromArena()}), which is the bounded fallback OPT-05 asks for: the group is still drawn,
+     * it just pays for its own allocation like every group used to.
+     */
+    private long vertexWriteAddress(long byteOffset, long length) {
+        if (this.frameRegion != null) {
+            long address = this.frameRegion.vertexAddressAt(byteOffset, length);
+            if (address != 0L) {
+                return address;
+            }
+            celtium$promoteFromArena();
+        }
+        long required = byteOffset + length;
+        if (required > this.vertices.size()) {
+            this.vertices.ensureCapacity(Math.max(required, this.vertices.size() * 2L));
+        }
+        return this.vertices.mappedAddress() + byteOffset;
+    }
+
+    /** The index half of {@link #vertexWriteAddress(long, long)}. */
+    private long indexWriteAddress(long byteOffset, long length) {
+        if (this.frameRegion != null) {
+            long address = this.frameRegion.indexAddressAt(byteOffset, length);
+            if (address != 0L) {
+                return address;
+            }
+            celtium$promoteFromArena();
+        }
+        long required = byteOffset + length;
+        if (required > this.indices.size()) {
+            this.indices.ensureCapacity(Math.max(required, this.indices.size() * 2L));
+        }
+        return this.indices.mappedAddress() + byteOffset;
+    }
+
+    /**
+     * Moves what this mesh has written out of the frame arena and into buffers of its own.
+     * <p>
+     * The arena refused the group (a single group larger than the slot's cap), so the choice is between an owned pair
+     * of buffers and dropping the draw. The bytes already written are copied, the reservation is given back to the
+     * slot, and every later write goes down the owning path - the same path a model mesh or the UI mesh uses, so the
+     * picture is unchanged and only the allocation returns for this one group.
+     * <p>
+     * A failure to allocate the second buffer releases the first and rethrows, exactly as the owning constructor does.
+     */
+    private void celtium$promoteFromArena() {
+        long vertexBytesWritten = this.vertexBytes;
+        long indexBytesWritten = this.indexBytes;
+        VulkanHostBuffer newVertices = null;
+        try {
+            newVertices = new VulkanHostBuffer(this.context,
+                    Math.max(INITIAL_VERTEX_BYTES, vertexBytesWritten * 2L + 4L),
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            VulkanHostBuffer newIndices = new VulkanHostBuffer(this.context,
+                    Math.max(INITIAL_INDEX_BYTES, indexBytesWritten * 2L + 4L),
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            long vertexSource = this.frameRegion.vertexBaseAddress();
+            if (vertexBytesWritten > 0L && vertexSource != 0L) {
+                MemoryUtil.memCopy(vertexSource, newVertices.mappedAddress(), vertexBytesWritten);
+            }
+            long indexSource = this.frameRegion.indexBaseAddress();
+            if (indexBytesWritten > 0L && indexSource != 0L) {
+                MemoryUtil.memCopy(indexSource, newIndices.mappedAddress(), indexBytesWritten);
+            }
+            this.frameRegion.abandon();
+            this.frameRegion = null;
+            this.vertices = newVertices;
+            this.indices = newIndices;
+            if (this.frameArena != null) {
+                this.frameArena.notePromotion();
+            }
+        } catch (RuntimeException | Error error) {
+            if (newVertices != null) {
+                newVertices.delete();
+            }
+            throw error;
+        }
+    }
+
+    /** Marks this mesh's slice as held by the group, so the slot cannot be reset while the group can still be drawn. */
+    private void sealFrameSlice() {
+        if (this.frameRegion != null) {
+            this.frameRegion.seal();
         }
     }
 
@@ -651,7 +833,7 @@ public final class VulkanDynamicMesh {
         if (this.vertexCount == 0) {
             throw new IllegalStateException("nextVertex() must be called before any attribute is written");
         }
-        return this.vertices.mappedAddress() + this.vertexBytes - this.layout.stride;
+        return vertexWriteAddress(this.vertexBytes - this.layout.stride, this.layout.stride);
     }
 
     private void requireAttribute(int offset, String name) {

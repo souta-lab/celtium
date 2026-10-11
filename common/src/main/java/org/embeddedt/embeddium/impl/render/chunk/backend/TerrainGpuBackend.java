@@ -31,8 +31,24 @@ public interface TerrainGpuBackend {
     default void setBlendEnabled(boolean enabled) {
     }
 
-    /** Mirrors {@code GlStateManager.func_187428_a(...)}; factors are the enum ordinals. */
+    /** Mirrors {@code GlStateManager.func_187428_a(...)} / {@code func_179120_a(...)}; factors are GL's constants. */
     default void setBlendFunc(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha) {
+    }
+
+    /**
+     * Mirrors {@code GlStateManager.func_187398_d(int)}: the blend equation, as GL's own constant
+     * ({@code GL_FUNC_ADD} = 0x8006, {@code GL_FUNC_SUBTRACT} = 0x800A, and so on). BH-07 - it bakes into the same
+     * colour-blend attachment as the factors, so a backend that bakes one has to be told the other.
+     */
+    default void blendEquation(int rgbEquation, int alphaEquation) {
+    }
+
+    /**
+     * Mirrors {@code GlStateManager.func_179135_a(boolean,boolean,boolean,boolean)}: which colour channels a write may
+     * touch, as the {@code VK_COLOR_COMPONENT_*} nibble (R=1, G=2, B=4, A=8). BH-10 - the Fancy cloud's depth-only
+     * pass clears all four while the visible pass writes them, and the two must not share a pipeline.
+     */
+    default void colorMask(int mask) {
     }
 
     /** Mirrors {@code GlStateManager.func_179132_a(boolean)}. */

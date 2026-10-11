@@ -138,10 +138,10 @@ public final class VulkanImmediatePipeline {
         clamped.limit(Math.min(clamped.remaining(), PUSH_CONSTANT_BYTES));
         vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
-        LongBuffer vertexBuffer = MemoryStack.stackGet().longs(mesh.vertexBuffer());
-        vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffer, MemoryStack.stackGet().longs(0L));
-        vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer(), 0L, VK_INDEX_TYPE_UINT32);
-        mesh.draw(commandBuffer);
+        // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
+        // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
+        // slice at 0 and drawing another group's vertices (OPT-05).
+        mesh.bindAndDraw(commandBuffer);
     }
 
     public int vertexBytes() {

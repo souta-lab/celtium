@@ -22,8 +22,39 @@ import static org.lwjgl.vulkan.VK10.*;
  * returns the raw {@code VkBuffer}. Render thread only, like the rest of the backend.
  */
 public final class VulkanHostBuffer {
+    /**
+     * Host-visible buffers created and destroyed since process start, with the count still live.
+     * <p>
+     * OPT-05's acceptance is "no vkAllocateMemory proportional to the group count after warm-up", and that is a
+     * property of how many times this class allocated, not of a frame time. Counting it here - at the only place a
+     * host buffer's memory is allocated - keeps the statement in the report instead of in a source reading.
+     */
+    private static long allocations;
+    private static long deletions;
+    /** Buffers created for the frame arena, counted apart so its bounded growth is not read as per-group allocation. */
+    private static long arenaAllocations;
+
+    /** {@return the host-buffer allocation census, so a report can say whether allocation scales with groups}. */
+    public static synchronized String allocationSummary() {
+        return "hostBuffersCreated=" + allocations + " hostBuffersDestroyed=" + deletions
+                + " hostBuffersLive=" + (allocations - deletions) + " hostBuffersFromFrameArena=" + arenaAllocations;
+    }
+
+    private static synchronized void noteAllocated(boolean arena) {
+        allocations++;
+        if (arena) {
+            arenaAllocations++;
+        }
+    }
+
+    private static synchronized void noteDeleted() {
+        deletions++;
+    }
+
     private final VulkanContext context;
     private final int usageFlags;
+    /** Whether this buffer belongs to the frame arena (the census separates its growth from per-group buffers). */
+    private final boolean arenaOwned;
 
     private long handle = VK_NULL_HANDLE;
     private long memory = VK_NULL_HANDLE;
@@ -38,6 +69,17 @@ public final class VulkanHostBuffer {
      *                               when the device has no host-visible coherent memory type
      */
     public VulkanHostBuffer(VulkanContext context, long sizeBytes, int usageFlags) {
+        this(context, sizeBytes, usageFlags, false);
+    }
+
+    /**
+     * The same buffer, marked as the frame arena's when {@code arenaOwned} is set.
+     * <p>
+     * A frame arena slice is written while the frame is being built and read by the GPU only when that frame's
+     * submission runs, so its reuse is bounded by a completion fence rather than by the frame having ended; the flag
+     * exists so the report can tell those buffers apart from the ones a model mesh or a UI mesh owns.
+     */
+    public VulkanHostBuffer(VulkanContext context, long sizeBytes, int usageFlags, boolean arenaOwned) {
         if (context == null) {
             throw new IllegalArgumentException("context must not be null");
         }
@@ -46,6 +88,7 @@ public final class VulkanHostBuffer {
         }
         this.context = context;
         this.usageFlags = usageFlags;
+        this.arenaOwned = arenaOwned;
         this.size = VulkanContext.alignUp4(sizeBytes);
         create();
     }
@@ -78,7 +121,8 @@ public final class VulkanHostBuffer {
         if (requiredBytes <= this.size) {
             return;
         }
-        VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, requiredBytes, this.usageFlags);
+        VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, requiredBytes, this.usageFlags,
+                this.arenaOwned);
         MemoryUtil.memCopy(this.mapped, replacement.mapped, this.size);
         delete();
         this.handle = replacement.handle;
@@ -95,6 +139,7 @@ public final class VulkanHostBuffer {
         if (this.handle != VK_NULL_HANDLE) {
             vkDestroyBuffer(this.context.device(), this.handle, null);
             this.handle = VK_NULL_HANDLE;
+            noteDeleted();
         }
         if (this.memory != VK_NULL_HANDLE) {
             vkFreeMemory(this.context.device(), this.memory, null);
@@ -126,6 +171,9 @@ public final class VulkanHostBuffer {
             check(vkCreateBuffer(device, createInfo, null, handleBuffer), "vkCreateBuffer(host buffer, " + this.size
                     + " bytes)");
             this.handle = handleBuffer.get(0);
+            // Counted from the moment the buffer exists: delete() counts the matching destruction, so a create that
+            // fails before this line leaves the census balanced (audit ownership gap's partial state).
+            noteAllocated(this.arenaOwned);
 
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetBufferMemoryRequirements(device, this.handle, requirements);
