@@ -2808,7 +2808,19 @@ public final class ValidationClient {
 
     @SubscribeEvent
     public void frame(TickEvent.RenderTickEvent event) {
-        if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
+        if (!enabled || finished) return;
+        if (event.phase == TickEvent.Phase.START) {
+            // The scene's own camera overrides are applied BEFORE the frame is rendered, which is where a pose has to be
+            // set to be the pose that gets drawn. They used to live in the END half of this handler, next to the code
+            // that inspects the finished frame - and since celtium$applyPose re-applies the scene pose from the client
+            // tick, the two writers fought over the same field at different points of the loop and the rendered pitch
+            // interpolated between them. Measured: GL-less frames sat at +20 while the bridge's screenshot caught about
+            // -14, so the two legs were not at the same camera and a real-GL run failed with "the camera at the capture
+            // is not the pose ... measured pitch=-14". A pose comparison across legs is only a comparison if both legs
+            // render the same pose.
+            celtium$applyClientPoseOverride(Minecraft.getMinecraft());
+            return;
+        }
         Minecraft mc = Minecraft.getMinecraft();
         // Every render tick: see whether a requested dump has been written, and complete its identity from the
         // renderer's own counters if it has. This is the frame-bound step - the identity is taken from the observation
@@ -3034,38 +3046,6 @@ public final class ValidationClient {
                 && worldTicks >= Integer.getInteger("celtium.validation.dumpPresentedTick", 20).intValue()) {
             celtium$presentedDumpRequested = true;
             celtium$requestPresentedDump(mc, "early");
-        }
-        if (Boolean.getBoolean("celtium.validation.allBlocks") && mc.player != null) {
-            // The block wall is tall enough that the default downward pitch cuts its top rows off; level view plus a
-            // little tilt keeps all of it inside the frame at the wall's distance.
-            mc.player.rotationPitch = -14.0F;
-            mc.player.prevRotationPitch = -14.0F;
-        }
-        if (Boolean.getBoolean("celtium.validation.lookDown") && mc.player != null) {
-            mc.player.rotationPitch = 75.0F;
-            mc.player.prevRotationPitch = 75.0F;
-            // The block-selection outline is only drawn while the HUD is shown: drawSelectionBox is skipped when the
-            // game's hideGUI is set, and that setting is copied from the instance's options. Without this the scene looks
-            // right and the outline is simply never submitted - measured as zero line-primitive refusals and no outline.
-            mc.gameSettings.hideGUI = false;
-            // The vanilla guard for the outline is "not inside water" (EntityRenderer: !entity.isInsideOfMaterial(WATER)),
-            // and the default layer stack puts the player's feet in the water layer (bedrock 3, dirt 4-5, grass 6, water 7),
-            // so the outline was skipped before it was ever submitted - measured as zero line-primitive offers while the ray
-            // trace hit a block. Lifting the player out of the water is the scene's job, and the harness already takes
-            // worldLayers, so this scene is run with a water-free stack (see the plan); forcing a height here only moved the
-            // ray out of reach (measured hit=MISS).
-            // The outline is drawn from the ray trace, so the trace's own result is the thing that says whether the scene
-            // reaches drawSelectionBox at all: a null or non-block result means the outline is never submitted, which is
-            // what zero line-primitive offers measured.
-            if (worldTicks % 40 == 0) {
-                net.minecraft.util.math.RayTraceResult hit = mc.objectMouseOver;
-                System.out.println("[Celtium] CELTIUM_MOUSEOVER tick=" + worldTicks + " hit="
-                        + (hit == null ? "null" : hit.typeOfHit + "@" + hit.getBlockPos())
-                        + " inGameHasFocus=" + mc.inGameHasFocus
-                        + " hideGui=" + mc.gameSettings.hideGUI
-                        + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName())
-                        + " guiOpen=" + mc.currentScreen);
-            }
         }
         if (worldTicks >= 150 && !celtium$spectator) {
             // The spectator effects the audit lists: creeper, spider and enderman each load their own post shader
@@ -5579,5 +5559,44 @@ public final class ValidationClient {
             error.printStackTrace();
         }
         mc.shutdown();
+    }
+
+    /**
+     * The scene's client-side camera overrides, applied at the start of a render tick so the frame that follows is
+     * drawn with them. See the note in {@link #frame(TickEvent.RenderTickEvent)} for why this is not in the END half.
+     */
+    private void celtium$applyClientPoseOverride(Minecraft mc) {
+        if (Boolean.getBoolean("celtium.validation.allBlocks") && mc.player != null) {
+            // The block wall is tall enough that the default downward pitch cuts its top rows off; level view plus a
+            // little tilt keeps all of it inside the frame at the wall's distance.
+            mc.player.rotationPitch = -14.0F;
+            mc.player.prevRotationPitch = -14.0F;
+        }
+        if (Boolean.getBoolean("celtium.validation.lookDown") && mc.player != null) {
+            mc.player.rotationPitch = 75.0F;
+            mc.player.prevRotationPitch = 75.0F;
+            // The block-selection outline is only drawn while the HUD is shown: drawSelectionBox is skipped when the
+            // game's hideGUI is set, and that setting is copied from the instance's options. Without this the scene looks
+            // right and the outline is simply never submitted - measured as zero line-primitive refusals and no outline.
+            mc.gameSettings.hideGUI = false;
+            // The vanilla guard for the outline is "not inside water" (EntityRenderer: !entity.isInsideOfMaterial(WATER)),
+            // and the default layer stack puts the player's feet in the water layer (bedrock 3, dirt 4-5, grass 6, water 7),
+            // so the outline was skipped before it was ever submitted - measured as zero line-primitive offers while the ray
+            // trace hit a block. Lifting the player out of the water is the scene's job, and the harness already takes
+            // worldLayers, so this scene is run with a water-free stack (see the plan); forcing a height here only moved the
+            // ray out of reach (measured hit=MISS).
+            // The outline is drawn from the ray trace, so the trace's own result is the thing that says whether the scene
+            // reaches drawSelectionBox at all: a null or non-block result means the outline is never submitted, which is
+            // what zero line-primitive offers measured.
+            if (worldTicks % 40 == 0) {
+                net.minecraft.util.math.RayTraceResult hit = mc.objectMouseOver;
+                System.out.println("[Celtium] CELTIUM_MOUSEOVER tick=" + worldTicks + " hit="
+                        + (hit == null ? "null" : hit.typeOfHit + "@" + hit.getBlockPos())
+                        + " inGameHasFocus=" + mc.inGameHasFocus
+                        + " hideGui=" + mc.gameSettings.hideGUI
+                        + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName())
+                        + " guiOpen=" + mc.currentScreen);
+            }
+        }
     }
 }
