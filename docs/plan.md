@@ -257,6 +257,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.257 **round 63: 再利用条件は既に texture 変化で group を閉じている＝stale な 8 は「offer 時点で 8 が bound」だった**
+
+- **原典（コード）確認（Lead）**: group 再利用条件（`VulkanTerrainGpuBackend:5155-5157`）は
+  `this.currentGroupFormatId != formatId || **this.currentGroupTexture != boundTexture** || this.currentGroupStateKey != stateKey || !samePass …`
+  を含む＝**bound texture が変われば group は閉じる**。したがって `texture=8` の group は
+  **その batch が offer された時点で unit 0 に 8 が bound だった**ことになる（捕捉コードの単純な取りこぼしではない）。
+- **意味**: panorama の face batch は **bind(45) より前に offer** されている。つまり問題は「offer の順序と bind の順序」で、
+  描画時点の bind ではなく **offer 時点の bind** が使われていること。同じ「accept 時 vs flush 時」の状態クラス（BH-04/BH-05/BH-11 と同族）だが、
+  ここでは *accept 時点が既に古い* ので、**offer 側の呼び出し順**（display list / 遅延描画の経路）を原典で追う必要がある。
+- **次の測定（担当へ）**: `CELTIUM_IMMEDIATE_ENQ`（offer 時）に bound texture を載せ、同じ frame の `CELTIUM_UNIT_BIND` と並べる。
+  offer が bind より先なら、`GuiMainMenu.drawPanorama` の bind と `Tessellator` の offer の順序を原典（`:448` 以降）で確認し、
+  bind が offer より後になる理由（display list の再実行、`WorldVertexBufferUploader` の遅延）を特定する。
+- **menu 経路の layout VUID 2件**（`VUID-vkCmdDraw-None-09600`・image handle `0x360000000036`）も残りの1件。
+
 ## 0.256 **round 62: bind は 42/44/45-48（正しい）・group は 8 を記録＝即時捕捉が stale と確定・menu 経路に layout VUID 2件**
 
 - **1つの console で両側が揃った（Lead の `r61-bind`・`menuHoldTicks=60`）**:
