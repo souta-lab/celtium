@@ -114,23 +114,19 @@ public final class VulkanImmediateTexturePipeline {
     /** Sets this pipeline has been given: the one reserved at creation plus every cached texture set. */
     private int descriptorSetsAllocated;
 
-    private final boolean blend;
-    private final int srcFactor;
-    private final int dstFactor;
+    private final VulkanColorBlendState colorBlend;
     private final boolean depthTest;
     private final boolean depthWrite;
     private final boolean cull;
     /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
     private final int depthCompareOp;
 
-    private VulkanImmediateTexturePipeline(VulkanContext context, long renderPass, boolean blend, int srcFactor,
-                                           int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+    private VulkanImmediateTexturePipeline(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
+                                           boolean depthTest, boolean depthWrite, boolean cull,
                                            int depthCompareOp) {
         this.context = context;
         this.renderPass = renderPass;
-        this.blend = blend;
-        this.srcFactor = srcFactor;
-        this.dstFactor = dstFactor;
+        this.colorBlend = colorBlend;
         this.depthTest = depthTest;
         this.depthWrite = depthWrite;
         this.cull = cull;
@@ -139,8 +135,7 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
     public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass) {
-        return create(context, renderPass, true, org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
-                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false,
+        return create(context, renderPass, VulkanColorBlendState.legacy(), true, false, false,
                 VK_COMPARE_OP_LESS_OR_EQUAL);
     }
 
@@ -150,18 +145,18 @@ public final class VulkanImmediateTexturePipeline {
      * state instead of forcing every batch through a single hardcoded combination.
      */
     /** Creates the colourless {@code POSITION_TEX} variant, which is how the sky, the clouds and the water arrive. */
-    public static VulkanImmediateTexturePipeline createForPositionTex(VulkanContext context, long renderPass, boolean blend,
-            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+    public static VulkanImmediateTexturePipeline createForPositionTex(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
         return pipeline.build();
     }
 
     /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
-    public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass, boolean blend,
-            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+    public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
         pipeline.positionNoTexture = true;
@@ -179,9 +174,9 @@ public final class VulkanImmediateTexturePipeline {
      * binding has to step 16 bytes, not the position-only layout's 12.
      */
     public static VulkanImmediateTexturePipeline createForPositionNormal(VulkanContext context, long renderPass,
-            boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
             int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
         pipeline.positionNoTexture = true;
@@ -195,9 +190,9 @@ public final class VulkanImmediateTexturePipeline {
      * layout has to be declared honestly or the pipeline reads the next vertex's bytes as this one's colour.
      */
     public static VulkanImmediateTexturePipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
-            boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
             int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.extraTrailingElementBytes = POSITION_TEX_COLOR_NORMAL_BYTES;
         return pipeline.build();
@@ -205,18 +200,18 @@ public final class VulkanImmediateTexturePipeline {
 
     /** Creates the {@code POSITION_TEX_NORMAL} variant, 24 bytes: colourless shaders, wider stride than the 20-byte one. */
     public static VulkanImmediateTexturePipeline createForPositionTexNormal(VulkanContext context, long renderPass,
-            boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
             int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, colorBlend, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
         pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_BYTES;
         return pipeline.build();
     }
 
-    public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
+    public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
                             boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
-        return allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, depthCompareOp).build();
+        return allocate(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp).build();
     }
 
     /**
@@ -235,13 +230,16 @@ public final class VulkanImmediateTexturePipeline {
      * {@code VulkanImmediatePipeline} does this correctly by passing its variant through the constructor; this class
      * now builds only after its fields are final.
      */
-    private static VulkanImmediateTexturePipeline allocate(VulkanContext context, long renderPass, boolean blend,
-                            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+    private static VulkanImmediateTexturePipeline allocate(VulkanContext context, long renderPass,
+                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
                             int depthCompareOp) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
-        return new VulkanImmediateTexturePipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite,
+        if (colorBlend == null) {
+            throw new IllegalArgumentException("colorBlend must be set");
+        }
+        return new VulkanImmediateTexturePipeline(context, renderPass, colorBlend, depthTest, depthWrite,
                 cull, depthCompareOp);
     }
 
@@ -694,15 +692,14 @@ public final class VulkanImmediateTexturePipeline {
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
                         VkPipelineColorBlendAttachmentState.calloc(1, stack);
                 blendAttachment.get(0)
-                        .blendEnable(this.blend)
-                        .srcColorBlendFactor(this.srcFactor)
-                        .dstColorBlendFactor(this.dstFactor)
-                        .colorBlendOp(VK_BLEND_OP_ADD)
-                        .srcAlphaBlendFactor(VK_BLEND_FACTOR_ONE)
-                        .dstAlphaBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-                        .alphaBlendOp(VK_BLEND_OP_ADD)
-                        .colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+                        .blendEnable(this.colorBlend.blend())
+                        .srcColorBlendFactor(this.colorBlend.srcColor())
+                        .dstColorBlendFactor(this.colorBlend.dstColor())
+                        .colorBlendOp(this.colorBlend.colorOp())
+                        .srcAlphaBlendFactor(this.colorBlend.srcAlpha())
+                        .dstAlphaBlendFactor(this.colorBlend.dstAlpha())
+                        .alphaBlendOp(this.colorBlend.alphaOp())
+                        .colorWriteMask(this.colorBlend.writeMask());
                 VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
                         .sType$Default().logicOpEnable(false).pAttachments(blendAttachment);
                 VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)

@@ -59,22 +59,18 @@ public final class VulkanImmediateParticlePipeline {
     /** How many descriptor sets this pipeline has had to build; a rise means keys stopped matching. */
     public long setsCreated;
 
-    private final boolean blend;
-    private final int srcFactor;
-    private final int dstFactor;
+    private final VulkanColorBlendState colorBlend;
     private final boolean depthTest;
     private final boolean depthWrite;
     private final boolean cull;
     /** The Vulkan compare op the mirrored {@code glDepthFunc} mapped to. */
     private final int depthCompareOp;
 
-    private VulkanImmediateParticlePipeline(VulkanContext context, long renderPass, boolean blend, int srcFactor,
-                                           int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+    private VulkanImmediateParticlePipeline(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
+                                           boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
         this.context = context;
         this.renderPass = renderPass;
-        this.blend = blend;
-        this.srcFactor = srcFactor;
-        this.dstFactor = dstFactor;
+        this.colorBlend = colorBlend;
         this.depthTest = depthTest;
         this.depthWrite = depthWrite;
         this.cull = cull;
@@ -83,22 +79,27 @@ public final class VulkanImmediateParticlePipeline {
 
     /** Creates a pipeline for straight-alpha blending, which is what most of vanilla's immediate content uses. */
     public static VulkanImmediateParticlePipeline create(VulkanContext context, long renderPass) {
-        return create(context, renderPass, true, org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA,
-                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false,
+        return create(context, renderPass, VulkanColorBlendState.legacy(), true, false, false,
                 VK_COMPARE_OP_LESS_OR_EQUAL);
     }
 
     /**
-     * Creates a pipeline for one drawing state: blending with the given Vulkan factors, the depth test and its write
-     * mask, and face culling. These bake into the pipeline object, which is why the immediate path caches one per
-     * state instead of forcing every batch through a single hardcoded combination.
+     * Creates a pipeline for one drawing state: the blend factors, blend equations and colour write mask the batch was
+     * captured under (BH-07, BH-10), the depth test and its write mask, and face culling. These bake into the pipeline
+     * object, which is why the immediate path caches one per state instead of forcing every batch through a single
+     * hardcoded combination.
      */
-    public static VulkanImmediateParticlePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
-                            boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+    public static VulkanImmediateParticlePipeline create(VulkanContext context, long renderPass,
+                            VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, boolean cull,
+                            int depthCompareOp) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
-        VulkanImmediateParticlePipeline result = new VulkanImmediateParticlePipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, depthCompareOp);
+        if (colorBlend == null) {
+            throw new IllegalArgumentException("colorBlend must be set");
+        }
+        VulkanImmediateParticlePipeline result = new VulkanImmediateParticlePipeline(context, renderPass, colorBlend,
+                depthTest, depthWrite, cull, depthCompareOp);
         result.createPipelineLayout();
         result.createPipeline();
         return result;
@@ -369,15 +370,14 @@ public final class VulkanImmediateParticlePipeline {
                 VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
                         VkPipelineColorBlendAttachmentState.calloc(1, stack);
                 blendAttachment.get(0)
-                        .blendEnable(this.blend)
-                        .srcColorBlendFactor(this.srcFactor)
-                        .dstColorBlendFactor(this.dstFactor)
-                        .colorBlendOp(VK_BLEND_OP_ADD)
-                        .srcAlphaBlendFactor(VK_BLEND_FACTOR_ONE)
-                        .dstAlphaBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-                        .alphaBlendOp(VK_BLEND_OP_ADD)
-                        .colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+                        .blendEnable(this.colorBlend.blend())
+                        .srcColorBlendFactor(this.colorBlend.srcColor())
+                        .dstColorBlendFactor(this.colorBlend.dstColor())
+                        .colorBlendOp(this.colorBlend.colorOp())
+                        .srcAlphaBlendFactor(this.colorBlend.srcAlpha())
+                        .dstAlphaBlendFactor(this.colorBlend.dstAlpha())
+                        .alphaBlendOp(this.colorBlend.alphaOp())
+                        .colorWriteMask(this.colorBlend.writeMask());
                 VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
                         .sType$Default().logicOpEnable(false).pAttachments(blendAttachment);
                 VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)

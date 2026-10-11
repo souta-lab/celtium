@@ -131,6 +131,11 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
     private static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
     private static final int SEM_POLYGON_OFFSET = 62;  // (factor, units) as float bits -> the depth bias GL wants
+    private static final int SEM_COLOR_MASK = 63;      // (r,g,b,a) -> which channels the draw may write (BH-10)
+    private static final int SEM_BLEND_FUNC = 64;      // (src,dst) -> all four GL blend factors, as glBlendFunc does
+    private static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
+    private static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
+    private static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -378,6 +383,22 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glDisableClientState", R_VOID, SEM_DISABLE, A_INT);
         fn("glVertexPointer", R_VOID, SEM_VERTEX_POINTER, A_INT, A_INT, A_INT, A_PTR);
         fn("glDrawArrays", R_VOID, SEM_DRAW_ARRAYS, A_INT, A_INT, A_INT);
+        // ---- the blend and colour-write state (BH-07, BH-10): the two the games' own wrappers reach through
+        // OpenGlHelper rather than through a GlStateManager field, which is why a mixin hook could not see them.
+        // Read from the original: `GlStateManager.blendFunc(int,int)` calls `GL11.glBlendFunc` directly, while both
+        // `tryBlendFuncSeparate` overloads delegate to `OpenGlHelper.glBlendFunc`, which with OpenGL14 present (the
+        // stub reports GL 4.6, so it is) calls `GL14.glBlendFuncSeparate`. The mixin hooks the enum overload only, so
+        // the int overload - the one JsonBlendingMode and every Forge caller with plain ints uses - reached the
+        // no-op table and the mirror kept the last enum call's factors. Recording here catches every caller of every
+        // shape, including raw GL, for the same reason the cull capability is recorded here (BH-08).
+        fn("glBlendFunc", R_VOID, SEM_BLEND_FUNC, A_INT, A_INT);
+        fn("glBlendFuncSeparate", R_VOID, SEM_BLEND_FUNC_SEPARATE, A_INT, A_INT, A_INT, A_INT);
+        fn("glBlendEquation", R_VOID, SEM_BLEND_EQUATION, A_INT);
+        fn("glBlendEquationSeparate", R_VOID, SEM_BLEND_EQUATION_SEPARATE, A_INT, A_INT);
+        // BH-10: the Fancy-cloud depth-only pass reaches this through GlStateManager.colorMask, which is itself
+        // cached and calls GL11.glColorMask only when the mask changes - so the stub is the one place that sees the
+        // change that matters (false,false,false,false at RenderGlobal:1655).
+        fn("glColorMask", R_VOID, SEM_COLOR_MASK, A_INT, A_INT, A_INT, A_INT);
         // ---- DSA create-functions: same out-array shape as the glGen* family
         fn("glCreateTextures", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
         fn("glCreateBuffers", R_VOID, SEM_GEN, A_INT, A_PTR);
@@ -391,9 +412,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         // ---- state-set no-ops: the fixed-function and raster state the Vulkan side mirrors or owns
         String[] noops = {
                 "glBindRenderbuffer",
-                "glBindSampler", "glBindBufferBase", "glBindBufferRange", "glBlendFunc",
-                "glBlendFuncSeparate", "glBlendFuncSeparatei", "glBlendEquation", "glBlendEquationSeparate",
-                "glBlendColor", "glColorMask", "glColorMaski", "glDepthMask", "glDepthFunc", "glDepthRange",
+                "glBindSampler", "glBindBufferBase", "glBindBufferRange",
+                "glBlendFuncSeparatei", "glBlendEquationi", "glBlendEquationSeparatei",
+                "glBlendColor", "glColorMaski", "glDepthMask", "glDepthFunc", "glDepthRange",
                 "glClearBufferfv", "glClearBufferiv",
                 "glClearBufferuiv", "glStencilFunc", "glStencilFuncSeparate", "glStencilOp", "glStencilOpSeparate",
                 "glStencilMask", "glStencilMaskSeparate", "glPolygonMode",
@@ -549,6 +570,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             // file the process was started with and stays writable through the teardown. The content is unchanged.
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 celtium$printAtExit("CELTIUM_NOOP_CENSUS " + noopCensusSummary());
+                // BH-07/BH-10: the blend and colour-write record's own census, printed only when one of the entry
+                // points was reached. Before the fix every one of these counts was zero because all five functions
+                // were in the no-op table; a run that never blends still stays silent rather than claiming a
+                // measurement it did not take.
+                if (installed != null && (installed.blendFuncCalls.get() > 0L || installed.blendSeparateCalls.get() > 0L
+                        || installed.blendEquationCalls.get() > 0L || installed.colorMaskCalls.get() > 0L)) {
+                    celtium$printAtExit("CELTIUM_BLEND_CENSUS " + blendCensusSummary());
+                }
                 if (DRAWARRAY_CALLS.get() > 0L) {
                     celtium$printAtExit("CELTIUM_DRAWARRAYS " + drawArraySummary());
                 }
@@ -652,6 +681,123 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static int frontFace() {
         CeltiumGlStub stub = installed;
         return stub == null || !stub.frontFaceCalled ? GL_CCW : stub.frontFaceValue;
+    }
+
+    // BH-07: the blend state, spelled the way this class spells the cull pair above - it deliberately carries no
+    // org.lwjgl.opengl import, so the numbers are named where they are used. The initial values are *GL's own*
+    // initial state, not an invented default: source ONE, destination ZERO (GL's black box starts there, and so does
+    // GlStateManager's cache - read in the original, `BlendState` sets srcFactor = 1 / dstFactor = 0 / the alpha pair
+    // likewise), equation FUNC_ADD and every colour channel writable. That matters because the game's own wrappers
+    // are cached: a wrapper that never called GL leaves the real state at these values, and a mirror that started
+    // somewhere else would report a blend the device is not applying.
+    private static final int GL_BLEND = 0x0BE2;
+    /** {@code GL_FUNC_ADD}, the equation GL starts with and the only one the pipeline bakes besides the mapped set. */
+    private static final int GL_FUNC_ADD = 0x8006;
+    private static final int GL_SRC_ALPHA = 0x0302;
+    private static final int GL_ONE_MINUS_SRC_ALPHA = 0x0303;
+
+    private int blendSrcRgb = 1;               // GL_ONE
+    private int blendDstRgb = 0;               // GL_ZERO
+    private int blendSrcAlpha = 1;
+    private int blendDstAlpha = 0;
+    private int blendEquationRgb = GL_FUNC_ADD;
+    private int blendEquationAlpha = GL_FUNC_ADD;
+    private volatile boolean blendFactorsCalled;
+    private volatile boolean blendEquationCalled;
+    /** Bit 0 red, 1 green, 2 blue, 3 alpha: the same nibble Vulkan's VK_COLOR_COMPONENT_*_BIT uses, spelled here. */
+    private volatile int colorMaskBits = 0xF;
+    private volatile boolean colorMaskCalled;
+
+    /** Calls of each recorded entry point, so "the path was reached" is a number rather than an expectation. */
+    private final java.util.concurrent.atomic.AtomicLong blendFuncCalls = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong blendSeparateCalls = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong blendEquationCalls = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong colorMaskCalls = new java.util.concurrent.atomic.AtomicLong();
+
+    /** {@return whether GL_BLEND is enabled}, read from the same {@code enables} map glEnable/glDisable write. */
+    public static boolean blendEnabled() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.enables.getOrDefault(Integer.valueOf(GL_BLEND), Boolean.FALSE).booleanValue();
+    }
+
+    /** {@return the RGB source factor GL was last given}, or GL's initial {@code ONE} when it was never told. */
+    public static int blendSrcRgb() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? GL_SRC_ALPHA : stub.blendSrcRgb;
+    }
+
+    /** {@return the RGB destination factor GL was last given}, or GL's initial {@code ZERO}. */
+    public static int blendDstRgb() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? GL_ONE_MINUS_SRC_ALPHA : stub.blendDstRgb;
+    }
+
+    /** {@return the alpha source factor GL was last given}, or GL's initial {@code ONE}. */
+    public static int blendSrcAlpha() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 1 : stub.blendSrcAlpha;
+    }
+
+    /** {@return the alpha destination factor GL was last given}, or GL's initial {@code ZERO}. */
+    public static int blendDstAlpha() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.blendDstAlpha;
+    }
+
+    /** {@return the RGB blend equation GL was last given}, or GL's initial {@code GL_FUNC_ADD}. */
+    public static int blendEquationRgb() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? GL_FUNC_ADD : stub.blendEquationRgb;
+    }
+
+    /** {@return the alpha blend equation GL was last given}, or GL's initial {@code GL_FUNC_ADD}. */
+    public static int blendEquationAlpha() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? GL_FUNC_ADD : stub.blendEquationAlpha;
+    }
+
+    /**
+     * {@return which colour channels writes may touch}, as the Vulkan {@code VK_COLOR_COMPONENT_*} nibble (bit 0
+     * red, 1 green, 2 blue, 3 alpha). GL's own initial state is all four, which is the value before any call.
+     */
+    public static int colorMask() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0xF : stub.colorMaskBits;
+    }
+
+    /** {@return whether any of the two blend-factor entry points was called at all}. */
+    public static boolean blendFactorsRecorded() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.blendFactorsCalled;
+    }
+
+    /** {@return whether either blend-equation entry point was called at all}. */
+    public static boolean blendEquationRecorded() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.blendEquationCalled;
+    }
+
+    /** {@return whether glColorMask was called at all}: (true,true,true,true) is a legal call, so the call is the fact. */
+    public static boolean colorMaskRecorded() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.colorMaskCalled;
+    }
+
+    /** {@return a one-line census of the blend/mask entry points that were reached}, for the exit line. */
+    public static String blendCensusSummary() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "not-installed";
+        }
+        return "blendFuncCalls=" + stub.blendFuncCalls.get() + " blendFuncSeparateCalls="
+                + stub.blendSeparateCalls.get() + " blendEquationCalls=" + stub.blendEquationCalls.get()
+                + " colorMaskCalls=" + stub.colorMaskCalls.get()
+                + " factorsCalled=" + stub.blendFactorsCalled + " equationCalled=" + stub.blendEquationCalled
+                + " colorMaskCalled=" + stub.colorMaskCalled
+                + " lastFactors=(" + stub.blendSrcRgb + "," + stub.blendDstRgb + ","
+                + stub.blendSrcAlpha + "," + stub.blendDstAlpha + ")"
+                + " lastEquations=(" + stub.blendEquationRgb + "," + stub.blendEquationAlpha + ")"
+                + " lastColorMask=0x" + Integer.toHexString(stub.colorMaskBits);
     }
 
     /** {@return the game's clip rectangle}, or {@code null} when glScissor has not been called in this process. */
@@ -1225,6 +1371,51 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_FRONT_FACE:
                 this.frontFaceValue = (int) a0;
                 this.frontFaceCalled = true;
+                return 0L;
+            case SEM_BLEND_FUNC:
+                // glBlendFunc sets the RGB *and* the alpha factors to the same pair (GL 1.0's rule, and what
+                // GlStateManager.blendFunc(int,int) relies on when it forwards the pair unchanged).
+                this.blendFuncCalls.incrementAndGet();
+                this.blendSrcRgb = (int) a0;
+                this.blendDstRgb = (int) a1;
+                this.blendSrcAlpha = (int) a0;
+                this.blendDstAlpha = (int) a1;
+                this.blendFactorsCalled = true;
+                return 0L;
+            case SEM_BLEND_FUNC_SEPARATE:
+                // The canonical separate entry (OpenGlHelper.glBlendFunc -> GL14.glBlendFuncSeparate). The enum
+                // overload of GlStateManager.tryBlendFuncSeparate delegates to the int one, which lands here, so
+                // recording here and in the mixin writes the same four values rather than two competing ones.
+                this.blendSeparateCalls.incrementAndGet();
+                // Four arguments: the dispatch only names a0/a1 (the two slots most cases need), so the last two
+                // come from the raw slot array - the same trap that bit the scissor case.
+                this.blendSrcRgb = (int) c[0];
+                this.blendDstRgb = (int) c[1];
+                this.blendSrcAlpha = (int) c[2];
+                this.blendDstAlpha = (int) c[3];
+                this.blendFactorsCalled = true;
+                return 0L;
+            case SEM_BLEND_EQUATION:
+                // glBlendEquation sets both equations; glBlendEquationSeparate below splits them.
+                this.blendEquationCalls.incrementAndGet();
+                this.blendEquationRgb = (int) a0;
+                this.blendEquationAlpha = (int) a0;
+                this.blendEquationCalled = true;
+                return 0L;
+            case SEM_BLEND_EQUATION_SEPARATE:
+                this.blendEquationCalls.incrementAndGet();
+                this.blendEquationRgb = (int) a0;
+                this.blendEquationAlpha = (int) a1;
+                this.blendEquationCalled = true;
+                return 0L;
+            case SEM_COLOR_MASK:
+                // GLboolean arguments; anything non-zero is "write". Kept as the VK_COLOR_COMPONENT nibble because
+                // that is the form the pipeline attachment takes, and the two bit assignments are the same (R=1,
+                // G=2, B=4, A=8) - spelled out here rather than assumed at the use site.
+                this.colorMaskCalls.incrementAndGet();
+                this.colorMaskBits = ((int) c[0] != 0 ? 0x1 : 0) | ((int) c[1] != 0 ? 0x2 : 0)
+                        | ((int) c[2] != 0 ? 0x4 : 0) | ((int) c[3] != 0 ? 0x8 : 0);
+                this.colorMaskCalled = true;
                 return 0L;
             case SEM_POLYGON_OFFSET:
                 // BH-11: glPolygonOffset(factor, units) - the two are A_FLOAT slots, so the raw IEEE-754 bits arrive

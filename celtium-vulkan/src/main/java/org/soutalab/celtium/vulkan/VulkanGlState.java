@@ -36,6 +36,11 @@ public final class VulkanGlState {
     private int blendDstRgb = BLEND_ONE_MINUS_SRC_ALPHA;
     private int blendSrcAlpha = BLEND_ONE;
     private int blendDstAlpha = BLEND_ONE_MINUS_SRC_ALPHA;
+    /** GL's two blend equations; {@code GL_FUNC_ADD} is GL's initial state and what the pipelines baked alone. */
+    private int blendEquationRgb = BLEND_FUNC_ADD;
+    private int blendEquationAlpha = BLEND_FUNC_ADD;
+    /** Which channels a write may touch: bit 0 red, 1 green, 2 blue, 3 alpha (Vulkan's own component bits). */
+    private int colorMask = COLOR_CHANNEL_ALL;
     private boolean depthTestEnabled = true;
     /** The OpenGL depth-function constant (GL_LEQUAL &c.), not an ordinal: the pipeline maps it to a compare op. */
     private int depthFunc = 515;
@@ -82,6 +87,19 @@ public final class VulkanGlState {
     public static final int BLEND_ONE_MINUS_SRC_COLOR = 7;
     public static final int BLEND_DST_ALPHA = 8;
     public static final int BLEND_ONE_MINUS_DST_ALPHA = 9;
+
+    /**
+     * GL's blend equations, as the constants GL itself defines them (these are not ordinals: the backend maps each
+     * one to its Vulkan counterpart). {@code BLEND_FUNC_ADD} is GL's initial state.
+     */
+    public static final int BLEND_FUNC_ADD = 0x8006;
+    public static final int BLEND_FUNC_SUBTRACT = 0x800A;
+    public static final int BLEND_FUNC_REVERSE_SUBTRACT = 0x800B;
+    public static final int BLEND_MIN = 0x8007;
+    public static final int BLEND_MAX = 0x8008;
+
+    /** Every colour channel writable: bit 0 red, 1 green, 2 blue, 3 alpha - Vulkan's own component bits. */
+    public static final int COLOR_CHANNEL_ALL = 0xF;
 
     /** Depth and alpha function identifiers, matching the values Minecraft passes around. */
     public static final int DEPTH_NEVER = 0;
@@ -310,6 +328,43 @@ public final class VulkanGlState {
 
     public int blendDstAlpha() {
         return this.blendDstAlpha;
+    }
+
+    /**
+     * {@return the RGB blend equation}, as GL's own constant.
+     * <p>
+     * BH-07: the equation bakes into the pipeline's colour-blend attachment beside the factors, so it belongs in the
+     * same mirror and the same key. {@code JsonBlendingMode} is the caller that can ask for a non-ADD equation
+     * ({@code GlStateManager.glBlendEquation} -> {@code GL14.glBlendEquation} -> this process's GL entry, which used
+     * to drop the call); ADD is GL's initial state and what every pipeline baked alone before this field existed.
+     */
+    public int blendEquationRgb() {
+        return this.blendEquationRgb;
+    }
+
+    public int blendEquationAlpha() {
+        return this.blendEquationAlpha;
+    }
+
+    public void blendEquation(int rgb, int alpha) {
+        this.blendEquationRgb = rgb;
+        this.blendEquationAlpha = alpha;
+    }
+
+    /**
+     * {@return which channels a write may touch}, as the {@code VK_COLOR_COMPONENT_*} nibble (R=1, G=2, B=4, A=8).
+     * <p>
+     * BH-10: all four by default - GL's own initial state and what every pipeline baked before this field existed.
+     * The Fancy-cloud depth-only pass clears all four ({@code RenderGlobal:1655
+     * colorMask(false,false,false,false)}); without the mask in the key the depth-only batch and the visible batch
+     * that follows it are the same pipeline, and the depth pass paints colour.
+     */
+    public int colorMask() {
+        return this.colorMask;
+    }
+
+    public void colorMask(int mask) {
+        this.colorMask = mask;
     }
 
     public boolean depthTestEnabled() {
@@ -597,6 +652,12 @@ public final class VulkanGlState {
         key = (key * 31) + (this.blendEnabled ? this.blendDstRgb : 0);
         key = (key * 31) + (this.blendEnabled ? this.blendSrcAlpha : 0);
         key = (key * 31) + (this.blendEnabled ? this.blendDstAlpha : 0);
+        // BH-07, BH-10: the equations and the colour write mask bake into the same attachment and must therefore
+        // close a pipeline the way the factors do. Before this they were not in the mirror at all, so the Fancy
+        // cloud's depth-only pass and the visible pass shared one pipeline and the first pass painted colour.
+        key = (key * 31) + (this.blendEnabled ? this.blendEquationRgb : 0);
+        key = (key * 31) + (this.blendEnabled ? this.blendEquationAlpha : 0);
+        key = (key * 31) + this.colorMask;
         key = (key * 31) + (this.depthTestEnabled ? this.depthFunc + 1 : 0);
         key = (key * 31) + (this.depthMask ? 1 : 0);
         key = (key * 31) + (this.cullEnabled ? this.cullFace + 1 : 0);
@@ -609,7 +670,9 @@ public final class VulkanGlState {
     /** {@return a one-line description of the state that affects pipeline selection}, for diagnostics */
     public String describe() {
         return "blend=" + this.blendEnabled + "(" + this.blendSrcRgb + "," + this.blendDstRgb + ","
-                + this.blendSrcAlpha + "," + this.blendDstAlpha + ") depthTest=" + this.depthTestEnabled
+                + this.blendSrcAlpha + "," + this.blendDstAlpha + ") eq=" + this.blendEquationRgb + "/"
+                + this.blendEquationAlpha + " writeMask=0x" + Integer.toHexString(this.colorMask)
+                + " depthTest=" + this.depthTestEnabled
                 + " depthFunc=" + this.depthFunc + " depthMask=" + this.depthMask + " cull=" + this.cullEnabled
                 + "(" + this.cullFace + ") alphaTest=" + this.alphaTestEnabled + "(" + this.alphaFunc + ","
                 + this.alphaRef + ") lighting=" + this.lightingEnabled + " shade=" + this.shadeModel;

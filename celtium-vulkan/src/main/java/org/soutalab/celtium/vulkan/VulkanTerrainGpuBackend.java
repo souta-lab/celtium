@@ -1178,6 +1178,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long cullEnabledGroups;
     private long cullDisabledGroups;
     /**
+     * BH-07's per-batch counts, taken at capture with the group: batches with blending on, and of those the ones whose
+     * alpha factor pair is not the {@code ONE / ONE_MINUS_SRC_ALPHA} pair every pipeline baked before the fix.
+     * <p>
+     * The second number is the one that matters. Before BH-07 it was zero <em>by construction</em> - the capture never
+     * read the alpha pair - so a non-zero value in a leg is the proof that the pair now travels, and the pipeline
+     * caches' size next to it is the proof that it also closes a pipeline rather than being captured and dropped.
+     */
+    private long blendGroups;
+    private long blendAlphaNonDefaultGroups;
+    /** BH-10: batches whose captured write mask was not all four channels, and the last such mask. */
+    private long partialColorMaskGroups;
+    private int lastPartialColorMask = -1;
+    /** BH-07: batches whose captured blend equation was not ADD. */
+    private long nonAddBlendEquationGroups;
+    /** BH-03: batches captured with the alpha test on, with a comparison other than GREATER, and with it off. */
+    private long alphaFuncGroups;
+    private long nonGreaterAlphaFuncGroups;
+    private long alphaTestDisabledGroups;
+    /** The last comparison function captured, as the raw GL enum; 0 means the test was disabled for that batch. */
+    private int lastAlphaFunc;
+    /**
      * Batches a failed window flush puts back on the queue instead of throwing away.
      * <p>
      * The frame is abandoned either way, so nothing that was already recorded into it survives; but a group whose
@@ -1551,6 +1572,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private static final boolean POSITION_NORMAL_DEPTH_TEST =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.positionNormalDepthTest", "true"));
+    /**
+     * The one-flag controls for BH-07 and BH-10. Each substitutes the value the pipeline baked before the finding was
+     * fixed while leaving everything else - the capture, the key, the group - untouched, so the same build can be run
+     * twice and the two pictures differ by the state and nothing else. This is the shape a picture claim about blend
+     * alpha needs: with the default (correct) factors the RGB result of a draw is identical to the wrong-alpha one, so
+     * only a controlled leg can show the difference at all.
+     */
+    private static final boolean IMMEDIATE_BLEND_ALPHA = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.immediateBlendAlpha", "true"));
+    private static final boolean IMMEDIATE_BLEND_EQUATION = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.immediateBlendEquation", "true"));
+    private static final boolean IMMEDIATE_COLOR_MASK = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.immediateColorMask", "true"));
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
@@ -3773,8 +3807,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     return false;
                 }
                 this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, renderPass,
-                        false, 0, 0, false, false, false,
-                        org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
+                        VulkanColorBlendState.of(false, 0, 0,
+                                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE,
+                                org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD, org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
+                                VulkanColorBlendState.allChannels()),
+                        false, false, false, org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
             }
             boolean ok = celtium$descriptorSet(
                     this.descriptorProbe.descriptorSetFor(texture, this.lightmapTexture), "probe") != 0L;
@@ -4954,6 +4992,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return "[none]";
         }
         return "[blend=" + state[0] + " src=" + state[1] + " dst=" + state[2]
+                // The appended slots, named here because these five numbers are what BH-07/BH-10/BH-03 moved: a reader
+                // of a group line has to be able to see the alpha pair beside the RGB pair, the write mask, and the
+                // comparison the batch was captured with.
+                + (state.length > 14 ? " srcA=" + state[9] + " dstA=" + state[10]
+                        + " mask=0x" + Integer.toHexString(state[11]) + " eq=" + state[12] + "/" + state[13]
+                        + " alphaFunc=" + state[14] : " (pre-BH-07 array)")
                 + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + state[5]
                 + " alphaRef=" + Float.intBitsToFloat(state[6]) + " depthFunc=" + state[7]
                 // The other copy of the same facts, and the trap in reading it. The mirror is fed at the head of
@@ -5148,14 +5192,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Snapshots the drawing state that bakes into a pipeline.
      * <p>
      * Captured with the group, like the matrices: by the time the flush runs a frame later the live state has moved on,
-     * and using it would draw with a blend or depth combination the batch never asked for. The array is
-     * {blend, srcFactor, dstFactor, depthTest, depthWrite, cull} with the factors already in Vulkan form.
+     * and using it would draw with a blend or depth combination the batch never asked for.
+     * <p>
+     * The array is
+     * {@code {blend, srcColorVk, dstColorVk, depthTest, depthWrite, cull, alphaRefBits, depthFunc, lighting,
+     * srcAlphaVk, dstAlphaVk, colorWriteMask, colorOpVk, alphaOpVk, alphaFuncGl}} - the first nine slots are the
+     * original layout and keep their meaning, everything BH-07/BH-10/BH-03 added is appended so a reader written
+     * before the change still reads what it read. The key is computed over the whole array
+     * ({@link #celtium$stateKey}), which is what makes a batch that differs only in its alpha factors, its write mask
+     * or its alpha comparison a different pipeline <em>and</em> a different group.
      */
     private int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
-
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
         int destination = blend ? glBlendFactorToVk(this.immediateState.blendDstRgb()) : 0;
+        int sourceAlpha = blend ? glBlendFactorToVk(this.immediateState.blendSrcAlpha()) : 0;
+        int destinationAlpha = blend ? glBlendFactorToVk(this.immediateState.blendDstAlpha()) : 0;
+        int colorOp = glBlendEquationToVk(this.immediateState.blendEquationRgb());
+        int alphaOp = glBlendEquationToVk(this.immediateState.blendEquationAlpha());
+        int writeMask = this.immediateState.colorMask();
         // Comparison switch, default on: forcing the threshold to zero turns every discard off, which isolates the
         // alpha test's effect inside one build instead of comparing across builds.
         float alphaReference = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
@@ -5163,16 +5218,91 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // BH-08: the cull state the game actually set, read from the recording the stub keeps for exactly this -
         // the capability from the same enables map glEnable/glDisable write, and the face from glCullFace. Nothing
         // else ever wrote these two fields, so the pipeline was built with culling off for every immediate batch.
+        //
+        // BH-07/BH-10: the same reading, for the same reason, of the state that used to stop at the game's own
+        // wrapper. `GlStateManager.blendFunc(int,int)` calls `GL11.glBlendFunc` directly and both
+        // `tryBlendFuncSeparate` overloads go through `OpenGlHelper.glBlendFunc` -> `GL14.glBlendFuncSeparate`, so
+        // the mixin that hooks the enum overload is not the whole path - and `glColorMask` has no mixin at all. The
+        // stub's record is the one place every caller of every shape lands, and it holds exactly what GL was told.
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            // The mirror is kept in step as well, so `describe()` and any later reader of the mirror see the same
+            // state the capture took rather than the last wrapper call.
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendFactorsRecorded()) {
+                this.immediateState.blendFunc(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcRgb(),
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstRgb(),
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcAlpha(),
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstAlpha());
+            }
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationRecorded()) {
+                this.immediateState.blendEquation(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationRgb(),
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationAlpha());
+            }
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMaskRecorded()) {
+                this.immediateState.colorMask(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMask());
+            }
+            this.immediateState.blendEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEnabled());
             this.immediateState.cullEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnabled());
             this.immediateState.cullFace(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFace());
+            blend = this.immediateState.blendEnabled();
+            source = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcRgb()) : 0;
+            destination = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstRgb()) : 0;
+            sourceAlpha = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendSrcAlpha()) : 0;
+            destinationAlpha = blend ? glBlendFactorToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendDstAlpha()) : 0;
+            colorOp = glBlendEquationToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationRgb());
+            alphaOp = glBlendEquationToVk(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.blendEquationAlpha());
+            writeMask = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.colorMask();
         }
+        // The one-flag controls. Each keeps the captured state but substitutes the value the pipeline baked before the
+        // finding was fixed, so a single build can be run twice and the picture compared against itself rather than
+        // against another build's picture - the difference between the legs is then the state and nothing else.
+        if (!IMMEDIATE_BLEND_ALPHA) {
+            sourceAlpha = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE;
+            destinationAlpha = org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        }
+        if (!IMMEDIATE_BLEND_EQUATION) {
+            colorOp = org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
+            alphaOp = org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
+        }
+        if (!IMMEDIATE_COLOR_MASK) {
+            writeMask = VulkanColorBlendState.allChannels();
+        }
+        // BH-03: the comparison function travels with the batch, next to the reference it is compared against. The
+        // slot must distinguish "disabled" (0 - no GL enum is 0) from "enabled with a reference of 0", which the old
+        // shader's `alphaRef > 0.0` guard could not: for GL_GREATER and a reference of 0 the discard is *not* off.
+        int alphaFunction = ALPHA_TEST_ENABLED && this.immediateState.alphaTestEnabled()
+                ? this.immediateState.alphaFunc() : 0;
         // BH-08's per-batch proof, counted here where the group's own state is taken rather than at draw time, where
         // it would be the flush's state.
         if (this.immediateState.cullEnabled()) {
             this.cullEnabledGroups++;
         } else {
             this.cullDisabledGroups++;
+        }
+        // BH-07/BH-10/BH-03's own per-batch counts, at the same instant and for the same reason: a batch whose alpha
+        // pair is not the pair the pipelines used to bake is the case the finding is about, and "the state reached the
+        // key" is only readable if the number of batches that carried a different one is on the report.
+        if (blend) {
+            if (sourceAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE
+                    || destinationAlpha != org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA) {
+                this.blendAlphaNonDefaultGroups++;
+            }
+            this.blendGroups++;
+        }
+        if (writeMask != VulkanColorBlendState.allChannels()) {
+            this.partialColorMaskGroups++;
+            this.lastPartialColorMask = writeMask;
+        }
+        if (colorOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD || alphaOp != org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD) {
+            this.nonAddBlendEquationGroups++;
+        }
+        if (alphaFunction != 0) {
+            this.alphaFuncGroups++;
+            this.lastAlphaFunc = alphaFunction;
+            if (alphaFunction != 0x0204) {
+                this.nonGreaterAlphaFuncGroups++;
+            }
+        } else {
+            this.alphaTestDisabledGroups++;
         }
         return new int[] {
                 blend ? 1 : 0,
@@ -5188,7 +5318,49 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Fixed-function lighting: only the normal-carrying formats (8 and 9) can act on it, but it rides the
                 // state key so a lit batch and an unlit batch never share a pipeline - or a group.
                 this.immediateState.lightingEnabled() ? 1 : 0,
+                // ---- appended by BH-07/BH-10/BH-03; the first nine slots above keep their meaning.
+                sourceAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE : sourceAlpha,
+                destinationAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destinationAlpha,
+                writeMask,
+                colorOp,
+                alphaOp,
+                alphaFunction,
         };
+    }
+
+    /**
+     * The Vulkan blend state a captured group asks for, rebuilt from its own array.
+     * <p>
+     * One place owns the GL-to-Vulkan mapping for the whole immediate path, and the pipeline factories take the result
+     * rather than nine loose integers that can be passed in the wrong order.
+     */
+    private static VulkanColorBlendState celtium$blendState(int[] state) {
+        boolean blend = state[0] != 0;
+        return VulkanColorBlendState.of(blend,
+                state[1],
+                state[2],
+                state.length > 9 ? state[9] : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE,
+                state.length > 10 ? state[10] : org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                state.length > 12 ? state[12] : org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
+                state.length > 13 ? state[13] : org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
+                state.length > 11 ? state[11] : VulkanColorBlendState.allChannels());
+    }
+
+    /**
+     * The Vulkan blend op for one OpenGL blend equation. GL's constants are not Vulkan's and not ordinals of each
+     * other, so this is a translation and not a cast; an equation this renderer does not know falls back to ADD, which
+     * is GL's initial state and the one every caller in the fixture actually sets.
+     */
+    private static int glBlendEquationToVk(int glEquation) {
+        switch (glEquation) {
+            case VulkanGlState.BLEND_FUNC_SUBTRACT: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_SUBTRACT;
+            case VulkanGlState.BLEND_FUNC_REVERSE_SUBTRACT:
+                return org.lwjgl.vulkan.VK10.VK_BLEND_OP_REVERSE_SUBTRACT;
+            case VulkanGlState.BLEND_MIN: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_MIN;
+            case VulkanGlState.BLEND_MAX: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_MAX;
+            case VulkanGlState.BLEND_FUNC_ADD:
+            default: return org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
+        }
     }
 
     /**
@@ -5959,14 +6131,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long descriptor = 0;
         if (format == 5) {
             long particleKey = key * 31L + (((long) VK_BLEND_FACTOR_SRC_ALPHA) << 20) + VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            // BH-07: the colour-blend state is the batch's own, like every other family's. This one used to assert
+            // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) for the RGB pair and the family default for alpha whatever the capture
+            // said; ParticleManager itself calls `blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`, and GL's glBlendFunc sets
+            // the RGB *and* the alpha pair to that same pair - so the alpha pair the pipeline baked was the wrong one
+            // for every particle batch in the scene. The depth and cull arguments are left as this family asserted
+            // them: they are a different finding's subject and changing them here would move an accepted picture.
             VulkanImmediateParticlePipeline value = this.particlePipelineCache.computeIfAbsent(particleKey,
-                    k -> VulkanImmediateParticlePipeline.create(this.context, pass, true,
-                            VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, true, false, false,
-                            celtium$vkCompareOp(state[7])));
+                    k -> VulkanImmediateParticlePipeline.create(this.context, pass, celtium$blendState(state),
+                            true, false, false, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == 4) {
             VulkanImmediateItemPipeline value = this.itemPipelineCache.computeIfAbsent(key,
-                    k -> VulkanImmediateItemPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
+                    k -> VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
                             state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]),
                             state.length > 8 && state[8] != 0));
             // The lit variant samples the light map on a second binding; the unlit one has only the model texture, so
@@ -5978,7 +6155,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             pipeline = value;
         } else if (format == 3) {
             VulkanImmediateBlockPipeline value = this.blockPipelineCache.computeIfAbsent(key,
-                    k -> VulkanImmediateBlockPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
+                    k -> VulkanImmediateBlockPipeline.create(this.context, pass, celtium$blendState(state),
                             state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format >= 2) {
@@ -5995,29 +6172,30 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // separates "the fragments are rejected by the depth the window draws against" from "the draw does not
                 // reach the image at all". Default on, so the shipped behaviour is unchanged.
                 boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
+                VulkanColorBlendState colorBlend = celtium$blendState(state);
                 value = format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
-                        state[0] != 0, state[1], state[2], positionNormalDepthTest, state[4] != 0, state[5] != 0,
-                        compareOp)
+                        colorBlend, positionNormalDepthTest, state[4] != 0, state[5] != 0, compareOp)
                         : format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 7 ? VulkanImmediateTexturePipeline.createForPosition(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 6 ? VulkanImmediateTexturePipeline.createForPositionTex(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : VulkanImmediateTexturePipeline.create(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp);
+                        colorBlend, state[3] != 0, state[4] != 0, state[5] != 0, compareOp);
                 cache.put(key, value);
             }
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
         } else {
             boolean lineBatch = (key & (1L << 61)) != 0;
+            VulkanColorBlendState colorBlend = celtium$blendState(state);
             pipeline = (lineBatch ? this.linePipelineCache : this.immediatePipelineCache).computeIfAbsent(key,
                     k -> lineBatch
-                            ? VulkanImmediatePipeline.createForLines(this.context, pass, state[0] != 0, state[1], state[2],
+                            ? VulkanImmediatePipeline.createForLines(this.context, pass, colorBlend,
                                     state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]))
-                            : VulkanImmediatePipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
+                            : VulkanImmediatePipeline.create(this.context, pass, colorBlend,
                                     state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             if (lineBatch) {
                 this.lineBatchesNative++;
@@ -6547,6 +6725,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " groupViewportSets=" + this.groupViewportSets
                 + " cullEnabledGroups=" + this.cullEnabledGroups
                 + " cullDisabledGroups=" + this.cullDisabledGroups
+                // BH-07/BH-10/BH-03's counters, at the same place as BH-08's: captured per batch, so a leg says how
+                // many batches carried an alpha pair the old pipelines could not express, how many carried a write
+                // mask that was not all four channels, and which alpha comparison reached the shader. Before the fix
+                // the first two were zero by construction (the capture never read them) and the third did not exist.
+                + " blendGroups=" + this.blendGroups
+                + " blendAlphaNonDefaultGroups=" + this.blendAlphaNonDefaultGroups
+                + " partialColorMaskGroups=" + this.partialColorMaskGroups
+                + " lastPartialColorMask=0x" + Integer.toHexString(this.lastPartialColorMask)
+                + " nonAddBlendEquationGroups=" + this.nonAddBlendEquationGroups
+                + " alphaFuncGroups=" + this.alphaFuncGroups
+                + " nonGreaterAlphaFuncGroups=" + this.nonGreaterAlphaFuncGroups
+                + " alphaTestDisabledGroups=" + this.alphaTestDisabledGroups
+                + " lastAlphaFunc=" + this.lastAlphaFunc
                 + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
                 + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
                         : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
@@ -10987,13 +11178,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // 96 yet - the two colourless vertex shaders have to be changed to use it - but the value has to
                     // be there for that to be a one-line change on their side.
                     push.putFloat(96, color == null || color.length < 4 ? 1.0f : color[3]);
-                    // BH-03: the alpha comparison function, in the spare slot at offset 100 (the texture family's
-                    // u_TexPad.y; the position family only reads 96 of that vec4 and the lit family's block has the same
-                    // free slot). The raw GL enum travels, and 0 means "the test is disabled" - no GL enum is 0, so a
-                    // reference of 0 is no longer indistinguishable from a disabled test, which the shader's old
-                    // "alphaRef > 0.0" guard conflated (it implemented GL_GREATER only).
-                    push.putFloat(100, this.immediateState.alphaTestEnabled() ? this.immediateState.alphaFunc() : 0);
                 }
+                // BH-03: the alpha comparison function, in the spare slot at offset 100. The GL enum travels as a
+                // float, and 0 means "the test is disabled" - no GL enum is 0, so a reference of 0 stays
+                // distinguishable from a disabled test, which the shader's old "alphaRef > 0.0" guard conflated (it
+                // implemented GL_GREATER alone).
+                //
+                // Read from the group's own captured state (slot 14), not from the live mirror: the push buffer is
+                // shared by the whole flush, and a comparison the game changed after this batch was accepted must not
+                // reach it - the same rule the matrices, the alpha reference and the colour above already follow.
+                // Written outside the combine branch as well, because the buffer is shared: a group that follows a
+                // combine group must not inherit the combine's compare value even though the combine's own branch
+                // never reads it (a negative alpha reference selects the mix path before the comparison).
+                push.putFloat(100, state.length > 14 ? state[14] : 0);
                 // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every
                 // group that carries them rather than guarded per pipeline - only the lit layout reads past 128, and
                 // a lit group always arrives with its params attached.

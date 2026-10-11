@@ -18,10 +18,6 @@ layout(push_constant) uniform PushConstants {
     vec4 u_MvColumn0;
     vec4 u_MvColumn1;
     vec4 u_MvColumn2;
-    // The texture affine's padding slot, declared here exactly as the vertex stage declares it: BH-03's
-    // alpha-test comparison selector rides u_TexPad.y (the vertex stage reads .z for the affine enable), so
-    // the fragment must declare the same field or the two stages disagree and the shader does not compile.
-    layout(offset = 96) vec4 u_TexPad;
     layout(offset = 112) float u_AlphaRef;
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;
@@ -57,7 +53,7 @@ float celtiumFogAmount(float distance) {
 
 /**
  * BH-03: the GL alpha comparison, so the fragment stops implementing GREATER alone. The selector arrives in the spare
- * {@code u_TexPad.y} at offset 100 as the raw GL enum, with 0 meaning "the test is disabled" - no GL enum is 0, so a
+ * {@code u_MvColumn2.y} at offset 100 (the slot the vertex stage declares as {@code u_TexPad}) as the raw GL enum, with 0 meaning "the test is disabled" - no GL enum is 0, so a
  * reference of 0 stays distinguishable from a disabled test, which the old {@code alphaRef > 0.0} guard conflated.
  */
 bool celtiumAlphaPass(int func, float alpha, float reference) {
@@ -84,7 +80,7 @@ void main() {
         // while ours moved by at most 1.8 pixels.
         colour.rgb = mix(colour.rgb, vec3(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB), -celtium.u_AlphaRef);
     } else {
-        int alphaFunc = int(celtium.u_TexPad.y + 0.5);
+        int alphaFunc = int(celtium.u_MvColumn2.y + 0.5);
         if (alphaFunc != 0 && !celtiumAlphaPass(alphaFunc, colour.a, celtium.u_AlphaRef)) {
             discard;
         }
