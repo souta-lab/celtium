@@ -1086,6 +1086,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int itemLitGuiGroups;
     private int itemUnlitGroups;
     private int itemUnlitGuiGroups;
+    /**
+     * Whether the light-map texture unit is enabled right now, from {@code EntityRenderer.enableLightmap()} /
+     * {@code disableLightmap()} (SRG {@code func_180436_i} / {@code func_175072_h}). Defaults to <em>enabled</em> so a
+     * dropped hook leaves the captured coordinate in place - the behaviour before this rule - rather than drawing every
+     * entity full-bright. The two counters below are what say the hook ran.
+     */
+    private boolean lightmapUnitEnabled = true;
+    private int lightmapUnitEnables;
+    private int lightmapUnitDisables;
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
@@ -1153,11 +1162,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The same refusals grouped by program alone. */
     private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedPrograms = new java.util.LinkedHashMap<>();
     private int postAcceptDroppedGroups;
+    /** Per target: batches dropped at a frame boundary because no pass ran for that identity (BH-15). */
+    private final java.util.Map<Long, Integer> unflushedTargetDroppedByTarget =
+            new java.util.HashMap<Long, Integer>();
+
     /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
     private final java.util.Map<Long, Integer> flushEntryGroupsByTarget = new java.util.HashMap<Long, Integer>();
     private final java.util.Map<Long, Integer> flushEntryPassesByTarget = new java.util.HashMap<Long, Integer>();
     /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
     private int drainedOtherTargetPasses;
+
+    /** {@return one line per target whose groups were dropped at a frame boundary}, or "none". */
+    private String unflushedTargetDropSummary() {
+        if (this.unflushedTargetDroppedByTarget.isEmpty()) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder();
+        for (java.util.Map.Entry<Long, Integer> entry : this.unflushedTargetDroppedByTarget.entrySet()) {
+            text.append(Long.toHexString(entry.getKey().longValue())).append(":frames=").append(entry.getValue())
+                    .append(' ');
+        }
+        return text.toString().trim();
+    }
 
     /** {@return one line per target the drain visited}, with its entry counts. */
     private String flushEntrySummary() {
@@ -1233,6 +1259,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** BH-10: batches whose captured write mask was not all four channels, and the last such mask. */
     private long partialColorMaskGroups;
     private int lastPartialColorMask = -1;
+    /**
+     * BH-10's histogram over the captured write masks: one slot per possible mask, index = the
+     * {@code VK_COLOR_COMPONENT_*} nibble (0x0 = nothing written, 0x7 = RGB without alpha, 0xF = all four).
+     * <p>
+     * The last-mask field could only ever name one value, and the Fancy-cloud experiment needs to know <em>which</em>
+     * masks were captured: the depth-only pass is exactly {@code 0x0}, so a run whose histogram holds only
+     * {@code 0x7} (the GUI hover's alpha-masked highlight) says the depth-only pass was not in the frame at all -
+     * the difference between "the mask reached the pipeline and changed nothing visible" and "the group this finding
+     * is about never ran". Complete rather than bounded: 16 slots, no eviction.
+     */
+    private final long[] colorMaskHistogram = new long[16];
     /** BH-07: batches whose captured blend equation was not ADD. */
     private long nonAddBlendEquationGroups;
     /** BH-03: batches captured with the alpha test on, with a comparison other than GREATER, and with it off. */
@@ -2148,6 +2185,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateStateCalls++;
     }
 
+    /**
+     * {@code EntityRenderer.enableLightmap()} / {@code disableLightmap()}: the light-map texture unit was enabled or
+     * disabled. This is the state the full-bright rule keys on (see {@code celtium$lightmapForGroup()}), because it is
+     * the state real OpenGL modulates by - the unit is on for the entity pass, the hand and the block entities, and off
+     * for the whole GUI stage.
+     */
+    @Override
+    public void setLightmapUnitEnabled(boolean enabled) {
+        this.lightmapUnitEnabled = enabled;
+        if (enabled) {
+            this.lightmapUnitEnables++;
+        } else {
+            this.lightmapUnitDisables++;
+        }
+    }
+
     @Override
     public void setLightEnabled(int index, boolean enabled) {
         this.immediateState.lightEnabled(index, enabled);
@@ -2968,12 +3021,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.combineColor = combineColor;
         group.texMatrix = celtium$textureAffine();
         group.lightParams = celtium$lightParams(state, modelView);
-        // The captured coordinate, deliberately, even outside the world pass: the only model-path content the GUI stage
-        // draws is the inventory's player model, and vanilla lights that one by the world on purpose - GuiInventory
-        // draws it with the light-map unit enabled and RenderManager.renderEntity sets the coordinate from the entity
-        // (GuiInventory.java:154-165). celtium$lightmapForGroup() is therefore for the immediate path, where the GUI
-        // items arrive; forcing it here would brighten the player model in a dark place, which is not what vanilla does.
-        group.lightmapCoords = lightmapCoordKnown() ? lightmapCoords() : null;
+        // The same rule as the immediate path, and it is the light-map unit's enable state that decides it - not the
+        // pass. The model path's GUI-stage content is the inventory's player model and any TESR item (a chest, a
+        // shulker box, a banner: RenderItem.renderItem sends those through
+        // getTileEntityItemStackRenderer().renderByItem, RenderItem.java:144-148), and real OpenGL draws both with the
+        // unit disabled - GuiInventory.java:154-165 only *disables* the unit at the end of its draw and never enables
+        // it, so nothing lights the player model by the world either. A chest in the hotbar of a dark place was drawn
+        // with the cave's light because this line took the captured coordinate unconditionally.
+        group.lightmapCoords = celtium$lightmapForGroup();
         group.fog = celtium$fogSnapshot();
         group.batches = quads;
         group.viewportValues = this.currentGroupViewportValues;
@@ -3809,6 +3864,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public void captureWorldSnapshot() {
         // Frame boundary for the font batching (task-59): a held run must not survive into the next frame.
         celtium$flushPendingFontBatch("boundary");
+        // BH-15, the safe half of BH-14/15/16. The flush draws the groups of whichever target is bound when it runs
+        // (`flushImmediateWindow`'s binding-driven filter), so a group accepted for a target that is never bound again
+        // would sit in this queue for the rest of the session and the image it was meant for would stay empty - which
+        // is what the menu panorama and the loading screen's white window are. Such a group is dropped here, at the
+        // frame boundary it was accepted in, and counted per identity, rather than left queued or silently re-routed
+        // into another target's pass. The drain that would have drawn them per target was reverted (e30a23cd6)
+        // because retargeting the same command buffer lost the device; drawing them needs a pass of its own.
+        if (!this.immediateGroups.isEmpty()) {
+            int dropped = 0;
+            java.util.LinkedHashSet<Long> targets = new java.util.LinkedHashSet<Long>();
+            for (ImmediateGroup group : this.immediateGroups) {
+                dropped += group.batches;
+                targets.add(Long.valueOf(group.target));
+            }
+            this.unflushedTargetGroupsDropped += dropped;
+            for (Long target : targets) {
+                this.unflushedTargetDroppedByTarget.merge(target, Integer.valueOf(1), Integer::sum);
+            }
+            if (this.unflushedTargetGroupsDropped <= this.unflushedTargetGroupsDroppedLogged + 3) {
+                this.unflushedTargetGroupsDroppedLogged++;
+                record("frame boundary dropped " + dropped + " accepted immediate batches whose target never got a"
+                        + " pass (targets=" + targets + ", total " + this.unflushedTargetGroupsDropped + ")");
+            }
+            this.immediateGroups.clear();
+            this.pendingImmediateIndices = 0;
+        }
         // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
         // that is per frame - the window budget, these counters - is reset here and nowhere else.
         if (this.countersFrameId >= 0) {
@@ -4497,6 +4578,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (this.swapchain.outOfDate()) {
                         // The swapchain no longer matches the surface. Dropping it is the whole rebuild: the next
                         // present calls ensureSwapchain(), which creates one against the surface as it is by then.
+                        //
+                        // OPT-04 contract, stated because this delete rests on a basis other than a device-wide idle:
+                        // it runs inside the present path, *after* this frame's submission completed and its images
+                        // were handed to the presentation engine (the fence this path waits on before reaching here),
+                        // and the only resources it frees are the swapchain's own images, semaphores and surface
+                        // wrapper - none of which this frame's command buffer still references, because the blit into
+                        // them is part of the submission that already signalled. So the basis is "the submission that
+                        // used these completed", which is the same guarantee settleGpu() would give, obtained from the
+                        // present path's own fence instead of a queue wait. A future change that moves this delete
+                        // before that wait, or that frees anything the frame's command buffer can still name, breaks
+                        // the contract and needs the idle wait instead.
                         record("the swapchain is out of date with the surface, rebuilding it for the next present");
                         this.swapchain.delete();
                         this.swapchain = null;
@@ -5432,6 +5524,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.blendGroups++;
         }
+        this.colorMaskHistogram[capturedWriteMask & 0xF]++;
         if (capturedWriteMask != VulkanColorBlendState.allChannels()) {
             this.partialColorMaskGroups++;
             this.lastPartialColorMask = capturedWriteMask;
@@ -6559,9 +6652,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         StringBuilder summary = new StringBuilder();
         for (Long idBoxed : ids) {
             java.util.concurrent.atomic.AtomicInteger offered = this.offTargetBatchesByTarget.get(idBoxed);
+            // The units are named in the columns because they are not the same and reading them as if they were
+            // produced a false mechanism: `offered` counts batches (one increment per accepted batch) while the pass
+            // column counts groups, so "677 offered, 32 atPass" is not 645 lost groups - it is 677 batches in 32
+            // groups that reached a pass. The row is evidence only when the two are read in their own units.
             summary.append(Long.toHexString(idBoxed.longValue()))
-                    .append(":offered=").append(offered == null ? 0 : offered.get())
-                    .append(",atPass=").append(this.offTargetPassGroupsByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
+                    .append(":batchesOffered=").append(offered == null ? 0 : offered.get())
+                    .append(",groupsAtPass=").append(this.offTargetPassGroupsByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
                     .append(",drawnPasses=").append(this.offTargetDrawnByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
                     .append(",pair=").append(pairOfOffTargetIdentity(idBoxed.longValue()))
                     .append(' ');
@@ -6876,6 +6973,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * whether a run really rendered terrain: selecting the backend by name is not evidence that any pass reached the
      * queue, so submissions, skips and errors are counted instead.
      */
+    /**
+     * BH-10's capture histogram as one bracketed field, non-zero slots only.
+     * <p>
+     * The number that decides the Fancy-cloud question is the {@code 0x0} slot: it is the depth-only pass. A leg
+     * whose histogram has {@code 0x0:0} did not draw that pass, and no crop can show the mask's effect there however
+     * the flags are set.
+     */
+    private String colorMaskHistogramText() {
+        StringBuilder text = new StringBuilder("[");
+        boolean any = false;
+        for (int mask = 0; mask < this.colorMaskHistogram.length; mask++) {
+            if (this.colorMaskHistogram[mask] == 0L) {
+                continue;
+            }
+            if (any) {
+                text.append(' ');
+            }
+            text.append("0x").append(Integer.toHexString(mask)).append(':').append(this.colorMaskHistogram[mask]);
+            any = true;
+        }
+        return text.append(']').toString();
+    }
+
     public String verificationSummary() {
         return "celtium/vulkan-check passes=" + this.passSubmissions + " skipped=" + this.passSkips + " errors="
                 + this.passErrors + " lastDraw=" + this.lastDrawCommands + " lastSections=" + this.lastSectionsDrawn
@@ -6903,6 +7023,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
+                + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
                 + " drainedOtherTargetPasses=" + this.drainedOtherTargetPasses
                 + " flushEntries=[" + flushEntrySummary() + "]"
                 + " unflushedTargetPassFailures=" + this.unflushedTargetPassFailures
@@ -6935,6 +7056,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " blendAlphaNonDefaultGroups=" + this.blendAlphaNonDefaultGroups
                 + " partialColorMaskGroups=" + this.partialColorMaskGroups
                 + " lastPartialColorMask=0x" + Integer.toHexString(this.lastPartialColorMask)
+                + " colorMaskHistogram=" + colorMaskHistogramText()
                 + " nonAddBlendEquationGroups=" + this.nonAddBlendEquationGroups
                 + " alphaFuncGroups=" + this.alphaFuncGroups
                 + " nonGreaterAlphaFuncGroups=" + this.nonGreaterAlphaFuncGroups
@@ -7173,6 +7295,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " lightmapCoordCalls=" + this.lightmapCoordCalls
                 + " lightmapCoordGroups=" + this.lightmapCoordGroups
                 + " lightmapFullBrightGroups=" + this.lightmapFullBrightGroups
+                // The hook's own census: a zero here means the enableLightmap/disableLightmap injection never ran, and
+                // the full-bright rule then degrades to the captured coordinate rather than to full-bright entities.
+                + " lightmapUnitEnables=" + this.lightmapUnitEnables
+                + " lightmapUnitDisables=" + this.lightmapUnitDisables
                 // The ITEM variant split, so "the GUI item is bright" can be read as "it was lit and the coordinate was
                 // full-bright" or as "it was never lit at all" rather than assumed from the picture.
                 + " itemLitGroups=" + this.itemLitGroups
@@ -7264,9 +7390,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             } catch (RuntimeException error) {
                 this.regionUploadFailures++;
                 this.lastRegionUploadFailure = String.valueOf(error);
-                record("region upload failed and was skipped: " + error);
+                // BH-25: name every section of the failed region, so the caller leaves them un-committed instead of
+                // marking them built. Swallowing the exception alone left the section's metadata, build token and
+                // lastBuiltFrame advanced with no geometry on the GPU, and nothing rebuilds a section that reads as
+                // built - the missing chunks were permanent.
+                for (ChunkTaskOutput output : entry.getValue()) {
+                    if (output.render != null) {
+                        this.failedUploads.add(output.render);
+                    }
+                }
+                record("region upload failed and was skipped: " + error + " (sections left un-built: "
+                        + entry.getValue().size() + ", regionUploadFailures=" + this.regionUploadFailures + ")");
             }
         }
+    }
+
+    /**
+     * {@return the sections the last {@code uploadMeshes} could not upload}, consuming the set (BH-25).
+     * <p>
+     * The caller reads this immediately after {@code uploadMeshes} and skips the commit for each named section, so the
+     * failure leaves the section queued for another build instead of marking it built with no geometry.
+     */
+    @Override
+    public java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> consumeFailedUploads() {
+        if (this.failedUploads.isEmpty()) {
+            return java.util.Collections.emptySet();
+        }
+        java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> drained =
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        drained.addAll(this.failedUploads);
+        this.failedUploads.clear();
+        return drained;
     }
 
     @Override
@@ -7834,6 +7988,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Regions whose upload was abandoned because a resource could not be built. */
     private int regionUploadFailures;
     private String lastRegionUploadFailure = "none";
+    /**
+     * Sections whose geometry the last {@code uploadMeshes} could not put on the GPU (BH-25).
+     * <p>
+     * Filled when a region's upload throws and drained by {@link #consumeFailedUploads()} on the caller's next line, so
+     * the section manager can leave exactly those sections un-committed and queued for another build. A set rather than
+     * a count because the caller needs the identity, and identity is the whole point: the section must not be marked
+     * built.
+     */
+    private final java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> failedUploads =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private final java.util.HashMap<Integer, Integer> colourCounts = new java.util.HashMap<>();
     private int colourBatches;
 
@@ -8750,6 +8914,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons);
         if (this.swapchain == null) {
             record("swapchain unavailable at surface and swapchain creation: " + reasons);
+            // BH-19 evidence: this list is what names *why* the swapchain was refused - the present-support contract,
+            // a surface usage/alpha/format refusal, or a vkCreateSwapchainKHR result. record()'s line reaches the
+            // report but not the process stdout, so the leg that exercises the refusal (the synthetic
+            // -Dceltium.vulkan.assumeNoPresentSupport=true contract test, or a real non-presenting family) had no
+            // reason string in its artifact - only the present hook's lastSkip=[swapchain unavailable]. Printed once
+            // per failed creation, where the run's own log keeps it.
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN_FAILED " + reasons);
             return false;
         }
         record(this.swapchain.describe());
@@ -10597,35 +10768,43 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final float[] FULL_BRIGHT_LIGHTMAP = {240.0F, 240.0F};
 
     /**
-     * The light-map coordinate a group offered now must be drawn with: the captured world light inside the world pass,
-     * the full-bright pair outside it.
+     * The light-map coordinate a group offered now must be drawn with: the captured world light where the light-map
+     * texture unit was **enabled**, the full-bright pair where it was disabled.
      * <p>
-     * Real OpenGL modulates a draw by the light map only where the light-map texture unit is enabled, and
-     * {@code EntityRenderer} enables it in three places - {@code RenderGlobal.renderEntities}
-     * ({@code RenderGlobal.java:1166}/{@code :1205}), the first-person hand ({@code EntityRenderer.java:825}/{@code :827},
-     * inside {@code renderWorldPass}) and the block-entity section ({@code EntityRenderer.java:1434}/{@code :1403}).
-     * Every one of them is inside the world pass; the GUI stage draws with that unit disabled, so a hotbar or inventory
-     * item is never darkened by the light level under real GL - and the container says so explicitly for its items
-     * ({@code GuiContainer.java:107} sets 240,240 before drawing them). This renderer's lit layouts always sample the
-     * light map, so outside the world pass the coordinate has to be the full-bright one: otherwise the coordinate the
-     * world last set - the player's own light ({@code ItemRenderer.setLightmap()}), or the last entity's - reaches the
-     * hotbar, and a GUI item in a dark place is drawn with the cave's light.
+     * The key is the unit's own enable state, not the pass, because that is what real OpenGL modulates by. The unit is
+     * enabled in exactly three brackets - {@code RenderGlobal.renderEntities} ({@code RenderGlobal.java:1166}/{@code :1205}),
+     * the first-person hand ({@code EntityRenderer.java:825}/{@code :827}, inside {@code renderWorldPass}) and the
+     * block-entity section ({@code EntityRenderer.java:1434}/{@code :1403}) - and disabled everywhere else, including
+     * the whole GUI stage: {@code GuiIngame.renderHotbar} never sets the coordinate while
+     * {@code GuiContainer.java:107} sets {@code (240,240)} for its own items. This renderer's lit layouts always sample
+     * the light map, so a draw made with the unit disabled has to be given the full-bright texel, or the coordinate the
+     * world last set (the player's own light, {@code ItemRenderer.setLightmap()}) reaches the hotbar and a GUI item in a
+     * dark place is drawn with the cave's light.
      * <p>
-     * Inside the world pass the captured coordinate is kept: the hand is world-lit on purpose
-     * ({@code ItemRenderer.setLightmap()} reads {@code world.getCombinedLight} at the player's eye and is called from
-     * {@code renderHand}, which {@code renderWorldPass} calls at {@code EntityRenderer.java:1492}), and so are the
-     * entities and the block entities.
+     * The state is a hook on {@code EntityRenderer.enableLightmap}/{@code disableLightmap} (SRG
+     * {@code func_180436_i}/{@code func_175072_h}, resolved from the SRG table rather than guessed) and it defaults to
+     * <em>enabled</em>: a hook that never fires leaves every group on the captured coordinate, which is the behaviour
+     * this renderer had before the rule, so a silently dropped injection degrades to the status quo rather than to a
+     * frame of full-bright entities. {@code lightmapUnitEnables}/{@code lightmapUnitDisables} in the census say whether
+     * the hook ran at all.
+     * <p>
+     * The model path uses this too. Its GUI-stage content is the inventory's player model and any TESR item - a chest,
+     * a shulker box, a banner, which {@code RenderItem.renderItem} sends through
+     * {@code getTileEntityItemStackRenderer().renderByItem} ({@code RenderItem.java:144-148}) - and both are drawn with
+     * the unit disabled, so both are full-bright under real GL. The inventory's player model is the reason this is
+     * checked rather than assumed: {@code GuiInventory.java:154-165} only <em>disables</em> the unit at the end of its
+     * draw, it never enables it, so nothing lights that model by the world either.
      */
     /**
-     * {@code -Dceltium.vulkan.lightmapFullBrightGui=false} turns the GUI-stage full-bright rule off, for measurements:
-     * the same jar, the same scene and the same tick then draw a hotbar item with the world's light, which is the
-     * "before" half of the pair without rebuilding a jar that differs in anything else.
+     * {@code -Dceltium.vulkan.lightmapFullBrightGui=false} turns the rule off, for measurements: the same jar, the same
+     * scene and the same tick then draw a GUI item with the world's light, which is the "before" half of the pair
+     * without rebuilding a jar that differs in anything else.
      */
     private static final boolean LIGHTMAP_FULL_BRIGHT_GUI = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.lightmapFullBrightGui", "true"));
 
     private float[] celtium$lightmapForGroup() {
-        if (!this.worldPassActive && LIGHTMAP_FULL_BRIGHT_GUI) {
+        if (!this.lightmapUnitEnabled && LIGHTMAP_FULL_BRIGHT_GUI) {
             this.lightmapFullBrightGroups++;
             return FULL_BRIGHT_LIGHTMAP;
         }
