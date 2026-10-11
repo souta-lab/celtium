@@ -35,6 +35,9 @@ import java.util.*;
 @Mixin(RenderGlobal.class)
 public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<CeleritasWorldRenderer> {
 
+    /** How often the chunk-layer entry point ran; see the note on renderBlockLayer. */
+    private int celtium$blockLayerCalls;
+
     @Shadow
     @Final
     private Map<Integer, DestroyBlockProgress> damagedBlocks;
@@ -112,6 +115,15 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     public int renderBlockLayer(BlockRenderLayer blockLayerIn, double partialTicks, int pass, Entity entityIn) {
+        // One counter, because whether this method runs at all is an open question in the runtime we target:
+        // Cleanroom's Kirino replaces EntityRenderer.renderWorld, its classes reference neither renderWorldPass nor
+        // renderBlockLayer by name, and yet the terrain draws. Either this entry point is alive (and only the entity
+        // and TESR injections are dead) or the terrain comes in somewhere else - and one number settles which.
+        celtium$blockLayerCalls++;
+        if (celtium$blockLayerCalls <= 3) {
+            System.out.println("[Celtium] CELTIUM_BLOCKLAYER calls=" + celtium$blockLayerCalls
+                    + " layer=" + blockLayerIn + " pass=" + pass);
+        }
         RenderDevice.enterManagedCode();
 
         RenderHelper.disableStandardItemLighting();
