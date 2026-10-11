@@ -211,17 +211,24 @@ public final class ValidationClient {
     private enum Scene {
         /**
          * The standard terrain scene: the flat world at the fixture's pose, HUD hidden at tick 190, captured at tick
-         * 200. Reference: GL bridge, run {@code scene-ref-terrain}, 1280x720, camera x=0.5 y=12.0 z=0.5 yaw=180
-         * pitch=20, presented image = {@code screenshots/celtium-validation.png} written by the capture's own
-         * {@code ScreenShotHelper} call. Measured there: distinctColours=REF, nonBackgroundFraction=REF,
-         * verticalBands=REF, blackFraction=REF (see the gate constants below, which carry the same numbers).
+         * 200. Reference: GL bridge at 1280x720 and camera x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, picture =
+         * {@code screenshots/celtium-validation.png} written by the capture's own {@code ScreenShotHelper} call
+         * (the GL bridge presents nothing through Vulkan, so the screenshot is that configuration's picture of the
+         * window). Measured there: distinctColours=1535/1536, nonBackgroundFraction=0.732164/0.727735,
+         * verticalBands=631/638, blackFraction=0.000000/0.000000 (see {@link #celtium$terrainGate} for the runs and
+         * the floors derived from them).
          */
         TERRAIN("terrain", false, true),
         /**
          * Minecraft's own video settings screen: {@code GuiOptions} is opened through {@code displayGuiScreen} - the
          * call the pause menu makes - and its Video Settings button is dispatched through the screen's own
          * {@code mouseClicked}, which is what a real click runs. The screen has to be a {@code GuiVideoSettings} at the
-         * capture, and the picture has to show a panel where the screen says its list is.
+         * capture, and the picture has to show a panel where the screen says its list is. Its world frame is measured
+         * like the terrain scene's (1536/0.727735/638/0.000000 in both of the scene's own runs) and its panel floors
+         * come from the same runs' GUI frames against their world frames (guiPanelChangedFraction=0.477975/0.478083,
+         * guiPanelStrongFraction=0.455733/0.455836, guiPanelDistinctColours=15805/15877,
+         * guiPanelRowAmplitude=9.344/9.441, against the world frame's 1509/1516 colours and 9.509/9.789 rows at the
+         * same rectangle); see {@link #celtium$videoSettingsGate}.
          */
         VIDEO_SETTINGS("videoSettings", true, true),
         /**
@@ -229,16 +236,30 @@ public final class ValidationClient {
          * background colour of a cave rather than of daylight. It is its own scene because a floor measured on the
          * overworld does not describe it - a GL-less Nether capture measured nonBackgroundFraction=0.32598 and
          * blackFraction=0.036944 against the overworld reference's 0.728299 and 0.000000, and judging it by the
-         * overworld floor failed a frame whose picture was fine (measured: .celtium-work/runtime/vuid-after2).
-         * Until a GL-bridge reference run of this scene exists at this pose, its floors are not calibrated and the
-         * gate says so instead of failing a scene nobody has measured.
+         * overworld floor failed a frame whose picture was fine (measured: .celtium-work/runtime/vuid-after2) - and it
+         * has its own pose for the same reason: the overworld pose (y=12) is inside the Nether's rock. Its own measured
+         * floors are in {@link #celtium$netherGate} (0.938502 non-background, 720 bands, 0.087951 black at x=1.5 y=70
+         * z=1.5). Until that block carried a measured reference at that pose the gate reported
+         * {@code floorsNotCalibrated} and the verdict {@code UNCALIBRATED_PRESENTED_IMAGE} instead of judging the frame
+         * by another scene's numbers.
          */
-        NETHER("nether", false, false);
+        NETHER("nether", false, true),
+        /**
+         * A frame of the End (dimension 1). The fixture can drive it, and it is neither the overworld nor the Nether:
+         * its sky is the End's, its ground is the main island and its light is its own. No GL-bridge reference run
+         * exists, so it is gated as uncalibrated rather than by the overworld's floors.
+         */
+        END("end", false, false),
+        /**
+         * Any other dimension the fixture is asked to travel to (dimension 2 and up). Recorded by name and dimension
+         * and gated as uncalibrated for the same reason as {@link #END}.
+         */
+        OTHER_DIMENSION("otherDimension", false, false);
 
         final String name;
         /** Whether this scene drives a GUI screen and takes a second capture with it open. */
         final boolean guiStage;
-        /** Whether a reference run exists at this pose: an uncalibrated scene records its floors as missing. */
+        /** Whether a measured reference exists at this pose: an uncalibrated scene records its floors as missing. */
         final boolean calibrated;
 
         Scene(String name, boolean guiStage, boolean calibrated) {
@@ -252,7 +273,9 @@ public final class ValidationClient {
      * The numbers a scene's picture gate uses, resolved once from the scene's measured defaults and the overrides.
      * <p>
      * {@code reference} is prose on purpose: a floor without the run it came from cannot be re-derived, and the audit
-     * that started this asked for exactly that provenance.
+     * that started this asked for exactly that provenance. It is split into three properties so a reader of a report
+     * can tell the runs from the numbers from the margin: {@code referenceRuns} names the runs, {@code referenceNumbers}
+     * is what they measured, and {@code margin} is the rule that turned those numbers into the floors.
      */
     private static final class SceneGate {
         final int minDistinctColours;
@@ -264,12 +287,16 @@ public final class ValidationClient {
         final int minPanelDistinctColours;
         final double minPanelRowAmplitude;
         final String reference;
+        final String referenceRuns;
+        final String referenceNumbers;
+        final String margin;
         /** False when this scene has no measured reference yet: its floors are reported as missing, not enforced. */
         final boolean calibrated;
 
         SceneGate(int minDistinctColours, double minNonBackgroundFraction, int minVerticalBands, double maxBlackFraction,
                 double minPanelChangedFraction, double minPanelStrongFraction, int minPanelDistinctColours,
-                double minPanelRowAmplitude, String reference, boolean calibrated) {
+                double minPanelRowAmplitude, String reference, String referenceRuns, String referenceNumbers,
+                String margin, boolean calibrated) {
             this.calibrated = calibrated;
             this.minDistinctColours = minDistinctColours;
             this.minNonBackgroundFraction = minNonBackgroundFraction;
@@ -280,6 +307,9 @@ public final class ValidationClient {
             this.minPanelDistinctColours = minPanelDistinctColours;
             this.minPanelRowAmplitude = minPanelRowAmplitude;
             this.reference = reference;
+            this.referenceRuns = referenceRuns;
+            this.referenceNumbers = referenceNumbers;
+            this.margin = margin;
         }
     }
 
@@ -296,8 +326,20 @@ public final class ValidationClient {
     private static final class PictureEvidence {
         final String stage;
         final String source;
-        final java.nio.file.Path image;
-        final java.nio.file.Path identity;
+        /**
+         * Where the renderer was asked to write. The renderer re-requests a dump to the <em>last</em> path the fixture
+         * asked for every fortieth presented frame ({@code VulkanTerrainGpuBackend}: {@code presentedDumpPath != null &&
+         * presented % 40 == 0}), so a requested path is rewritten by later frames until the fixture asks for another
+         * one. Measured in {@code .celtium-work/runtime/unfreeze}: the early dump's identity was completed at
+         * 09:39:45.787 with imageHash=-457084848, the file at that path was rewritten at 09:39:52.443, and it then held
+         * the world frame's content (imageHash=1564670080, byte-identical to the world dump) - two files that look like
+         * one frozen frame, and an identity that no longer describes its file. The kept copy below is what the identity
+         * names instead.
+         */
+        final java.nio.file.Path requestedImage;
+        /** The picture the identity names: the requested file, or its kept copy when one could be taken. */
+        java.nio.file.Path image;
+        java.nio.file.Path identity;
         final int requestedAtTick;
         final int worldFramesAtRequest;
         final int presentedFramesAtRequest;
@@ -319,6 +361,8 @@ public final class ValidationClient {
         int imageHash;
         int completedAtTick = -1;
         String completionError = "none";
+        /** The requested path this identity's file is a kept copy of, or "none" when the file is that path itself. */
+        String keptFrom = "none";
 
         PictureEvidence(String stage, String source, java.nio.file.Path image, int requestedAtTick,
                 int worldFramesAtRequest, int presentedFramesAtRequest, int requestedWidth, int requestedHeight,
@@ -327,6 +371,7 @@ public final class ValidationClient {
             this.stage = stage;
             this.source = source;
             this.image = image;
+            this.requestedImage = image;
             this.identity = image.resolveSibling(image.getFileName().toString() + IDENTITY_SUFFIX);
             this.requestedAtTick = requestedAtTick;
             this.worldFramesAtRequest = worldFramesAtRequest;
@@ -444,6 +489,9 @@ public final class ValidationClient {
     private final String celtium$sceneError = celtium$sceneResolutionError;
     /** The tick the server teleport is scheduled at: after the world exists, early enough to be settled by the capture. */
     private final int celtium$poseTick = Integer.getInteger("celtium.validation.cameraSetTick", 25).intValue();
+    /** Set when the renderer's view entity was not the player and had to be moved to the pose as well. */
+    private String celtium$poseViewEntity = "none";
+    private int celtium$poseViewEntityTicks;
     private boolean celtium$poseRequested;
     private int celtium$poseAppliedAtTick = -1;
     private int celtium$poseAppliedTicks;
@@ -456,6 +504,8 @@ public final class ValidationClient {
     private int celtium$stage;
     /** Whether the picture verdict has been taken; it is taken once, on the frame whose evidence is complete. */
     private boolean celtium$pictureVerdictTaken;
+    /** Whether the scene's measured floors were enforced on this run's picture: a reference exists and this run is its variant. */
+    private boolean celtium$gateEnforced;
     /** Whether the world stage's picture has been taken, so the capture body does not run twice for one frame. */
     private boolean celtium$worldStageTaken;
     /** Every completed picture of this run, by stage. */
@@ -536,9 +586,32 @@ public final class ValidationClient {
         if (dimension == -1) {
             return Scene.NETHER;
         }
-        // The End and any other dimension have no scene of their own yet: they are recorded as the terrain scene's
-        // flags with their own dimension, and their gate will be the uncalibrated one once they have a scene.
-        return Scene.TERRAIN;
+        if (dimension == 1) {
+            return Scene.END;
+        }
+        // Any other dimension is its own scene name with no reference of its own: judging it by the overworld's floors
+        // would be exactly the mistake the Nether frame exposed, so it is gated as uncalibrated.
+        return Scene.OTHER_DIMENSION;
+    }
+
+    /**
+     * The pose a scene's floors were measured at: the fixture's own default for that scene, before overrides.
+     * <p>
+     * A pose is part of a scene, not a detail of it. The overworld pose (x=0.5 y=12 z=0.5) is clear air above the flat
+     * stack - the stack's top block is the enchanting table at y=10, 0.75 high - but y=12 in the Nether is inside the
+     * dimension's rock: a camera there sees whichever sections the renderer happened to have meshed, and two runs at
+     * that same pose measured nonBackgroundFraction 0.183982 (background 0x120303, the netherrack around the camera)
+     * and 0.420806 (background 0x000027, the void where nothing was drawn). That is not a scene two runs can be
+     * compared in, so the Nether has its own pose: the arrival spot the fixture's own teleporter verifies as air with
+     * ground under it (dimensionArrivalPlacement "arrival=0,70,1 ... placed=1,70,1 placedBlock=minecraft:air
+     * ground=true safe=true", the same string in every run), where the frame is open Nether rather than the inside of
+     * a block.
+     */
+    private static CameraPose celtium$referencePose(Scene scene) {
+        if (scene == Scene.NETHER) {
+            return new CameraPose(1.5D, 70.0D, 1.5D, 180.0F, 20.0F);
+        }
+        return new CameraPose(0.5D, 12.0D, 0.5D, 180.0F, 20.0F);
     }
 
     /**
@@ -546,19 +619,12 @@ public final class ValidationClient {
      * {@code -Dceltium.validation.cameraX} and friends.
      */
     private static CameraPose celtium$resolvePose(Scene scene) {
-        // The pose every scene starts from. It is the historical teleport target's column - the world origin - but at
-        // y=12, which is clear air above the fixture's layer stack (the stack's top block is the enchanting table at
-        // y=10, 0.75 high), so the client's and the server's player both have somewhere to stand still.
-        double x = 0.5D;
-        double y = 12.0D;
-        double z = 0.5D;
-        float yaw = 180.0F;
-        float pitch = 20.0F;
-        x = Double.parseDouble(System.getProperty("celtium.validation.cameraX", Double.toString(x)));
-        y = Double.parseDouble(System.getProperty("celtium.validation.cameraY", Double.toString(y)));
-        z = Double.parseDouble(System.getProperty("celtium.validation.cameraZ", Double.toString(z)));
-        yaw = Float.parseFloat(System.getProperty("celtium.validation.cameraYaw", Float.toString(yaw)));
-        pitch = Float.parseFloat(System.getProperty("celtium.validation.cameraPitch", Float.toString(pitch)));
+        CameraPose base = celtium$referencePose(scene);
+        double x = Double.parseDouble(System.getProperty("celtium.validation.cameraX", Double.toString(base.x)));
+        double y = Double.parseDouble(System.getProperty("celtium.validation.cameraY", Double.toString(base.y)));
+        double z = Double.parseDouble(System.getProperty("celtium.validation.cameraZ", Double.toString(base.z)));
+        float yaw = Float.parseFloat(System.getProperty("celtium.validation.cameraYaw", Float.toString(base.yaw)));
+        float pitch = Float.parseFloat(System.getProperty("celtium.validation.cameraPitch", Float.toString(base.pitch)));
         return new CameraPose(x, y, z, yaw, pitch);
     }
 
@@ -566,100 +632,298 @@ public final class ValidationClient {
      * The picture gate for a scene.
      * <p>
      * Every floor here is a measured number from a real GL-bridge reference run of the same scene at the same fixed
-     * pose, with margin; the reference run and its numbers are named in {@link Scene} and repeated in the
-     * {@code reference} string the report carries, so a floor can be re-derived rather than believed. The overrides
-     * exist so an experiment can move a floor; the report always says which value was used and where it came from.
+     * pose, with margin; the runs, their numbers and the margin rule are named in the per-scene gate factories below
+     * and repeated in the {@code sceneGateReference*} properties the report carries, so a floor can be re-derived
+     * rather than believed.
+     * <p>
+     * Whether the floors are <em>enforced</em> is a separate question, decided at the verdict by the calibration key
+     * ({@link #celtium$calibrationKey}): a floor measured on one variant of a scene does not describe another variant,
+     * so a run at another pose, GUI scale or world stack reports {@code floorsNotCalibrated} and the verdict
+     * {@code UNCALIBRATED_PRESENTED_IMAGE} rather than being judged - or failed - by a floor that belongs to a picture
+     * it is not. A scene with no measured reference at all has no floors to enforce for the same reason.
+     * <p>
+     * The overrides exist so an experiment can move a floor; the report always says which value was used and where it
+     * came from.
      */
     private static SceneGate celtium$resolveGate(Scene scene) {
-        // -----------------------------------------------------------------------------------------------------------
-        // The terrain floors, and the reference they were measured in.
-        //
-        // Reference run: GL bridge, fresh game directory, scene "terrain", camera x=0.5 y=12.0 z=0.5 yaw=180
-        // pitch=20, 1280x720, picture = the capture's own screenshots/celtium-validation.png (the GL bridge presents
-        // nothing through Vulkan, so the game's screenshot is that configuration's picture of the window).
-        // Measured there: distinctColours=1535, nonBackgroundFraction=0.732164, verticalBands=631,
-        // blackFraction=0.000000, backgroundColour=0x571716.
-        // A second GL-bridge run of the video settings scene at the same pose measured its world frame at
-        // distinctColours=1540, nonBackgroundFraction=0.728299, verticalBands=638, blackFraction=0.000000, which is
-        // the reproducibility the fixed camera was added for (the same scene used to land anywhere between
-        // nonBackgroundFraction 0.33 and 0.84 depending on where the run's drift left the player).
-        //
-        // The floors below are set with margin against those numbers, in the direction that keeps them meaningful:
-        // the non-background floor is 55% of the measured 0.7283, the band floor 40% of the measured 631, and the
-        // black ceiling is 0.05 against a measured 0.000 (the frames the audit wants caught measured 0.32-0.67 black
-        // with colour counts in the thousands: outline2 judged at 11751 colours and 0.6715 black, outline5 0.321,
-        // tesr1 0.519 with 46 colours - all three of which passed the old "more than 16 colours" test).
-        // -----------------------------------------------------------------------------------------------------------
+        SceneGate measured = celtium$measuredGate(scene);
         int minDistinctColours = Integer.getInteger("celtium.validation.gate.minDistinctColours",
                 PRESENTED_DISTINCT_COLOUR_FLOOR).intValue();
-        double referenceNonBackground = 0.40D;
-        int referenceBands = 250;
-        double referenceBlack = 0.05D;
-        // -----------------------------------------------------------------------------------------------------------
-        // The video settings gate, measured on the same run's GUI frame against its own world frame. The panel is the
-        // rectangle the open screen's own list occupies, so this is "the expected panel", not a guessed layout.
-        //
-        // Reference run: GL bridge, fresh game directory, scene "videoSettings", same pose. Measured on the GUI frame
-        // (screenshots/celtium-validation.png, taken in the render tick that has the screen drawn) against the world
-        // frame of the same run (screenshots/celtium-validation-world.png): guiPanelChangedFraction=MEASURED,
-        // guiPanelStrongFraction=MEASURED, guiPanelDistinctColours=MEASURED, guiPanelRowAmplitude=MEASURED. The floors
-        // are set below those with margin, and a frame in which the screen never drew changes nothing (fraction 0).
-        // -----------------------------------------------------------------------------------------------------------
-        double minPanelChanged = 0.0D;
-        double minPanelStrong = 0.0D;
-        int minPanelColours = 0;
-        double minPanelRowAmplitude = 0.0D;
-        String reference;
-        if (scene == Scene.NETHER) {
-            // No GL-bridge reference run of this scene exists at this pose yet. The floors below are the overworld
-            // terrain scene's and are NOT applied to a Nether frame: what a Nether frame of this fixture measured
-            // (GL-less, .celtium-work/runtime/vuid-after2, camera x=0.5 y=12.0 z=0.5 yaw=180 pitch=20) was
-            // distinctColours=605, nonBackgroundFraction=0.32598, verticalBands=720, blackFraction=0.036944,
-            // backgroundColour=0x000027 - a cave frame, not a daylight one. The scene stays uncalibrated until a
-            // GL-bridge run at the same pose says what its floors are, and the verdict reports
-            // floorsNotCalibrated rather than failing a scene nobody has measured.
-            reference = "not calibrated: scene nether has no GL-bridge reference run at x=0.5 y=12.0 z=0.5 yaw=180"
-                    + " pitch=20 yet; the overworld floors (nonBackgroundFraction>=0.40, verticalBands>=250,"
-                    + " blackFraction<=0.05) are NOT applied here. Measured GL-less Nether frame for the record:"
-                    + " distinctColours=605, nonBackgroundFraction=0.32598, verticalBands=720,"
-                    + " blackFraction=0.036944, backgroundColour=0x000027 (vuid-after2)";
-        } else if (scene == Scene.VIDEO_SETTINGS) {
-            reference = "gl-bridge scene-ref-video (scene=videoSettings, x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, gui frame"
-                    + " vs the same run's world frame): world frame distinctColours=1540 nonBackgroundFraction=0.728299"
-                    + " verticalBands=638 blackFraction=0.000000 -> floors distinctColours>16 nonBackgroundFraction>=0.40"
-                    + " verticalBands>=250 blackFraction<=0.05; panel floors from the gui frame of the same run:"
-                    + " panelChangedFraction>=MEASURED panelStrongFraction>=MEASURED panelDistinctColours>=MEASURED"
-                    + " panelRowAmplitude>=MEASURED";
-        } else {
-            reference = "gl-bridge scene-ref-terrain (scene=terrain, x=0.5 y=12.0 z=0.5 yaw=180 pitch=20,"
-                    + " screenshots/celtium-validation.png): distinctColours=1535, nonBackgroundFraction=0.732164,"
-                    + " verticalBands=631, blackFraction=0.000000 -> floors distinctColours>16,"
-                    + " nonBackgroundFraction>=0.40 (55% of measured), verticalBands>=250 (40% of measured),"
-                    + " blackFraction<=0.05";
-        }
         double minNonBackground = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minNonBackgroundFraction", Double.toString(referenceNonBackground)));
-        int minBands = Integer.getInteger("celtium.validation.gate.minVerticalBands", referenceBands).intValue();
-        double maxBlack = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.maxBlackFraction", Double.toString(referenceBlack)));
-        minPanelChanged = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minPanelChangedFraction", Double.toString(minPanelChanged)));
-        minPanelStrong = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minPanelStrongFraction", Double.toString(minPanelStrong)));
-        minPanelColours = Integer.getInteger("celtium.validation.gate.minPanelDistinctColours", minPanelColours).intValue();
-        minPanelRowAmplitude = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minPanelRowAmplitude", Double.toString(minPanelRowAmplitude)));
-        boolean calibrated = scene.calibrated;
-        if (!calibrated) {
-            // The smoke test and the identity checks still apply - those are correctness, not thresholds - but the
-            // scene's measured floors are not enforced, because there is no measurement to enforce.
-            minNonBackground = 0.0D;
-            minBands = 0;
-            maxBlack = 1.0D;
-        }
+                "celtium.validation.gate.minNonBackgroundFraction",
+                Double.toString(measured.minNonBackgroundFraction)));
+        int minBands = Integer.getInteger("celtium.validation.gate.minVerticalBands",
+                measured.minVerticalBands).intValue();
+        double maxBlack = Double.parseDouble(System.getProperty("celtium.validation.gate.maxBlackFraction",
+                Double.toString(measured.maxBlackFraction)));
+        double minPanelChanged = Double.parseDouble(System.getProperty(
+                "celtium.validation.gate.minPanelChangedFraction",
+                Double.toString(measured.minPanelChangedFraction)));
+        double minPanelStrong = Double.parseDouble(System.getProperty(
+                "celtium.validation.gate.minPanelStrongFraction",
+                Double.toString(measured.minPanelStrongFraction)));
+        int minPanelColours = Integer.getInteger("celtium.validation.gate.minPanelDistinctColours",
+                measured.minPanelDistinctColours).intValue();
+        double minPanelRowAmplitude = Double.parseDouble(System.getProperty(
+                "celtium.validation.gate.minPanelRowAmplitude",
+                Double.toString(measured.minPanelRowAmplitude)));
         return new SceneGate(minDistinctColours, minNonBackground, minBands, maxBlack, minPanelChanged, minPanelStrong,
-                minPanelColours, minPanelRowAmplitude, reference, calibrated);
+                minPanelColours, minPanelRowAmplitude, measured.reference, measured.referenceRuns,
+                measured.referenceNumbers, measured.margin, measured.calibrated);
     }
+
+    /** The measured gate for a scene: the scene's own reference runs, their numbers, and the floors derived from them. */
+    private static SceneGate celtium$measuredGate(Scene scene) {
+        switch (scene) {
+            case NETHER:
+                return celtium$netherGate();
+            case VIDEO_SETTINGS:
+                return celtium$videoSettingsGate();
+            case END:
+            case OTHER_DIMENSION:
+                return celtium$uncalibratedGate(scene);
+            case TERRAIN:
+            default:
+                return celtium$terrainGate();
+        }
+    }
+
+    /**
+     * The terrain scene's floors, measured on two GL-bridge reference runs at the fixture pose.
+     * <p>
+     * References (GL bridge, fresh game directory, {@code scene=terrain}, 1280x720, camera x=0.5 y=12.0 z=0.5
+     * yaw=180 pitch=20, picture = the capture's own {@code screenshots/celtium-validation.png}, because the GL bridge
+     * presents nothing through Vulkan):
+     * <ul>
+     * <li>{@code scene-ref-terrain} (run dir {@code .celtium-work/runtime/scene-ref-terrain}, 2026-10-11 01:15):
+     * distinctColours=1535, nonBackgroundFraction=0.732164, verticalBands=631, blackFraction=0.000000,
+     * backgroundColour=0x571716.</li>
+     * <li>{@code scene-floors/terrain-a} (2026-10-11 09:11, the same scene at the same pose, for the run-to-run
+     * spread): distinctColours=1536, nonBackgroundFraction=0.727735, verticalBands=638, blackFraction=0.000000,
+     * backgroundColour=0x571716. The renderer's own viewport at that capture read 0.50 13.60 0.45 against the pose's
+     * eye 0.5 13.62 0.5.</li>
+     * </ul>
+     * The floors are the smaller reference with a stated margin, in the direction that keeps them meaningful:
+     * {@code nonBackgroundFraction >= 0.40} is 55% of the smaller measured 0.727735 (the two runs differ by 0.004429,
+     * so the floor is 74x the measured spread); {@code verticalBands >= 250} is 39% of the smaller measured 638
+     * (spread 7 rows); {@code blackFraction <= 0.05} against a measured 0.000000, which still catches the frames the
+     * audit wants caught (outline2 0.6715 black at 11751 colours, outline5 0.321, tesr1 0.519 at 46 colours - all
+     * three of which passed the old "more than 16 colours" test).
+     */
+    private static SceneGate celtium$terrainGate() {
+        String runs = "gl-bridge scene-ref-terrain (2026-10-11 01:15, .celtium-work/runtime/scene-ref-terrain) and"
+                + " gl-bridge scene-floors/terrain-a (.celtium-work/runtime/scene-floors/terrain-a), both scene=terrain"
+                + " at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, 1280x720, picture=screenshots/celtium-validation.png"
+                + " (the GL bridge's own screenshot)";
+        String numbers = "scene-ref-terrain: distinctColours=1535 nonBackgroundFraction=0.732164 verticalBands=631"
+                + " blackFraction=0.000000 backgroundColour=0x571716; scene-floors/terrain-a:"
+                + " distinctColours=1536 nonBackgroundFraction=0.727735 verticalBands=638 blackFraction=0.000000"
+                + " (spread: 1 colour, 0.004429 non-background, 7 bands, 0.000000 black)";
+        String margin = "nonBackgroundFraction floor 0.40 = 55% of the smaller reference 0.727735 (74x the measured"
+                + " spread of 0.004429); verticalBands floor 250 = 39% of the smaller reference 638 (spread 7 rows);"
+                + " blackFraction ceiling 0.05 = measured 0.000000 + 0.05, which still catches the audit's"
+                + " large-black-region frames (0.32-0.67 black)";
+        String reference = "gl-bridge " + runs + ": " + numbers + " -> floors distinctColours>16,"
+                + " nonBackgroundFraction>=0.40, verticalBands>=250, blackFraction<=0.05; margin: " + margin;
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.40D, 250, 0.05D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+                numbers, margin, true);
+    }
+
+    /**
+     * The video settings scene's floors: the terrain world floors on its world frame, and the same run's GUI frame
+     * against that world frame for the panel.
+     * <p>
+     * References (GL bridge, fresh game directory, {@code scene=videoSettings}, same pose and extent as the terrain
+     * scene; the world frame is {@code screenshots/celtium-validation-world.png} and the GUI frame is
+     * {@code screenshots/celtium-validation.png}, both written synchronously by the capture that draws them; the screen
+     * is {@code net.minecraft.client.gui.GuiVideoSettings}, title "Video Settings", reached through
+     * {@code GuiOptions.mouseClicked} on button 101):
+     * <ul>
+     * <li>{@code scene-floors/video-a} (2026-10-11 09:11) and {@code scene-floors/video-b} (09:12), two runs of the
+     * same scene at the same pose, for the spread. World frame: distinctColours=1536/1536,
+     * nonBackgroundFraction=0.727735/0.727735, verticalBands=638/638, blackFraction=0.000000/0.000000. GUI frame:
+     * distinctColours=17626/17699, nonBackgroundFraction=0.837541/0.836627, verticalBands=720/720,
+     * blackFraction=0.000000/0.000000. Panel (the open screen's own list, 0,32..427,208 in GUI units, which is
+     * 2,98..1279,622 in pixels at the game's scale 3): guiPanelChangedFraction=0.477975/0.478083,
+     * guiPanelStrongFraction=0.455733/0.455836, guiPanelDistinctColours=15805/15877, guiPanelRowAmplitude=9.344/9.441;
+     * the same rectangle of the world frame measures guiWorldPanelDistinctColours=1509/1516 and
+     * guiWorldPanelRowAmplitude=9.509/9.789, and the panel mean luma 101.001/100.497 against the world's
+     * 105.481/104.521.</li>
+     * <li>{@code scene-ref-video2} (01:18) is the earlier GL-bridge run of this scene. Its world-frame numbers
+     * (1540/0.728299/638/0.000000) agree with the two above; its panel numbers were measured before the panel
+     * rectangle was scaled, on the 425x174 corner region rather than on the list, so they are not used here.</li>
+     * </ul>
+     * The panel floors are a fraction of the measured panel, and each one sits between the measured panel and the
+     * world frame at that rectangle: {@code panelChangedFraction >= 0.30} against a measured 0.478 (a frame in which the
+     * screen never drew is the world frame itself, 0.000 by construction); {@code panelStrongFraction >= 0.25} against a
+     * measured 0.456 (the share differing by more than 32 per channel); {@code panelDistinctColours >= 4000} against a
+     * measured 15805 and 1509 in the world frame there (the floor is 2.6x the world's count and 25% of the panel's);
+     * {@code panelRowAmplitude >= 0.25} is a flatness guard only - the measured 9.344 is large, but the world frame at
+     * the same rectangle measures 9.509, so row amplitude does not separate this scene's panel from the world frame at
+     * this GUI scale and the floor is not claimed to.
+     * <p>
+     * The panel floors are measured at the game's GUI scale 3, which is what a fresh game directory resolves to at
+     * 1280x720: the list rectangle is a different region of the frame at another scale (427x176 GUI units is 427x176
+     * pixels at scale 1 and 1281x528 at scale 3), so a run at another scale is reported as uncalibrated rather than
+     * judged by these numbers.
+     */
+    private static SceneGate celtium$videoSettingsGate() {
+        String runs = "gl-bridge scene-floors/video-a (2026-10-11 09:11) and scene-floors/video-b (09:12), both"
+                + " scene=videoSettings at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, 1280x720, guiScale=3, world frame="
+                + "screenshots/celtium-validation-world.png and gui frame=screenshots/celtium-validation.png (the GL"
+                + " bridge's own screenshots), screen=net.minecraft.client.gui.GuiVideoSettings"
+                + " (net.minecraft.client.gui.GuiVideoSettings was open at the capture in both), plus gl-bridge"
+                + " scene-ref-video2 (01:18) for the world frame";
+        String numbers = "world frame: distinctColours=1536/1536 nonBackgroundFraction=0.727735/0.727735"
+                + " verticalBands=638/638 blackFraction=0.000000/0.000000; gui frame:"
+                + " guiPanelChangedFraction=0.477975/0.478083 guiPanelStrongFraction=0.455733/0.455836"
+                + " guiPanelDistinctColours=15805/15877 guiPanelRowAmplitude=9.344/9.441"
+                + " guiWorldPanelDistinctColours=1509/1516 guiWorldPanelRowAmplitude=9.509/9.789"
+                + " guiPanelMeanLuma=101.001/100.497 guiWorldPanelMeanLuma=105.481/104.521"
+                + " (spread: 0.000108 changed, 0.000103 strong, 72 colours, 0.097 row amplitude)";
+        String margin = "world floors as the terrain scene's (nonBackgroundFraction>=0.40 = 55% of 0.727735,"
+                + " verticalBands>=250 = 39% of 638, blackFraction<=0.05 against 0.000000); panel floors"
+                + " panelChangedFraction>=0.30 = 63% of the measured 0.478 (a frame where the screen never drew"
+                + " measures 0.000), panelStrongFraction>=0.25 = 55% of the measured 0.456, panelDistinctColours>=4000 ="
+                + " 25% of the measured 15805 and 2.6x the 1509 the world frame has at the same rectangle,"
+                + " panelRowAmplitude>=0.25 as a flatness guard only (measured 9.344, but the world frame measures 9.509"
+                + " there, so this floor does not separate panel from world at this scale)";
+        String reference = "gl-bridge " + runs + ": " + numbers + " -> floors distinctColours>16,"
+                + " nonBackgroundFraction>=0.40, verticalBands>=250, blackFraction<=0.05, panelChangedFraction>=0.30,"
+                + " panelStrongFraction>=0.25, panelDistinctColours>=4000, panelRowAmplitude>=0.25 (flatness guard);"
+                + " margin: " + margin;
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.40D, 250, 0.05D, 0.30D, 0.25D, 4000, 0.25D, reference,
+                runs, numbers, margin, true);
+    }
+
+    /**
+     * The Nether scene's floors, measured on GL-bridge reference runs of the Nether at the scene's own pose.
+     * <p>
+     * References (GL bridge, fresh game directory, {@code scene=nether} via
+     * {@code -Dceltium.validation.dimensionAtTick=80 -Dceltium.validation.dimension=-1}, 1280x720, camera x=1.5 y=70.0
+     * z=1.5 yaw=180 pitch=20 - the arrival spot the fixture's own teleporter verifies as air with ground under it -
+     * picture = the capture's own {@code screenshots/celtium-validation.png}):
+     * <ul>
+     * <li>{@code scene-floors/nether-c1} (2026-10-11 09:43) and {@code scene-floors/nether-c2} (09:44), two runs of
+     * the same scene at the same pose. The renderer's own viewport at the capture read x=1.5000 y=71.6000 z=1.4500,
+     * the pose's eye, in both ({@code rendererCameraAtPose=true}). Measured: distinctColours=1937/1894,
+     * nonBackgroundFraction=0.938502/0.938502, verticalBands=720/720, blackFraction=0.087951/0.087951,
+     * backgroundColour=0x200201. Spread: 43 colours, 0.000000 non-background, 0 bands, 0.000000 black.</li>
+     * <li>The earlier runs at the overworld's pose (x=0.5 y=12 z=0.5) are <em>not</em> this scene and are not used:
+     * y=12 in the Nether is inside the dimension's rock, where the frame is whichever sections the renderer happened to
+     * have meshed, measuring nonBackgroundFraction 0.183982 (background 0x120303) and 0.420806 (background 0x000027,
+     * the void where nothing was drawn) at the same pose - see {@link #celtium$referencePose}.</li>
+     * </ul>
+     * A Nether frame of this fixture is dark - netherrack lit only by what light reaches it - so the overworld's
+     * blackFraction ceiling of 0.05 would fail this scene's own correct frames (measured 0.087951): the scene's
+     * ceiling is its own. {@code nonBackgroundFraction >= 0.80} is 85% of the measured 0.938502; the two runs measured
+     * that fraction to the same six decimals, so the 15% is an allowance for content a frame may legitimately not
+     * show, not a spread - and a frame missing a section would show the void in its place, which is exactly the
+     * missing-content case the floor exists to catch. {@code verticalBands >= 288} is 40% of the measured 720 (the same
+     * 720 the in-rock frames measured; a flat or untextured frame is far below). {@code blackFraction <= 0.18} is 2x
+     * the measured 0.087951, which still catches the audit's large-black-region frames (0.32-0.67 black).
+     */
+    private static SceneGate celtium$netherGate() {
+        String runs = "gl-bridge scene-floors/nether-c1 (2026-10-11 09:43) and scene-floors/nether-c2 (09:44), both"
+                + " scene=nether at x=1.5 y=70.0 z=1.5 yaw=180 pitch=20 (the arrival spot the fixture's teleporter"
+                + " verifies as air with ground: dimensionArrivalPlacement 'arrival=0,70,1 ... placed=1,70,1"
+                + " placedBlock=minecraft:air ground=true safe=true'), 1280x720, picture=screenshots/celtium-validation.png"
+                + " (the GL bridge's own screenshot), renderer viewport at the capture x=1.5000 y=71.6000 z=1.4500 in"
+                + " both (the pose's eye)";
+        String numbers = "distinctColours=1937/1894 nonBackgroundFraction=0.938502/0.938502 verticalBands=720/720"
+                + " blackFraction=0.087951/0.087951 backgroundColour=0x200201 (spread: 43 colours, 0.000000"
+                + " non-background, 0 bands, 0.000000 black). The overworld-pose runs at x=0.5 y=12 z=0.5 are a different"
+                + " scene variant: 0.183982 non-background (background 0x120303, inside the rock) and 0.420806"
+                + " (background 0x000027, the void where no section was drawn)";
+        String margin = "nonBackgroundFraction floor 0.80 = 85% of the measured 0.938502 (the runs agree to six"
+                + " decimals, so this is an allowance for content a frame may legitimately not show, and a missing"
+                + " section shows the void instead and fails); verticalBands floor 288 = 40% of the measured 720;"
+                + " blackFraction ceiling 0.18 = 2x the measured 0.087951, because the overworld's 0.05 would fail this"
+                + " scene's own correct frames (and the audit's large-black frames are 0.32-0.67, still caught)";
+        String reference = "gl-bridge " + runs + ": " + numbers + " -> floors distinctColours>16,"
+                + " nonBackgroundFraction>=0.80, verticalBands>=288, blackFraction<=0.18; margin: " + margin;
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.80D, 288, 0.18D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+                numbers, margin, true);
+    }
+
+    /**
+     * A scene with no measured reference: no floors are enforced, and the report says so in words.
+     * <p>
+     * It must not pass silently either, which is what {@code UNCALIBRATED_PRESENTED_IMAGE} is for: the picture is
+     * still held to the smoke test, the identity, the frame binding and the camera pose, but nothing here claims it
+     * shows the scene, because nobody has measured what the scene looks like from this pose yet.
+     */
+    private static SceneGate celtium$uncalibratedGate(Scene scene) {
+        String runs = "none: no GL-bridge reference run of scene " + scene.name + " at its own pose (see"
+                + " celtium$referencePose) exists yet";
+        String numbers = "none measured for this scene";
+        String margin = "no floors: a floor without a measured reference would be another scene's number, which is what"
+                + " failed a Nether frame whose picture was fine (.celtium-work/runtime/vuid-after2:"
+                + " nonBackgroundFraction=0.32598 against the overworld floor of 0.40)";
+        String reference = "not calibrated, scene " + scene.name + ": " + runs + ". No floor of any other scene is"
+                + " applied here - not the overworld's (nonBackgroundFraction>=0.40, verticalBands>=250,"
+                + " blackFraction<=0.05) and not the Nether's (0.80/288/0.18) - and the run's own"
+                + " sceneCalibrationKey is compared with the key its scene's floors would need. The picture is held to"
+                + " the smoke test, its identity, the frame binding and the camera pose only.";
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.0D, 0, 1.0D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+                numbers, margin, false);
+    }
+
+    /**
+     * The calibration key of a run: everything that decides what the picture contains.
+     * <p>
+     * This is the audit's requirement made concrete - the key carries the scene, the pose, the world stack and every
+     * variant flag that changes the frame (registry sweeps, the all-blocks wall, the entity set, and the GUI scale the
+     * panel is laid out at) - so a floor measured on one picture cannot be applied to a different one. The key is a
+     * string so the report can carry both the run's key and the key its scene's floors were measured under, and a
+     * reader can see the difference without reading this file.
+     * <p>
+     * It is why the measured run at pitch=-14 of a scene whose floors were taken at pitch=+20 is uncalibrated rather
+     * than failed: the key differs, so no floor of that scene describes that picture.
+     */
+    private static String celtium$calibrationKey(Scene scene, CameraPose pose, int guiScale) {
+        String stack = System.getProperty("celtium.validation.worldLayers", celtium$DEFAULT_WORLD_LAYERS);
+        int sweep = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
+        StringBuilder key = new StringBuilder();
+        key.append("scene=").append(scene.name);
+        key.append(" pose=").append(pose.describe());
+        key.append(" stack=").append(celtium$DEFAULT_WORLD_LAYERS.equals(stack) ? "default" : stack);
+        key.append(" blockSweep=").append(sweep);
+        key.append(" allBlocks=").append(Boolean.getBoolean("celtium.validation.allBlocks"));
+        key.append(" entities=").append(celtium$entityVariant());
+        key.append(" guiScale=").append(guiScale > 0 ? Integer.toString(guiScale) : "unreadable");
+        return key.toString();
+    }
+
+    /** The key the scene's floors were measured under, or the reason there is none. */
+    private static String celtium$referenceCalibrationKey(Scene scene) {
+        if (!scene.calibrated) {
+            return "none: scene " + scene.name + " has no measured reference at any pose";
+        }
+        return celtium$calibrationKey(scene, celtium$referencePose(scene), celtium$REFERENCE_GUI_SCALE);
+    }
+
+    /** The entity flags that change the frame, as one token: the measured references were taken with none of them. */
+    private static String celtium$entityVariant() {
+        StringBuilder variant = new StringBuilder();
+        String[] flags = {"celtium.validation.keepEntities", "celtium.validation.captureEntities",
+                "celtium.validation.glowEntities", "celtium.validation.spawnEntities"};
+        for (String flag : flags) {
+            if (Boolean.getBoolean(flag)) {
+                if (variant.length() > 0) {
+                    variant.append('+');
+                }
+                variant.append(flag.substring(flag.lastIndexOf('.') + 1));
+            }
+        }
+        return variant.length() == 0 ? "none" : variant.toString();
+    }
+
+    /** The fixture's default flat world: the world every measured reference above was taken in. */
+    private static final String celtium$DEFAULT_WORLD_LAYERS =
+            "3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,"
+            + "minecraft:leaves,minecraft:stained_glass,minecraft:chest,minecraft:enchanting_table;1;";
+
 
     /**
      * The flat world's layers, as the superflat generator string.
@@ -669,8 +933,7 @@ public final class ValidationClient {
      * to tell "the world got heavier" apart from "the renderer got slower". The default is the fuller world.
      */
     private final String celtium$worldLayers = System.getProperty("celtium.validation.worldLayers",
-            "3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,"
-            + "minecraft:leaves,minecraft:stained_glass,minecraft:chest,minecraft:enchanting_table;1;");
+            celtium$DEFAULT_WORLD_LAYERS);
     private boolean celtium$rejoinPending;
     private boolean commandsRun;
     private boolean finished;
@@ -1820,6 +2083,8 @@ public final class ValidationClient {
     public void tick(TickEvent.ClientTickEvent event) {
         if (!enabled || finished || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
+        // N02 acceptance probe: display-list add/recompile/delete/re-use, off unless -Dceltium.validation.modelLifecycle.
+        ModelListLifecycleProbe.tick(mc, worldTicks);
         try {
             if (!launched && mc.currentScreen instanceof GuiMainMenu) {
                 launched = true;
@@ -2149,12 +2414,31 @@ public final class ValidationClient {
             if (worldTicks == 20) {
                 mc.player.capabilities.isFlying = true;
                 // Early, so a run that never reaches its capture still says which scene, which run id and which pose
-                // it was: the report is the only thing a failed run leaves behind.
+                // it was: the report is the only thing a failed run leaves behind. The gate's provenance is recorded
+                // here too, so a run that dies before its verdict still names the reference its floors came from.
                 report.addProperty("scene", celtium$scene.name);
                 report.addProperty("sceneGuiStage", Boolean.valueOf(celtium$scene.guiStage));
                 report.addProperty("runId", celtium$runId);
                 report.addProperty("cameraRequested", celtium$pose.describe());
                 report.addProperty("sceneGateSource", celtium$gate.reference);
+                report.addProperty("sceneGateReferenceRuns", celtium$gate.referenceRuns);
+                report.addProperty("sceneGateReferenceNumbers", celtium$gate.referenceNumbers);
+                report.addProperty("sceneGateMargin", celtium$gate.margin);
+                report.addProperty("sceneGateCalibrated", Boolean.valueOf(celtium$gate.calibrated));
+                boolean earlyVariantMeasured = celtium$variantMeasuredAtVerdict();
+                report.addProperty("sceneGateFloorsEnforced",
+                        Boolean.valueOf(celtium$gate.calibrated && earlyVariantMeasured));
+                report.addProperty("sceneVariant", celtium$sceneVariantDescription());
+                report.addProperty("sceneCalibrationKey", celtium$runCalibrationKey());
+                report.addProperty("sceneReferenceCalibrationKey", celtium$referenceCalibrationKey(celtium$scene));
+                report.addProperty("sceneCalibrationKeyMatches", Boolean.valueOf(earlyVariantMeasured));
+                if (!celtium$gate.calibrated || !earlyVariantMeasured) {
+                    report.addProperty("floorsNotCalibrated", "FLOORS NOT CALIBRATED for scene " + celtium$scene.name
+                            + " (" + celtium$sceneDimension() + "): " + celtium$gate.referenceRuns + "; the picture is"
+                            + " held to the smoke test, its identity, the frame binding and the camera pose only, and"
+                            + " the verdict is UNCALIBRATED_PRESENTED_IMAGE (not PASSED, not FAILED). "
+                            + celtium$gate.reference);
+                }
                 if (!"none".equals(celtium$sceneError)) {
                     report.addProperty("sceneError", celtium$sceneError);
                 }
@@ -3696,6 +3980,8 @@ public final class ValidationClient {
         identity.addProperty("stage", evidence.stage);
         identity.addProperty("source", evidence.source);
         identity.addProperty("image", celtium$relative(evidence.image));
+        identity.addProperty("requestedImage", celtium$relative(evidence.requestedImage));
+        identity.addProperty("keptFrom", evidence.keptFrom);
         identity.addProperty("worldTick", evidence.worldTick);
         identity.addProperty("worldFrames", evidence.worldFrames);
         identity.addProperty("presentedFrame", evidence.presentedFrame);
@@ -3756,14 +4042,68 @@ public final class ValidationClient {
             celtium$readAndHash(evidence);
             if (observed != expected) {
                 evidence.completed = false;
+            } else {
+                // The file the renderer wrote is copied before the identity is written, because the renderer keeps
+                // rewriting the last path it was given (see PictureEvidence.requestedImage). The identity then names a
+                // file nothing else writes, so "the image is not the one its identity names" can only mean a real
+                // problem rather than the renderer's own refresh.
+                celtium$keepCompletedCopy(evidence);
             }
             celtium$writeIdentity(evidence);
             celtium$evidence.put(evidence.stage, evidence);
             System.out.println("[Celtium] CELTIUM_PICTURE_IDENTITY stage=" + evidence.stage + " source="
-                    + SOURCE_PRESENTED_DUMP + " file=" + celtium$relative(evidence.image) + " presentedFrame="
-                    + evidence.presentedFrame + " expected=" + expected + " worldTick=" + evidence.worldTick
-                    + " worldFrames=" + evidence.worldFrames + " " + evidence.width + "x" + evidence.height
-                    + " hash=" + Integer.toHexString(evidence.imageHash) + " error=" + evidence.completionError);
+                    + SOURCE_PRESENTED_DUMP + " file=" + celtium$relative(evidence.image) + " requested="
+                    + celtium$relative(evidence.requestedImage) + " keptFrom=" + evidence.keptFrom
+                    + " presentedFrame=" + evidence.presentedFrame + " expected=" + expected + " worldTick="
+                    + evidence.worldTick + " worldFrames=" + evidence.worldFrames + " " + evidence.width + "x"
+                    + evidence.height + " hash=" + Integer.toHexString(evidence.imageHash) + " error="
+                    + evidence.completionError);
+        }
+    }
+
+    /**
+     * Copies a just-completed dump to a path the renderer will never write again, and makes that copy the evidence.
+     * <p>
+     * The renderer re-requests a dump to the last path the fixture asked for every fortieth presented frame, so the
+     * requested path stops being the captured frame as soon as the next refresh lands (measured in
+     * {@code .celtium-work/runtime/unfreeze}: the early dump's identity hash -457084848, the file rewritten 6.7 s later
+     * and then byte-identical to the world dump at 1564670080). Copying the file the moment its frame is named is what
+     * keeps "the picture this verdict is about" a file that still exists, and the copy is re-hashed so the identity and
+     * the bytes it names are checked against each other rather than assumed.
+     */
+    private void celtium$keepCompletedCopy(PictureEvidence evidence) {
+        if (!evidence.completed) {
+            return;
+        }
+        try {
+            String name = evidence.requestedImage.getFileName().toString();
+            String keptName = name.endsWith(".png")
+                    ? name.substring(0, name.length() - 4) + "-kept.png" : name + "-kept.png";
+            java.nio.file.Path kept = evidence.requestedImage.resolveSibling(keptName);
+            java.nio.file.Files.copy(evidence.requestedImage, kept,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            Picture copy = Picture.read(kept);
+            if (copy == null) {
+                evidence.completionError = "the kept copy at " + celtium$relative(kept) + " has no pixels";
+                return;
+            }
+            if (copy.hash() != evidence.imageHash) {
+                evidence.completionError = "the kept copy at " + celtium$relative(kept) + " hashes to 0x"
+                        + Integer.toHexString(copy.hash()) + ", not the 0x" + Integer.toHexString(evidence.imageHash)
+                        + " the requested file was read as: the renderer rewrote the requested path while it was being"
+                        + " copied";
+                return;
+            }
+            evidence.image = kept;
+            evidence.identity = kept.resolveSibling(kept.getFileName().toString() + IDENTITY_SUFFIX);
+            evidence.keptFrom = celtium$relative(evidence.requestedImage);
+            report.addProperty("pictureKept_" + evidence.stage, celtium$relative(kept) + " (copy of "
+                    + evidence.keptFrom + ", hash 0x" + Integer.toHexString(evidence.imageHash)
+                    + ", taken when the frame was named; the renderer's every-40th-frame refresh rewrites the requested"
+                    + " path afterwards)");
+        } catch (Throwable error) {
+            evidence.completionError = "the completed picture at " + celtium$relative(evidence.requestedImage)
+                    + " could not be copied to a path the renderer will not rewrite: " + error;
         }
     }
 
@@ -3869,15 +4209,64 @@ public final class ValidationClient {
         }
         mc.player.capabilities.allowFlying = true;
         mc.player.capabilities.isFlying = true;
-        mc.player.motionX = 0.0D;
-        mc.player.motionY = 0.0D;
-        mc.player.motionZ = 0.0D;
-        mc.player.fallDistance = 0.0F;
-        mc.player.setPositionAndRotation(celtium$pose.x, celtium$pose.y, celtium$pose.z, celtium$pose.yaw, celtium$pose.pitch);
-        mc.player.rotationYawHead = celtium$pose.yaw;
-        mc.player.prevRotationYawHead = celtium$pose.yaw;
-        mc.player.renderYawOffset = celtium$pose.yaw;
-        mc.player.prevRenderYawOffset = celtium$pose.yaw;
+        celtium$setPoseOn(mc.player);
+        // The picture is drawn from the renderer's *view entity*, which is not always the player entity the fixture's
+        // camera gate reads: a dimension change replaces mc.player, and the renderer can keep the old entity, which the
+        // server left at the arrival position. Measured: .celtium-work/runtime/scene-floors/nether-a rendered from
+        // (1.34, 62.32, 1.29) - the Nether arrival - while mc.player read exactly the pinned pose (0.5, 12.0, 0.5), so
+        // the frame was of another camera. The pose is therefore applied to both, and the renderer's own viewport is
+        // gated at the capture (celtium$gateCamera) rather than assumed.
+        net.minecraft.entity.Entity view = mc.getRenderViewEntity();
+        if (view != null && view != mc.player) {
+            celtium$poseViewEntity = view.getClass().getName();
+            celtium$poseViewEntityTicks++;
+            celtium$setPoseOn(view);
+        }
+    }
+
+    /** Sets the scene's position and both rotations on an entity, through the game's own setter. */
+    private void celtium$setPoseOn(net.minecraft.entity.Entity entity) {
+        entity.motionX = 0.0D;
+        entity.motionY = 0.0D;
+        entity.motionZ = 0.0D;
+        entity.fallDistance = 0.0F;
+        entity.setPositionAndRotation(celtium$pose.x, celtium$pose.y, celtium$pose.z, celtium$pose.yaw, celtium$pose.pitch);
+        // The head and body yaw fields are EntityLivingBase's, not Entity's: a view entity that is not a living entity
+        // (a camera entity a mod installed) gets the position and the Entity-level rotations and nothing else.
+        if (entity instanceof net.minecraft.entity.EntityLivingBase) {
+            net.minecraft.entity.EntityLivingBase living = (net.minecraft.entity.EntityLivingBase) entity;
+            living.rotationYawHead = celtium$pose.yaw;
+            living.prevRotationYawHead = celtium$pose.yaw;
+            living.renderYawOffset = celtium$pose.yaw;
+            living.prevRenderYawOffset = celtium$pose.yaw;
+        }
+    }
+
+    /**
+     * The renderer's own camera at the capture, from the viewport line the world renderer publishes.
+     * <p>
+     * This is the camera the picture in the file was drawn from. {@code mc.player} being at the pose says the fixture
+     * asked for the right camera; this says the renderer used it.
+     */
+    private double[] celtium$rendererViewport() {
+        if (!report.has("rendererDebug") || !report.get("rendererDebug").isJsonArray()) {
+            return null;
+        }
+        com.google.gson.JsonArray debug = report.getAsJsonArray("rendererDebug");
+        for (int i = 0; i < debug.size(); i++) {
+            String line = debug.get(i).getAsString();
+            java.util.regex.Matcher match = java.util.regex.Pattern
+                    .compile("Viewport: (-?[0-9.]+) (-?[0-9.]+) (-?[0-9.]+)").matcher(line);
+            if (match.find()) {
+                try {
+                    return new double[] {Double.parseDouble(match.group(1)), Double.parseDouble(match.group(2)),
+                            Double.parseDouble(match.group(3))};
+                } catch (NumberFormatException unreadable) {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -4123,6 +4512,10 @@ public final class ValidationClient {
      * Taken once, on the frame whose evidence is complete, and never against a live counter: the frame assertion reads
      * the identity the dump's own write was observed under and the capture-time snapshot, which is what the Intel run
      * needed when its shutdown re-check compared a capture-time 150 against a live 152.
+     * <p>
+     * A scene with no measured reference is not a pass and not a failure: the picture is still held to the smoke test,
+     * the identity, the frame binding and the camera pose, and the verdict says {@code UNCALIBRATED_PRESENTED_IMAGE}
+     * with the reason in {@code floorsNotCalibrated}.
      */
     private void celtium$judgePictures(Minecraft mc, String when) {
         if (celtium$pictureVerdictTaken) {
@@ -4136,7 +4529,17 @@ public final class ValidationClient {
         celtium$gateCamera(failures);
         report.addProperty("pictureEvidenceSource", celtium$evidenceSource());
         report.addProperty("sceneGateReference", celtium$gate.reference);
+        report.addProperty("sceneGateReferenceRuns", celtium$gate.referenceRuns);
+        report.addProperty("sceneGateReferenceNumbers", celtium$gate.referenceNumbers);
+        report.addProperty("sceneGateMargin", celtium$gate.margin);
         report.addProperty("sceneGateCalibrated", Boolean.valueOf(celtium$gate.calibrated));
+        boolean variantMeasured = celtium$variantMeasuredAtVerdict();
+        celtium$gateEnforced = celtium$gate.calibrated && variantMeasured;
+        report.addProperty("sceneGateFloorsEnforced", Boolean.valueOf(celtium$gateEnforced));
+        report.addProperty("sceneVariant", celtium$sceneVariantDescription());
+        report.addProperty("sceneCalibrationKey", celtium$runCalibrationKey());
+        report.addProperty("sceneReferenceCalibrationKey", celtium$referenceCalibrationKey(celtium$scene));
+        report.addProperty("sceneCalibrationKeyMatches", Boolean.valueOf(variantMeasured));
         report.addProperty("sceneGateFloors", (celtium$gate.calibrated ? "" : "NOT_CALIBRATED (smoke test only): ")
                 + "distinctColours>" + celtium$gate.minDistinctColours
                 + " nonBackgroundFraction>=" + celtium$gate.minNonBackgroundFraction
@@ -4146,6 +4549,20 @@ public final class ValidationClient {
                 + " panelStrongFraction>=" + celtium$gate.minPanelStrongFraction
                 + " panelDistinctColours>=" + celtium$gate.minPanelDistinctColours
                 + " panelRowAmplitude>=" + celtium$gate.minPanelRowAmplitude);
+        if (!celtium$gateEnforced) {
+            // Words, not a missing field: a reader of the report has to be able to tell "no reference yet" from "the
+            // picture passed" without knowing this fixture's internals.
+            report.addProperty("floorsNotCalibrated", "FLOORS NOT CALIBRATED for scene " + celtium$scene.name + " ("
+                    + celtium$sceneDimension() + "): " + (celtium$gate.calibrated
+                            ? "this scene has a measured reference, but this run is not the variant it describes ("
+                                    + celtium$sceneVariantDescription() + "); the reference is " + celtium$gate.referenceRuns
+                            : celtium$gate.referenceRuns)
+                    + ". This run is judged by the smoke test (more than " + celtium$gate.minDistinctColours
+                    + " distinct colours), the picture identity, the frame binding and the camera pose only, and its"
+                    + " verdict is UNCALIBRATED_PRESENTED_IMAGE - not PASSED, because no floor says the picture shows"
+                    + " this scene, and not FAILED, because no floor measured for this scene says it does not."
+                    + " Reference provenance: " + celtium$gate.reference);
+        }
         if (!"none".equals(celtium$sceneError)) {
             failures.add("the run could not be attributed to a scene: " + celtium$sceneError);
         }
@@ -4185,6 +4602,74 @@ public final class ValidationClient {
         }
         report.addProperty("presentedImageFrameCountAboveZero",
                 Boolean.valueOf(primary != null && celtium$presentedImageFailures == 0));
+    }
+
+    /** The GUI scale the video settings panel floors were measured at, in the game's own ScaledResolution units. */
+    private static final int celtium$REFERENCE_GUI_SCALE = 3;
+
+    /** The GUI scale a ScaledResolution gives this window, or -1 when it cannot be read. */
+    private static int celtium$guiScale() {
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            return mc == null ? -1 : new net.minecraft.client.gui.ScaledResolution(mc).getScaleFactor();
+        } catch (Throwable unreadable) {
+            return -1;
+        }
+    }
+
+    /**
+     * Whether this run's picture is the one the scene's floors describe: the scene has a measured reference and this
+     * run's calibration key equals the key those floors were measured under.
+     * <p>
+     * The key is built here rather than at construction because part of it - the GUI scale - is a live game setting,
+     * and the pose is the run's resolved pose rather than the scene's default.
+     */
+    private boolean celtium$variantMeasuredAtVerdict() {
+        if (!celtium$gate.calibrated) {
+            return false;
+        }
+        return celtium$calibrationKey(celtium$scene, celtium$pose, celtium$guiScale())
+                .equals(celtium$referenceCalibrationKey(celtium$scene));
+    }
+
+    /** The run's calibration key as the report carries it. */
+    private String celtium$runCalibrationKey() {
+        return celtium$calibrationKey(celtium$scene, celtium$pose, celtium$guiScale());
+    }
+
+    /** The scene's variant as words: the world stack and the coverage flags that decide what the picture contains. */
+    private static String celtium$sceneVariantDescription() {
+        String stack = System.getProperty("celtium.validation.worldLayers", celtium$DEFAULT_WORLD_LAYERS);
+        int sweep = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
+        int sweepFrom = Integer.getInteger("celtium.validation.blockSweepFrom", 0).intValue();
+        StringBuilder variant = new StringBuilder();
+        variant.append(celtium$DEFAULT_WORLD_LAYERS.equals(stack) ? "default flat stack" : "worldLayers=" + stack);
+        if (sweep > 0) {
+            variant.append(", blockSweep=").append(sweep).append(" from registry index ").append(sweepFrom);
+        }
+        if (Boolean.getBoolean("celtium.validation.allBlocks")) {
+            variant.append(", allBlocks wall");
+        }
+        if (!"none".equals(celtium$entityVariant())) {
+            variant.append(", entity flags ").append(celtium$entityVariant());
+        }
+        int scale = celtium$guiScale();
+        if (scale > 0) {
+            variant.append(", guiScale=").append(scale).append(scale == celtium$REFERENCE_GUI_SCALE
+                    ? " (the scale the panel floors were measured at)"
+                    : " (NOT the scale the panel floors were measured at: " + celtium$REFERENCE_GUI_SCALE + ")");
+        }
+        return variant.toString();
+    }
+
+    /** The scene's dimension as words, so a failure names the world the picture is of, not only the scene's name. */
+    private static String celtium$sceneDimension() {
+        int dimension = Integer.getInteger("celtium.validation.dimension", 0).intValue();
+        int atTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
+        if (atTick <= 0 || dimension == 0) {
+            return "overworld (dimension 0), no transfer requested";
+        }
+        return "dimension " + dimension + " (transfer requested at tick " + atTick + ")";
     }
 
     /**
@@ -4344,10 +4829,13 @@ public final class ValidationClient {
         PresentedImageStats stats = picture.stats();
         boolean primary = "world".equals(stage) ? !celtium$scene.guiStage : celtium$scene.guiStage;
         String prefix = "world".equals(stage) ? "worldFrame" : "guiFrame";
-        String label = "scene=" + celtium$scene.name + " stage=" + stage + " frame=["
-                + "source=" + celtium$evidenceSource() + " extent=" + stats.width + "x" + stats.height
-                + " worldTick=" + celtium$tickOfEvidence(stage) + " presentedFrame=" + celtium$frameOfEvidence(stage)
-                + " identity=" + celtium$relative(celtium$imageOfEvidence(stage)) + "]";
+        // What a failure names: the scene and the world it is of, the stage, the file, its identity sidecar, where the
+        // picture came from, and the frame it is: a reader has to be able to open the image a verdict is about.
+        String label = "scene=" + celtium$scene.name + " (" + celtium$sceneDimension() + ") stage=" + stage
+                + " file=" + celtium$relative(celtium$imageOfEvidence(stage))
+                + " identity=" + celtium$relative(celtium$identityOfEvidence(stage))
+                + " source=" + celtium$evidenceSource() + " extent=" + stats.width + "x" + stats.height
+                + " worldTick=" + celtium$tickOfEvidence(stage) + " presentedFrame=" + celtium$frameOfEvidence(stage);
         report.addProperty(prefix + "StatsSource", celtium$evidenceSource() + " " + stats.width + "x" + stats.height);
         report.addProperty(prefix + "DistinctColours", Integer.valueOf(stats.distinctColours));
         report.addProperty(prefix + "NonBackgroundFraction", Double.valueOf(stats.nonBackgroundFraction));
@@ -4372,14 +4860,12 @@ public final class ValidationClient {
                     Boolean.valueOf(stats.distinctColours > celtium$gate.minDistinctColours));
             report.addProperty("presentedImagePng", celtium$relative(celtium$imageOfEvidence(stage)));
         }
-        if (!celtium$gate.calibrated) {
-            report.addProperty("floorsNotCalibrated", "scene " + celtium$scene.name + ": no GL-bridge reference run at"
-                    + " this pose yet, so no non-background, band or black floor is applied to this picture; the"
-                    + " smoke test (more than " + celtium$gate.minDistinctColours + " distinct colours), the picture"
-                    + " identity, the camera pose and the frame binding are still asserted. " + celtium$gate.reference);
-            report.addProperty(prefix + "Gate", "NOT_CALIBRATED");
+        if (celtium$gateEnforced) {
+            report.addProperty(prefix + "Gate", "CALIBRATED against " + celtium$gate.referenceRuns);
         } else {
-            report.addProperty(prefix + "Gate", "CALIBRATED: " + celtium$gate.reference);
+            report.addProperty(prefix + "Gate", "NOT_CALIBRATED: " + celtium$gate.referenceRuns
+                    + "; this picture is held to the smoke test, its identity and the camera pose only (verdict"
+                    + " UNCALIBRATED_PRESENTED_IMAGE, floorsNotCalibrated)");
         }
         if (stats.distinctColours <= 1) {
             failures.add("the picture is a single colour for " + label + ": presentedDistinctColours="
@@ -4392,22 +4878,24 @@ public final class ValidationClient {
                     + stats.nonBackgroundFraction + ", verticalBands=" + stats.verticalBands + ", blackFraction="
                     + stats.blackFraction + ")");
         }
-        if (celtium$gate.calibrated && stats.nonBackgroundFraction < celtium$gate.minNonBackgroundFraction) {
+        if (celtium$gateEnforced && stats.nonBackgroundFraction < celtium$gate.minNonBackgroundFraction) {
             failures.add("presentedNonBackgroundFraction=" + stats.nonBackgroundFraction + " is below the scene floor of "
                     + celtium$gate.minNonBackgroundFraction + " for " + label + " (backgroundColour="
                     + celtium$hexColour(stats.backgroundColour) + " covers "
-                    + Math.round((1.0D - stats.nonBackgroundFraction) * 1000000.0D) / 10000.0D + "% of the frame)");
+                    + Math.round((1.0D - stats.nonBackgroundFraction) * 1000000.0D) / 10000.0D + "% of the frame; scene"
+                    + " floor measured in " + celtium$gate.referenceRuns + ")");
         }
-        if (celtium$gate.calibrated && stats.verticalBands < celtium$gate.minVerticalBands) {
+        if (celtium$gateEnforced && stats.verticalBands < celtium$gate.minVerticalBands) {
             failures.add("presentedVerticalBands=" + stats.verticalBands + " is below the scene floor of "
                     + celtium$gate.minVerticalBands + " for " + label + ": the frame has too few row transitions to be"
-                    + " a picture of this scene");
+                    + " a picture of this scene (scene floor measured in " + celtium$gate.referenceRuns + ")");
         }
-        if (celtium$gate.calibrated && stats.blackFraction > celtium$gate.maxBlackFraction) {
+        if (celtium$gateEnforced && stats.blackFraction > celtium$gate.maxBlackFraction) {
             failures.add("presentedBlackFraction=" + stats.blackFraction + " is above the scene ceiling of "
                     + celtium$gate.maxBlackFraction + " for " + label + ": " + Math.round(stats.blackFraction * 10000.0D)
                     / 100.0D + "% of the frame is black in every channel, which is the large-black-region defect the"
-                    + " colour count alone passed (outline2: 11751 colours, two thirds black)");
+                    + " colour count alone passed (outline2: 11751 colours, two thirds black; scene ceiling measured in "
+                    + celtium$gate.referenceRuns + ")");
         }
         return failures;
     }
@@ -4457,9 +4945,14 @@ public final class ValidationClient {
         report.addProperty("guiWorldPanelRowAmplitude", Double.valueOf(worldRows));
         report.addProperty("guiPanelMeanLuma", Double.valueOf(panelLuma));
         report.addProperty("guiWorldPanelMeanLuma", Double.valueOf(worldLuma));
-        String label = "scene=" + celtium$scene.name + " stage=gui screen=" + celtium$screenName(mc) + " panel=" + x0
-                + "," + y0 + ".." + x1 + "," + y1 + " guiFrame=[source=" + celtium$evidenceSource() + " worldTick="
-                + celtium$tickOfEvidence("gui") + " presentedFrame=" + celtium$frameOfEvidence("gui") + "]";
+        String label = "scene=" + celtium$scene.name + " (" + celtium$sceneDimension() + ") stage=gui screen="
+                + celtium$screenName(mc) + " panel=" + x0 + "," + y0 + ".." + x1 + "," + y1 + " guiFrame=[file="
+                + celtium$relative(celtium$imageOfEvidence("gui")) + " identity="
+                + celtium$relative(celtium$identityOfEvidence("gui")) + " source=" + celtium$evidenceSource()
+                + " worldTick=" + celtium$tickOfEvidence("gui") + " presentedFrame=" + celtium$frameOfEvidence("gui")
+                + "] worldFrame=[file=" + celtium$relative(celtium$imageOfEvidence("world")) + " identity="
+                + celtium$relative(celtium$identityOfEvidence("world")) + " worldTick="
+                + celtium$tickOfEvidence("world") + "] panel floors measured in " + celtium$gate.referenceRuns;
         if (changed < celtium$gate.minPanelChangedFraction) {
             failures.add("the video settings panel did not draw: guiPanelChangedFraction=" + changed + " is below the"
                     + " reference floor of " + celtium$gate.minPanelChangedFraction + " for " + label);
@@ -4495,7 +4988,11 @@ public final class ValidationClient {
         report.addProperty("cameraRequested", celtium$pose.describe());
         report.addProperty("cameraPoseSource", "fixture pose: server-side teleport at tick " + celtium$poseTick + " ("
                 + celtium$poseResult + "), re-applied on the client every tick (" + celtium$poseAppliedTicks
-                + " times, last at tick " + celtium$poseAppliedAtTick + ")");
+                + " times, last at tick " + celtium$poseAppliedAtTick + ")"
+                + (celtium$poseViewEntityTicks > 0
+                        ? ", and to the renderer's view entity too (" + celtium$poseViewEntity + " on "
+                                + celtium$poseViewEntityTicks + " ticks, where it was not the player entity)"
+                        : ", the renderer's view entity was the player entity on every tick"));
         if (mc.player == null) {
             failures.add("scene " + celtium$scene.name + ": there is no client player, so the capture camera cannot be"
                     + " compared with the scene's pose (" + celtium$pose.describe() + ")");
@@ -4516,6 +5013,42 @@ public final class ValidationClient {
             failures.add("scene " + celtium$scene.name + ": the camera at the capture is not the pose the scene's"
                     + " floors were measured at (requested " + celtium$pose.describe() + ", measured " + measured
                     + "): two runs of this scene are not pixel-comparable and the floors do not describe this picture");
+        }
+        // The camera the picture was actually drawn from. mc.player above is the fixture's side of the claim; the world
+        // renderer publishes the viewport it used, and the two can disagree - after the Nether transfer one run rendered
+        // from (1.34, 62.32, 1.29), the arrival position, while mc.player read exactly the pose (measured:
+        // .celtium-work/runtime/scene-floors/nether-a against nether-b). A picture taken from another camera is not a
+        // picture of this scene, so it is refused here rather than judged by the scene's floors.
+        double[] viewport = celtium$rendererViewport();
+        double eyeY = celtium$pose.y + mc.player.getEyeHeight();
+        if (viewport == null) {
+            report.addProperty("rendererCameraAtCapture", "unavailable: the renderer published no viewport line at the"
+                    + " capture (no world renderer in this configuration, or the capture never ran)");
+        } else {
+            double vdx = viewport[0] - celtium$pose.x;
+            double vdy = viewport[1] - eyeY;
+            double vdz = viewport[2] - celtium$pose.z;
+            // The renderer's viewport is the eye position and carries the game's own view bobbing and partial-tick
+            // interpolation, which the measured runs put within 0.05 of the pose for x/z and 0.02 for y (terrain and
+            // video: 0.50 13.60 0.45 against a pose of 0.5, 12.0, 0.5 and an eye height of 1.62). The tolerance is
+            // wide enough for that and far narrower than any camera that is not this pose: the stale one was 50 blocks
+            // away.
+            boolean atPose = Math.abs(vdx) <= 0.25D && Math.abs(vdz) <= 0.25D && Math.abs(vdy) <= 0.50D;
+            report.addProperty("rendererCameraAtCapture", String.format(java.util.Locale.ROOT,
+                    "x=%.4f y=%.4f z=%.4f (the world renderer's own viewport at the capture; the pose's eye is"
+                            + " x=%.4f y=%.4f z=%.4f, tolerance 0.25 horizontally and 0.50 vertically)",
+                    viewport[0], viewport[1], viewport[2], celtium$pose.x, eyeY, celtium$pose.z));
+            report.addProperty("rendererCameraAtPose", Boolean.valueOf(atPose));
+            if (!atPose) {
+                failures.add("scene " + celtium$scene.name + ": the renderer drew this picture from "
+                        + String.format(java.util.Locale.ROOT, "x=%.2f y=%.2f z=%.2f", viewport[0], viewport[1], viewport[2])
+                        + ", not from the pose's eye " + String.format(java.util.Locale.ROOT, "x=%.2f y=%.2f z=%.2f",
+                                celtium$pose.x, eyeY, celtium$pose.z)
+                        + " the scene's floors were measured at (mc.player reads " + measured + "): the frame in the"
+                        + " file is a picture of another camera position, so the scene's floors do not describe it"
+                        + " (this is the stale-view-entity case: the renderer kept an entity the dimension transfer had"
+                        + " moved, measured in .celtium-work/runtime/scene-floors/nether-a)");
+            }
         }
     }
 
@@ -4538,15 +5071,37 @@ public final class ValidationClient {
                 : evidence.image;
     }
 
+    /** The identity sidecar of the picture of a stage, or a placeholder when there is none. */
+    private java.nio.file.Path celtium$identityOfEvidence(String stage) {
+        PictureEvidence evidence = celtium$evidence.get(stage);
+        return evidence == null
+                ? Minecraft.getMinecraft().gameDir.toPath().resolve("screenshots/<none>" + IDENTITY_SUFFIX)
+                : evidence.identity;
+    }
+
     /**
      * The run's status from the picture verdict.
+     * <p>
+     * Three outcomes, not two: {@code PASSED} when every picture is the frame its identity names and the scene's own
+     * measured floors hold; {@code FAILED_PRESENTED_IMAGE} when they do not; and
+     * {@code UNCALIBRATED_PRESENTED_IMAGE} when the scene has no measured reference, which is neither - it must not
+     * read as a pass, and it must not train a reader to ignore failures by being one.
      * <p>
      * A run that has already failed for a reason of its own keeps that verdict - a dimension run whose gate failed can
      * still have presented a clean frame, and that picture passing must not turn the failure into a pass - and the
      * picture verdict is recorded under its own name either way.
      */
     private void celtium$setStatusFromPictures() {
-        String verdict = celtium$presentedImageFailures == 0 ? "PASSED" : "FAILED_PRESENTED_IMAGE";
+        boolean enforced = report.has("sceneGateFloorsEnforced")
+                && report.get("sceneGateFloorsEnforced").getAsBoolean();
+        String verdict;
+        if (celtium$presentedImageFailures > 0) {
+            verdict = "FAILED_PRESENTED_IMAGE";
+        } else if (!enforced) {
+            verdict = "UNCALIBRATED_PRESENTED_IMAGE";
+        } else {
+            verdict = "PASSED";
+        }
         report.addProperty("presentedImageVerdict", verdict);
         String status = report.has("status") ? report.get("status").getAsString() : null;
         if ("FAILED".equals(status) || "NO_CAPTURE".equals(status)) {
@@ -4555,9 +5110,15 @@ public final class ValidationClient {
         report.addProperty("status", verdict);
     }
 
-    /** The assertion results as one line: PASSED, or every failure with the numbers and the frame it measured. */
-    private static String celtium$presentedImageAssertionMessage(java.util.List<String> failures) {
+    /** The assertion results as one line: PASSED, uncalibrated, or every failure with the numbers and the frame it measured. */
+    private String celtium$presentedImageAssertionMessage(java.util.List<String> failures) {
         if (failures.isEmpty()) {
+            if (!celtium$gateEnforced) {
+                return "UNCALIBRATED: this scene has no measured reference, so no non-background, band, black or panel"
+                        + " floor was applied; the smoke test, the picture identity, the frame binding and the camera"
+                        + " pose held. The run is neither passed nor failed on a picture nobody has measured"
+                        + " (see floorsNotCalibrated)";
+            }
             return "PASSED: every picture is the frame its identity names, and the scene's gate (distinct colours,"
                     + " non-background fraction, row bands, black fraction; panel statistics for a GUI scene) held";
         }
