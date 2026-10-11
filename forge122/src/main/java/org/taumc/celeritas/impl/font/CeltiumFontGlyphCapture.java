@@ -101,7 +101,8 @@ public final class CeltiumFontGlyphCapture {
      * used, off by default.
      * <p>
      * The strip and the quad cover the same rectangle, so this isolates the one thing that differs between the glyph
-     * batch and every GUI batch that is known to reach the frame: the primitive mode.
+     * batch and every GUI batch that is known to reach the frame: the primitive mode. It is a diagnostic; the shipped
+     * path submits the strip vanilla emitted, unchanged.
      */
     private static final boolean FORCE_QUADS = "quads".equals(System.getProperty("celtium.font.mode", ""));
 
@@ -109,12 +110,11 @@ public final class CeltiumFontGlyphCapture {
      * {@code -Dceltium.font.winding=swapped} offers the four vertices in the strip order with its middle pair exchanged
      * (top-left, top-right, bottom-left, bottom-right), off by default.
      * <p>
-     * The rectangle and every vertex's texture coordinate are unchanged; only the winding is. It exists because the
-     * measurement says the renderer keeps one winding and drops the other: a screen-filling quad offered as vanilla's
-     * strip order drew nothing at all, while the same quad offered as {@code GL_QUADS} drew exactly one of its two
-     * triangles - the one whose winding is the opposite of the strip's. Culling is on at the glyph (measured:
-     * {@code cull=true}), so if exchanging the middle pair makes the glyphs appear, the geometry was being culled for
-     * its winding and nothing else about the capture is at fault.
+     * The rectangle and every vertex's texture coordinate are unchanged; only the winding is. It is the second half of
+     * the "accepted and never seen" experiment: {@link #STATE_PROBE} reads whether culling is on at the glyph, and this
+     * asks the other question - if the same four corners appear when their winding is exchanged, the batch was culled
+     * for its winding rather than never drawn. Both are diagnostics and nothing but an explicit property turns either
+     * on; neither is a mode the font is meant to run in.
      */
     private static final boolean SWAP_WINDING = "swapped".equals(System.getProperty("celtium.font.winding", ""));
 
@@ -139,15 +139,15 @@ public final class CeltiumFontGlyphCapture {
     private static int matrixProbeLines;
 
     /**
-     * {@code -Dceltium.font.stateProbe=true} prints the live GL state and the mirrored matrices at a bounded number of
-     * glyphs, in either configuration, off by default.
+     * {@code -Dceltium.font.stateProbe=true} prints the live GL state and the matrices at a bounded number of glyphs,
+     * in either configuration, off by default.
      * <p>
-     * The measured difference this exists for: the same screen-filling quad is invisible when it is offered as the
-     * strip vanilla used and visible (as one of its two triangles) when it is offered as {@code GL_QUADS}. Two
-     * triangles of one rectangle differ only in winding, so the state that decides winding - culling and which face
-     * is front - is the thing to read at the moment of the glyph rather than reason about. In the bridge the same
-     * line is the reference: that is the state real OpenGL draws these glyphs correctly under, with the same vanilla
-     * vertex order.
+     * The question it answers is whether a batch that is accepted and never seen was culled: the raster state that
+     * decides that (culling, the front face, the depth test) is the game's, not the capture's, and it can only be read
+     * at the moment of the glyph. Both the GL answer and the renderer's own mirrored matrices are printed, because the
+     * draw uses the mirror while the stub answers the GL query from its own record, and a geometry that is accepted
+     * and invisible is either drawn with the wrong matrix or not drawn at all. In the bridge the same line is the
+     * reference: that is the state real OpenGL draws these glyphs correctly under, with the same vanilla vertex order.
      */
     private static final boolean STATE_PROBE = Boolean.getBoolean("celtium.font.stateProbe");
     private static int stateProbeLines;
@@ -597,5 +597,23 @@ public final class CeltiumFontGlyphCapture {
                 + " bridgeWindows=" + bridgeWindows + " quads=" + quads + " submitted=" + submitted
                 + " accepted=" + accepted + " refused=" + refused + " submitMillis=" + (submitNanos / 1000000L)
                 + " reasons=" + REFUSALS;
+    }
+
+    /**
+     * Prints {@link #summary()} once, when the JVM exits.
+     * <p>
+     * The progress lines stop after {@link #PROGRESS_LINES} of them, so the totals a run ends with were only ever
+     * readable by adding them up; {@code summary()} existed for the report and nothing called it. A shutdown hook is
+     * the one place that runs after the last glyph of every configuration - a run that is killed by the harness's
+     * timeout included - and it only reads these counters, never the game.
+     */
+    static {
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(
+                    () -> System.out.println("[Celtium] CELTIUM_FONT_GLYPH_SUMMARY " + summary()),
+                    "celtium-font-summary"));
+        } catch (IllegalStateException | SecurityException ignored) {
+            // A shutdown already in progress, or a security manager: the counters are a diagnostic, not a contract.
+        }
     }
 }
