@@ -140,6 +140,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.199 **最大監査（`docs/history/2026-10-11-full-audit-1832.md`）の受領と P1 割当・item サイズも実プレイで解消**
+
+- **監査の要約（sha256 `49115e2c8cba55a9…`）**: Celeritas 最適化は **341/359 が upstream と同一**で残っているが、
+  **転送（C03・per-segment queue idle）と最終 draw（C04・`vkCmdDrawIndexed` ループ）は元の効率ではない**。
+  汎用 GL→VK 変換器ではないが、**stub の `glDrawArrays`/raw pointer/`glCopyTex` の境界は低い**（`/proc` readable 判定で
+  任意 mod の直接 GL も通り得る＝callsite census は acceptance allowlist ではない）。
+  **C02 は配送前 source 是正済み**（`28edeccd6`＝Forge 入口 owner・raw matrix の無条件適用は撤回）と監査が確認。
+  **C01 は runtime 受入が残る**。**C07 の 208B push は 1.2/1.3 の保証 128B を超える**（1.4 のみ 256B）。
+  **C06 の VSync は native present に届いていない**。**C08 の GUI floor は参照自身も落ちる**。**C09 の splash/panorama ownership** が残る。
+  **C13.5**（`diagnostics()` が呼ばれるたび ArrayList に追記＝累積）は P2 の整理対象。
+  **24 分野の完了ではない**・**FAIL を PASS に読み替えない**・**goal ID/revision の同期**（下記で実施）が明記されている。
+- **新規 P1 タスク**: **task-56**（sky-draws・VSync と他 option の native 適用）・**task-57**（pipelines・208B→128B 契約と
+  fog/light の分離）。既存の task-51（C03）・task-47（C08）・task-36/53（C09/lag）と合わせて監査の P1 を全て owner 付きにした。
+- **goal header 同期（監査 17.2）**: live は `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`（revision 1・active/armed・
+  roundsStarted 5・maxGoalRounds 256）。plan と `docs/goal.md` の旧 `goal-0d07c3b5-…`（revision 61）記載を live 値へ更新した。
+- **実プレイ追加確認**: ユーザー「**アイテムの大きさも治りました**」＝task-50 の GROUND scale も実プレイで解消
+  （`t45-entity-hurt` の kept frame でドロップ apple が正しい大きさである私の確認と一致）。
+- **proj-channel の決定的 before 数値**: 旧 jar（stub が raw matrix を適用）では **flag の on/off どちらでも dome が `F²`**
+  （`0.648 = 0.803²`・`2.047 ≈ 1.428²`）——channel 側の flag では二重適用を切り分けられなかった。
+  これが「raw call は GL-API 全体に広がり、mirror が偶然持っていた値と合成される」ことの実測で、**単一 owner 化の根拠**。
+  現行 jar の A/B（`t50c-single-on/off`）は両 leg とも `≈0.805` を期待し、`0.648` なら raw がまだ適用されている＝findings。
+
 ## 0.198 **lag の計器が届いた・audio は独立欠陥ではなく lag の症状（機序を明記）・item 修正の視覚確認**
 
 - **`bootstrapQueueWaits` が summary に届いた**（pipelines・`VulkanTerrainGpuBackend:6036` と upload 量の対）。
