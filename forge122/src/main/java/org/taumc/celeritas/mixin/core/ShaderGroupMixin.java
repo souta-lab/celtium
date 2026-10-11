@@ -40,6 +40,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ShaderGroup.class)
 public abstract class ShaderGroupMixin {
 
+    /**
+     * Lab switch for the one ordering step this hook makes: record the geometry still queued for the chain's input
+     * image before the chain reads it. Default on; {@code -Dceltium.vulkan.chainInputFlush=false} restores the
+     * previous dependence on the main-framebuffer bind's own flush, in the same jar.
+     */
+    private static final boolean CHAIN_INPUT_FLUSH =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.chainInputFlush", "true"));
+
     @Shadow
     private List<Shader> listShaders;
 
@@ -134,6 +142,18 @@ public abstract class ShaderGroupMixin {
             first.groupMainH = inputH;
         }
         if (mainIsGame) {
+            // The chain's input image has to hold the geometry the game just drew into it before the first pass
+            // samples it. The model path coalesces its own flushes to one per target change, so the silhouette batches
+            // that arrived after that first flush are still queued here - and the bind below is the only other flush,
+            // which makes the outcome depend on a bind that exists for another reason. This asks for the flush
+            // explicitly, while the chain's own framebuffer is still the current target and before main is bound.
+            if (CHAIN_INPUT_FLUSH) {
+                try {
+                    backend.celtium$flushPendingForChainInput();
+                } catch (RuntimeException | LinkageError ignored) {
+                    // An ordering hint must never stop the chain from running.
+                }
+            }
             // The handoff validates the bound framebuffer, and under adoption the game framebuffer's binding is the
             // shared one - exactly what a mid-frame acquire needs to see. The bind is also what flushes the batches
             // the game left pending for the framebuffer the chain is about to read: for the outline group those are

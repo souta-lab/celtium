@@ -119,6 +119,20 @@ public final class VulkanTextureRegistry {
      * and "the levels above 0 kept whatever the last whole upload put there" a pair of numbers from the same binary.
      * With the control set, {@code reachUnwritten} in the census must rise; with it unset it must stay at zero.
      */
+    /**
+     * Whether a mirror filled from a captured surface takes the game's own per-level data (the default) or only level
+     * 0, with the chain above it generated here. The second setting is the pre-N07b behaviour and exists as a
+     * measurement control: the whole-image blit averages across sprite borders, so the two settings differ in what a
+     * deep sample reads - which is a claim to be measured, not assumed.
+     */
+    /**
+     * Diagnostic: the sampler reach to force on every captured fill, whatever its content, so the reach and the
+     * content can be measured apart. 0 leaves every mirror with the reach its own content justifies.
+     */
+    private static final int MIRROR_REACH_OVERRIDE =
+            Integer.getInteger("celtium.vulkan.mirrorReachOverride", 0).intValue();
+    private static final boolean MIRROR_CAPTURED_LEVELS =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.mirrorCapturedLevels", "true"));
     private static final boolean PATCH_MIP_LEVELS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.patchMipLevels", "true"));
     /** The GL texture ids that reach the readback refresh, recorded once each. */
@@ -718,7 +732,12 @@ public final class VulkanTextureRegistry {
                 this.entries.put(id, entry);
                 this.mirrorCount++;
             }
-            java.nio.ByteBuffer[] levels = celtium$capturedLevels(glTextureId, extent[0], extent[1]);
+            // Control: -Dceltium.vulkan.mirrorCapturedLevels=false keeps the pre-N07b behaviour (level 0 only, the
+            // chain above it generated here by a whole-image blit) so the per-level content can be measured one flag
+            // apart on one jar. The atlas is the texture this matters for; every other captured fill has one level.
+            java.nio.ByteBuffer[] levels = MIRROR_CAPTURED_LEVELS
+                    ? celtium$capturedLevels(glTextureId, extent[0], extent[1])
+                    : new java.nio.ByteBuffer[] {rgba};
             int appliedLevels = entry.texture.uploadCapturedLevels(glTextureId, extent[0], extent[1], levels,
                     levels.length);
             if (appliedLevels == 0) {
@@ -737,6 +756,9 @@ public final class VulkanTextureRegistry {
             recordApplication(glTextureId, true);
             this.staleIds.remove(id);
             this.filledFromCapture++;
+            if (MIRROR_REACH_OVERRIDE > 0) {
+                entry.texture.forceSamplerReach(MIRROR_REACH_OVERRIDE);
+            }
             celtium$noteMirrorSource(glTextureId, "capture", extent[0], extent[1], rgba, appliedLevels);
             return true;
         } catch (RuntimeException | LinkageError error) {

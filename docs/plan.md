@@ -133,6 +133,64 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.184 **panorama の真因＝毎フレームの colour clear が feedback loop を壊していた（frame-composite）**
+
+- 暗い「OK」画面は dialog でも stale image でもなく **loading screen**（menu dump が menu frame を逃した）。fixture の identity 行が
+  「要求した 18 ではなく presented counter は 36」と明示。served leg は menu が遅く（1フレーム7回の同期 copy readback）、
+  要求を消費した present が world 起動後に着地していた。新しい `t36-menu.sh`（menu を保持し client tick 40 で dump）で
+  **両 leg とも同じ grey main menu**（dominant colours 同一・590 vs 524 色）＝dialog は出ていない。
+- **panorama が見えない真因**: 背景の差は ~5/255 しかなく、served copy の元が
+  `CELTIUM_MIRROR_SOURCE id=52 source=announcement size=256x256 content=opaque=18763/65536 firstOpaque=0xff020101`
+  ＝**28% 不透明・ほぼ黒**。理由は原典で確定: `EntityRenderer.updateCameraAndRender` は `GlStateManager.clear(256)`
+  （**depth のみ**）を `currentScreen.drawScreen` の前に呼ぶ（`EntityRenderer.java:1171-1174`）が、
+  我々は default pair の **colour を毎フレーム clear** していた。`GuiMainMenu.renderSkybox` は 6面を描いて copy するので、
+  **前フレームの面の上に重ねていく feedback loop** が blur の前提——colour clear がそれを消していた。
+- **修正（`GllessFrameTarget`）**: `clearOffTarget` は **depth を clear し colour は保持**、colour は pair の初回のみ clear、
+  colour に `COLOR_ATTACHMENT_WRITE -> COLOR_ATTACHMENT_READ|WRITE` の hand-back barrier。chain pair は従来どおり全面 clear
+  （entity outline silhouette は vanilla も clear する）。frozen pair `celtium-t36b 28dabb1dde958a7f` / `fixture-t36b 6dfaf4da1905a061`。
+- **統制**: world 画像は t36 vs t32b で 4,383/921,600 px 差・**sky band rows 0-199 は 0/256,000**・nonBg が6桁一致（0.761182）。
+  差の帯 rows 225-257 は near-horizon silhouette で、42 vs 47 world frames という **task-33 の build 状態**の機構。
+
+## 0.183 **mod cohort 完了（JEI recipe・AppleSkin/MapWriter）と block overlay の texMat 実験**
+
+- **acceptance（task-22）の mod cohort 完了**（jar `609eb69a9064df05`・fixture `f5b041ae841b2585`・AMD GL-less）:
+  - `mod3b-jei-recipe`: `jeiRecipeOpened=True`（tick 41）・Crafting ページ `1/259`・グリッド/矢印/出力スロット/ページボタンが描画・
+    `id4=1391/1391`・VUID 0・UNCALIBRATED（jei+keep の較正参照が無い＝正しい）。
+  - `mod3-hud`（AppleSkin `4bbd37edecff0b42`＋MapWriter `e9a0551013ab785e`）: **PASSED**・distinct 17080・nonBg 0.952757・
+    **MapWriter の円形ミニマップと座標表示が描画**。**AppleSkin はロードされるがこの scene では overlay が見えない**＝未検証と明記。
+  - **JEI 場面の Celeritas 参照**（`mod3b-jei-ref`）との比較: sky 6.6%・horizon 40.5%・terrain centre 35.1%・chat 52.7%・
+    **hotbar 0 px・hud strip 0 px**・whole 34.3%。**JEI 固有ではなく GUI 段の残差**（B05/build 状態の話と整合）。
+- **計器の注意（acceptance 記録）**: `user-cfg-menu` の 90 秒メニューで `CELTIUM_SWAPPOINT calls=1..3` と
+  `CELTIUM_PRESENT presented=2` しか出ないのに compositor capture は連続フレームで変化（logo/splash 領域 0.55%）＝
+  **「止まった計器は止まった絵ではない」**。menu の present 経路がこの計器で覆われていない（task-15/frame-composite へ）。
+- **block overlay の texMat 実験（Lead）**: `fmt=3` の7 group すべて **`texMat=none`**（`id3=5/5`・
+  `ndc x[-0.07..0.07] y[-0.23..0.08]`）＝**texture matrix 仮説は死んだ**。UV は生値でバッチは全て正しい。
+  → 次の実験は `mirrorPoisonFlat=12=FFFF00FF`（どの image をサンプルしているかを証明）。変わらなければ
+  descriptor が mirror と別 image を指している＝block pipeline の descriptor path（`setsByTextureView` の view キー）。
+
+## 0.182 **task-26 完了: per-texture sampler reach とゲーム自身の per-level mip（band 26.7→6.2）**
+
+texture-mirror が両半分を実装（`samplerMaxLod` を global 定数から per-texture へ・`setSamplerReach` は sampler を作り直し
+generation を上げるので descriptor cache が破棄済み sampler を名指ししない／registry が stub の per-level capture を歩いて
+既存の per-level patch writer へ渡す・control `-Dceltium.vulkan.mirrorCapturedLevels=false`）:
+
+| 参照（upstream 989ebf2e・同一 fixture/scene/pose/tick・band rows 200-320 = 153,600 px） | mean\|d\| | >8 |
+|---|---|---|
+| per-level content + reach 4（`t26`） | **6.207** | **5.86%** |
+| generated chain + reach 1（`t26-nomips`＝変更前） | 26.728 | 50.00% |
+| sky rows 0-205 | 0.442 | **0 of 262,400** |
+| rows 320-720 / terrain centre | 0.006 / 0.010 | 0.01% / 0.02% |
+
+`CELTIUM_MIRROR_SOURCE id=12 … levels=5 samplerMaxLod=4`・`CELTIUM_SAMPLER … maxLod=4.0`・census
+`levels=[0:4 1:4 2:4 3:4 4:4] written=20 samplerReach=4 reachUnwritten=0 refusals=0`・PASSED・msgs 0。
+**per-level の半分は「撤回された帯の主張」ではなく自身の対照で根拠づけられた**（26.728→6.207・terrain centre 1.256→0.010）。
+**S23 note（mirrored 5.60% vs generated 0.16-0.28%）は global clamp 1.0 の下での測定として上書き**。
+**混同の明示**: control は content と reach の2変数が同時に違う（per-level path だけが reach を上げるため）。
+3つ目の leg（generated chain + reach を 4 に固定）は未実施。
+**等価対照（既定 vs `terrainAtlasMaxLod=1`）は画素一致しない**: band の 8,474 px（5.5%）が rows 225-256 のみで差、
+両 leg とも maxLod=4.0 なので差は reach ではなく sampler の他パラメータか build 状態 → **terrain sampler は残す**
+（消せば測った 0.2 の残差を測っていない残差と交換することになる）。分離実験は記録に記載。
+
 ## 0.181 **task-30（B02/B03/B04）受入・task-33 完了と mip 内容主張の撤回**
 
 - **B02（sky-draws）**: GL-less 経路は **fd 拡張を要求も enable もしない**（`interopPath = openGl != null`）。

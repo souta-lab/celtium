@@ -937,6 +937,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Bounded: how many chain-input state lines this run has printed. */
     private int chainInputReports;
     /**
+     * Diagnostic for the chain's input image: batches recorded before each chain read, and how many groups were still
+     * queued for the input's identity at that moment. The two are what tell "the silhouette is in the image" apart
+     * from "the model path drew it and the chain read an image it had not reached yet".
+     */
+    private long lastChainInputRecordedBatches = -1L;
+    private int chainInputBatchLogs;
+    /**
      * Lab switch for the one ordering change this task makes: register the chain's reported input image before the
      * preflight that judges it. Default on; {@code -Dceltium.vulkan.chainPreflightAdoption=false} restores the old
      * order in the same jar, which is the A/B the chain's {@code postChains} counter is read against.
@@ -1215,6 +1222,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
     private static final int GROUP_BOUNDS_LIMIT =
             Integer.getInteger("celtium.vulkan.groupBoundsCount", 200).intValue();
+    /**
+     * First frame {@code CELTIUM_GROUP_BOUNDS} reports, so the bounded line budget reaches the frame under test.
+     * <p>
+     * {@code -Dceltium.vulkan.groupBoundsMinFrame=<n>}, default 0 (no filter). Measured need: a probe with
+     * {@code groupBoundsFormat=2,5,6,7,10 groupBoundsCount=400} spent all 400 lines on the loading screen and produced
+     * zero world-frame samples, which is the measurement that says the cap alone cannot reach the world. The filter is
+     * checked before the cap for the same reason the format filter is.
+     */
+    private static final long GROUP_BOUNDS_MIN_FRAME =
+            Long.getLong("celtium.vulkan.groupBoundsMinFrame", 0L).longValue();
     /**
      * Diagnostic only: the rotations the mirror applied since this frame's camera boundary, oldest first.
      * <p>
@@ -2567,16 +2584,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // `CELTIUM_OUTLINE_INPUT … identity=… texture=42`). Without it they sit in the queue: the visible frame
             // gains the outline pass's geometry (creeper green 1.017/0.971/1.003 with the flush, against 1.28/1.27/1.21
             // before it) and the outline image still holds only the item.
-            long recordedBefore = this.immediateRecordedBatches;
-            long flushesBefore = this.actualFlushes;
-            this.flushPendingBeforeGlDraw();
-            if (this.modelOffTargetFlushLogs < MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
-                this.modelOffTargetFlushLogs++;
-                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+"
-                        + (this.immediateRecordedBatches - recordedBefore)
-                        + " flushes+" + (this.actualFlushes - flushesBefore)
-                        + " windowBusy=" + this.immediateWindowBusy
-                        + " target=" + target + " groupsLeft=" + this.immediateGroups.size());
+            // Coalesced to one flush per target change within a frame: the first off-target batch of a pass flushes the
+            // batches of that pass, and the later batches of the same target/frame are left for the next change. Per
+            // batch this was a submit and a wait each time (`frameIntervalP95Ms=1946`, world frames 43-63 -> 48).
+            if (this.frameId != this.modelOffTargetFlushedFrame || target != this.modelOffTargetFlushedTarget) {
+                this.modelOffTargetFlushedFrame = this.frameId;
+                this.modelOffTargetFlushedTarget = target;
+                long recordedBefore = this.immediateRecordedBatches;
+                long flushesBefore = this.actualFlushes;
+                this.flushPendingBeforeGlDraw();
+                if (this.modelOffTargetFlushLogs < MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
+                    this.modelOffTargetFlushLogs++;
+                    System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+"
+                            + (this.immediateRecordedBatches - recordedBefore)
+                            + " flushes+" + (this.actualFlushes - flushesBefore)
+                            + " windowBusy=" + this.immediateWindowBusy
+                            + " target=" + target + " groupsLeft=" + this.immediateGroups.size()
+                            + " frame=" + this.frameId);
+                }
+            } else {
+                this.modelOffTargetCoalesced++;
             }
         }
         return true;
@@ -4384,6 +4411,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (!wantedGroupBoundsFormat(group.formatId)) {
             // The format filter is checked before the cap so that a run narrowed to one layout is not spent on the
             // first six groups of every other layout.
+            return;
+        }
+        if (this.frameId < GROUP_BOUNDS_MIN_FRAME) {
+            // Same reason, one level up: the loading screen and the menu own the first frames' groups, so a bounded
+            // budget has to skip them to reach the frame the question is about.
             return;
         }
         int limit = GROUP_BOUNDS_DIAGNOSTICS ? GROUP_BOUNDS_LIMIT : 6;
@@ -7861,6 +7893,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** How many flush-outcome lines have printed for off-target model batches, and the bound on them. */
     private int modelOffTargetFlushLogs;
     private static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
+    /** The frame and target the last coalesced off-target flush covered, and how many batches it coalesced. */
+    private long modelOffTargetFlushedFrame = -1L;
+    private long modelOffTargetFlushedTarget = Long.MIN_VALUE;
+    private int modelOffTargetCoalesced;
     /** The bound on {@link #modelOffTargetLogs}: the entity scene has one list set per off-target pass. */
     private static final int MODEL_OFFTARGET_LOG_LIMIT = 24;
     /** Display lists seen replayed under a texture other than their compile texture, so a layer prints once. */
@@ -8145,6 +8181,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             beginCommands();
             this.frameTarget.recordAcquireBarriers(this.commandBuffer);
             adoptChainFramebuffers(passes);
+            reportChainInputRecorded(passes.get(0).groupMainFbId);
             if (this.publishedChainOutput != null) {
                 // The chain's adopted target is GENERAL by contract, and the off-target pass may not have run in
                 // this frame (the game can render the chain from an image an earlier frame left behind).
@@ -8240,6 +8277,59 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("post chain input adoption could not be declared: " + describe(error));
             return false;
         }
+    }
+
+    /**
+     * One bounded line per run: how much geometry had been recorded before this chain read its input image, and how
+     * many groups were still queued for that image's identity at that moment.
+     * <p>
+     * This is the measurement the glow needs. The model path draws the silhouette into the chain pair and the counter
+     * says it was drawn ({@code CELTIUM_MODEL_OFFTARGET_BATCHES calls=N drawn=N}); what is not visible from outside is
+     * whether those batches had reached the image when pass 0 sampled it, because the silhouette's pass and the chain
+     * are two submissions of the same frame. {@code deltaSinceLastChain} is the geometry recorded between two chain
+     * reads - the whole silhouette of one frame if the ordering is right, a fraction of it if the rest is still
+     * queued - and {@code pendingForInput} names the groups that are provably not in the image yet.
+     */
+    private void reportChainInputRecorded(int inputIdentity) {
+        long pending = inputIdentity == 0 ? 0L : countGroupsForTarget(inputIdentity);
+        if (this.chainInputBatchLogs < 8) {
+            this.chainInputBatchLogs++;
+            System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_BATCHES frame=" + this.frameId
+                    + " identity=" + inputIdentity + " pendingForInput=" + pending
+                    + " recordedTotal=" + this.immediateRecordedBatches
+                    + " deltaSinceLastChain="
+                    + (this.lastChainInputRecordedBatches < 0 ? -1
+                            : this.immediateRecordedBatches - this.lastChainInputRecordedBatches));
+        }
+        this.lastChainInputRecordedBatches = this.immediateRecordedBatches;
+    }
+
+    /**
+     * Records the batches still queued for the target the game is drawing into, before a post chain reads that
+     * target's image.
+     * <p>
+     * Called from {@link org.taumc.celeritas.mixin.core.ShaderGroupMixin} while the chain's input framebuffer is
+     * still the current one and before the main framebuffer is bound: the model path coalesces its own flushes to one
+     * per target change, so the silhouette batches that arrived after that first flush are still queued at chain time
+     * and the bind that follows is the only other flush - this makes it explicit and ordered ahead of the read.
+     *
+     * @return how many groups were pending for the current target (0 when nothing had to be recorded)
+     */
+    public int celtium$flushPendingForChainInput() {
+        if (this.gpuStalled || this.immediateWindowBusy) {
+            return 0;
+        }
+        int pending = countGroupsForTarget(this.currentRenderTarget);
+        if (pending == 0) {
+            return 0;
+        }
+        flushPendingBeforeGlDraw();
+        if (this.chainInputBatchLogs <= 12) {
+            System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH frame=" + this.frameId
+                    + " target=" + this.currentRenderTarget + " groups=" + pending
+                    + " recordedTotal=" + this.immediateRecordedBatches);
+        }
+        return pending;
     }
 
     /**

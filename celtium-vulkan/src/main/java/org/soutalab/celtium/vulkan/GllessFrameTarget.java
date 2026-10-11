@@ -657,9 +657,21 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.defaultPair.ensure(width, height);
     }
 
-    /** Records the clears a pair receives before the game's draws for it land in it. */
+    /**
+     * Records the depth clear the game gives the default framebuffer, and leaves its colour alone.
+     * <p>
+     * This is the game's own clear for this framebuffer, read from the sources: with no world loaded,
+     * {@code EntityRenderer.updateCameraAndRender} runs {@code GlStateManager.clear(256)} - depth only - before
+     * {@code currentScreen.drawScreen} (EntityRenderer.java:1171-1174). The colour is never cleared, which is what makes
+     * the main menu's panorama work: {@code GuiMainMenu.renderSkybox} draws the six faces into this framebuffer and
+     * copies them into the skybox texture, so each frame accumulates over the previous frame's faces (the classic
+     * feedback loop the blur passes are built on). Clearing the colour to transparent black every frame - which is what
+     * this pair used to receive - left that texture 28 % opaque and nearly black, so the menu's background stayed the
+     * flat gradient: measured on the GL-less menu, the served copy of the 256x256 region read
+     * {@code opaque=18763/65536 firstOpaque=0xff020101}.
+     */
     public void clearOffTarget(VkCommandBuffer command) {
-        this.defaultPair.clear(command);
+        this.defaultPair.clearDepthOnly(command);
     }
 
     /** Records and reports a pair's clear-and-barrier sequence. See {@link Pair#selfTest}. */
@@ -889,6 +901,76 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
                 recordClearToAttachment(command);
                 this.clears++;
+            }
+        }
+
+        /**
+         * Clears the depth of the pair and keeps its colour, which is the clear the game gives the default framebuffer
+         * ({@code GlStateManager.clear(256)}; see {@link GllessFrameTarget#clearOffTarget}).
+         * <p>
+         * The colour is cleared once, on the pair's first use, so the first frame does not sample undefined content;
+         * after that it accumulates, exactly as the real default framebuffer does. The barrier the colour needs is the
+         * hand-back of the previous frame's attachment writes, not a transfer-write barrier: nothing transferred into it
+         * this frame.
+         */
+        private void clearDepthOnly(VkCommandBuffer command) {
+            checkAlive();
+            if (command == null || command.address() == 0L) {
+                throw new IllegalArgumentException(this.label + " pair clear needs a command buffer");
+            }
+            if (!exists()) {
+                throw new IllegalStateException("ensure must run before the " + this.label + " pair is cleared");
+            }
+            try (MemoryStack stack = stackPush()) {
+                boolean first = !this.acquired;
+                if (first) {
+                    recordAcquire(command);
+                    this.acquired = true;
+                }
+                VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
+                if (first) {
+                    VkClearColorValue color = VkClearColorValue.calloc(stack);
+                    color.float32(0, OFF_TARGET_CLEAR_RED);
+                    color.float32(1, OFF_TARGET_CLEAR_GREEN);
+                    color.float32(2, OFF_TARGET_CLEAR_BLUE);
+                    color.float32(3, OFF_TARGET_CLEAR_ALPHA);
+                    range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+                    vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
+                } else {
+                    recordColourHandBack(command);
+                }
+
+                VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
+                depth.depth(OFF_TARGET_CLEAR_DEPTH).stencil(0);
+                range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
+                vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
+
+                recordClearToAttachment(command);
+                this.clears++;
+            }
+        }
+
+        /**
+         * Hands the colour image's previous attachment writes back to the attachment reads and writes that follow.
+         * <p>
+         * The pair's colour is written by a render pass in one frame and loaded by a render pass in the next, and this
+         * pair is not covered by the frame images' own acquire/release barriers, so without this the next pass's
+         * attachment load has an execution dependency but no availability or visibility for the writes it is loading.
+         * The layouts do not change: the pair is {@code GENERAL} before and after.
+         */
+        private void recordColourHandBack(VkCommandBuffer command) {
+            int queueFamily = context.queueFamilyIndex();
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+                barrier.get(0).sType$Default()
+                        .image(this.colorImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
             }
         }
 

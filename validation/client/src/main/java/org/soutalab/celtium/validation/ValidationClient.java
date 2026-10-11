@@ -5551,7 +5551,23 @@ public final class ValidationClient {
         java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
                 new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
         click.setAccessible(true);
-        click.invoke(screen, Integer.valueOf(x + w / 2), Integer.valueOf(y + h / 2), Integer.valueOf(0));
+        // Press until the option is back at the value it had, not once: these options cycle through more than two
+        // states (Clouds is Fancy -> Fast -> OFF -> Fancy), so one press moved Fancy -> OFF and the *restore* press
+        // moved OFF -> Fast, leaving the captured frame on a variant the reference does not share. Measured: the
+        // candidate captured "Clouds: Fast" while the reference leg showed "Clouds: Fancy". Bounded so a control that
+        // never comes back cannot spin here.
+        String restoredTo = String.valueOf(celtium$fieldValue(found[0], new String[] {"displayString", "field_146126_j"}));
+        int presses = 0;
+        while (!restoredTo.equals(celtium$vsBefore) && presses < 8) {
+            click.invoke(screen, Integer.valueOf(x + w / 2), Integer.valueOf(y + h / 2), Integer.valueOf(0));
+            Object[] again = celtium$vsFindOptionButton(
+                    celtium$fieldValue(screen, new String[] {"optionsRowList", "field_146501_h"}), celtium$vsOption);
+            if (again == null) {
+                break;
+            }
+            restoredTo = String.valueOf(celtium$fieldValue(again[0], new String[] {"displayString", "field_146126_j"}));
+            presses++;
+        }
         Object done = celtium$vsButtonById(screen, 200);
         if (done != null) {
             int dx = ((Number) celtium$fieldValue(done, new String[] {"x", "field_146128_h"})).intValue();
@@ -5560,7 +5576,9 @@ public final class ValidationClient {
             int dh = ((Number) celtium$fieldValue(done, new String[] {"height", "field_146121_g"})).intValue();
             click.invoke(screen, Integer.valueOf(dx + dw / 2), Integer.valueOf(dy + dh / 2), Integer.valueOf(0));
         }
-        celtium$vsRestored = "pressed " + celtium$vsOption + " again and Done, to put the value back before the capture";
+        celtium$vsRestored = "pressed " + celtium$vsOption + " " + presses + " more time(s) and Done; value is now '"
+                + restoredTo + "', the value before the change was '" + celtium$vsBefore + "'"
+                + (restoredTo.equals(celtium$vsBefore) ? " (restored)" : " (NOT restored)");
         report.addProperty("videoSettingsRestored", celtium$vsRestored);
         celtium$vsStep = 3;
         return false;

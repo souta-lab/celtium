@@ -1833,6 +1833,16 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * Forces this mirror's sampler reach, whatever its content, for the measurement that separates the reach from the
+     * content: the per-level path raises the reach as a side effect of holding the game's levels, so a control that
+     * disables the content also disables the reach and cannot tell the two apart. Diagnostic only - a reach the
+     * content does not back is exactly what the clamp exists to prevent.
+     */
+    public void forceSamplerReach(int maxLod) {
+        setSamplerReach(maxLod);
+    }
+
+    /**
      * Raises this mirror's sampler reach to a level its content actually holds, recreating the sampler.
      * <p>
      * Never lowered here: a later write through a shallower path (an announcement carrying level 0 only) must not
