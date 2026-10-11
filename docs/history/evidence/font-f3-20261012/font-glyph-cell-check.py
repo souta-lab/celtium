@@ -30,8 +30,14 @@ sys.path.insert(0, "")
 from PIL import Image
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+# Any F3-overlay presented frame can be checked: pass its path as the first argument. The default is the
+# leg the check was written on (jar 7acf4a9d-era), so the same measurement can be run before and after a
+# change to the glyph path - the strip-separator fix was verified this way on the leg in
+# .celtium-work/runtime/font-strip.
 FRAME = os.path.join(ROOT, ".celtium-work/runtime/font-f3/screenshots",
                      "celtium-presented-world-run-1727828e99559-66d3c617-kept.png")
+if len(sys.argv) > 1:
+    FRAME = os.path.abspath(sys.argv[1])
 SHEET = os.path.join(ROOT, "forge122/build/rfg/minecraft-src/resources/assets/"
                            "minecraft/textures/font/ascii.png")
 OUT = os.path.dirname(os.path.abspath(__file__))

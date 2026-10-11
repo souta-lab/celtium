@@ -528,6 +528,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile double clearDepth = 1.0;
     /** The GL framebuffer name bound when the pending clear was issued; 0 is the default framebuffer. */
     private volatile int pendingClearDrawFbo;
+    /** Whether the backend's routing considered the bound framebuffer the main one when the clear was issued. */
+    private volatile boolean pendingClearIsMain = true;
+    /** Set by the backend after each bind, so a clear is classified by routing rather than by a raw GL name. */
+    private volatile boolean drawFramebufferIsMain = true;
 
     private final java.util.concurrent.atomic.AtomicInteger pendingClears =
             new java.util.concurrent.atomic.AtomicInteger();
@@ -899,6 +903,29 @@ public final class CeltiumGlStub implements FunctionProvider {
      * {@return the framebuffer the pending clear was issued against}, or -1 when no clear is pending. A non-zero
      * value means the clear names one of the game's own framebuffers rather than the delivered frame.
      */
+    /**
+     * Records the backend's own main/non-main decision for the framebuffer that is now bound.
+     * <p>
+     * A clear's owner cannot be decided from the raw GL name: the game's main render target is not necessarily the
+     * default framebuffer (name 0), so a rule that drops every clear with a non-zero name drops the frame's own
+     * clears too - measured as 420 dropped clears with owner 1 and a picture gate that had been passing.
+     */
+    public static void noteDrawFramebufferIsMain(boolean isMain) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.drawFramebufferIsMain = isMain;
+        }
+    }
+
+    /** {@return whether the pending clear belongs to the main render target}, false when no clear is pending. */
+    public static boolean pendingClearIsMain() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return false;
+        }
+        return stub.pendingClears.get() != 0 && stub.pendingClearIsMain;
+    }
+
     public static int pendingClearDrawFbo() {
         CeltiumGlStub stub = installed;
         if (stub == null) {
@@ -1603,6 +1630,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // the chain pair, so applying such a clear to the pair wipes whatever another identity had just drawn
                 // there (measured: the panorama's faces are cleared to white before the copy reads them).
                 this.pendingClearDrawFbo = this.drawFbo;
+                this.pendingClearIsMain = this.drawFramebufferIsMain;
                 return 0L;
             case SEM_CLEAR_COLOR:
                 this.clearRed = Float.intBitsToFloat((int) c[0]);

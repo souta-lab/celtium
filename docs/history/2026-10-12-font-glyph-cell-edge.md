@@ -104,6 +104,50 @@ coalesced font run of task-59: `celtium$fontAppend` appends quads into the reuse
 buffer (stale quads land at the previous frame's glyph positions, which is why their pattern is nearly static while
 the current text moves), but this is a hypothesis, not a measurement.
 
+## Verified: the bars are the coalesced run's strip junctions, and the separators remove them
+
+The mechanism was found elsewhere: every glyph window arrives as `GL_TRIANGLE_STRIP` (`modes={5=…}`), and a strip of
+4N vertices draws 4N-2 triangles, so the last vertices of one glyph connect to the first of the next - those junction
+triangles span the gaps between quads and are what the 1-px bars are. Quads would not join. `celtium$fontAppend` now
+inserts degenerate vertices at each glyph boundary of a strip/fan run, so the junction triangles have zero area and
+rasterize nothing while the run still goes out in one call (commit `51003a602`).
+
+| leg | jar | picture gate | glyph summary | gap bars |
+|---|---|---|---|---|
+| `font-f3` (before, no separators) | `7acf4a9d`-era | `UNCALIBRATED_PRESENTED_IMAGE` | `modes={5=687406}` | **26 of 36** usable columns |
+| `font-strip` (after) | `79b57e4021785b89608ff222ddfbae4f` | **PASSED** | `windows=1223657 quads=1223657 submitted=1223657 accepted=1223657 refused=0 submitMillis=281 modes={5=1223657}` | **1 of 36** |
+| `font-strip3` (after, counter reported) | `44ce47f3f905279a0d4c744a5d7925be` | FAILED (see below) | `fontStripSeparators=1138913 fontRunsStarted=2485 fontQuadsAppended=1141398` | **1 of 36** |
+| `font-strip-ctrl` (leg A's jar re-run) | `79b57e40…` | **PASSED** | - | **1 of 36** |
+
+* **The separators are inserted once per glyph boundary**: `fontStripSeparators=1138913` is exactly
+  `fontQuadsAppended - fontRunsStarted` = 1,141,398 - 2,485. (The counter counts separations, each of which is two
+  degenerate vertices.)
+* **The bars are gone**: 26 of 36 detector-safe gap columns before, **0** after. The one column the detector still
+  flags is the F3 background rect's own right edge (x=171, two pixels from the detector's ±2 neighbour): x=166..170
+  are byte-identical in the raw frame, so it is not a bar. Leg A, leg C and the re-run control agree.
+* **The strokes are unchanged**: line 1 **449/449**, line 4 **104/104**, **0** empty texels drawn, in both legs
+  (`font-glyph-cell-check.py <frame>` now takes any F3 frame).
+* **Cost**: `refused=0` of 1,223,657 quads and **281 ms / 1,223,657 = 0.23 µs per glyph** (the baseline was 0.56 µs;
+  the coalescing holds at 2,619 runs for 1,223,051 appended quads).
+* **Acceptance crop at the user's own scale (1x)**: `font-f3-1x-before-after.png` sha256 `76cce531e2c2aaaf…` - the
+  same 520x420 F3 block from the before and after frames side by side; the streaking between characters is gone.
+
+**A correction to my own earlier numbers**: the "105 of 165" and "53 stroke-free" counts in the section above were
+inflated by the detector's footprint - its high-pass reads x±2, so any column within two pixels of a glyph stroke (or
+of the rect's edge) reports a large value. The honest metric excludes those columns: 26 of 36 before, 0 after. The
+8x-amplified residual is kept as the diagnostic that found the shape, but the 1x crop is the acceptance.
+
+**The counter needed a reporting site**: `fontStripSeparators` was incremented at `:4211` and printed nowhere, and
+the line that carries `celtium$fontBatchSummary()` is a shutdown hook - measured, the `font-strip2` leg has no
+`CELTIUM_FONT_GLYPH_SUMMARY` line at all because its fixture exited early. It is now in the verification census
+(`fontStripSeparators`, `fontRunsStarted`, `fontQuadsAppended`), which is written during the run.
+
+**Separate finding, not this change**: the presented-image readback went dark between `51003a602` (leg A: gate
+`PASSED`, `presentedImageMeanAtCapture=30.72`) and `f02ae2cce` (legs B and C: `FAILED_PRESENTED_IMAGE`,
+`presentedImageMeanAtCapture=3.82`/`3.88`), while the renderer's own presented dump is bright and carries the F3 text
+in all of them. One more leg narrows it: the **new celtium jar with leg A's fixture also fails**, so the regression is
+in the celtium jar's tree between those two commits, not in the fixture.
+
 **Next measurement, one flag on the same leg and the same jar**: `-Dceltium.font.batching=false` turns
 `celtium$fontAppend` into a refusal for every glyph (`VulkanTerrainGpuBackend.java:1342`, `:3840`), so every glyph
 goes through `submitImmediateBatch` on its own. If the bars survive that, the coalescing is not the source and the

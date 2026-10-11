@@ -661,7 +661,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.gameClearLatched = false;
         } else {
             int owner = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearDrawFbo();
-            if (owner > 0) {
+            boolean ownerIsMain = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearIsMain();
+            if (owner >= 0 && !ownerIsMain) {
                 // The clear names one of the game's own framebuffers. Every non-main identity shares the chain pair,
                 // so applying it here wipes whatever another identity drew into that image - measured as the
                 // panorama's faces being cleared to white between their draw and the copy that reads them. The clear

@@ -3859,6 +3859,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
+        // The stub classifies a clear by this decision, not by the raw GL name: the game's main render target is not
+        // necessarily the default framebuffer, so name-based classification dropped the frame's own clears.
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noteDrawFramebufferIsMain(isMain);
         // First, while the fields below still describe the framebuffer that is bound: the game clears a framebuffer
         // between binding it and binding the next one, so this is the only moment a glClear can be attributed to the
         // image it names. See celtium$latchGameClearAtTargetChange for what the two routes mean.
