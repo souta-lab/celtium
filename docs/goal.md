@@ -1,4 +1,4 @@
-# Celtium goal — 2026-10-11 更新（revision 66, phase active / activation armed）
+# Celtium goal — 2026-10-11 更新（revision 66, phase active / activation armed（本文はこのセッションの撤回を反映済み・§0.148））
 
 goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
 
@@ -65,7 +65,13 @@ mean がビット一致＝カメラは同一 → **renderer の退行**。フッ
 - **性能（制限付き）**: GL-less p50 3.94ms / bridge 4.89ms / 参照 16.10ms。参照は 60Hz フロアであり「4倍速い」とは主張しない。
 
 ## 未完（優先順は plan の実行順）
-文字（N03 実画像受入）・可視 glow（chain 専用 image へ設計変更中）・wedge の残存（原典が示す3候補から識別）・
+**受入済み（このセッション）**: N03（font — glyph ポインタ修正が全て。magenta probe で実証・unicode 経路も初行使・advance は構造的に不変）、
+N10（UBO 経路 — color_convolve 192B・spider 144B を SPIR-V から実測、ShaderGroupMixin の4バイトずれも修正）、
+N07/N08/N17/N05、監査 A01〜A05、所有権ギャップ4つ（N17 画像側は bind 後の fault で実測）。
+**outline chain は実行を確認**（`CELTIUM_POSTCHAIN create`・`program=entity_outline`・chain pair も実行時に使用）。
+**撤回した主張（計器で反証）**: 旧「runtime は entity outline を描かない」・旧「注入4つは死んでいる」——`CELTIUM_RENDERENTITIES calls=3` を実測。
+
+未完: 可視 glow（chain は走る。**画の受入**が残る）・wedge の残存（**原因は特定済み**＝`renderSky` の月 quad が固定回転で誤配置。残りは sky 回転が modelview に載らない理由）・
 **`POSITION_NORMAL` の native 化**（原典で発見した未対応パス）・bridge の model 計器・post chain の受入・
 model mesh 寿命の受入・mip/ByteBuffer 契約・FBO/postprocess・全 entity/TESR の画質・mod 互換（文字が最上位）・
 ベンチの欠測検出・docs/配布物の同期・bounded wait/census/ring・リブランド/配布。
