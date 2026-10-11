@@ -141,6 +141,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.204 **task-50 の GUI case を現行 tree で受入（スロット充填率が参照と一致）・glyph particle の fixture hook 投入**
+
+- **GUI item の受入（weather-water・`ww27-cand` jar `fa9487e0cd17ee7c` vs upstream `d12425eaaf184e79`・同一 fixture/scene/pose/tick）**:
+  両 frame は同じ JEI "Building Blocks" 画面（等角 block アイコン・同じ "Gold Ore" tooltip・同じ hotbar）。実測:
+  **per-slot icon fill fraction**（スロット画素のうち modal colour と異なる割合・6スロット）: 候補
+  `[0.736,0.722,0.722,0.746,0.724,0.682]`・参照 `[0.692,0.722,0.722,0.746,0.724,0.696]`——
+  **等角アイコンはスロットの約70%を占め、平坦テクスチャなら ~1.0**。**ユーザーの「枠いっぱい」は解消し参照と 0.04 以内で一致**。
+  item-grid (375,210..915,510) `mean|d|=5.32`・**60.5% が byte-identical**、tooltip `mean|d|=0.66`。
+  crop は `.celtium-work/ww-evidence/crops/item-grid-{cand,ref}.png`・`hotbar-{cand,ref}.png`。
+  **正直な caveat 2つ（実測）**: 候補側は fixture 自身の debug テキスト行が出る（`mean|d|=13.92`＝overlay の差で renderer の差ではない）、
+  両 leg は **build 状態が違う**（候補 listedSections=8・21 world frames／参照 16・69）ため world 背景も違う（左帯 `mean|d|=6.04`）——
+  **有効な比較は item crop であって world frame ではない**。held/dropped GROUND/hurt flash は inventory を開いていると見えないため、
+  画面なしの `ww30-cand-entity`/`ww31-ref-entity` を実行中。
+- **task-54 の fixture hook 投入（weather-water）**: `celtium.validation.glyphParticles=true`＋report field `glyphParticlesSpawned`。
+  still-particle grid 上に tick 197 で 24 個の `ENCHANTMENT_TABLE` を spawn（javadoc に「実 table が使えない実測理由2つ」＝
+  superflat 層に bookshelf が無い・全面 plane では midpoint の `!isAirBlock` で loop が先に break する）。`ww29-glyph` が
+  `textureDiagnostics=true` で走り、**crop（文字か汎用 particle か）と particle atlas の `CELTIUM_MIRROR_SOURCE` を同一 run で**取る
+  ＝「glyph 領域が mirror にあるか」を仮定せずに答える。
+
 ## 0.203 **画面背後 27.7% の帰属確定（共有 overlay ではなく inventory panel 自身）・VSync toggle は「行が無い」という計測**
 
 - **gui-stage の判別 pair（事前登録した分岐が的中）**: 参照 `wbs-vs-ref2`（upstream Celeritas＋fog-path fixture）と候補を**両方コピー・hash してから**

@@ -1442,6 +1442,7 @@ public final class ValidationClient {
     private boolean celtium$resized;
     private boolean celtium$weatherShown;
     private boolean celtium$particlesSpawned;
+    private boolean celtium$glyphParticlesSpawned;
     /**
      * The block-breaking subject: the position the progress was registered on, how it was chosen, and how many times
      * the game's own registration method was called. Reported so "the overlay is not in the frame" can be told from
@@ -4005,6 +4006,30 @@ public final class ValidationClient {
                 mc.world.spawnParticle(net.minecraft.util.EnumParticleTypes.FLAME, px, py, pz, 0.0, 0.0, 0.0);
             }
             report.addProperty("particlesSpawned", 24);
+        }
+        if (worldTicks >= 197 && !celtium$glyphParticlesSpawned
+                && Boolean.getBoolean("celtium.validation.glyphParticles")) {
+            celtium$glyphParticlesSpawned = true;
+            // The enchanting table's letter glyphs, spawned directly because the fixture's world cannot spawn them:
+            // BlockEnchantmentTable.randomDisplayTick needs a BOOKSHELF within +-2/0..1 of the table (the Cleanroom
+            // patch routes that through ForgeHooks.getEnchantPower, whose power is 1 only for bookshelves) and
+            // world.isAirBlock at the midpoint of the table's own level - and the fixture's superflat layers make the
+            // top layer a full enchanting-table plane, so that midpoint is never air and the loop breaks before any
+            // spawn. Spawning the type here also makes a sharper test than a real table would: the glyph particles
+            // take their sprite from ParticleEnchantmentTable's random index in 225..250 (Particle.setParticleTextureIndex
+            // -> (i%16, i/16) -> the quad's UVs in Particle.renderParticle), a sprite region no other particle in the
+            // scene uses, so a crop showing letters proves the vertex-UV path end to end while a generic particle
+            // proves the sprite is being replaced.
+            // Still particles, like the FLAME block above and for the same reason: prev == current, so the captured
+            // frame does not depend on the partial-tick interpolation.
+            for (int i = 0; i < 24; i++) {
+                double px = -4.0 + (i % 6) * 1.6;
+                double py = 11.0 + (i / 6) * 0.6;
+                double pz = 1.0 - ((i / 6) % 3) * 2.0;
+                mc.world.spawnParticle(net.minecraft.util.EnumParticleTypes.ENCHANTMENT_TABLE, px, py, pz, 0.0, 0.0, 0.0);
+            }
+            report.addProperty("glyphParticlesSpawned",
+                    "24 ENCHANTMENT_TABLE at the fixture's own grid, sprite indices 225..250 from ParticleEnchantmentTable");
         }
         if (worldTicks >= 190 && !celtium$hudHidden && !Boolean.getBoolean("celtium.validation.interop")
                 && !Boolean.getBoolean("celtium.validation.drawTest")) {
