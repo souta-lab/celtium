@@ -203,11 +203,19 @@ in §1c), which is what makes it usable as a reference at all.
 **Provenance, verified per leg rather than assumed.** `prism_validation.py` builds its command from
 the Prism *patches* (`patches/*.json` `+jvmArgs`, lines 77 and 258-260) plus `--jvm-arg`; the
 instance's `instance.cfg` `JvmArgs` reaches the JVM only in a Prism launch. Every leg's
-`effectiveConfig` is therefore quoted above: all three reference legs have
-`profileJvmArgs=['-Dfile.encoding=UTF-8']` and **no `glless` anywhere in the union**, while the
-GL-less candidates carry it in `runnerJvmArgs` (`acc2-glless`, `ww6-gl-base` and `sky-draws-final`
-each show `-Dceltium.vulkan.glless=true` in `effectiveConfig.runnerJvmArgs`). The reference legs were
-never GL-less; that is measured, not inferred from the absence of a flag.
+`effectiveConfig` is therefore quoted literally:
+
+| leg | `effectiveConfig.profileJvmArgs` | `effectiveConfig.runnerJvmArgs` | `glless` in the union |
+|---|---|---|---|
+| `ref3-terrain` | `["-Dfile.encoding=UTF-8"]` | `["-Dceltium.validation.minWorldFrames=5"]` | **no** |
+| `ref3-entity` | `["-Dfile.encoding=UTF-8"]` | `["-Dceltium.validation.minWorldFrames=5", "-Dceltium.validation.keepEntities=true", "-Dceltium.validation.captureEntities=true"]` | **no** |
+| `ref3-inventory` | `["-Dfile.encoding=UTF-8"]` | `["-Dceltium.validation.minWorldFrames=5", "-Dceltium.validation.jeiScreen=true", "-Dceltium.validation.keepInventoryScreen=true", "-Dceltium.validation.screenshotAtTick=60"]` | **no** |
+| `acc2-glless` (candidate) | `["-Dfile.encoding=UTF-8"]` | `[…, "-Dceltium.vulkan.glless=true"]` | yes |
+| `ww6-gl-base` (candidate) | `["-Dfile.encoding=UTF-8"]` | `[…, "-Dceltium.vulkan.glless=true", …]` | yes |
+| `sky-draws-final` (candidate) | `["-Dfile.encoding=UTF-8"]` | `["-Dceltium.vulkan.glless=true", …]` | yes |
+
+The reference legs were never GL-less; that is measured per leg, not inferred from the absence of a
+flag, and the same reading is what a reader must do for any future leg.
 
 **Tick pairing, because it breaks comparisons silently.** `-Dceltium.validation.screenshotAtTick=60`
 writes an *extra* `celtium-at-tick-60.png`; the main `celtium-validation.png` is still taken at tick

@@ -420,9 +420,42 @@ public abstract class RenderSectionManager {
         return true;
     }
 
+    /**
+     * The inputs the terrain render list is built from, printed a bounded number of times.
+     * <p>
+     * The list's section count is the number this exists to explain: the same fixture, camera and tick put 41
+     * sections in the reference's list and 34 in ours, and the list-building code is byte-identical between the two.
+     * Every input that can move it is on one line - the game's render distance, the fog cutoff and its alpha and
+     * shape, whether fog occlusion is on, the search distance that follows from them, whether the frustum traversal
+     * may use occlusion, the section graph's size and the projection's own far-plane entries - so the difference can
+     * be read rather than argued. {@code -Dceltium.debug.listInputLog=N} bounds the lines, default 6.
+     */
+    private static final int LIST_INPUT_LOG_LIMIT =
+            Integer.getInteger("celtium.debug.listInputLog", 6).intValue();
+    private static int listInputLogs;
+
     private void createTerrainRenderList(Viewport viewport, Matrix4fc projectionMatrix, int frame, boolean spectator) {
         final var searchDistance = this.getSearchDistance(projectionMatrix);
         final var useOcclusionCulling = this.shouldUseOcclusionCulling(viewport, spectator);
+
+        if (listInputLogs < LIST_INPUT_LOG_LIMIT) {
+            listInputLogs++;
+            var color = this.getFogService().getFogColor();
+            System.out.println("[Celtium] CELTIUM_LIST_INPUT frame=" + frame
+                    + " renderDistance=" + this.getRenderDistance()
+                    + " fogCutoff=" + this.getFogService().getFogCutoff()
+                    + " fogAlpha=" + (color != null && color.length > 3 ? color[3] : Float.NaN)
+                    + " fogShape=" + this.getFogService().getFogShapeIndex()
+                    + " useFogOcclusion=" + this.useFogOcclusion()
+                    + " searchDistance=" + searchDistance
+                    + " occlusionTraversal=" + useOcclusionCulling
+                    + " graphSections=" + this.getTotalSections()
+                    + " regions=" + this.regions.getRegionIdsLength()
+                    + " proj=[" + (projectionMatrix == null ? "null"
+                            : projectionMatrix.m00() + "," + projectionMatrix.m11() + ","
+                            + projectionMatrix.m22() + "," + projectionMatrix.m23() + ","
+                            + projectionMatrix.m32()) + "]");
+        }
 
         this.renderListManager.startGraphUpdate(viewport, frame, this.regions.getRegionIdsLength(),
                 searchDistance, useOcclusionCulling, this.getTargetQueueSize());

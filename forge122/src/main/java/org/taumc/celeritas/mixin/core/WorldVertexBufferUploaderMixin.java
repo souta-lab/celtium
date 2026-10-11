@@ -259,23 +259,34 @@ public abstract class WorldVertexBufferUploaderMixin {
                 }
             }
             if (formatId == 0 && celtium$nullFormatDumps < 2) {
-                // Something uploads vertices with no VertexFormat at all, and the immediate path cannot take it because a
-                // null format has neither a stride nor a pipeline. Printing where it comes from turns "format 0 is
-                // refused" into a named call site (sky, clouds, weather and the water surface are the candidates).
+                // Two different things land on id 0 and this branch used to assume only one of them. A *null* format -
+                // something uploading vertices with no VertexFormat at all - has neither a stride nor a pipeline, and
+                // the dump below used to dereference it: format.getElementCount() threw, the broad catch at the end of
+                // this method swallowed the offer, and the batch never reached the backend at all. That is worse than a
+                // refusal, because a refusal is counted and named while this was neither. A non-null format answered 0
+                // is simply one the layout table does not know, and the element dump is what names it.
                 celtium$nullFormatDumps++;
-                StringBuilder elements = new StringBuilder();
-                for (int i = 0; i < format.getElementCount(); i++) {
-                    elements.append(format.getElement(i)).append(' ');
+                if (format == null) {
+                    System.out.println("[Celtium] CELTIUM_NULLFORMAT stride=" + stride + " vertices=" + vertices
+                            + " elements=[none: the BufferBuilder carries no VertexFormat at all] formatSize=0"
+                            + " elementCount=0 (id 0 means no layout; a null format cannot be mapped, and the offer"
+                            + " continues so the backend's own refusal counts and names it)"
+                            + " stack=" + celtium$stack());
+                } else {
+                    StringBuilder elements = new StringBuilder();
+                    for (int i = 0; i < format.getElementCount(); i++) {
+                        elements.append(format.getElement(i)).append(' ');
+                    }
+                    // Both sides, in the same shape. Six rules were tried against this shape without success, and the reason may
+                    // simply be that nobody has seen the two formats side by side: the dump printed the unmatched format's
+                    // elements and never a known one to compare them with.
+                    System.out.println("[Celtium] CELTIUM_NULLFORMAT stride=" + stride + " vertices=" + vertices
+                            + " elements=[" + elements.toString().trim() + "] formatSize=" + format.getSize()
+                            + " elementCount=" + format.getElementCount()
+                            + " referencePositionTex=[" + celtium$describe(DefaultVertexFormats.POSITION_TEX) + "]"
+                            + " referenceBlock=[" + celtium$describe(DefaultVertexFormats.BLOCK) + "]"
+                            + " stack=" + celtium$stack());
                 }
-                // Both sides, in the same shape. Six rules were tried against this shape without success, and the reason may
-                // simply be that nobody has seen the two formats side by side: the dump printed the unmatched format's
-                // elements and never a known one to compare them with.
-                System.out.println("[Celtium] CELTIUM_NULLFORMAT stride=" + stride + " vertices=" + vertices
-                        + " elements=[" + elements.toString().trim() + "] formatSize=" + format.getSize()
-                        + " elementCount=" + format.getElementCount()
-                        + " referencePositionTex=[" + celtium$describe(DefaultVertexFormats.POSITION_TEX) + "]"
-                        + " referenceBlock=[" + celtium$describe(DefaultVertexFormats.BLOCK) + "]"
-                        + " stack=" + celtium$stack());
             }
             int mode = celtium$drawMode(buffer);
             // The call that decides everything. It was lost when a dead branch was cleaned out of this method, and

@@ -22,6 +22,12 @@
 
 | 項目 | 状態 | 最新の実測（GPU・条件つき） |
 | **参照の変更（2026-10-11 14:xx）** | **bridge を廃止し upstream Celeritas 989ebf2e を参照に** | ユーザー決定「bridgeとかいらない。gllessのみでいこう」「glless vs celeritasのほうが楽だし、bridgeの保守もいらなくなる」。参照 leg は同一 fixture・同一 scene/pose/tick で `--mod .celtium-work/upstream-baseline/.../celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`＋celtium jar なし＋glless フラグなし。**検証済み**: `ref-celeritas2` = `nonBg 0.761173`・**PASSED**・2476色・tick 150 の screenshot 取得成功（§0.163） |
+| **GL-less のメニュー（ユーザーの苦情）** | **解消（task-15・2026-10-11 16:18）** | **window 生成時に renderer を作り、world renderer が同一インスタンスを adopt** する形にした結果、
+**ユーザー構成（Prism instance・fixture なし・validation client なし・`-Dceltium.vulkan.glless=true`）でメインメニューが描かれ、compositor 出力から撮れた**:
+`.celtium-work/ww-menu-caps/compositor-0018.png`（1280x720・44,841 B・sha256 `ade674e0be57ea63…`・私が開いて確認＝ロゴ・splash 文言・3ボタン・Options/Quit・footer 14 mods）。
+`CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0 reasons=[]`・`CELTIUM_PRESENT hookCalls=3900 presented=3899 failures=0 swapsSkipped=3899`。
+**残り**: panorama 背景は灰色——`drawFbo=0`（window）に **256x256 の sub-rect viewport** で描かれる batch を viewport 不一致として拒否しているため
+（FBO 説は否定・修正は「拒否ではなく Vulkan viewport/scissor として適用」）。**task-15 継続**。 |
 | **Intel UHD 630（GL-less の第2 vendor）** | **受入済み（task-11 完了）** | Intel で **GL-less と参照の両 leg が PASSED**（`intel-glless` / `intel-ref`・AMD と同じ fixture/pose/tick・`validationClean=true`・VUID 0・`fixtureStatus=PASSED`）。**rows 0-200 の 256,000 画素で 8 を超える差は 0**（mean 0.453・max 4）、AMD の GL-less と Intel の GL-less は **0 画素差**（rows 0-200）・terrain 帯で 4 画素。`depthFormat=D32_SFLOAT`（両社とも候補1/6＝**fallback 候補は未行使**）。**device を決めるのは `VK_ICD_FILENAMES`**（pin で `vulkanDeviceCount=1`・無 pin は 3、`matchedOpenGl=false`）。**Intel 未検証**: 星/地平線 plane（fixture 制約）・depth fallback 候補・GUI/item/entity 段・resize/device loss・性能。`docs/history/2026-10-11-intel-uhd630-leg.md` |
 | **参照 leg の取り直し（task-22 準備）** | **完了** | upstream Celeritas `d12425eaaf184e79`＋凍結 fixture `acfb62b16ed70ac3`・AMD・pose 0.5/12/0.5 yaw180 pitch20・tick 200: terrain `nonBg 0.761173` PASSED／entity `0.774399` UNCALIBRATED（variant 差＝正しい）／inventory `0.888320` UNCALIBRATED。**harness は instance.cfg の JvmArgs を読まない**（`patches/*.json` の `+jvmArgs` と `--jvm-arg` のみ）＝instance.cfg はユーザーの手動起動専用（16:0x に空へ変更されていたのを `-Dceltium.vulkan.glless=true` へ復元） |
 | **空（dome+星+地平線）** | **受入済み（task-3 完了）** | GL-less vs upstream Celeritas で **rows 0-199 の 256,000 画素のうち 8 を超える差は 0**（max 4）。行平均が参照と 0.1 カウントまで一致、63色が両側で同一。gate は両分岐とも削除。**地平線 plane と星はこの fixture では行使不可**（flat world の `getHorizon()`=0／worldTime 固定で星輝度 0）と明記 |
@@ -156,12 +162,12 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 ### このラウンドの測定で確定した事実
 
 - **task-15 の第1段は動いた**: window 生成時に renderer が作られ（`CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0`）、
-  swapchain は提示している。**しかし窓はまだ空白**——stub の `glDrawArrays` は **1,048,576 件すべて decode された**うえで
-  **全件拒否**: 理由は `target: the viewport is 256x256, the target is 1280x720`。site は `SplashProgress.drawVanillaScreen`。
-  一方 **uploader 経路は受理している**（`CELTIUM_ACCEPTED total=1365000`・format 2 が 1,301,507・`CELTIUM_FONT_GLYPH_SUMMARY windows=1293746`）。
-  **2経路が食い違っており、絵だけが決められる**。次の問い: (i) 90秒時点で loading screen から出ているか、
-  (ii) **viewport が target と違う batch を拒否するのが正しいか**——GL の viewport は drawable の部分矩形なので、
-  window target に対しては**拒否ではなく適用**（Vulkan viewport/scissor）が GL 意味論に合う。拒否は「誰も描かない」。
+  swapchain は提示している。**そして 16:18 にメニューが描かれた**（compositor 出力の capture を私が確認・上の表）。
+  **残るのは panorama 背景**: stub の `glDrawArrays` は 1,048,576 件すべて decode されたうえで、
+  **256x256 の viewport を持つ batch が `target: the viewport is 256x256, the target is 1280x720` で拒否**される。
+  **修正は「拒否ではなく適用」**（GL の viewport は drawable の部分矩形）——`CELTIUM_DRAWARRAY_REFUSAL_CONTEXT` が
+  `drawFbo=0`（＝window）を示したので **FBO 説は否定**。uploader 経路は同じ run で 1.3M batch を受理しており、
+  2経路の食い違いはこの viewport 拒否が原因。
 - **task-15 の user-launch にはまだ絵が無い**: `scripts/compositor_capture.py --output` は **grim の output 名**であり
   JSON path ではない（`--output` に JSON path を渡すと全 capture が `unknown output` で失敗＝PNG 0枚）。**screenshot の無い run は証拠ではない**。
 - **spider の赤目 layer の原因は model ではなく blend state**: `VulkanTerrainGpuBackend.blendFunc(int,int)`（~:3021）が
@@ -172,6 +178,17 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   `verify_forge_jar.py` は license を見ないのに `verified: true`。
 - **GL-less の性能は測定済み**（`docs/performance-2026-10-11.md` §4.1: p50 3.94 ms / 253.8 fps・§7 で 2.83〜3.94 ms を再現）。
   「未測定」と書かない（gui-stage の訂正を採用）。
+- **回帰（受入を全員止める・原因確定）**: すべての run が `FAILED_PRESENTED_IMAGE`＋
+  `presentedImageAssertions = FAILED: ... frame the renderer presented at 146, which is 18 away from the 128 world frames`
+  で落ちる（`t16-atlas4`/`t16-atlas1`/`t19-bounds`/`t19-noimm`/`t17b-break-on` が同一）。
+  **原因は task-15**: これまで renderer は world 生成時にしか無かったので presented frame 番号は world frame と一致していたが、
+  window 生成時に renderer が出来たことで**menu/loading の presented が番号に混ざる**（差 18）。
+  **assertion は正しく、壊れたのは番号**——fixture 側を緩めず、**world 採用時に presented カウンタをリセット**する（weather-water）。
+- **地平線帯の mip**: 原因の一部は確定・修正済み（atlas sampler の maxLod 1→4・fog-path）。
+  band rows 200-320 の mean|d| **29.187 → 20.996**、>8 65.82% → 59.08%、rows 240-250 の空間 std 58.5 → 0.0-2.2（参照 0.1-1.9）、
+  他段は不変（sky rows 0-205 は 0/256,000・terrain centre 2.65%）。**残り2因**: (i) **mirror の mip 内容**
+  （GL は per-sprite の level 4・我々は全体 blit の平均 → rows 240-250 が (102.0,63.0,58.0) vs 参照 (112.9,110.7,99.7)・task-26）、
+  (ii) **section 数が 34 vs 参照 41**（同一 fixture/camera/tick・task-16 継続）。
 
 ## 0.174 **video settings の機能受入（ユーザー要件の半分が閉じた）**
 

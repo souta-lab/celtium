@@ -179,20 +179,43 @@ build, of different configurations:
 - **No code from Sodium 0.6 or later (PolyForm Shield 1.0.0) has been copied, translated, renamed or cherry-picked.** Where an
   idea comes from published descriptions, its source is recorded in `docs/plan.md` rather than presented as original.
 - Rewriting is not treated as a way to make a licensing question disappear.
-- **What the shipped jar actually contains, measured 2026-10-11** (`unzip -l` over
-  `celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar`): `org/embeddedt` 485 classes, `org/taumc` 207,
-  `org/soutalab` 102, `grondag/bitraster` 13, `common/xyz/wagyourtail/jvmdg` 13. No `org/lwjgl`, no `org/joml`.
-  - `licenses/bitraster-LICENSE` is present and is the **Apache License 2.0**, matching the 13 bundled
-    `grondag/bitraster` classes.
-  - **The `common/xyz/wagyourtail/jvmdg/**` entries are the JVM Downgrader runtime stubs** pulled in with the downgraded
-    `:common` configuration (`forge122/build.gradle.kts:117-121`) and they carry **no license file in the jar**. Reported
-    as a distribution defect; the license is not stated here because it has not been read.
-  - **`META-INF/LICENSE` in the jar is the JOML MIT license while the jar contains no JOML class.** It is the wrong
-    top-level license for this artifact - the project's own is LGPL-3 - and it is reported as a distribution defect
-    rather than documented as if intended.
+- **What the shipped jar actually contains, measured 2026-10-11** from the built jar itself
+  (`unzip -l celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar`, and the census
+  `scripts/verify_forge_jar.py` now prints): `org/embeddedt` 485 classes, `org/taumc` 207, `org/soutalab` 102,
+  `grondag/bitraster` 13, `common/xyz/wagyourtail/jvmdg` 13, `org/embeddedt/embeddium/impl/shadow/joml` 111.
+  No `org/lwjgl`, no unrelocated `org/joml`, no `net/minecraft`. Each bundled third-party component and the notice
+  that covers it:
+  - `grondag/bitraster` (13 classes) → **`licenses/bitraster-LICENSE`, Apache-2.0**.
+  - `common/xyz/wagyourtail/jvmdg` (13 classes, the **JVM Downgrader** runtime stubs shaded in by
+    `common/build.gradle`'s `shadeDowngradedApi`, embedded through `forge122/build.gradle.kts`) →
+    **`licenses/jvmdowngrader-LICENSE.md` and `licenses/jvmdowngrader-LGPLv2.1.md`**. The licence was read from the
+    dependency's own metadata, not from memory: `jvmdowngrader-2.0.1.pom` declares
+    `<licenses><license><name>LGPL-2.1</name>`, and its `LICENSE.md` offers LGPL-2.1 **or** a commercial licence and
+    states explicitly that shading its api classes into a Combined Work is permitted provided the unshaded jar or the
+    source is available - which this repository is (LGPL-3.0, sources included). Both files are shipped byte-identical
+    to the ones inside `jvmdowngrader-2.0.1.jar`, and the verifier compares them.
+  - `org/embeddedt/embeddium/impl/shadow/joml` (111 classes) → **`META-INF/LICENSE`, the JOML MIT notice**.
+    **Correction, 2026-10-11:** an earlier entry in this file called that notice a defect "because no JOML class is
+    bundled". That was wrong and the instrument was at fault: JOML **is** bundled, relocated to
+    `org/embeddedt/embeddium/impl/shadow/joml/` (version 1.10.5, from
+    `META-INF/maven/org.joml/joml/pom.properties`), and a `grep -c 'org/joml'` on the jar returns 0 precisely because
+    the package was relocated. The MIT notice is required by the licence of the code that is shipped, and the jar
+    verifier had already been requiring that class and that notice together.
+  - The project's own licence is in the jar at the root: **`COPYING` and `COPYING.LESSER` (LGPL-3.0)**, byte-identical
+    to the repository's copies.
+  - The manifest carries `Celtium-License: LGPL-3.0` and `Celtium-Vulkan-Minimum: 1.2`. The stale
+    `Celtium-Stage: backend-boundary` (a 2026-10-09 label) is gone.
 - **The decompiled Minecraft and Forge sources** that `scripts/mc-sources.sh` produces are reference material extracted
   on demand from the jar the build already uses. They are **not redistributed in the jar** (measured: no
   `net/minecraft` entry) and are Mojang/Forge-licensed material kept out of the distribution.
+- **The verifier now checks the licence content, not just its presence** (`scripts/verify_forge_jar.py`, extended
+  2026-10-11): it requires `COPYING`/`COPYING.LESSER`/`META-INF/LICENSE`/the two downgrader notices, reads
+  `META-INF/LICENSE` and fails unless it is the JOML MIT notice *while* relocated JOML classes are bundled, prints a
+  **licence census** of every bundled third-party package against the notice that covers it, compares the two
+  downgrader files byte-for-byte with the dependency jar at the version pinned in `common/build.gradle`, and fails the
+  jar if that pin and the resolved artifact disagree. Its scope line is now "packaging and licence content only".
+  A negative control was run: a copy of the jar with those three notice entries removed reports
+  `verified: false` with eight named errors, so the checks are live rather than vacuous.
 
 ## 7. How the claims above are measured
 

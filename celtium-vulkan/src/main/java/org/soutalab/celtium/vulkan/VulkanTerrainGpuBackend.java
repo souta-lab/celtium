@@ -373,6 +373,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     .reduce(1, MathUtil::lcm);
         }
         this.windowBackend = false;
+        // The presented-frame counter means world frames: it names the numbered dump files (`frame-N.png`) and the
+        // fixture asserts that N is the frame the capture shows, within one. The window-time instance presents the
+        // menu and the loading screens from the first tick, so without this reset N would start before the world and
+        // every dump would be offset by the pre-world presents - measured as 146 against 128 world frames in
+        // fog-path's legs, which is exactly the `|presentedFrame - captureWorldFrames| <= 1` assertion failing for
+        // every worker. The counter is a world-frame number, so it is restarted when the world begins.
+        if (this.framePresentedFromVulkan != 0) {
+            record("presented-frame counter reset at adoption: was " + this.framePresentedFromVulkan
+                    + " pre-world presents, the numbering starts with the world");
+            this.framePresentedFromVulkan = 0;
+        }
         install();
         record("the world renderer adopted the window-time backend: configuration=" + (configuration != null)
                 + " regions=" + (regionManager != null) + " fog=" + (fogService != null)
@@ -905,6 +916,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Input images registered before the chain preflight, and preflight refusals printed, both bounded. */
     private int chainAdoptionDeclarations;
     private int preflightRefusalsReported;
+    /** Bounded: how many chain-input state lines this run has printed. */
+    private int chainInputReports;
 
     /**
      * Token of the device-wide wait in progress, and the token whose wait has returned. Per-call rather than one
@@ -1086,6 +1099,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
     private final java.util.Set<Integer> diagnosedTextures = new java.util.HashSet<Integer>();
     private String blendOutlier;
+    /**
+     * How many 2-argument {@code glBlendFunc} calls reached the mirror, and the last pair they carried.
+     * <p>
+     * Before this counter existed a 2-argument call was visible only through {@link #blendOutlier}, which is set for
+     * anything that is not the ordinary alpha pair - so a run in which the game called {@code blendFunc(ONE, ONE)}
+     * and nothing else unusual happened reported no evidence at all, and the fact that the call never reached the
+     * mirror was invisible.
+     */
+    private int blendFuncTwoArgCalls;
+    private String lastTwoArgBlendPair = "none";
     /** How many groups opened with each observed (src,dst) pair, so one run says whether they differ. */
     private final java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
     private VulkanImmediateParticlePipeline descriptorProbe;
@@ -1183,6 +1206,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Boolean.getBoolean("celtium.vulkan.enqAll");
     private static final int ENQ_FORMAT =
             Integer.getInteger("celtium.vulkan.enqFormat", -1).intValue();
+    /** Lines of {@code CELTIUM_DRAW_SITE}, the draw-moment companion of {@code CELTIUM_IMMEDIATE_ENQ}. */
+    private static final int DRAW_SITE_LIMIT =
+            Integer.getInteger("celtium.vulkan.drawSiteLines", 16).intValue();
     private int crossPassComparisonsSkipped;
     private boolean mirrorMidSetup;
     private int midSetupComparisonsSkipped;
@@ -1600,6 +1626,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Boolean.getBoolean("celtium.vulkan.immediateWindowSamples");
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
+    /**
+     * Groups drawn, by format id - the counter that pairs with {@code acceptedByFormat}.
+     * <p>
+     * {@code immediateGroupsDrawn} says how many groups reached a pipeline in total; it cannot say which layout they
+     * were. A group of POSITION_NORMAL that is accepted (48 batches), closed and counted as drawn while the box is
+     * absent from the picture is exactly the case where the total hides the answer, so the per-format row is what
+     * says whether the drop is in the queue (drawn 0) or after it (drawn 48 and no pixels).
+     */
+    private final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
+    /**
+     * Where the draw loop was entered from, for the bounded {@code CELTIUM_DRAW_SITE} record.
+     * <p>
+     * The queue counters say a group was drawn; they do not say into which pass. The three entries are the only ones
+     * that exist - the ordering flush inside an open pass, an immediate-only window of its own, and the tail of a
+     * terrain pass - and they differ in what the depth attachment holds when the group is tested against it, which is
+     * the difference that decides whether a group drawn "successfully" can still leave no pixels.
+     */
+    private String immediateDrawSite = "none";
+    /** Lines of {@code CELTIUM_DRAW_SITE} printed; bounded by {@code celtium.vulkan.enqAll} + {@code enqFormat}. */
+    private int immediateDrawSiteLogged;
     /** Groups left in the queue because they belong to another render target (audit A32). */
     private int immediateGroupsKeptForOtherTargets;
     private int immediateGroupsOffTargetRetired;
@@ -3030,6 +3076,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.blendFuncIgnored++;
             return;
         }
+        // The 2-argument form *is* the state. It used to be read and thrown away - observedBlendSrc/Dst were written
+        // but the mirror was not - so the mirror kept whatever the last 4-argument tryBlendFuncSeparate left, and a
+        // batch drawn under the 2-argument pair was enqueued and had its pipeline built with the wrong factors. That
+        // is not a cosmetic difference: LayerSpiderEyes calls enableBlend(); disableAlpha(); blendFunc(ONE, ONE) for
+        // the additive red eye layer, and with the mirror still holding (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) the layer
+        // came out alpha-blended instead - measured as the eye's red channel matching the reference at 0.99 while
+        // green and blue sat at 0.64-0.66, which is the signature of alpha-blending an additive layer.
+        //
+        // GL's glBlendFunc sets the RGB and alpha factors alike, which is exactly how GlStateManager.blendFunc(int,int)
+        // behaves (it assigns srcFactor/dstFactor to the alpha fields too), so all four slots take the same pair.
+        this.immediateState.blendFunc(sourceFactor, destinationFactor, sourceFactor, destinationFactor);
+        this.immediateStateCalls++;
+        this.blendFuncTwoArgCalls++;
+        this.lastTwoArgBlendPair = "(" + sourceFactor + "," + destinationFactor + ")";
         this.observedBlendSrc = sourceFactor;
         this.observedBlendDst = destinationFactor;
         this.blendObserved = true;
@@ -3693,8 +3753,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // passed the mapping, passed the acceptance mask, and was then refused here as an unknown layout by a range
             // check that simply predated the format. It is the highest id the formats class declares, not a literal, for
             // the same reason: the literal was the defect.
-            this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId
-                    + ", no such layout)";
+            // Id 0 is the one case where the number says nothing at all: it is what the uploader passes when no layout
+            // in the table matched, so the refusal has to point at the line that carries the shape rather than repeat
+            // "no such layout". Measured: 138 offers in one GL-less leg read as `id0=138/0` here while the uploader's
+            // own CELTIUM_UNMAPPED line named them as PARTICLE_POSITION_TEX_COLOR_LMAP written `2,UV,Short` - two
+            // layout constants said "Unsigned Short" (USHORT's name) for an element whose type is SHORT, and this
+            // refusal was the end of a path that never mentioned the element list.
+            this.immediateLastRefusal = formatId == 0
+                    ? "no native layout for a " + vertexStride + "-byte vertex (id 0: the uploader's CELTIUM_UNMAPPED"
+                    + " and CELTIUM_UNMAPPED_LAYOUT lines carry its element list, width, count and indices)"
+                    : "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ", no such layout)";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             this.flushPendingBeforeGlDraw();
             return false;
@@ -5638,8 +5706,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
                 + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
+                // The 2-argument glBlendFunc calls, which used to reach the counters but not the mirror. A run whose
+                // value here is 0 and whose picture has an additive layer is a run where the call never arrived.
+                + " blendFuncTwoArg=" + this.blendFuncTwoArgCalls
+                + " lastTwoArgBlendPair=\"" + this.lastTwoArgBlendPair + "\""
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " acceptedByFormat=[" + celtium$perFormat(this.acceptedByFormat) + "]"
+                + " drawnByFormat=[" + celtium$perFormat(this.drawnByFormat) + "]"
                 + " droppedByFormat=[" + celtium$perFormat(this.postAcceptDroppedByFormat) + "]"
                 + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
                 // Per-format arrival and acceptance over every id the layouts class declares, built from COUNT rather
@@ -6624,6 +6697,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
 
         if (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty()) {
+            // The terrain pass's tail: everything still pending is drawn inside this pass, after the sections, so it
+            // tests against the depth the terrain of this pass wrote.
+            this.immediateDrawSite = "terrain-pass-tail";
             drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         }
 
@@ -7848,6 +7924,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
+     * One bounded line per run naming what the chain's input image holds at the moment the chain is about to read it.
+     * <p>
+     * The counters can say the chain ran ({@code postChains>0}) while the picture shows no outline, and the two are
+     * not separable from the frame: either nothing was drawn into the adopted image, or the image was cleared after
+     * the silhouette reached it, or the composite sampled a different name than the one the image was published
+     * under. This prints the four facts that tell them apart - the identity and GL name the chain reads, whether the
+     * pair was cleared in this frame, every off-target identity that received batches (with the pair each routes to),
+     * and the name the image is currently published under.
+     */
+    private void reportChainInputState(int identity, long[] reported, GllessFrameTarget glless) {
+        if (this.chainInputReports++ >= 3) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_OUTLINE_INPUT frame=" + this.frameId
+                + " identity=" + identity + " texture=" + (reported == null ? -1L : reported[0])
+                + " size=" + (reported == null ? "?" : reported[1] + "x" + reported[2])
+                + " clearedThisFrame=" + (this.chainPairClearedFrame == this.frameId)
+                + " chainPairClears=" + this.chainPairClears
+                + " boundIdentity=" + this.currentFramebufferIdentity
+                + " boundIsMain=" + this.currentRenderTargetIsMain
+                + " offTargetByTarget=[" + offTargetSummary() + "]"
+                + " publishedTexture=" + (this.publishedChainOutput != null ? this.publishedChainTexture : 0));
+    }
+
+    /**
      * One bounded line per run when the preflight refuses the chain.
      * <p>
      * The refusal was recorded but never printed, so a run whose chain stopped there had no line naming it - the
@@ -7927,6 +8028,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.postChain.adoptTarget(identity, glless.chainPairColorImage(), glless.chainPairColorView(),
                 width, height);
         this.chainAdoptions++;
+        reportChainInputState(identity, reported, glless);
         // CELTIUM-OUTLINE-COMPOSITE: the chain's output IS this image, and the game composites it by binding the
         // outline framebuffer's colour texture name - the one the bind reported for this identity. Publishing the
         // image under that name is what gives the composite's batch a texture to sample: every batch resolves its
@@ -8892,6 +8994,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.immediateGroupsDrawn++;
                 this.immediateFlushes++;
                 this.frameDrawn++;
+                if (group.formatId >= 0 && group.formatId < this.drawnByFormat.length) {
+                    this.drawnByFormat[group.formatId]++;
+                }
+                if (ENQ_ALL_GROUPS && (ENQ_FORMAT < 0 || ENQ_FORMAT == group.formatId)
+                        && this.immediateDrawSiteLogged < DRAW_SITE_LIMIT) {
+                    // Where this group was drawn, not only that it was: the three sites test against different depth
+                    // contents, so "drawn" and "in the picture" are different questions and this is the line that
+                    // tells them apart. Gated by the existing enq switches and bounded, so a normal run is unchanged.
+                    this.immediateDrawSiteLogged++;
+                    System.out.println("[Celtium] CELTIUM_DRAW_SITE #" + this.immediateDrawSiteLogged
+                            + " frame=" + this.frameId + " fmt=" + group.formatId
+                            + " site=" + this.immediateDrawSite
+                            + " target=" + group.target + " onMain=" + (group.target == this.mainTargetIdentity)
+                            + " passOpen=" + (this.commandState != null && this.commandState.inRenderPass())
+                            + " vertices=" + mesh.vertexCount() + " indices=" + mesh.indexCount()
+                            + " batches=" + batches + " pending=" + this.immediateGroups.size()
+                            + " windows=" + this.immediateWindows + " windowsThisFrame=" + this.immediateWindowsThisFrame
+                            + " terrainRanThisFrame=" + (this.lastTerrainPassFrame == this.frameId)
+                            + " groupFrame=" + (group.stamp == null ? -1L : group.stamp.frameId)
+                            + " groupGeneration=" + (group.stamp == null ? -1 : group.stamp.targetGeneration)
+                            + " borrowed=" + (group.stamp != null && group.stamp.meshBorrowed));
+                }
                 iterator.remove();
                 this.pendingImmediateIndices -= mesh.indexCount();
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
