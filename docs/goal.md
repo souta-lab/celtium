@@ -1,9 +1,9 @@
-# Celtium goal — 2026-10-12 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 16, phase active / activation armed / roundsStarted 27 / maxGoalRounds 256）
+# Celtium goal — 2026-10-12 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 27, phase active / activation armed / roundsStarted 103 / maxGoalRounds 1000, phase active / activation armed / roundsStarted 27 / maxGoalRounds 256）
 
 goal ID: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`
 
 **persisted goal は目標のみを保持する**（ユーザー指示 2026-10-12: goal は俺が喋らないと変えられないので、目標だけにしろ）。
-goal revision 16 の objective は「完成目標 + 直近の必須修正3件 + 詳細はリポジトリの聖典に従う」の短い形で、
+goal revision 27 の objective は「完成目標 + 直近の必須修正3件 + 詳細はリポジトリの聖典に従う」の短い形で、
 **詳細な仕様・優先順・受入・作業規律・証拠の扱いはこのファイル・`docs/plan.md`・`AGENTS.md`・
 `docs/history/2026-10-11-code-bughunt.md` が聖典**である。以下はその詳細側（goal から移した canon）。
 

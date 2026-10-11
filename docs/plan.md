@@ -4,7 +4,7 @@
 
 > **描画backendの決定（2026-10-10）:** Vulkan直結を維持する。SDL GPUへの全面移行は行わない。Angelicaはshader変換・model/TESR/文字のbatch化・状態と資源寿命の設計/試験を部品ごとに比較する。現在のGL除去と主要mod対応を優先し、影の実装は上記gateを満たしてから。汎用GLエミュレーションを新たな主backendにしない。
 
-> goal: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`（live API で revision 1 / phase active / activation armed / roundsStarted 5 / maxGoalRounds 256 を確認。**旧 `goal-0d07c3b5-…` revision 61 の記載は監査 17.2 で不一致と指摘され、この行を live 値へ同期した**）。
+> goal: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`（live API で revision 27 / phase active / activation armed / roundsStarted 103 / maxGoalRounds 1000 を確認。**旧 `goal-0d07c3b5-…` revision 27 の記載は監査 17.2 で不一致と指摘され、この行を live 値へ同期した**）。
 > 全文は `docs/goal.md`。構造修復の方針は **`docs/handoff-structure-recovery-2026-10-10.md`**、
 > 直近の原因候補は `docs/hints-2026-10-10-nether.md`。監査起点は `docs/audit-2026-10-09-third.md`。
 > **round ごとの経緯と旧測定は `docs/history/plan-round-log-until-2026-10-10.md` に移した**（削除していない）。
