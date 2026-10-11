@@ -21,16 +21,23 @@
 **この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.92 にある（新しい節ほど新しい実測）。
 
 | 項目 | 状態 | 最新の実測（GPU・条件つき） |
+| **ログ flood（ユーザー報告 18:2x）** | **修正済（Lead・jar `2a3c59fe21ae831b6a3d` を instance へ投入）** | ユーザー構成は `-Dceltium.vulkan.glless=true` **だけ**なのに `CELTIUM_MODEL_MATRIX` が **model list ごと・フレームごと**に出て、**ログが 100,000 行を超え Prism が表示停止**（screenshot が証拠）。`VulkanDiagnostics` で `MODEL_MATRIX`（上限200）・`ACCEPTED`（500 batch ごと）・arena census（既定 true だった）を gate。一回だけの構成識別行は残す。§0.187 |
+| **F3 / driver 表示** | **実 device 名は実機で確認（Intel/AMD 両方）／driver 詳細は task-46** | `glRenderer = "AMD Radeon RX 6400 (RADV NAVI24) via Celtium Vulkan"`・Intel は `"Intel(R) UHD Graphics 630 (CFL GT2) via Celtium Vulkan"`（以前は "Celtium stub GL"）。task-46 が `VkPhysicalDeviceDriverProperties` の driver 名/info/version と API version を実値にし、取れなければ「未取得」にする。§0.188/§0.189 |
+| **ロード画面** | **splash が renderer に到達／owned image 待ち** | `CELTIUM_WINDOW_RENDERER … stage=createDisplay`・`no terrain backend is installed` **0件**（以前3）。最初の immediate group が splash 自身（`mvT z=-2000`・logo texture 8・**splash 自身の FBO**）。残りは FBO の colour texture の mirror が空＝frame-composite が `publishExternalImage` で公開する。§0.189 |
+| **性能の測定法** | **訂正: 記録の frame interval は全て cold** | fixture は `worldTicks 120-200`（chunk build 窓）でしか測らない。benchmark は 600 tick warmup 後。warm/cold を1 report で分ける変更が入った（`frameIntervalWarm*`・`frameIntervalWindows`）。§0.189 |
+| **item 変換 family（ユーザー報告）** | **未修正（task-43・entity-models）** | GUI アイコンが枠いっぱい（`item-grid.png` が各スロットを平坦テクスチャで埋める）・剣の向き・ドロップ item 過大。**GUI/first-person/third-person/GROUND を1バッチで参照比較**し、1つの scale 定数で済ませない。§0.187 |
+| **hurt flash / 手持ち block の暗さ** | **半分着地（task-45・pipelines）** | `immediate_tex_color.frag` に `u_AlphaRef<0` の INTERPOLATE 分岐を追加（SPIR-V も jar 内で一致を確認）。lightmap 項と hand の light 状態は測定してから。§0.187 |
 | **参照の変更（2026-10-11 14:xx）** | **bridge を廃止し upstream Celeritas 989ebf2e を参照に** | ユーザー決定「bridgeとかいらない。gllessのみでいこう」「glless vs celeritasのほうが楽だし、bridgeの保守もいらなくなる」。参照 leg は同一 fixture・同一 scene/pose/tick で `--mod .celtium-work/upstream-baseline/.../celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`＋celtium jar なし＋glless フラグなし。**検証済み**: `ref-celeritas2` = `nonBg 0.761173`・**PASSED**・2476色・tick 150 の screenshot 取得成功（§0.163） |
 | **GL-less のメニュー（ユーザーの苦情）** | **解消（task-15・2026-10-11 16:18）** | **window 生成時に renderer を作り、world renderer が同一インスタンスを adopt** する形にした結果、
 **ユーザー構成（Prism instance・fixture なし・validation client なし・`-Dceltium.vulkan.glless=true`）でメインメニューが描かれ、compositor 出力から撮れた**:
 `.celtium-work/ww-menu-caps/compositor-0018.png`（1280x720・44,841 B・sha256 `ade674e0be57ea63…`・私が開いて確認＝ロゴ・splash 文言・3ボタン・Options/Quit・footer 14 mods）。
 `CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0 reasons=[]`・`CELTIUM_PRESENT hookCalls=3900 presented=3899 failures=0 swapsSkipped=3899`。
-**残り**: panorama 背景は灰色。原因は特定済み——`GuiMainMenu.renderSkybox` が 6面を 256x256 で描いたあと
-**`glCopyTexSubImage2D` で skybox texture へコピー**するが、stub はその形を mirror しないので texture が空のまま。
-**viewport 側は解決**（最新 run で `CELTIUM_COMPOSITE_REFUSED` **0件**・`defaultFramebufferCompositesTaken=37`・
-`CELTIUM_GROUP_VIEWPORT gl=0,0 256x256 clipped=0,464 256x256 target=1280x720`＝sub-rect が原点反転付きで適用）。
-**task-15 継続**（weather-water が copy の mirror を実装中）。 |
+**残り**: panorama 背景は**まだ灰色**。copy の read 側は実装済（`celtium$serveTextureCopy`・stub の hand-off・1フレーム1回の batching・
+`CELTIUM_TEX_COPY_SERVED`）だが、**served した元画像が暗い/空**（`mean=13,15,13 opaque=8192/65536` → 後続は `mean=0,0,0 opaque=0/65536`）。
+**真因の一方は確定**: 我々が default pair の colour を毎フレーム clear していたが、vanilla は menu では **depth しか clear しない**
+（`EntityRenderer.java:1171-1174`）ので panorama の feedback loop が壊れていた → `clearOffTarget` を depth のみに修正（§0.184）。
+**ズレ（配置）は解消**: 1920x1080 で menu/world 両方の resize を実測（`CELTIUM_RESIZE_OBSERVED`・提示 dump が窓全面・black 0.0）。
+**次の測定**: chain/frame image の dump で「submit 前に読んでいる」か「faces が pair に無い」かを切り分ける（frame-composite）。 |
 | **Intel UHD 630（GL-less の第2 vendor）** | **受入済み（task-11 完了）** | Intel で **GL-less と参照の両 leg が PASSED**（`intel-glless` / `intel-ref`・AMD と同じ fixture/pose/tick・`validationClean=true`・VUID 0・`fixtureStatus=PASSED`）。**rows 0-200 の 256,000 画素で 8 を超える差は 0**（mean 0.453・max 4）、AMD の GL-less と Intel の GL-less は **0 画素差**（rows 0-200）・terrain 帯で 4 画素。`depthFormat=D32_SFLOAT`（両社とも候補1/6＝**fallback 候補は未行使**）。**device を決めるのは `VK_ICD_FILENAMES`**（pin で `vulkanDeviceCount=1`・無 pin は 3、`matchedOpenGl=false`）。**Intel 未検証**: 星/地平線 plane（fixture 制約）・depth fallback 候補・GUI/item/entity 段・resize/device loss・性能。`docs/history/2026-10-11-intel-uhd630-leg.md` |
 | **参照 leg の取り直し（task-22 準備）** | **完了** | upstream Celeritas `d12425eaaf184e79`＋凍結 fixture `acfb62b16ed70ac3`・AMD・pose 0.5/12/0.5 yaw180 pitch20・tick 200: terrain `nonBg 0.761173` PASSED／entity `0.774399` UNCALIBRATED（variant 差＝正しい）／inventory `0.888320` UNCALIBRATED。**harness は instance.cfg の JvmArgs を読まない**（`patches/*.json` の `+jvmArgs` と `--jvm-arg` のみ）＝instance.cfg はユーザーの手動起動専用（16:0x に空へ変更されていたのを `-Dceltium.vulkan.glless=true` へ復元） |
 | **空（dome+星+地平線）** | **受入済み（task-3 完了）** | GL-less vs upstream Celeritas で **rows 0-199 の 256,000 画素のうち 8 を超える差は 0**（max 4）。行平均が参照と 0.1 カウントまで一致、63色が両側で同一。gate は両分岐とも削除。**地平線 plane と星はこの fixture では行使不可**（flat world の `getHorizon()`=0／worldTime 固定で星輝度 0）と明記 |
@@ -43,12 +50,12 @@ option **`RENDER_CLOUDS` を "Clouds: Fancy" → "Clouds: OFF"** へ、**画面�
 **settings file が実際に変化**: `+renderClouds:false -renderClouds:true`。
 **画面を開き直すと "Clouds: OFF" のまま**（保存が効いている）。撮影用に元へ戻す処理も入れた。
 **残り**: この画面の**画**を同一 variant の参照と比較（保存参照が無いため現在は UNCALIBRATED）。 |
-| **雲** | **機序特定・未修正（task-13）** | Forge の `CloudRenderer` が引き取り、24バイト頂点で stub が拒否（52/run＝1フレーム1回）。「frame 1 のみ受理」は VBO 構築前の vanilla 経路 |
-| **client-memory 描画** | **未修正（task-15・ユーザーの起動ブロッカー）** | メニュー/ローディング画面の全描画が `no GL_ARRAY_BUFFER is bound` で拒否（1024→1,048,576）。swapchain は生きて image 0..3 を present＝**ウィンドウは在るが中身が無い**。pointer は有効な JVM アドレス・stride 16 |
-| **地平線直下の terrain 帯** | **未修正（task-16）** | rows 200-320 が 62/94.75/41.66% 差。**fog ではない**（per-pixel fog 係数が channel 不整合・自社 bridge 時代の run と画素一致）。参照は平坦（std 0.02-0.08）・私たちは縞（std 58-63）・参照の端が約3行遠い |
+| **雲** | **修正済（census で decode・ユーザーの実プレイでも雲が見える）** | Forge の `CloudRenderer` が引き取る 24バイト POSITION_TEX_COLOR 経路を stub が decode するようにし、census は `drawn=205 vertices=752088`（以前 23/17,992）。**ユーザーの実プレイ報告でも「空も雲も」正常と確認**（task-13・§0.187） |
+| **client-memory 描画** | **解消（ユーザーの起動ブロッカーは閉じた）** | window 生成時に renderer を作り（`stage=createDisplay`）、pre-world の batch も uploader mixin の offer 経路が取るので `no terrain backend is installed` は **0件**（ww19）。stub の client-memory decode は B09 の owned-buffer publish 経路へ（`/proc` guard は「guard であって所有権記録ではない」と明記）。§0.189 |
+| **地平線直下の terrain 帯** | **閉じた（task-33・等価 build 状態）** | 原因は culling でも fog でもなく **build 状態の差**。`captureCondition=sections captureSections=41 captureMinWorldFrames=295` で両 leg を揃えると rows 200-320 は **mean 0.403・>8 が 744/153,600 = 0.484%**（以前 59%）、sky rows 0-199 は **0/254,720**、frame 0.087%。**22 vs 32 section は build throughput**（我々は 819 frame を要した）。旧「62/94.75/41.66% 差」の記載は撤回。§0.179 |
 | **format 2/6/7 同居時の group-drop** | **未修正（task-14）** | id10 は isolate leg で**描画を実証**（白箱 3,909 画素が GROUP_BOUNDS の座標に一致）。2/6/7 のいずれかが同居すると frame から落ちる（6 leg の bisect） |
-| **block 破壊 overlay** | **未行使（task-17）** | `drawBlockDamageTexture` が `DefaultVertexFormats.BLOCK`(id3) を使うが、**どの run の histogram でも id3 は 0**——pipeline は存在するが一度も画で検証されていない |
-| **GUI panel / slot 背景** | **修正済・測定で確定（pipeline が原因）** | format-6 パイプライン修正入りの jar で panel が presented frame に在る。1フラグ差の対照は**ビット一致**（meanAbsDiff 0.000）＝**invalidation 変更は画素中立**。mirror census: id 124/129 が announcement から充填（24224/26502 不透明 texel・stale=false・patch 拒否0）。panel 領域の参照との差は 122.678 → **2.590**、panel 端は参照と同一（x357..923 y165..554） |
+| **block 破壊 overlay** | **行使済・描画が誤り（task-17/39）** | fixture が subject を選び progress 5 を登録（`breakProgressCalls=5`）→ **`id3=16/16`（初行使）**。参照は `destroy_stage_5` のひび、我々は素の stone。geometry/blend/alphaRef/depth/texture は vanilla どおりで、**sample が bound atlas でない**。`texMat=none`（7 group 全部）で texture matrix 仮説は死に、次の実験は `mirrorPoisonFlat=12`。§0.183 |
+| **GUI panel / slot 背景** | **video settings の panel は未修正（task-39）** | 通常 inventory の panel は以前修正済（参照との差 122.678 → 2.590）。**video settings の panel は `guiPanelDistinctColours=133` 対参照 **15,805**・`changedFraction 0.999996`**＝背景 texture から描かれていない。wrap 記録は入った（`wrapRepeat=38 wrapClamp=0`＝hardcoded CLAMP が bug だった）が**必要であって十分でない**。次の測定は GUI frame の panel crop＋背景 texture の mirror dump。§0.189 |
 | **fog** | **受入済み（task-2 完了）** | fog-on と fog-off が **sky band のどの画素も違わない**のに `CELTIUM_SKY_DEGRADED fogEnabled=true fogAvailable=false`。原因: fog を group **close 時**に snapshot（行列/GL 状態は open 時）＋ `renderSky` が `:1337` で有効化・`:1354` で無効化 → dome の group が `fog==null`。修正: open 時捕捉＋`CELTIUM_FOG_CAPTURE`（§0.162） |
 | **射影チャネル** | **受入済み（task-1 完了）** | `mirrorGluPerspective` の1フラグ差で dome の射影が sky 自身の `gluPerspective`（far 256）に。**terrain は不変**（y[0..120]・y[240..720] が 0 画素差）、dome が地平線に 11 行近づく、純青 0。`lastSections` 23 vs 31 は反復で分離中 |
 | **GUI/HUD 段階** | **受入済み（task-5 完了）** | panel rect の平均差 91.145 → **26.405**、tab row 76.337 → **9.863**、label row 137.484 → **47.936**、hotbar strip 15.186 → **6.221**（参照 = 保存 GL 画像・同一 scene/pose/tick）。残差は sky band と下記の blend 問題 |

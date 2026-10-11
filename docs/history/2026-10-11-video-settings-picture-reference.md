@@ -55,7 +55,28 @@ Per `AGENTS.md` this is not a reason to lower the floor. The fix is to calibrate
 frame of the reference run, which exists (`scene-ref-video2` has both frames); that is the gate owner's call, and
 this record is the evidence for it.
 
-## 3. State of the pair
+## 3. The pair, and the region numbers
+
+Candidate `vs-pic-cand` (GL-less, jar `28dabb1dde958a7f`, fixture `29f1a7d399017f66`, `GuiVideoSettings` at tick 297)
+against the reference `vs-pic-ref` (upstream Celeritas, tick 235). Both keys identical,
+`sceneCalibrationKeyMatches=True`, both restored `Clouds: Fancy`, both `FAILED_PRESENTED_IMAGE` on the same
+`verticalBands` assertion.
+
+| region | candidate mean | reference mean | ratio | pixels >8 |
+|---|---|---|---|---|
+| title (0,20,1280,60) | 41.8,31.9,24.8 | 39.4,30.2,23.8 | 1.063,1.055,1.044 | 9,297 of 51,200 (18.16 %) |
+| option rows, left column (180,80,620,620) | 78.2,77.4,76.7 | 79.3,78.2,77.3 | 0.987,0.989,0.992 | 10,134 of 237,600 (4.27 %) |
+| option rows, right column (660,80,1100,620) | 68.1,67.3,66.5 | 69.2,68.1,67.2 | 0.985,0.988,0.991 | 10,134 of 237,600 (4.27 %) |
+| panel (180,80,1100,624) | 70.2,69.3,68.5 | 71.4,70.2,69.2 | 0.983,0.987,0.990 | 22,842 of 500,480 (4.56 %) |
+| **Done button (340,640,940,690)** | 110.1,110.1,110.1 | 110.1,110.1,110.1 | **1.000,1.000,1.000** | **8 of 30,000 (0.03 %)** |
+| whole frame | 52.9,49.9,47.6 | 55.1,51.7,48.9 | 0.959,0.966,0.972 | 114,666 of 921,600 (12.44 %) |
+
+The screen's own content matches: the Done button is pixel-identical, the option rows and the panel are within
+1-2 % of the reference's means, and the title band is the largest of the screen's regions at 18.16 % - the font path,
+not the panel. The whole-frame 12.44 % is dominated by the world behind the screen, which is the separate open
+question. Crops: `.celtium-work/sky-ratio/vspic-crops/` (candidate above, reference below).
+
+## 3b. State of the pair
 
 - Reference leg: **done** (`vs-pic-ref`, tick 235, key matches, chain ran and restored).
 - Candidate leg: **queued** when this was written (`vs-pic-cand`, GL-less, jar `28dabb1dde958a7f`, same fixture and

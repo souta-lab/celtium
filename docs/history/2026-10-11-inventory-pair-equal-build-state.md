@@ -66,9 +66,19 @@ frames are the same rate. Compare per frame.
 
 ## 4. The entity pair
 
-Not re-taken at the time of writing, and it needs one: `cand3-entity` had **8 listed sections after 30 world
-frames** against `ref3-entity`'s **30 after 466** - the same mismatch as the inventory pair, so any region
-table built from it is a build-state comparison. A re-take with
-`captureCondition=sections captureSections=30 captureMinWorldFrames=466` is queued (`t41b-cand-entity`,
-`t41b-ref-entity`); this record will be corrected with its numbers rather than left implying the pair was
-comparable.
+**Not re-taken, and it needs one.** `cand3-entity` had **8 listed sections after 30 world frames** against
+`ref3-entity`'s **30 after 466** - the same mismatch as the inventory pair, so any region table built from it
+is a build-state comparison.
+
+The re-take was attempted: `t41b-cand-entity` completed (`sections-target`, **64 listed sections, 466 world
+frames**, `P1=063 P2=000`, `deviceUsed=24/34 MiB`, `worldFrameNonBackgroundFraction=0.775297`,
+`UNCALIBRATED_PRESENTED_IMAGE`), but its reference leg `t41b-ref-entity` never started: it waited for the
+single game slot for the harness's whole 900 s `--slot-wait` (the slot was held by other workers' runs) and
+the harness exited with the slot-wait error before launching. So the pair is half-taken and no region table
+is claimed for it.
+
+What the re-take needs, when the slot is available: the same two legs, reference first (it is the fast one),
+with `captureCondition=sections captureSections=30 captureMinWorldFrames=466`; note the candidate overshot
+the target to 64 sections because the condition fires at "at least", so the reference will also land above 30
+if it waits for the frame floor - the two `captureListedSections` values have to be compared before any
+region table is read.
