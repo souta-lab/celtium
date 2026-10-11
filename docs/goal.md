@@ -1,4 +1,4 @@
-# Celtium goal — 2026-10-11 更新（revision 65, phase active / activation armed）
+# Celtium goal — 2026-10-11 更新（revision 66, phase active / activation armed）
 
 goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
 
@@ -29,6 +29,27 @@ goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
   担当を起動する時は原典のパスと `scripts/mc-sources.sh` を必ず渡す。
 - 規則は `AGENTS.md`（新規参加者と担当が最初に読むファイル）に置く。
 - 原典で確定した事実は plan §0.129（バニラの (mode, format) 全表・`POSITION_NORMAL` が未対応・font glyph の契約）。
+
+## 失敗しているゲートは証拠（必須・2026-10-11 追加）
+- 画像ゲートは 09:33 以降の全 GL-less run で `sceneGateFloorsEnforced=true`・`sceneCalibrationKeyMatches=true`・
+  `presentedImageVerdict=FAILED_PRESENTED_IMAGE` を出していた。**ゲートは正しかった**（terrain が画素を出していなかった）。
+  私が「mean 213 の FAILED は固定 scene の正常状態」と言い換え、担当にもそう伝えたため数時間隠れた。
+- 失敗しているゲートは、**測定が誤りだと示すまで証拠**。verdict を「既知の正常」と言い換えて counter だけを読まない。
+- ゲートを上書きする前に、**競合する説明を分離する実験**（同一 fixture・同一カメラで2 jar／同一 jar で2 カメラ）を取り、
+  どの説明が棄却されたかを書く。
+
+## 射影チャネルの現状（2026-10-11・撤回済み）
+`Project.gluPerspective` のフック（`30a30a375`）は **`f82bf4612` で撤回**。A/B 実測（同一 fixture・同一カメラ・jar のみ変更）:
+
+| | 退行前 jar `d2073e9456da7bcc` | 現行 jar | フック撤回後 |
+|---|---|---|---|
+| `presentedNonBackgroundFraction` | 0.733183 | 0.364906 | **0.838628** |
+| `presentedImageMeanAtCapture` | 213.6667 | 213.6667 | 44.0 |
+| `presentedImageVerdict` | PASSED | FAILED | **PASSED** |
+| `lastDraw/lastSections` | 22/25 | 8/8 | - |
+
+mean がビット一致＝カメラは同一 → **renderer の退行**。フックは culling が読む射影スタックに掛かり、world を cull で消していた。
+**代償**: mirror が `gluPerspective` を見ないギャップは戻る（空 fan・太陽/月・雲）。次は **`lastDraw/lastSections` を測りながら**設計する。
 
 ## 現在の到達点（2026-10-11 実測・詳細は plan §0.100〜§0.126）
 - **GL context なしの window が実 scene を描いて提示する**。AMD/Intel とも bridge/GL-less 両 leg が PASSED・clean・VUID 0。
