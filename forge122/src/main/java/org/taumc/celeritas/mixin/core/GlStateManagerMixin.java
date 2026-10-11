@@ -298,8 +298,15 @@ public abstract class GlStateManagerMixin {
      * Texture matrices are per unit, so the mirror must know which unit a {@code glMatrixMode(GL_TEXTURE)} sequence
      * addresses: the lightmap writes its own every frame, and without this it lands on unit 0's stack. The argument
      * is the GL enum ({@code GL_TEXTURE0 + n}); only the unit offset is kept.
+     * <p>
+     * BH-06's remaining half: this hook was written with the deobfuscated name while every other injection in this
+     * mixin uses the SRG name, and {@code require = 0} made the mismatch silent - measured, the mirror never saw a
+     * single unit switch in a whole leg (`CELTIUM_UNIT_SWITCH lines: 0`, `bindsOnUnit0=786 bindsOnOtherUnits=0`), so
+     * every bind, the light map's included, landed in unit 0's slot. {@code func_179138_g} is
+     * {@code GlStateManager.setActiveTexture(I)V} per {@code scripts/mc-sources.sh --srg setActiveTexture}, and
+     * {@code require = 1} now fails loudly if a future mapping moves it rather than silently dropping the hook.
      */
-    @Inject(method = "setActiveTexture", at = @At("HEAD"), require = 0)
+    @Inject(method = "func_179138_g", at = @At("HEAD"), require = 1)
     private static void celtium$setActiveTexture(int texture, CallbackInfo info) {
         celtium$mirror(backend -> backend.activeTextureUnit(texture - org.lwjgl.opengl.GL13.GL_TEXTURE0));
     }
@@ -338,6 +345,47 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179112_b", at = @At("HEAD"), require = 0)
     private static void celtium$blendFunc(int sourceFactor, int destinationFactor, CallbackInfo info) {
         celtium$mirror(backend -> backend.blendFunc(sourceFactor, destinationFactor));
+    }
+
+    /**
+     * The integer {@code tryBlendFuncSeparate}, which is the canonical one: the enum overload above delegates to it,
+     * and it is the overload a caller with plain GL constants uses ({@code JsonBlendingMode} is the one in the game's
+     * own code). BH-07: the mixin hooked the enum overload alone, so an integer call never reached the mirror - and
+     * the two overloads are different SRG names, read in the SRG table rather than guessed
+     * ({@code (IIII)V -> func_179120_a}, the enum one {@code func_187428_a}).
+     * <p>
+     * Feeding both is not a double update in the sense that matters: the enum overload converts its constants and
+     * calls this one, so the two hooks write the same four values in the same call. The reason to hook this one as
+     * well is every caller that starts here.
+     */
+    @Inject(method = "func_179120_a", at = @At("HEAD"), require = 0)
+    private static void celtium$tryBlendFuncSeparateInt(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha,
+                                                        CallbackInfo info) {
+        celtium$mirror(backend -> backend.setBlendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha));
+    }
+
+    /**
+     * BH-07's second half: the blend equation, which bakes into the same pipeline attachment as the factors.
+     * {@code GlStateManager.glBlendEquation} is a straight pass-through to {@code GL14.glBlendEquation}, so without a
+     * hook the equation never reaches the mirror - {@code JsonBlendingMode} is the caller in the game's own code, and
+     * the SRG table calls this one {@code func_187398_d}.
+     */
+    @Inject(method = "func_187398_d", at = @At("HEAD"), require = 0)
+    private static void celtium$blendEquation(int equation, CallbackInfo info) {
+        celtium$mirror(backend -> backend.blendEquation(equation, equation));
+    }
+
+    /**
+     * BH-10: {@code GlStateManager.colorMask}, which is cached (it calls {@code GL11.glColorMask} only when the mask
+     * changes) - the Fancy cloud's depth-only pass is the caller that matters ({@code RenderGlobal:1655}). SRG name
+     * {@code func_179135_a}. Feeding the mirror here does not replace the stub's record, which is what the capture
+     * reads under GL-less; the two receive the same calls, and this half is what makes the bridge path carry the mask
+     * as well.
+     */
+    @Inject(method = "func_179135_a", at = @At("HEAD"), require = 0)
+    private static void celtium$colorMask(boolean red, boolean green, boolean blue, boolean alpha, CallbackInfo info) {
+        int mask = (red ? 1 : 0) | (green ? 2 : 0) | (blue ? 4 : 0) | (alpha ? 8 : 0);
+        celtium$mirror(backend -> backend.colorMask(mask));
     }
 
     @Inject(method = "func_179152_a", at = @At("HEAD"), require = 0)
