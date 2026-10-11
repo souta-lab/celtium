@@ -282,6 +282,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.296 **round 102: 決定的な外部根拠 — この VUID は「present の wait semaphore が swapchain にまだ使われている」形で、修正は swapchain image 単位の semaphore（Khronos の guide が名指し）**
+
+- **外部根拠（web 調査・Khronos 公式 guide）**: [Swapchain Semaphore Reuse](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html) が
+  **「これは現在 `VUID-vkQueueSubmit-pSignalSemaphores-00067` として報告される（"your VkSemaphore is being signaled by VkQueue, but it may still be
+  in use by VkSwapchainKHR"）」**と明記し、原因と修正を名指ししている:
+  > `vkQueuePresentKHR` は signal も fence も提供しないため、`pWaitSemaphores` がまだ present に使われているかを知る手段がない。
+  > **よくある誤り**は present wait semaphore に frames-in-flight の buffering を適用すること。**修正は2行**:
+  > (1) submit semaphore の配列を **swapchain image 数**で確保する、(2) **acquired swapchain image index** で引く（in-flight frame index ではなく）。
+- **Celtium への適用（これが本欠陥の owner）**: `GllessFrameTarget.doneSemaphore` は **frame 単位の単一 semaphore**でありながら
+  **present の `pWaitSemaphores` に渡っている**（`VulkanSwapchain` の bridge 引数）。＝**swapchain がまだその semaphore を保持している間に次の frame が signal** する形そのもの。
+  swapchain 側の `renderFinishedSemaphores` は既に image 数追従＋modulo 撤去で直したが、**bridge の `doneSemaphore` は frame 単位のまま**。
+- **修正（次に着手・2箇所）**: `GllessFrameTarget` の done semaphore を **swapchain image 数ぶんの配列**にし、
+  **acquire した image index で引く**（`VulkanSwapchain.acquireNextImage` の結果を frame target に渡す）。
+  これで「present が使い終えるまで同じ semaphore を再 signal しない」が**構成上**保証される。
+  frame 単位の `waitSemaphore`（frame の最初の submission が wait する側）は **1:1 が frame 内で閉じる**ので frame 単位のままでよい。
+- **この VUID が3経路（guard・drain・consumer 報告）で動かなかった理由**: それらは**すべて frame 単位の所有権**を扱っており、
+  欠陥は**「present の wait semaphore の寿命が frame ではなく swapchain image に属する」**という別の軸だったため。
+  ＝**proj-channel の「決定的な生成順で race ではない」という結論とも整合**（image index は決定的に進む）。
+- **受入**: 同じ leg で `validationMessageCount=0`（semaphore の VUID が消える）＋ OPT-09 step(3) が緑で閉じる。
+
 ## 0.295 **round 101: semaphore の producer は3経路のいずれでもないと測定で確定・flag を「意図」から「結果」へ（`5d508be38`）**
 
 - **測定（proj-channel・同一 jar 規律・`opt09d-close` と `opt09e-close`）**: **どちらも `validationMessageCount=10`**・
