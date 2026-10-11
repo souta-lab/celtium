@@ -230,6 +230,35 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.229 **round 35-36: ホットバー暗転を上流参照で受入（light-map unit enable キー）・BH-11 counter は break overlay が呼び元**
+
+- **ホットバー暗転（ユーザー報告）を修正・受入（glyph-fix・`4883b1ba8`）**: 規則を **capture 時の light-map unit enable 状態**にキー。
+  `EntityRendererMixin` が `enableLightmap`/`disableLightmap` を **SRG `func_180436_i` / `func_175072_h`**（原典で解決・推測しない）で hook し、
+  `TerrainGpuBackend.setLightmapUnitEnabled`（interface の default no-op）へ渡す。`celtium$lightmapForGroup()` は unit が **無効**なら `(240,240)`、
+  **有効**なら捕捉座標を書き、**model 経路もこれを使う**。既定は enabled＝注入が黙って落ちた場合は現状（捕捉座標）に退避し、
+  `lightmapUnitEnables/Disables`（実測 805/906・989/1113）が hook の作動を示す。`-Dceltium.vulkan.lightmapFullBrightGui=false` が一変数対照。
+- **機序の実測**: `itemLitGroups=4406 itemLitGuiGroups=0 itemUnlitGroups=116 itemUnlitGuiGroups=116`
+  ＝**GUI stage の ITEM batch は全て unlit** なので、plain な hotbar item には座標が届き得ない（apple は rule ON/OFF/参照で画素同一）。
+  真の該当は **TESR item**（`RenderItem.java:144-148` → `renderByItem`）で、model 経路が **lit**（`itemLitGuiGroups=201/255`）で world 座標を持っていた。
+- **上流参照との比較（night `worldTime=18000`・`heldItem=chest`・全 leg `validationClean=true`・`validationMessageCount=0`・`drawnByFormat` id9 228/228）**:
+
+  | leg | chest の wood 画素 mean / max |
+  |---|---|
+  | 参照（upstream Celeritas `989ebf2e`・実 GL） | **(106.5, 74.7, 25.6) / (171,121,47)** |
+  | 現行 jar・規則 ON | **(111.0, 76.4, 26.2) / (223,158,61)** |
+  | 現行 jar・規則 OFF（対照） | (82.2, 48.1, 16.8) / (106,63,26) ＝**明るい画素が無い** |
+
+  world pass は不変（mob band 52.7/52.6・terrain 79.9/80.9）。crop `hotbar-chest-ref-on-off.png`（sha256 `68c90846…`）。
+  未確立: ユーザーの実 scene に TESR item があったこと・洞窟 leg・inventory の player model。
+- **fixture 変更の開示**: `-Dceltium.validation.heldItem=chest` を追加（`Blocks.CHEST`・apple では TESR 経路に届かない）。fixture jar が変わる（`b4e99ad6…`）。
+- **BH-11 の counter は 0（`chest-off`・`r35-outline` の両 leg）**: `lineBatchesNarrowed` は 83/215 で line 経路は生きている。
+  原典では `GlStateManager.doPolygonOffset` の呼び元は **`RenderGlobal:1815/1900`（block break overlay）・`RenderGlobal:1915/1925`（entity outline, -1/-10）・
+  `RenderTNTPrimed`** の3つのみで、chest と outline の scene には break overlay が無い＝**bias すべき対象が無い**。
+  BH-11 の受入 leg は **break scene**（acceptance の `r29-break` は `breakProgressCalls=31`）。そこで 0 なら
+  `GlStateManager.doPolygonOffset` が stub の `glPolygonOffset` に届いているかを次に確認する。
+- **プロセスの注意（glyph-fix の開示）**: ファイル単位の staging で他担当の未 commit hunk（BH-25 の `failedSections()`・BH-09 の scissor hunk）を
+  自分の commit に巻き込んだ（build 緑・損失なし）。以後は hunk 単位で stage する。
+
 ## 0.228 **round 35: scissor を group へ捕捉（OPT-10 gap #3）・BH-15 の安全な半分・BH-29 night/day 受入**
 
 - **scissor の group 捕捉（Lead・`c4f72b15f`）**: `glScissor` の矩形と enable を **group を開いた時点で捕捉**し（fog・state と同じ場所）、
