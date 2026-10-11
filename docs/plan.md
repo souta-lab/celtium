@@ -145,6 +145,33 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.225 **OPT-07 再挑戦（契約 (b): destination を flush 時に解決）は受入: 0 VUID・submit 数 −78%・待ち時間の合計は不変**
+
+- **契約 (b)**: pending copy は handle ではなく `VulkanBuffer` を保持し、`flushUploads()` が `target.buffer()` を解決する。
+  growth の前後で offset は不変なので、解決を遅らせるだけで透過になる。解放済み destination は `VK_NULL_HANDLE` に解決し、
+  copy は **skip して計数**（`uploadSkippedDeletedDestinations`）。加えて `VulkanBuffer.ensureCapacity` は
+  **copy-out の前に flush** する（growth が pending の bytes を失わないため。growth は run 中数回なので per-copy wait は戻らない）。
+  arena の segment 再利用は gate 不要: copy は CPU 書込み順を保ち、batch は同一 queue に順に submit されるので、
+  free→再 allocate された segment は最後の書込みで正しくなる。ordering は既存の `submitCommands` 冒頭の `flushUploads()`。
+- **受入 leg 1（layers ON・terrain＋keepGui＋captureEntities・glless・jar `1601de0cc240c073`）**: **VUID 0行・
+  `-4`/DEVICE_LOST 0件・`validationMessageCount=0`・`validationClean=true`・exit 0**。非緑は既知の画像ゲート
+  `FAILED_PRESENTED_IMAGE` のみ。＝前回 device lost したのと同じ形の leg が通る。
+- **受入 leg 2（同じ scene・fixture `0407469a82ef64ee` 固定・layer 無し・sections+700 capture）**: `uploadCopiesBatched=30434`
+  （`uploadFlushes=6825`・`uploadFlushMillis=1060`・worst 10 ms・`uploadPendingCopies=0`・`uploadFallbackCopies=3`・
+  `uploadSkippedDeletedDestinations=0`・`uploadRingBytes=4 MiB`）。before は受理済み `perf-arena`（jar `a23a6b0b`）:
+  - **submit/wait 数**: `uploadSubmitWaitsAtEnd` **31343 → 6910（−78%）**、cold `uploadSubmitWaitsColdWindow` **3889 → 1309**、
+    warm **7969 → 579（−93%）**。`uploadQueueWaitMillisAtEnd=0` は両方。
+  - **待ち時間**: `uploadSubmitWaitMillisAtEnd` **972 → 958 ms**、cold **124 → 182 ms**・warm **200 → 97 ms**。
+    **frame あたりでは改善していない**（cold 1.53→1.67 ms/frame・warm 1.20→1.35 ms/frame）= flush が batch 全体の完了を待つため、
+    CPU が待つ総 GPU 時間は同じ。**「queue idle を fence に置き換えただけ」以上の主張はしない**（plan の OPT-07 の但し書きどおり）。
+    真に待ちを消すのは semaphore で frame submission に渡す形＝OPT-08 の領域。
+  - `frameInterval*` は cold 109 sample p50 33.8 / p95 54.7 / p99 79.3、warm 72 sample p50 49.4 / p95 75.0 / p99 92.3 だが、
+    **before と比較しない**: 同じ 700 frame でも tick 到達が 513 対 770、sample 数も 109/72 対 81/166 で、マシン競合も違う
+    （`frameInterval` の差を OPT-07 に帰属できない）。
+  - OPT-05 の counter は不変で良好: `regionsOpened=8897 blockedOpenings=0 promotions=0`・`hostBuffersCreated=6`。
+- **未確立**: Intel での再確認、`uploadFlushWorstMillis` の 10 ms が worst frame に寄与するか、flush 回数（6825＝約 9.75/frame）を
+  frame あたり 1 回へ落とす余地。
+
 ## 0.224 **P0: OPT-07 の copy batch 化は destination の所有権を壊し device lost を起こした → revert（OPT-05 は無関係と確認）**
 
 - **症状**: HEAD `f9150335` の jar で terrain scene が **device lost**。lead の layered leg は

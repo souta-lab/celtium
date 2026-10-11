@@ -271,7 +271,13 @@ Angelica の `TesrMeshProvider` / `TesrMeshCache` / `ModelPartBatch` は、entit
 > よって **batch 化の前提条件は次のいずれか**であり、これが無い限り per-copy settle（1 copy = 1 submit + fence wait）を維持する:
 > (a) destination 側の last-use を batch の完了 epoch で gate する（`VulkanBuffer.delete/ensureCapacity` と arena の segment 再利用を含む）、
 > または (b) copy の destination handle を **flush 時に解決**する（記録時に固定しない）＋ arena の segment 再利用 gate。
-> 実装は commit `14ed4615f` で revert 済み（ring と `flushUploads()` は未配線で残置）。詳細と検証 leg は `docs/plan.md` §0.224。
+
+> **2026-10-12 再挑戦（契約 (b) で受入）**: destination を `VulkanBuffer` 参照として保持し `flushUploads()` 時に解決する形にした。
+> これで stale handle の class 自体が消える（growth は透過・解放済み destination は skip して計数）。加えて `ensureCapacity` は
+> copy-out の前に flush する。arena の segment 再利用は gate 不要（copy は CPU 書込み順・batch は同一 queue に順次 submit）。
+> 受入（layers ON の同形 leg）: VUID 0行・`-4` 0件・`validationMessageCount=0`・`validationClean=true`・exit 0。
+> 効果: submit 数 **31343 → 6910（−78%）**（cold 3889→1309・warm 7969→579）。**待ち時間の合計は不変**（972→958 ms）＝
+> batch 全体の完了を待つため。真に待ちを消すのは semaphore で frame submission に渡す形で、OPT-08 の領域。詳細は `docs/plan.md` §0.225。
 
 ### OPT-08: 2 frames in flight と非同期 present
 
