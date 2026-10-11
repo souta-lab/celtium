@@ -137,6 +137,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int publishedChainTexture;
     private long publishedChainImage;
     /**
+     * Every game colour texture name published over the chain pair's image, and the image it names.
+     * <p>
+     * The outline's own name has its own field above; this map is for the names published by the off-target pass -
+     * the vanilla loading screen's framebuffer is the measured one - so that a pair recreated at a new size can be
+     * unpublished from every name it stood for instead of only from the outline's.
+     */
+    private final java.util.Map<Integer, Long> publishedFrameTextures = new java.util.HashMap<Integer, Long>();
+    private int publishedFrameTexturesCreated;
+    /**
      * The frame in which each pair's images have been cleared, so the clear happens once per frame and not per
      * window. One per pair: two pairs are two images, and a frame that cleared one of them says nothing about the
      * other - which is exactly the mistake that would make the second window of a frame erase the first's work.
@@ -5664,6 +5673,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.chainPairClears++;
                     }
                     framebuffer = ensureChainPairFramebuffer(renderPass);
+                    // The game's own framebuffer whose draws are landing in this pair: its colour texture name is what
+                    // the game composites with, and under GL-less that texture has an extent and no pixels (the stub's
+                    // glTexImage2D with a null pointer records the size and no data). Publishing the pair's image under
+                    // that name is what gives the composite's batch something to sample - the same call the entity
+                    // outline's adoption makes, applied here because the vanilla loading screen has no post chain to
+                    // adopt anything: SplashProgress draws the Mojang logo into its own framebuffer and composites it,
+                    // so with no entry in the registry the composite samples an empty mirror and the window shows a
+                    // black loading screen. Nothing is created, resized, transitioned or freed here.
+                    long[] reported = framebufferColorTexture(this.currentRenderTarget);
+                    if (reported != null && reported[0] != 0L) {
+                        celtium$publishFrameTexture((int) reported[0], offTarget.chainPairColorImage(),
+                                offTarget.chainPairColorView(), this.targetWidth, this.targetHeight);
+                    }
                 } else {
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
                     // No hand-back here: the published image is the chain pair's, and this pass attaches the default
@@ -8548,6 +8570,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      *
      * @param chainPairColorImage the colour image the chain pair holds now, which is what the wrapper must name
      */
+    /**
+     * Publishes a game framebuffer's colour texture name over the chain pair's image, and keeps it current.
+     * <p>
+     * One entry per GL texture name, holding the image that name currently stands for. The same name is published
+     * again only when the pair has been recreated (a new size makes a new image); a recreated pair's old image is
+     * destroyed, so the wrapper that named it is unpublished first - the rule {@code celtium$syncPublishedChainOutput}
+     * follows for the outline's name. Called from the off-target pass that draws the game's own framebuffer into the
+     * pair, which is the moment both facts are true: the identity being drawn is known, and the image its draws land in
+     * is the pair.
+     */
+    private void celtium$publishFrameTexture(int glTextureName, long image, long view, int width, int height) {
+        if (glTextureName == 0 || image == 0L || width <= 0 || height <= 0) {
+            return;
+        }
+        Long current = this.publishedFrameTextures.get(Integer.valueOf(glTextureName));
+        if (current != null && current.longValue() == image) {
+            return;
+        }
+        if (current != null) {
+            celtium$registry().unpublishExternalImage(glTextureName);
+        }
+        celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
+        this.publishedFrameTextures.put(Integer.valueOf(glTextureName), Long.valueOf(image));
+        this.publishedFrameTexturesCreated++;
+    }
+
     private void celtium$syncPublishedChainOutput(long chainPairColorImage) {
         if (this.publishedChainOutput == null) {
             return;
@@ -8941,9 +8989,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (out.image == 0L || "main".equals(out.label)) {
                     continue;
                 }
+                // The input side rides on the same line: "the pass read the right image but wrote nothing" and "the
+                // pass read the wrong image" are different faults, and only the pair tells them apart. A `main` input
+                // is the frame image, reported as 0 handles by the executor - the label is what names it.
                 celtium$dumpOwnedImage("pass-out", out.image, base,
                         identity + " pass=" + out.passIndex + " program=" + out.program + " label=" + out.label
-                                + " out=" + out.width + "x" + out.height,
+                                + " out=" + out.width + "x" + out.height
+                                + " in=" + out.inLabel + (out.inImage == 0L ? "" : "(0x" + Long.toHexString(out.inImage)
+                                        + ")") + " in=" + out.inWidth + "x" + out.inHeight,
                         out.width, out.height);
             }
         }

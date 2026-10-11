@@ -1079,27 +1079,31 @@ public final class ValidationClient {
         // passed by a frame where the world shows through the panel and failed by the correct picture, whose flat
         // screen measures 133. That is the second wrong-provenance floor the audit found, and re-deriving it from the
         // reference's own GUI frame is what this block does. The margin rules are unchanged; the source frame changed.
-        String guiNumbers = "gui frame: distinctColours=145 nonBackgroundFraction=0.672704 verticalBands=229"
-                + " blackFraction=0.068322; panel (the screen's own list, 2,98..1279,622):"
-                + " guiPanelChangedFraction=0.999189 guiPanelStrongFraction=0.990540 guiPanelDistinctColours=133"
-                + " guiPanelRowAmplitude=4.089 guiPanelMeanLuma=57.783 guiWorldPanelMeanLuma=109.919"
-                + " guiWorldPanelDistinctColours=2480 (the same numbers to the digit in the GL-less candidate"
-                + " `vs47-cand`: 145/0.672704/229/0.068322, panel changed 1.0, strong 0.998936, 133 colours,"
-                + " rowAmplitude 4.089, luma 57.783 against the world's 113.658)";
-        String guiMargin = "nonBackgroundFraction floor 0.37 = 55% of the measured 0.672704; verticalBands floor 89 ="
-                + " 39% of the measured 229; blackFraction ceiling 0.118 = the measured 0.068322 + 0.05, the same rule"
-                + " as the world frame's; panelChangedFraction>=0.63 = 63% of the measured 0.999189;"
-                + " panelStrongFraction>=0.545 = 55% of the measured 0.990540; panelDistinctColours>=33 = 25% of the"
+        String guiNumbers = "two reference runs of the same era agree to the digit on the frame: vs-pic-ref"
+                + " (fixture 29f1a7d399017f66) and vs47-cel (fixture 396d40cd6043ded4) both measure"
+                + " distinctColours=145 nonBackgroundFraction=0.672704 verticalBands=229 blackFraction=0.068322,"
+                + " panel guiPanelDistinctColours=133 guiPanelRowAmplitude=4.089 guiPanelMeanLuma=57.783 against the"
+                + " world frame's 111.377-109.919; the panel fractions are the only spread:"
+                + " guiPanelChangedFraction=0.999189/0.999617 (spread 0.000428),"
+                + " guiPanelStrongFraction=0.990540/0.995158 (spread 0.004618). The GL-less candidate `vs47-cand`"
+                + " measures the same frame (145/0.672704/229/0.068322, panel 133 colours, rowAmplitude 4.089, luma"
+                + " 57.783 against the world's 113.658), which is the corroboration and not the source";
+        String guiMargin = "nonBackgroundFraction floor 0.37 = 55% of the measured 0.672704 (spread 0); verticalBands"
+                + " floor 89 = 39% of the measured 229 (spread 0 rows); blackFraction ceiling 0.118 = the measured"
+                + " 0.068322 + 0.05, the same rule as the world frame's; panelChangedFraction>=0.63 = 63% of the"
+                + " smaller measured 0.999189; panelStrongFraction>=0.545 = 55% of the smaller measured 0.990540;"
+                + " panelDistinctColours>=33 = 25% of the"
                 + " measured 133, a presence guard only - the world frame has 2480 colours at the same rectangle, so"
                 + " this floor no longer separates panel from world (the changed/strong fractions do: 0.999/0.991 on"
                 + " the drawn screen against 0.000 if it never drew); panelRowAmplitude>=0.25 as a flatness guard"
                 + " (measured 4.089); panelMeanLuma<=0.70x the world frame's at the same rectangle (measured 0.526"
                 + " here, 0.774 in the backgrounds-missing bridge frame, 1.0 if the screen never drew)";
         String guiSource = "upstream Celeritas 989ebf2e d12425eaaf184e79, scene=videoSettings at x=0.5 y=12.0 z=0.5"
-                + " yaw=180 pitch=20, 1280x720, guiScale=3, screen=net.minecraft.client.gui.GuiVideoSettings,"
-                + " run=.celtium-work/runtime/vs-pic-ref (fixture 29f1a7d399017f66, GUI FRAME="
-                + "screenshots/celtium-validation.png, worldTick=235; the world frame of the same run is"
-                + " screenshots/celtium-validation-world.png and is not the frame these floors describe)";
+                + " yaw=180 pitch=20, 1280x720, guiScale=3, screen=net.minecraft.client.gui.GuiVideoSettings:"
+                + " .celtium-work/runtime/vs-pic-ref (fixture 29f1a7d399017f66, GUI FRAME="
+                + "screenshots/celtium-validation.png, worldTick=235) and .celtium-work/runtime/vs47-cel (fixture"
+                + " 396d40cd6043ded4, same frame); the world frame of those runs is"
+                + " screenshots/celtium-validation-world.png and is not the frame these floors describe";
         String guiReference = "upstream-celeritas " + guiSource + ": " + guiNumbers + " -> gui floors"
                 + " nonBackgroundFraction>=0.37, verticalBands>=89, blackFraction<=0.118, panelChangedFraction>=0.63,"
                 + " panelStrongFraction>=0.545, panelDistinctColours>=33 (presence guard), panelRowAmplitude>=0.25,"

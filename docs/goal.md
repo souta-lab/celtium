@@ -1,6 +1,9 @@
-# Celtium goal — 2026-10-11 更新（live revision 75, phase active / activation armed（本文はこのセッションの撤回を反映済み・§0.148））
+# Celtium goal — 2026-10-11 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 1, phase active / activation armed / roundsStarted 5 / maxGoalRounds 256）
 
-goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
+goal ID: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`
+
+**この ID は live API で確認した現行 goal である。** 旧 `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 61 と記載していた）は
+監査 2026-10-11 17.2 で文書との不一致を指摘されたため、plan と本ファイルの両方を live 値へ同期した。
 
 このファイルは goal の objective と同期する。status・優先順・受入の現状表は `docs/plan.md`（単一の管理場所）、
 証拠と経緯は `docs/history/`、監査起点は `docs/audit-2026-10-09-third.md` と `docs/history/2026-10-11-full-audit-0903.md`。
