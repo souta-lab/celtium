@@ -89,6 +89,40 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.139 **wedge の根本原因を測定で特定: `renderSky` の月の quad が反転して描かれている**
+
+wedge 担当が計器（`-Dceltium.vulkan.groupBounds=true` → `CELTIUM_GROUP_BOUNDS`）を作り、15 run の再測定で**原因を特定**した。
+
+### 帰属（terrain のある画で再取得）
+
+allow-list 掃引（frame-18・同一カメラ）: **only-6 が 20388 uniq・exactClear 18.0%・yellowgreen 4227・black-top-right 4603 ＝ wedge そのもの**。
+他の format 単独（only-1/5/2/7/9）はいずれも wedge を再現しない（yellowgreen 813-1117・black 132 ＝ scene 自身のテクスチャ）。
+**format 6（POSITION_TEX）単独で wedge が再現する**——terrain のある画での再確認。
+
+### 原因（`CELTIUM_GROUP_BOUNDS` の実測）
+
+```
+frame=23 group=896 fmt=6 worldPass=true texture=114 proj=[m00=0.71 m11=1.26 m22=-1.00 m32=-0.05] ndc all behind  <- 太陽（RenderGlobal:1409, y=+100）
+frame=23 group=897 fmt=6 worldPass=true texture=115 proj=[...] ndc x[-41.70..0.00] y[-3.96..0.35] z[0.85..1.00] behind=1  <- 月（:1425-1428, y=-100）
+```
+
+月 group の NDC footprint が**測定された artefact と一致**（x<0＝左半面 cols 0-622・y[-1..0.35]＝rows 0-718）。frame 内で画面を覆う bounds を持つ唯一の group。
+vanilla は world time 6000 で太陽 +100・月 -100、カメラは 14° **見上げ**なので、太陽が手前・月が背後でなければならない——**実行は逆**。
+両 group は別の頂点（u=0 と u=0.25＝sun.png と moon phases）を持つのでテクスチャ/形状の取り違えではなく、
+**world-pass の sky group が持つ行列が vanilla のそれと違う**（同じ frame の terrain は正しい）。
+
+**裏取り**: Nether travel（`dimension=-1 dimensionAtTick=80`）では yellowgreen=0・wedge なし（非 surface dimension では renderSky が sun/moon の前で return）。
+bridge（実 GL が同じ2 quad を描く）にも wedge は無い。
+
+### 次の一手
+
+行列の出所は `captureGlMatrices`（`VulkanTerrainGpuBackend:7708`）の world-pass 枝（mirror の projection/modelview を使う）。
+判別測定: 同一 jar で `-Dceltium.validation.lookDown=true`（pitch +75）。
+- 太陽が画面を覆う側へ回れば **pitch 符号の反転**。
+- 両方が動かなければ**固定回転**（sky の `rotate(-90,0,1,0)` や celestial step の二重適用/欠落）で、別時刻の run が切り分ける。
+
+計器は**既定出力を変えない**（property 無しでは何も呼ばず何も出さない）。`enqAll`/`enqFormat` で `CELTIUM_IMMEDIATE_ENQ` を全 group へ広げられ、`frame=`/`group=`/`target=` を持つので番号付き dump と結び付く。
+
 ## 0.138 **決着: terrain 入口は生きている（1カウンタで確定）／GL-less allBlocks は PASSED に復帰**
 
 §0.137 で残した「terrain はどの入口から描かれているのか」を、`renderBlockLayer` のカウンタで決めた。
