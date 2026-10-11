@@ -304,6 +304,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.302 **round 108（round 100 到達）: 同世代プロジェクトとの設計境界を整理 — Celtium は唯一「完全 native・GL 非依存」を主張できる位置にいる**
+
+- **外部調査で確定した構図（goal C/D の材料）**:
+  | プロジェクト | 方式 | 1.12.2 での扱い |
+  |---|---|---|
+  | **Celtium（本プロジェクト）** | **完全 native Vulkan・GL context を生成しない**（GL-less） | — |
+  | [VulkanMod-Next](https://www.curseforge.com/minecraft/mc-mods/vulkanmod-next) | vanilla の chunk VBO を Vulkan へ**ミラーし、GPU external-memory interop で framebuffer へ合成** | Forge/Cleanroom 両対応・**OptiFine/shader mod があると Vulkan 経路が降りる** |
+  | [Vulcanizator](https://www.curseforge.com/minecraft/mc-mods/vulkanizator) | **本体 scene は LWJGL2/OpenGL が生成**し、その結果を Vulkan へ転送（hybrid） | 1.12.2・alpha・**「compatibility-rendered」を明記** |
+  | [Actinium](https://github.com/DHJComical/Actinium) | OpenGL のまま **Iris 風 pass モデル**（shadow/gbuffers/deferred/composite/final） | Cleanroom・Celeritas/GLSM/GTNHLib 統合 |
+  | [Kirino-Engine](https://github.com/CleanroomMC/Cleanroom) | Cleanroom 本体のモジュール（ECS・deferred render command・meshlet） | `runKirinoClient`/`runCleanroomClient`/`runVanillaClient` を用意 |
+  ＝**goal が除外する「汎用 GL→Vulkan 変換・GL 全体のエミュレーション・Zink 組込み」に該当するのは Vulkanizator の hybrid 方式**で、
+  **Celtium はこの表で唯一「GL context を生成しない」を主張する位置**にある。**goal (b) の主張が他プロジェクトとの差別化点そのもの**。
+- **本家 Minecraft Java の Vulkan 移行（参考・将来整合）**: 26.2 で Graphics API 設定（Default/Prefer Vulkan/Prefer OpenGL）が入り、
+  **26.4 snapshot で Default＝Vulkan**。要求は **Vulkan 1.2＋dynamic rendering＋push descriptors**、macOS は MoltenVK、
+  **reversed depth buffer を採用して Z-fighting を減らしている**。
+  参照: [Mojang の告知](https://www.minecraft.net/en-us/article/another-step-towards-vibrant-visuals-for-java-edition)・[26.4 の解説](https://pcgaming.io/en-us/blog/minecraft-java-vulkan-26-4)・[snapshot の確認手順](https://www.playnews.gg/en/guides/minecraft-snapshot-26-4-vulkan-rendering-how-to-enable-it-and-check-it-with-f3)。
+  ＝**Celtium の baseline 設計（mesh shader を必須にしない・能力で選ぶ）と、BH-11 の z-fighting 修正の方向は本家と一致**している。
+  本家の最小要求（Vulkan 1.2＋dynamic rendering＋push descriptors）は **Celtium の対応 GPU 表を書くときの比較対象**として記録。
+- **現在の成果物**: `forge122/build/libs/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar`（2.58 MB）ほか3点。
+  HEAD `4ae603796`・ツリーは glyph-fix の mixin のみ dirty・build 緑。
+
 ## 0.301 **round 107: OPT-08 step1 撤回と ring-pressure の実測改善・層あり leg で現行 tree が緑（`fed5dafbe`）**
 
 - **OPT-08 step1（upload batch の semaphore handoff）は撤回（perf-ring）**: `flushUploads()` に **caller が2つ**あり
