@@ -27,7 +27,7 @@
 | **per-frame present** | **受入済（AMD/Intel）** | 263 presented / 262 GL swap skipped（§0.17）。GL swap は `@Redirect` で停止 |
 | **提示画像と GL フレームの画素一致** | **受入済** | 上下反転比較で 平均絶対差 0.015・最大 3（§0.35）。**§0.103 で提示画像は正立になったので、以降は反転なしで比べる**（resize 時は提示画像の左下 `dw×dh` 領域を screenshot と比較） |
 | **GL 最終合成の停止** | **受入済（フラグ、既定 off）** | `glCompositesSkipped=717/718`、提示画像は off 比 平均絶対差 0.001（§0.36） |
-| **GUI / font / HUD** | **画像等価を受入済** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
+| **GUI / font / HUD** | **画像等価を受入済／N03 の glyph 経路は受入済（§0.144）** | HUD 帯（上部250行）平均絶対差 **0.000**・>8 が **0.00 %**。画面全体 0.015・0.04 %（§0.40） |
 | **lightmap の供給漏れ（format 5）** | **解消・両GPU受入** | AMD `lightmapSuppliedOnDemand=2`・失敗なし・拒否ゼロ（§0.43）、**Intel も 2・失敗なし・拒否ゼロ・PASSED**（`p337-intel-lightmap`） |
 | End の dimension 受入 | **両GPU PASSED** | capture 時 dimension 1 |
 | **Nether の dimension 受入** | **AMD で絵・validation とも受入／Intel 未実施** | `validationClean=true`・msgs 0・capture 時 client/world/server すべて -1・`dimensionFramesInTarget=129`。根因は fixture 側（到着位置がポータル内＋`timeUntilPortal=0`）で修正済み。旧「両GPU受入」の記載は撤回済み。**画像ゲートも較正済み**: Nether は専用 pose 1.5/70/1.5 を持ち、参照 2 run（`nonBackground=0.938502`・`bands=720`）に対し GL-less 実測 **1973 / 0.938502 / 720 / 0.087951** で PASSED。overworld の pose は Nether の岩の中（0.183982 と 0.420806 の2値）で比較不能なため、床は scene ごとに持つ。**未完**: Intel での Nether 受入。§0.117 §0.119 §0.126 |
@@ -46,11 +46,17 @@
 **未測定は scanout のみ**（`kmsgrab` は DRM master 無し・非 root で不可）。§0.123・`docs/compositor-output-capture-2026-10-11.md` |
 | **model 経路（表示リスト）の native 描画** | **既定 ON（§0.108）／TESR の list は未 capture** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、モデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りで最良）。既定は ON（§0.108）。**未完**: 実測 `modelMeshLists=2 / modelQuads=12`＝腕と手持ちのみ。TESR の model（エンチャント台の本）は list 自体が capture されておらず、GL fallback に落ちて GL-less では何も描かれない。`celtium$drawModelList` は mesh の無い list を `modelMissingMeshes` として名指しで数えるようにした。§0.108 |
 | **model mesh の頂点契約（N01）** | **修正済・両GPU受入** | `buildModelMeshes` が `nextVertex()` を quad ごとに呼び、4 隅が同一頂点を上書きしていた（頂点 Q・index は 4Q を指す）。per-vertex へ修正し契約検査（4 頂点/6 index・連番）を追加。**AMD で 36.9 % の画素が変化**（巨大 wedge 消滅）・Intel でも PASSED。§0.124 |
-| **model mesh の寿命（N02）** | **実装・統合済／受入 run 待ち** | list ごとの compile generation、変更のあった list だけ再構築、旧 mesh は `VulkanRetireQueue` へ retire、失敗した部分構築は discard、teardown は `settleGpu` 成功後に `releaseAfterIdle`。担当の10ステップ probe 通過（live 2→3→3→2→3・stale/unmeshed/geometryMismatch なし）。§0.127 |
+| **model mesh の寿命（N02）** | **実装・統合済（所有権ギャップも閉鎖・§0.141/§0.147）** | list ごとの compile generation、変更のあった list だけ再構築、旧 mesh は `VulkanRetireQueue` へ retire、失敗した部分構築は discard、teardown は `settleGpu` 成功後に `releaseAfterIdle`。担当の10ステップ probe 通過（live 2→3→3→2→3・stale/unmeshed/geometryMismatch なし）。§0.127 |
 | **format 5（粒子）の descriptor gate** | **修正済・受入済** | 「描画経路が使わない pass を probe が要求していた」のが根因。73/73 受理・拒否 census 空（`1:606 2:191 4:1 5:76 6:568 7:464 8:128 9:180`）。§0.113 |
-| **depth format の能力契約** | **実装済** | 候補（`D32_SFLOAT` → `D24_UNORM_S8` → … → `D16_UNORM`）ごとに features と `vkGetPhysicalDeviceImageFormatProperties` を問い合わせ、全て不可なら**候補別の理由つきで拒否**。AMD に sampled な 24-bit depth が無い実測に基づく。GL-less target と terrain pipeline が同じ決定を共有。§0.125 |
+| **depth format の能力契約** | **実装済（AMD では旧定数と同一＝無影響と実測・§0.130）** | 候補（`D32_SFLOAT` → `D24_UNORM_S8` → … → `D16_UNORM`）ごとに features と `vkGetPhysicalDeviceImageFormatProperties` を問い合わせ、全て不可なら**候補別の理由つきで拒否**。AMD に sampled な 24-bit depth が無い実測に基づく。GL-less target と terrain pipeline が同じ決定を共有。§0.125 |
 | **画像ゲートの較正（N06）** | **実装済・受入済** | calibration key に scene・pose・stack・sweep・allBlocks・entity flag・GUI scale を含め、key が違えば `floorsNotCalibrated` ＋ `UNCALIBRATED_PRESENTED_IMAGE`（**遡及適用しない**）。床は各 scene 自身の pose で較正し、閾値は下げていない。§0.126 |
 | 配布物と docs の一致（N13） | **一部実施** | README を現状へ（GL-less で present まで・未完も明記）、性能節は制限付きの実測、`mcmod.info` の説明も同様。**jar 検証器が「既に離れた Java 8 契約」を強制していた**のを修正し、`verified: true`・`classVersions {46:111, 51:1, 52:613, 65:86}`。§0.127 |
+| **font glyph（N03）** | **受入済** | ポインタ修正（`aa041c2d4`）が全てだった。magenta probe で修正前は magenta 画素ゼロ→修正後に presented frame へ glyph が出る。最終 `quads=52406 submitted=52406 accepted=52406 refused=0`、**unicode 経路を初行使**（`unicodeWindows=40548`）。advance は HEAD/RETURN 注入で構造的に不変。§0.144 |
+| **post chain の UBO 経路（N10）** | **受入済** | color_convolve **192B**・spider **144B**（監査の 180/140 と旧 196 は誤り。SPIR-V 実測）。拒否0・VUID 0・両経路のブロックはバイト一致。**同梱の実バグ修正**: ShaderGroupMixin の extras が 88 始まり→84（invert の `InverseAmount` が4バイトずれ、native enderman が 0.8 に対し 0.0 を読んでいた） |
+| **outline chain の実行** | **実行を確認** | `CELTIUM_POSTCHAIN create`・`program=entity_outline route=pushConstants bytes=84`。**chain pair も実行時に使用**（`framebuffer bind: … pair=chain-pair`）。旧「runtime は outline を描かない」は**撤回**（§0.143） |
+| **監査 A01〜A05** | **全修正済** | A01 glyph ポインタ／A02 timeout の fence・buffer 隔離／A03 参照較正キーの定数化（実測で `keyMatches=false`→未較正）／A04 溢れ拒否／A05 watchdog token |
+| **所有権ギャップ（監査）** | **全閉鎖** | `VulkanDynamicMesh` コンストラクタ・`buildModelMeshes` の構築中 mesh・`VulkanHostBuffer.create`・**N17 画像側**（bind 後の fault で image と memory の両方が解放されることを実測・§0.147） |
+| **死んだ注入という主張** | **撤回** | `CELTIUM_RENDERENTITIES calls=3`・`CELTIUM_BLOCKLAYER calls=1,2` を実測。**計器で反証**（§0.143） |
 | **entity 場面の残差（既定構成）** | **確定: fixture のキャプチャ仕様（描画欠陥ではない）** | format 5 = 実粒子（提出元 `ParticleManager`）。残差は**提示フレームの生存粒子**が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレームの静止 FLAME 比較で format 5 の色・位置は正しく、残差は経年差のみ（§0.104） |
 | **通常場面（実体なし）の一致** | **両GPU受入** | 提示画像 vs GL の絵: **AMD 0.011 / 0.01 %**、**Intel 0.000〜0.016 / 0.00 %**（§0.77・§0.92 の撤去後も維持） |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
