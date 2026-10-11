@@ -251,6 +251,13 @@ public final class VulkanGlTexture {
     /** The source GL texture's wrap on each axis: {@code true} for GL_REPEAT, {@code false} for a clamp mode. */
     private boolean wrapRepeatU;
     private boolean wrapRepeatV;
+    /**
+     * Whether the min filter is NEAREST (with a linear mip mode) rather than LINEAR. Kept apart from
+     * {@link #nearestFilter} (the magnification decision) because the record reports the two pnames separately and
+     * vanilla's atlas is {@code GL_NEAREST} magnification with {@code GL_NEAREST_MIPMAP_LINEAR} minification.
+     * Defaults to the caller's decision so a texture whose filters were never recorded behaves as before.
+     */
+    private boolean nearestMinFilter;
     /** Whether the recorded wrap parameters were consulted once; see {@link #confirmWrapFromRecord}. */
     private boolean wrapConfirmed;
 
@@ -790,6 +797,7 @@ public final class VulkanGlTexture {
         result.nearestFilter = nearestFilter;
         result.wrapRepeatU = wrapRepeatU;
         result.wrapRepeatV = wrapRepeatV;
+        result.nearestMinFilter = nearestFilter;
         try {
             // One variable at a time: the level count is computed here so the sampler can be told the truth about the
             // chain, while the creation order stays exactly as it was. The previous measurement changed the order and the
@@ -1845,7 +1853,7 @@ public final class VulkanGlTexture {
      * "one stretched tile" defect. Bounded to once per mirror; a change bumps the generation so descriptor caches
      * keyed on {@link #key()} cannot keep naming the destroyed sampler.
      */
-    public void confirmWrapFromRecord(int glTextureId) {
+    public void confirmSamplerStateFromRecord(int glTextureId) {
         if (this.wrapConfirmed || glTextureId <= 0
                 || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             return;
@@ -1855,20 +1863,51 @@ public final class VulkanGlTexture {
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S) == org.lwjgl.opengl.GL11.GL_REPEAT;
         boolean repeatV = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T) == org.lwjgl.opengl.GL11.GL_REPEAT;
-        if (repeatU == this.wrapRepeatU && repeatV == this.wrapRepeatV) {
+        // The filters, which this method did not consult when it was written for the wrap alone. The ordering that
+        // hid them is the same one: a texture's parameters are set after the upload that creates its mirror, and
+        // nearestFilterFor falls back to the write-shape inference when nothing is recorded yet - which answers
+        // LINEAR for a whole-image upload, and the block atlas is uploaded exactly that way. A GUI item at scale 3-4
+        // is magnified, so LINEAR magnification is what "the icons are the right shape but low resolution" is.
+        boolean magRecorded = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameterRecorded(glTextureId,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER);
+        boolean minRecorded = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameterRecorded(glTextureId,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER);
+        boolean magNearest = this.nearestFilter;
+        boolean minNearest = this.nearestMinFilter;
+        if (magRecorded) {
+            magNearest = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER) == org.lwjgl.opengl.GL11.GL_NEAREST;
+        }
+        if (minRecorded) {
+            int min = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER);
+            minNearest = min == org.lwjgl.opengl.GL11.GL_NEAREST
+                    || min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST
+                    || min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
+        }
+        if (repeatU == this.wrapRepeatU && repeatV == this.wrapRepeatV
+                && magNearest == this.nearestFilter && minNearest == this.nearestMinFilter) {
             return;
         }
+        String source = "mag=" + (magRecorded ? "record" : "inference") + " min=" + (minRecorded ? "record" : "inference");
+        String was = "wasMag=" + (this.nearestFilter ? "NEAREST" : "LINEAR")
+                + " wasMin=" + (this.nearestMinFilter ? "NEAREST" : "LINEAR")
+                + " wasRepeatU=" + this.wrapRepeatU + " wasRepeatV=" + this.wrapRepeatV;
         this.wrapRepeatU = repeatU;
         this.wrapRepeatV = repeatV;
+        this.nearestFilter = magNearest;
+        this.nearestMinFilter = minNearest;
         if (this.sampler != 0L) {
             org.lwjgl.vulkan.VK10.vkDestroySampler(this.context.device(), this.sampler, null);
             this.sampler = 0L;
         }
         createSampler();
         this.generation++;
-        System.out.println("[Celtium] CELTIUM_SAMPLER_WRAP glTexture=" + glTextureId + " repeatU=" + repeatU
-                + " repeatV=" + repeatV + " (from the stub's recorded glTexParameteri; the sampler was built before"
-                + " the game set it)");
+        System.out.println("[Celtium] CELTIUM_SAMPLER_FILTER glTexture=" + glTextureId + " repeatU=" + repeatU
+                + " repeatV=" + repeatV + " mag=" + (this.nearestFilter ? "NEAREST" : "LINEAR")
+                + " min=" + (this.nearestMinFilter ? "NEAREST" : "LINEAR")
+                + " mipmapMode=LINEAR maxLod=" + this.samplerMaxLod
+                + " (" + source + "; the sampler was built before the game set it) " + was);
     }
 
     /**
@@ -2140,7 +2179,7 @@ public final class VulkanGlTexture {
                     // blurred every magnified texel and the frame measured four times fewer texture edges than
                     // the OpenGL reference. NEAREST filters with a linear mipmap mode reproduce that combination.
                     .magFilter(this.nearestFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
-                    .minFilter(this.nearestFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
+                    .minFilter(this.nearestMinFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
                     .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)
                     // The wrap mode of the source GL texture, carried through at mirror creation: a repeating
                     // texture (GUI sprites, item icons) that is clamped here samples its edge texels instead.

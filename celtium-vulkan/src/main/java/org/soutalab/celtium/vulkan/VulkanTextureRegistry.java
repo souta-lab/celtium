@@ -1534,7 +1534,7 @@ public final class VulkanTextureRegistry {
             // so a sampler built at creation time can hold the default. Re-consulting the record here - the first
             // lookup, which is a draw, after the upload completed - is what makes the mode the game's rather than
             // whichever default was in force a moment earlier.
-            existing.texture.confirmWrapFromRecord(glTextureId);
+            existing.texture.confirmSamplerStateFromRecord(glTextureId);
             if (this.staleIds.remove(Integer.valueOf(glTextureId))) {
                 if (canSkipReadback(glTextureId)) {
                     // The write that made this texture stale announced its pixels, and they are already in this image:

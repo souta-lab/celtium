@@ -140,6 +140,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.202 **VUID の修正着地・task-47 完了（床の全数再導出）・item blur の根因を原典/自コードから特定**
+
+- **VUID 修正（frame-composite・`celtium-t36d fa9487e0cd17ee7c`）**: published map が `VulkanGlTexture` wrapper を持ち、
+  **全 published name** に outline と同じ扱いをする——sampling 側 `celtium$transitionPublishedFrameTextures(false)`
+  （`ensureSampledLayout` を2つの sampling site で、pass の外・draw の前に記録＝VUID が要求した位置）、write 側は
+  chain submission で `true`（`ensureGeneralLayout`）、unpublish は「現在の pair image でない name」を外して計数
+  （`publishedFrameTexturesUnpublished`）。検証 leg `splash-vuid`（validation on・world capture＝splash は起動時に走る）を queue。
+  **受入は `validationMessageCount` が 0 に戻ること**。3つの image が pair の colour image でなければ別 publisher が残る、と明記。
+- **task-47 完了（acceptance）**: enforced floor を全数監査し、**誤った provenance は3つ**（world frame 由来の
+  `nonBackgroundFraction>=0.40`・`verticalBands>=250`・`blackFraction<=0.05` を GUI stage にも適用）。
+  GUI frame 自身から **0.37 / 89 / 0.118** へ再導出。**`panelDistinctColours>=4000` は「欠陥を要求する床」**だった
+  （bridge 時代の背景欠落 frame 由来。正しく描かれた画面は世界より平坦＝133色）→ **33**（参照 133 の25%・presence guard）。
+  `panelChangedFraction`/`panelStrongFraction` は stage 正・picture 誤 → 0.63/0.545。**新設の判別床** `panelMeanLuma <= 0.70x`
+  （参照 0.526・背景欠落 0.799・未描画 1.0）。**実装の罠**: `celtium$resolveGate()` が 13引数 constructor で gate を再構築し
+  `guiFloors` を落としていた（最初の検証 run が古い床を報告）→ 修正。検証: `vs47d-cand` **PASSED**（GUI 由来床）、
+  bridge 対照は新 luma 床で正しく FAIL（背景欠落 frame を捕捉）。crop は `.celtium-work/acceptance/crops/vs47d/` に保存。
+- **item blur の根因（Lead が原典と自コードから特定・task-52）**: `nearestFilterFor` は record が**その時点で無ければ**
+  write-shape 推論 `!(x==0&&y==0&&w>0&&h>0)` に落ち、**全面 upload（atlas）では false＝LINEAR**。
+  texture-mirror 自身の記録どおり mirror は announce 時に params 到着前へ問い合わせる（texture 2/8/12/13 が `recorded=false`）。
+  そして **`confirmWrapFromRecord` は wrap だけを再照会し、MAG/MIN filter は再照会しない**——早期に作られた atlas mirror は
+  LINEAR 拡大のまま固定。record の答えは NEAREST（`texture=2 pname=0x2800 (MAG_FILTER) value=0x2600 (NEAREST)`、3/6 も同様）。
+  GUI item は scale 3-4 で**拡大**されるので、LINEAR mag は「形は正しいが低解像度」そのもの。→ 同じ one-shot pattern を
+  filter へ拡張するよう依頼（record が無い texture は従来の推論を維持・どちらの source が勝ったかを明記）。
+
 ## 0.201 **VUID 検出（`vkCmdDraw-None-09600`・sampled image が GENERAL）＝splash publication の layout 遷移欠落へ帰属**
 
 - **sky-draws の `vsync-leg`（AMD・fixture PASSED・picture あり）で `validationClean=false`・10 ×
