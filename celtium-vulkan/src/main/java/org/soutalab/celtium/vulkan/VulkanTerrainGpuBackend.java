@@ -1156,7 +1156,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
     private final java.util.Map<Long, Integer> flushEntryGroupsByTarget = new java.util.HashMap<Long, Integer>();
     private final java.util.Map<Long, Integer> flushEntryPassesByTarget = new java.util.HashMap<Long, Integer>();
-    /** Flush entries whose target was not the bound one: the drain's own work (BH-14/15/16). */
+    /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
     private int drainedOtherTargetPasses;
 
     /** {@return one line per target the drain visited}, with its entry counts. */
@@ -5929,79 +5929,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    /**
-     * Drains the pending immediate groups of <em>every</em> target they were accepted for, each into a pass of its
-     * own, instead of only the target that happens to be bound when this runs (BH-14/15/16).
-     * <p>
-     * The flush used to return as soon as the bound target had no groups ({@code others remain owned in the queue}),
-     * so a target's groups waited for a bind of their own target - and a framebuffer bound once and never again (the
-     * menu panorama's, the loading screen's one-shot identity) never got one. Measured: {@code offTargetPerTarget}
-     * read {@code 63482454: offered=677, atPass=32, drawnPasses=17}, and the panorama's copy of that image returned
-     * uniform white because the image was never written.
-     * <p>
-     * Anything that cannot be drawn is dropped here and counted ({@code unflushedTargetGroupsDropped}), never left
-     * queued forever and never silently re-routed into another target's pass (BH-15).
-     */
+    /** Synchronous same-target LOAD window; no draw command is emitted outside this backend's pass. */
     private void flushImmediateWindow() {
         if (this.immediateWindowBusy) return;
-        closeCurrentImmediateGroup();
-        if (this.immediateGroups.isEmpty()) return;
-        java.util.LinkedHashSet<Long> targets = new java.util.LinkedHashSet<Long>();
-        targets.add(Long.valueOf(this.currentRenderTarget));
-        for (ImmediateGroup group : this.immediateGroups) {
-            targets.add(Long.valueOf(group.target));
-        }
-        for (Long target : targets) {
-            long identity = target.longValue();
-            if (countGroupsForTarget(identity) == 0) {
-                continue;
-            }
-            // Where the drain's own question is answered: how many groups of this target were present at flush
-            // entry, and how often the target was not the bound one. A target whose entry count is zero was never
-            // in the queue at a flush at all, which is a different defect from one that was present and not drawn.
-            int present = countGroupsForTarget(identity);
-            this.flushEntryGroupsByTarget.merge(Long.valueOf(identity), Integer.valueOf(present), Integer::sum);
-            this.flushEntryPassesByTarget.merge(Long.valueOf(identity), Integer.valueOf(1), Integer::sum);
-            if (identity != this.currentRenderTarget) {
-                this.drainedOtherTargetPasses++;
-            }
-            long savedTarget = this.currentRenderTarget;
-            boolean savedIsMain = this.currentRenderTargetIsMain;
-            this.currentRenderTarget = identity;
-            this.currentRenderTargetIsMain = identity == this.mainTargetIdentity;
-            try {
-                flushImmediateWindowForTarget();
-            } catch (RuntimeException | LinkageError error) {
-                // One target's pass failing must not lose the others': the failure is counted against that target and
-                // the drain continues with the next one.
-                this.unflushedTargetPassFailures++;
-                this.lastUnflushedTargetFailure = describe(error);
-                record("target " + identity + " could not be drawn (" + this.lastUnflushedTargetFailure + ")");
-            } finally {
-                this.currentRenderTarget = savedTarget;
-                this.currentRenderTargetIsMain = savedIsMain;
-            }
-        }
-        // Whatever is still queued after every target had its pass cannot be drawn by anybody: drop it and say so.
-        if (!this.immediateGroups.isEmpty()) {
-            int dropped = 0;
-            for (ImmediateGroup group : this.immediateGroups) {
-                dropped += group.batches;
-            }
-            this.unflushedTargetGroupsDropped += dropped;
-            if (this.unflushedTargetGroupsDropped <= this.unflushedTargetGroupsDroppedLogged + 3) {
-                this.unflushedTargetGroupsDroppedLogged++;
-                record("dropping " + dropped + " accepted immediate batches whose target could not be drawn"
-                        + " (total " + this.unflushedTargetGroupsDropped + ")");
-            }
-            this.immediateGroups.clear();
-            this.pendingImmediateIndices = 0;
-        }
-    }
-
-    /** The per-target window flush; called once per pending target by {@link #flushImmediateWindow()}. */
-    private void flushImmediateWindowForTarget() {
-        if (this.immediateWindowBusy) return;
+        // Kept from the reverted drain (e87aa0ec1): how many of the bound target's groups are present at flush entry,
+        // and how often that target was visited. The drain itself is reverted - a device-lost regression outranks it -
+        // but this counter is what said the one-shot identity's groups are not in the queue at a flush at all, and it
+        // stays so the next attempt starts from that fact rather than rediscovering it.
+        this.flushEntryGroupsByTarget.merge(Long.valueOf(this.currentRenderTarget),
+                Integer.valueOf(countGroupsForTarget(this.currentRenderTarget)), Integer::sum);
+        this.flushEntryPassesByTarget.merge(Long.valueOf(this.currentRenderTarget), Integer.valueOf(1), Integer::sum);
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
         if (this.gpuStalled) {
