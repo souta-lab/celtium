@@ -23,10 +23,14 @@
 | 項目 | 状態 | 最新の実測（GPU・条件つき） |
 | **ログ flood（ユーザー報告 18:2x）** | **修正済（Lead・jar `2a3c59fe21ae831b6a3d` を instance へ投入）** | ユーザー構成は `-Dceltium.vulkan.glless=true` **だけ**なのに `CELTIUM_MODEL_MATRIX` が **model list ごと・フレームごと**に出て、**ログが 100,000 行を超え Prism が表示停止**（screenshot が証拠）。`VulkanDiagnostics` で `MODEL_MATRIX`（上限200）・`ACCEPTED`（500 batch ごと）・arena census（既定 true だった）を gate。一回だけの構成識別行は残す。§0.187 |
 | **F3 / driver 表示** | **完了（task-46・両 vendor 実測）** | `glRendererPreflight` が実 device の `VkPhysicalDeviceDriverProperties` を end-to-end で返す: AMD `driverName="radv" driverID=3(MESA_RADV) driverInfo="Mesa 26.2.4-1" driverVersion=109060100(26.2.4)` / Intel `Intel open-source Mesa driver`・両方 `apiVersion=1.4.354`。`CELTIUM_DRIVER_INFO` が「今描いているのは何か」の権威行。§0.194/§0.202 |
-| **ロード画面** | **splash publication 着地・VUID 修正済／検証 leg queue** | `CELTIUM_WINDOW_RENDERER … stage=createDisplay`・`no terrain backend is installed` 0件・最初の immediate group が splash 自身（`mvT z=-2000`・logo texture 8・splash 自身の FBO）。`celtium$publishFrameTexture` が game framebuffer の colour texture 名を chain pair の image に publish し、**全 published name に layout 遷移**（sampling 側 `ensureSampledLayout`・write 側 `ensureGeneralLayout`・unpublish で外す）＝`VUID-vkCmdDraw-None-09600` の修正。受入は `validationMessageCount=0` 復帰＋最初の loading frame が画面に出ること。§0.201/§0.202 |
+| **ロード画面** | **未表示（ユーザー第11報で再報告）／task-61** | `CELTIUM_WINDOW_RENDERER … stage=createDisplay`・`no terrain backend is installed` 0件・最初の immediate group が splash 自身（`mvT z=-2000`・logo texture 8・splash 自身の FBO）。`celtium$publishFrameTexture` が game framebuffer の colour texture 名を chain pair の image に publish し、**全 published name に layout 遷移**（sampling 側 `ensureSampledLayout`・write 側 `ensureGeneralLayout`・unpublish で外す）＝`VUID-vkCmdDraw-None-09600` の修正。**round 11 のユーザー報告は「未だに表示されてない」**＝「renderer に届いた」は「ユーザーが見た」ではない。受入は presented frame に loading 内容が出ること＋`validationMessageCount=0`。§0.201/§0.202/§0.206 |
 | **性能（実測・ユーザー構成）** | **cold は依然として悪い／steady は約24fps・audio はその症状** | ユーザー構成（854x480・validation 無し）の leg: cold window（world tick 120-200＝chunk build）p50 **254ms**・p95 619ms、run 全体は world tick 4006 まで進み presents 4800/約200s＝**約24fps**。audio のとぎれは**独立欠陥ではなく lag の症状**（sound manager は client thread の tick=frame で供給される）。最有力は upload 経路の per-segment `vkQueueWaitIdle`（`bootstrapQueueWaits` を summary へ配線済み・task-51）。§0.198 |
+| **性能（warm 実測・受入は p95/p99）** | **中央値は合格水準・spike がユーザーの lag** | `lead-warm3`（ユーザー構成・854x480・layer 無し・`worldTicksAtEnd=4041`）: cold 40 sample p50 44.1 / p95 250.2 / p99 575.9 ms、**warm 275 sample p50 24.0 / p95 105.6 / p99 207.4 ms**。**中央値を 24→20 にしても p95 105 が残る限り苦情は直らない**。spike 帰属の計器は `slowFrameThresholdMs`/`slowFrameCount`/`slowFrames`（commit `05935fdd5`・§0.206）。§0.198/§0.199 |
+| **GUI scale 変更でクラッシュ（ユーザー第11報）** | **未再現／原文解析済み（task-58）** | 唯一の crash report（19:20）は `NoClassDefFoundError: CeltiumGlStub$ReadableRange` で、原因は **Forge の transformer に長さ0の class file が渡った**こと（`ClassReader.readShort` が空配列の offset 6 を読む）。instance の jar は `md5 ff85a8f5…` で `build/libs` と完全一致・長さ0の `.class` entry は無し・20:05 のセッションは同じメソッドを24万回通って落ちていない＝**古い/部分コピー jar の産物という仮説**。**「再現しなかった」を「修正済み」と書かない**。§0.206 |
+| **F3 がとても重い（ユーザー第11報）** | **原因の数値あり・task-59** | ユーザーのログ: `CELTIUM_FONT_GLYPH_SUMMARY windows=1012751 … refused=138929 submitMillis=47246`＝**1 glyph window 46.6 µs**・28分で101万 window・13.7% は誰も描いていない。F3 overlay は最も文字が密。受入は F3 on/off の p50/p95 同一 leg 比較。§0.206 |
+| **GPU stall latch（ユーザー第11報の lag 側）** | **未帰属・task-60** | ユーザーのログの拒否ヒストグラムで `the GPU stalled; no further drawing until the renderer is rebuilt` が**約50,200 batch**（format 7=21,366 ほか）。`gpuStalled` は latch（`:1102`/`:1126`・wait timeout `:10534`・拒否 `:3629`/`:3665`・geometry 破棄 `:5084`）で、`:10516` のコメント自身が false stall の高コストを警告。§0.206 |
 | **video settings の画** | **PASSED（GUI 由来の床で較正）** | `vs47d-cand` **PASSED**（`guiFrameGateFloors nonBackgroundFraction>=0.37 verticalBands>=89 blackFraction<=0.118`・`guiFrameGateSource` が参照の GUI frame を名指し）。Done ボタンは画素一致（8/30,000）・panel 4.56%。bridge 対照は新設 luma 床（`panelMeanLuma<=0.70x`）で正しく FAIL（背景欠落 frame を捕捉）。§0.202 |
-| **item 変換 family（ユーザー報告）** | **形状・サイズ・剣の向きは実プレイで解消（task-50 完了）／blur のみ残（task-52）** | 根因は Forge の生 `GL11.glMultMatrix`（`ForgeHooksClient:425-455`）が GlStateManager を迂回し stub の no-op 表が捨てていたこと。**owner を1つに固定**（`ForgeHooksClientMixin` が `multiplyCurrentGlMatrix` HEAD＝GUI/FIRST/THIRD/GROUND の公開入口・stub は census のみ）。実測: 旧 jar は dome が `F²`（`0.648=0.803²`）が flag の on/off 両方、現行 jar は on `[0.805,1.431,-1.0]`/off `[0.805,1.431,-1.001]` で両方 PASSED。ユーザー実プレイで「アイテムの問題は修正」「ドロップの大きさも治った」「剣の持ち方も治った」。**残り**: GUI アイコンが低解像度＝`nearestFilterFor` の推論が全面 upload で LINEAR に落ち、`confirmWrapFromRecord` が wrap しか再照会しないため（record は NEAREST）。§0.191/§0.202 |
+| **item 変換 family（ユーザー報告）** | **実プレイで解消（round 11「アイテムは治った」）・task-50/52 完了** | 根因は Forge の生 `GL11.glMultMatrix`（`ForgeHooksClient:425-455`）が GlStateManager を迂回し stub の no-op 表が捨てていたこと。**owner を1つに固定**（`ForgeHooksClientMixin` が `multiplyCurrentGlMatrix` HEAD＝GUI/FIRST/THIRD/GROUND の公開入口・stub は census のみ）。実測: 旧 jar は dome が `F²`（`0.648=0.803²`）が flag の on/off 両方、現行 jar は on `[0.805,1.431,-1.0]`/off `[0.805,1.431,-1.001]` で両方 PASSED。ユーザー実プレイで「アイテムの問題は修正」「ドロップの大きさも治った」「剣の持ち方も治った」、**round 11 で「アイテムは治った」＝形状・サイズ・blur を含めて解消**（blur は `confirmSamplerStateFromRecord` の着地後）。§0.191/§0.202/§0.206 |
 | **hurt flash / 手持ち block の暗さ** | **hurt flash は実プレイで確認／night の明るさは task-55** | `immediate_tex_color.frag` に `u_AlphaRef<0` の INTERPOLATE 分岐（SPIR-V も一致）。`CELTIUM_ENV_COMBINE rgba=1.0,0.0,0.0,0.3` が hurt-on のみに出る1フラグ統制。**ユーザー実プレイ「ダメージで赤くなるようになった」**。残り: 夜の entity/雲が明るい＝**lit ITEM に lightmap 項が無い**（task-55）。§0.197 |
 | **参照の変更（2026-10-11 14:xx）** | **bridge を廃止し upstream Celeritas 989ebf2e を参照に** | ユーザー決定「bridgeとかいらない。gllessのみでいこう」「glless vs celeritasのほうが楽だし、bridgeの保守もいらなくなる」。参照 leg は同一 fixture・同一 scene/pose/tick で `--mod .celtium-work/upstream-baseline/.../celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`＋celtium jar なし＋glless フラグなし。**検証済み**: `ref-celeritas2` = `nonBg 0.761173`・**PASSED**・2476色・tick 150 の screenshot 取得成功（§0.163） |
 | **GL-less のメニュー（ユーザーの苦情）** | **解消（task-15・2026-10-11 16:18）** | **window 生成時に renderer を作り、world renderer が同一インスタンスを adopt** する形にした結果、
@@ -140,6 +144,74 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **ミキシン間で直接メソッドを呼ばない**（メソッドは対象クラスへマージされるため起動時 `NoClassDefFoundError`。§0.121 の経緯）。
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
+
+## 0.206 **ユーザー第11報（5項目）・クラッシュの原文解析・F3 の実測値・stall latch の帰属タスク化**
+
+**ユーザー報告（round 11・原文）**: 「ロード画面は未だに表示されてない。エンティティ/雲/プレイヤーは未だに明るい。ラグいのは少しマシになったが f3開くととてもらぐい。アイテムは治った。**GUIスケール変えようとするとクラッシュする**。」
+
+### クラッシュ（新規・最優先・task-58）
+
+- 前回 round 以降の crash report は1件だけ: `crash-2026-10-11_19.20.30-client.txt`（19:20・`Description: Rendering entity in world`）。
+  `NoClassDefFoundError: org/soutalab/celtium/vulkan/gl/CeltiumGlStub$ReadableRange`
+  ← `CeltiumGlStub.celtium$refreshReadableMappings(:3301)` ← `celtium$readableMapping(:3221)` ← `drawArrays(:2936)`
+  ← `WorldVertexBufferUploader.func_181679_a` ← `ModelBiped.func_78088_a`（player モデルの draw）。
+- 原因鎖の最下段が決定的: `ArrayIndexOutOfBoundsException: Index 6 out of bounds for length 0`
+  at `org.objectweb.asm.ClassReader.readShort(ClassReader.java:3638)` ← `ClassReader.<init>` ←
+  `EventSubscriptionTransformer.transform(EventSubscriptionTransformer.java:64)`。
+  **transformer に渡された class file が長さ0だった**（`readShort` が offset 6 を読む＝class file の major version 位置）。
+  原典の guard は `bytes == null` だけなので、空配列は `new ClassReader(bytes)` まで届く
+  （`forge122/build/rfg/minecraft-src/.../EventSubscriptionTransformer.java`）。
+- **配布物は測定で確認した**（仮定しない）: instance の `mods/` の jar は
+  `md5 ff85a8f5857eff44112e0f9cd6300507`・2,515,756 B で、`build/libs/` の同名 jar と**完全一致**。
+  3つの jar（reobf/dev/本体）に **長さ0の `.class` entry は無い**（0バイトはディレクトリ entry のみ）。
+  `CeltiumGlStub$ReadableRange.class` は **574 B**。
+- **反証**: 20:05:06–20:33:14 のセッションは `CELTIUM_ARRIVALS total=244000`＝同じメソッドを24万回通って落ちていない。
+  → 19:20 のクラッシュは**古い/部分的にコピーされた jar**の産物である可能性が最も高い。
+  **ただしこれは仮説であり verdict ではない**（ユーザーは「クラッシュする」と言っている）。
+  task-58（sky-draws）が「画面自身の GUI Scale 行」で再現するか、jar 全 entry の class 健全性で反証する。
+  **「再現しなかった」を「修正済み」と書かない。**
+
+### F3（新規・task-59）
+
+- ユーザーのログ（20:05–20:33）: `CELTIUM_FONT_GLYPH_SUMMARY windows=1012751 defaultWindows=1012751 unicodeWindows=0
+  bridgeWindows=0 quads=1012751 submitted=1012751 accepted=873822 refused=138929 submitMillis=47246 reasons={backend=138929}`。
+  **28分で101万 glyph window＝1 window あたり46.6 µs**、submit 内で47.2秒、**13.7% は誰も描いていない**（refused）。
+  F3 overlay はゲーム中で最も文字が密なので、「f3開くととてもらぐい」の形と一致する。task-59（gui-stage）が
+  F3 on/off の p50/p95 を同一 leg で測り、1テキスト描画内の連続 glyph quad を1 window にまとめる。
+
+### GPU stall latch（新規・task-60）
+
+- ユーザーのログの拒否ヒストグラム: `the GPU stalled; no further drawing until the renderer is rebuilt`
+  が format 7=21,366 / 4=12,320 / 6=9,968 / 5=3,337 / 2=2,483 / 1=750 ＝**約50,200 batch**。
+- `gpuStalled` は **latch**（`VulkanTerrainGpuBackend.java:1102`・`:1126` で wait timeout `:10534` から設定・
+  `:3629`/`:3665` で全拒否・`:5084` で受理済み geometry を破棄）。`:10516` のコメント自身が
+  **false stall は permanent だから高くつく**と警告している。prime suspect は upload 経路の per-segment
+  `vkQueueWaitIdle`（`VulkanContext.beginCommands`＝task-51）。frame-composite が budget 終了で返却 → **fog-path が受領**。
+
+### その他の実測・裁定
+
+- **ロード画面（task-61・texture-mirror）**: splash は renderer に届いている（§0.201/§0.202）が、ユーザーには見えない。
+  「renderer に届いた」は「ユーザーが見た」ではない。presented frame で内容が止まる位置を計測で名指しする。
+- **VUID 回帰の報告（proj-channel・`t51-refusal`・jar `fa9487e0cd17ee7c`）**: 通常 terrain leg が
+  `validationClean=false` / `validationMessageCount=20`（`VUID-vkCmdBeginRenderPass-initialLayout-00900` ＋
+  `VUID-vkCmdDraw-None-09600`・`postChains=0`）。frame-composite の attach 側 hand-back は現行 tree に入っている
+  （`:5666` `celtium$syncPublishedChainOutput(offTarget.chainPairColorImage())` → `:5671`
+  `celtium$transitionPublishedFrameTextures(true)`・clear/attach の前）。**現行 jar で再測するのが task-61 の最初の仕事**
+  （`validationClean=false` の leg は受入を運べない）。
+- **model batch の lightmap 不在（proj-channel・原典＋自コード）**: `celtium$enqueueModelMesh` は ITEM group を作り
+  `group.lightParams = celtium$lightParams(state, modelView)`（`RenderHelper.enableStandardItemLighting` の固定機能ライト）
+  だけを積む。vanilla が world 位置の明るさに使う **unit-1 light map**（`OpenGlHelper.setLightmapTextureCoords`）は
+  経路に無く、lit ITEM pipeline は texture を1枚しか bind しない（`immediate_tex_color_lit.vert` に lightmap uniform 無し）。
+  ＝**entity/player が夜も昼の明るさのまま**。修正は task-55 の lit ITEM 側（model capture の変更ではない）。
+- **拒否4件の帰属（proj-channel・`t51-refusal`）**: sky VBO の最初の数 draw が mirror の identity 射影で拒否されるのは
+  **最初の `CELTIUM_GLUPERSPECTIVE` より前**だから（census は log 450行・最初の gluPerspective は 471行）。
+  steady-state は被覆済み。件数は per-boot（2〜4）で、「毎 run 2件」ではなく**「≤4・全て最初の受理 draw より前」**と書く。
+- **計器の配線（Lead・commit `05935fdd5`）**: 承認済みの slow-frame capture は**収集されるだけで report に書かれていなかった**
+  → `slowFrameThresholdMs` / `slowFrameCount` / `slowFrames` として出力（`slowFrames` は `worldTick=<n> <ms>ms <handoff line>`）。
+  p95/p99 の帰属はこの計器で取る（**中央値を受入にしない**）。
+- **新タスク**: task-58（GUI scale crash・sky-draws）/ task-59（F3 glyph 費用・gui-stage）/ task-60（stall latch・fog-path）/
+  task-61（ロード画面＋VUID 再測・texture-mirror）。night scene 用の `-Dceltium.validation.worldTime`（既定 6000）を
+  gui-stage が land（4タスクが待っている）。
 
 ## 0.205 **task-52 の filter 修正着地（atlas が LINEAR で作られていた実測）・新しい VUID クラス・spike 帰属の計器を承認**
 
