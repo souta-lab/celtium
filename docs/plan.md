@@ -274,6 +274,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.293 **round 99: 私の guard は欠陥を「消した」のではなく「移した」— skip を撤回（`cd53bbff2`）**
+
+- **分析（Lead・frame target の drain 機構を読んで）**: `GllessFrameTarget` は既に
+  **`beginFrame()` が前 frame を open のまま見つけたら `consumeOutstandingWait(...)` で wait signal を drain** し、
+  **`endFrame()` が `consumeDone()` で done signal を consume** する＝**pair は構成上 1:1 に保たれている**。
+- **私の guard がしたこと**: outstanding のとき **pair ごと skip** したため、**`waitSemaphore` の signal が消費されないまま**になり、
+  **次の `beginFrame()` が再び signal** する。結果、**VUID は10件のまま**で、欠陥は **`doneSemaphore` → `waitSemaphore` へ移動**した。
+  ＝測定（私の `r94-opt09` と glyph-fix の `vs-celeritas` が共に10件）と整合する。
+- **対応**: present 経路の skip を**撤回**（`cd53bbff2`）。tracking（`doneSemaphoreSignalOutstanding`/`noteDoneSemaphoreSignalled`）は
+  **drain が参照する計器**として残す。**修正は frame-open 契約側**（`consumeOutstandingWait` が既に住んでいる場所）で、
+  **pair を skip せず drain する**形に限る。
+- **この round の教訓（記録）**: 「VUID が減らない修正」は**欠陥を移しただけ**でありうる。次に semaphore を触る者は
+  **signal と wait の 1:1 を数える計器**（`waitSignalled`・`doneSemaphoreOutstanding` の遷移）を先に読み、**skip ではなく drain** を選ぶこと。
+- **未了**: OPT-09 step(3) の緑 leg（等価性自体は測定済み・`match=true`）・BH-14・goal (e) の self-consistency・F3 の bind short-circuit・
+  `scissorCapturedGroups=0`（plan の `>0` が失敗）・`guiClickDivertedTo` の report field 不一致。
+
 ## 0.292 **round 98: semaphore VUID は私の guard をすり抜けた（10件のまま）— 二重 signal は `doneSemaphore` ではなく `waitSemaphore` の見込み**
 
 - **測定（Lead の `r94-opt09`・修正 `7e3afed8d` 入り jar `a1a3aa96`・`pinSections=60`・`indirectCompare=true`）**: **VUID=10（変わらず）**。
