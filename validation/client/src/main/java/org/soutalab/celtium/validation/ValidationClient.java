@@ -3885,16 +3885,8 @@ public final class ValidationClient {
 
     /** The renderer's presented-frame counter, or -1 when the live terrain backend is not the Vulkan one. */
     private static int celtium$presentedFrameCount() {
-        try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                return ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current).celtium$presentedFrameCount();
-            }
-        } catch (RuntimeException | LinkageError ignored) {
-            // A measurement must never stop the tick; -1 says it could not be taken.
-        }
-        return -1;
+        Object count = celtium$backendCall("celtium$presentedFrameCount", new Class<?>[0]);
+        return count instanceof Integer ? ((Integer) count).intValue() : -1;
     }
 
     /** Every reason the capture tick cannot be accepted as a frame of the target dimension, with its numbers. */
@@ -3994,13 +3986,23 @@ public final class ValidationClient {
         return text.replace(java.io.File.separatorChar, '/');
     }
 
-    /** The live Vulkan terrain backend, or null when this run's terrain is drawn some other way. */
-    private static org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend celtium$vulkanBackend() {
+    /**
+     * The live Vulkan terrain backend as an {@code Object}, or null when this run's terrain is drawn another way.
+     * <p>
+     * Deliberately not typed as the backend: this class is the {@code @Mod} class, and Forge's
+     * {@code FMLModContainer.gatherAnnotations} resolves every type in every method signature while it constructs the
+     * mod. A signature naming {@code VulkanTerrainGpuBackend} therefore made the fixture unloadable in a configuration
+     * that has no Celtium jar - which is exactly the upstream-Celeritas reference leg the whole team needs, and it died
+     * with {@code NoClassDefFoundError: org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend} at mod construction.
+     * The class name is compared as a string and the calls go through {@link #celtium$backendCall}, which is the same
+     * shape the JEI and framebuffer-interop probes in this file already use.
+     */
+    private static Object celtium$vulkanBackend() {
         try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                return (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
+            Object current = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current != null
+                    && "org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend".equals(current.getClass().getName())) {
+                return current;
             }
         } catch (RuntimeException | LinkageError absent) {
             // The renderer's classes are not on the classpath in every configuration this fixture runs in, and a
@@ -4009,9 +4011,22 @@ public final class ValidationClient {
         return null;
     }
 
+    /** Invokes one of the backend's own methods by reflection, or null when there is no backend or the call fails. */
+    private static Object celtium$backendCall(String method, Class<?>[] types, Object... arguments) {
+        Object backend = celtium$vulkanBackend();
+        if (backend == null) {
+            return null;
+        }
+        try {
+            return backend.getClass().getMethod(method, types).invoke(backend, arguments);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+            return null;
+        }
+    }
+
     private static double celtium$presentedImageMean() {
-        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend = celtium$vulkanBackend();
-        return backend == null ? -1.0D : backend.celtium$presentedImageMean();
+        Object mean = celtium$backendCall("celtium$presentedImageMean", new Class<?>[0]);
+        return mean instanceof Double ? ((Double) mean).doubleValue() : -1.0D;
     }
 
     /**
@@ -4035,13 +4050,12 @@ public final class ValidationClient {
             evidence.completionError = "a stale file at " + celtium$relative(image) + " could not be cleared: " + error;
         }
         boolean requested = false;
-        try {
-            org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend = celtium$vulkanBackend();
-            if (backend != null) {
-                requested = backend.celtium$dumpPresentedImage(image);
-            }
-        } catch (RuntimeException | LinkageError error) {
-            evidence.completionError = "the presented-image dump could not be requested: " + error;
+        Object dumped = celtium$backendCall("celtium$dumpPresentedImage", new Class<?>[] { java.nio.file.Path.class },
+                image);
+        if (dumped instanceof Boolean) {
+            requested = ((Boolean) dumped).booleanValue();
+        } else if (celtium$vulkanBackend() != null) {
+            evidence.completionError = "the presented-image dump could not be requested";
         }
         if (requested) {
             celtium$pendingDumps.add(evidence);
