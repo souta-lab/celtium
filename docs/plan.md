@@ -89,6 +89,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.142 **A03 修正の実測確認と、現在ツリーの健全性（baseline run）**
+
+`baseline686`（GL-less allBlocks・A02〜A05＋所有権修正＋N10 を含むツリー）:
+
+```
+fixtureStatus = UNCALIBRATED_PRESENTED_IMAGE   validationClean = true   msgs = 0
+worldFrameNonBackgroundFraction = 0.852727     presentedDistinctColours = 24618
+presentedImageMeanAtCapture = 44.890625        presentedImageVerdict = UNCALIBRATED_PRESENTED_IMAGE
+sceneCalibrationKeyMatches = false             sceneGateFloorsEnforced = false
+floorsNotCalibrated = "FLOORS NOT CALIBRATED for scene terrain (overworld (dimension 0), no transfer requested): …"
+```
+
+**A03 の修正が端から端まで効いている**: 候補は `allBlocks=true` で走っており、参照は allBlocks なしで測定されている。
+修正前は参照キーが候補に追随して `keyMatches=true` になり、**その variant を記述していない床で判定**されていた。
+現在は `false` → **未較正として報告**（床を当てない）。これが監査の要求した形。
+
+**正直な帰結**: allBlocks variant の床は（参照が無いので）**今は誰も判定していない**。allBlocks にゲートを掛けたいなら、
+その variant 自身の参照 run を取って較正する必要がある——「別 variant の床で判定する」より厳密に正しい状態。
+
+**画像は健全**: `nonBg 0.852727`（これまでで最も高い＝地形が豊かに見えている）・24618色・mean 44.89。
+
 ## 0.141 **監査 A03 修正: 参照較正キーが候補の property を読んでいた（ゲートの穴）**
 
 監査の指摘どおりだった。`celtium$referenceCalibrationKey` は `celtium$calibrationKey(scene, referencePose, REFERENCE_GUI_SCALE)` を呼び、
