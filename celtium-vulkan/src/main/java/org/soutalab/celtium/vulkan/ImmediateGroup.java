@@ -123,9 +123,24 @@ final class GroupStamp {
 final class PreparedImmediate {
     final Object pipeline;
     final long descriptor;
+    /**
+     * The sampled wrapper's {@code key()} (view + generation) at prepare time, or 0 for an untextured group.
+     * <p>
+     * A group can outlive the texture it was prepared with: the wrapper is retired when the renderer replaces the image
+     * (the measured case is {@code glTexture=22} unpublished at frame 0, moments after the group was enqueued), and the
+     * descriptor then names a view that has been destroyed. Drawing it is not a missing batch but a device-lost class
+     * failure, so the draw site compares this key against the registry's current wrapper and re-prepares the descriptor
+     * when it has moved.
+     */
+    final long textureKey;
 
     PreparedImmediate(Object pipeline, long descriptor) {
+        this(pipeline, descriptor, 0L);
+    }
+
+    PreparedImmediate(Object pipeline, long descriptor, long textureKey) {
         this.pipeline = pipeline;
         this.descriptor = descriptor;
+        this.textureKey = textureKey;
     }
 }

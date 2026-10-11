@@ -145,6 +145,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.212 **構造: `VulkanTerrainGpuBackend.java` 11,469行の分解計画（挙動を変えない抽出・1クラスタ=1 commit）**
+
+- **実測**: module は 47 file / 35,644 行。`VulkanTerrainGpuBackend.java` は **11,469 行**（全体の32%）・
+  メンバ約 **908**・`celtium$` 接頭辞の行 235・診断/集計関連の語を含む行 200。
+  内訳の目安: immediate 794行語 / frame・present・swapchain 425 / model 408 / matrix・viewport 339 /
+  terrain・region 283 / stall・wait 274 / published 134 / font 122。
+- **なぜこうなったか**: `TerrainGpuBackend` の広い interface を1クラスで実装し、round ごとの修正が
+  「状態が既にある場所」に着地したため。代償は実測済み: 同時編集でコンフリクトし、1つの修正が無関係な状態に触れる。
+- **分解の方針（挙動を変えない・小さく・検証は既存 leg）**:
+  1. `VulkanFontRunBatcher` — font run の状態機械（pendingFont* 12 field・append/flush/boundary/summary・約120行）
+  2. `PublishedFrameTextures` — published name の寿命（map・publish/prune/repoint/transition）
+  3. `VulkanBackendDiagnostics` — `verificationSummary()` と census/report（読み取り専用・約800行）
+  4. `VulkanImmediateQueue` — pending group の queue と draw loop（最大の塊）
+- **規則**: 抽出 commit は**挙動を変えない**（public 面＝mixin から呼ばれる `celtium$*` は薄い委譲として残す）。
+  検証は同じ leg（menu・world・validation on）で行う。**同じクラスタを他の担当が編集中は抽出を始めない**。
+- **既知の失敗の記録**: この巨大 backend を複数担当が同時編集した結果、round 12-14 で
+  「どの変更が device lost を入れたか」の切り分けに4 leg を要した（proj-channel の `t55-*` 4 leg）。
+  抽出はその再発を減らすための構造整理であり、機能追加ではない。
+
 ## 0.211 **round 14: 放棄された frame が wait semaphore を残す（device lost の根因）・zero-view ガードの穴・publish の再指し**
 
 - **device lost の根因（fog-path が `00067` から特定・Lead が修正）**: `GllessFrameTarget.beginFrame` が `waitSemaphore` を

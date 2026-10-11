@@ -167,6 +167,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int publishedFrameTexturesStalePruned;
     /** How many published names were re-pointed at the pair's new image instead of being dropped. */
     private int publishedFrameTexturesRepublished;
+    /** Groups whose sampled texture wrapper had been replaced between prepare and draw, and were re-prepared. */
+    private int staleGroupDescriptorsRebuilt;
+    /** Groups refused because their texture wrapper had moved and no rebuild was available for their pipeline. */
+    private int staleGroupRefusals;
     /**
      * The frame in which each pair's images have been cleared, so the clear happens once per frame and not per
      * window. One per pair: two pairs are two images, and a frame that cleared one of them says nothing about the
@@ -1280,15 +1284,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /**
      * The batching, <b>off by default</b>: `-Dceltium.font.batching=true` enables it.
      * <p>
-     * It was on by default and it breaks text: with it on, the menu's button labels, the rotated splash text and the
-     * copyright line render as blocks while the unscaled footer text stays legible; with `-Dceltium.font.batching=false`
-     * every string is legible on the same jar (measured, one flag apart, same build, compositor capture). Adding the
-     * matrix pair to the run's witness did not fix it, so the defect is not the transform alone and the mechanism is
-     * still open. An unverified optimisation that corrupts text is not a default: the flag stays, the code stays, and
-     * the fix lands when the mechanism is named rather than by widening the witness again.
+     * It is 16x cheaper per glyph when it applies - the user's own session with it on: 275,503 quads in 1,014 ms, 3.7 us
+     * per quad, against 59 us with it off - and it still corrupts the picture. On the jar that carries both the
+     * colour-witness fix and the matrix-boundary flush, the user's play and our own compositor capture both show the
+     * menu's button labels, the rotated splash text and the copyright line as blocks while the unscaled footer text stays
+     * legible. That is the same symptom as before the two fixes, so the mechanism is still open. An optimisation that
+     * garbles text is not a default: the code and the flag stay, and the default flips back when a leg shows legible text
+     * with it on.
      */
     private static final boolean FONT_BATCHING = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.font.batching", "true"));
+            System.getProperty("celtium.font.batching", "false"));
 
     /** The run's vertices, owned by this backend and grown as needed; the font's own buffer is copied into it. */
     private java.nio.ByteBuffer pendingFontVertices;
@@ -5805,7 +5810,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " pipeline=" + (pipeline == null ? "null" : "present");
             return null;
         }
-        return format == 1 || descriptor != 0 ? new PreparedImmediate(pipeline, descriptor) : null;
+        return format == 1 || descriptor != 0
+                ? new PreparedImmediate(pipeline, descriptor, texture == null ? 0L : texture.key())
+                : null;
     }
 
 
@@ -6485,6 +6492,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // handle was measured as a validation error followed by a SIGSEGV inside libvulkan_radeon.
                 + " publishedFrameTexturesStalePruned=" + this.publishedFrameTexturesStalePruned
                 + " publishedFrameTexturesRepublished=" + this.publishedFrameTexturesRepublished
+                // A group that outlived its texture wrapper: the descriptor is rebuilt from the current wrapper, or the
+                // group is refused. Both are counted because "the picture lost a batch" and "the device was lost" are
+                // different outcomes and only the counter says which happened.
+                + " staleGroupDescriptorsRebuilt=" + this.staleGroupDescriptorsRebuilt
+                + " staleGroupRefusals=" + this.staleGroupRefusals
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
                 + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
@@ -10554,6 +10566,36 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 VulkanDynamicMesh mesh = group.mesh;
                 if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
                 PreparedImmediate prepared = group.prepared;
+                // A group can outlive the texture it was prepared with: the wrapper is retired when the renderer replaces
+                // the image (measured: glTexture=22 unpublished at frame 0, moments after the group was enqueued), and the
+                // descriptor then names a destroyed view. Drawing it is not a missing batch but the
+                // `u_Texture ... imageView 0x0` -> VK_ERROR_DEVICE_LOST chain, so the sampled wrapper is re-resolved here
+                // and the descriptor rebuilt when its key (view + generation) has moved.
+                if (prepared.textureKey != 0L && group.texture != 0) {
+                    VulkanGlTexture currentTexture = celtium$registry().get(group.texture);
+                    if (currentTexture != null && currentTexture.key() != prepared.textureKey) {
+                        long rebuilt = prepared.pipeline instanceof VulkanImmediateTexturePipeline texturePipeline
+                                ? texturePipeline.descriptorSetFor(currentTexture) : 0L;
+                        if (rebuilt != 0L) {
+                            prepared = new PreparedImmediate(prepared.pipeline, rebuilt, currentTexture.key());
+                            this.staleGroupDescriptorsRebuilt++;
+                        } else {
+                            // No rebuild available (a lit item group needs its light map as well): refusing by name is
+                            // still better than binding a descriptor whose view has been destroyed.
+                            this.staleGroupRefusals++;
+                            if (this.staleGroupRefusals <= 4) {
+                                record("group for GL texture " + group.texture + " was prepared with key 0x"
+                                        + Long.toHexString(prepared.textureKey) + " but the wrapper is now key 0x"
+                                        + Long.toHexString(currentTexture.key())
+                                        + "; the group is refused rather than drawn with a destroyed view");
+                            }
+                            iterator.remove();
+                            this.retiredImmediateGroups.add(group);
+                            this.immediateGroupsDiscarded++;
+                            continue;
+                        }
+                    }
+                }
                 pushCombinedMatrixInto(group.projection, group.modelView, push, 0);
                 // The push buffer is shared by every group in this flush, so the texture-matrix slots must be
                 // rewritten per group rather than only when a matrix is present: a stale affine would otherwise leak
