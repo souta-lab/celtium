@@ -304,6 +304,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.313 **round 119: 前ラウンドの結論を訂正 — `resizeAtTick` guard は発火していた（`resizeRequestedAtTick=200`）・止めているのは compositor**
+
+- **訂正（重要・自分の誤り）**: §0.312 で「guard が発火していない」と書いたが、**それは誤り**だった。原因は**私が harness の lock JSON
+  （`components`/`mods`/`libraries` しか持たない `.celtium-work/r109-resize.json`）を読んでいたこと**で、
+  **validation report は `runtime/<leg>/logs/celtium-validation.json`** にある。そちらを読むと:
+  ```
+  worldTicksAtEnd        = 2664
+  resizeRequestedAtTick  = 200      ← guard は発火している
+  glfwWindowSizeAtEnd    = 1280x720 ← window は変わっていない
+  ```
+  ＝**guard は tick 200 で発火し、`celtium$requestResize` は呼ばれている**。**変わっていないのは window size**。
+- **帰結（gui-stage の予測どおり）**: 止めているのは **fixture ではなく compositor**。
+  gui-stage の言葉: 「`resizeRequestedAtTick` があって 1280x720 なら、request は発火して **compositor が従っていない**。
+  次に見るのは **`resizeOutput`（既定 `HEADLESS-1`）が実際の sway output 名と一致するか**」。
+  ＝**resize 受入の次の1点は `resizeOutput` の実名合わせ**（fixture の変更ではなく環境側の設定）。
+- **教訓（記録）**: **harness の lock JSON と validation report は別物**で、field を探すときは後者を読む。
+  §0.312 の「field が無い＝経路未踏」という推論は**読むファイルを間違えたことによる誤り**だった。
+  ＝**「計器の不在は描画の不在ではない」と同じ形の誤りを、私自身が犯した**ので、ここに残す。
+- **ユニットの状態（更新）**: per-image は**実装済・通常経路は4 leg 緑**。**resize 受入は「経路は踏んだが compositor が resize を適用していない」**
+  段階まで進んだ（未取得であることに変わりはない）。**frame-close の pairing** は fixture で到達不能のまま（counter は可視化済み）。
+
 ## 0.312 **round 118: `resizeAtTick` guard が発火していないことを artifact field で確定（受入は未取得）・外部知見の追補**
 
 - **確定（コード＋artifact）**: `celtium$requestResize` は `:5264-5265` で **`resizeRequestedAtTick` を report に書く**。
