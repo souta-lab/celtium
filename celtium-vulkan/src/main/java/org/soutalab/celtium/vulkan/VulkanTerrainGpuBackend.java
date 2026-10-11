@@ -307,6 +307,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public List<String> diagnostics() {
         // takeTimingSummary() was written but never called, so every post-process investigation ran without the numbers
         // that say where the handoff time goes. Gated, because it is a per-report string rather than a per-frame cost.
+        // Which depth format this device ended up with, and how: the choice is made once, from the device's own
+        // answers, and a run that does not say which format it used cannot be compared with one on another GPU.
+        this.diagnostics.add("depthFormat: " + org.soutalab.celtium.vulkan.VulkanDepthFormat.chosenName()
+                + " (" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + ")");
         // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
         this.diagnostics.add("stateMirror: stubTransformCalls="
                 + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
@@ -4407,6 +4411,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // presented mean near 170 says the swapchain image held this renderer's frame rather than nothing.
                 + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
                 + " presentSubmitDone=" + (this.swapchain != null && this.swapchain.lastPresentSubmitDone())
+                + " depthFormat=" + org.soutalab.celtium.vulkan.VulkanDepthFormat.chosenName()
+                + " depthFormatDecision=[" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + "]"
                 + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
