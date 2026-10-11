@@ -257,6 +257,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.250 **round 56: id 8 は splash の dynamic texture（caller census が確定）＝名前の再利用と mirror の残存**
+
+- **caller census の結果（texture-mirror・`pano-caller`・jar `bb480811a`・`validationClean=true`）**:
+  ```
+  id=8   256x256 first=0xffffffff callers=[TextureUtil.func_110988_a <- DynamicTexture.func_110564_a:35
+          <- DynamicTexture.<init>:18 <- Minecraft.func_180510_a:889 <- SplashProgress.drawVanilla…]
+  id=13  16x16   first=0xffffffff  (entity white texture・正しい)
+  id=15  16x16   first=0xff0e0e0e  (light map・正しい)
+  id=121 1x1     first=0xfff2f2f3  (cloud stand-in・正しい)
+  ```
+  ＝**id 8 は splash の dynamic texture**（`SplashProgress.drawVanilla` が `new DynamicTexture(256,256)` を白で埋める）。
+  menu の cube face は**再利用された GL 名**を sample しており、その mirror は splash の白のまま。panorama PNG の announcement はその名前に届いていない。
+- **delete 経路は既に hook 済み（Lead の確認）**: stub の `glDeleteTextures` が `liveNames` から外し **`forgetTexture(name)`** を呼ぶ
+  （`CeltiumGlStub.delete`）。backend も `VulkanTerrainGpuBackend:3053` で `forgetTexture` を呼ぶ。
+  したがって mirror が splash の白のままである理由は3分岐:
+  (a) menu 前に `forgetTexture(8)` が発火していない＝**splash の texture が menu 時点で生存**（lifecycle・weather-water の領域）、
+  (b) 発火したが **`announceImage(8)`（panorama PNG の BufferedImage 経路）が来ていない**（announcement 経路）、
+  (c) 発火し announcement も来たが retention 規則で落ちた。
+- **分離計器（texture-mirror へ配布）**: その名前について `forgetTexture(name)` と `announceImage(name)` を**frame 番号つき**で1行ずつ印字。
+  leg の log が3分岐のどれかを直接示す。(b) なら announcement 経路の修正、(a) なら splash の texture lifetime として weather-water へ回す。
+- **受入は不変**: copy の `mean=` が 255 から動き menu crop にパノラマが出る。
+
 ## 0.249 **round 55: 原典がパノラマの texture を名指し（cube は panorama_N.png・copy 先は backgroundTexture）＝mirror が白いのは PNG の中身が announce されていない**
 
 - **原典確認（Lead）**: `GuiMainMenu`（decompile）:
