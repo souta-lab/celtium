@@ -202,6 +202,24 @@ public final class CeltiumFontGlyphCapture {
      */
     private static long windowNanos;
     private static long hookNanos;
+    /**
+     * The two brackets above the capture's own: the whole vanilla glyph method ({@code renderDefaultChar} /
+     * {@code renderUnicodeChar}, opened and closed by {@link FontRendererMixin}) and the whole string
+     * ({@code drawString(String, float, float, int, boolean)}, SRG {@code func_175065_a}).
+     * <p>
+     * They exist to split the F3 overlay's frame cost instead of adding another aggregate to it. Per frame the numbers
+     * read: {@code stringMillis} is everything the overlay's text costs; subtracting {@code glyphMillis} leaves the
+     * caller's own per-character work (the ASCII-table lookup, the style/width bookkeeping); subtracting this capture's
+     * {@code windowMillis}, {@code hookMillis} and {@code submitMillis} from {@code glyphMillis} leaves the vanilla
+     * glyph body (the {@code bindTexture} per glyph and the {@code GlStateManager} wrapper calls) - which is the
+     * suspect the F3 measurement named and which no counter covered.
+     */
+    private static long glyphNanos;
+    private static long glyphCalls;
+    private static long stringNanos;
+    private static long stringCalls;
+    private static long glyphStartNanos;
+    private static long stringStartNanos;
     private static long accepted;
     private static long refused;
     private static boolean firstQuadReported;
@@ -283,6 +301,28 @@ public final class CeltiumFontGlyphCapture {
                     + " unicode=" + unicode + " " + glState() + " " + matrices() + " " + mirroredMatrices());
         }
         reset();
+    }
+
+    /** Opens the vanilla glyph method's own bracket. Called from the mixin's HEAD injection. */
+    public static void beginGlyph() {
+        glyphStartNanos = System.nanoTime();
+        glyphCalls++;
+    }
+
+    /** Closes it. Called from the mixin's RETURN injection, after {@link #closeWindow()}. */
+    public static void endGlyph() {
+        glyphNanos += System.nanoTime() - glyphStartNanos;
+    }
+
+    /** Opens the string bracket. Called from {@code func_175065_a}'s HEAD injection. */
+    public static void beginString() {
+        stringStartNanos = System.nanoTime();
+        stringCalls++;
+    }
+
+    /** Closes it. Called from {@code func_175065_a}'s RETURN injection. */
+    public static void endString() {
+        stringNanos += System.nanoTime() - stringStartNanos;
     }
 
     /** Closes the window. Called on the glyph method's normal return, and after the glyph's own {@code glEnd}. */
@@ -673,6 +713,9 @@ public final class CeltiumFontGlyphCapture {
                 + " submitMillis=" + (submitNanos / 1000000L)
                 + " windowMillis=" + (windowNanos / 1000000L)
                 + " hookMillis=" + (hookNanos / 1000000L)
+                + " glyphMillis=" + (glyphNanos / 1000000L)
+                + " stringMillis=" + (stringNanos / 1000000L)
+                + " stringCalls=" + stringCalls
                 + " meanSubmitMicros=" + (submitted == 0 ? 0 : submitNanos / submitted / 1000L)
                 + " reasons=" + REFUSALS);
     }
@@ -683,6 +726,8 @@ public final class CeltiumFontGlyphCapture {
                 + " bridgeWindows=" + bridgeWindows + " quads=" + quads + " submitted=" + submitted
                 + " accepted=" + accepted + " refused=" + refused + " submitMillis=" + (submitNanos / 1000000L)
                 + " windowMillis=" + (windowNanos / 1000000L) + " hookMillis=" + (hookNanos / 1000000L)
+                + " glyphMillis=" + (glyphNanos / 1000000L) + " glyphCalls=" + glyphCalls
+                + " stringMillis=" + (stringNanos / 1000000L) + " stringCalls=" + stringCalls
                 + " reasons=" + REFUSALS + " modes=" + MODE_CENSUS + " " + batchSummary();
     }
 

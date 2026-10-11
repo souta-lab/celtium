@@ -28,21 +28,44 @@ public abstract class FontRendererMixin {
 
     @Inject(method = "func_78266_a", at = @At("HEAD"), require = 0)
     private void celtium$openDefaultGlyph(int ch, boolean italic, CallbackInfoReturnable<Float> info) {
+        CeltiumFontGlyphCapture.beginGlyph();
         CeltiumFontGlyphCapture.openWindow(false);
     }
 
     @Inject(method = "func_78266_a", at = @At("RETURN"), require = 0)
     private void celtium$closeDefaultGlyph(int ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.closeWindow();
+        CeltiumFontGlyphCapture.endGlyph();
     }
 
     @Inject(method = "func_78277_a", at = @At("HEAD"), require = 0)
     private void celtium$openUnicodeGlyph(char ch, boolean italic, CallbackInfoReturnable<Float> info) {
+        CeltiumFontGlyphCapture.beginGlyph();
         CeltiumFontGlyphCapture.openWindow(true);
     }
 
     @Inject(method = "func_78277_a", at = @At("RETURN"), require = 0)
     private void celtium$closeUnicodeGlyph(char ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.closeWindow();
+        CeltiumFontGlyphCapture.endGlyph();
+    }
+
+    /**
+     * The string bracket: {@code FontRenderer.drawString(String, float, float, int, boolean)}, SRG
+     * {@code func_175065_a}, resolved from the SRG table rather than guessed. It wraps the shadow pass, the per-character
+     * loop and the per-glyph calls, so per frame {@code stringMillis - glyphMillis} is the caller's own work and
+     * {@code glyphMillis - (windowMillis + hookMillis + submitMillis)} is the vanilla glyph body - the split the F3
+     * overlay's 135 ms/frame needed and that no aggregate could give.
+     */
+    @Inject(method = "func_175065_a", at = @At("HEAD"), require = 0)
+    private void celtium$beginString(String text, float x, float y, int color, boolean dropShadow,
+            CallbackInfoReturnable<Integer> info) {
+        CeltiumFontGlyphCapture.beginString();
+    }
+
+    @Inject(method = "func_175065_a", at = @At("RETURN"), require = 0)
+    private void celtium$endString(String text, float x, float y, int color, boolean dropShadow,
+            CallbackInfoReturnable<Integer> info) {
+        CeltiumFontGlyphCapture.endString();
     }
 }

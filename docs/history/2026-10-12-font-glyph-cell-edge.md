@@ -205,3 +205,27 @@ is the next instrument's job rather than a guess:
 New instrument this measurement added (committed with it): `windowMillis`/`hookMillis` in the glyph
 summary and in the periodic progress lines, and the progress stride raised from 2,000 to 20,000 so a
 dense leg's running totals are readable to the end of the run instead of only from the shutdown hook.
+
+## The F3 text cost, split inside the glyph path (the instrument the Lead asked for)
+
+Brackets added: the whole vanilla glyph method (`renderDefaultChar`/`renderUnicodeChar`, SRG `func_78266_a`/
+`func_78277_a`, opened/closed in `FontRendererMixin`) and the whole string (`drawString(String, float, float, int,
+boolean)`, SRG `func_175065_a`, resolved from the SRG table). Jar `a1a3aa967f5ec1e0a4449e0e9ca52e1c`, F3 on, leg
+`f3split`, at 1,280,000 glyph windows and 2,785 strings:
+
+| bracket | millis over the run | per unit |
+|---|---|---|
+| `stringMillis` (everything the text costs) | **4,701** | 1.69 ms per string |
+| `glyphMillis` (the vanilla glyph methods) | **4,635** | **3.62 µs per glyph** |
+| this capture's `submitMillis` + `windowMillis` + `hookMillis` | 293 + 69 + 220 = **582** | 0.45 µs per glyph |
+| caller's own per-character work (`stringMillis - glyphMillis`) | **66** | - |
+
+So **the vanilla glyph body is 4,053 ms of the 4,701** (3.17 µs per glyph) and the capture is 582 ms: the suspect the
+aggregate could not see is now the measured majority - `bindTexture` for every glyph through `TextureManager` and the
+nine `GlStateManager` wrapper calls per glyph (glBegin, four glTexCoord2f, four glVertex3f, glEnd), each of which is a
+stub call plus our hook. At ~4,600 extra glyphs per frame that is **~15 ms/frame of vanilla glyph body against
+~2 ms/frame of ours** - and the text path as a whole is ~22 ms/frame of the 139 ms the overlay adds, so the remainder
+is the per-frame overlay construction and the extra immediate groups rather than the glyphs themselves.
+
+The instrument costs two `System.nanoTime()` pairs per glyph and per string (~0.3 ms/frame at this density); it is
+reported in the summary and in the progress lines, so a leg that loses the shutdown hook still carries it.
