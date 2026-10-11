@@ -1,14 +1,67 @@
 # N03 — the vanilla glyph path: the committed code, and the pictures
 
 Worker record for the audit's N03 (P1: "vanilla text still reaches the GL-less no-op immediate path").
-Tree: `318a24d0a` (`font: the probe notes corrected, and the counter summary printed at exit`), on top of
-`aa041c2d4` (`font: the glyph buffer was submitted from one past its last written byte`).
-Jar used for every run below: `celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar`,
-sha256 `044f5aba990550f707b59c112121ecabbe4a842790d91bc1d62e511197d719b3` (the glyph path is byte-identical to
-`aa041c2d4`; `318a24d0a` adds a comment correction and a shutdown-hook summary only).
+Tree: `6a27f1d51` (`font: A01 verified on the artifact, and the counter lines now reach the end of a run`), on top of
+`318a24d0a` and the parent's `aa041c2d4` (the address fix). Evidence jars, each recorded in its run directory's
+`jar-hashes.txt`:
+
+| leg | engine jar sha256 | fixture jar sha256 |
+|---|---|---|
+| acceptance (`n03-ac/ae`, `n03-ad/af`, `n03-ag/ah`) | `216cd6284a3c22f79240222414cf64abbc4a2f5de8ab91d054a4be2dbd6f357d` | `2a9f705301d55c2e7f02798f2113570b71c7809b45d37f91e2a5427ed6d503f0` |
+| earlier pairs (`n03-u/v`, `n03-p/q`, `n03-r/s`, `n03-w/x`) | `044f5aba990550f707b59c112121ecabbe4a842790d91bc1d62e511197d719b3` | `3fbc80fc7acf6087c02f95fee8fb138b84deaf1a66746086e16c4a291510fb94` |
+
+The glyph path is byte-identical between those two engine jars; `216cd6284a` also carries the 64-line counter cap.
 Runner: `.celtium-work/fontmatrix.py` (builds the same isolated game directory `scripts/prism_validation.py`
-builds, adds the `options.txt` the harness never copies, and replays the harness's own command through the
-harness's `inspect()`). Evidence sheets: `.celtium-work/n03/`. Run directories: `.celtium-work/runtime/n03-*`.
+builds, adds the `options.txt` the harness never copies, records the jar hashes, and replays the harness's own
+command through the harness's `inspect()`). Evidence sheets: `.celtium-work/n03/`. Run directories:
+`.celtium-work/runtime/n03-*`.
+
+## 0. A01 — the address defect, confirmed and verified on the artifact
+
+The audit's A01 (`docs/history/2026-10-11-full-audit-1058.md`) is the same defect the parent fixed in `aa041c2d4`:
+`submit()` wrote four 24-byte vertices and then took `MemoryUtil.memAddress(VERTEX)` without `flip()`, so the
+backend was handed a pointer one past the last written byte and copied 96 bytes of unrelated native memory (the
+isolation branch, 4×16, had the identical defect). The audit's live-jar observation was 11:15:29; the fix landed
+11:24.
+
+Verified the way the audit asks — on the built jar, not on the source:
+
+```
+$ unzip -o -q <engine jar> 'org/taumc/celeritas/impl/font/*'
+$ javap -p -c org/taumc/celeritas/impl/font/CeltiumFontGlyphCapture.class | grep -E 'flip|memAddress|address-extent'
+   579: invokevirtual ByteBuffer.flip()            <- isolation branch
+   601: ldc_w "address-extent"
+   645: invokestatic MemoryUtil.memAddress(ByteBuffer)
+   655: invokevirtual ByteBuffer.flip()            <- normal branch
+   679: ldc_w "address-extent"
+   725: invokestatic MemoryUtil.memAddress(ByteBuffer)
+```
+
+Both branches flip, check `position == 0 && limit == 4*stride` and refuse with the named reason `address-extent`
+before taking the address; the offsets the audit quoted (508/518, no flip) no longer exist.
+
+CPU contract, no GPU, on the offered bytes themselves — `scripts/cpu-contract/GlyphAddressCheck.java`, extended
+to both layouts with the producer's own write order and address-taking:
+
+```
+$ javac -cp <lwjgl-core.jar> -d /tmp scripts/cpu-contract/GlyphAddressCheck.java
+$ java -Dorg.lwjgl.librarypath=<natives> -cp /tmp:<lwjgl-core.jar> GlyphAddressCheck
+normal: position=96 capacity=96 memAddress(buf)-memAddress(buf,0)=96
+  ok   normal: written extent is exactly 4x24 (position=0 limit=96)
+normal: offered address is the first written byte: delta=0
+  ok   normal: vertex 0..3 position, uv and colour recovered exactly (63,63,63,255)
+  ok   isolation: written extent is exactly 4x16 (position=0 limit=64)
+  ok   isolation: vertex 0..3 position and colour (offset 12) recovered exactly
+defect: unflipped delta=96 reads 2.3801702E20, flipped delta=0 reads 1000.0
+  ok   defect: the unflipped address does not read the first written vertex
+  ok   defect: the flipped address reads the first written vertex
+CELTIUM_CPU_CONTRACT PASS
+```
+
+The strip order, the italic offsets and the advance are untouched: the shipped path submits the vanilla
+`GL_TRIANGLE_STRIP` order, mode 5, and no injection writes the return value. `-Dceltium.font.mode=quads` is a
+diagnostic only, and its note now says that changing the draw mode alone does not preserve that strip's vertex
+order — the pre-fix runs that suggested otherwise shared the bad address and are not evidence.
 
 ## 1. What the committed code does per entry point
 
@@ -75,51 +128,56 @@ frame — the title, the tutorial toast and the chat block, all in magenta. Shee
 = the post-fix frame, same crop ("Video Settings" in magenta). Census: 838 magenta-hue pixels in the GUI frame,
 15062 in the world frame of the same run.
 
-Final totals on the current tree (`n03-z-final`, video settings scene, GL-less):
-
-```
-CELTIUM_FONT_GLYPH_SUMMARY windows=53140 defaultWindows=53140 unicodeWindows=0 bridgeWindows=0
-  quads=52406 submitted=52406 accepted=52406 refused=0 submitMillis=1636 reasons={}
-CELTIUM_REFUSALS_BY_FORMAT {}
-```
+Final totals on the current tree (`n03-ac-terrain-deco`, terrain scene, GL-less, jar `216cd6284a`):
+`submitted=56000 accepted=56000 refused=0` on the counter line, `CELTIUM_REFUSALS_BY_FORMAT {}`, and the run's own
+verdict is **PASSED** (`presentedNonBackgroundFraction=0.841951`, `presentedBlackFraction=0.00733`). The unicode
+leg (`n03-ad-terrain-ja`) reads `unicodeWindows` for every window, `defaultWindows=0`, 0 refused.
 
 Unicode leg (`n03-r-ja`, `lang:ja_jp` + `forceUnicodeFont:true`, the options.txt the harness never copies):
-`unicodeWindows=40548, defaultWindows=0, submitted=40000 accepted=40000 refused=0` at the progress cap —
-`func_78277_a` is exercised and accepted for the first time.
+`unicodeWindows=40548, defaultWindows=0, submitted=40000 accepted=40000 refused=0` at the old progress cap, and
+`n03-ab-accept-ja` (same flags, jar `ed0e7000`) ended with
+`CELTIUM_FONT_GLYPH_SUMMARY windows=76270 defaultWindows=0 unicodeWindows=76270 bridgeWindows=0 quads=75790
+submitted=75790 accepted=75790 refused=0 reasons={}` — `func_78277_a` is exercised and accepted, at a batch
+boundary of 75790 quads.
 
 ## 3. The text categories, each with its bridge/GL-less pair and crops
 
+**The acceptance legs are the GL-less ones** (the bridge is the reference for what the text should look like; its
+settings text is drawn by GL and is not this acceptance). They are taken in the **terrain** scene, which the
+picture gate accepts, because in the video-settings scene the panel the floors describe is still missing under
+GL-less (the open GUI-geometry gap) and that scene's verdict cannot be evidence for the font.
+
 All crops are `x0,y0,x1,y1` in the 1280×720 frame. Sheets are in `.celtium-work/n03/`.
 
-| category | GL-less leg | bridge leg | sheet | crops |
+| category | GL-less leg (jar `216cd6284a`) | bridge leg | sheet | crops |
 |---|---|---|---|---|
-| ASCII + shadow | `n03-u-clean` presented GUI frame | `n03-v-cleanbridge` game screenshot | `ascii-shadow-bold.png` | title `520,0,760,45`; toast `880,10,1280,90`; Done `520,630,760,690`; list label `640,110,1110,175` |
-| bold + italic (`§l`/`§o`) | `n03-p-ascii` | `n03-q-asciibridge` | `decorated-labels.png` | Done `§o` `520,630,760,690`; `§l§o` label `640,110,1110,175`; bold toast `880,10,1280,90` |
-| unicode (Japanese) | `n03-r-ja` | `n03-s-jabridge` | `unicode-ja.png` | toast `760,20,1280,100`; Done `560,620,760,700`; title `500,0,780,60` |
-| chat (shadowed) | `n03-w-terrain` (status PASSED, nonBackground 0.841211, black 0.004333) | `n03-x-terrainbridge` | `chat-terrain.png` | chat `0,320,660,620`; toast `760,10,1280,100` |
+| ASCII + shadow | `n03-ac-terrain-deco` (PASSED) | `n03-ae-terrain-bridge` (PASSED) | `terrain-ascii-shadow.png` | chat `0,320,660,620`; toast `760,10,1280,100` |
+| bold + italic (`§l`/`§o`) | `n03-ac-terrain-deco` | `n03-ae-terrain-bridge` | `terrain-ascii-shadow.png` | toast `760,10,1280,100` |
+| unicode (Japanese) | `n03-ad-terrain-ja` | `n03-af-terrain-jabridge` | `terrain-unicode.png` | toast `760,10,1280,100`; chat `0,320,660,620` |
+| video-settings crops (secondary) | `n03-aa-accept`, `n03-ab-accept-ja` | `n03-v-cleanbridge`, `n03-s-jabridge` | `ascii-shadow-bold.png`, `decorated-labels.png`, `unicode-ja.png` | title `520,0,760,45`; toast `880,10,1280,90`; Done `520,630,760,690`; list label `640,110,1110,175` |
 | inventory + JEI | `n03-t-jei` early presented dump (tick 40) | **none exists** | `jei-inventory.png` | JEI page `1030,20,1140,60`; tooltip `660,315,820,355` |
 
 What the pairs show:
 
-* **ASCII/shadow**: "Video Settings" `(520,0,760,45)`, the toast `(880,10,1280,90)`, "Done"
-  `(520,630,760,690)` are at the same size and position in both legs. The list label
-  `(640,110,1110,175)` is only partially comparable: in the GL-less leg the world's shard triangles cover the
-  panel, so only the tail of "Render Distance: 8 chunks" ("ks") is visible; that is the frame-composition
-  defect, not the font.
-* **bold/italic**: the pack `.celtium-work/packs/n03-format` (installed into the isolated game directory
-  only) puts `§l` on `options.video`, `§o` on `gui.done` and `§l§o` on `options.renderDistance`. "Done" is
-  visibly slanted in both legs; "Render Distance: 8 chunks" is heavy and slanted in the bridge and tail-only
-  in the GL-less leg (same occlusion); the tutorial toast's own bold words match in both.
-* **unicode**: "W、A、S、D で移動します / SPACE でジャンプします" `(760,20,1280,100)` and "完了"
-  `(560,620,760,700)` are pixel-comparable between the legs. The title `(500,0,780,60)` is not: in Japanese
-  the toast is wider and its icon sits over the title's spot in the GL-less leg.
-* **chat**: both legs carry the same `/celtium` messages at a 27–30 px line pitch with 24 px glyphs starting
-  at x≈6. In the GL-less leg parts of the block are covered by the world shards (the last line, "Terrain still
-  renders with OpenGL.", is complete; the lines above it are cut where the shards cross them). The matrix probe
-  (`n03-y-chatprobe`) shows the glyph quads carrying the game's own coordinates and advances
-  (e.g. `quad=(256.0,-53.0)-(260.99,-53.0)`, a 4.99-unit advance = the game's own `charWidth - 0.01`), and the
-  state probe reads the chat's own model view `(2,200,-2000)` = `translate(2,8)` inside
-  `GuiIngame`'s `translate(0, 192, 0)` (`GuiNewChat.java:54`, `GuiIngame.java:361`).
+* **ASCII + shadow**: the chat lines `(0,320,660,620)` carry the same `/celtium` messages in both legs, with the
+  shadow's dark offset copy visible in each. 24 px glyphs, 27–30 px line pitch, lines starting at x≈6. In the
+  GL-less leg the world's shard triangles cover parts of the block (the last line, "Terrain still renders with
+  OpenGL.", is complete; the lines above it are cut where the shards cross them) — the frame-composition gap, not
+  the font.
+* **bold + italic**: the decoration pack `.celtium-work/packs/n03-format` (installed into the isolated game
+  directory only) puts `§o` on `tutorial.move.title` and `§l§o` on `tutorial.move.description`, i.e. on the two
+  strings the terrain scene actually draws (`TutorialToast.java:26-27` stores `getFormattedText()`, `:40-45` draws
+  it with `fontRenderer.drawString`). The toast `(760,10,1280,100)` is italic in the GL-less leg and in the
+  bridge, with vanilla's own bold words ("W, A, S, D", "SPACE") unchanged — identical size and position.
+* **unicode**: the ja_jp + `forceUnicodeFont` toast `(760,10,1280,100)` reads
+  "W、A、S、D で移動します / SPACE でジャンプします" in both legs, pixel-comparable, every glyph through
+  `renderUnicodeChar`.
+* **video-settings crops (secondary)**: the same categories on the GUI screen — "Video Settings"
+  `(520,0,760,45)`, the toast `(880,10,1280,90)`, "Done" `(520,630,760,690)`, the `§l§o` list label
+  `(640,110,1110,175)` — match the bridge in size and position, but the list label is tail-only in the GL-less
+  leg because the missing panel is covered by the shards, and in Japanese the wider toast icon sits over the
+  title's spot. Those runs' *verdicts* fail on the panel floors (`guiPanelRowAmplitude`,
+  `guiPanelDistinctColours`), which is the GUI-geometry gap, not the font.
 * **inventory + JEI**: the GL-less early presented dump shows JEI's overlay with its text — the page indicator
   "1/16" and the "Gold Ore" tooltip. **No bridge leg exists**: the fixture opens `GuiInventory` at tick 30,
   closes it at tick 190, and every capture (world tick 200, the GUI stage, the game screenshot) is after that;
@@ -141,14 +199,26 @@ What the pairs show:
 
 ## 5. What remains unproven
 
-1. **No bridge reference for the inventory/JEI screen** (fixture timing, section 3). The GL-less leg shows the
-   text; the pair cannot be completed without changing when the fixture captures.
-2. **`§l`/`§o` through the unicode glyph method** was not exercised: the formatted labels are ascii strings
-   from the pack, and the ja run has no formatting codes.
+1. **No bridge reference for the inventory/JEI screen**, and the fixture's new support for it does not fire yet.
+   `37fd1036b` added `-Dceltium.validation.screenshotAtTick=<tick>` (the configuration's own screenshot at that
+   tick, with `screenshotAtTickScreen` recording which screen was open) and `keepInventoryScreen`, but in four
+   runs on the current fixture the tick-30 open never happened: `jeiScreenOpenedAtTick` is absent from the report
+   and `screenshotAtTickScreen` is absent at tick 35 and `none` at tick 60, while `worldTicksAtEnd` is 200–213 —
+   i.e. `frame()` does not see `worldTicks == 30`/`35` although it does see 60. Runs: `n03-ag`, `n03-ah`,
+   `n03-ai`, `n03-aj`, `n03-ak` (the last in the video-settings scene, so it is not the scene). The GL-less leg
+   from the earlier fixture (`n03-t-jei`, tick-40 presented dump) is the only picture of that screen with text.
+2. **`§l`/`§o` through the unicode glyph method** was not exercised: the formatted strings are ascii
+   (`tutorial.move.*`, `gui.done`, `options.*`), and the ja run's toast comes from the ja asset without
+   formatting codes.
 3. **The GL-less frame still lacks the GUI's Tessellator geometry** — panel and button faces, the chat's
    background bars, the hotbar — and the world's shard blob covers parts of the text in the GUI frames. That is
-   a different finding (frame composition / immediate ordering), and it is what limits the list-label crops.
+   a different finding (frame composition / immediate ordering), and it is why the video-settings scene's
+   verdict fails on panel floors and why the list-label crops are tail-only there.
 4. **The font texture mirror's own census** was not taken: the magenta glyphs prove the sampling works
    (texture × v_Color, the font page bound), but no separate measurement of the mirror's content was made.
 5. The pre-fix probes (`mode=quads`, `winding=swapped`, `isolation=positionColor`, `screenFill`) were not
    re-run after the address fix beyond the configurations named above; their earlier results are void.
+6. **The `CELTIUM_FONT_GLYPH_SUMMARY` shutdown-hook line is not reliable**: it appeared in `n03-z-final` and
+   `n03-ab-accept-ja` and not in `n03-aa-accept` — the same Log4j-shutdown race the parent measured for
+   `CELTIUM_NOOP_CENSUS`. The counter lines are the evidence; the cap is 64 lines since `6a27f1d51` so they
+   reach the end of a run (56000 accepted in the terrain acceptance, 0 refused).
