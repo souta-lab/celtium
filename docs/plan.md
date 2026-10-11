@@ -257,6 +257,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.273 **round 79: 行順が確定 — clear(269) → face の draw(273) → copy(後段)＝clear は face の前、残るのは「pass の submit」か「readback の対象」**
+
+- **測定（Lead の `r77-enq`・`enqAll`+`enqFormat=2`+`drawSiteLines=8`+hold 60）**:
+  ```
+  269  recordImmediateOnlyPass   ← chain pair の clear（CELTIUM_CHAIN_PAIR_CLEAR frame=0）
+  273  drawPendingImmediate      ← face の DRAW_SITE #1（clear の4行後）
+  372/617-621  drawPendingImmediate ← 以降の draw
+  （copy はその後段）
+  ```
+  ＝**clear は face の draw より前**。前々ラウンドの「clear が後」も、前ラウンドの「clear は wipe ではない」も整合し、
+  **face は clear の後に描いている**＝内容はそこにあるはず。
+- **残る2候補**:
+  (a) **face の draw を記録した window が submit に到達していない**（記録はあるが queue に行かない）— 前ラウンドの「記録と実行のギャップ」と同族。
+  (b) **readback が別の対象を読む**（pair の color image ではなく、同じ handle を持つ別 mip/layer、または extent 不一致）。
+- **次の測定（(a)/(b) の分離）**: face の draw を記録した window の `submitCommands` 到達を bounded に印字し、
+  readback 側では **読み出した pixels の先頭数画素**を印字する（`mean` だけでは「白一色」と「数画素だけ白」が区別できない）。
+- **ツリー**: 計装（`CELTIUM_CHAIN_PAIR_CLEAR`・`CELTIUM_COPY_READ`）は残置・build 緑・revert 済みのみ。
+
 ## 0.272 **round 78: chain pair の clear は copy より前（frame 0・行 269 対 838）— clear は wipe ではない**
 
 - **計装（Lead・`recordImmediateOnlyPass` の clear 地点）と測定（`r76-order`・hold 60）**: console の行順は
