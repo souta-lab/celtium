@@ -274,6 +274,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.283 **round 89: faces は実際に描かれている（fmt=2 が 24,738）— 残る説明は「draw の image ≠ read の image」のみ**
+
+- **測定（Lead・`r86-both` のレポート）**:
+  ```
+  refusedBeforeAppend=0   acceptedForOtherTargets=21047
+  immediateRecordedBatches=30074  immediateSubmittedBatches=30074  immediateGroupsDrawn=25711
+  drawnByFormat=[1:109 2:24738 3:0 4:1936 5:168 6:1916 7:1195 8:0 9:12 10:0]
+  immediateGroupsDiscarded=0  postAcceptDroppedGroups=0
+  ```
+  ＝**fmt=2（panorama の face）が 24,738 batch 描かれている**。拒否も破棄も 0。
+- **帰結**: 「描かれていない」「pending が flush されない」は**両方棄却**。
+  残る唯一の説明は **draw が書いた image と copy が読む image が別**であること
+  （identity→image の写像が draw 時と read 時で食い違う、または read の解決が誤っている）。
+- **次の一手（1点・bounded）**: **offer/draw 時の `group.target` と、その target が写像される image** を印字し、
+  read の `readImage` と突き合わせる。写像が同じなら readback 自体、違うなら routing 表。
+- **パノラマの確定事実（不変）**: mirror 実内容・bind 正・捕捉正・clear 順序正・copy は panorama 自身・
+  **faces は 24,738 batch 描画済み**・readback は全画素白。
+
 ## 0.282 **round 88: flush＋routing の併用も白（`nonWhite=0`）— faces の内容はどちらの pair にも無い**
 
 - **測定（Lead の `r86-both`・hold 60）**: 39 groups queued・window なし・serve 前に flush 実行・read は routing 規則に従う — それでも
