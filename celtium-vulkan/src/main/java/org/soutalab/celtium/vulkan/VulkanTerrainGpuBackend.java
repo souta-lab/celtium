@@ -11584,6 +11584,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.immediateRecordedBatches += batches;
                 if (target != this.mainTargetIdentity) this.offTargetRecordedBatches += batches;
                 this.immediateGroupsDrawn++;
+                if (group.target != this.mainTargetIdentity) {
+                    // offTargetDrawn was declared and printed but never incremented - a counter that can only read
+                    // zero, which is the inverse of "a missing counter is not a missing draw": here it invited
+                    // "nothing off-target was drawn" from a number that could never move. It counts the groups whose
+                    // target is not the main identity as they are drawn, which is what its name says.
+                    this.offTargetDrawn++;
+                }
                 this.immediateFlushes++;
                 this.frameDrawn++;
                 if (group.formatId >= 0 && group.formatId < this.drawnByFormat.length) {
