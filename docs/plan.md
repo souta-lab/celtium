@@ -257,6 +257,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.241 **round 47: videoSettings の真因を修正（0 範囲 slider）・BH-22 の退役と census・パノラマは「窓の破棄」へ**
+
+- **videoSettings の真因（gui-stage の unwrap → Lead の修正・`28e3c3335`）**:
+  `IllegalArgumentException: The maximum value must be greater than the minimum value` の出所は **`SodiumGameOptionPages.java` の
+  chunk-fade-in 行**で、0 に固定された行が **`new SliderControl(o, 0, 0, 1, …)`** になっていた。`SliderControl` は
+  `max > min` を assert（`SliderControl.java:22`）するため **min == max で throw** し、`CeleritasVideoOptionsScreen` の
+  コンストラクタが4ページを組む途中で失敗 → **InvocationTargetException wrapper** → fixture が vanilla `GuiVideoSettings` に fallback →
+  **scissor caller に到達しない**。修正は **単一値の `CyclingControl`（"0"）**で、tooltip が既に言っている内容と同じ意味を illegal な範囲なしで表す。
+  受入: `guiScreenOpenedVia` に Celeritas screen・`scissorCapturedGroups > 0`・crop `(180,80,1100,624)`。
+- **BH-22（texture-mirror の設計 → Lead の実装・`1b4bb12bd`）**: 即時 texture pipeline の descriptor cache は `view ^ generation` key で、
+  **何も entry を消していなかった**ため generation bump（mirror refresh・sampler 再作成・再確保）ごとに追加され、有限 pool を枯渇させていた。
+  miss 時に**cache が pool 容量に達したら最古の entry を退役**し、census（`descriptorSetsLive`/`Retired`/`AwaitingCompletion`/`Allocated`）を
+  通常 leg で読めるようにした。**descriptor set は free しない**（記録済み command buffer が飛行中の可能性・OPT-04 は完了のみを解放根拠とする）＝
+  退役 set は完了 gate 付き reset 用の list に保持。この gap は commit に明記。
+- **パノラマは「窓の破棄」へ（fog-path・`5110647f0`）**: 完了事実の計測で
+  `lastDrawnImage=0x…7bb0`・`passAttached=0x…7bb0`・**`lastDrawnEpoch=27 completedEpochNow=33 completionsSinceDraw=6`**。
+  `readImage=0x…4b20` は **chain pair** で `DRAW_SITE #1 target=781913368` の `passImage` と一致。
+  ＝**copy は face が描いた image を読み、間に6 submission が完了している**＝順序・ルーティング・解決はすべて正しい。
+  残るのは **face 自身の submission**: (1) face の pass を記録した window が submit 前に**破棄/reset**された（flush retry が reset して再記録する）、
+  (2) submit が失敗/skip された、(3) 未捕捉の later clear（最も低い確率）。`windowFlushFailures`・`unflushedTargetPassFailures`・
+  `immediateGroupsDiscarded` はすべて 0。次の測定は **chain pair の pass の per-window 記録**（submit に到達したか・破棄理由）。
+- **BH-32 の未確立（weather-water）**: (a) terrain pass の**実効 maxLod がどこにも印字されない**（mirror 自身の sampler のみ）＝
+  `atlasSamplerMaxLod` の1行レポートが要る、(b) fixture に **mipmap property が無い**ため「異なる mipmap 設定」の半分は knob か resource reload が要る。
+- **BH-29 night/day 受入**（night luma 35.3 対 day 134.6・entity/terrain 比 0.581 対 1.788）は既報のとおり。
+
 ## 0.240 **round 46: videoSettings の throw を名指しできるように（wrapper を unwrap）・BH-32 実装・chain-menu の追確認**
 
 - **videoSettings の欠陥（gui-stage の診断＋Lead の実装・`38b685b0d`）**: fixture は `mouseClicked` を**反射で呼ぶ**ため catch が握るのは
