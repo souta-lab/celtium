@@ -89,6 +89,36 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.128 **開発環境の活用**: デコンパイル済みソースを手元に置き、`runClient` の位置づけを確定（2026-10-11）
+
+CleanroomMC の ForgeDevEnv テンプレート（RFG 2.0.3・Java 25・mixin/coremod 対応の 1.12.2 mod 開発テンプレート）を確認した。
+**ビルド構成は私たちの `build-1122` が既に同系統か上位**（RFG 2.0.4・mixinbooter 10.5・RetroFuturaBootstrap・access transformer・`runClient`/`runServer`）で、
+テンプレートから取り込む価値があるのは次の2点だった。
+
+**1. デコンパイル済み Minecraft ソース（活用開始）**
+
+RFG は既に `forge122/build/rfg/mcp_patched_minecraft-sources.jar`（7561 ファイル）を生成していた。展開済み:
+
+```
+.celtium-work/mc-sources/net/minecraft/...        （Minecraft 2185 ファイル）
+```
+
+`client/gui/FontRenderer.java`・`client/shader/ShaderGroup.java`・`client/shader/Framebuffer.java`・
+`client/renderer/RenderGlobal.java` を含む。**担当は署名と挙動を推測や bytecode 読みではなく原典で確認できる**——
+監査が繰り返し指摘している「実物に当たっていない作業」を減らすための計器である。
+すぐ効いた例: `FontRenderer.renderDefaultChar`（230-248行）は `glBegin(5)` の **4頂点ストリップ**で、
+UV は各頂点前の `glTexCoord2f`、テクスチャは直前の `bindTexture(locationFontTexture)`、頂点は
+`k = italic ? 1 : 0`・`f = charWidth[ch] - 0.01` を使い、**戻り値は `charWidth[ch]`**。
+capture が UV とテクスチャ identity を取っていなければ、1 texel を引く「受理されるが絵が出ない」形になる——担当の観測と一致する。
+
+**2. `runClient` は stock Forge の開発クライアントであって Cleanroom ではない（受入に使わない）**
+
+`forge122:runClient`/`runServer` は RFG 既定（私たちの build に追加設定なし）で、動かすのは
+**stock Forge 14.23.5.2847 の開発環境**であり、目標ランタイムの **Cleanroom 0.6.13-alpha ではない**。
+したがって受入の証拠にはならない（受入は Prism 上の Cleanroom 実インスタンスで取る）。
+探索・ログ確認・mod 読み込みの素早い反復には使えるが、その結果を Cleanroom の受入として引用しない。
+assets の取得（`downloadAssets`）が必要で、初回はネットワークと時間を使う。
+
 ## 0.127 **統合**: 失われた担当4体の作業を保全し、監査バッチの現状を固定（2026-10-11）
 
 4体の担当が同時に落ちた（最終報告の直後）。作業は**未commitのまま作業ツリーに残っていた**ため、コンパイルが通ることを確認したうえで単位ごとに保全した。
