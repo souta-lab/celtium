@@ -3539,6 +3539,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the chunk traversal culls with from the same two reads ({@code ClippingHelperImpl}). {@code VulkanGlState.matrix}
      * returns a copy, so a caller cannot write into the mirror through this.
      */
+    /**
+     * How many immediate batches this backend has been offered, as a monotonic ordering witness.
+     * <p>
+     * Read by the font's glyph batching ({@code CeltiumFontGlyphCapture}), which may hold a run of glyph quads and
+     * submit them in one call - but only while nothing else is submitted in between. Between two glyphs of one string
+     * nothing else draws; between two strings another batch can, and a held quad appended afterwards would be drawn on
+     * top of that content instead of under it. Comparing this counter against the font's own submission count is what
+     * makes the batching order-safe by construction, rather than assuming a string boundary the font cannot see.
+     */
+    public int celtium$immediateSequence() {
+        return this.immediateBatchesOffered;
+    }
+
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
     }
@@ -5908,6 +5921,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " actualFlushMillis=" + (this.actualFlushNanos / 1000000L)
                 + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L)
                 + " actualFlushCpuMillis=" + (this.actualFlushCpuNanos / 1000000L)
+                // Task-60: the wait facts, so the JSON report names the wait instead of a reader guessing. The
+                // bootstrap path's waits have no API bound at all; the frame path's fence wait has a 5 s one and is
+                // the only place that sets gpuStalled. Worst is the number that says whether either is a hazard.
+                + " bootstrapQueueWaits=" + VulkanContext.bootstrapQueueWaits
+                + " bootstrapQueueWaitMillis=" + VulkanContext.bootstrapQueueWaitMillis
+                + " bootstrapQueueWaitWorstMillis=" + VulkanContext.bootstrapQueueWaitWorstMillis
+                + " submitTimeouts=" + VulkanContext.submitTimeouts
+                + " gpuStalled=" + this.gpuStalled
+                + " deviceWaitToken=" + this.deviceWaitToken
+                + " stalledGeometryDrops=" + this.stalledGeometryDrops
+                + " stalledGeometryDroppedBatches=" + this.stalledGeometryDroppedBatches
                 + " batchCallCount=" + batchCallCount
                 + " batchCallMillis=" + (batchCallNanos / 1000000L)
                 + " batchCallWorstMillis=" + (batchCallWorstNanos / 1000000L)
