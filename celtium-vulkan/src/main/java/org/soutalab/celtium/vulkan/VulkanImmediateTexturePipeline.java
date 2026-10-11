@@ -309,6 +309,11 @@ public final class VulkanImmediateTexturePipeline {
     /** Cache hits and misses of {@link #descriptorSetFor}, so "the cache is not hitting" is measured, not assumed. */
     public static long DESCRIPTOR_HITS;
     public static long DESCRIPTOR_MISSES;
+    /**
+     * Batches refused because the wrapper they would sample has no view any more. A zero view in a descriptor is a
+     * device-lost class failure, not a missing draw, so this counter is the honest alternative to binding it.
+     */
+    public static long ZERO_VIEW_REFUSALS;
 
     /**
      * The other side of the atlas-binding question: which images the registry is handing out.
@@ -371,6 +376,22 @@ public final class VulkanImmediateTexturePipeline {
 
     public long descriptorSetFor(VulkanGlTexture texture) {
         if (this.descriptorPools.isEmpty() || texture == null) {
+            return 0L;
+        }
+        if (texture.view() == 0L) {
+            // A wrapper whose view has been released. Writing a descriptor with a zero view is not a missing draw: the
+            // validation layer reports `u_Texture is using imageView VkImageView 0x0 that is invalid or has been
+            // destroyed`, and on RADV the frame ends in VK_ERROR_DEVICE_LOST - the measured world-path failure. A refusal
+            // here is a batch drawn by nobody (counted, named); binding the zero view is a dead device, so the refusal is
+            // the honest outcome until the owner that retired the wrapper is found.
+            ZERO_VIEW_REFUSALS++;
+            if (ZERO_VIEW_REFUSALS <= 4) {
+                System.out.println("[Celtium] CELTIUM_ZERO_VIEW_REFUSAL key=0x" + Long.toHexString(texture.key())
+                        + " size=" + texture.width() + "x" + texture.height()
+                        + " (the wrapper's view has been released; the batch is refused rather than binding a zero"
+                        + " view, which the validation layer reports as a destroyed imageView and RADV ends as"
+                        + " VK_ERROR_DEVICE_LOST)");
+            }
             return 0L;
         }
         censusTexture(texture);

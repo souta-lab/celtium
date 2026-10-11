@@ -145,6 +145,36 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.209 **round 12-13: published name の再指し・font batching の既定off・world の device lost 系列**
+
+- **published frame texture の寿命（Lead 修正）**: `glTexture=6/22`（game framebuffer の colour texture 名）は chain pair image を
+  publish したもの。pair が作り直されると wrapper が古い image を指したままになり、
+  (a) その image への barrier が `VUID-VkImageMemoryBarrier-image-parameter`（invalid object）→ RADV の SIGSEGV、
+  (b) name を unpublish すると sample 側の descriptor が `VkImageView 0x0` → `VUID-vkCmdDrawIndexed-None-08114` →
+  semaphore 二重 signal → **VK_ERROR_DEVICE_LOST**、という2つの失敗を出していた。
+  修正: `celtium$pruneStalePublishedNames` は stale な name を **live な pair image へ再 publish** し
+  （`publishedFrameTexturesRepublished`）、live が無い時だけ drop（`publishedFrameTexturesStalePruned`）。
+  sampling 側の遷移は pass が attach する image を飛ばす（`publishedFrameTexturesSkippedForAttach`）。
+- **zero view の拒否（Lead 修正・実測待ち）**: `descriptorSetFor` が `view==0` の wrapper を渡されたら
+  descriptor を書かずに batch を拒否する（`CELTIUM_ZERO_VIEW_REFUSAL`・`ZERO_VIEW_REFUSALS`）。
+  **view 0 を descriptor に書くと 1 batch の欠落ではなく device が落ちる**（acceptance 実測の系列）。
+  view 0 の wrapper がどこから来るかは計器が名指しする（次の leg）。
+- **font batching は既定 off（Lead 裁定）**: ON だと menu のボタンラベル・回転した splash・copyright がブロック状になり、
+  同じ jar で `-Dceltium.font.batching=false` にすると全部読める（1フラグ差・compositor capture・私が目視）。
+  matrix を witness に足しても直らなかったので機構は未解明。**未検証の最適化が文字を壊す状態を既定にしない**。
+  コードと flag は残す（`-Dceltium.font.batching=true` で有効）。
+- **stall latch は bounded（fog-path）**: 2つの flush catch が例外文と破棄 batch を記録して次フレームに再試行する。
+  latch 自体は wait 経路（`settleGpu` の `vkDeviceWaitIdle` 失敗）に残る。引き金は
+  `vkQueueSubmit (glless beginFrame signal) failed with VkResult -4` = **VK_ERROR_DEVICE_LOST**（frame 0）。
+- **world leg の現状（`r12-world`・compositor・AMD）**: `CELTIUM_STALL site=…presentAtSwapPoint:3541 latchSite=settleGpu:10953
+  frameId=0`・`glDrawArrays drawn=0 refused=749`・frame は黒/白のみ・`presentedImageVerdict=FAILED_PRESENTED_IMAGE`。
+  ＝**world 経路は frame 0 で device を失う**。menu（fixture なし・181 frame）は生存するので、失敗は world 側。
+- **fixture**: `-Dceltium.validation.worldTime`（既定6000）・`renderClouds`（既定 -1）・`showDebugInfo`（既定 未設定）を追加。
+  **凍結 fixture が古いと flag は黙って無視される**（fog-path の実測: night のはずが `pinnedWorldTime=6000`）＝
+  leg を読む前に report の `pinnedWorldTime`/`renderCloudsRequested` を確認する。
+- **compositor capture の運用**: ゲームスロットの待ち行列が長いので `--startup-timeout` を 900 以上にする
+  （240 で timeout した leg がある）。
+
 ## 0.208 **Lead が2つの根因を修正: 00900 VUID（published name と attach の不一致）とロード画面（frame 0 の drop）**
 
 ### (1) `VUID-vkCmdBeginRenderPass-initialLayout-00900`（20件/run・受入ブロッカー）

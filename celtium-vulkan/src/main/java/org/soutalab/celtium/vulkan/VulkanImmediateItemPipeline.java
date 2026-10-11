@@ -191,6 +191,13 @@ public final class VulkanImmediateItemPipeline {
         if (this.descriptorPools.isEmpty() || texture == null) {
             return 0L;
         }
+        if (texture.view() == 0L) {
+            // Same rule as the texture pipeline: a released view is refused by name rather than written into a
+            // descriptor. Measured failure of the other choice: `u_Texture is using imageView VkImageView 0x0` followed
+            // by VK_ERROR_DEVICE_LOST, which ends the session rather than one batch.
+            VulkanImmediateTexturePipeline.ZERO_VIEW_REFUSALS++;
+            return 0L;
+        }
         Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
         if (existing != null) {
             return existing.longValue();
