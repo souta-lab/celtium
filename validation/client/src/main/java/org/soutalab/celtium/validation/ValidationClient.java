@@ -1092,6 +1092,8 @@ public final class ValidationClient {
     private boolean celtium$particlesSpawned;
     private boolean celtium$interopChecked;
     private boolean celtium$jeiScreen;
+    /** Set once the property-driven screenshot at a specific tick has been taken. */
+    private boolean celtium$tickScreenshotTaken;
     private boolean celtium$jeiRecipe;
     private boolean celtium$compositeBlit;
     private boolean celtium$screenReadback;
@@ -2920,7 +2922,26 @@ public final class ValidationClient {
                 report.addProperty("jeiRecipeError", String.valueOf(error));
             }
         }
-        if (worldTicks == 190 && celtium$jeiScreen && mc.currentScreen != null) {
+        // A screenshot inside the fixture's own screen window. The inventory opens at 30 and the JEI overlay is up from
+        // about 31, while every other capture happens at 200 or later - which is why the font work has no
+        // inventory/JEI bridge pair to compare: in a bridge run the GL screenshot is that configuration's picture, and
+        // it was never taken while the screen was open. The tick is a property because the window is the fixture's,
+        // not the renderer's, and this is the one capture whose purpose is a comparison across the two legs.
+        int screenshotAtTick = Integer.getInteger("celtium.validation.screenshotAtTick", -1).intValue();
+        if (screenshotAtTick > 0 && worldTicks == screenshotAtTick && !celtium$tickScreenshotTaken) {
+            celtium$tickScreenshotTaken = true;
+            celtium$captureGlScreenshot(mc, "celtium-at-tick-" + screenshotAtTick + ".png", "tick" + screenshotAtTick);
+            report.addProperty("screenshotAtTick", Integer.valueOf(screenshotAtTick));
+            report.addProperty("screenshotAtTickScreen",
+                    mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
+        }
+        if (worldTicks == 190 && celtium$jeiScreen && mc.currentScreen != null
+                && !Boolean.getBoolean("celtium.validation.keepInventoryScreen")) {
+            // Closed before the capture by default, so the saved frame stays the normal scene. The screen is a fixture
+            // window - open at 30, closed at 190 - and every capture happens at 200 or later, which is why the font work
+            // had no inventory/JEI pair to compare: its bridge leg never had the screen open. Keeping it open through
+            // the capture is what makes that pair possible, and it is a property rather than the new default because the
+            // other scenes are calibrated without the screen.
             mc.displayGuiScreen(null);
         }
         if (worldTicks == 100 && !celtium$resized && Boolean.getBoolean("celtium.validation.resize")) {
