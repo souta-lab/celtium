@@ -89,6 +89,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.145 **outline chain が走った（訂正の実測裏づけ）**
+
+§0.143 の訂正を受けて、健全なツリーで glow シーンを再測定した結果、**chain が native executor に到達**:
+
+```
+CELTIUM_POSTCHAIN create: a chain reached the native executor on this backend
+CELTIUM_POSTCHAIN UBO_ROUTE device=AMD Radeon RX 6400 (RADV NAVI24) binding=2
+CELTIUM_POSTCHAIN ROUTE program=entity_outline route=pushConstants
+CELTIUM_POSTCHAIN PACKED program=entity_outline bytes=84
+```
+
+**`entity_outline` プログラムが記録・経路選択（push constants・84バイト＝ShaderGroupMixin 修正後のサイズ）・native 実行されている。**
+以前の `postChains=0` は **scene の状態**であって runtime の挙動ではなく、訂正の予測どおりだった。**glow インフラが初めて実際に行使された**。
+
+同じ run の画: `nonBg 0.81016`・`distinct 47597`・verdict は `UNCALIBRATED_PRESENTED_IMAGE`（glow variant の参照が無いため＝**A03 修正が正しく働いている**）。
+`presentedBlackFraction=0.18984` は残っており、UBO 担当が独立に指摘した**黒領域の欠陥**として未解決。
+
+**計器の穴（再掲）**: `postChains`・`postAdopted`・`postRunsOnStandIn`・`offTargetPairs` が**この run のレポート JSON に出ていない**。
+読めるのはコンソール行だけで、受入が引用すべきサマリが読めない。計器は存在するのに artifact へ届いていない——**「読めない計器は計器ではない」**の同族。
+
 ## 0.143 **重大な訂正: `renderEntities` 注入は発火する（§0.135〜§0.137 の結論を撤回）**
 
 「死んでいる」と私が判断した注入にカウンタを足して測った結果:
