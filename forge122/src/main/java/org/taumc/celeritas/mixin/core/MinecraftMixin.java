@@ -41,6 +41,9 @@ public class MinecraftMixin {
      * there and this hook does nothing. The world renderer adopts this instance rather than building a second one, so
      * the swapchain and the frame target keep one owner.
      */
+    /** Latched after the saved VSync option has been handed to the present policy once (task-56). */
+    @Unique
+    private static boolean celtium$vsyncPushed;
     @Unique
     private static boolean celtium$windowRendererCreated;
     @Unique
@@ -93,6 +96,18 @@ public class MinecraftMixin {
             return;
         }
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        // The saved VSync option is pushed once, here, before anything creates a swapchain: the option page's setter
+        // only runs when the player opens the video-settings screen, so without this a saved `enableVsync=false`
+        // began as FIFO (the policy's default) and only a press of the row could change the mode. Pushed at the same
+        // early point the window renderer is created, which is before the first present - so the first swapchain is
+        // built with the player's own value. Measured need: task-56's `vsync-toggle2` leg, where the row's press was
+        // the only thing that reached the policy.
+        if (!celtium$vsyncPushed) {
+            celtium$vsyncPushed = true;
+            if (mc != null) {
+                org.soutalab.celtium.vulkan.VulkanSwapchain.setVSyncRequested(mc.gameSettings.enableVsync);
+            }
+        }
         if (mc != null && mc.world != null) {
             // Past the menu already; the world-time creation is the right path there.
             return;
