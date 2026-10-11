@@ -140,6 +140,36 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.190 **video settings の画は一致（task-42 完了）・chain は絵に寄与しない（noise floor）・黒四分円は per-boot**
+
+- **task-42 完了（gui-stage）**: 参照 `vs-pic-ref`（upstream Celeritas・tick 235）と候補 `vs-pic-cand`（GL-less・jar `28dabb1dde958a7f`・
+  tick 297）で **sceneCalibrationKey 完全一致**・両 leg とも操作した画面を撮影・両 leg とも `Clouds: Fancy` へ復元（variant bug も修正）。
+
+  | 領域 | 比 | >8 |
+  |---|---|---|
+  | title (0,20,1280,60) | 1.063,1.055,1.044 | 9,297/51,200（**18.16%**） |
+  | option rows 左右 | 0.985–0.992 | 4.27% |
+  | panel (180,80,1100,624) | 0.983,0.987,0.990 | 4.56% |
+  | **Done button** | **1.000,1.000,1.000** | **8/30,000（0.03%）** |
+  | whole frame | 0.959,0.966,0.972 | 12.44% |
+
+  **画面自身の描画は正しい**（Done は画素一致・rows/panel は 1〜2%）。**title 帯 18.16% は font 経路**（別項目として記録）、
+  whole frame の 12.44% は**画面の背後の world**。両 leg とも `verticalBands`（212/229 対 world 校正の床 250）で FAILED
+  ＝task-47 の provenance 修正待ち（**下げない**）。
+- **chain は絵に寄与しない（proj-channel・noise floor 実測）**: 同一 jar・同一 fixture の3 boot、差は `spectator=spider` のみ。
+  黒四分円 `(640,360)-(1279,719)` を除いた領域で **no-spectator の2 boot は 14 px 差（0.004%）＝noise floor ≈ 0**、
+  spectator leg は自分のパターンの boot と同一（14 px）。**chain は `postChains=6 postPasses=60 postTargets=4`・
+  `spectatorResult=loaded` で走っているのに出力が presented 画像に届かない**——**全ての chain で passes の下流**が欠陥で、
+  adopted silhouette はその特殊例。参照は detail 0.179→0.097（放射ブラー）で我々は不変。
+  → 次の計器は frame image の dump（frame-composite の `celtium$dumpImagesAtChainTime()`、chain 自身の `submitCommands()` 直後）。
+- **黒四分円は per-boot パターン（task-8 の flag-free 統制）**: 3 boot 中1つで `0.2500`・他2つは `0.0000`、しかも
+  **no-spectator の2 boot 間で 3.68%** の差——spectator flag でも chain でもない。frame-composite の帰属（`Minecraft.java:1199`
+  の `clear(16640)`・`RenderGlobal.java:679`・latch 消費が1フレーム遅れた時の到達領域）と整合。
+- **task-41 完了（fog-path）**: inventory pair を等価 build 状態で（43 sections・521 vs 1384 frames）取り直し、
+  **48.0% → 10.88%**・sky 83.4% → **1.28%**。**entity pair は未取得と明記**（参照 leg が slot-wait 900s で起動せず）＝
+  task-49 で参照 leg 優先の取り直し。**方法則**: `acceptedByFormat` は run 累積なので**フレーム数で割って**比較（55.5 vs 50.8/frame）。
+- **マシン負荷**: 15 GB 中 11 used・空き 1 GB・harness script 多数 queue。**1担当あたり queue は最大2 leg**（frame-composite は順守）。
+
 ## 0.189 **splash が renderer に届いた・F3 が実 driver を名乗る・wrap の実測・frame interval は「cold」だった**
 
 - **ww19（weather-water）**: `CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0 **stage=createDisplay**`。
