@@ -89,6 +89,36 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.140 **wedge の判別結果: pitch 符号ではなく「固定回転」／N10 の UBO 経路が入った**
+
+### 1. 判別測定（私が実行・同一カメラ・lookDown=true / pitch +75）
+
+```
+frame=7 group=55 fmt=6 worldPass=true texture=115 ... ndc x[-42.46..0.00] y[-3.97..0.35] z[0.85..1.00] behind=1   <- 月
+frame=8 group=62 fmt=6 worldPass=true texture=114 ... ndc x[-16.86..-16.86] y[-1.38..-1.38] behind=3             <- 太陽（画面外の一点）
+frame=8 group=63 fmt=6 worldPass=true texture=115 ... ndc x[-13.69..0.00] y[-0.35..3.55] z[0.95..1.00] behind=1   <- 月
+```
+
+**pitch を反転しても月（texture=115）が画面を覆ったまま**で、太陽は画面外の一点のまま。
+→ 担当が用意した判別基準どおり、**pitch 符号の反転ではなく固定回転の誤り**（sky の `rotate(-90,0,1,0)` か
+celestial step の二重適用/欠落）。次は**別の world time** の run で切り分ける。
+
+**確認済みの周辺事実**: mirror の `rotate`（`VulkanGlState:158-180`）は glRotatef の仕様どおりで**正しい**（列優先の全要素を検算）。
+原典の sun/moon 部は `pushMatrix` → `color` → `rotate(-90,0,1,0)` → `rotate(celestialAngle*360,1,0,0)` → `begin(7, POSITION_TEX)`（`RenderGlobal:1402-1430`）。
+同じ frame の terrain は正しいので、**mirror のカメラ部は正しく、sky の追加回転だけがずれている**。
+
+### 2. N10（UBO 経路）受入 — `ac62e83dd`
+
+担当が実装・実測。**color_convolve 192B・spider 144B**（監査の 180/140 と旧 196 は誤り。shader のコメントは `Saturation@192` だが**コンパイラは 188 を出す**——旧表はコメント由来だった）。
+4本の UBO 変種＋descriptor ring と同一スロットのホスト可視 ring＋per-pass の経路選択＋**名前つき拒否**。shader 自身のオフセットと packer の報告を突き合わせるので、不一致は破壊ではなく拒否になる。
+
+**同梱の実バグ修正**: `ShaderGroupMixin` の extras が 88 始まりだったのを **84** へ。
+invert の `InverseAmount` は shader が 84 を宣言しているのに 88 に詰められ（native enderman が GL の 0.8 に対して 0.0 を読んでいた）、bits の Resolution/Saturation/MosaicSize も4バイトずれていた。
+
+**監査記述の訂正2点**: (a) **この GPU は `maxPushConstantsSize=256`** を報告するので「両GPUとも128」は本機には当てはまらない（経路は guard 付き override で行使。担当はこれを emulation として明示）。
+(b) **fixture の native vs GL 画像は別の surface を比較している**——chain が native で走る leg では Vulkan が window を提示し、GL-chain の leg の保存画像は stale な GL framebuffer。
+したがって画素の主張はしない（presented vs presented の測定が必要）。
+
 ## 0.139 **wedge の根本原因を測定で特定: `renderSky` の月の quad が反転して描かれている**
 
 wedge 担当が計器（`-Dceltium.vulkan.groupBounds=true` → `CELTIUM_GROUP_BOUNDS`）を作り、15 run の再測定で**原因を特定**した。
