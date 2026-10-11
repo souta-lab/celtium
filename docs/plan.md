@@ -230,6 +230,32 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.231 **round 37: パノラマは「offer と accept の間の矛盾」へ再帰属・glyph の draw mode census・BH-01/BH-19 受入**
+
+- **パノラマの矛盾（fog-path・`e9f2d56e8`）**: terrain leg で `offTargetOffered=793` に対し **`acceptedForOtherTargets=7`**、
+  `offTargetRefusals=none`・`immediateGroupsDiscarded=0`・`postAcceptDroppedGroups=0`・`unflushedTargetGroupsDropped=0`。
+  ＝**約786の off-target offer が「offer 加算（`:4348`）」と「accept 加算（`:4762`）」の間で消えている**。既存 counter では区別不能。
+  対策として **`offerStageReached[16]`**（11箇所の stage 代入を `celtium$offerStage(int)` 経由にし、`offerStages=[…]` として報告）を追加。
+  `CELTIUM_DRAW_SITE` は `enqAll`+`enqFormat=2` でも**0行**（limit 未消費）で、loop の target filter は原因ではない
+  （`immediateGroupsKeptForOtherTargets=0`）。ロード画面の白も同機序の可能性が高く同じ line で確認する。
+- **glyph の draw mode census（Lead・`f61f952d5`）**: `CELTIUM_FONT_GLYPH_SUMMARY` に `modes={…}` を追加。
+  coalesced run は**run の mode で一括描画**するため、mode が strip/fan なら**連続 glyph が連結**する（4N 頂点の strip は 4N-2 三角形＝
+  隣の glyph の頂点と繋がる）＝ユーザー報告の「文字間の 1px バー」の形。quad なら連結しない。
+  mode はゲーム自身の `glBegin`（`GlStateManagerImmediateMixin` 経由）から読むので**仮定せず計器で確定**する。
+- **BH-01 受入（proj-channel・`93d310631`）**: `VulkanArena.allocate` が `-Dceltium.vulkan.arenaVerify=true` で
+  **全 segment の offset が stride の倍数・長さが unit の倍数**であることを検査（違反は数値つきで throw・両結果を計数）。
+  leg: `arenaSegmentAlignChecks=864`・`arenaSegmentAlignViolations=0`・`validationMessageCount=0`・exit 0
+  ＝initial/split/reuse/post-grow の4ケースを通常 leg 1本で被覆。
+- **BH-19 完了（sky-draws）**: swapchain 作成失敗路に `CELTIUM_SWAPCHAIN_FAILED <reasons>` を追加し、
+  `-Dceltium.vulkan.assumeNoPresentSupport=true` の contract test で
+  `queue family 0 cannot present … forced by … (BH-19 contract test; not a device result)` を実測。
+  exit 0・`validationMessageCount=0`・`validationClean=true`・crash 0・present は全て skip。
+  **`semaphorePoolRollbacks` は「不在による 0」**（成功路にしか印字されない）と明記。selection 半分（probe surface）は stated-not-done。
+- **BH-36/OPT-09 は未着手と明記（proj-channel）**: indirect 経路＋feature/fallback 行列＋透明順の比較は大きく、
+  半端に land させない。提案は「flag-gated indirect path を counters 付きで先に、geometry/order 比較を次に」。
+- **BH-17 は documented のまま（sky-draws）**: `0..127` を全デバイスで push に残し `128..215` を descriptor set 1 の UBO slice へ。
+  OPT-03 を先に読むことが前提。
+
 ## 0.230 **round 36: BH-11 は「呼び出し・enable・描画」の3つに分離して計装・パノラマは同一 image 上で空と確定・BH-25 受入**
 
 - **BH-11 が break scene でも 0（acceptance・`41a72b6d2`）**: `immediateDepthBiasedGroups=0`。原因を推測せず3つに分離する計装を追加（`8e765012d`）:
