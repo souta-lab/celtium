@@ -38,8 +38,17 @@ import java.util.List;
 /** Explicitly installed validation fixture; never embedded in the renderer mod. */
 @Mod(modid = "celtium_validation", name = "Celtium validation fixture", version = "0.1.0", clientSideOnly = true)
 public final class ValidationClient {
-    /** Time of day pinned for comparison runs: noon, so the sun angle cannot drift between runs. */
-    private static final long PINNED_WORLD_TIME = 6000L;
+    /**
+     * Time of day pinned for comparison runs: noon by default, so the sun angle cannot drift between runs.
+     * <p>
+     * {@code -Dceltium.validation.worldTime=<ticks>} overrides it, which is what a night scene needs: the user's
+     * round-11 report ("entities, clouds and the player are still bright") is a lighting question and cannot be
+     * answered at noon. **The default is 6000, unchanged**, so every existing leg and every calibration key stays
+     * bit-for-bit what it was - the value the run used is reported as {@code pinnedWorldTime} either way, so a night
+     * leg states its own time in the artifact rather than leaving the reader to assume noon.
+     */
+    private static final long PINNED_WORLD_TIME =
+            Long.getLong("celtium.validation.worldTime", 6000L).longValue();
 
     /**
      * MCP field names followed by the SRG names Forge uses at runtime. Vanilla regenerates the lightmap with a
@@ -4048,15 +4057,24 @@ public final class ValidationClient {
             // scene uses, so a crop showing letters proves the vertex-UV path end to end while a generic particle
             // proves the sprite is being replaced.
             // Still particles, like the FLAME block above and for the same reason: prev == current, so the captured
-            // frame does not depend on the partial-tick interpolation.
+            // frame does not depend on the partial-tick interpolation. The grid is placed at eye level and in front of
+            // the camera instead of reusing the FLAME grid: that one was tuned against the glass-surface world
+            // (surface y=8), and the fixture's default world's top layer is the enchanting-table plane at y=10, so the
+            // same heights sit almost on the ground and below the camera's 20-degree-down view - measured as a run
+            // whose particle batches were accepted (id5=38/38) with no particle pixels in the frame. These are 1-1.4
+            // blocks below the eye (13.6) and 2.0-4.4 blocks in front of the pose's z=0.5 facing -z.
             for (int i = 0; i < 24; i++) {
-                double px = -4.0 + (i % 6) * 1.6;
-                double py = 11.0 + (i / 6) * 0.6;
-                double pz = 1.0 - ((i / 6) % 3) * 2.0;
+                double px = -3.0 + (i % 6) * 1.2;
+                double py = 12.2 + ((i / 6) % 2) * 0.6;
+                // Both sides of the camera's z: the pose is yaw=180 and the fixture's world is symmetric, so which
+                // sign is "in front" is not read off the frame - one band of twelve is on each side, and a run that
+                // shows letters on one side only still answers the sprite question.
+                double pz = (i / 12 == 0 ? -2.0 : 2.0) - ((i / 6) % 2) * 0.6;
                 mc.world.spawnParticle(net.minecraft.util.EnumParticleTypes.ENCHANTMENT_TABLE, px, py, pz, 0.0, 0.0, 0.0);
             }
             report.addProperty("glyphParticlesSpawned",
-                    "24 ENCHANTMENT_TABLE at the fixture's own grid, sprite indices 225..250 from ParticleEnchantmentTable");
+                    "24 ENCHANTMENT_TABLE: 12 at z=-2.0/-2.6 and 12 at z=+2.0/+1.4, x=-3.0+1.2*(i%6),"
+                            + " y=12.2/12.8, sprite indices 225..250 from ParticleEnchantmentTable");
         }
         if (worldTicks >= 190 && !celtium$hudHidden && !Boolean.getBoolean("celtium.validation.interop")
                 && !Boolean.getBoolean("celtium.validation.drawTest")) {
