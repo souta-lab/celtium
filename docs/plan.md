@@ -274,6 +274,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.285 **round 91: BH-14 の偵察を記録（全 site が identity 非依存・一回で切るための手順）＋外部の互換/配布の参考**
+
+- **BH-14 の偵察（sky-draws・実装は未着手・理由つき）**: **pair を触る全 site が identity 非依存**で、clears・publication・post-chain・readback に
+  pair が糸通しされているため、一部だけ identity を通すと**現在の絵が依存している唯一の chain path を壊す**。
+  site 一覧（`VulkanTerrainGpuBackend.java`）: `:2174`（group-bounds image）・`:7084` `celtium$syncPublishedChainOutput`・`:7103` `clearChainPair`・
+  `:7119` `passAttachedColorImage`・`:7130` `celtium$publishFrameTexture`・`:7138` `clearOffTarget`・`:7143` `passAttachedColorImage`（off-target）・
+  `:10141` `postChain.adoptTarget(identity, chainPairColorImage(), …)`・`:10296` 同 sync・`:10301` clear・`:10307` `adoptTarget`・
+  `:10317`/`:10319` readback と `publishedChainImage`、加えて `pairOfOffTargetIdentity`（`:3914`）と `routeLabelForBinding`（`:4081-4087`）。
+- **一回で切る手順**: (1) `GllessFrameTarget` の単一 `chainPair` を **`Map<Long, Pair> chainPairsByIdentity`**（bounded pool・`MAX_IDENTITY_PAIRS=4`・
+  LRU 退役・counters `created/retired/reused/poolFull`）に置換、`pairForIdentity(identity)` が初回 bind で確保・同一 frame 内の再登場で再利用・
+  frame 末か pool full で退役。`defaultPair` と main route は不変。(2) accessor に identity を足す（`chainPairColorImage(long)`・`clearChainPair(long, cmd)` と off-target 版）。
+  (3) backend の上記 site に identity を通す。**最重要は publication と readback**（copy は「描いた identity が routing された pair」を解決する必要がある＝
+  まさに panorama の欠陥: faces は非main identity に offer され、copy は name 0 を読む）。(4) 受入は **1 frame に2つの非main identity** の scene で
+  `pairs == nonMainIdentities`・`widestPair=1`・`retired/reused` 可視・各 identity の readback が自分の内容。
+  現在の census は `pairs=2`・`widestPair=chain(<全非main identity>)`＝**欠陥が数値で出ている**。
+- **外部参考（goal C/D 用・web 調査）**: 1.12.2/Cleanroom の同種プロジェクトが複数存在し、互換境界の設計に使える —
+  [VulkanMod-Next](https://www.curseforge.com/minecraft/mc-mods/vulkanmod-next)（1.12.2/Cleanroom 両対応・OptiFine/shader mod 併用時は
+  Vulkan renderer が退いて fallback、MixinBooter 必須）、[Actinium](https://www.curseforge.com/minecraft/mc-mods/actinium-1-12-2-optimization)
+  （Cleanroom 専用・Iris 風 shader pipeline・Celeritas/GLSM/GTNHLib 連携）、[Vulkanizator](https://www.curseforge.com/minecraft/mc-mods/vulkanizator/files/8494271)
+  （legacy 版の GL→Vulkan 置換・**capture + native stage の混成**という設計）、[Kirino-Engine](https://github.com/CleanroomMC/Kirino-Engine)
+  （Cleanroom 公式の次世代 render engine・ECS/GPU-driven）、[Cleanroom の renderbook](https://cleanroommc.com/renderbook/) と
+  [modpack 準備ガイド](https://cleanroommc.com/wiki/end-user-guide/preparing-your-modpack)。
+  ＝**未対応を成功風に黙殺せず境界を明記する**という goal C の要求に対し、他プロジェクトがどう境界を引いているかの実例になる。
+
 ## 0.284 **round 90: 引き継ぎ — パノラマは「draw の image と read の image の突き合わせ」1点だけが残る**
 
 - **このセッションで棄却した説明（再試行しない）**: pass 終了時の read-only hand-back（VUID 2→4）・descriptor 一律 GENERAL（2→20+20）・
