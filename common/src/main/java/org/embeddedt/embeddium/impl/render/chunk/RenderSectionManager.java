@@ -730,8 +730,19 @@ public abstract class RenderSectionManager {
 
         this.terrainBackend.uploadMeshes(filtered, this::markGraphDirty);
 
+        // BH-25: the sections whose geometry did not reach the GPU. Committing them below would clear their build
+        // token, advance lastBuiltFrame and store their metadata as if they were built, and nothing re-submits a
+        // section that reads as built - the chunks stay missing until something else rebuilds them. Skipping the
+        // commit leaves exactly those queued, which is the retry the finding asks for.
+        java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> failedUploads =
+                this.terrainBackend.consumeFailedUploads();
+
         for (var holder : filtered) {
             var result = holder.output();
+
+            if (failedUploads.contains(result.render)) {
+                continue;
+            }
 
             // whether this result belongs to the most recently submitted build
             boolean latest = result.buildTime >= result.render.getLastSubmittedFrame();

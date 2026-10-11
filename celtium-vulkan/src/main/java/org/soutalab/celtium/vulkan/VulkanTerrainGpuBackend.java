@@ -1703,6 +1703,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean IMMEDIATE_COLOR_MASK = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.immediateColorMask", "true"));
     /**
+     * {@code -Dceltium.vulkan.groupScissor=false} restores the pre-fix shape of the clip rule for a measurement leg:
+     * the rectangle is read from the live stub record when the group is flushed, and a change of it does not close the
+     * group. Default on (the fix), so the shipped behaviour is the captured rectangle plus the boundary.
+     */
+    private static final boolean GROUP_SCISSOR = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.groupScissor", "true"));
+    /**
      * {@code -Dceltium.vulkan.alphaFuncOverride=<GL enum>} substitutes the alpha comparison function for a measurement
      * leg (BH-03). Default 0 = off, which is the shipped behaviour: the captured comparison is used. Vanilla asks for
      * GL_GREATER everywhere it calls {@code GlStateManager.alphaFunc}, so this is the only way to put a second
@@ -4858,7 +4865,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             boolean liveScissorApplies = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
                     && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
                     && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled();
-            boolean scissorMoved = this.currentImmediateMesh != null
+            boolean scissorMoved = GROUP_SCISSOR && this.currentImmediateMesh != null
                     && !celtium$sameScissor(liveScissorApplies);
             if (scissorMoved) {
                 this.scissorBoundarySplits++;
@@ -7113,6 +7120,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // applied" had no evidence in any artifact; the narrowed-line total had the same gap (only the
                 // first four events printed). Both are now in the verification summary.
                 + " immediateDepthBiasedGroups=" + this.immediateDepthBiasedGroups
+                // The two halves that decide whether the bias can fire at all: the call reaching the stub, and the
+                // enable bit. acceptance measured 0 groups with the break overlay present, so one of these is false
+                // and the pair says which without another round of guessing.
+                + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCallCount()
+                + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
+                + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
                 + " lineBatchesNarrowed=" + this.lineBatchesNarrowed
                 // BH-07/BH-10/BH-03's counters, at the same place as BH-08's: captured per batch, so a leg says how
                 // many batches carried an alpha pair the old pipelines could not express, how many carried a write
@@ -7154,6 +7167,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " uniformPreparationFailures=" + this.uniformPreparationFailures
                 + " lastUniformPreparationFailure=" + this.lastUniformPreparationFailure
                 + " regionUploadFailures=" + this.regionUploadFailures
+                + " sectionsLeftUnbuilt=" + this.sectionsLeftUnbuilt
                 + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
                 + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
                 + (this.preflightCpuNanos / 1000000L) + ", append " + (this.appendNanos / 1000000L) + "/"
@@ -7463,8 +7477,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // lastBuiltFrame advanced with no geometry on the GPU, and nothing rebuilds a section that reads as
                 // built - the missing chunks were permanent.
                 for (ChunkTaskOutput output : entry.getValue()) {
-                    if (output.render != null) {
-                        this.failedUploads.add(output.render);
+                    if (output.render != null && this.failedUploads.add(output.render)) {
+                        this.sectionsLeftUnbuilt++;
                     }
                 }
                 record("region upload failed and was skipped: " + error + " (sections left un-built: "
@@ -8066,6 +8080,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private final java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> failedUploads =
             java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    /**
+     * Sections a failed region upload left un-built, counted for the acceptance (BH-25). Before the fix the same
+     * failure left them marked built, so this number was invisible: it was zero because nothing distinguished the two.
+     */
+    private int sectionsLeftUnbuilt;
     private final java.util.HashMap<Integer, Integer> colourCounts = new java.util.HashMap<>();
     private int colourBatches;
 
@@ -11877,7 +11896,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // had set last to every batch in the group, so a group spanning a scissor change was clipped by the wrong box
         // (OPT-10's "state must reach the group", the same rule the fog and the light params follow).
         int[] clip = group.scissorBox;
-        if (clip != null && group.scissorEnabled) {
+        boolean clipEnabled = group.scissorEnabled;
+        if (!GROUP_SCISSOR) {
+            // The measurement control: the pre-fix shape read the live record here, so a group that spanned a
+            // rectangle change was clipped by whatever the game had set by the time the group was flushed.
+            clip = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox();
+            clipEnabled = clip != null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest();
+        }
+        if (clip != null && clipEnabled) {
             // The group carried a clip of its own: counted separately from the intersection below, so a run says
             // whether the rectangle reached the group at all before it says how the intersection came out.
             this.scissorCapturedGroups++;
