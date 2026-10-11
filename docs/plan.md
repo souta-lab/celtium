@@ -186,6 +186,15 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **semaphore 修正後の leg（`r14-world`・validation on・300s・AMD）**: 121 frame 時点で
   `SIGSEGV 0・DEVICE_LOST 0・00067 0・08114 0・stall 0`、frame は 黒→白→**menu（3798色）**で安定。
   world 到達は未確認（fixture の world 開始が遅い）。
+- **受入ブロッカーの解消を実測（`r15-world`・jar `d69dfb82`・validation on・`--validate`・200s）**:
+  `worldTicksAtEnd=243`・`captureListedSections=41`・**`validationMessageCount=0`・`validationClean=true`**・
+  `08114 0 / 00067 0 / DEVICE_LOST 0 / SIGSEGV 0 / CELTIUM_STALL 0`。
+  format ヒストグラムは `id1=3/3 id2=801/801 id5=6/6 id6=42/41 id7=8/8 id8=128/128 id9=12/12`
+  ＝**entity/TESR(id8)・particle(id5)・block(id3 系)が world で実際に提出されている**。
+  `fixtureStatus=FAILED_PRESENTED_IMAGE` は「picture を要求していない」ためで、device lost ではない。
+  **harness の `--validate` が無いと fixture は world を開始しない**（私の leg が menu のままだった理由）。
+- **次**: `dumpPresentedImage` 付きの world leg で「entity が見えるか」を画で確認（ユーザーの「エンティティが不可視」）と、
+  ロード画面の content 確認（publish 再指しの効果）。
 - **font batching（weather-water）**: 文字化けの機序は **行列が submit 時に捕捉される**こと（run が行列変更を跨ぐと
   最後の変換で描かれる）。10 の行列入口で run を flush（`celtium$fontMatrixBoundary`）、colour witness も量子化バイトに修正。
   既定は on に戻したが、**device-lost 中の3 leg では batching が一度も発動していない**（`fontRunsStarted=0`）ため
