@@ -18,7 +18,7 @@
 
 ## 0. 直近の到達点（最新実測・冒頭表）
 
-> **冒頭表（このセッションの受入状況・最終更新 2026-10-12）** — 詳細と数値は下の §0.2xx に、旧測定は `docs/history/` にある。
+> **冒頭表（このセッションの受入状況・最終更新 2026-10-12・round 96）** — 詳細と数値は下の §0.2xx に、旧測定は `docs/history/` にある。
 
 | 対象 | 状態 | 実測の要点 |
 |---|---|---|
@@ -31,6 +31,14 @@
 | clip 矩形・BH-10 | **受入済み（probe で pixel 証明）** | 同一 jar・1 flag 差で green x 318..638 対 未 clip・`colorMaskHistogram=[0x0:397 0x7f:357 0xf:6645]` |
 | **動画設定が開かない** | **受入済み（画面が開く）** | 真因 = 0 範囲 slider が `SliderControl` の assert で throw。`guiClickDivertedTo=CeleritasVideoOptionsScreen`・verdict PASSED。(e) の3段階は未了 |
 | **パノラマ / ロード画面の白** | **機序確定・未修正** | mirror 内容（replay 修正済みで実内容）・bind（42/44/45-48）・捕捉（stale でない）・clear（face の draw より前）・copy の出所（panorama 自身）・pending 39・**readback は全画素白**。faces の内容がどちらの pair にも無いことが残る1点 |
+| **較正済み picture gate** | **PASSED** | 素の terrain で `PASSED`・assertion failure 0・`validationMessageCount=0`・`presentedDistinctColours=2142`・non-background 0.759463・628 bands・black 0.0。`keepGui+captureEntities` 変種は**未較正**として併記 |
+| **OPT-09（indirect terrain）** | **等価性を受入** | 753 call が 8665 draw・`indirectChecksum == directChecksum == fb6ba6ff7e1b6f0e`・`match=true`（同一 world 内）・11.5 draws/call。緑 leg は semaphore VUID 待ち |
+| **F3 overlay のコスト** | **機序確定** | 0.48 µs/glyph（capture）に対し **vanilla glyph 本体 3.62 µs/glyph**・text 経路 ~22 ms/frame（overlay の 139 ms のうち）・残りは per-frame overlay 構築 |
+| **video settings 画面** | **self-consistency 受入** | `guiScreenClassAtCapture=CeleritasVideoOptionsScreen`・panel crop 587 distinct colours。same-screen upstream 参照は**存在し得ない**（diverter は我々の tree）と明記 |
+| **light-params 境界** | **lit-only 化で受入** | terrain 416→**17**・videoSettings 425→**2**（両 leg clean） |
+| **BH-10（雲）** | **counter で受入・絵は不可** | Fancy clouds 506 対 368 partialColorMaskGroups・159 group が zero mask を得る。雲 scene の scatter は **r=0.945**（frame phase が動く）ため絵では解像しない |
+| **semaphore VUID（P1）** | **未修正・owner 確定** | `VUID-vkQueueSubmit-pSignalSemaphores-00067` が 10件。frame target は pair を 1:1 に保つ機構を持つ（`consumeOutstandingWait`/`consumeDone`）ため、**skip ではなく drain** を frame-open 契約に実装するのが次の1点 |
+
 | 性能 | **着地** | OPT-05（hostBuffers 6 for 8316 groups）・OPT-07(b)（`uploadSubmitWaitsAtEnd` 31343→6910）・**OPT-09（1086 indirect call が 17,651 draw を運ぶ＝16.3:1・fallback 0・VUID 0）**・BH-22（descriptor cache 退役＋census）・BH-32（atlas sampler の maxLod を level 数に追従） |
 | 未了 | — | パノラマの最後の1点・menu hold 経路の layout VUID（hold 依存）・OPT-09 step(3)（geometry/order 比較）・BH-14 per-identity pair・goal (e) の3段階・較正済み scene での picture gate 再取得 |
 
@@ -273,6 +281,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **未確立（その2）**: `lead-warm3`（jar `c6e7a8058c3fd511`・19:53・同 shape）は **warm 275 sample で p50 24.0 / p95 105.6 / p99 207.4 ms**、
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
+
+## 0.294 **round 100: 外部参考（goal C/D 用）— 同世代の実装が同じ設計に到達している**
+
+- **Sodium の MC 26.2 port（Blaze3D 内で Vulkan 経路を持つ）**: `GLDrawContext` / **`VKMultiDrawContext`**（push constants を uniform 代わり・`EXT_multi_draw`）/
+  **`VKIndirectContext`**（`EXT_multi_draw` の保証が無いため indirect＋追加 upload）＝**Celtium の OPT-09 と同じ設計判断**
+  （multiDrawIndirect 対応時は1 call・非対応時は indirect の単発列）。参照: [CaffeineMC/sodium#3735](https://github.com/CaffeineMC/sodium/pull/3735)。
+- **Actinium（Cleanroom 1.12.2・実験的 rendering/shader 互換 mod）**: Celeritas/GLSM/GTNHLib を統合し、
+  **Iris 風の pass モデル（shadow/gbuffers/prepare/deferred/composite/final）**・framebuffer ownership・
+  OpenGL state transition を対象にしている。互換マトリクスと roadmap を docs に持つ。
+  参照: [DHJComical/Actinium](https://github.com/DHJComical/Actinium)・[CurseForge の Actinium](https://www.curseforge.com/minecraft/mc-mods/actinium-1-12-2-optimization)。
+  ＝**goal E（shader pack 対応）の構造は、同じ Cleanroom 上で既にこの形に落ちている**。
+- **Kirino-Engine（Cleanroom 公式）**: ECS・GL abstraction・**deferred render command**・meshlet terrain。
+  「mod が GL state を漏らす」「Minecraft の描画が構造化されていない」を動機として明記。
+  参照: [CleanroomMC/Kirino-Engine](https://github.com/CleanroomMC/Kirino-Engine)・[Cleanroom Discussion #405](https://github.com/CleanroomMC/Cleanroom/discussions/405)・
+  [Cleanroom renderbook](https://cleanroommc.com/renderbook/)。
+- **Vulkan validation のコスト（設計判断の根拠）**: VVL は state tracking を常時行うため **draw call 主体のアプリで 10x の overhead** がありうる
+  （[VVL issue #4039](https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/4039)）。**Celtium の受け入れ leg は `--validate` 付き**で走るため、
+  OPT-09 の「indirect の方が速い」という主張は**この overhead 込みの測定**であり、**release 構成での倍率としては主張しない**（goal の「根拠のない倍率を使わない」に沿う）。
+- **未了は変わらず**: semaphore drain（frame-open 契約）・BH-14・F3 の bind short-circuit・`scissorCapturedGroups=0`・`guiClickDivertedTo` の report field。
 
 ## 0.293 **round 99: 私の guard は欠陥を「消した」のではなく「移した」— skip を撤回（`cd53bbff2`）**
 
