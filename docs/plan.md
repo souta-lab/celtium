@@ -257,6 +257,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.248 **round 54: パノラマの白は「copy 先 20 と face が sample する 8 が別」＋両方とも announcement が白**
+
+- **既存 leg の grep で決定的な比較（Lead）**: texture-mirror の分析（`content=` は**announcement が渡した画素**を読む＝mirror ではなく announce 自体が白）を受けて、
+  `CELTIUM_TEX_COPY` の dest と `CELTIUM_MIRROR_SOURCE` の id を突き合わせた:
+  ```
+  CELTIUM_TEX_COPY_SERVED dest=20 … 256x256 readFbo=0 mean=255,255,255 opaque=65536/65536 served=1 frame=0
+  CELTIUM_MIRROR_SOURCE id=20 source=announced-int[] size=256x256 firstOpaque=0xffffffff announced=0 stale=false full=true
+  CELTIUM_MIRROR_SOURCE id=8  source=announced-int[] size=256x256 firstOpaque=0xffffffff announced=0 stale=false full=true
+  ```
+  ＝**copy は 20 を埋め、cube face は 8 を sample している（別の texture）**、そして**両方の mirror が自分の announcement 由来で白**。
+- **次の3問（優先順・texture-mirror へ配布）**:
+  1. **id 8 と id 20 に白を announce している呼び元**（`func_110988_a` hook の bounded caller census＝BH-06 と同じ形）＝「game が白を upload した」か「我々の経路が白で埋めた」かを分ける唯一の方法。
+  2. **copy 先(20) と face が sample する(8) がなぜ違うのか** — vanilla では cube は copy が埋める texture を sample する。どちらかの id が誤った GL 名に解決されているなら registry の解決の問題。
+  3. **copy の `readFbo=0` が何に解決されるか** — readback の `mean=255,255,255` は同じ白なので、copy の source も白。chain pair に解決されるなら「face 自身の白を 20 に書き戻している」循環であり原因ではない。
+- **BH-36/OPT-09 step(2)（`aa20d83af`）と step(3) 未了**、**BH-14 per-identity 未着手**、**videoSettings (e) の3段階未了**は前 round のとおり。
+
 ## 0.247 **round 53: パノラマの機序が確定（mirror が白）・BH-36/OPT-09 step(2) 着地（1086 call で 17,651 draw）**
 
 - **パノラマの機序確定（fog-path・`7fb11c10b`）**: 描画側は**すべて測定で棄却**された。
