@@ -95,6 +95,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.151 **翼は `glDrawArrays` 経路と計測で帰属／射影 mirror のギャップが原因候補**
+
+stub 担当の測定（同一 fixture・同一 pose・変更前 jar `0c90f819` vs 変更後 `d50f1a56`・両方 GL-less/allBlocks）:
+
+- **rows 0-200 の 39.4% の画素が >8 変化**、変更後の frame は **90,442 画素（9.8%）が厳密に `(0,0,B)`（B=0..192）**で滑らかな planar ramp＋flat sub-facet を成す。変更前には無い。
+- 担当の読みは私の fog 説より強い: **fog 無しの平面なら空の色 (179,207,255) になるはず**で、`R=G=0` の純青が9万画素というのは**誤った変換**（頂点が clip volume 外に出て frustum 辺と交差する部分だけ残る＝角の wedge の形）または**色の誤り**の形。どちらかを測定中。
+
+### 射影 mirror のギャップ（原典から名指し）
+
+Kirino 下では `renderSky` の直前が **`GlStateManager.loadIdentity`（mirror 済み＝射影 mirror が identity になる）＋ `Project.gluPerspective`（GlStateManager を通らない）**で、
+**backend の `frustum()`/`perspective()` mirror には呼び出し元が存在しない**。
+→ **sky の描画まさにその瞬間に射影 mirror が identity になりうる**。
+
+**これは私が撤回したフックが対象にしていたギャップそのもの**。フックが誤りだったのは**到達範囲**（world 全体の culling に餌を与えた）であって、**診断ではなかった**。
+次の試行は**狭い形**——それらの描画で即時パスが使う射影、または信頼できない変換なら**名前つきで拒否**——にすべき。
+
+### 計器の競合（既存の読みに影響）
+
+**`CELTIUM_NOOP_CENSUS` は競合で通常は出ない**: Forge が `System.out` を Log4j へ回し、Log4j の shutdown hook が appender を止め、hook は並行に走る。
+同じ run で別の hook の行は出るのに census は出ないことがある。担当が**出力経路だけ**（logger ではなくプロセスの stdout）変更し、内容は不変。
+→ **「census が無い＝no-op が呼ばれていない」と読んだ読みは競合を読んでいた**。
+
 ## 0.150 **訂正: wedge の局在は計器バグだった／レポートのカメラは描かれたカメラではない**
 
 担当が §0.139 の局在を**計器で反証**した（これが本プロジェクトで繰り返し学んでいる基準）。
