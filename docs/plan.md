@@ -257,6 +257,19 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.259 **round 65: layout handshake の具体的な在処を特定（frame image は layout を記録・chain pair は記録していない）**
+
+- **コード確認（Lead）**: `GllessFrameTarget` は **frame image の layout を記録している**
+  （`colorImageLayout()` / `noteColorImageLayout(int)`・`:731-732` で `COLOR_RENDER_LAYOUT`=`VK_IMAGE_LAYOUT_GENERAL` に初期化・`:753` の release barrier が GENERAL と render layout の間を動かす）。
+  一方 **pair 経路は同じ `COLOR_RENDER_LAYOUT`（`:88-89`）を使うが、`chainPairLayout` / `noteChainPairLayout` は存在しない**
+  （grep しても frame image 側の2メソッドしか出ない）。
+- **これが2つの `VUID-vkCmdDraw-None-09600` の形そのもの**: `0x360000000036`（chain pair）について、
+  **sampling 用に `SHADER_READ_ONLY_OPTIMAL` へ動かす側**（publish/read）と **GENERAL attachment として使う側**（pass）が
+  **記録された layout を共有していない**ため、片方が誤った `oldLayout`（または無し）から遷移している。
+- **unit（texture-mirror へ配布）**: chain pair（および同形の off-target pair）に **frame image と同じ layout bookkeeping** を与える —
+  `chainPairLayout` フィールド・barrier 記録箇所で呼ぶ note メソッド・2つの barrier site がそれを `oldLayout` の根拠に使う。
+  受入は同じ menu leg で **`validationMessageCount=0`** かつ **copy の `mean=` が 255 から動く**こと（handle `0x360000000036` は copy 行が既に印字）。
+
 ## 0.258 **round 64: A/B で「捕捉は stale ではない」と確定（group id は bind に追随）・残りは layout handshake のみ**
 
 - **A/B（texture-mirror・同一 scene・1 flag 差・jar のみ）**:
