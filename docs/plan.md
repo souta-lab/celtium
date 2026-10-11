@@ -257,6 +257,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.274 **round 80: 決定的 — copy は「まだ何も描かれていない」時点で走っている（`lastDrawnFrame=-1`・`drawnThisFrame=false`）**
+
+- **測定（Lead の `r78-px`・hold 60）**:
+  ```
+  CELTIUM_TEX_COPY_SERVED dest=20 … mean=255,255,255 opaque=65536/65536 served=1 frame=0
+    readImage=0x7fef74c70cf0  lastDrawnImage=0x0  lastDrawnFrame=-1  drawnThisFrame=false  lastDrawnEpoch=-1
+    completedEpochNow=33 …
+  ```
+  ＝**copy が読む image には、backend の記録上まだ一度も描かれていない**（`lastDrawnFrame=-1`・`lastDrawnEpoch=-1`・`drawnThisFrame=false`）。
+- **結論**: 白の原因は **copy が face の draw より先に走っていること**。frame 0 の早い段階で `glCopyTexSubImage2D` が stub に届き、
+  **その時点では immediate の batch がまだ描かれていない**（pending のまま）ので、pair は clear のまま読まれる。
+  以前 fog-path が見た「draw と copy の間に6完了」は**別 flag の leg**のもので、この leg では成立しない（`lastDrawnFrame=-1` が直接の反証）。
+- **修正方向（次に着手）**: copy を**提供する前に、その target の pending immediate を flush し、submit と完了まで待つ**
+  （`celtium$serveTextureCopy` の入口で `flushPendingBeforeGlDraw()` 相当＋`waitForIdle()`。既存の `flushPendingBeforeGlDraw` が
+  pending を flush しているなら、その後に **submit されていない**ことが原因なので、serve 経路で明示的に submit する）。
+- **受入**: 同じ menu-hold leg で `lastDrawnFrame == frameId` になり、copy の `mean=` が 255 から動くこと。
+
 ## 0.273 **round 79: 行順が確定 — clear(269) → face の draw(273) → copy(後段)＝clear は face の前、残るのは「pass の submit」か「readback の対象」**
 
 - **測定（Lead の `r77-enq`・`enqAll`+`enqFormat=2`+`drawSiteLines=8`+hold 60）**:

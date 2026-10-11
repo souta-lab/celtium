@@ -10849,7 +10849,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " completionsSinceDraw=" + (VulkanContext.completedEpoch() - this.lastDrawnEpoch)
                     + " passAttached=0x" + Long.toHexString(this.passAttachedColorImage)
                     + " passSubmissions=" + this.passSubmissions
-                    + " windowsThisFrame=" + this.immediateWindowsThisFrame);
+                    + " windowsThisFrame=" + this.immediateWindowsThisFrame
+                    // A mean cannot tell "all white" from "a few white pixels": the first four pixels and the count of
+                    // non-white ones say which, and that separates "the pass never reached this image" from "the
+                    // readback is reading a different target".
+                    + " firstPixels=[" + Integer.toHexString(pixels[0]) + "," + Integer.toHexString(pixels[1])
+                    + "," + Integer.toHexString(pixels[2]) + "," + Integer.toHexString(pixels[3]) + "]"
+                    + " nonWhite=" + celtium$countNonWhite(pixels));
         }
         boolean applied = this.textureRegistry.announceFullPixels(destName, levels, width, height, xoffset, yoffset);
         if (!applied) {
@@ -11063,6 +11069,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     /** Bounded lines of the copy's read facts; a normal run prints nothing. */
     private int celtium$copyReadLogs;
+
+    /** {@return how many of the read pixels are not pure white}; a mean cannot tell that apart. */
+    private static int celtium$countNonWhite(int[] pixels) {
+        int count = 0;
+        for (int pixel : pixels) {
+            if ((pixel & 0xFFFFFF) != 0xFFFFFF) {
+                count++;
+            }
+        }
+        return count;
+    }
 
     private int[] celtium$readImageRectangle(long image, int x, int y, int width, int height) {
         // The copy's own facts, so the white is decided independently of the hold leg's VUID: which image is read,
