@@ -59,10 +59,40 @@ the whole quad, so the UVs land where the atlas is transparent (the destroy-stag
 or the sampler reads a level whose blurred alpha has fallen below the cutoff. The `texMat=none` result already
 excludes a texture-matrix affine, and the geometry/colour/blend/alphaRef/depth are all the mirrored vanilla ones.
 
-Next experiment (one pair, not taken yet): `-Dceltium.vulkan.mirrorEncode=12` with the overlay and its
-`breakSubjectOnly` control. The ramp makes every texel alpha=255 *and* writes the sampled texel's (x,y) into R,G, so
-the block's pixels read back the UVs the shader used - which separates "wrong region" from "wrong level" by
-comparing the sampled atlas coordinate against the destroy-stage sprite's own atlas rectangle.
+### The encode pair, taken: the arithmetic points at the lightmap, and it contradicts the poison pair
+
+`t39-enc-overlay` / `t39-enc-control` (jar `d0781f5da1cd082d974305ee`, `-Dceltium.vulkan.mirrorEncode=12`, the same
+pair one flag apart). The overlay changes 10,133 of 24,000 px in the block region (whole frame 1.10%), so it draws
+with the ramp (every texel alpha 255, no discard).
+
+Recovering the overlay's fragment colour under the blend the group bounds reports (`DST_COLOR, SRC_COLOR`, i.e.
+`result = 2*src*dst`), `src = result*255/(2*dst)`, at eight pixels of the block:
+
+| pixel | result (overlay) | dst (control) | implied src |
+|---|---|---|---|
+| (600,340) | (255,211,249) | (204,107,126) | (159,251,251) |
+| (620,360) | (255,160,200) | (168,81,101) | (193,251,252) |
+| (640,380) | (255,164,200) | (167,83,101) | (194,251,252) |
+| (660,400) | (255,168,200) | (165,85,101) | (197,252,252) |
+
+The **blue channel is the discriminator**: the ramp's blue is 128, so a fragment sampling the encoded atlas cannot
+have B above 128 before the lightmap, and the lightmap can only scale it down. The implied src has B = 251. What
+fits every channel is the **lightmap sampled as the texture**: lightmap x lightmap = (255*255, 251*251, 251*251)/255
+= (255,247,247), and `2*src*dst/255` then gives (255, 207, 244) at (620,360) against the measured (255,160,200) -
+the same shape, with the red channel clipped at 255 in every sample (which is why the inverted R varies). A ramp
+sample is ruled out by the blue channel alone.
+
+**And that contradicts the poison pair**, where replacing the *atlas* mirror's content changed the overlay's
+contribution from nothing to a large darkening. If the overlay sampled the lightmap, the poison would leave its RGB
+contribution unchanged (lightmap x magenta is still magenta). The most likely reconciliation is that the poison
+pair's difference is not the texture sample at all but what else the overlay writes - depth, and the alpha channel
+under its `ONE, ONE_MINUS_SRC_ALPHA` alpha blend - on a presented image whose alpha the readback shows. It is
+stated as a contradiction, not resolved.
+
+The experiment that settles it in one pair: `-Dceltium.vulkan.mirrorPoisonFlat=15=FF00FF` (poison the *lightmap*)
+with the overlay and its control. If the overlay's contribution turns magenta it samples the lightmap, which is the
+descriptor path for the block pipeline's binding 1; if it does not, the encode arithmetic's premise (the doubled
+multiply) is what is wrong and the blend state needs its own check.
 
 ## 4. The wrap record, consumed
 

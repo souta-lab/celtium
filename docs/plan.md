@@ -140,6 +140,33 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.196 **item 変換の owner を1つに固定（Lead）・画面なし統制 0.19%・最適化の継承ギャップ（task-51）**
+
+- **二重適用の回避（Lead・jar `79fb7c3ca93a450ebfb1` を instance へ投入）**: weather-water の stub 版は
+  `glMultMatrixf` を**全て適用**していたが、`Project.gluPerspective` は `GluProjectionMixin` が frustum を mirror した**後**に
+  同じ生呼び出しへ到達する（proj-channel の `CELTIUM_MULT_MATRIX` の site が
+  `org.lwjgl.util.glu.Project.gluPerspective:197` を名指し）＝**投影が2回適用され F×F になる**。
+  → **stub の SEM_MULT_MATRIX は census のみ**（`celtium$noteMatrixMultiplyArrival`・適用ハンドラと変換 scratch は削除）、
+  **item 変換は新規 `ForgeHooksClientMixin`**（`ForgeHooksClient.multiplyCurrentGlMatrix` HEAD＝GUI/FIRST/THIRD/GROUND が通る公開入口）が
+  `backend.multiplyMatrix` へ渡す。**1操作=1 owner**（frustum は GluProjectionMixin・item は Forge 入口）、
+  GL API 全体への行列エミュレーション拡大はしない。**応用側の計器** `mirroredMultiplies` を summary に追加（arrivals との対で読む）。
+  **受入は未取得**（4ケース＋通常 camera/sky projection 不変を同一 jar で）。fog-path の before 数値が基準。
+- **画面なし統制（gui-stage・等価 build 状態）**: `wbs-noscreen-ref/cand` で **sky band 0.00%・terrain centre 0.01%・
+  chat 0.01%・hotbar 0.00%・whole frame 0.19%**（比は 1.000 前後）＝**画面を開いていなければ両 renderer は一致**。
+  よって inventory を開いた状態の残差（whole 10.88%・terrain centre 27.74%）は**画面を開いていること由来**と確定。
+  **方法則**: 等価化の基準は **listed-section 数**（frame 数でも tick でもない。44 vs 45 sections で 1165 vs 412 frames でも可）。
+  `captureListedSections` が1を超えて違う pair は比較として読まない。
+- **最適化の継承ギャップ（ユーザー監査・task-51）**: legacy common/forge122 の 341/359 は upstream 989ebf2e と同一（17変更/1削除）。
+  ただし `VulkanArena.upload`（segment ごと）→ `VulkanBuffer.write` → `context.recordStagingCopy` → `beginCommands()`…`endCommands()` が
+  **アップロードごとに `vkQueueWaitIdle`**（`bootstrapQueueWaits`。ソース自身が "deliberately bootstrap quality; a real frame uses a
+  small pool of buffers and fences" と書いている）。upstream の mapped staging は copy を合流し fence で retire する。
+  **cold window（chunk build・0.8〜1.7s/frame）の最有力候補**。→ task-51（pipelines）: 先に測定（`bootstrapQueueWaits`＋upload 量＋
+  cold/warm 両窓）、その後に buffer pool＋fence へ。terrain draw の `vkCmdDrawIndexed` ループも測定してから。
+  **「ソース継承」と「同性能」を分けて報告する**。
+- **task-45（pipelines）**: half (a) 検証済み（`CELTIUM_ENV_COMBINE rgba=1.0,0.0,0.0,0.3` が hurt-on にのみ出る＝1フラグ統制）、
+  half (b) は着地済みで SPIR-V も一致。**受入 run は mob が画面内に要る**ため pipelines が entity-models の scene 設定で取る。
+  `drawnByFormat[4]=4503` vs `acceptedByFormat[4]=15` は**単位が違う**（borrowed model group は acceptance 経路を通らない）と明記。
+
 ## 0.195 **task-50 の実装が tree に入った（glMultMatrix が mirror に届く）・chain の blit は frame image に痕跡ゼロ**
 
 - **task-50 実装済み・緑**（jar `5649052b3b8416c1165d` を instance へ投入）:

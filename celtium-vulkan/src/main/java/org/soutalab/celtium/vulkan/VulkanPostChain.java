@@ -916,7 +916,11 @@ public final class VulkanPostChain {
                     pass.outIsMain ? "main" : (outTarget.owned ? "owned" : "adopted"),
                     pass.outIsMain ? 0L : outTarget.image,
                     pass.outIsMain ? 0L : outTarget.view,
-                    pass.outW, pass.outH));
+                    pass.outW, pass.outH,
+                    pass.inIsMain ? "main" : (inTarget.owned ? "owned" : "adopted"),
+                    pass.inIsMain ? 0L : inImage,
+                    pass.inIsMain ? 0L : inView,
+                    pass.inW, pass.inH));
 
             // A target that was just created is still UNDEFINED: bring it to GENERAL exactly once, before any use.
             // An adopted target is never in that state - its caller declares it live and already in GENERAL - so it
@@ -1228,8 +1232,22 @@ public final class VulkanPostChain {
         public final long view;
         public final int width;
         public final int height;
+        /**
+         * What this pass read, in the same shape as the output side.
+         * <p>
+         * The pair is what separates the two failures a single image cannot: a pass that read the right image and
+         * wrote nothing (the draw produced no fragments) against a pass that read the wrong image (the input resolved
+         * to something else). The auxiliary input is deliberately not here - it is a second sampler with its own
+         * resolution rule, and the two-valued question this field exists for is about the primary read.
+         */
+        public final String inLabel;
+        public final long inImage;
+        public final long inView;
+        public final int inWidth;
+        public final int inHeight;
 
-        RecordedOutput(int passIndex, String program, String label, long image, long view, int width, int height) {
+        RecordedOutput(int passIndex, String program, String label, long image, long view, int width, int height,
+                String inLabel, long inImage, long inView, int inWidth, int inHeight) {
             this.passIndex = passIndex;
             this.program = program;
             this.label = label;
@@ -1237,12 +1255,18 @@ public final class VulkanPostChain {
             this.view = view;
             this.width = width;
             this.height = height;
+            this.inLabel = inLabel;
+            this.inImage = inImage;
+            this.inView = inView;
+            this.inWidth = inWidth;
+            this.inHeight = inHeight;
         }
 
         @Override
         public String toString() {
-            return "pass " + this.passIndex + " " + this.program + " out=" + this.label + " image=0x"
-                    + Long.toHexString(this.image) + " " + this.width + "x" + this.height;
+            return "pass " + this.passIndex + " " + this.program + " in=" + this.inLabel + "(0x"
+                    + Long.toHexString(this.inImage) + ") out=" + this.label + "(0x"
+                    + Long.toHexString(this.image) + ") " + this.width + "x" + this.height;
         }
     }
 

@@ -51,6 +51,30 @@ re-taken**. Script: `.celtium-work/gui-stage/run-wbs.sh` (legs run sequentially,
 - **No difference behind either screen** -> the difference is the panel covering the world, not a shading effect, and
   the region to compare is the world *outside* the panel.
 
+## The control has landed, and it validates the method
+
+`wbs-noscreen-ref` / `wbs-noscreen-cand`, equal build state (44 and 45 listed sections, fog-path's jars and fixture,
+capture condition rather than a tick):
+
+| region | candidate mean | reference mean | ratio | pixels >8 |
+|---|---|---|---|---|
+| sky band (0,0,1280,120) | 158.1,192.9,255.0 | 158.1,192.9,255.0 | **1.000,1.000,1.000** | **0.00 %** |
+| horizon (0,120,1280,300) | 147.2,153.4,174.6 | 147.3,153.6,174.6 | 0.999,0.999,1.000 | 0.72 % |
+| terrain centre (320,300,960,640) | 103.8,66.8,61.2 | 103.8,66.8,60.8 | 1.000,1.000,1.007 | **0.01 %** |
+| chat block (0,320,660,620) | 102.3,63.9,58.5 | 102.3,63.9,57.8 | 1.000,1.000,1.013 | **0.01 %** |
+| hotbar strip (490,660,790,720) | 103.6,23.2,22.2 | 103.6,23.2,22.2 | 1.000,1.000,1.002 | **0.00 %** |
+| whole frame | 123.4,105.7,118.4 | 123.4,105.7,118.1 | 1.000,0.999,1.002 | **0.19 %** |
+
+**This is the control that makes the inventory column readable.** With no screen open and at equal build state, the two
+renderers agree to 0.19 % of pixels whole-frame and to zero in the sky band, so the 27.74 % terrain-centre difference
+that remains with the inventory open is **caused by the screen being open** and is not a build-state or renderer-level
+artefact. The earlier "48 %" is fully explained: it was a build-state difference (54 vs 412 world frames, 12 vs 43
+listed sections), and the re-take at equal build state leaves a real, screen-caused 10.88 % whole-frame difference.
+
+The video-settings discriminator leg (`wbs-vs-cand`) was still running when this was written; `wbs-vs-ref` is done
+(tick 886, 44 sections). The reading in the section above is unchanged and its inputs are: this control, fog-path's
+inventory column, and the discriminator leg when it lands.
+
 ## Status when this was written
 
 All four legs were **queued behind the single-game slot** (the machine was at 10/15 GB with several harness scripts

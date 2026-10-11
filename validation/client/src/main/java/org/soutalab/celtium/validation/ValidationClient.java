@@ -369,6 +369,23 @@ public final class ValidationClient {
             final double minNonBackgroundFraction;
             final int minVerticalBands;
             final double maxBlackFraction;
+            /** The GUI panel's own floors, on the same frame: the screen's list rectangle against the world frame. */
+            final double minPanelChangedFraction;
+            final double minPanelStrongFraction;
+            final int minPanelDistinctColours;
+            final double minPanelRowAmplitude;
+            /**
+             * The panel's mean luma as a fraction of the world frame's at the same rectangle, as a ceiling.
+             * <p>
+             * The panel floors above cannot tell a drawn screen from a screen whose backgrounds did not draw: with
+             * the backgrounds missing the world shows through the panel and the region is *richer* than the world
+             * (12213 colours against 2025 in the bridge leg `vs47-ref`), so a colour floor set above the world's
+             * count is passed by the defect and failed by the correct picture (133 colours). Luma does separate them:
+             * the correct screen darkens the panel to 0.53x the world (`vs-pic-ref`, 57.783 against 109.919), the
+             * backgrounds-missing frame leaves it at 0.77x (86.344 against 111.535), and a frame where the screen
+             * never drew is 1.0x by construction.
+             */
+            final double maxPanelLumaRatio;
             /** Which run and which frame of it the floors were derived from. */
             final String source;
             /** What that frame measured. */
@@ -377,11 +394,18 @@ public final class ValidationClient {
             final String margin;
             final boolean calibrated;
 
-            FrameFloors(double minNonBackgroundFraction, int minVerticalBands, double maxBlackFraction, String source,
-                    String numbers, String margin, boolean calibrated) {
+            FrameFloors(double minNonBackgroundFraction, int minVerticalBands, double maxBlackFraction,
+                    double minPanelChangedFraction, double minPanelStrongFraction, int minPanelDistinctColours,
+                    double minPanelRowAmplitude, double maxPanelLumaRatio, String source, String numbers, String margin,
+                    boolean calibrated) {
                 this.minNonBackgroundFraction = minNonBackgroundFraction;
                 this.minVerticalBands = minVerticalBands;
                 this.maxBlackFraction = maxBlackFraction;
+                this.minPanelChangedFraction = minPanelChangedFraction;
+                this.minPanelStrongFraction = minPanelStrongFraction;
+                this.minPanelDistinctColours = minPanelDistinctColours;
+                this.minPanelRowAmplitude = minPanelRowAmplitude;
+                this.maxPanelLumaRatio = maxPanelLumaRatio;
                 this.source = source;
                 this.numbers = numbers;
                 this.margin = margin;
@@ -390,8 +414,8 @@ public final class ValidationClient {
 
             /** A stage this scene does not have: its floors are reported as absent rather than enforced. */
             static FrameFloors none(String why) {
-                return new FrameFloors(0.0D, 0, 1.0D, "no frame of this scene is judged by these floors: " + why,
-                        "none", "none", false);
+                return new FrameFloors(0.0D, 0, 1.0D, 0.0D, 0.0D, 0, 0.0D, 1.0D,
+                        "no frame of this scene is judged by these floors: " + why, "none", "none", false);
             }
         }
 
@@ -428,8 +452,9 @@ public final class ValidationClient {
         /** The floors that judge a stage's frame, and the frame they came from. */
         FrameFloors floorsFor(String stage) {
             return "gui".equals(stage) && guiFloors.calibrated ? guiFloors
-                    : new FrameFloors(minNonBackgroundFraction, minVerticalBands, maxBlackFraction, referenceRuns,
-                            referenceNumbers, margin, calibrated);
+                    : new FrameFloors(minNonBackgroundFraction, minVerticalBands, maxBlackFraction,
+                            minPanelChangedFraction, minPanelStrongFraction, minPanelDistinctColours,
+                            minPanelRowAmplitude, 1.0D, referenceRuns, referenceNumbers, margin, calibrated);
         }
     }
 
@@ -1041,24 +1066,42 @@ public final class ValidationClient {
         // The GUI stage is a different picture from the world stage, so it gets its own floors from its own frame.
         // Before this, the four world floors above were applied to it as well: the reference's own GUI frame has 229
         // bands and 145 colours in `.celtium-work/runtime/vs-pic-ref` while the world frame's floor asked for 250, so
-        // the reference failed the gate it had calibrated (task-47). The numbers below are the same reference runs'
-        // GUI frames - the file named here is the GUI frame, not the world frame - and the margin rule is the same one
-        // the world floors use.
-        String guiNumbers = "gui frame: distinctColours=17626/17699 nonBackgroundFraction=0.837541/0.836627"
-                + " verticalBands=720/720 blackFraction=0.000000/0.000000 (spread: 73 colours, 0.000914"
-                + " non-background, 0 bands, 0.000000 black)";
-        String guiMargin = "nonBackgroundFraction floor 0.46 = 55% of the smaller reference 0.836627 (69x the measured"
-                + " spread of 0.000914); verticalBands floor 280 = 39% of the smaller reference 720 (spread 0 rows);"
-                + " blackFraction ceiling 0.05 = measured 0.000000 + 0.05, the same rule as the world frame's";
-        String guiSource = "gl-bridge scene-floors/video-a (2026-10-11 09:11) and scene-floors/video-b (09:12), both"
-                + " scene=videoSettings at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, 1280x720, guiScale=3, screen="
-                + "net.minecraft.client.gui.GuiVideoSettings, GUI FRAME=screenshots/celtium-validation.png (the file"
-                + " the GUI stage's verdict reads; the world frame of the same runs is"
+        // the reference failed the gate it had calibrated (task-47).
+        //
+        // The frame these are derived from is the completion condition's reference leg, upstream Celeritas, not the
+        // stored gl-bridge runs. The bridge's GUI frame is a different picture: its screen backgrounds do not draw, so
+        // the world shows through the panel (12213 colours against the world's 2025 in `vs47-ref`, and 15805 in
+        // scene-floors/video-a). Floors derived from that frame demand the defect: `panelDistinctColours>=4000` is
+        // passed by a frame where the world shows through the panel and failed by the correct picture, whose flat
+        // screen measures 133. That is the second wrong-provenance floor the audit found, and re-deriving it from the
+        // reference's own GUI frame is what this block does. The margin rules are unchanged; the source frame changed.
+        String guiNumbers = "gui frame: distinctColours=145 nonBackgroundFraction=0.672704 verticalBands=229"
+                + " blackFraction=0.068322; panel (the screen's own list, 2,98..1279,622):"
+                + " guiPanelChangedFraction=0.999189 guiPanelStrongFraction=0.990540 guiPanelDistinctColours=133"
+                + " guiPanelRowAmplitude=4.089 guiPanelMeanLuma=57.783 guiWorldPanelMeanLuma=109.919"
+                + " guiWorldPanelDistinctColours=2480 (the same numbers to the digit in the GL-less candidate"
+                + " `vs47-cand`: 145/0.672704/229/0.068322, panel changed 1.0, strong 0.998936, 133 colours,"
+                + " rowAmplitude 4.089, luma 57.783 against the world's 113.658)";
+        String guiMargin = "nonBackgroundFraction floor 0.37 = 55% of the measured 0.672704; verticalBands floor 89 ="
+                + " 39% of the measured 229; blackFraction ceiling 0.118 = the measured 0.068322 + 0.05, the same rule"
+                + " as the world frame's; panelChangedFraction>=0.63 = 63% of the measured 0.999189;"
+                + " panelStrongFraction>=0.545 = 55% of the measured 0.990540; panelDistinctColours>=33 = 25% of the"
+                + " measured 133, a presence guard only - the world frame has 2480 colours at the same rectangle, so"
+                + " this floor no longer separates panel from world (the changed/strong fractions do: 0.999/0.991 on"
+                + " the drawn screen against 0.000 if it never drew); panelRowAmplitude>=0.25 as a flatness guard"
+                + " (measured 4.089); panelMeanLuma<=0.70x the world frame's at the same rectangle (measured 0.526"
+                + " here, 0.774 in the backgrounds-missing bridge frame, 1.0 if the screen never drew)";
+        String guiSource = "upstream Celeritas 989ebf2e d12425eaaf184e79, scene=videoSettings at x=0.5 y=12.0 z=0.5"
+                + " yaw=180 pitch=20, 1280x720, guiScale=3, screen=net.minecraft.client.gui.GuiVideoSettings,"
+                + " run=.celtium-work/runtime/vs-pic-ref (fixture 29f1a7d399017f66, GUI FRAME="
+                + "screenshots/celtium-validation.png, worldTick=235; the world frame of the same run is"
                 + " screenshots/celtium-validation-world.png and is not the frame these floors describe)";
-        String guiReference = "gl-bridge " + guiSource + ": " + guiNumbers + " -> gui floors nonBackgroundFraction>=0.46,"
-                + " verticalBands>=280, blackFraction<=0.05; margin: " + guiMargin;
-        SceneGate.FrameFloors guiFloors = new SceneGate.FrameFloors(0.46D, 280, 0.05D, guiReference, guiNumbers,
-                guiMargin, true);
+        String guiReference = "upstream-celeritas " + guiSource + ": " + guiNumbers + " -> gui floors"
+                + " nonBackgroundFraction>=0.37, verticalBands>=89, blackFraction<=0.118, panelChangedFraction>=0.63,"
+                + " panelStrongFraction>=0.545, panelDistinctColours>=33 (presence guard), panelRowAmplitude>=0.25,"
+                + " panelMeanLuma<=0.70x world; margin: " + guiMargin;
+        SceneGate.FrameFloors guiFloors = new SceneGate.FrameFloors(0.37D, 89, 0.118D, 0.63D, 0.545D, 33, 0.25D, 0.70D,
+                guiReference, guiNumbers, guiMargin, true);
         return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.40D, 250, 0.05D, 0.30D, 0.25D, 4000, 0.25D, reference,
                 runs, numbers, margin, true, guiFloors);
     }
@@ -6527,6 +6570,8 @@ public final class ValidationClient {
      */
     private java.util.List<String> celtium$gateGuiPanel(Picture world, Picture gui) {
         java.util.List<String> failures = new java.util.ArrayList<String>();
+        // The panel floors are the GUI stage's, and they name the frame they were measured on (task-47).
+        SceneGate.FrameFloors floors = celtium$gate.floorsFor("gui");
         Minecraft mc = Minecraft.getMinecraft();
         int[] panel = celtium$panelRect(mc);
         if (panel == null) {
@@ -6568,26 +6613,38 @@ public final class ValidationClient {
                 + " worldTick=" + celtium$tickOfEvidence("gui") + " presentedFrame=" + celtium$frameOfEvidence("gui")
                 + "] worldFrame=[file=" + celtium$relative(celtium$imageOfEvidence("world")) + " identity="
                 + celtium$relative(celtium$identityOfEvidence("world")) + " worldTick="
-                + celtium$tickOfEvidence("world") + "] panel floors measured in " + celtium$gate.referenceRuns;
-        if (changed < celtium$gate.minPanelChangedFraction) {
+                + celtium$tickOfEvidence("world") + "] panel floors measured on " + floors.source;
+        if (changed < floors.minPanelChangedFraction) {
             failures.add("the video settings panel did not draw: guiPanelChangedFraction=" + changed + " is below the"
-                    + " reference floor of " + celtium$gate.minPanelChangedFraction + " for " + label);
+                    + " reference floor of " + floors.minPanelChangedFraction + " for " + label
+                    + " (this floor was measured on " + floors.source + ")");
         }
-        if (strong < celtium$gate.minPanelStrongFraction) {
+        if (strong < floors.minPanelStrongFraction) {
             failures.add("the video settings panel has too little of its own chrome: guiPanelStrongFraction=" + strong
-                    + " is below the reference floor of " + celtium$gate.minPanelStrongFraction + " (a fraction of the"
-                    + " panel differing from the world frame by more than 32 per channel) for " + label);
+                    + " is below the reference floor of " + floors.minPanelStrongFraction + " (a fraction of the"
+                    + " panel differing from the world frame by more than 32 per channel; this floor was measured on "
+                    + floors.source + ") for " + label);
         }
-        if (panelColours < celtium$gate.minPanelDistinctColours) {
+        if (panelColours < floors.minPanelDistinctColours) {
             failures.add("the video settings panel has too few colours to be a screen of rows and labels:"
                     + " guiPanelDistinctColours=" + panelColours + " is below the reference floor of "
-                    + celtium$gate.minPanelDistinctColours + " (the world frame has " + worldColours + " there) for "
-                    + label);
+                    + floors.minPanelDistinctColours + " (the world frame has " + worldColours + " there; this floor was"
+                    + " measured on " + floors.source + ") for " + label);
         }
-        if (panelRows < celtium$gate.minPanelRowAmplitude) {
+        if (panelRows < floors.minPanelRowAmplitude) {
             failures.add("the video settings panel has no row structure: guiPanelRowAmplitude=" + panelRows
-                    + " is below the reference floor of " + celtium$gate.minPanelRowAmplitude
-                    + " (the world frame has " + worldRows + " there) for " + label);
+                    + " is below the reference floor of " + floors.minPanelRowAmplitude
+                    + " (the world frame has " + worldRows + " there; this floor was measured on " + floors.source
+                    + ") for " + label);
+        }
+        if (floors.maxPanelLumaRatio < 1.0D && panelLuma > floors.maxPanelLumaRatio * worldLuma) {
+            failures.add("the video settings panel did not darken the frame behind it: guiPanelMeanLuma=" + panelLuma
+                    + " is above " + floors.maxPanelLumaRatio + "x the world frame's " + worldLuma
+                    + " at the same rectangle (ratio " + (worldLuma == 0.0D ? "unmeasurable" :
+                            String.valueOf(Math.round(panelLuma / worldLuma * 1000.0D) / 1000.0D))
+                    + "), which is what a frame with the screen's backgrounds missing measures - the world shows"
+                    + " through the panel and the region is richer than the world, not darker (this ceiling was"
+                    + " measured on " + floors.source + ") for " + label);
         }
         return failures;
     }

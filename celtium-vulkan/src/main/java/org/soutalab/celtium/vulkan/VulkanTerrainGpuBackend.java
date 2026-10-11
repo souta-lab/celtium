@@ -834,6 +834,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private float mirroredModelViewDelta = -1.0f;
     private int matrixComparisons;
     private int matrixExactComparisons;
+    /**
+     * Multiplies that reached the mirror, from every owner: {@code GlStateManager.multMatrix} (hooked in
+     * {@code GlStateManagerMixin}) and the item camera transform ({@code ForgeHooksClientMixin}). Read against the
+     * stub's raw {@code glMultMatrixf} arrival census - the stub applies nothing on purpose, so arrivals without a
+     * mirrored multiply are the signal that a raw call arrived with no owner.
+     */
+    private int mirroredMultiplies;
     private String matrixDump;
     private boolean mirrorSeeded;
     private int cameraSetupSeeds;
@@ -3074,6 +3081,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.matricesDirty = true;
         this.immediateState.multiplyMatrixBuffer(buffer);
         this.immediateStateCalls++;
+        // The application side of the raw glMultMatrixf census: the stub counts arrivals and applies nothing, on
+        // purpose (one operation, one owner), and this counts the multiplies that actually reached the mirror -
+        // whether from GlStateManager's own multMatrix or from ForgeHooksClientMixin's item camera transform.
+        this.mirroredMultiplies++;
     }
 
     @Override
@@ -8869,7 +8880,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         String base = System.getProperty("celtium.vulkan.chainFrameDumpPath", "/tmp/celtium-chain-frame.png");
         if (this.frameTarget != null) {
-            celtium$dumpOwnedImage("frame", this.frameTarget.colorImage(), base, identity);
+            celtium$dumpOwnedImage("frame", this.frameTarget.colorImage(), base, identity,
+                    this.targetWidth, this.targetHeight);
         }
         GllessFrameTarget glless = offTargetTarget();
         if (glless != null && glless.chainPairColorImage() != 0L
@@ -8877,10 +8889,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Dumped at the frame's size: the pair is created at the size the game's framebuffer asks for, and the
             // readback's extent has to be inside the image it reads. A pair of another size is named rather than read.
             celtium$dumpOwnedImage("chain-pair", glless.chainPairColorImage(), base,
-                    identity + " pairSize=" + this.targetWidth + "x" + this.targetHeight);
+                    identity + " pairSize=" + this.targetWidth + "x" + this.targetHeight,
+                    this.targetWidth, this.targetHeight);
         } else if (glless != null && glless.chainPairColorImage() != 0L) {
             System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=chain-pair skipped=size"
                     + " frameSize=" + this.targetWidth + "x" + this.targetHeight + " " + identity);
+        }
+        // Each pass's own output image, from the executor's bookkeeping (`VulkanPostChain.lastRecordedOutputs`, filled
+        // as the passes are recorded and readable before `commitPasses`): the frame image alone cannot tell "pass 0
+        // wrote nothing" from "the final blit never reached main", and that is the fork this line exists for. The
+        // "main" entries are skipped - the frame image above is that image - and each line names its pass, program and
+        // label so a chain of several passes is attributable pass by pass. Off unless
+        // -Dceltium.vulkan.chainDumpPasses=true, so a normal leg pays nothing for it.
+        if (Boolean.getBoolean("celtium.vulkan.chainDumpPasses") && this.postChain != null) {
+            for (VulkanPostChain.RecordedOutput out : this.postChain.lastRecordedOutputs()) {
+                if (out.image == 0L || "main".equals(out.label)) {
+                    continue;
+                }
+                celtium$dumpOwnedImage("pass-out", out.image, base,
+                        identity + " pass=" + out.passIndex + " program=" + out.program + " label=" + out.label
+                                + " out=" + out.width + "x" + out.height,
+                        out.width, out.height);
+            }
         }
     }
 
@@ -8892,11 +8922,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * that is pure orientation - {@code flipud} of one side differs on 0 of 921,600 pixels. Anyone comparing a
      * chain-time dump with a presented dump has to flip one of them first.
      */
-    private void celtium$dumpOwnedImage(String stage, long image, String base, String identity) {
-        if (image == 0L || this.targetWidth <= 0 || this.targetHeight <= 0) {
+    private void celtium$dumpOwnedImage(String stage, long image, String base, String identity, int width,
+            int height) {
+        if (image == 0L || width <= 0 || height <= 0) {
             return;
         }
-        int[] pixels = celtium$readImageRectangle(image, 0, 0, this.targetWidth, this.targetHeight);
+        int[] pixels = celtium$readImageRectangle(image, 0, 0, width, height);
         if (pixels == null) {
             System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " readback=failed " + identity);
             return;
@@ -8918,9 +8949,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 : base.replaceFirst("\\.png$", "") + "-" + stage + ".png");
         boolean written = false;
         try {
-            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(this.targetWidth, this.targetHeight,
+            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(width, height,
                     java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            out.setRGB(0, 0, this.targetWidth, this.targetHeight, pixels, 0, this.targetWidth);
+            out.setRGB(0, 0, width, height, pixels, 0, width);
             if (path.getParent() != null) {
                 java.nio.file.Files.createDirectories(path.getParent());
             }
@@ -8929,7 +8960,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("chain frame dump write failed: " + describe(error));
         }
         System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " path=" + path
-                + " written=" + written + " " + this.targetWidth + "x" + this.targetHeight
+                + " written=" + written + " " + width + "x" + height
                 + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
                 + " opaque=" + opaque + "/" + pixels.length + " " + identity);
     }
