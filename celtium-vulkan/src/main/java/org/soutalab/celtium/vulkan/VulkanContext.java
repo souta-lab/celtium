@@ -713,18 +713,15 @@ public final class VulkanContext {
             return;
         }
         long paddedLength = alignUp4(length);
-        long stagingOffset = celtium$reserveUploadSlot(paddedLength);
-        if (stagingOffset < 0L) {
-            // Larger than a ring slot: the one-copy path, which blocks until the copy has completed. Counted, so a
-            // workload that needs the blocking form says so instead of hiding inside the batch counters.
-            this.uploadFallbackCopies++;
-            celtium$immediateStagingCopy(destination, destinationOffset, sourceAddress, length, paddedLength);
-            return;
-        }
-        MemoryUtil.memCopy(sourceAddress, this.uploadRingMapped + stagingOffset, length);
-        celtium$zeroUploadTail(stagingOffset, length, paddedLength);
-        this.pendingUploads.add(new long[] {destination, destinationOffset, stagingOffset, paddedLength});
-        this.uploadCopiesBatched++;
+        // Reverted to the settled one-copy path on 2026-10-12: the batched form below is written but not wired,
+        // because it broke an invariant this path is the home of. A copy that is recorded and left pending names a
+        // destination buffer handle, and the callers grow and replace destination buffers in the same frame
+        // (VulkanArena.allocate -> VulkanBuffer.ensureCapacity destroys the old VkBuffer, and world teardown destroys
+        // whole arenas), so the batch submitted later copied into handles that no longer existed: measured as
+        // `vkQueueSubmit returned VkResult -4` (device lost) out of flushUploads on three legs. Batching is only
+        // correct once a destination cannot be destroyed or have its segments reused while a copy into it is pending;
+        // that is the ownership contract OPT-07 needs, and it is not this unit.
+        celtium$immediateStagingCopy(destination, destinationOffset, sourceAddress, length, paddedLength);
     }
 
     /**
@@ -744,17 +741,8 @@ public final class VulkanContext {
             return;
         }
         long paddedLength = alignUp4(length);
-        long stagingOffset = celtium$reserveUploadSlot(paddedLength);
-        if (stagingOffset < 0L) {
-            this.uploadFallbackCopies++;
-            celtium$immediateStagingCopy(destination, destinationOffset, source, paddedLength);
-            return;
-        }
-        ByteBuffer staging = MemoryUtil.memByteBuffer(this.uploadRingMapped + stagingOffset, (int) paddedLength);
-        MemoryUtil.memCopy(source.duplicate(), staging);
-        celtium$zeroUploadTail(stagingOffset, length, paddedLength);
-        this.pendingUploads.add(new long[] {destination, destinationOffset, stagingOffset, paddedLength});
-        this.uploadCopiesBatched++;
+        // Same revert as the native-address form above: a pending copy must not outlive its destination buffer.
+        celtium$immediateStagingCopy(destination, destinationOffset, source, paddedLength);
     }
 
     /**
