@@ -257,6 +257,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.280 **round 86: read 解決の実データ — `readFbo=0`・`mainColorName=3`・`currentTarget=0`・`currentIsMain=false`、しかし readImage は chainPair に落ちている**
+
+- **測定（Lead・`r83-state` の `CELTIUM_READ_RESOLVE`）**:
+  ```
+  readFbo=0  mainIdentity=1434737802  mainColorName=3  currentTarget=0  currentIsMain=false
+  frameImage=140167268583392  defaultPair=140167123062848  chainPair=140167277396864
+  ```
+  そして copy の `readImage=0x7f7b3cc74380` = **chainPair**。
+- **コードの現状**: `celtium$ownedReadImage` は既に
+  (1) `mainColorName == readFbo` → frame image、(2) `readFbo == 0 && currentIsMain` → frame image、
+  (3) `readFbo == 0 && glless != null` で **`routeLabelForBinding(currentRenderTarget, currentIsMain)`** を見て `chain-pair` のときだけ chain pair、
+  という分岐を持つ。ここで `routeLabelForBinding(0, false)` は**identity 0 → default pair** を返すはずで、**chain pair にはならない**。
+  ＝**観測（readImage == chainPair）とコードの分岐が一致しない**ため、**その後のフォールバックが chain pair を返している**。
+- **次の一手（1点）**: `celtium$ownedReadImage` の**残りの分岐**（上記3つの後）を読み、
+  `readFbo=0` が chain pair に落ちる経路を名指しして、**faces が offer された identity の image**（＝pass が attach した image）に解決するよう直す。
+  受入は copy の `mean=` が 255 から動くこと（`nonWhite > 0`）。
+- **この round の成果**: 白の原因が「**read の解決が faces の書いた image に到達していない**」ことだと、実データ（readFbo/mainColorName/currentTarget/readImage）で確定した。
+
 ## 0.279 **round 85: 決定的 — copy 時点で `groups=39` が pending・`windowBusy=false`、しかし readback は全画素白、そして read image ≠ pass が attach した image**
 
 - **測定（Lead の `r83-state`・hold 60）**:
