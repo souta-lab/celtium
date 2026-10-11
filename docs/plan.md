@@ -32,12 +32,12 @@
 | **動画設定が開かない** | **受入済み（画面が開く）** | 真因 = 0 範囲 slider が `SliderControl` の assert で throw。`guiClickDivertedTo=CeleritasVideoOptionsScreen`・verdict PASSED。(e) の3段階は未了 |
 | **パノラマ / ロード画面の白** | **機序確定・未修正** | mirror 内容（replay 修正済みで実内容）・bind（42/44/45-48）・捕捉（stale でない）・clear（face の draw より前）・copy の出所（panorama 自身）・pending 39・**readback は全画素白**。faces の内容がどちらの pair にも無いことが残る1点 |
 | **較正済み picture gate** | **PASSED** | 素の terrain で `PASSED`・assertion failure 0・`validationMessageCount=0`・`presentedDistinctColours=2142`・non-background 0.759463・628 bands・black 0.0。`keepGui+captureEntities` 変種は**未較正**として併記 |
-| **OPT-09（indirect terrain）** | **等価性を受入** | 753 call が 8665 draw・`indirectChecksum == directChecksum == fb6ba6ff7e1b6f0e`・`match=true`（同一 world 内）・11.5 draws/call。緑 leg は semaphore VUID 待ち |
+| **OPT-09（indirect terrain）** | **受入完了（緑の leg）** | **1449 call が 29,065 draw**・`indirectChecksum == directChecksum == d89b513407194482`・`match=true`・**`validationMessageCount=0`**・`validationClean=true` |
 | **F3 overlay のコスト** | **機序確定** | 0.48 µs/glyph（capture）に対し **vanilla glyph 本体 3.62 µs/glyph**・text 経路 ~22 ms/frame（overlay の 139 ms のうち）・残りは per-frame overlay 構築 |
 | **video settings 画面** | **self-consistency 受入** | `guiScreenClassAtCapture=CeleritasVideoOptionsScreen`・panel crop 587 distinct colours。same-screen upstream 参照は**存在し得ない**（diverter は我々の tree）と明記 |
 | **light-params 境界** | **lit-only 化で受入** | terrain 416→**17**・videoSettings 425→**2**（両 leg clean） |
 | **BH-10（雲）** | **counter で受入・絵は不可** | Fancy clouds 506 対 368 partialColorMaskGroups・159 group が zero mask を得る。雲 scene の scatter は **r=0.945**（frame phase が動く）ため絵では解像しない |
-| **semaphore VUID（P1）** | **未修正・owner 確定** | `VUID-vkQueueSubmit-pSignalSemaphores-00067` が 10件。frame target は pair を 1:1 に保つ機構を持つ（`consumeOutstandingWait`/`consumeDone`）ため、**skip ではなく drain** を frame-open 契約に実装するのが次の1点 |
+| **semaphore VUID（P1）** | **閉じた** | 10件 → **0件**（`5d508be38`＝done semaphore の flag を present の結果で記録）。**latent な misuse は残置起票**: `doneSemaphore` が frame 単位のまま present の wait semaphore に渡っており、Khronos の規則は image 数配列＋acquired index |
 
 | 性能 | **着地** | OPT-05（hostBuffers 6 for 8316 groups）・OPT-07(b)（`uploadSubmitWaitsAtEnd` 31343→6910）・**OPT-09（1086 indirect call が 17,651 draw を運ぶ＝16.3:1・fallback 0・VUID 0）**・BH-22（descriptor cache 退役＋census）・BH-32（atlas sampler の maxLod を level 数に追従） |
 | 未了 | — | パノラマの最後の1点・menu hold 経路の layout VUID（hold 依存）・OPT-09 step(3)（geometry/order 比較）・BH-14 per-identity pair・goal (e) の3段階・較正済み scene での picture gate 再取得 |
@@ -281,6 +281,32 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **未確立（その2）**: `lead-warm3`（jar `c6e7a8058c3fd511`・19:53・同 shape）は **warm 275 sample で p50 24.0 / p95 105.6 / p99 207.4 ms**、
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
+
+## 0.297 **round 103: 緑の leg で semaphore VUID が消え、OPT-09 step(3) が閉じた（`validationMessageCount=0`）**
+
+- **測定（proj-channel の `opt09f-close`・現行 tree・jar `07004475`・較正済み terrain scene・`--validate`・`indirectCompare` 有効）**:
+  ```
+  fixtureStatus                 = PASSED        (fixtureUncalibrated=false)
+  validationMessageCount        = 0             validationClean = true
+  pSignalSemaphores-00067 lines = 0             ← 直前4 leg は 10 件
+  terrainIndirect               = [offers=1449 calls=1449 draws=29065 clamps=0 growths=1 fallbacks=0]
+  terrainIndirectStream         = [indirectDraws=29065 indirectChecksum=d89b513407194482
+                                   directDraws=29065   directChecksum=d89b513407194482  match=true]
+  drawnByFormat                 = [1:5 2:3094 3:0 4:1860 5:155 6:1126 7:1122 8:128 9:12]
+  ```
+  ＝**VUID 10件 → 0件**。**`5d508be38`（done semaphore の flag を present の「結果」で記録する修正）が原因を除去した**。
+- **OPT-09 step(3) 受入完了**: **1449 indirect call が 29,065 draw を運び（20.1 draws/call・world 依存）、
+  indirect が submit する command stream は direct loop のものと command 単位で一致**（同一 world・同一 leg・checksum 一致）。
+  「identical submitted geometry and transparent order」が**緑の leg で**成立。比率は world 依存、**等価性は依存しない**。
+- **残る latent リスク（記録・受入は緑の上で）**: `GllessFrameTarget.doneSemaphore` は **frame 単位の単一 semaphore**でありながら
+  present の `pWaitSemaphores` に渡っている。Khronos guide の規則は **swapchain image 数ぶんの配列＋acquired index で引く**で、
+  今の正しさは**flag の規律（意図→結果）に依存**している。**次に producer が増えるか、present が失敗して再 present すると再発しうる**。
+  proj-channel が修正の形を明記（target が acquired index を受け取る・`doneSemaphore` を image 数配列に・wait semaphore は frame 単位のまま・
+  per-image の signal counter を残す）。**latent として起票し、次の frame-target unit で取る**。
+- **perf-ring の指摘（upload batch の semaphore）**: 彼らの leg では handle が upload batch のもので、**consumer の無い signal** が
+  二重 signal を生む形だった（ring-pressure flush が frame submission を伴わない）。彼らは handoff を撤回済みで、
+  現行 tree では `boolean signal` の分岐自体が無い（OPT-07 の形に戻っている）。**同じ形の再導入を防ぐため、
+  将来「consumer のいない flush が signal する」経路を作らない**ことを規則として残す。
 
 ## 0.296 **round 102: 決定的な外部根拠 — この VUID は「present の wait semaphore が swapchain にまだ使われている」形で、修正は swapchain image 単位の semaphore（Khronos の guide が名指し）**
 
