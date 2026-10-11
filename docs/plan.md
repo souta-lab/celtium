@@ -145,6 +145,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.210 **round 13: panel は描かれていた（床が別 scene の数字）・published name の drop が白画面と abort の共通根因・zero-view ガード**
+
+- **video settings の panel は描かれている（gui-stage・`1321cf111`・task-42 の既存 leg を再利用）**:
+  panel(180,80,1100,624) の比 **0.983/0.987/0.990**・>8 が **4.56%**、Done button **1.000/0.0003%**、hotbar frame **0.00%**（画素一致）。
+  **決定的な数字: 参照自身の panel 領域は 139 色**（候補 104）。`guiPanelDistinctColours>=15,805` は **inventory scene の数字**
+  （item sprite を含む）で、video-settings の実 GL 参照でも満たせない＝**`verticalBands>=250` と同じ「別の絵で測った床」の2例目**。
+  task-47 の provenance 修正の対象。**床は下げていない**。残るのは texture detail（104 vs 139）で、欠落ではない。
+- **loading screen の白画面と menu abort は同じ根因（texture-mirror・既存 leg の読み出し）**:
+  `splash-vuid2` で `CELTIUM_EXTERNAL_IMAGE published glTexture=6 image=0x300000000030 … size=1281x720` →
+  同 name が **drop**、`glTexture=22` も publish 後に **5回 drop**。registry は `externalImages` → announcement → mirror の順に解決するので、
+  **frame の途中で unpublish された name は空 mirror に落ちる＝一様な白**（loading 17 capture が1色）。
+  そして `pano-menu` の abort が名指しした `Invalid VkImage Object 0x300000000030` は **glTexture=6 が publish したのと同じ handle**。
+  ＝**「drop した後に transition している」**。寿命（drop は attach する frame の後・transition は published の間だけ）が修正点。
+  併せて `glTexture=6` が **1281x720**（窓は 1280x720）で publish されている——1px 広い owned image は別途の候補。
+- **zero-view ガードの leg（`r13-world`・validation on・150s）**: SIGSEGV 0・DEVICE_LOST 0・VUID 0・stall 0・299 frame。
+  ただし 150 秒では world に入りきらず menu まで（`exitCode=143`・`validationExitCode=124`）＝**device loss は再現せず**。
+  次は duration 300 で world 到達まで見る。
+- **ユーザーの現況**: 実プレイで world が描画され（terrain・sky・ブロック）、F3 overlay の文字も正常。**苦情は「f3がラグい」**＝
+  1 glyph あたり 59 µs（`meanSubmitMicros=59`）・F3 は最も文字が密。font batching は既定 off（文字が壊れるため）。
+
 ## 0.209 **round 12-13: published name の再指し・font batching の既定off・world の device lost 系列**
 
 - **published frame texture の寿命（Lead 修正）**: `glTexture=6/22`（game framebuffer の colour texture 名）は chain pair image を
