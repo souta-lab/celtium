@@ -871,6 +871,43 @@ behaves as the flag. **The text rows are re-taken as legible on this jar.** **Ro
   `(255,255,255)`/1 distinct colour during the loading phase on the post-fix jar (`r11c-loading`), the rest black, with
   `CELTIUM_REPLACE_DROP` absent. Row 29 carries it.
 
+## 6i. Round-22 verification of the 37-finding hunt (verifier's ledger)
+
+Rules applied to every row below: **a missing counter is not a missing draw**, and **a fix that only moves a number
+without a picture is not accepted**. Each row names the BH id, the fix's file, the counter or crop before/after,
+`validationMessageCount`, and whether a picture changed.
+
+**The baseline is mine and it is pre-fix**: jar `3abc917b15e930cf`, fixture `5fc4975a301479fa`, HEAD `5e3b4a947`,
+`keepGui=true`+`captureEntities=true`, scene=terrain, `--validate`, AMD RX 6400 (`r22b-cand` / `r22b-ref`, upstream
+`d12425eaaf184e79`). Baseline numbers, to be compared against every later re-take: `validationMessageCount=0`,
+`UNCALIBRATED_PRESENTED_IMAGE` (the entity variant is not a calibrated key), `presentedDistinctColours=16285`,
+non-background fraction `0.952222`, `707` bands, `nonPlayerEntitiesAtCapture=8`, `worldFramesAtCapture=47`,
+capture tick 200; **`acceptedByFormat` `[1:3 2:1444 4:24 5:46 6:306 7:190 8:0 9:228]` against `drawnByFormat`
+`[1:3 2:1440 4:0 5:46 6:304 7:188 8:0 9:0]`** - the entity gap reproduces on this tree (id4 24 accepted / 0 drawn,
+id9 228 accepted / 0 drawn); `modelMeshBuilt=38`, `modelMeshQuads=228`, `modelDraws=1217`,
+`modelDrawRefusals=0`. Frames kept: `.celtium-work/acceptance/r22-baseline-cand.png` (sha256 `a16dcc4fa60d61fe…`),
+`r22-baseline-ref.png` (`4418710250979ac5…`).
+
+| BH | fix file | counter / crop before -> after | `validationMessageCount` | picture changed? |
+|---|---|---|---|---|
+| **entity gap** (id4/id9 accepted, never drawn) | not landed yet | `r22b-cand`: id4 24/0, id9 228/0 accepted/drawn | 0 | - (baseline recorded) |
+| **BH-27** whole-queue idle | `VulkanContext.beginCommands()/endCommands()` (`83aff9d70`; also `VulkanTerrainGpuBackend.verificationSummary`) | my legs, jar `3abc917b` -> `5f3d3bfb`: `bootstrapQueueWaitMillis` **316 -> 0**, worst **13 -> 0**; new `bootstrapSubmitWaits` **2738**, `...Millis` **234**, worst **6 ms**; `submitTimeouts` 0 -> 0, `gpuStalled` false -> false | 0 -> 0 | **no** at the gate level (`presentedNonBackgroundFraction` 0.952222 -> 0.95232, bands 707 -> 707); pixel-identity **not** established because the two legs sat at different build states (47 vs 88 world frames at capture), and the accepted histogram moved with the run length. Counter fix, not a picture fix |
+| **BH-18** swapchain creation contract | `VulkanSwapchain` (`0e45ebaed`), `argumentSummary` | leg presents cleanly: `presentSucceeded=true`, no swapchain probe failure; **the chosen image count / usage / compositeAlpha / format are not printed on the success path** - `argumentSummary()` only reaches a log in the probe-failure message (`VulkanTerrainGpuBackend:8241`) | 0 | not measurable: the adversarial-capability acceptance (min=max=2, max=0, no OPAQUE, no TRANSFER_DST) is not exercisable on this surface, and the per-field values have no print site. **Not accepted as verified** |
+| **BH-23** sampler one-shot guard | `confirmSamplerStateFromRecord` (`0e45ebaed`) | observable counters in my leg: `mirroredTextures=34`, `descriptorHits=3529`, `descriptorMisses=31`, `samplerReach=1`; the acceptance sequence (set parameters after upload, change after the first draw, re-draw the same announced image, lower the LOD) is not driven by any fixture hook | 0 | not measurable; the commit itself records the minification meaning as still NEAREST-vs-LINEAR with a fixed LINEAR mip, so the finding is **partially** addressed by its own statement |
+| **BH-37** attach-side transition | covered by the in-tree rule (`publishedFrameTexturesSkippedForAttach`), per `0e45ebaed` | round-11 evidence already in row 30: `publishedFrameTexturesSkippedForAttach=18`, `stalePruned=18`, **0 invalid-image / 0 device-lost**, `validationMessageCount=0` | 0 | picture unchanged; the rule is what removed the invalid-image barrier family |
+| **BH-09/10/11** scissor / colour mask / polygon offset | `3ab786172` is **analysis only** ("nothing fixed in the tree yet, and no leg taken") | none - no hook, no field, no write mask exists in the tree at that commit | - | nothing to verify yet; the commit's own conclusion is that all three states are **never mirrored** |
+
+**Where the fixers' claims cannot be verified with the current instruments**, and what would make them verifiable
+(requests to route through the Lead, since I do not fix and the fixture is gui-stage's):
+1. BH-18 needs the chosen swapchain arguments printed on the **success** path, or a leg on a surface with adversarial
+   capabilities.
+2. BH-23, BH-03, BH-04 and BH-05 need fixture hooks for their acceptance sequences: a texture-parameter change after
+   the first draw; a two-quad same-texture colour/texture-matrix/fog change; a lit draw followed by a light change
+   before the flush; and the alpha 0/0.05/0.1/0.5/1 x ref 0/0.1/0.5 x GREATER/GEQUAL/LESS/ALWAYS/NEVER table. Without
+   them the only available evidence is the general frame against the reference, which cannot separate these states.
+3. BH-27's second half ("submit/wait count does not grow linearly with payload count") needs a leg that varies the
+   chunk upload volume; my two legs differ in run length, not in payload policy.
+
 ## 7. Instruments and artifacts
 
 Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py`, `compare_jei_pair.py`, the
