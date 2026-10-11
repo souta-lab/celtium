@@ -1852,7 +1852,10 @@ public final class ValidationClient {
      * rectangle - the last one - so green appears on the right as well.
      */
     private void celtium$stateProbes(net.minecraft.client.Minecraft client, int width, int height) {
-        int scale = client.displayWidth / Math.max(1, width);
+        // The GUI scale, not displayWidth/width: that division truncates (1280/427 = 2 where the real scale is 3),
+        // and with the wrong factor the scissor rectangle landed on a different band from the quad it was meant to
+        // clip - the first version of this probe clipped both quads away entirely and proved nothing.
+        int scale = new net.minecraft.client.gui.ScaledResolution(client).getScaleFactor();
         int left = (int) (width * 0.06D);
         int leftEnd = (int) (width * 0.20D);
         int right = (int) (width * 0.80D);
