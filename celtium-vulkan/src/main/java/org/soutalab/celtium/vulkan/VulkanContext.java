@@ -262,32 +262,10 @@ public final class VulkanContext {
     private long uploadFlushWorstMillis;
     private long uploadFallbackCopies;
     private long uploadDroppedCopies;
-    /**
-     * OPT-08 step 1: the batch is submitted without a host wait and handed to the frame's own submission.
-     * <p>
-     * A binary semaphore is signalled by the batch and waited on by the frame's submission, which is the dependency the
-     * copies need (the batch's barrier makes the writes available, the wait makes them visible to the frame's reads).
-     * The CPU no longer blocks for the copies; the ring's slots stay reserved until the batch's own fence signals, so
-     * reuse is still decided by completion and not by a frame number (OPT-04).
-     */
-    private long uploadDoneSemaphore = VK_NULL_HANDLE;
-    private long uploadBatchFence = VK_NULL_HANDLE;
-    private long uploadBatchCommandBuffer = VK_NULL_HANDLE;
-    private boolean uploadBatchInFlight;
-    /** True while a batch's semaphore has been signalled and no queue wait has consumed it yet. */
-    private boolean uploadSignalOutstanding;
-    /** Ring slots the in-flight batch wrote into, as a bit mask: they are reserved until its fence signals. */
-    private int uploadInFlightSlots;
-    private long uploadBatchSubmissions;
-    private long uploadBatchCompletions;
-    private long uploadBatchStalls;
-    private long uploadBatchReapedByPoll;
-    private long uploadBatchFenceOnlyFlushes;
-    /** One-line-per-event trace of the batch's semaphore handoffs, for naming a 00067 without guessing. */
+    /** Flushes caused by the ring filling mid-frame rather than by a submission boundary. */
+    private long uploadEarlyFlushesForRingPressure;
+    /** One-line-per-flush trace, for reading what a flush cost without a profiler. */
     private static final boolean UPLOAD_TRACE = Boolean.getBoolean("celtium.vulkan.uploadTrace");
-    /** Host time spent waiting for an upload batch (only when the ring is out of slots or a destination is settled). */
-    private long uploadBatchWaitMillis;
-    private long uploadBatchWaitWorstMillis;
     /** Copies whose destination was destroyed before the flush: nothing reads it, so the copy is skipped. */
     private long uploadSkippedDeletedDestinations;
     private long stagingCapacityBytes;
@@ -1674,21 +1652,9 @@ public final class VulkanContext {
      * already waited for device idle, so this wait finds the batch complete and only confirms the epoch.
      */
     private void destroyUploadRing() {
-        if (this.uploadBatchInFlight) {
-            awaitUploads();
-        }
         this.uploadDroppedCopies += this.pendingUploads.size();
         this.pendingUploads.clear();
-        if (this.uploadDoneSemaphore != VK_NULL_HANDLE) {
-            vkDestroySemaphore(this.device, this.uploadDoneSemaphore, null);
-            this.uploadDoneSemaphore = VK_NULL_HANDLE;
-        }
-        if (this.uploadBatchFence != VK_NULL_HANDLE) {
-            vkDestroyFence(this.device, this.uploadBatchFence, null);
-            this.uploadBatchFence = VK_NULL_HANDLE;
-        }
-        this.uploadBatchInFlight = false;
-        this.uploadSignalOutstanding = false;
+
         if (this.uploadRingMapped != 0L) {
             vkUnmapMemory(this.device, this.uploadRingMemory);
             this.uploadRingMapped = 0L;
@@ -1749,11 +1715,6 @@ public final class VulkanContext {
             return -1L;
         }
         celtium$ensureUploadRing();
-        // A completed batch's slots are free without waiting for anything: that is the whole point of gating reuse on
-        // the fence rather than on the host having waited at flush time.
-        if (this.uploadBatchInFlight) {
-            celtium$reapUploadBatch(false);
-        }
         int slot = celtium$writableSlot(bytes);
         if (slot < 0 && !this.pendingUploads.isEmpty()) {
             // The batch being recorded has filled the ring. It goes out now (one submission, no wait) and its slots
@@ -1761,17 +1722,14 @@ public final class VulkanContext {
             // than four slots' worth of copies sent every further copy down the settled one-copy path - 1546 of 2419
             // copies on the layered leg, each paying its own submission and fence wait, which is exactly the cost this
             // unit exists to remove.
+            this.uploadEarlyFlushesForRingPressure++;
             flushUploads();
             slot = celtium$writableSlot(bytes);
         }
         if (slot < 0) {
-            // Every candidate is owned by a submission still in flight: wait for it (bounded, counted), which is the
-            // backpressure path. Only if even that leaves no room does the copy take the settled one-copy path.
-            celtium$reapUploadBatch(true);
-            slot = celtium$writableSlot(bytes);
-            if (slot < 0) {
-                return -1L;
-            }
+            // Even after a flush no slot can take this copy: it is larger than the room the ring has, so it takes the
+            // settled one-copy path (counted by the caller).
+            return -1L;
         }
         long offset = slot * UPLOAD_SLOT_BYTES + this.uploadSlotCursor[slot];
         this.uploadSlotCursor[slot] += bytes;
@@ -1783,9 +1741,6 @@ public final class VulkanContext {
     private int celtium$writableSlot(long bytes) {
         for (int i = 0; i < UPLOAD_SLOT_COUNT; i++) {
             int candidate = (this.uploadSlot + 1 + i) % UPLOAD_SLOT_COUNT;
-            if ((this.uploadInFlightSlots & (1 << candidate)) != 0) {
-                continue;
-            }
             if (this.uploadSlotCursor[candidate] + bytes <= UPLOAD_SLOT_BYTES) {
                 return candidate;
             }
@@ -1884,20 +1839,10 @@ public final class VulkanContext {
         if (this.pendingUploads.isEmpty()) {
             return;
         }
-        // One unwaited batch at a time. The previous one is reaped first (polled, and waited for only if the ring is
-        // out of slots), because a new batch may not write into staging bytes that submission is still reading.
-        if (this.uploadBatchInFlight) {
-            celtium$reapUploadBatch(true);
-        }
-        // A semaphore that a queue has not consumed cannot be signalled again, so a flush in that state goes out with
-        // its fence alone and the caller's ordering falls back to the host wait it would have had before OPT-08.
-        boolean signal = !this.uploadSignalOutstanding;
-        if (!signal) {
-            this.uploadBatchFenceOnlyFlushes++;
-        }
+        boolean trace = UPLOAD_TRACE;
         long started = System.nanoTime();
         VkCommandBuffer commandBuffer = beginCommands();
-        int slotsUsed = 0;
+        int copies = 0;
         try {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
@@ -1914,11 +1859,9 @@ public final class VulkanContext {
                     copy.get(0).srcOffset(pending.stagingOffset).dstOffset(pending.destinationOffset)
                             .size(pending.size);
                     vkCmdCopyBuffer(commandBuffer, this.uploadRingBuffer, destination, copy);
-                    if (pending.stagingOffset >= 0L) {
-                        slotsUsed |= 1 << (int) (pending.stagingOffset / UPLOAD_SLOT_BYTES);
-                    }
+                    copies++;
                 }
-                // The copies are transfer writes; making them available to every later stage here means the frame's
+                // The copies are transfer writes; making them available to every later stage here means the caller's
                 // submission needs no barrier of its own. One barrier per batch, not per copy.
                 org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
                 barrier.get(0).sType$Default()
@@ -1930,13 +1873,16 @@ public final class VulkanContext {
                 vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, barrier, null, null);
             }
-            celtium$submitUploadBatch(commandBuffer, signal, slotsUsed);
         } finally {
-            // The batch is cleared whatever the submit did, because re-recording it later would copy from slots whose
-            // contents have been overwritten by newer copies - a wrong picture rather than a failed one.
-            this.uploadCopiesFlushed += this.pendingUploads.size();
-            this.pendingUploads.clear();
-            if (!this.uploadBatchInFlight) {
+            // endCommands submits with the batch's own fence and waits on it: the wait is what frees the ring slots,
+            // and what makes the copies complete before whatever the caller submits next. The batch is cleared
+            // whatever the submit did, because re-recording it later would copy from slots whose contents have been
+            // overwritten by newer copies - a wrong picture rather than a failed one.
+            try {
+                endCommands(commandBuffer);
+            } finally {
+                this.uploadCopiesFlushed += this.pendingUploads.size();
+                this.pendingUploads.clear();
                 for (int slot = 0; slot < this.uploadSlotCursor.length; slot++) {
                     this.uploadSlotCursor[slot] = 0L;
                 }
@@ -1948,139 +1894,27 @@ public final class VulkanContext {
         if (millis > this.uploadFlushWorstMillis) {
             this.uploadFlushWorstMillis = millis;
         }
+        if (trace) {
+            System.out.println("[Celtium] CELTIUM_UPLOAD_FLUSH copies=" + copies + " flush=" + this.uploadFlushes
+                    + " millis=" + millis);
+        }
+        // The batches are gone, so the ring is entirely reusable: the cursors were reset above.
     }
 
     /**
-     * Records and submits one batch without waiting for it, signalling the frame's wait semaphore.
+     * Waits for any upload work that is still in flight.
      * <p>
-     * The command buffer and the fence stay owned by the context until {@link #awaitUploads()} reaps the batch: a
-     * command buffer in flight may not be freed, which is why this is not {@code endCommands}.
-     */
-    private void celtium$submitUploadBatch(VkCommandBuffer commandBuffer, boolean signal, int slotsUsed) {
-        check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer(upload batch)");
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (this.uploadDoneSemaphore == VK_NULL_HANDLE) {
-                LongBuffer semaphore = stack.mallocLong(1);
-                check(vkCreateSemaphore(this.device, VkSemaphoreCreateInfo.calloc(stack).sType$Default(), null, semaphore),
-                        "vkCreateSemaphore(upload batch)");
-                this.uploadDoneSemaphore = semaphore.get(0);
-            }
-            if (this.uploadBatchFence == VK_NULL_HANDLE) {
-                LongBuffer fence = stack.mallocLong(1);
-                check(vkCreateFence(this.device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, fence),
-                        "vkCreateFence(upload batch)");
-                this.uploadBatchFence = fence.get(0);
-            }
-            check(vkResetFences(this.device, this.uploadBatchFence), "vkResetFences(upload batch)");
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
-                    .pCommandBuffers(stack.pointers(commandBuffer));
-            if (signal) {
-                submit.pSignalSemaphores(stack.longs(this.uploadDoneSemaphore));
-            }
-            check(vkQueueSubmit(this.queue, submit, this.uploadBatchFence), "vkQueueSubmit(upload batch)");
-        }
-        this.uploadBatchCommandBuffer = commandBuffer.address();
-        this.uploadBatchInFlight = true;
-        this.uploadInFlightSlots = slotsUsed;
-        this.uploadSignalOutstanding = signal;
-        this.uploadBatchSubmissions++;
-        if (UPLOAD_TRACE) {
-            System.out.println("[Celtium] CELTIUM_UPLOAD_SIGNAL batch=" + this.uploadBatchSubmissions
-                    + " sem=0x" + Long.toHexString(this.uploadDoneSemaphore) + " signal=" + signal
-                    + " outstandingBefore=" + this.uploadSignalOutstanding + " slots=0x"
-                    + Integer.toHexString(slotsUsed));
-        }
-        // The slots this batch wrote into are reserved until its fence signals; the next reservation skips them
-        // (uploadInFlightSlots), which is what keeps staging bytes from being overwritten while the GPU reads them.
-    }
-
-    /**
-     * Reaps the batch that is in flight: polls its fence, and waits for it only when the caller says it must.
-     *
-     * @param waitWhenNotReady true to wait for the fence (bounded) when the poll says it has not signalled
-     * @return true when the batch was confirmed complete (or the device is lost, which is completion-equivalent)
-     */
-    private boolean celtium$reapUploadBatch(boolean waitWhenNotReady) {
-        if (!this.uploadBatchInFlight) {
-            return true;
-        }
-        int result = vkGetFenceStatus(this.device, this.uploadBatchFence);
-        if (result == VK_NOT_READY && waitWhenNotReady) {
-            this.uploadBatchStalls++;
-            long started = System.nanoTime();
-            result = vkWaitForFences(this.device, this.uploadBatchFence, true, SUBMIT_TIMEOUT_NANOS);
-            long millis = (System.nanoTime() - started) / 1_000_000L;
-            this.uploadBatchWaitMillis += millis;
-            if (millis > this.uploadBatchWaitWorstMillis) {
-                this.uploadBatchWaitWorstMillis = millis;
-            }
-            if (result == VK_TIMEOUT) {
-                submitTimeouts++;
-                this.usable = false;
-                throw new IllegalStateException("vkWaitForFences(upload batch) did not signal within "
-                        + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L) + "s; the batch's command buffer and fence are"
-                        + " abandoned rather than freed (submitTimeouts=" + submitTimeouts + ")");
-            }
-        } else if (result == VK_NOT_READY) {
-            return false;
-        } else if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) {
-            queueWaitFailures++;
-            this.usable = false;
-            throw new IllegalStateException("vkGetFenceStatus(upload batch) returned " + result
-                    + "; the batch's ownership is unknown (queueWaitFailures=" + queueWaitFailures + ")");
-        } else {
-            this.uploadBatchReapedByPoll++;
-        }
-        // Confirmed complete, or the device is gone and nothing is executing any more: either way the copies are
-        // done and the resources may be released.
-        if (this.uploadBatchCommandBuffer != VK_NULL_HANDLE) {
-            vkFreeCommandBuffers(this.device, this.commandPool, new VkCommandBuffer(this.uploadBatchCommandBuffer,
-                    this.device));
-            this.uploadBatchCommandBuffer = VK_NULL_HANDLE;
-        }
-        for (int slot = 0; slot < this.uploadSlotCursor.length; slot++) {
-            if ((this.uploadInFlightSlots & (1 << slot)) != 0) {
-                this.uploadSlotCursor[slot] = 0L;
-            }
-        }
-        this.uploadInFlightSlots = 0;
-        this.uploadBatchInFlight = false;
-        this.uploadBatchCompletions++;
-        noteCompletionConfirmed(result == VK_ERROR_DEVICE_LOST);
-        return true;
-    }
-
-    /**
-     * Waits for the upload batch that is in flight, if any. Called where a destination's bytes must be final: before a
-     * buffer is grown or destroyed, before a host read of a buffer, and at teardown.
+     * Empty on purpose in the accepted OPT-07 shape: {@link #flushUploads()} waits for its own submission before it
+     * returns, so a caller that has flushed has nothing left to wait for. It exists as the seam the asynchronous form
+     * (OPT-08 step 1) needs, and the measurement that reverted that form is in plan.md 0.226.
      */
     public void awaitUploads() {
-        celtium$reapUploadBatch(true);
+        // Nothing to do: every batch is waited for by the flush that submitted it.
     }
 
-    /** Submits every pending copy and waits for it, and for any batch already in flight, to complete. */
+    /** Submits every pending copy and waits for it to complete. */
     public void settleUploads() {
         flushUploads();
-        awaitUploads();
-    }
-
-    /**
-     * {@return the semaphore the frame's next submission must wait on, or {@link #VK_NULL_HANDLE} when no batch is
-     * outstanding}. The caller that takes it must call {@link #noteUploadSemaphoreConsumed()} once its own submission
-     * has been accepted by the queue.
-     */
-    public long takeUploadWaitSemaphore() {
-        long semaphore = this.uploadSignalOutstanding ? this.uploadDoneSemaphore : VK_NULL_HANDLE;
-        if (UPLOAD_TRACE) {
-            System.out.println("[Celtium] CELTIUM_UPLOAD_TAKE sem=0x" + Long.toHexString(semaphore)
-                    + " outstanding=" + this.uploadSignalOutstanding);
-        }
-        return semaphore;
-    }
-
-    /** Clears the outstanding signal: the queue has taken the wait on the batch's semaphore. */
-    public void noteUploadSemaphoreConsumed() {
-        this.uploadSignalOutstanding = false;
     }
 
     /** {@return the batched upload path's census, for the run report}. */
@@ -2093,16 +1927,7 @@ public final class VulkanContext {
                 + " uploadFallbackCopies=" + this.uploadFallbackCopies
                 + " uploadDroppedCopies=" + this.uploadDroppedCopies
                 + " uploadSkippedDeletedDestinations=" + this.uploadSkippedDeletedDestinations
-                // OPT-08 step 1: the batch is no longer waited for by the CPU; these say how it went.
-                + " uploadBatchSubmissions=" + this.uploadBatchSubmissions
-                + " uploadBatchCompletions=" + this.uploadBatchCompletions
-                + " uploadBatchStalls=" + this.uploadBatchStalls
-                + " uploadBatchReapedByPoll=" + this.uploadBatchReapedByPoll
-                + " uploadBatchWaitMillis=" + this.uploadBatchWaitMillis
-                + " uploadBatchWaitWorstMillis=" + this.uploadBatchWaitWorstMillis
-                + " uploadBatchFenceOnlyFlushes=" + this.uploadBatchFenceOnlyFlushes
-                + " uploadBatchInFlight=" + this.uploadBatchInFlight
-                + " uploadSignalOutstanding=" + this.uploadSignalOutstanding;
+                + " uploadEarlyFlushesForRingPressure=" + this.uploadEarlyFlushesForRingPressure;
     }
 
     private void recordStagingCopy(long destination, long destinationOffset, long length) {

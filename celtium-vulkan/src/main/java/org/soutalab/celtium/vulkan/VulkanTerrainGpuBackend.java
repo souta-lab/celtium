@@ -4915,13 +4915,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // semaphore to the wait semaphore rather than disappearing. Both halves of the bridge pair must stay
                     // 1:1, so the fix belongs in the frame-open contract (drain before re-signalling), not at this call
                     // site. The tracking below is what such a drain would consult.
-                    if (bridgeDone != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                        this.frameTarget.noteDoneSemaphoreSignalled();
-                    }
                     int sourceLayout = this.frameTarget.colorImageLayout();
                     int restoredLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
                     String result = this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(), sourceLayout,
                             this.targetWidth, this.targetHeight, bridgeWait, bridgeDone, restoredLayout);
+                    // Recorded from the outcome, not from the intent. This flag answers "is the done semaphore's signal
+                    // outstanding?", and it was being set before the present ran - so a present that did not submit left
+                    // it claiming a signal that never happened, and the next producer (submitSignalOnly, the second
+                    // producer of the same semaphore) was suppressed, shifting the pairing the other way. Measured: the
+                    // ten VUID-vkQueueSubmit-pSignalSemaphores-00067 messages survive with the guard, with a drain, and
+                    // with the consumer reporting consumption, so the producer is none of those paths and the flag's
+                    // own accuracy is what is left to correct.
+                    if (bridgeDone != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE
+                            && this.swapchain.lastPresentSubmitDone()) {
+                        this.frameTarget.noteDoneSemaphoreSignalled();
+                    }
                     // The present moved the shared image through the transfer layout and this hands it back, so the
                     // owner's bookkeeping follows what the commands actually did.
                     this.frameTarget.noteColorImageLayout(restoredLayout);
@@ -12755,9 +12763,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * seeded post-chain path synchronizes with the fence instead, and the frame's semaphores belong to whoever
      * opened the frame.
      */
-    /** Trace of what each frame submission actually carried, for naming a semaphore handoff that went wrong. */
-    private static final boolean UPLOAD_SUBMIT_TRACE = Boolean.getBoolean("celtium.vulkan.uploadTrace");
-
     private void submitCommands(boolean withFrameSemaphores) {
         if (this.gpuStalled) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
@@ -12773,28 +12778,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.commandState.end();
             check(vkResetFences(this.context.device(), this.fence), "vkResetFences");
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
-            // OPT-08 step 1: the upload batch is a submission of its own that this one must wait for. The wait is what
-            // makes the copies visible to this command buffer's reads - the batch's barrier only makes them available -
-            // and it is taken here instead of the CPU blocking for the batch at flush time. A batch that has been
-            // reaped without its semaphore being consumed leaves nothing to wait on, so the wait is conditional.
-            long uploadWait = this.context.takeUploadWaitSemaphore();
-            int waitCount = (withFrameSemaphores ? 1 : 0) + (uploadWait != 0L ? 1 : 0);
             LongBuffer waitSemaphores = null;
             IntBuffer waitStages = null;
             LongBuffer signalSemaphores = null;
-            if (waitCount > 0) {
-                waitSemaphores = stack.mallocLong(waitCount);
-                waitStages = stack.mallocInt(waitCount);
-                int at = 0;
-                if (withFrameSemaphores) {
-                    waitSemaphores.put(at, this.frameTarget.waitSemaphore());
-                    waitStages.put(at, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-                    at++;
-                }
-                if (uploadWait != 0L) {
-                    waitSemaphores.put(at, uploadWait);
-                    waitStages.put(at, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-                }
+            if (withFrameSemaphores) {
+                waitSemaphores = stack.mallocLong(1);
+                waitSemaphores.put(0, this.frameTarget.waitSemaphore());
+                waitStages = stack.mallocInt(1);
+                waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
             }
             if (withFrameSemaphores) {
                 signalSemaphores = stack.mallocLong(1);
@@ -12806,19 +12797,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // waitSemaphoreCount must be set explicitly: LWJGL's pWaitSemaphores(LongBuffer) writes only the
             // pointer, unlike pSignalSemaphores which also sets its count. Leaving it to calloc's zero meant this
             // submission waited on nothing at all - which is what the validation layer was reporting all along.
-            if (waitCount > 0) {
-                submit.waitSemaphoreCount(waitCount);
-                submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages);
-            }
-            if (UPLOAD_SUBMIT_TRACE) {
-                System.out.println("[Celtium] CELTIUM_FRAME_SUBMIT frame=" + this.frameId
-                        + " withFrameSemaphores=" + withFrameSemaphores + " waitCount=" + waitCount
-                        + " uploadWait=0x" + Long.toHexString(uploadWait) + " signals="
-                        + (signalSemaphores == null ? 0 : signalSemaphores.remaining())
-                        + " boundWaitCount=" + submit.waitSemaphoreCount());
-            }
-            if (signalSemaphores != null) {
-                submit.pSignalSemaphores(signalSemaphores);
+            if (withFrameSemaphores) {
+                submit.waitSemaphoreCount(waitSemaphores.remaining());
+                submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
+                        .pSignalSemaphores(signalSemaphores);
             }
             submit.pCommandBuffers(commandBuffers);
             if (this.immediateWindowBusy && !this.recordedImmediateGroups.isEmpty() && failImmediateSubmits > 0) {
@@ -12840,12 +12822,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
                         check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
-            // The queue owns the batch's semaphore wait now, so it is no longer outstanding and the next batch may
-            // signal it again. Recorded only after a successful submit: a submission the driver refused never consumed
-            // the wait, and pretending otherwise would let the next flush signal a semaphore that is still signalled.
-            if (uploadWait != 0L) {
-                this.context.noteUploadSemaphoreConsumed();
-            }
+
             // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
             // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
             // that never reaches the queue must not hold a slot, and an abandon after a successful submit must.
