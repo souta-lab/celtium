@@ -194,18 +194,41 @@ if __name__ == "__main__":
     frame = Image.open(FRAME).convert("RGB")
     px = frame.load()
     print("frame %s  %dx%d" % (os.path.relpath(FRAME, ROOT), frame.size[0], frame.size[1]))
+    # Outputs carry the leg's own name, so running the check on a second leg cannot overwrite the first leg's
+    # evidence: the before/after pair for the strip-separator fix is font-f3-* against font-strip-*.
+    tag = os.path.basename(os.path.dirname(FRAME))
+    if tag == "screenshots":                      # <leg>/screenshots/<frame>.png
+        tag = os.path.basename(os.path.dirname(os.path.dirname(FRAME)))
     print("texel-exactness of the F3 overlay glyphs against ascii.png (GUI scale 3,")
     print("space advances 4 GUI units and emits no quad):")
     check(px, LINE_1, 1, "line 1")
     check(px, LINE_4, 4, "line 4")
-    expected_vs_observed(px, LINE_1, 1, os.path.join(OUT, "font-f3-line1-sheet-vs-frame.png"))
-    ghost(os.path.join(OUT, "font-f3-line4-background-residual.png"))
-    print("1-px vertical lines inside line 4's rect rows 87-110 (x=5..169):")
-    lines = 0
-    for x in range(5, 170):
+    expected_vs_observed(px, LINE_1, 1, os.path.join(OUT, "%s-line1-sheet-vs-frame.png" % tag))
+    ghost(os.path.join(OUT, "%s-line4-background-residual.png" % tag))
+    # The bars, counted honestly. The high-pass reads x+-2, so a column within two pixels of a glyph stroke (or of the
+    # F3 rect's right edge) reports a large value without carrying a bar - that footprint inflated the first version of
+    # this count to "105 of 165". A column is usable only if neither it nor its +-2 neighbours carry a stroke.
+    stroke_cols = set()
+    pen = PEN_X_GUI
+    for ch in LINE_4:
+        if ch in (" ", "\u00a0"):
+            pen += 4
+            continue
+        w, c = char_width(ord(ch)), cell(ord(ch))
+        for t in range(w - 1):
+            for ty in range(7):
+                if c[ty][t]:
+                    for dx in range(TEXEL_PX):
+                        stroke_cols.add((pen + t) * TEXEL_PX + dx)
+        pen += w
+    usable = [x for x in range(5, 170)
+              if all((x + d) not in stroke_cols for d in (-2, -1, 0, 1, 2))]
+    bars = []
+    for x in usable:
         col = [lum(px[x, y]) - (lum(px[x - 2, y]) + lum(px[x + 2, y])) / 2.0
                for y in range(87, 111)]
         if sum(1 for v in col if abs(v) >= 5) >= 12:
-            lines += 1
-    print("  F3 on  (this leg)            %d of 165 columns" % lines)
+            bars.append(x)
+    print("1-px bars in line 4's rect rows 87-110, detector-safe columns only:")
+    print("  %-28s %d of %d usable columns %s" % ("F3 on (this leg)", len(bars), len(usable), bars[:16]))
     control(CONTROL, "F3 off (ww39, different leg)")
