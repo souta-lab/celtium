@@ -208,12 +208,22 @@ public abstract class ShaderGroupMixin {
                 }
             }
             int[] outBytes = new int[1];
-            float[] block = pack(manager, outBytes);
+            List<String> blockNames = new ArrayList<>();
+            List<Integer> blockOffsets = new ArrayList<>();
+            float[] block = pack(manager, outBytes, blockNames, blockOffsets);
             if (block == null || outBytes[0] <= 0 || outBytes[0] > block.length * 4) {
                 return null;
             }
             pass.push = block;
             pass.pushBytes = outBytes[0];
+            // The same layout said member by member. The native executor compares these offsets with the ones the
+            // shader modules declare before it writes a block: a length alone cannot tell a permuted block from a
+            // correct one, and the buffer route in particular writes at whatever offset this reports.
+            pass.blockNames = blockNames.toArray(new String[0]);
+            pass.blockOffsets = new int[blockOffsets.size()];
+            for (int i = 0; i < blockOffsets.size(); ++i) {
+                pass.blockOffsets[i] = blockOffsets.get(i).intValue();
+            }
             return pass;
         } catch (RuntimeException | LinkageError error) {
             return null;
@@ -229,15 +239,34 @@ public abstract class ShaderGroupMixin {
     /**
      * {@return the program's push block in the normalized schema the ported shaders declare} - ProjMat at 0,
      * InSize at 64, OutSize at 72, Time at 80, then every remaining declared uniform in JSON order, aligned like
-     * GLSL does (matrices and vec3+ at 16 bytes, vec2 at 8, scalars at 4).
+     * GLSL does (matrices and vec3+ at 16 bytes, vec2 at 8, scalars at 4) - with the same layout reported member by
+     * member through {@code names} and {@code offsets}.
+     * <p>
+     * The extras start at 84, not at 88: Time is a float, so the next member is aligned from the byte after it. A
+     * first extra of vec2/vec3/vec4 lands at 88/96/96 either way, but a first extra that is a scalar - invert's
+     * InverseAmount, bits' Resolution - lands at 84, and packing it at 88 made the native pass read the four bytes
+     * between them instead of the value (measured: invert read 0.0 for an InverseAmount the GL chain uploaded as
+     * 0.8, and bits' Resolution/Saturation/MosaicSize were all shifted by four). The shaders declare those at 84
+     * because that is where the compiler puts them; the executor now compares the two member by member.
      */
-    private static float[] pack(ShaderManager manager, int[] outBytes) {
+    private static float[] pack(ShaderManager manager, int[] outBytes, List<String> names, List<Integer> offsets) {
         float[] block = new float[64];
         if (!writeNamed(block, 0, manager, "ProjMat") || !writeNamed(block, 64, manager, "InSize")
                 || !writeNamed(block, 72, manager, "OutSize") || !writeNamed(block, 80, manager, "Time")) {
             return null;
         }
-        int offset = 88;
+        // The head is written at fixed offsets whether or not the program declares it, so its layout is reported the
+        // same way: the executor compares by name, and a head member missing from the report would read as a member
+        // the packer never placed.
+        names.add("ProjMat");
+        offsets.add(Integer.valueOf(0));
+        names.add("InSize");
+        offsets.add(Integer.valueOf(64));
+        names.add("OutSize");
+        offsets.add(Integer.valueOf(72));
+        names.add("Time");
+        offsets.add(Integer.valueOf(80));
+        int offset = 84;
         List<ShaderUniform> uniforms = ((ShaderManagerAccessor) manager).celtium$shaderUniforms();
         for (ShaderUniform uniform : uniforms) {
             if (isHeadUniform(uniform.getShaderName())) {
@@ -254,6 +283,8 @@ public abstract class ShaderGroupMixin {
             if (!writeUniform(block, offset, uniform)) {
                 return null;
             }
+            names.add(uniform.getShaderName());
+            offsets.add(Integer.valueOf(offset));
             offset += count * 4;
         }
         outBytes[0] = offset;
