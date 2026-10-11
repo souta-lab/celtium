@@ -544,6 +544,8 @@ public final class VulkanGlState {
 
     /** Bounded log of the first unit switches and the first binds that carry their unit, so BH-06's half is named. */
     private static int unitLogs;
+    /** Its own budget: the bind log filled the shared one first, which suppressed every switch line (BH-06 re-take). */
+    private static int unitSwitchLogs;
     private static final int UNIT_LOG_LIMIT = 24;
 
     /** {@return how many binds arrived on a unit other than 0, against how many on unit 0}. */
@@ -646,8 +648,8 @@ public final class VulkanGlState {
 
     public void activeTextureUnit(int unit) {
         this.activeTextureUnit = unit;
-        if (unitLogs < UNIT_LOG_LIMIT) {
-            unitLogs++;
+        if (unitSwitchLogs < UNIT_LOG_LIMIT) {
+            unitSwitchLogs++;
             System.out.println("[Celtium] CELTIUM_UNIT_SWITCH unit=" + unit
                     + " (the mirror's active unit; a switch the game makes that is absent here is a hook the"
                     + " mirror does not see)");

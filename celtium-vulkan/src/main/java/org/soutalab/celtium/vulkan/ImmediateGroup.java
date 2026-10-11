@@ -75,6 +75,17 @@ public final class ImmediateGroup {
     public int batches;
     /** Viewport values captured at accept time for off-target passes. */
     public int[] viewportValues;
+    /**
+     * The game's clip rectangle and its enable bit, captured when this group was opened.
+     * <p>
+     * The scissor is command state and it is read where the group's rectangle becomes the Vulkan scissor - but it was
+     * read from the *live* stub record at that point, so a group that spans a scissor change (the F3 overlay's list,
+     * a scrolling panel) had its last rectangle applied to every batch in it. Captured here for the same reason the
+     * fog and the state are: at group open the live state is the batch's own.
+     */
+    public int[] scissorBox;
+    /** Whether the clip was enabled when this group was opened. */
+    public boolean scissorEnabled;
     /** Frame and target-generation stamp: groups of a destroyed frame target must be retired, not drawn. */
     public GroupStamp stamp;
 

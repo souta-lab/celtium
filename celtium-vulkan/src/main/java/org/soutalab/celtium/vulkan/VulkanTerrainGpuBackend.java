@@ -285,6 +285,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
     private int currentGroupBatches;
     private int[] currentGroupViewportValues;
+    /**
+     * The game's {@code glScissor} rectangle the group being built was offered under, and whether
+     * {@code GL_SCISSOR_TEST} was on, captured with the rest of the group's state.
+     * <p>
+     * The flush used to read the stub's live box when it issued {@code vkCmdSetScissor}, which is the same class of
+     * defect the colour, the fog and the texture affine each had: the scissor is per-draw state, so a group whose
+     * batches were offered under two different rectangles got one of them - the <em>last</em> - applied to all of
+     * them. Capturing it here and adding it to the boundary test below is what makes the rectangle part of the group,
+     * exactly as {@code currentGroupViewportValues} does for the viewport. The box is a 4-element array only when a
+     * clip applies ({@code null} = no clip), so the common case allocates nothing per group.
+     */
+    private final int[] currentGroupScissorBox = new int[4];
+    private boolean currentGroupScissorTest;
+    private boolean currentGroupScissorCalled;
+    /** Groups closed because the game's clip rectangle moved between two otherwise identical batches. */
+    private long scissorBoundarySplits;
+    /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
+    private long scissorCapturedGroups;
     private PreparedImmediate currentPreparedImmediate;
 
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
@@ -1642,6 +1660,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * to the fog colour (179,207,255) - i.e. the flag made no difference to the picture at all.
      */
     private float[] currentGroupFog;
+    /** The clip rectangle captured with the open group, or null when glScissor had not been called. */
+    private int[] currentGroupScissor;
+    /** Whether the clip was enabled when the open group was created. */
+    private boolean currentGroupScissorEnabled;
     /** The colour GL had current when a position-only batch was offered; null for every other format. */
     private float[] currentGroupColor;
     /**
@@ -4810,9 +4832,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (!samePass && this.currentImmediateMesh != null) {
                 this.passSplits++;
             }
+            // BH-09's group rule: the clip rectangle is command state, so it must not go into the pipeline key - but
+            // it is per-draw state, so a batch offered under a different rectangle cannot join this group. Read here,
+            // at the offer, and compared against the captured one without allocating (the four readers rather than
+            // scissorBox(), which builds an array; this runs on every batch).
+            boolean liveScissorTest = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest();
+            boolean liveScissorCalled = liveScissorTest
+                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled();
+            int liveScissorX = liveScissorCalled ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorX() : 0;
+            int liveScissorY = liveScissorCalled ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorY() : 0;
+            int liveScissorWidth = liveScissorCalled ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorWidth() : 0;
+            int liveScissorHeight = liveScissorCalled ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorHeight() : 0;
+            boolean scissorMoved = !celtium$sameScissor(liveScissorTest, liveScissorCalled, liveScissorX,
+                    liveScissorY, liveScissorWidth, liveScissorHeight);
             if (this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
                     || this.currentGroupStateKey != stateKey || !samePass
+                    || scissorMoved
                     || this.currentPreparedImmediate == null || this.currentPreparedImmediate.pipeline != prepared.pipeline
                     || this.currentPreparedImmediate.descriptor != prepared.descriptor
                     || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
@@ -4849,6 +4886,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
                 this.currentGroupFog = null;
+                this.currentGroupScissor = null;
+                this.currentGroupScissorEnabled = false;
                 this.currentGroupBatches = 0;
                 this.currentGroupViewportValues = currentViewport();
                 this.currentPreparedImmediate = prepared;
@@ -4875,6 +4914,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // moment the live fog state is the batch's own, and by the time the group closes the game may have
                 // bracketed the batch with enable/disable (the sky dome is exactly that case).
                 this.currentGroupFog = celtium$fogSnapshot();
+                // BH-09/OPT-10: the clip rectangle the batch was offered under, captured here rather than read at
+                // flush time. Reading it live applied the last rectangle of a scissor change to every batch in the
+                // group, which is the same "state must reach the group" rule the fog and the state follow.
+                int[] liveScissor = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox() : null;
+                this.currentGroupScissor = liveScissor == null ? null : liveScissor.clone();
+                this.currentGroupScissorEnabled = liveScissor != null
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest();
                 // BH-05: the lighting belongs to the batch that opened the group, so it is read from the state saved
                 // two lines above while that state is still the live one. Reading it at close time instead let a later
                 // light change shade vertices that had already been accepted.
@@ -6926,6 +6973,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.lightmapCoords = this.currentGroupLightmapCoords;
             // The state captured when the group was opened, not the live state: see currentGroupFog.
             group.fog = this.currentGroupFog;
+            group.scissorBox = this.currentGroupScissor;
+            group.scissorEnabled = this.currentGroupScissorEnabled;
             celtium$noteFogCaptureDrift(group);
             group.stamp = new GroupStamp(this.frameId, this.targetGeneration, false, this.worldEpoch);
             this.immediateGroups.add(group);
@@ -11805,8 +11854,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         int scissorY = y;
         int scissorWidth = width;
         int scissorHeight = height;
-        int[] clip = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox();
-        if (clip != null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()) {
+        // The group's own captured clip, not the live record: reading it live applied whatever rectangle the game
+        // had set last to every batch in the group, so a group spanning a scissor change was clipped by the wrong box
+        // (OPT-10's "state must reach the group", the same rule the fog and the light params follow).
+        int[] clip = group.scissorBox;
+        if (clip != null && group.scissorEnabled) {
             int clipX0 = clip[0];
             int clipY0 = this.targetHeight - (clip[1] + clip[3]);
             int clipX1 = clipX0 + clip[2];

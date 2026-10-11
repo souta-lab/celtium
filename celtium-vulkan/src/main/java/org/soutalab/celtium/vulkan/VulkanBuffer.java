@@ -81,7 +81,10 @@ public final class VulkanBuffer {
         if (length == 0L) {
             return;
         }
-        this.context.uploadToBuffer(this.handle, offsetBytes, sourceAddress, length);
+        // The deferred form: the handle is resolved when the frame's upload batch is submitted, so a growth of this
+        // buffer between here and the flush (the arena grows when a mesh does not fit) cannot leave the copy naming a
+        // destroyed VkBuffer. The copy still lands at this offset, because offsets survive a growth.
+        this.context.uploadToBuffer(this, offsetBytes, sourceAddress, length);
     }
 
     /**
@@ -151,6 +154,11 @@ public final class VulkanBuffer {
         if (requiredBytes <= this.size) {
             return;
         }
+        // A copy into this buffer may still be pending in the frame's upload batch. It is submitted now, while the
+        // handle it resolves to is still the current one, because the copy-out below reads this buffer's contents and
+        // the old buffer is destroyed at the end of this call. Growth is rare (a handful per run), so this does not
+        // put a per-copy wait back into the upload path.
+        this.context.flushUploads();
         long newSize = VulkanContext.alignUp4(requiredBytes);
         long oldHandle = this.handle;
         long oldMemory = this.memory;

@@ -230,8 +230,30 @@ public final class VulkanContext {
     private long uploadRingCapacity;
     private final long[] uploadSlotCursor = new long[UPLOAD_SLOT_COUNT];
     private int uploadSlot = -1;
-    /** {destination buffer handle, destination offset, staging offset, size} for every copy not yet submitted. */
-    private final java.util.List<long[]> pendingUploads = new java.util.ArrayList<long[]>();
+    /**
+     * Every copy this frame has recorded but not submitted.
+     * <p>
+     * The destination is a {@link VulkanBuffer} reference, not a handle, because the handle can be replaced between
+     * the record and the flush: the arena grows its buffer when a mesh does not fit, and {@code ensureCapacity}
+     * destroys the old {@code VkBuffer}. Resolving at flush time is what makes that transparent instead of dangling
+     * (the first attempt recorded the handle and lost the device: plan.md 0.224).
+     */
+    private final java.util.List<PendingUpload> pendingUploads = new java.util.ArrayList<PendingUpload>();
+
+    /** One pending copy: where it goes, where its bytes already are, and how many. */
+    private static final class PendingUpload {
+        private final VulkanBuffer target;
+        private final long destinationOffset;
+        private final long stagingOffset;
+        private final long size;
+
+        private PendingUpload(VulkanBuffer target, long destinationOffset, long stagingOffset, long size) {
+            this.target = target;
+            this.destinationOffset = destinationOffset;
+            this.stagingOffset = stagingOffset;
+            this.size = size;
+        }
+    }
     private long uploadCopiesBatched;
     private long uploadCopiesFlushed;
     private long uploadFlushes;
@@ -239,6 +261,8 @@ public final class VulkanContext {
     private long uploadFlushWorstMillis;
     private long uploadFallbackCopies;
     private long uploadDroppedCopies;
+    /** Copies whose destination was destroyed before the flush: nothing reads it, so the copy is skipped. */
+    private long uploadSkippedDeletedDestinations;
     private long stagingCapacityBytes;
 
     private VulkanContext() {
@@ -722,6 +746,70 @@ public final class VulkanContext {
         // correct once a destination cannot be destroyed or have its segments reused while a copy into it is pending;
         // that is the ownership contract OPT-07 needs, and it is not this unit.
         celtium$immediateStagingCopy(destination, destinationOffset, sourceAddress, length, paddedLength);
+    }
+
+    /**
+     * Records a copy into a buffer this frame, resolved and submitted by {@link #flushUploads()} (OPT-07).
+     * <p>
+     * The destination is named by the {@link VulkanBuffer} rather than by its handle, so a growth between this call
+     * and the flush is transparent: the copy lands in the buffer the object has at flush time, at the same offset
+     * (offsets do not move across a growth). A destination released before the flush is skipped and counted. The
+     * caller must not need the bytes before the next {@link #flushUploads()}; the frame's own submission calls it
+     * before it submits anything that reads them.
+     * <p>
+     * Render thread only.
+     */
+    public void uploadToBuffer(VulkanBuffer target, long destinationOffset, long sourceAddress, long length) {
+        if (target == null) {
+            throw new IllegalArgumentException("target must not be null");
+        }
+        if (sourceAddress == 0L) {
+            throw new IllegalArgumentException("sourceAddress must be a non-null native address");
+        }
+        requireUploadArguments(target.buffer(), destinationOffset, length);
+        if (length == 0L) {
+            return;
+        }
+        long paddedLength = alignUp4(length);
+        long stagingOffset = celtium$reserveUploadSlot(paddedLength);
+        if (stagingOffset < 0L) {
+            // Larger than a ring slot: the settled path, which blocks until the copy has completed. Counted, so a
+            // workload that needs the blocking form says so instead of hiding inside the batch counters.
+            this.uploadFallbackCopies++;
+            celtium$immediateStagingCopy(target.buffer(), destinationOffset, sourceAddress, length, paddedLength);
+            return;
+        }
+        MemoryUtil.memCopy(sourceAddress, this.uploadRingMapped + stagingOffset, length);
+        celtium$zeroUploadTail(stagingOffset, length, paddedLength);
+        this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
+        this.uploadCopiesBatched++;
+    }
+
+    /** The heap-buffer half of {@link #uploadToBuffer(VulkanBuffer, long, long, long)}. */
+    public void uploadToBuffer(VulkanBuffer target, long destinationOffset, ByteBuffer source) {
+        if (target == null) {
+            throw new IllegalArgumentException("target must not be null");
+        }
+        if (source == null) {
+            throw new IllegalArgumentException("source must not be null");
+        }
+        int length = source.remaining();
+        requireUploadArguments(target.buffer(), destinationOffset, length);
+        if (length == 0) {
+            return;
+        }
+        long paddedLength = alignUp4(length);
+        long stagingOffset = celtium$reserveUploadSlot(paddedLength);
+        if (stagingOffset < 0L) {
+            this.uploadFallbackCopies++;
+            celtium$immediateStagingCopy(target.buffer(), destinationOffset, source, paddedLength);
+            return;
+        }
+        ByteBuffer staging = MemoryUtil.memByteBuffer(this.uploadRingMapped + stagingOffset, (int) paddedLength);
+        MemoryUtil.memCopy(source.duplicate(), staging);
+        celtium$zeroUploadTail(stagingOffset, length, paddedLength);
+        this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
+        this.uploadCopiesBatched++;
     }
 
     /**
@@ -1679,9 +1767,19 @@ public final class VulkanContext {
         try {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
-                for (long[] pending : this.pendingUploads) {
-                    copy.get(0).srcOffset(pending[2]).dstOffset(pending[1]).size(pending[3]);
-                    vkCmdCopyBuffer(commandBuffer, this.uploadRingBuffer, pending[0], copy);
+                for (PendingUpload pending : this.pendingUploads) {
+                    // Resolved here, not at record time: a growth between the two replaced the handle, and the offset
+                    // stayed valid, so the copy belongs in the buffer the object has now. A destination that is gone
+                    // resolves to VK_NULL_HANDLE - the arena or the world it belonged to was released, nothing reads
+                    // it any more - and the copy is skipped rather than submitted against a dead handle.
+                    long destination = pending.target.buffer();
+                    if (destination == VK_NULL_HANDLE) {
+                        this.uploadSkippedDeletedDestinations++;
+                        continue;
+                    }
+                    copy.get(0).srcOffset(pending.stagingOffset).dstOffset(pending.destinationOffset)
+                            .size(pending.size);
+                    vkCmdCopyBuffer(commandBuffer, this.uploadRingBuffer, destination, copy);
                 }
                 // The copies are transfer writes; making them available to every later stage here means the caller's
                 // submission needs no barrier of its own. One barrier per batch, not per copy.
@@ -1726,7 +1824,8 @@ public final class VulkanContext {
                 + " uploadPendingCopies=" + this.pendingUploads.size()
                 + " uploadRingBytes=" + this.uploadRingCapacity
                 + " uploadFallbackCopies=" + this.uploadFallbackCopies
-                + " uploadDroppedCopies=" + this.uploadDroppedCopies;
+                + " uploadDroppedCopies=" + this.uploadDroppedCopies
+                + " uploadSkippedDeletedDestinations=" + this.uploadSkippedDeletedDestinations;
     }
 
     private void recordStagingCopy(long destination, long destinationOffset, long length) {

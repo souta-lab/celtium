@@ -818,6 +818,39 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub != null && stub.enables.getOrDefault(Integer.valueOf(GL_SCISSOR_TEST), Boolean.FALSE).booleanValue();
     }
 
+    /**
+     * {@return whether {@code glScissor} was called at all}.
+     * <p>
+     * The four readers below exist beside {@link #scissorBox()} so the backend can compare a group's captured
+     * rectangle against the live one once per batch without allocating: {@code scissorBox()} builds a new array, and
+     * the group's boundary test runs on every offered batch. They are the same four values; only the allocation
+     * differs.
+     */
+    public static boolean scissorCalled() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.scissorCalled;
+    }
+
+    public static int scissorX() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.scissorBox[0];
+    }
+
+    public static int scissorY() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.scissorBox[1];
+    }
+
+    public static int scissorWidth() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.scissorBox[2];
+    }
+
+    public static int scissorHeight() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0 : stub.scissorBox[3];
+    }
+
     /** The stream the exit census is written to: the process's own stdout, not the logger Forge put in front of it. */
     private static volatile java.io.PrintStream exitStream;
 
