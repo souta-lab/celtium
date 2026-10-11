@@ -274,6 +274,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.291 **round 97: F3 のコストを原典と外部前例で裏づけ（vanilla の per-glyph `charmap.indexOf` と `bindTexture`）**
+
+- **原典の構造（web 調査・1.12.2 の `FontRenderer`）**: `drawString` → `renderString` → **`renderStringAtPos`**（1文字ずつ
+  `charmap.indexOf(c0)` を回す per-character loop・`getStringWidth` も同様）→ **`renderDefaultChar`**（その中で毎 glyph
+  `bindTexture(this.locationFontTexture)`）→ `doDraw`。
+  ＝glyph-fix が名指しした「200文字 ASCII 表の `indexOf` を1文字ごと」「毎 glyph の `bindTexture`」は**原典どおり**で、
+  我々の hook（`GlStateManager` の bind・immediate 3 hook）は**その内側に居る**ため、**hook の外側の vanilla 仕事が無計測のまま残る**。
+  参照: [mappings.dev の 1.12.2 FontRenderer](https://mappings.dev/1.12.2/net/minecraft/client/gui/FontRenderer.html)・
+  [Forge javadoc 1.12.2 FontRenderer](https://nekoyue.github.io/ForgeJavaDocs-NG/javadoc/1.12.2/net/minecraft/client/gui/FontRenderer.html)・
+  [Optifine-1.12-SRC の FontRenderer](https://github.com/Awe23123/Optifine-1.12-SRC/blob/master/src/net/minecraft/client/gui/FontRenderer.java)。
+- **同種の前例（外部）**: MinecraftConsoles の **"Batch font drawing to fix debug overlay FPS"**（`renderCharacter` を
+  `addCharacterQuad` に分け、`draw` の per-character ループを1つの Tessellator batch にまとめる）＝**F3 overlay の FPS を
+  font の batch 化で直す**という同じ結論に別実装が到達している。
+  参照: [MinecraftConsoles の commit](https://git.minecraftlegacy.com/backups/MinecraftConsoles/commit/7dcecdbd4d6037194e75d9fe3130845dd8690928)。
+- **Celtium 側の含意**: 我々の `celtium$fontAppend`/`flushPendingFontBatch` は既に **1 run を1 batch にまとめて**おり
+  （`fontStripSeparators=1138913`・0.23 µs/glyph）、**残るのは vanilla 側の per-glyph 仕事**（`indexOf` と `bindTexture`）と
+  **per-frame の overlay 構築**。したがって次の実装候補は (a) `FontRenderer.renderStringAtPos`/`renderDefaultChar` に対する
+  **Celtium 側の高速経路**（charmap を `int[65536]` 表に、bind を run 内で1回に）、(b) `GuiOverlayDebug` の per-frame 文字列構築の削減。
+  どちらも**計器（Profiler section か stub hook timer）で帰属を確定してから**着手する（glyph-fix に依頼済み）。
+- **未了は変わらず**: OPT-09 step(3) の緑 leg（semaphore 修正 `7e3afed8d` の検証）・BH-14 per-identity pair・goal (e) の
+  self-consistency 受入・F3 の計器。
+
 ## 0.290 **round 96: semaphore 二重 signal を修正・較正済み picture gate が PASSED・F3 の実コストを測定・video-settings の参照不能を確定**
 
 - **semaphore VUID を修正（Lead・`7e3afed8d`）**: proj-channel が `0x1eb00000001eb` を **GL-less frame target の bridge pair** と特定
