@@ -74,11 +74,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   （terrain pass があればそれ、無ければ `uiRenderPass()`）に揃え、throw 経路も理由を記録。
   検証: format 5 **73/73 受理**（従来 96/131）・probe 拒否 0（従来35）・**拒否 census が空**・fixture PASSED・clean・
   画像 verdict PASSED（distinct 28170・black 0.0029）。
-- **wedge の根因（担当の実測・確定待ち）**: `mode=7` は `GL_QUADS` で topology 取り違えは否定。
-  format 8（`RenderGlobal.renderCloudsFancy` の fancy cloud）が **GL-less でのみ受理**され、
-  native immediate pipeline に cloud shader が無いため巨大な半透明クワッド/黒三角として出る。
-  bridge では `boundProgram != 0` の shutter で拒否され GL が正しく描くため、**GL-less 固有の構造欠陥**。
-  担当が `-Dceltium.vulkan.immediateFormats=8` の positive-form run で帰属を確定中で、修正は拒否規則（幾何ではない）。
+- **wedge の根因（確定・修正済み `454fb3600`）**: 監査が**パッケージ済み jar のバイトコード**から特定した——
+  `celtium$buildModelMeshes` が `mesh.nextVertex()` を **quad ごとに1回、4頂点ループの外**で呼び、
+  その後に `putPosition`/`putUv` を4回呼んでいた。`nextVertex()` は頂点を開始してその index を返し、`put*` は
+  開始済みの頂点に書く契約なので、**quad の4隅が1頂点を上書き**し、mesh は 4Q ではなく **Q 個の頂点**しか持たず、
+  index は `base..base+3` を要求して**範囲外**を指していた。巨大な半透明 wedge・空の黒三角・筋は、
+  **書かれていない頂点を rasterizer が結んでいた**もの。行列・topology・depth の議論はすべてこの下流だった。
+  修正: `nextVertex()` を頂点ループ内へ移し（0,1,2 / 0,2,3 の三角分割は維持）、契約を**検査**として追加
+  （各 quad の頂点が連続して開始されること、完成した mesh がちょうど 4Q 頂点・6Q index を持つこと。破れば描かずに拒否）。
+  **検証（同一固定カメラ scene・GL-less allBlocks）**: fixture PASSED・clean・msgs 0・画像 verdict PASSED・
+  `modelMeshLists=29 modelMeshQuads=160 modelMeshFailure=none`。修正前後で **36.9% の画素が変化**し、
+  比較画像では wedge・空の黒三角・太い筋が消えてブロック壁と床が残る。細い斜めの筋は残っており、
+  これは今回の修正とは別の、より小さい欠陥。
+  なお担当が並行して見つけた「format 8（fancy cloud）が GL-less でのみ受理される」経路は、**別個の**
+  GL-less 固有欠陥として残る（cloud shader を持たない native immediate pipeline が受理してしまう）。
 - **注意（受入の前提）**: これらの run の後も `ValidationClient.java` と `scripts/prism_validation.py` が編集されている。
   次の受入は rebuild 後の jar で取ること。
 
