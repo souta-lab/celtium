@@ -257,6 +257,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.234 **round 40: パノラマの機序確定（他 framebuffer の clear が共有 pair を消していた）→ BH-16 修正・OPT-07(b) 受入**
+
+- **機序（fog-path・`702cc725b`・1 frame 1 log）**:
+  `CELTIUM_DRAW_SITE #1 frame=0 fmt=2 site=immediate-only-window target=1938698341 onMain=false passOpen=true vertices=8 indices=12 batches=2`
+  → `CELTIUM_READ_RESOLVE … chainPair=0x…6290` → `CELTIUM_TEX_COPY_SERVED … frame=0 readImage=0x…6290 mean=255,255,255`。
+  その**間に5つの `CELTIUM_CLEAR_LATCH route=pair`**（`boundIdentity` は全て**非main・非ゼロ**・`colour=(1.0,1.0,1.0,0.0)`）。
+  ＝**face は chain pair に描かれ、別の framebuffer に対して発行された clear が同じ pair に流れて白く消していた**。
+  **非main identity は全て chain pair を共有**するため、ある identity の clear が別 identity の内容を消す。**これが BH-16（clear の target が保存されない）そのもの**。
+  ロード画面の白も1 frame 前の同じ形。
+- **修正（Lead・`787e13d2d`）**: stub が**pending clear の発行元 framebuffer を記録**（`pendingClearDrawFbo`・-1=なし・0=default）。
+  `GllessFrameTarget.applyGameClears` は **owner が非ゼロの clear を適用せず drop** し、`gameClearsDroppedForeignTarget` と
+  `lastDroppedClearOwner` で計数・帰属。default framebuffer の clear（owner 0）は従来どおり＝**提示 frame 自身の clear**。
+- **順序を1 frame で答えられる計器**: `CELTIUM_DRAW_SITE` に **`passImage=0x…`** を追加（copy line は `frame=`/`readImage=` を持つ）。
+  さらに `immediateDrawSiteLogged` をレポートに載せ、「0行」と「limit 到達」を混同しないようにした（fog-path の以前の0行は
+  `site=immediate-only-window` のハイフンを regex が拾えなかった grep バグと訂正済み）。
+- **OPT-07(b) 受入（perf-ring・`f8ee10446`）**: pending copy が `VulkanBuffer` 参照を保持し `flushUploads()` が handle を解決。
+  解放済み destination は copy を **skip して計数**（`uploadSkippedDeletedDestinations=0`）。`ensureCapacity` は grow 前に flush、
+  arena segment 再利用は**gate 不要**（CPU 書込順＝submit 順）。
+  **P0 と同じ leg 形状で zero VUID・zero `-4`・`validationMessageCount=0`・exit 0**。
+  `uploadSubmitWaitsAtEnd` **31343 → 6910（−78%）**・warm waits **7969 → 579（−93%）**、30434 copy → 6825 submission。
+  **待ち時間そのものは改善していない**（flush が batch 全体を待つため cold 1.53→1.67ms・warm 1.20→1.35ms/frame）と明記。
+  frame interval 比較は machine 競合のため**意図的に不比較**。待ちの除去は OPT-08。
+
 ## 0.233 **round 39: 文字間バーの機序を確定して修正（font run は strip）・パノラマは「描いている」と訂正（grep バグ）**
 
 - **文字間の 1px バー（ユーザー報告）— 機序確定＋修正（Lead・`51003a602`）**: font census が **`modes={5=84822}`**
