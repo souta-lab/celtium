@@ -54,6 +54,17 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.125 **訂正**: bridge の「model draw 回帰」は証拠不足（カウンタが bridge レポートに存在しない）
+
+- ベンチ担当の観測「最新ビルドの bridge が 60Hz フロアに落ち、`CELTIUM_MODEL_MATRIX` 行が一切出ない」を受け、
+  私が「bridge で native model 描画が発火していない回帰を実測で確認」と報告したが、**これは証拠を超えていた**。
+- 実測: bridge 構成のレポートには model 系カウンタが**元から含まれていない**。
+  `p530-tp`・`ref-gl`・`glow-bridge3`・`bridge-model` のいずれも `modelDraws=` は absent、`modelMeshLists=` も absent。
+  GL-less のレポートには含まれる（例 `modelMeshLists=2 modelQuads=12`）。
+- したがって「行が出ない」は **「描いていない」と「記録していない」を区別できない**。回帰の有無は未確定であり、
+  次に必要なのは bridge でも同じ計器をレポートへ載せること（フィールドの有無自体が構成差で説明できてしまう現状を直す）。
+- これは「counter の不在を描画の不在と読まない」という §0.118 の規則と同じ種類の誤りである。記録として残す。
+
 ## 0.124 **受入**: Intel 4-leg（Nether 含む）／format 5 の拒否を修正・検証／wedge の根因は format 8（fancy cloud）
 
 - **Intel 4-leg 受入（実測）**: `.celtium-work/intel-layout-evidence/leg{1,2,3,4}`、jar sha256
