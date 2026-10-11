@@ -61,3 +61,35 @@ provenance I have not checked; what this record establishes is that the number c
 missing", because the reference scores 139 on the same region of the same scene. A leg that reports 133 for the
 candidate against a 15,805 floor is a leg to re-measure with the floor's provenance fixed, not a rendering defect to
 chase.
+
+## The 104-versus-139 gap, characterised (round 16)
+
+The panel region's colour sets, compared directly:
+
+| | count |
+|---|---|
+| candidate distinct colours | 104 |
+| reference distinct colours | 139 |
+| **shared** | **104** |
+| **candidate-only** | **0** |
+| reference-only | 35 |
+
+**Every colour the candidate draws in the panel, the reference also draws.** The candidate is missing 35
+*intermediate shades*, and it draws nothing the reference does not. That is not missing geometry, not a wrong
+texture, and not a missing quad: it is the signature of **texture filtering** - the reference blends neighbouring
+texels into in-between values and the candidate samples more coarsely.
+
+The difference is only mildly edge-concentrated: 4.56 % of panel pixels differ by more than 8, and 10.3 % of those
+sit on a reference colour edge, against 6.4 % of panel pixels being on an edge at all.
+
+**So the next measurement is the sampler's filter state, not the mirror's content.** The wrap census already showed
+the game's texture *parameters* are recorded and consumed (`CELTIUM_TEX_PARAM_CENSUS recorded=194 textures=29
+wrapRepeat=38 wrapClamp=0`); the filter pair (`GL_TEXTURE_MIN_FILTER` / `GL_TEXTURE_MAG_FILTER`, and the mipmap
+level) belongs in the same census, and the question is whether the GUI atlas mirror is sampled with the filter the
+game set or with the renderer's own default. That is a texture-mirror question with a named measurement, and it is
+the whole of what remains of this row.
+
+**Also unexercised, and named as such:** the chat background bars. The fixture sends no chat line, so `Gui.drawRect`'s
+chat bars have no geometry in any scene of this fixture. A chat scene needs a hook that prints chat lines - the
+fixture owner has it this round - and until then the chat half of the HUD complaint is unexercised rather than
+passing or failing. The hotbar frame, by contrast, is measured: 0.00 % of pixels over 8, pixel-identical.
