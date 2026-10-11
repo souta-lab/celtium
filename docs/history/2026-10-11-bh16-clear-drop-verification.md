@@ -52,3 +52,31 @@ be dropping clears the frame needed (the game's own background clear of a non-ze
 delivered image in this configuration). Worth checking before the drop rule is kept as-is: the owner rule
 (`owner != 0` drops) and the identity rule (the pair's content belongs to another identity) are not the same
 test, and this leg cannot tell them apart yet.
+
+## Re-take on the current jar (md5 `44ce47f3f905279a0d4c744a5d7925be`)
+
+Both legs on the same fresh jar, so the fix and the picture are read from one build:
+
+| leg | reading |
+|---|---|
+| `retake-terrain` (fixture, scene=terrain, `keepGui`) | `gameClearsDroppedForeignTarget=**420**`, `lastDroppedClearOwner=1`, `gpuStalled=false`, `offTargetPairClears=[default-pair=167, **chain-pair=1**]`, verdict `FAILED_PRESENTED_IMAGE`, nonBg 0.741353 |
+| `retake-menu` (fixture-free menu) | `CELTIUM_DRAW_SITE #1 frame=0 target=1938698341 … passImage=0x7fb294c73650`; `CELTIUM_TEX_COPY_SERVED … frame=0 readImage=0x7fb294c73650 **mean=255,255,255**`; **5** `CELTIUM_CLEAR_LATCH` entries still between the draw and the copy |
+
+So the fix fires on the current jar (420 drops, owner 1) and the copy still reads the very image the faces'
+pass attached, in the same frame, and it is white. The dropped clears are therefore **not** what leaves the
+image white - the remaining wipe is the pair's own clear: `offTargetPairClears` shows **`chain-pair=1`**, i.e.
+the chain pair is cleared once, and `GllessFrameTarget.clearChainPair` (`:900`) is the mechanism that records
+"the clear the game's own framebuffer would have received". If that clear is recorded at the pair's first
+non-main pass of the frame and the faces' pass for that identity comes earlier, it wipes exactly what the copy
+then reads.
+
+Next measurement: the position of `clearChainPair` relative to the faces' pass within one frame (a line at
+`clearChainPair` with `frame=`, the pair image and the identity that triggered it), which is the same shape as
+the `passImage`/`readImage` pair that settled the last question.
+
+## Gate note (unchanged, and now on the current jar)
+
+`FAILED_PRESENTED_IMAGE` on both fixture legs of this round (`bh16-terrain` and `retake-terrain`) where the
+pre-fix `stage-leg` read `PASSED` with the same flags. That is still unresolved and is the reason the drop
+rule's scope (owner != 0 vs "the pair's content belongs to another identity") is worth a check before it is
+kept as-is.
