@@ -257,6 +257,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.275 **round 81: serve 前の flush＋idle 待ちは効かない（`lastDrawnFrame=-1` のまま）＝測っている copy は panorama のものではない可能性**
+
+- **実装した修正（serve 入口で `flushPendingBeforeGlDraw()` ＋ `waitForIdle()`）と測定（`r79-flush`・hold 60）**:
+  ```
+  CELTIUM_TEX_COPY_SERVED dest=20 … mean=255,255,255
+    readImage=0x7fe408c74890  lastDrawnImage=0x0  lastDrawnFrame=-1  drawnThisFrame=false  lastDrawnEpoch=-1
+  ```
+  ＝**変わらず**（`lastDrawnFrame=-1`）。flush しても「pending が無い」ので描かれない。**revert 済み**（効かない変更を残さない）。
+- **重要な含意**: `lastDrawnFrame=-1` は「**この run でまだ一度も draw していない**」ことを意味する。
+  frame 0 の copy が**全 draw より前**に走っている＝**測っている copy は `GuiMainMenu:483`（panorama の cube 描画後）ではない可能性が高い**
+  （起動直後の splash/loading 経路の copy である可能性）。
+- **次の測定（1点）**: **copy の呼び元**を bounded な caller census で印字する（BH-06・`func_110988_a` と同じ形）。
+  panorama の copy（`GuiMainMenu.renderSkybox`）か splash の copy かで、修正の向きが変わる。
+- **これまでの確定（再掲）**: mirror 内容は正しい（replay 修正）・bind は 42/44/45-48・group の捕捉は stale でない・
+  clear は face の draw より前・白は「読んだ時点で何も描かれていない」。
+
 ## 0.274 **round 80: 決定的 — copy は「まだ何も描かれていない」時点で走っている（`lastDrawnFrame=-1`・`drawnThisFrame=false`）**
 
 - **測定（Lead の `r78-px`・hold 60）**:
