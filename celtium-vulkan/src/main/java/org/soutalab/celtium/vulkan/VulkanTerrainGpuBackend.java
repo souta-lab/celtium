@@ -104,10 +104,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int targetHeight;
     private long framebuffer;
     private long framebufferRenderPass;
-    /** The framebuffer over the owned off-target images, and the render pass it was built for. */
+    /**
+     * The framebuffer over the owned off-target images, and the render pass it was built for.
+     * <p>
+     * One per pair, cached for the same reason: compatibility is defined by the render pass the pipeline built, and
+     * one framebuffer serves every pass that is compatible with it.
+     */
     private long offTargetFramebuffer;
     private long offTargetFramebufferRenderPass;
     private int offTargetFramebufferCreations;
+    /**
+     * The framebuffer over the chain pair - the images draws for the game's own framebuffers render into, the
+     * entity-outline silhouette being the measured one. It is a second framebuffer rather than a second colour view
+     * on one, because the render pass declares its attachments and the two pairs are different images.
+     */
+    private long chainPairFramebuffer;
+    private long chainPairFramebufferRenderPass;
+    private int chainPairFramebufferCreations;
     /**
      * The published wrapper for the chain's adopted output: the renderer's off-target colour image under the GL name
      * the game's composite binds, plus the name and the image handle it was published for.
@@ -121,9 +134,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private VulkanGlTexture publishedChainOutput;
     private int publishedChainTexture;
     private long publishedChainImage;
-    /** The frame whose off-target images have been cleared, so the clear happens once per frame and not per window. */
-    private long offTargetClearedFrame = -1L;
-    private int offTargetClears;
+    /**
+     * The frame in which each pair's images have been cleared, so the clear happens once per frame and not per
+     * window. One per pair: two pairs are two images, and a frame that cleared one of them says nothing about the
+     * other - which is exactly the mistake that would make the second window of a frame erase the first's work.
+     */
+    private long defaultPairClearedFrame = -1L;
+    private long chainPairClearedFrame = -1L;
+    /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
+    private int defaultPairClears;
+    private int chainPairClears;
     private int offTargetPassFailures;
     private String lastOffTargetFailure = "none";
 
@@ -793,6 +813,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Map<Long, long[]> framebufferColorTextures = new java.util.concurrent.ConcurrentHashMap<>();
     private int framebufferColorTextureReports;
     private int framebufferColorTextureLog;
+    /** Distinct framebuffer identities the game has bound, for the bounded census the routing rule is read against. */
+    private final java.util.Set<Long> framebufferBindCensus =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** How many orthographic projections the mirror has been given; the GUI's own, if it arrives at all. */
     private int orthoCalls;
     /** How many frame images the periodic dump has written; capped so a long run cannot fill the disk. */
@@ -2176,9 +2199,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public String offTargetSummary() {
         StringBuilder text = new StringBuilder();
         for (java.util.Map.Entry<Long, java.util.concurrent.atomic.AtomicInteger> entry : this.offTargetBatchesByTarget.entrySet()) {
-            text.append(entry.getKey()).append(':').append(entry.getValue().get()).append(' ');
+            text.append(entry.getKey()).append(':').append(entry.getValue().get())
+                    .append('(').append(pairOfOffTargetIdentity(entry.getKey().longValue())).append(") ");
         }
         return text.length() == 0 ? "none" : text.toString().trim();
+    }
+
+    /**
+     * Which of the two owned pairs an off-target identity's draws render into. The rule itself is stated once, in
+     * {@link GllessFrameTarget#pairLabelForIdentity(long)}, which owns the pairs; this is the name the backend's
+     * counters use so a reported identity is never read against the wrong image.
+     */
+    private static String pairOfOffTargetIdentity(long identity) {
+        return GllessFrameTarget.pairLabelForIdentity(identity);
+    }
+
+    /** {@return the owned pairs' own creation/clear/self-test counters, or "none" for the GL bridge}. */
+    private String frameTargetPairSummary() {
+        GllessFrameTarget glless = offTargetTarget();
+        return glless == null ? "none" : glless.pairSummary();
     }
 
     @Override
@@ -2293,6 +2332,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // every pending group, including the ones offered for another framebuffer, which is why the off-target pass found
             // an empty queue every time (246 offered, 0 at pass time).
             this.mainTargetIdentity = targetIdentity;
+        }
+        // One line per distinct identity the game ever binds, bounded: this is the census that says whether any
+        // framebuffer other than the default one (identity 0, reported by the unbind) and the game's own main one was
+        // ever bound in this run. The chain pair is fed by exactly those identities - the entity outline's target is
+        // the measured one - so a run whose census has only 0 and main cannot exercise that route, and the report has
+        // to say that instead of leaving a zero counter to be read as "no draws arrived".
+        if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
+            record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
+                    + " pair=" + pairOfOffTargetIdentity(targetIdentity)
+                    + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
         }
     }
 
@@ -4128,6 +4177,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * is the game's adopted colour image, so the world, the composite and the entity silhouette all legitimately pass
      * through it, and the outline chain reading it as its input is the actual defect. The fix belongs where the chain's
      * input image is chosen: it needs an image of its own rather than the shared pair.
+     * <p>
+     * <b>That fourth change is the one that is in the tree (2026-10-11):</b> a second owned pair was added beside the
+     * first, identity 0 keeps the pair above and every other non-main identity - the outline framebuffer's silhouette
+     * is the measured one - renders into the new pair, which the chain adopts, publishes and hands back instead. No
+     * rule about what identity 0 means changed, which is why the delivered frame survived the change: the routing is
+     * by identity and the chain's input image, not the drawing of the composite, is what moved.
      */
     private boolean celtium$isScreenSelfComposite() {
         if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || this.currentRenderTarget != 0L) {
@@ -4175,6 +4230,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     .append(":offered=").append(offered == null ? 0 : offered.get())
                     .append(",atPass=").append(this.offTargetPassGroupsByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
                     .append(",drawnPasses=").append(this.offTargetDrawnByTarget.getOrDefault(idBoxed, Integer.valueOf(0)))
+                    .append(",pair=").append(pairOfOffTargetIdentity(idBoxed.longValue()))
                     .append(' ');
         }
         return summary.toString().trim();
@@ -4192,8 +4248,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         long renderPass = terrain != null ? terrain.renderPass() : uiRenderPass();
-        // Which image this pass draws into: the frame's, or - for a framebuffer the game bound that is not the main
-        // one - the renderer's own off-target pair. Without this the silhouette is painted onto the scene.
+        // Which image this pass draws into: the frame's, or one of the two owned pairs. The rule is by identity,
+        // because identity is the only thing that separates the two streams that used to share one image.
         long framebuffer;
         // NOT "identity 0 is main". That was tried and it overdraws the frame: routing the default-framebuffer
         // passes into the delivered image makes the game's finished-frame composite - a copy of the image onto
@@ -4201,26 +4257,56 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // (presentedDistinctColours=1). Refusing those passes outright was tried before that and froze the picture,
         // because the same identity also carries the world pass. Both halves of that stream need different answers,
         // which is a design question (skip the self-composite, keep the pass) rather than a one-line routing change.
+        //
+        // What identity 0 keeps is the pair it has always written: it is the default framebuffer, and under the stub
+        // its draws are the game's own finished-frame composites. Every OTHER non-main identity is one of the game's
+        // framebuffers - the entity outline's `entityOutlineFramebuffer` is the measured one - and those get the
+        // chain pair, which is the image the post chain adopts. That split is the fix for the shared pair: the chain
+        // used to read an image the composite had just painted a copy of the whole scene into. It is a routing rule
+        // and not a skip rule: both streams are still drawn, each into an image of its own.
+        boolean chainIdentity = this.currentRenderTarget != 0L;
         GllessFrameTarget offTarget = this.currentRenderTargetIsMain ? null : offTargetTarget();
         if (offTarget != null) {
             try {
-                offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
-                // CELTIUM-OUTLINE-COMPOSITE: the image the composite sampled last frame is in SHADER_READ_ONLY, and
-                // this pass clears it (which declares GENERAL) and then attaches it, so the hand-back is recorded
-                // before both. A pair recreated at a new size is unpublished here instead: its wrapper names a
-                // destroyed image, and a barrier on that is a validation error rather than a missing glow.
-                this.celtium$syncPublishedChainOutput(offTarget);
-                if (!offTarget.offTargetAcquired() || this.offTargetClearedFrame != this.frameId) {
-                    // Outside the pass, which is where the clear and its first-use barrier belong, and once per frame:
-                    // the game clears a framebuffer when it binds it, and clearing per window would erase what an
-                    // earlier window of the same frame already drew there. The acquire state is asked of the pair as
-                    // well as the frame, because a pair recreated after this frame's clear is UNDEFINED again while
-                    // the frame flag still says otherwise - which is the layout error a dimension change produced.
-                    offTarget.clearOffTarget(this.commandBuffer);
-                    this.offTargetClearedFrame = this.frameId;
-                    this.offTargetClears++;
+                if (chainIdentity) {
+                    offTarget.ensureChainPair(this.targetWidth, this.targetHeight);
+                    // CELTIUM-OUTLINE-COMPOSITE: the image this pair holds was sampled last frame by whatever
+                    // composites it (the game's own outline composite binds the published name), so it can be in
+                    // SHADER_READ_ONLY while this pass clears it - which declares GENERAL - and then attaches it. The
+                    // hand-back is recorded before both. A pair recreated at a new size is unpublished here instead:
+                    // its wrapper names a destroyed image, and a barrier on that is a validation error rather than a
+                    // missing glow.
+                    this.celtium$syncPublishedChainOutput(offTarget.chainPairColorImage());
+                    if (!offTarget.chainPairAcquired() || this.chainPairClearedFrame != this.frameId) {
+                        // Outside the pass, which is where the clear and its first-use barrier belong, and once per
+                        // frame: the game clears a framebuffer when it binds it, and clearing per window would erase
+                        // what an earlier window of the same frame already drew there. The acquire state is asked of
+                        // the pair as well as the frame, because a pair recreated after this frame's clear is
+                        // UNDEFINED again while the frame flag still says otherwise - which is the layout error a
+                        // dimension change produced.
+                        if (offTarget.chainPairNeedsSelfTest()) {
+                            // The one legal-use sequence of the images this pair now holds, recorded through the
+                            // validation layer and reported once per creation: it is the same clear the ordinary path
+                            // records, so it is the pair's first clear rather than an extra one.
+                            record(offTarget.chainPairSelfTest(this.commandBuffer));
+                        } else {
+                            offTarget.clearChainPair(this.commandBuffer);
+                        }
+                        this.chainPairClearedFrame = this.frameId;
+                        this.chainPairClears++;
+                    }
+                    framebuffer = ensureChainPairFramebuffer(renderPass);
+                } else {
+                    offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
+                    // No hand-back here: the published image is the chain pair's, and this pass attaches the default
+                    // pair. Transitioning the published image is the sampling site's job, below.
+                    if (!offTarget.offTargetAcquired() || this.defaultPairClearedFrame != this.frameId) {
+                        offTarget.clearOffTarget(this.commandBuffer);
+                        this.defaultPairClearedFrame = this.frameId;
+                        this.defaultPairClears++;
+                    }
+                    framebuffer = ensureOffTargetFramebuffer(renderPass);
                 }
-                framebuffer = ensureOffTargetFramebuffer(renderPass);
             } catch (RuntimeException | LinkageError error) {
                 this.offTargetPassFailures++;
                 this.lastOffTargetFailure = describe(error);
@@ -4432,6 +4518,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " partialMirrorsCompleted=" + this.partialMirrorsCompleted
                 + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
                 + " offTargetPerTarget=[" + offTargetPerTarget() + "]"
+                + " offTargetPairs=[" + frameTargetPairSummary() + "]"
+                + " offTargetPairClears=[default-pair=" + this.defaultPairClears
+                + ",chain-pair=" + this.chainPairClears + "]"
+                + " offTargetPairFramebuffers=[default-pair=" + this.offTargetFramebufferCreations
+                + ",chain-pair=" + this.chainPairFramebufferCreations + "]"
                 + " otherTargetGroups=[atMainFlush=" + this.otherTargetGroupsAtMainFlush
                 + ",discarded=" + this.otherTargetGroupsDiscarded
                 + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
@@ -5532,10 +5623,41 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return this.offTargetFramebuffer;
         }
         destroyOffTargetFramebuffer();
+        this.offTargetFramebuffer = ensurePairFramebuffer(renderPass, glless.offTargetColorView(),
+                glless.offTargetDepthView(), "off-target");
+        this.offTargetFramebufferRenderPass = renderPass;
+        this.offTargetFramebufferCreations++;
+        return this.offTargetFramebuffer;
+    }
+
+    /**
+     * The framebuffer for a pass that draws into the chain pair: the game's own framebuffers' content, the
+     * entity-outline silhouette being the measured case. Separate from the default pair's framebuffer because the
+     * attachments differ; otherwise the same cache, keyed by the render pass it is compatible with.
+     */
+    private long ensureChainPairFramebuffer(long renderPass) {
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null) {
+            return 0L;
+        }
+        if (this.chainPairFramebuffer != 0 && this.chainPairFramebufferRenderPass == renderPass
+                && glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
+            return this.chainPairFramebuffer;
+        }
+        destroyChainPairFramebuffer();
+        this.chainPairFramebuffer = ensurePairFramebuffer(renderPass, glless.chainPairColorView(),
+                glless.chainPairDepthView(), "chain-pair");
+        this.chainPairFramebufferRenderPass = renderPass;
+        this.chainPairFramebufferCreations++;
+        return this.chainPairFramebuffer;
+    }
+
+    /** Builds one framebuffer over a pair's views at the frame's size. */
+    private long ensurePairFramebuffer(long renderPass, long colorView, long depthView, String what) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer attachments = stack.mallocLong(2);
-            attachments.put(0, glless.offTargetColorView());
-            attachments.put(1, glless.offTargetDepthView());
+            attachments.put(0, colorView);
+            attachments.put(1, depthView);
             org.lwjgl.vulkan.VkFramebufferCreateInfo create = org.lwjgl.vulkan.VkFramebufferCreateInfo.calloc(stack)
                     .sType$Default()
                     .renderPass(renderPass)
@@ -5544,11 +5666,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     .height(this.targetHeight)
                     .layers(1);
             LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateFramebuffer(this.context.device(), create, null, handle), "vkCreateFramebuffer(off-target)");
-            this.offTargetFramebuffer = handle.get(0);
-            this.offTargetFramebufferRenderPass = renderPass;
-            this.offTargetFramebufferCreations++;
-            return this.offTargetFramebuffer;
+            check(vkCreateFramebuffer(this.context.device(), create, null, handle),
+                    "vkCreateFramebuffer(" + what + ")");
+            return handle.get(0);
         }
     }
 
@@ -5562,6 +5682,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             vkDestroyFramebuffer(this.context.device(), this.offTargetFramebuffer, null);
             this.offTargetFramebuffer = 0;
             this.offTargetFramebufferRenderPass = 0;
+        }
+    }
+
+    private void destroyChainPairFramebuffer() {
+        if (this.chainPairFramebuffer != 0) {
+            vkDestroyFramebuffer(this.context.device(), this.chainPairFramebuffer, null);
+            this.chainPairFramebuffer = 0;
+            this.chainPairFramebufferRenderPass = 0;
         }
     }
 
@@ -5591,6 +5719,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private void destroyFramebuffer() {
         destroyOffTargetFramebuffer();
+        destroyChainPairFramebuffer();
         if (this.framebuffer != 0) {
             vkDestroyFramebuffer(this.context.device(), this.framebuffer, null);
             this.framebuffer = 0;
@@ -6421,14 +6550,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
-     * Adopts the renderer-owned off-target image under every framebuffer identity the game bound and drew into, so a
+     * Adopts the renderer-owned chain-pair image under the framebuffer identity the game bound and drew into, so a
      * pass that reads another pass's framebuffer - the entity-outline chain reads the silhouette framebuffer - samples
      * what the game actually drew there instead of an empty stand-in the chain allocated for itself.
      * <p>
      * The identity map is filled only by the game's own framebuffer binds, so a chain-allocated target (its "swap"
      * sibling, say) is never in it and cannot be adopted by mistake. The pair must already be in the layout the chain
-     * assumes, which is what the frame's first off-target clear records; if the frame has not used the pair yet, the
-     * clear happens here, and if it has, the silhouette is live and must not be cleared again.
+     * assumes, which is what the frame's first clear for that pair records; if the frame has not used the pair yet,
+     * the clear happens here, and if it has, the silhouette is live and must not be cleared again.
+     * <p>
+     * The image adopted is the <em>chain</em> pair and not the default one: the default pair is where the game's
+     * finished-frame composites land, and adopting it is what made the chain blur a per-frame copy of the whole
+     * scene instead of the silhouette (audit N04). The silhouette's own draws reach the chain pair through the
+     * identity routing in {@link #recordImmediateOnlyPass}, before this runs - the bind the caller performs just
+     * ahead of the chain is what flushes them.
      */
     private void adoptChainFramebuffers(java.util.List<VulkanPostChain.Pass> passes) {
         GllessFrameTarget glless = offTargetTarget();
@@ -6453,21 +6588,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (reported == null || width <= 0 || height <= 0 || identity == (int) this.mainTargetIdentity) {
             return;
         }
-        if (!glless.offTargetMatches(width, height)) {
-            // Never resize a live pair here: the silhouette it holds is what the chain is about to read.
+        if (!glless.chainPairMatches(width, height)) {
+            // Never resize a live pair here: the silhouette it holds is what the chain is about to read. A pair that
+            // does not exist at all is refused the same way rather than created empty: the chain's real input is the
+            // silhouette, and an image with nothing in it would make the chain report a run whose picture is the
+            // deterministic result of reading nothing - the stand-in failure the audit measured, with a counter that
+            // says otherwise. Refusing leaves the caller's GL chain in charge, which is the audit's N04 rule.
             this.chainAdoptionsRefused++;
-            record("post chain adoption refused: the off-target image is not " + width + "x" + height);
+            record("post chain adoption refused: the chain image is "
+                    + (glless.chainPairExists() ? "not " + width + "x" + height : "absent")
+                    + " (asked for " + width + "x" + height + ")");
             return;
         }
         // Before anything in this submission clears, attaches or samples the image: the previous frame's composite
         // may have left it in SHADER_READ_ONLY, and both the clear and the chain declare GENERAL.
-        this.celtium$syncPublishedChainOutput(glless);
-        if (!glless.offTargetAcquired() || this.offTargetClearedFrame != this.frameId) {
-            glless.clearOffTarget(this.commandBuffer);
-            this.offTargetClearedFrame = this.frameId;
-            this.offTargetClears++;
+        this.celtium$syncPublishedChainOutput(glless.chainPairColorImage());
+        if (!glless.chainPairAcquired() || this.chainPairClearedFrame != this.frameId) {
+            if (glless.chainPairNeedsSelfTest()) {
+                record(glless.chainPairSelfTest(this.commandBuffer));
+            } else {
+                glless.clearChainPair(this.commandBuffer);
+            }
+            this.chainPairClearedFrame = this.frameId;
+            this.chainPairClears++;
         }
-        this.postChain.adoptTarget(identity, glless.offTargetColorImage(), glless.offTargetColorView(),
+        this.postChain.adoptTarget(identity, glless.chainPairColorImage(), glless.chainPairColorView(),
                 width, height);
         this.chainAdoptions++;
         // CELTIUM-OUTLINE-COMPOSITE: the chain's output IS this image, and the game composites it by binding the
@@ -6476,25 +6621,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // bound name through the registry, and with no entry there this one is refused and the glow never reaches
         // the screen. Nothing is created, resized, transitioned or freed on the image's behalf here.
         this.publishedChainOutput = celtium$registry().publishExternalImage((int) reported[0],
-                glless.offTargetColorImage(), glless.offTargetColorView(), width, height);
+                glless.chainPairColorImage(), glless.chainPairColorView(), width, height);
         this.publishedChainTexture = (int) reported[0];
-        this.publishedChainImage = glless.offTargetColorImage();
+        this.publishedChainImage = glless.chainPairColorImage();
     }
 
     /**
      * Keeps the published outline output current and hands it back to the layout its owner attaches it in.
      * <p>
-     * Called from the two places the image is about to be used as an attachment: the off-target pass, which clears
-     * it and then attaches it, and the chain submission, whose adopted target is GENERAL by contract. The composite
-     * is the one sampler, and its transition to SHADER_READ_ONLY is recorded at the end of the chain submission;
-     * without this hand-back the next attachment would begin a render pass on an image in the wrong layout. A pair
-     * recreated at a new size is unpublished rather than transitioned, because its wrapper names a destroyed image.
+     * Called from the two places the chain pair's colour image is about to be used as an attachment: the off-target
+     * pass that draws the game's own framebuffer into it, which clears it and then attaches it, and the chain
+     * submission, whose adopted target is GENERAL by contract. The composite is the one sampler, and its transition
+     * to SHADER_READ_ONLY is recorded at the end of the chain submission; without this hand-back the next attachment
+     * would begin a render pass on an image in the wrong layout. A pair recreated at a new size is unpublished
+     * rather than transitioned, because its wrapper names a destroyed image.
+     *
+     * @param chainPairColorImage the colour image the chain pair holds now, which is what the wrapper must name
      */
-    private void celtium$syncPublishedChainOutput(GllessFrameTarget glless) {
-        if (this.publishedChainOutput == null || glless == null) {
+    private void celtium$syncPublishedChainOutput(long chainPairColorImage) {
+        if (this.publishedChainOutput == null) {
             return;
         }
-        if (this.publishedChainImage != glless.offTargetColorImage()) {
+        if (this.publishedChainImage != chainPairColorImage) {
             celtium$registry().unpublishExternalImage(this.publishedChainTexture);
             this.publishedChainOutput = null;
             this.publishedChainImage = 0L;

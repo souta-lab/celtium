@@ -75,14 +75,13 @@ import org.lwjgl.vulkan.VkSubmitInfo;
  * The images never leave our queue family: the acquire/release barriers still perform the layout transitions a
  * frame needs (GENERAL to the render layout and back) but carry no external-family transfer.
  * <p>
- * A second, independent pair of images lives beside the frame's own: {@link #ensureOffTarget(int, int)} creates it
- * on first use for draws the game addresses to one of <em>its</em> framebuffers rather than the main one - the
- * entity-outline silhouette is the measured case, and recorded against the frame's framebuffer it painted the
- * silhouette flat onto the scene, depth-testing against the scene's own buffer. The pair uses the frame's formats
- * and the same {@code VK_IMAGE_LAYOUT_GENERAL} attachments, so the frame-compatible render pass built by
- * {@code VulkanTerrainPipeline.createFrameRenderPass} accepts it without a second pass; {@link #clearOffTarget}
- * records the clears the game's own framebuffer would have received, and {@link #offTargetSelfTest} records a
- * clear-and-barrier sequence the validation layer can check end to end.
+ * Two independent pairs of images live beside the frame's own, one per stream of draws that is not addressed to
+ * the main framebuffer - the split, and the measurement that forced it, are in the section comment on {@link Pair}.
+ * Each uses the frame's formats and the same {@code VK_IMAGE_LAYOUT_GENERAL} attachments, so the frame-compatible
+ * render pass built by {@code VulkanTerrainPipeline.createFrameRenderPass} accepts it without a second pass;
+ * {@link #clearOffTarget} and {@link #clearChainPair} record the clears the game's own framebuffer would have
+ * received, and {@link #offTargetSelfTest} and {@link #chainPairSelfTest} record a clear-and-barrier sequence the
+ * validation layer can check end to end.
  */
 public final class GllessFrameTarget implements FrameImageTarget {
 
@@ -110,24 +109,21 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private long doneSemaphore;
 
     /**
-     * The off-target pair: created by {@link #ensureOffTarget(int, int)} on first use, replaced when the requested
-     * size changes, and released by {@link #delete()} like every other resource here. They are never handed to GL
-     * and never leave this queue family, so their only layout bookkeeping is the one-time UNDEFINED to GENERAL move
-     * {@link #clearOffTarget} records before the first clear.
+     * The default-framebuffer pair: created by {@link #ensureOffTarget(int, int)} on first use, replaced when the
+     * requested size changes, and released by {@link #delete()} like every other resource here. It is never handed
+     * to GL and never leaves this queue family, so its only layout bookkeeping is the one-time UNDEFINED to GENERAL
+     * move {@link #clearOffTarget} records before the first clear.
+     * <p>
+     * Its one writer is the game's draw stream with no framebuffer bound (identity 0).
      */
-    private long offTargetColorImage;
-    private long offTargetColorMemory;
-    private long offTargetColorView;
-    private long offTargetDepthImage;
-    private long offTargetDepthMemory;
-    private long offTargetDepthView;
-    private int offTargetWidth;
-    private int offTargetHeight;
-    /** False until the first clear has moved the pair out of the layout they were created in (UNDEFINED). */
-    private boolean offTargetAcquired;
-    private int offTargetCreations;
-    private int offTargetClears;
-    private int offTargetSelfTests;
+    private final Pair defaultPair = new Pair("default");
+    /**
+     * The second pair, for draws the game addresses to one of <em>its own</em> framebuffers - the entity-outline
+     * silhouette is the measured case. {@link #ensureChainPair(int, int)} creates it on first use at the size the
+     * game's framebuffer asks for, and the post chain adopts it as its input, so the chain reads the silhouette
+     * rather than the copy of the whole scene the default pair holds.
+     */
+    private final Pair chainPair = new Pair("chain");
 
     private boolean frameOpen;
     private boolean deleted;
@@ -515,280 +511,419 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     // ----------------------------------------------------------------------------------------------------------
-    // The off-target image pair
+    // The two off-target image pairs
     //
-    // Not every draw the game issues is addressed to the main framebuffer. The entity outline is the measured
-    // case: the silhouette is drawn into the game's own entityOutlineFramebuffer. Recorded against the frame's
-    // framebuffer those draws overpainted the silhouette flat onto the scene, testing depth against the scene's
-    // own depth buffer. This pair is where such draws land instead. It repeats the frame images' formats and
-    // usages - so the frame-compatible render pass built by VulkanTerrainPipeline.createFrameRenderPass accepts
-    // it unchanged, GENERAL attachments included - and is created on demand at the size the game's framebuffer
-    // asks for rather than up front, because most sessions never bind a second framebuffer at all.
+    // Not every draw the game issues is addressed to the main framebuffer, and the draws that are not do not all
+    // belong to the same producer. The measured case is the entity outline: the silhouette is drawn into the game's
+    // own entityOutlineFramebuffer before the chain that turns it into a glow, while the finished-frame composite -
+    // issued with no framebuffer bound at all - is drawn once per frame into the default framebuffer. Both used to
+    // land in one owned pair, so the outline chain, whose input is that pair, blurred a per-frame copy of the whole
+    // scene rather than the silhouette (audit N04). There are two pairs now: {@link #defaultPair} takes identity 0
+    // and {@link #chainPair} takes every other non-main identity, which is what makes each pair have exactly one
+    // writer and the chain's input the silhouette.
+    //
+    // Both repeat the frame images' formats and usages - so the frame-compatible render pass built by
+    // VulkanTerrainPipeline.createFrameRenderPass accepts them unchanged, GENERAL attachments included - and both
+    // are created on demand at the size the game's framebuffer asks for rather than up front, because most sessions
+    // never bind a second framebuffer at all.
     // ----------------------------------------------------------------------------------------------------------
 
-    /** The colour image view off-target draws render into, or 0 before the first {@link #ensureOffTarget}. */
     /**
-     * {@return whether the off-target pair has been acquired}, i.e. moved out of UNDEFINED into the layout its render
-     * pass and the post chain assume.
+     * {@return whether the default pair has been acquired}, i.e. moved out of UNDEFINED into the layout its render
+     * pass assumes.
      * <p>
      * A caller that only remembers "this frame already cleared it" cannot see a pair that was recreated after that
      * clear: the new images are UNDEFINED again while the frame flag still says otherwise, and the next pass that
      * attaches or samples them is a layout error. This asks the pair itself.
      */
     public boolean offTargetAcquired() {
-        return this.offTargetAcquired;
+        return this.defaultPair.acquired;
     }
 
-    /** The colour image off-target draws render into and the post chain adopts, or 0 before it exists. */
+    /** The colour image the default pair renders into, or 0 before it exists. */
     public long offTargetColorImage() {
         checkAlive();
-        return this.offTargetColorImage;
+        return this.defaultPair.colorImage;
     }
 
     public long offTargetColorView() {
         checkAlive();
-        return this.offTargetColorView;
+        return this.defaultPair.colorView;
     }
 
-    /** The depth image view off-target draws test against, or 0 before the first {@link #ensureOffTarget}. */
+    /** The depth image view the default pair tests against, or 0 before the first {@link #ensureOffTarget}. */
     public long offTargetDepthView() {
         checkAlive();
-        return this.offTargetDepthView;
+        return this.defaultPair.depthView;
     }
 
-    /** Whether the off-target pair exists and is exactly the requested size. */
+    /** Whether the default pair exists and is exactly the requested size. */
     public boolean offTargetMatches(int width, int height) {
-        return this.offTargetColorView != VK_NULL_HANDLE && this.offTargetDepthView != VK_NULL_HANDLE
-                && this.offTargetWidth == width && this.offTargetHeight == height;
+        return this.defaultPair.matches(width, height);
     }
 
-    /**
-     * Makes the off-target pair exist at the requested size, creating it on first use and replacing it when the
-     * size changes. A freed pair is destroyed here, so the caller must have settled the GPU before asking for a
-     * different size - the same precondition the frame target's own re-creation has, and for the same reason: the
-     * validation layer has already caught one destroy of an image still in use by a command buffer.
-     * <p>
-     * The images are created in {@code VK_IMAGE_LAYOUT_UNDEFINED}; {@link #clearOffTarget} records the one-way move
-     * to the {@code GENERAL} layout the render pass declares, so it (or {@link #offTargetSelfTest}) must be
-     * recorded before any render pass binds these views.
-     */
+    /** Makes the default pair exist at the requested size. See {@link Pair#ensure(int, int)}. */
     public void ensureOffTarget(int width, int height) {
-        checkAlive();
-        if (width <= 0 || height <= 0) {
-            throw new IllegalArgumentException("off-target size must be positive, got " + width + "x" + height);
-        }
-        if (offTargetMatches(width, height)) {
-            return;
-        }
-        releaseOffTarget();
-        try {
-            long[] color = allocateImage(true, width, height);
-            this.offTargetColorImage = color[0];
-            this.offTargetColorMemory = color[1];
-            this.offTargetColorView = color[2];
-            long[] depth = allocateImage(false, width, height);
-            this.offTargetDepthImage = depth[0];
-            this.offTargetDepthMemory = depth[1];
-            this.offTargetDepthView = depth[2];
-            this.offTargetWidth = width;
-            this.offTargetHeight = height;
-            this.offTargetAcquired = false;
-            this.offTargetCreations++;
-        } catch (RuntimeException | LinkageError error) {
-            // No half pair is left behind: a retry starts from nothing and delete() still frees whatever exists.
-            releaseOffTarget();
-            throw error;
-        }
+        this.defaultPair.ensure(width, height);
     }
 
-    /**
-     * Records the clears the game's own framebuffer receives before it draws into it: colour (0,0,0,0) and depth
-     * 1.0, the transparent black and far plane {@code glClear} leaves behind, in the {@code GENERAL} layout both
-     * {@code vkCmdClearColorImage} and {@code vkCmdClearDepthStencilImage} accept.
-     * <p>
-     * Three things are recorded, in this order, because each one is what makes the next legal:
-     * <ol>
-     * <li>on first use only, one barrier per image moving UNDEFINED to GENERAL - the layout these images were
-     * created in has undefined content, and a clear into an image the validation layer still believes is UNDEFINED
-     * is a layout mismatch rather than a clear;</li>
-     * <li>the colour clear and the depth/stencil clear, both in GENERAL;</li>
-     * <li>a barrier from the transfer write the clears are to the attachment reads and writes the pass that follows
-     * performs, so the pass cannot load the pre-clear content.</li>
-     * </ol>
-     * Recorded outside a render pass instance, as both clear commands require. The commands land in the caller's
-     * command buffer, which is the one the off-target pass will be recorded into.
-     */
+    /** Records the clears a pair receives before the game's draws for it land in it. */
     public void clearOffTarget(VkCommandBuffer command) {
-        checkAlive();
-        if (command == null || command.address() == 0L) {
-            throw new IllegalArgumentException("off-target clear needs a command buffer");
-        }
-        if (this.offTargetColorView == VK_NULL_HANDLE || this.offTargetDepthView == VK_NULL_HANDLE) {
-            throw new IllegalStateException("ensureOffTarget must run before clearOffTarget");
-        }
-        try (MemoryStack stack = stackPush()) {
-            if (!this.offTargetAcquired) {
-                recordOffTargetAcquire(command);
-                this.offTargetAcquired = true;
-            }
-            VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
-
-            VkClearColorValue color = VkClearColorValue.calloc(stack);
-            color.float32(0, OFF_TARGET_CLEAR_RED);
-            color.float32(1, OFF_TARGET_CLEAR_GREEN);
-            color.float32(2, OFF_TARGET_CLEAR_BLUE);
-            color.float32(3, OFF_TARGET_CLEAR_ALPHA);
-            range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-            vkCmdClearColorImage(command, this.offTargetColorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
-
-            VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
-            depth.depth(OFF_TARGET_CLEAR_DEPTH).stencil(0);
-            range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
-            vkCmdClearDepthStencilImage(command, this.offTargetDepthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
-
-            recordOffTargetClearToAttachment(command);
-            this.offTargetClears++;
-        }
+        this.defaultPair.clear(command);
     }
 
-    /**
-     * Proves the off-target pair can actually be written, which nothing before this did: it records the clears a
-     * real off-target pass starts from and the barriers around them, so the validation layer checks the image
-     * handles, the image layouts, the aspect masks and the queue-family use of the whole sequence, and returns what
-     * was recorded as one line.
-     * <p>
-     * No staging buffer is involved and none is needed: the point is not to read a pixel back but to show that the
-     * commands record and are legal, which is what a wrong format, usage, aspect or layout would break. The line
-     * carries the two images' and views' handles, so a report can show they exist, are distinct from the frame's
-     * own images, and were cleared at the size the game asked for.
-     */
+    /** Records and reports a pair's clear-and-barrier sequence. See {@link Pair#selfTest}. */
     public String offTargetSelfTest(VkCommandBuffer command) {
+        return this.defaultPair.selfTest(command);
+    }
+
+    /** {@return whether the chain pair exists}, i.e. whether some non-default framebuffer has drawn into it. */
+    public boolean chainPairExists() {
+        return this.chainPair.exists();
+    }
+
+    /** Whether the chain pair exists and is exactly the requested size. */
+    public boolean chainPairMatches(int width, int height) {
+        return this.chainPair.matches(width, height);
+    }
+
+    /** {@return whether the chain pair has been acquired}, i.e. moved out of UNDEFINED into its render layout. */
+    public boolean chainPairAcquired() {
+        return this.chainPair.acquired;
+    }
+
+    /** {@return whether the chain pair still owes the one-shot self-test for its current images}. */
+    public boolean chainPairNeedsSelfTest() {
+        return this.chainPair.needsSelfTest();
+    }
+
+    /** The colour image the chain pair renders into and the post chain adopts, or 0 before it exists. */
+    public long chainPairColorImage() {
         checkAlive();
-        if (command == null || command.address() == 0L) {
-            throw new IllegalArgumentException("off-target self-test needs a command buffer");
-        }
-        if (this.offTargetColorView == VK_NULL_HANDLE || this.offTargetDepthView == VK_NULL_HANDLE) {
-            throw new IllegalStateException("ensureOffTarget must run before offTargetSelfTest");
-        }
-        clearOffTarget(command);
-        this.offTargetSelfTests++;
-        return "glless off-target self-test #" + this.offTargetSelfTests
-                + ": size=" + this.offTargetWidth + "x" + this.offTargetHeight
-                + " clearColor=(" + OFF_TARGET_CLEAR_RED + "," + OFF_TARGET_CLEAR_GREEN + ","
-                + OFF_TARGET_CLEAR_BLUE + "," + OFF_TARGET_CLEAR_ALPHA + ")"
-                + " clearDepth=" + OFF_TARGET_CLEAR_DEPTH + " clearStencil=0"
-                + " layout=GENERAL->GENERAL"
-                + " barrier=clearTransferWrite->attachmentReadWrite"
-                + " colorImage=0x" + Long.toHexString(this.offTargetColorImage)
-                + " depthImage=0x" + Long.toHexString(this.offTargetDepthImage)
-                + " colorView=0x" + Long.toHexString(this.offTargetColorView)
-                + " depthView=0x" + Long.toHexString(this.offTargetDepthView)
-                + " readback=none";
+        return this.chainPair.colorImage;
+    }
+
+    public long chainPairColorView() {
+        checkAlive();
+        return this.chainPair.colorView;
+    }
+
+    /** The depth image view the chain pair tests against, or 0 before it exists. */
+    public long chainPairDepthView() {
+        checkAlive();
+        return this.chainPair.depthView;
+    }
+
+    /** Makes the chain pair exist at the requested size. See {@link Pair#ensure(int, int)}. */
+    public void ensureChainPair(int width, int height) {
+        this.chainPair.ensure(width, height);
+    }
+
+    public void clearChainPair(VkCommandBuffer command) {
+        this.chainPair.clear(command);
+    }
+
+    public String chainPairSelfTest(VkCommandBuffer command) {
+        return this.chainPair.selfTest(command);
+    }
+
+    /** {@return one line per pair, naming the counters that used to be one unlabelled set}. */
+    public String pairSummary() {
+        return this.defaultPair.summary() + " " + this.chainPair.summary();
     }
 
     /**
-     * The one-time move from the layout the pair was created in to the {@code GENERAL} layout every later command
-     * assumes, with the clears that follow execution-ordered behind it. {@code TOP_OF_PIPE} as the source is the
-     * same statement the frame images' first acquire makes: nothing has touched these images yet, and the move
-     * discards the undefined content rather than preserving it.
+     * Which of the two pairs an off-target draw identity renders into: {@link #defaultPair} for identity 0 - the
+     * default framebuffer, which under the stub carries the game's finished-frame composites - and {@link #chainPair}
+     * for every other non-main identity, the game's own framebuffers, of which the entity-outline silhouette is the
+     * measured case.
      * <p>
-     * Both destination access masks are the transfer write the clear performs, not the attachment accesses the
-     * pass will perform: this barrier's destination stage is {@code TRANSFER}, and an access flag not supported by
-     * a stage in the destination mask is exactly the kind of mismatch the validation layer rejects. The attachment
-     * visibility is the following barrier's job.
+     * The rule lives here because this class owns the two pairs; the backend routes by it and labels its attribution
+     * counters with it, so the counters and the drawing cannot disagree. It is public and static - and touches no
+     * device - so the CPU contract test can exercise it without a GPU, which is the same reason
+     * {@code ImmediateGroupQueue.retireGroupsForTarget} is written that way.
+     *
+     * @param identity the framebuffer identity the game bound, as the frame mixin reports it
+     * @return the pair label, "default-pair" or "chain-pair"
      */
-    private void recordOffTargetAcquire(VkCommandBuffer command) {
-        int queueFamily = this.context.queueFamilyIndex();
-        try (MemoryStack stack = stackPush()) {
-            VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
-            VkImageMemoryBarrier colorBarrier = barriers.get(0);
-            colorBarrier.sType$Default()
-                    .image(this.offTargetColorImage)
-                    .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                    .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-            colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-
-            VkImageMemoryBarrier depthBarrier = barriers.get(1);
-            depthBarrier.sType$Default()
-                    .image(this.offTargetDepthImage)
-                    .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                    .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-            depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
-
-            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, null, null, barriers);
-        }
+    public static String pairLabelForIdentity(long identity) {
+        return identity == 0L ? "default-pair" : "chain-pair";
     }
 
     /**
-     * Makes the clears visible to what reads and writes the attachments afterwards. {@code vkCmdClearColorImage}
-     * and {@code vkCmdClearDepthStencilImage} are transfer operations, so without this the pass that follows has an
-     * execution dependency but no availability or visibility for the cleared values, and its attachment loads may
-     * still see the content the clear replaced. The layouts do not change - the pair is GENERAL before and after.
+     * One owned colour+depth pair and its whole lifecycle: created on first use at the size the caller asks for,
+     * replaced when that size changes, cleared once per frame from UNDEFINED, and released by {@link #delete()}.
+     * <p>
+     * The two instances differ in one thing only - the identity whose draws they receive - and that is what the
+     * label on every counter of theirs says. The pair itself has no idea which stream feeds it, so the lifecycle is
+     * written once here rather than twice beside two sets of fields.
      */
-    private void recordOffTargetClearToAttachment(VkCommandBuffer command) {
-        int colorAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        int depthAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        int queueFamily = this.context.queueFamilyIndex();
-        try (MemoryStack stack = stackPush()) {
-            VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
-            VkImageMemoryBarrier colorBarrier = barriers.get(0);
-            colorBarrier.sType$Default()
-                    .image(this.offTargetColorImage)
-                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(colorAccess);
-            colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+    private final class Pair {
 
-            VkImageMemoryBarrier depthBarrier = barriers.get(1);
-            depthBarrier.sType$Default()
-                    .image(this.offTargetDepthImage)
-                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(depthAccess);
-            depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+        /** How this pair is named in every counter that describes it. */
+        private final String label;
+        private long colorImage;
+        private long colorMemory;
+        private long colorView;
+        private long depthImage;
+        private long depthMemory;
+        private long depthView;
+        private int width;
+        private int height;
+        /** False until the first clear has moved the pair out of the layout it was created in (UNDEFINED). */
+        private boolean acquired;
+        private int creations;
+        private int clears;
+        private int selfTests;
 
-            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                    0, null, null, barriers);
+        private Pair(String label) {
+            this.label = label;
         }
-    }
 
-    /**
-     * Releases the off-target pair and forgets its size, so the next {@link #ensureOffTarget} builds it afresh.
-     * Safe to call with nothing created and safe to call twice; {@link #delete()} calls it, so every handle this
-     * class ever creates is freed exactly once even when a resize replaces a pair mid-session.
-     */
-    private void releaseOffTarget() {
-        VkDevice device = this.context.device();
-        if (this.offTargetColorView != VK_NULL_HANDLE) {
-            vkDestroyImageView(device, this.offTargetColorView, null);
-            this.offTargetColorView = VK_NULL_HANDLE;
+        private boolean exists() {
+            return this.colorView != VK_NULL_HANDLE && this.depthView != VK_NULL_HANDLE;
         }
-        if (this.offTargetColorImage != VK_NULL_HANDLE) {
-            vkDestroyImage(device, this.offTargetColorImage, null);
-            this.offTargetColorImage = VK_NULL_HANDLE;
+
+        private boolean matches(int requestedWidth, int requestedHeight) {
+            return exists() && this.width == requestedWidth && this.height == requestedHeight;
         }
-        if (this.offTargetColorMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(device, this.offTargetColorMemory, null);
-            this.offTargetColorMemory = VK_NULL_HANDLE;
+
+        /** {@return whether the images this pair holds now have not had their one legal-use self-test yet}. */
+        private boolean needsSelfTest() {
+            return exists() && this.selfTests < this.creations;
         }
-        if (this.offTargetDepthView != VK_NULL_HANDLE) {
-            vkDestroyImageView(device, this.offTargetDepthView, null);
-            this.offTargetDepthView = VK_NULL_HANDLE;
+
+        /**
+         * Makes the pair exist at the requested size, creating it on first use and replacing it when the size
+         * changes. A freed pair is destroyed here, so the caller must have settled the GPU before asking for a
+         * different size - the same precondition the frame target's own re-creation has, and for the same reason:
+         * the validation layer has already caught one destroy of an image still in use by a command buffer.
+         * <p>
+         * The images are created in {@code VK_IMAGE_LAYOUT_UNDEFINED}; {@link #clear} records the one-way move to
+         * the {@code GENERAL} layout the render pass declares, so it (or {@link #selfTest}) must be recorded before
+         * any render pass binds these views.
+         */
+        private void ensure(int requestedWidth, int requestedHeight) {
+            checkAlive();
+            if (requestedWidth <= 0 || requestedHeight <= 0) {
+                throw new IllegalArgumentException(this.label + " pair size must be positive, got "
+                        + requestedWidth + "x" + requestedHeight);
+            }
+            if (matches(requestedWidth, requestedHeight)) {
+                return;
+            }
+            release();
+            try {
+                long[] color = allocateImage(true, requestedWidth, requestedHeight);
+                this.colorImage = color[0];
+                this.colorMemory = color[1];
+                this.colorView = color[2];
+                long[] depth = allocateImage(false, requestedWidth, requestedHeight);
+                this.depthImage = depth[0];
+                this.depthMemory = depth[1];
+                this.depthView = depth[2];
+                this.width = requestedWidth;
+                this.height = requestedHeight;
+                this.acquired = false;
+                this.creations++;
+            } catch (RuntimeException | LinkageError error) {
+                // No half pair is left behind: a retry starts from nothing and delete() still frees whatever exists.
+                release();
+                throw error;
+            }
         }
-        if (this.offTargetDepthImage != VK_NULL_HANDLE) {
-            vkDestroyImage(device, this.offTargetDepthImage, null);
-            this.offTargetDepthImage = VK_NULL_HANDLE;
+
+        /**
+         * Records the clears the game's own framebuffer receives before it draws into it: colour (0,0,0,0) and
+         * depth 1.0, the transparent black and far plane {@code glClear} leaves behind, in the {@code GENERAL}
+         * layout both {@code vkCmdClearColorImage} and {@code vkCmdClearDepthStencilImage} accept.
+         * <p>
+         * Three things are recorded, in this order, because each one is what makes the next legal:
+         * <ol>
+         * <li>on first use only, one barrier per image moving UNDEFINED to GENERAL - the layout these images were
+         * created in has undefined content, and a clear into an image the validation layer still believes is
+         * UNDEFINED is a layout mismatch rather than a clear;</li>
+         * <li>the colour clear and the depth/stencil clear, both in GENERAL;</li>
+         * <li>a barrier from the transfer write the clears are to the attachment reads and writes the pass that
+         * follows performs, so the pass cannot load the pre-clear content.</li>
+         * </ol>
+         * Recorded outside a render pass instance, as both clear commands require. The commands land in the
+         * caller's command buffer, which is the one the pair's pass will be recorded into.
+         */
+        private void clear(VkCommandBuffer command) {
+            checkAlive();
+            if (command == null || command.address() == 0L) {
+                throw new IllegalArgumentException(this.label + " pair clear needs a command buffer");
+            }
+            if (!exists()) {
+                throw new IllegalStateException("ensure must run before the " + this.label + " pair is cleared");
+            }
+            try (MemoryStack stack = stackPush()) {
+                if (!this.acquired) {
+                    recordAcquire(command);
+                    this.acquired = true;
+                }
+                VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
+
+                VkClearColorValue color = VkClearColorValue.calloc(stack);
+                color.float32(0, OFF_TARGET_CLEAR_RED);
+                color.float32(1, OFF_TARGET_CLEAR_GREEN);
+                color.float32(2, OFF_TARGET_CLEAR_BLUE);
+                color.float32(3, OFF_TARGET_CLEAR_ALPHA);
+                range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+                vkCmdClearColorImage(command, this.colorImage, VK_IMAGE_LAYOUT_GENERAL, color, range);
+
+                VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
+                depth.depth(OFF_TARGET_CLEAR_DEPTH).stencil(0);
+                range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
+                vkCmdClearDepthStencilImage(command, this.depthImage, VK_IMAGE_LAYOUT_GENERAL, depth, range);
+
+                recordClearToAttachment(command);
+                this.clears++;
+            }
         }
-        if (this.offTargetDepthMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(device, this.offTargetDepthMemory, null);
-            this.offTargetDepthMemory = VK_NULL_HANDLE;
+
+        /**
+         * Proves a pair can actually be written, which nothing before this did: it records the clears a real pass
+         * starts from and the barriers around them, so the validation layer checks the image handles, the image
+         * layouts, the aspect masks and the queue-family use of the whole sequence, and returns what was recorded
+         * as one line.
+         * <p>
+         * No staging buffer is involved and none is needed: the point is not to read a pixel back but to show that
+         * the commands record and are legal, which is what a wrong format, usage, aspect or layout would break. The
+         * line names the pair and carries the two images' and views' handles, so a report can show they exist, are
+         * distinct from the frame's own images, and were cleared at the size the game asked for.
+         */
+        private String selfTest(VkCommandBuffer command) {
+            clear(command);
+            this.selfTests++;
+            return "glless " + this.label + " pair self-test #" + this.selfTests
+                    + ": size=" + this.width + "x" + this.height
+                    + " clearColor=(" + OFF_TARGET_CLEAR_RED + "," + OFF_TARGET_CLEAR_GREEN + ","
+                    + OFF_TARGET_CLEAR_BLUE + "," + OFF_TARGET_CLEAR_ALPHA + ")"
+                    + " clearDepth=" + OFF_TARGET_CLEAR_DEPTH + " clearStencil=0"
+                    + " layout=GENERAL->GENERAL"
+                    + " barrier=clearTransferWrite->attachmentReadWrite"
+                    + " colorImage=0x" + Long.toHexString(this.colorImage)
+                    + " depthImage=0x" + Long.toHexString(this.depthImage)
+                    + " colorView=0x" + Long.toHexString(this.colorView)
+                    + " depthView=0x" + Long.toHexString(this.depthView)
+                    + " readback=none";
         }
-        this.offTargetWidth = 0;
-        this.offTargetHeight = 0;
-        this.offTargetAcquired = false;
+
+        /**
+         * The one-time move from the layout the pair was created in to the {@code GENERAL} layout every later
+         * command assumes, with the clears that follow execution-ordered behind it. {@code TOP_OF_PIPE} as the
+         * source is the same statement the frame images' first acquire makes: nothing has touched these images yet,
+         * and the move discards the undefined content rather than preserving it.
+         * <p>
+         * Both destination access masks are the transfer write the clear performs, not the attachment accesses the
+         * pass will perform: this barrier's destination stage is {@code TRANSFER}, and an access flag not supported
+         * by a stage in the destination mask is exactly the kind of mismatch the validation layer rejects. The
+         * attachment visibility is the following barrier's job.
+         */
+        private void recordAcquire(VkCommandBuffer command) {
+            int queueFamily = context.queueFamilyIndex();
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
+                VkImageMemoryBarrier colorBarrier = barriers.get(0);
+                colorBarrier.sType$Default()
+                        .image(this.colorImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+
+                VkImageMemoryBarrier depthBarrier = barriers.get(1);
+                depthBarrier.sType$Default()
+                        .image(this.depthImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, null, null, barriers);
+            }
+        }
+
+        /**
+         * Makes the clears visible to what reads and writes the attachments afterwards. {@code vkCmdClearColorImage}
+         * and {@code vkCmdClearDepthStencilImage} are transfer operations, so without this the pass that follows has
+         * an execution dependency but no availability or visibility for the cleared values, and its attachment loads
+         * may still see the content the clear replaced. The layouts do not change - the pair is GENERAL before and
+         * after.
+         */
+        private void recordClearToAttachment(VkCommandBuffer command) {
+            int colorAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            int depthAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                    | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            int queueFamily = context.queueFamilyIndex();
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
+                VkImageMemoryBarrier colorBarrier = barriers.get(0);
+                colorBarrier.sType$Default()
+                        .image(this.colorImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(colorAccess);
+                colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+
+                VkImageMemoryBarrier depthBarrier = barriers.get(1);
+                depthBarrier.sType$Default()
+                        .image(this.depthImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(depthAccess);
+                depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        0, null, null, barriers);
+            }
+        }
+
+        /**
+         * Releases the pair and forgets its size, so the next {@link #ensure} builds it afresh. Safe to call with
+         * nothing created and safe to call twice; {@link #delete()} calls it, so every handle this class ever
+         * creates is freed exactly once even when a resize replaces a pair mid-session.
+         */
+        private void release() {
+            VkDevice device = context.device();
+            if (this.colorView != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, this.colorView, null);
+                this.colorView = VK_NULL_HANDLE;
+            }
+            if (this.colorImage != VK_NULL_HANDLE) {
+                vkDestroyImage(device, this.colorImage, null);
+                this.colorImage = VK_NULL_HANDLE;
+            }
+            if (this.colorMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, this.colorMemory, null);
+                this.colorMemory = VK_NULL_HANDLE;
+            }
+            if (this.depthView != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, this.depthView, null);
+                this.depthView = VK_NULL_HANDLE;
+            }
+            if (this.depthImage != VK_NULL_HANDLE) {
+                vkDestroyImage(device, this.depthImage, null);
+                this.depthImage = VK_NULL_HANDLE;
+            }
+            if (this.depthMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, this.depthMemory, null);
+                this.depthMemory = VK_NULL_HANDLE;
+            }
+            this.width = 0;
+            this.height = 0;
+            this.acquired = false;
+        }
+
+        /** {@return this pair's own counters, labelled with the identity stream that feeds it}. */
+        private String summary() {
+            return this.label + "(size=" + (exists() ? this.width + "x" + this.height : "none")
+                    + " creations=" + this.creations + " clears=" + this.clears
+                    + " selfTests=" + this.selfTests + " acquired=" + this.acquired + ")";
+        }
     }
 
     @Override
@@ -818,12 +953,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     @Override
     public String takeTimingSummary() {
+        // Per pair and labelled: the counters this used to print unlabelled were the default pair's, and with a
+        // second pair a bare "offTargetClears=" would be read as if it covered both images.
         return "glless target: no handoff, abandoned=" + this.abandonedFrames
                 + " lastAbandon=[" + this.lastAbandonReason + "]"
-                + " offTarget=" + (this.offTargetWidth > 0 ? this.offTargetWidth + "x" + this.offTargetHeight : "none")
-                + " offTargetCreations=" + this.offTargetCreations
-                + " offTargetClears=" + this.offTargetClears
-                + " offTargetSelfTests=" + this.offTargetSelfTests;
+                + " offTargetPairs=[" + pairSummary() + "]";
     }
 
     @Override
@@ -833,7 +967,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         this.deleted = true;
         VkDevice device = this.context.device();
-        releaseOffTarget();
+        this.defaultPair.release();
+        this.chainPair.release();
         if (this.waitSemaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(device, this.waitSemaphore, null);
             this.waitSemaphore = VK_NULL_HANDLE;
