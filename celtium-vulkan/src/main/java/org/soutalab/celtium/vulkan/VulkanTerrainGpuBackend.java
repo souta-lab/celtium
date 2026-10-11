@@ -2133,6 +2133,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
+    /**
+     * Prints where the chain pair is cleared in the frame, with the image and the identity that triggered it.
+     * <p>
+     * The panorama's faces draw into the chain pair, the copy reads that same image in the same frame, and it is
+     * white even after the foreign clears are dropped - so the remaining wipe is the pair's own clear, which runs
+     * once per frame ({@code chainPairClearedFrame}). Whether that clear is recorded before or after the faces' pass
+     * is the fact this line carries, and it is bounded so a normal run is unchanged.
+     */
+    private void celtium$noteChainPairClear(String site) {
+        if (this.chainPairClearLogs >= CHAIN_CLEAR_LOG_LIMIT) {
+            return;
+        }
+        this.chainPairClearLogs++;
+        GllessFrameTarget glless = offTargetTarget();
+        System.out.println("[Celtium] CELTIUM_CHAIN_CLEAR frame=" + this.frameId + " site=" + site
+                + " image=0x" + Long.toHexString(glless == null ? 0L : glless.chainPairColorImage())
+                + " target=" + this.currentRenderTarget + " onMain=" + this.currentRenderTargetIsMain
+                + " activeTarget=" + this.activeImmediateTarget
+                + " windowsThisFrame=" + this.immediateWindowsThisFrame
+                + " lastTerrainPassFrame=" + this.lastTerrainPassFrame
+                + " terrainRanThisFrame=" + (this.lastTerrainPassFrame == this.frameId));
+    }
+
+    /** Bounded lines of {@code CELTIUM_CHAIN_CLEAR}. */
+    private static final int CHAIN_CLEAR_LOG_LIMIT =
+            Integer.getInteger("celtium.vulkan.chainClearLog", 12).intValue();
+    private int chainPairClearLogs;
+
     /** Offers that reached each stage index; printed as {@code offerStages=[1:..,2:..]}. */
     private final int[] offerStageReached = new int[16];
 
@@ -6909,6 +6937,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         }
                         this.chainPairClearedFrame = this.frameId;
                         this.chainPairClears++;
+                        celtium$noteChainPairClear("first-non-main-pass");
                     }
                     framebuffer = ensureChainPairFramebuffer(renderPass);
                     this.passAttachedColorImage = offTarget.chainPairColorImage();
@@ -10076,6 +10105,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.chainPairClearedFrame = this.frameId;
             this.chainPairClears++;
+            celtium$noteChainPairClear("sync-published-chain-output");
         }
         this.postChain.adoptTarget(identity, glless.chainPairColorImage(), glless.chainPairColorView(),
                 width, height);

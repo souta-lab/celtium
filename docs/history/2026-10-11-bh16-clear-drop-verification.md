@@ -80,3 +80,34 @@ the `passImage`/`readImage` pair that settled the last question.
 pre-fix `stage-leg` read `PASSED` with the same flags. That is still unresolved and is the reason the drop
 rule's scope (owner != 0 vs "the pair's content belongs to another identity") is worth a check before it is
 kept as-is.
+
+## Re-take with the routing-based drop rule (jar `fog-path-chain.jar`)
+
+The Lead replaced the raw-GL-name rule with the backend's own routing decision (`bindFramebuffer` records whether
+it considered the framebuffer main; the stub stamps that onto each pending clear; only a clear routing called
+non-main is dropped). Two legs, same jar:
+
+| leg | reading |
+|---|---|
+| `chain-terrain` (fixture, scene=terrain, `keepGui`) | verdict **PASSED**, nonBg **0.952174** (the `FAILED_PRESENTED_IMAGE` regression is **gone**), `gameClearsDroppedForeignTarget=**0**`, `lastDroppedClearOwner=0`, `gpuStalled=false` |
+| `chain-menu` (fixture-free) | `CELTIUM_CHAIN_CLEAR frame=0 site=first-non-main-pass image=0x7fa2f0c72f50 target=1938698341 onMain=false activeTarget=0 windowsThisFrame=0`, then `CELTIUM_DRAW_SITE #1 frame=0 target=1938698341`, then the copy |
+
+So the 420 drops were the frame's own clears being wrongly dropped, exactly as the Lead diagnosed: with the
+routing test, **zero** clears are dropped in the terrain leg and the gate returns to `PASSED` with the same
+non-background fraction as before the fix (0.952174 against 0.952229).
+
+## The chain-pair clear is not the wipe either
+
+Log line order in the menu leg: `CELTIUM_CLEAR_LATCH` 233, **`CELTIUM_CHAIN_CLEAR` 236**, **`CELTIUM_DRAW_SITE
+#1` 239**, `CELTIUM_TEX_COPY_SERVED` 802. The pair's own clear is recorded **before** the faces draw, and the
+faces draw **before** the copy - so neither the foreign clears (now correctly not dropped, and none dropped in
+the terrain leg) nor the pair's own clear explains the white by ordering.
+
+## What is left
+
+The remaining candidate is the gap between **recording** and **execution**: `CELTIUM_DRAW_SITE` prints when the
+group is recorded into the command buffer (line 239), the copy reads at line 802, and the two are in different
+submissions - if the copy's read is submitted or executed before the faces' pass reaches the queue, the copy
+sees the image as the clear left it. The measurement that separates this from everything above is a completion
+fact at the copy: a fence or timestamp on the chain pair taken when the copy runs, printed beside
+`readImage=`/`frame=`, which says whether the faces' pass had executed at the copy's moment.
