@@ -145,6 +145,49 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.207 **round 11 の進行: クラッシュは再現せず（jar 健全性3計測）・lightmap 座標は stub で捨てられていた・VSync 行は在った**
+
+- **task-58 完了（sky-draws・`guiscale-leg`）＝クラッシュは再現せず、ただし「修正済み」ではない**:
+  AMD RX 6400・GL-less・`scene=videoSettings`・layer off・854x480（`resizeObservedTo=854x480`）で
+  **GUI Scale を9回**画面自身の `GuiVideoSettings.mouseClicked+mouseReleased` で押した（Auto→1→2→…）。
+  `exit 0`・**crash report 0件**・`validationMessageCount=0`・`validationClean=true`・画あり（gui stage・tick 314）。
+  `+guiScale:1 -guiScale:0` が `options.txt` に反映、Done 後に開き直して `GUI Scale: 1`。
+  **jar 健全性は3計測**: `unzip -t` clean／1073 entry・824 class・**長さ0の class entry 0**（190 の0バイトは全てディレクトリ）／
+  全 class の constant-pool walk で **824/824 有効**。`ReadableRange.class` は 574 B。
+  **GUI scale の契約（原典）**: `GuiVideoSettings.mouseClicked/mouseReleased` → `ScaledResolution` →
+  `setWorldAndResolution`（画面の再レイアウト）。`Minecraft.resize`/`updateFramebufferSize` は**窓**の経路で、
+  scale 変更は framebuffer も窓も変えない。native 側が反応すべきは (a) 毎フレームの GUI ortho（mirror・group 単位）、
+  (b) viewport/scissor（窓ピクセル・不変）、(c) 再レイアウトされた geometry。**scale 専用の hook は欠けていない**。
+  **残る仮説**: 19:20 のクラッシュは長さ0の class file（Forge の guard は `bytes == null` のみ）＝**古い/部分コピー jar**。
+  再発時の第一手は `md5sum mods/*.jar` と crash report の class file 長。
+- **fixture 欠陥2件（gui-stage へ）**: (1) GUI_SCALE の「restore」が冪等でなく Auto を通り過ぎて `guiScale=2` のまま
+  （`sceneCalibrationKey` に残る）＝「restored」と書いた leg は restored でない。(2) `videoSettingsRowNames` は
+  `ENABLE_VSYNC:Use VSync: OFF` を列挙しているのに、以前の VSync toggle は「行が無い」と測られていた＝finder の
+  token 照合欠陥。**task-56 の toggle は token `ENABLE_VSYNC` で取り直す**（行の不在を verdict にしない）。
+- **lightmap 座標は捨てられていた（proj-channel・原典＋自コード）**: `OpenGlHelper.setLightmapTextureCoords`
+  （`OpenGlHelper.java:877`）は `GL13.glMultiTexCoord2f` に落ち、**stub の no-op 表（`CeltiumGlStub.java:393`）**にあり
+  mirror も無い。呼び手は `RenderLiving.java:64`（全 living entity・`getBrightnessForRender()`）・
+  `TileEntityRendererDispatcher.java:129`・`ItemRenderer.java:105`・`LayerSpiderEyes.java:42,50`・`LayerHeldBlock.java:42`、
+  および**意図的に full-bright な** `LayerEndermanEyes.java:34`/`LayerEnderDragonEyes.java:34`（`(61680,0)`）。
+  ＝sampler を足すだけでは全 batch が1テクセルを読む（現状より悪い）。**capture＋per-group push＋shader の3点が必要**で、
+  **task-55 は pipelines から proj-channel へ再割当**（pipelines は3回 turn が起動しなかった）。
+  受入は夜 pair で **eye layer を body family と分けて報告**（全部を暗くする修正が通らないように）。
+- **entity pair の実測（weather-water・`ww30-cand-entity` vs `ww31-ref-entity`）**: 地面前景 **99.0% byte-identical**
+  （`mean|d|=0.00`）、frame 全体 `mean|d|=3.87`/69.4% 一致、chest `mean|d|=1.18`（89% が8以内）、
+  **entity band `mean|d|=6.07`/60% 一致**＝地形は画素一致で entity/chest の陰影が一様に数単位ずれる（＝task-55 の行）。
+  **一人称の手はどちらの frame にも無い**（この pose では fixture が行使しない＝held item の向きは未行使と明記）。
+  hurt flash は両側で赤みが出るが `CELTIUM_ENV_COMBINE` は出ていない（counters-only・verified と呼ばない）。
+- **glyph particle の null 結果は配置だった（weather-water・task-54）**: `ww29-glyph` は `PASSED`・`id5=38/38` 受理だが
+  粒子画素なし。原因は fixture の FLAME grid が y=8 面用で、既定 world の最上層 y=10 の enchant 面では
+  y=9.6-12.2 が面下・視界外。hook を eye level の両 z 方向へ直し、stub に **`CELTIUM_PARTICLE_UV`**
+  （受理粒子 batch の先頭4 tex coord と sprite cell `u*16,v*16`）を追加＝glyph なら x1..10/y14..15、既定 sprite なら別セル。
+- **fog は明るさの原因ではない（fog-path・`r11-rain-fogon/off`）**: 雨で暗くした fog 色 `(0.4324,0.5009,0.6181)` が
+  immediate path に届き（`CELTIUM_IMMEDIATE_FOG enable=true glMode=9729 start=0 end=128 colour=…`）、
+  sky band が **-12.7/-20.0/-18.9**、horizon が -10.1/-12.4/-10.0 動き terrain centre は不変。
+  ＝苦情は fog ではなく lighting/lightmap 項。雲は fixture に knob が無く未行使（`-Dceltium.validation.renderClouds` を依頼済み）。
+- **night scene は到達可能になった**: `-Dceltium.validation.worldTime`（既定 6000・commit `f95c6ed08`）で
+  `18000` を指定できる。夜 leg が queue 中（`r11b-night-fogon`・`t35c-night-ref`）。
+
 ## 0.206 **ユーザー第11報（5項目）・クラッシュの原文解析・F3 の実測値・stall latch の帰属タスク化**
 
 **ユーザー報告（round 11・原文）**: 「ロード画面は未だに表示されてない。エンティティ/雲/プレイヤーは未だに明るい。ラグいのは少しマシになったが f3開くととてもらぐい。アイテムは治った。**GUIスケール変えようとするとクラッシュする**。」
