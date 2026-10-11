@@ -140,6 +140,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.200 **証拠保存方針の変更（ユーザー指示）: 最新1 run のみ保存・チームへ周知**
+
+ユーザーが「全 run の実データ保存」を撤回し、**直近1件のみ保存**へ変更。実施済み:
+- 直近完了 run `runtime/vs47d-cand` を保存し、古い run の screenshot・log・描画 dump・検証 world・再生成ファイルを削除。
+- **古い実行 jar スナップショット 386 個**も削除。**約 4.45 GiB 確保・空き約 16.49 GiB**。
+- 台帳: **`.celtium-work/disk-cleanup-latest-only-20261011.json`**（`latest_retained` と `protected` の一覧あり）。
+- 小さな `validation-process.json` / `validation-command.json` 等のメタデータと docs の監査 MD は保存。
+- **実行中・待機中プロセスが参照する run は保護**: `runtime/celtium-headless-interop`・`runtime/lead-breaktex`・`runtime/t33c-atlas1`・
+  `runtime/t41-ref-inv`・`runtime/vs47d-cand`・`runtime/vs47d-ref`・`runtime/wbs-vs-cand`・`runtime/ww-menu4`・
+  `runtime/ww18-texparam`・`runtime/ww26-terrain`。
+
+**チームへ周知した2規則（plan にも残す）**:
+1. **古い docs が指す PNG/log/jar は既に存在しないことがある**——削除済み artifact を「読んだ」として引用しない。
+   過去の結果を**新しい検証済み結果として扱わない**。数値は直近の run か残存メタデータから取り、どちらかを明記する。
+2. **受入の証拠は leg 完了時に確保する**——次の整理で残るのは最新 run だけなので、crop/PNG は自分の記録ディレクトリへコピーするか、
+   hash と数値を即座に record へ書く。
+
 ## 0.199 **最大監査（`docs/history/2026-10-11-full-audit-1832.md`）の受領と P1 割当・item サイズも実プレイで解消**
 
 - **監査の要約（sha256 `49115e2c8cba55a9…`）**: Celeritas 最適化は **341/359 が upstream と同一**で残っているが、
