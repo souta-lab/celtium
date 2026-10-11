@@ -257,6 +257,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.245 **round 51: device feature の前提を実装（`pEnabledFeatures`）・パノラマは viewport 仮説も弱まり「alpha test / descriptor」へ**
+
+- **device feature の前提（Lead・`04375d685`）**: `createDevice` の `VkDeviceCreateInfo` に **`pEnabledFeatures` が無く全ての optional feature が off**
+  だった（`vkCmdDrawIndexedIndirect` は `multiDrawIndirect` を要する＝RADV が advertise していても**合法でない**）。
+  **query してサポート時のみ enable**（未サポートを enable すると `vkCreateDevice` が失敗し renderer が丸ごと無くなる）、
+  `maxDrawIndirectCount` は **limit** なので properties から読んで記録。
+  `CELTIUM_DEVICE_CONTRACT` に **`indirect=[multiDrawIndirect=… drawIndirectFirstInstance=… maxDrawIndirectCount=…]`** を追加
+  ＝受入 leg が1行で「何が報告され何が有効化されたか」を読める。挙動変更はこれ以外なし。indirect 経路本体は proj-channel の次の step。
+- **パノラマ: viewport 仮説も弱まる（Lead の bounds leg・`r52-bounds`）**:
+  ```
+  CELTIUM_GROUP_BOUNDS group=1 fmt=2 target=811177456 texture=8 batches=2 vertices=8 indices=12 colour0=0x0
+    proj=[m00=0.005 m11=-0.008 m22=0.0 m32=-0.5]
+    state=[blend=0 … alphaFunc=0 depthTest=0 depthWrite=1 cull=0 alphaRef=0.0 depthFunc=515]
+    ndc x[-1.00..5.00] y[-5.00..1.07] z[0.50..0.50] behind=0
+  CELTIUM_GROUP_VIEWPORT gl=0,0 1281x720 clipped=0,0 1280x720 target=1280x720
+  ```
+  ＝quad の NDC は**NDC 正方形全体を覆い**、viewport も**フルフレーム**。cull off・depth test off なので**画素を書くはず**なのに
+  copy は clear 色（白 `(1,1,1,0)`）を読む。残る候補は (1) **`colour0=0x0`（alpha 0）＋alpha test による全 fragment discard**
+  （`alphaFunc=0` は vanilla が設定する値ではなく、BH-03 の既定は `GL_GREATER`=516）、(2) **descriptor/texture**（白 texture × alpha 0 × blend off）。
+  分離測定は **alpha test を強制 off した leg の copy mean** と、`colour0` の隣に**最初の頂点の packed colour と alpha** を印字すること。
+- **BH-14 census・videoSettings の残り・BH-36 の分割は前 round のとおり**。
+
 ## 0.244 **round 50: BH-35（未モデル GL 入口の census）・SliderControl の縮退・パノラマは viewport へ・BH-14 census・device feature の前提**
 
 - **BH-35 実装（Lead・`c6a6d3c86`）**: stub は**全ての名前**に trampoline を返し、table 外の名前は generic no-op になるが**どの名前かは記録していなかった**
