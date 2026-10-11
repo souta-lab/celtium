@@ -10767,6 +10767,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (destName == 0 || width <= 0 || height <= 0) {
             return celtium$refuseTextureCopy("invalid arguments: dest=" + destName + " " + width + "x" + height);
         }
+        // Which caller issues the copy: the panorama's is GuiMainMenu.renderSkybox (after its 64 cubes are drawn), and
+        // a splash/loading copy would come before every draw - measured, the copy served at frame 0 runs with
+        // lastDrawnFrame=-1, so the two cannot be told apart by the counters alone. Bounded, the BH-06 pattern.
+        if (this.celtium$copyCallerLogs < 4) {
+            this.celtium$copyCallerLogs++;
+            StackTraceElement[] frames = Thread.currentThread().getStackTrace();
+            StringBuilder caller = new StringBuilder();
+            for (int i = 2; i < Math.min(frames.length, 16); i++) {
+                caller.append(frames[i].getClassName().replaceAll(".*\\.", "")).append('.')
+                        .append(frames[i].getMethodName()).append(':').append(frames[i].getLineNumber()).append(" <- ");
+            }
+            System.out.println("[Celtium] CELTIUM_COPY_CALLER dest=" + destName + " " + width + "x" + height
+                    + " frame=" + this.frameId + " callers=[" + caller + "]");
+        }
         if (level != 0) {
             // The mirror's patch path carries level 0 only (announceFullPixels walks data[level] from 0 and stops at the
             // first absent level), so a copy into a higher level is named rather than written to level 0 as if it were
@@ -11069,6 +11083,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     /** Bounded lines of the copy's read facts; a normal run prints nothing. */
     private int celtium$copyReadLogs;
+    /** Bounded lines of the copy's caller census; a normal run prints nothing. */
+    private int celtium$copyCallerLogs;
 
     /** {@return how many of the read pixels are not pure white}; a mean cannot tell that apart. */
     private static int celtium$countNonWhite(int[] pixels) {

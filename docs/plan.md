@@ -257,6 +257,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.276 **round 82: copy の呼び元計装を追加 — 判明した分は `GL11.glCopyTexSubImage2D` ← `GlStateManager.func_187443_a:510`、game 側の frame は window 外だった**
+
+- **計装（Lead・serve 入口の bounded caller census・BH-06 と同じ形）と測定（`r80-caller`）**:
+  ```
+  CELTIUM_COPY_CALLER dest=20 256x256 frame=0 callers=[
+    CeltiumGlStub.celtium$noteTextureCopy:3290 <- …CeltiumGlTrampoline.callback:1348
+    <- GL11C.glCopyTexSubImage2D:-2 <- GL11.glCopyTexSubImage2D:3793
+    <- GlStateManager.func_187443_a:510 <- ]
+  ```
+  ＝呼び出しは **`GL11.glCopyTexSubImage2D`**（`GlStateManager.func_187443_a` 経由）。**game 側の frame（`GuiMainMenu.renderSkybox` か splash か）は 9 frame の window 外**だったため、
+  **window を 16 に広げて再取得中**（`r81-caller2`・leg は完走待ち）。
+- **次の1点（変わらず）**: その game 側 frame が `GuiMainMenu` か splash か。前者なら修正は copy の**順序**（cube 描画後に serve される必要）、
+  後者なら**測っている copy が panorama のものではない**ので、受入 leg の設計から見直す。
+- **ツリー**: 計装（`CELTIUM_COPY_READ`・`CELTIUM_COPY_CALLER`・`CELTIUM_CHAIN_PAIR_CLEAR`）は残置・build 緑・効かなかった変更は revert 済み。
+
 ## 0.275 **round 81: serve 前の flush＋idle 待ちは効かない（`lastDrawnFrame=-1` のまま）＝測っている copy は panorama のものではない可能性**
 
 - **実装した修正（serve 入口で `flushPendingBeforeGlDraw()` ＋ `waitForIdle()`）と測定（`r79-flush`・hold 60）**:
