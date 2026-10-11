@@ -89,6 +89,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.146 **chain pair が実行時に使われている／計器の2つの問い**
+
+glow run の `rendererDebug` を（期待した counter ではなく）直接読んだ結果:
+
+```
+framebuffer bind: identity=0x34160193 main=true pair=chain-pair (distinct identities so far 1)
+framebuffer colour texture: identity=873857427 texture=3 1280x720
+```
+
+**glow 担当の2ペア routing が実行時に生きており、chain pair が使われている**——split が counter だけでなく実 run に存在する最初の証拠。
+
+**ただし2つの問いが残る（ここでは答えない）**:
+
+1. この行は `main=true` と `pair=chain-pair` を**同時に**報告している。設計は「identity 0 → default pair／それ以外の非 main identity → chain pair」なので、
+   **census が「その bind に選ばれた pair」ではなく「現在の pair」を印字している**（ラベル問題）か、**main の bind が chain pair に到達している**（routing 問題）かのどちらか。
+   切り分けは「routing 規則が返した pair」を印字すること。
+2. **post chain のサマリ（`postChains`・`postAdopted`・`postRunsOnStandIn`・`offTargetPairs`）が依然レポートに無い**。
+   `rendererDebug` には viewport・terrain backend・memory・transfer queue・framebuffer census が載るが、post chain の行が**1つも無い**。
+   一方コンソールには `CELTIUM_POSTCHAIN create / UBO_ROUTE / ROUTE / PACKED` が出ている。
+   **計器は存在するが、受入が引用する artifact に届いていない**——他行と同じ場所に足すのは私のファイルの1行だが、
+   今ラウンドはそのファイルを担当が編集中なので、編集を重ねずに引き継ぐ。
+
 ## 0.145 **outline chain が走った（訂正の実測裏づけ）**
 
 §0.143 の訂正を受けて、健全なツリーで glow シーンを再測定した結果、**chain が native executor に到達**:
