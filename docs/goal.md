@@ -1,6 +1,30 @@
-# Celtium goal — 2026-10-11 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 1, phase active / activation armed / roundsStarted 5 / maxGoalRounds 256）
+# Celtium goal — 2026-10-12 更新（live: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`, revision 13, phase active / activation armed / roundsStarted 25 / maxGoalRounds 256）
 
 goal ID: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`
+
+## 聖典・最優先の修正対象（2026-10-12 ユーザー指示・goal revision 13 へ反映済み）
+
+**以下の3つが全部直るまで「戻らない」。報告・受入・修正を止めない。3件程度の修正で終えない。**
+
+1. **`docs/history/2026-10-11-code-bughunt.md` の37件（BH-01〜BH-37）を全部閉じる。**
+   担当割り当て・進捗・受入は `docs/plan.md` に置く。P1から順に、各件を
+   「根因の特定 → 修正 → 観測できる leg → before/after → commit/push」の単位で閉じる。
+2. **文字がおかしい問題。** 現行 jar の実測では F3 overlay と chat が可読、hotbar strip が
+   参照比 mean|d| **1.86**・差 0.2%。未再現なら再現条件を特定し、再現したら修正する。
+   font counter は `refused=0` を維持する。
+3. **エンティティとHUDが見えない問題。** HUD は受入済み（参照一致 1.86）。エンティティ/一人称の
+   手持ちは未解決で、実測は `acceptedByFormat` id4=28・id9=228 に対し `drawnByFormat` id4=0・id9=0、
+   `modelDraws=1485`・`modelDrawRefusals=0`、そして model group は `target=main identity`・
+   `mainBound=true`・`keptForOtherTargets=0`・`discarded=0` なのに描かれない。次は
+   「window flush 失敗時の全消し（`VulkanTerrainGpuBackend:4744-4756`, `windowFlushDroppedBatches`）」か
+   「`discardImmediateGroups`（`:6370+`）」のどちらが group を黙って消すかを特定し、
+   **group は必ず「描かれるか、落ちたと数えられるか」のどちらか**になる契約へ直す。
+   受入は entity band と一人称 hand が上流参照（`d12425eaaf184e79`・同一 scene/pose/tick）に一致し、
+   id4/id9 が drawn ヒストグラムで非0、`validationMessageCount=0`、HUD/terrain 不変。
+   leg は `keepEntities=true` と `captureEntities=true` の**両方**が必要。
+
+**注意**: この未較正 scene は boot 間の画素ノイズ床が **23.5%**（proj-channel 実測）なので、
+絵の主張は較正済み leg（key が一致する参照）でのみ行う。ノイズ床以下の差分を修正の証拠にしない。
 
 **この ID は live API で確認した現行 goal である。** 旧 `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`（revision 61 と記載していた）は
 監査 2026-10-11 17.2 で文書との不一致を指摘されたため、plan と本ファイルの両方を live 値へ同期した。
