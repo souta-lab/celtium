@@ -525,6 +525,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (DRAWARRAY_CALLS.get() > 0L) {
                     celtium$printAtExit("CELTIUM_DRAWARRAYS " + drawArraySummary());
                 }
+                if (installed != null && (installed.texParamCalls.get() > 0 || installed.texParamQueries.get() > 0)) {
+                    // The texture-parameter record's own census: what the game set, and what the queries were answered
+                    // from. Printed only when something was recorded or asked, so a run that never touches it stays
+                    // silent rather than claiming a measurement it did not take.
+                    celtium$printAtExit("CELTIUM_TEX_PARAM_CENSUS " + texParamSummary());
+                }
             }, "celtium-noop-census"));
         }
         return installed;
@@ -1155,6 +1161,25 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_COPY_TEX_SUB_IMAGE:
                 celtium$noteTextureCopy(fn.name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
                         (int) c[5], (int) c[6], (int) c[7]);
+                return 0L;
+            case SEM_TEX_PARAM_I:
+                celtium$setTextureParameterBound((int) c[0], (int) c[1],
+                        "glTexParameterf".equals(fn.name) ? Math.round(Float.intBitsToFloat((int) c[2])) : (int) c[2],
+                        celtium$paramSite());
+                return 0L;
+            case SEM_TEX_PARAM_IV:
+                celtium$setTextureParameterBound((int) c[0], (int) c[1], celtium$firstParamValue(fn, c[2]),
+                        celtium$paramSite());
+                return 0L;
+            case SEM_TEX_PARAM_I_DSA:
+                celtium$setTextureParameter((int) c[0], (int) c[1],
+                        "glTextureParameterf".equals(fn.name)
+                                ? Math.round(Float.intBitsToFloat((int) c[2])) : (int) c[2],
+                        celtium$paramSite());
+                return 0L;
+            case SEM_TEX_PARAM_IV_DSA:
+                celtium$setTextureParameter((int) c[0], (int) c[1], celtium$firstParamValue(fn, c[2]),
+                        celtium$paramSite());
                 return 0L;
             case SEM_BIND_FRAMEBUFFER:
                 bindFramebuffer((int) a0, (int) a1);
@@ -2402,6 +2427,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         return ((long) textureName << 32) | (pname & 0xFFFFFFFFL);
     }
 
+    /**
+     * The call site for a parameter set, or the empty string once the instrument has named its shapes.
+     * <p>
+     * Reading the stack is the expensive part of this instrument, and a texture load sets four parameters per texture,
+     * so it is taken only while the bounded shape set is still being filled.
+     */
+    private static String celtium$paramSite() {
+        return TEX_PARAM_SHAPES.size() < 24 ? celtium$callSite(5) : "";
+    }
+
+    /** The first element of an array-valued texture parameter: every scalar pname this record carries is one wide. */
+    private static int celtium$firstParamValue(Fn fn, long values) {
+        if (values == 0L) {
+            return 0;
+        }
+        return fn.name.endsWith("fv") ? Math.round(MemoryUtil.memGetFloat(values)) : MemoryUtil.memGetInt(values);
+    }
+
     private static String texParamPname(int pname) {
         switch (pname) {
             case GL_TEXTURE_MAG_FILTER: return "MAG_FILTER";
@@ -3430,12 +3473,35 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if (fn.name.startsWith("glGetTextureParameter")) {
-            // (texture, pname, out): the filter and wrap state the registry announces from. Defaults are the GL
-            // defaults, which is what a texture created without an explicit parameter really has.
-            int filterPname = (int) c[1];
-            int value = filterPname == 0x2801 || filterPname == 0x2800 ? 0x2601 // GL_TEXTURE_MIN/MAG_FILTER
-                    : filterPname == 0x2802 || filterPname == 0x2803 ? 0x812F // GL_TEXTURE_WRAP_S/T
-                    : 0;
+            // (texture, pname, out): the filter and wrap state the mirror announces from. Answered from the record the
+            // setters fill, so a texture the game asked to REPEAT is announced as REPEAT; a pname the game never set
+            // answers GL's own initial state (REPEAT wrap, LINEAR mag, NEAREST_MIPMAP_LINEAR min), which is what a
+            // fresh texture object really has - the hardcoded CLAMP_TO_EDGE this used to answer was not GL's default
+            // and is what made the tiled options background sample as one stretched tile.
+            int textureName = (int) c[0];
+            int paramPname = (int) c[1];
+            int value = textureParameterValue(textureName, paramPname);
+            celtium$noteTextureParameterQuery(fn.name, textureName, paramPname, value,
+                    textureParameterRecorded(textureName, paramPname));
+            if (fn.name.endsWith("fv")) {
+                MemoryUtil.memPutFloat(out, value);
+            } else {
+                memPutInt(out, value);
+            }
+            return;
+        }
+        if (fn.name.startsWith("glGetTexParameter")) {
+            // The non-DSA form: (target, pname, out) applies to the texture bound to the target on the active unit.
+            int target = (int) c[0];
+            int paramPname = (int) c[1];
+            int textureName = 0;
+            if (!isProxyTarget(target)) {
+                Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
+                textureName = bound == null ? 0 : bound.intValue();
+            }
+            int value = textureParameterValue(textureName, paramPname);
+            celtium$noteTextureParameterQuery(fn.name, textureName, paramPname, value,
+                    textureParameterRecorded(textureName, paramPname));
             if (fn.name.endsWith("fv")) {
                 MemoryUtil.memPutFloat(out, value);
             } else {

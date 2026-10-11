@@ -263,29 +263,33 @@ generation を上げるので descriptor cache が破棄済み sampler を名指
   （std 2.34 / 参照 2.40・mean (113.0,110.8,99.8)）。tick 200 の縞は**未 build の遠 ring が近い低 LOD terrain を置いていた**ため。
   sampler の実効は terrain の edge（rows 216-224 が 174→43 px）。→ task-26 の mip 内容の半分は**根拠なし**として再定義。
 
-## 0.180 **inventory 場面の sky 17% 暗は B05（fog/lighting payload の同居）と確定（task-38）**
+## 0.180 **inventory 場面の 48% は「build 状態」だった（B05 帰属は撤回）——task-41 の訂正**
 
-gui-stage が既存の pair（`cand3-*` GL-less vs `ref3-*` upstream Celeritas・同一 fixture/pose/tick 200）で
-**1 run も足さずに**確定させた:
+**この節の当初の結論（sky 17% 暗＝B05）は撤回する。** fog-path が等価 build 状態で pair を取り直した:
+旧 pair は `cand3-inventory` **54 world frames / 12 sections / 8 MiB** に対し `ref3-inventory` **412 / 43 / 30 MiB** で
+**同じ tick でも比較になっていなかった**。再測定（両 leg 43 listed sections・`captureCondition=sections`）:
 
-| 領域 | A: screen なし（比 / >8） | B: inventory 開（比 / >8） |
+| 領域 | tick 200（当初） | 等価 build 状態 |
 |---|---|---|
-| **sky band (0,0,1280,120)** | **1.000,1.000,1.000 / 153,600 中 0** | **0.857,0.842,0.825 / 128,052（83.4%）** |
-| horizon | 1.008,0.979,1.012 / 34.9% | 0.991,0.968,0.961 / 53.0% |
-| terrain centre | 0.994,0.993,0.993 / 2.7% | 1.023,1.014,0.985 / 35.9% |
-| hotbar strip | 1.000,1.000,1.000 / 0.0% | 0.975,0.996,0.993 / 0.0% |
+| sky band (0,0,1280,120) | 0.857,0.842,0.825 / **83.4%** | **0.992,0.991,0.991 / 1.28%** |
+| horizon | 0.991,0.968,0.961 / 53.0% | 1.019,1.000,0.988 / 16.48% |
+| terrain centre | 1.023,1.014,0.985 / 35.9% | 1.029,1.016,0.987 / 27.74% |
+| hotbar strip | 0.975,0.996,0.993 / 0.0% | 1.000,1.000,1.000 / **0.00%** |
+| whole frame | 0.970,0.968,0.949 / **48.0%** | 1.016,1.005,0.990 / **10.88%** |
 
-同一 run の `acceptedByFormat`: **format 4（ITEM＝lit item batch）が A で 0・B で 2744**——
-**lit batch が 0 のとき sky は画素一致、2744 になると 17% 暗くなる**。これは B05
-（lit group の payload が同一 flush 内の後続 group の fog byte を上書きする）の記述そのもの。
-**除外できた代替**: 射影/ortho（位置と extent は正しく明度だけ違う）・画面の dim overlay
-（**同じ B frame で chat block は 1.026,1.053,1.037 と明るい**——1つの overlay が片方を 15% 暗く他方を 3% 明るくはできない）・
-単純な alpha 乗算（channel 比が違い blue が最も悪い）。
-**fixture の限界も明記**: この cohort では `jeiScreen` は `GuiInventory` を開くだけで JEI jar を積んでいないため
-「JEI 画面」と「vanilla inventory」は同一 scene。JEI 固有の分離には JEI 入りの candidate と reference の両 leg が要る
-（`mod3-*` は別 fixture/jar 期・参照 leg 無し・FAILED）。**B05 の受入は inventory 場面の sky が ~1.0 に戻り、
-terrain 場面の 0/153,600 が維持されること**。
+**lit ITEM の率は両期で同じ**（等価状態 55.5 batch/frame・当初 50.8/frame）——`acceptedByFormat` は
+**run 累積**なので「2744 が 54 frame で」という見かけが特別に見えただけ。**同じ率で暗くならない**ため
+batches は原因ではない。**B05 の機構自体はコード上実在**（`lightParams != null` の group は `celtium$writeFogPush` を
+skip し、lit ITEM shader に fog block が無い）が、**この絵の原因としての根拠は無くなった**（task-29 の受入は
+lit+fog が同時に要る場面で取る）。**一般則（plan に残す）**: 画像比較は **等価 build 状態**で取り、
+`acceptedByFormat` 等の累積計器は**フレーム数で割って**比べる。
+等価状態で残る差は「画面を開いていること」由来（terrain centre 27.74%・chat 17.30%・horizon 16.48%・frame 10.88%）で、
+画面なしの同一 scene は 2.65% なので **dim overlay / panel / JEI の被覆**が次の問い（gui-stage）。
 
+**撤回した当初の測定（経緯として残す）**: 同一 tick 200 の pair で「sky band 比 0.857・83.4% 差、format 4 が 0→2744」を
+観測し、それを B05 の根拠とした（`task-38`）。**この pair は build 状態が違っていた**ため撤回。
+当時の副産物として有効なのは「画面なしの同一 scene では sky が 153,600 中 0 画素差」という統制だけで、
+それは等価 build 状態の再測定でも sky 1.28% として残っている。
 ## 0.179 **地平線帯は「build 状態を揃える」ことで閉じた（task-33）／fixture jar の空コピーという罠**
 
 - **task-33（fog-path）の受入**: `captureCondition=sections captureSections=41 captureMinWorldFrames=295` で
