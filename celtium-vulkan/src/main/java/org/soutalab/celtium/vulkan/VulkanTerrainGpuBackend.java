@@ -2156,6 +2156,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " terrainRanThisFrame=" + (this.lastTerrainPassFrame == this.frameId));
     }
 
+    /** The image/frame/completion-epoch of the last recorded group, for the copy's completion fact. */
+    private long lastDrawnImage;
+    private long lastDrawnFrame = -1L;
+    private long lastDrawnEpoch = -1L;
+
     /** Bounded lines of {@code CELTIUM_CHAIN_CLEAR}. */
     private static final int CHAIN_CLEAR_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.chainClearLog", 12).intValue();
@@ -10639,7 +10644,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // The frame and the image this copy read, so it can be put against CELTIUM_DRAW_SITE in the same
                     // frame: the faces draw (DRAW_SITE #1, target=1941007851) and this line reads white, and neither
                     // carried a frame or a handle before, which left ordering unanswerable.
-                    + " frame=" + this.frameId + " readImage=0x" + Long.toHexString(image));
+                    + " frame=" + this.frameId + " readImage=0x" + Long.toHexString(image)
+                    // The completion fact: whether the image the copy reads is the one the last recorded group went
+                    // into, and whether any submission has been confirmed complete since that group was recorded. If
+                    // the handles and the frame match and no completion has happened since, the copy is reading an
+                    // image whose producing pass is still in flight - a commit-contract question, not a clear one.
+                    + " lastDrawnImage=0x" + Long.toHexString(this.lastDrawnImage)
+                    + " lastDrawnFrame=" + this.lastDrawnFrame
+                    + " drawnThisFrame=" + (this.lastDrawnFrame == this.frameId)
+                    + " lastDrawnEpoch=" + this.lastDrawnEpoch
+                    + " completedEpochNow=" + VulkanContext.completedEpoch()
+                    + " completionsSinceDraw=" + (VulkanContext.completedEpoch() - this.lastDrawnEpoch)
+                    + " passAttached=0x" + Long.toHexString(this.passAttachedColorImage)
+                    + " passSubmissions=" + this.passSubmissions
+                    + " windowsThisFrame=" + this.immediateWindowsThisFrame);
         }
         boolean applied = this.textureRegistry.announceFullPixels(destName, levels, width, height, xoffset, yoffset);
         if (!applied) {
@@ -11969,6 +11987,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // contents, so "drawn" and "in the picture" are different questions and this is the line that
                     // tells them apart. Gated by the existing enq switches and bounded, so a normal run is unchanged.
                     this.immediateDrawSiteLogged++;
+                    // The completion fact's anchor: which image the last recorded group went into, in which frame,
+                    // and the completion epoch at that moment. The copy prints the same three beside readImage=, so
+                    // "had the faces' pass executed when the copy ran" is answerable from one artifact.
+                    this.lastDrawnImage = this.passAttachedColorImage;
+                    this.lastDrawnFrame = this.frameId;
+                    this.lastDrawnEpoch = VulkanContext.completedEpoch();
                     System.out.println("[Celtium] CELTIUM_DRAW_SITE #" + this.immediateDrawSiteLogged
                             + " frame=" + this.frameId + " fmt=" + group.formatId
                             + " site=" + this.immediateDrawSite
