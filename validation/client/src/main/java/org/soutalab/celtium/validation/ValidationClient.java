@@ -895,13 +895,40 @@ public final class ValidationClient {
         return key.toString();
     }
 
-    /** The key the scene's floors were measured under, or the reason there is none. */
+    /**
+     * The key the scene's floors were measured under, or the reason there is none.
+     * <p>
+     * Built from constants, never from the live properties the candidate run sets. The previous form called
+     * {@link #celtium$calibrationKey} with the reference pose and scale, and that method reads
+     * {@code celtium.validation.worldLayers}, {@code blockSweep}, {@code allBlocks} and the entity flags from the
+     * running JVM - so the reference variant followed the candidate, the two keys always matched, and
+     * {@code sceneCalibrationKeyMatches=true} meant nothing. The audit found it by running a candidate with
+     * allBlocks and seeing the reference reported as allBlocks too, against references that were measured on plain
+     * terrain (A03). A key that describes a measurement must not move when the thing it is compared against moves.
+     */
     private static String celtium$referenceCalibrationKey(Scene scene) {
         if (!scene.calibrated) {
             return "none: scene " + scene.name + " has no measured reference at any pose";
         }
-        return celtium$calibrationKey(scene, celtium$referencePose(scene), celtium$REFERENCE_GUI_SCALE);
+        StringBuilder key = new StringBuilder();
+        key.append("scene=").append(scene.name);
+        key.append(" pose=").append(celtium$referencePose(scene).describe());
+        key.append(" stack=").append(celtium$REFERENCE_STACK);
+        key.append(" blockSweep=").append(celtium$REFERENCE_BLOCK_SWEEP);
+        key.append(" allBlocks=").append(celtium$REFERENCE_ALL_BLOCKS);
+        key.append(" entities=").append(celtium$REFERENCE_ENTITIES);
+        key.append(" guiScale=").append(celtium$REFERENCE_GUI_SCALE);
+        return key.toString();
     }
+
+    /** The world stack every measured reference used: the fixture's default, stated once. */
+    private static final String celtium$REFERENCE_STACK = "default";
+    /** The block sweep every measured reference used: none. */
+    private static final int celtium$REFERENCE_BLOCK_SWEEP = 0;
+    /** Whether the measured references ran with the all-blocks wall: they did not. */
+    private static final boolean celtium$REFERENCE_ALL_BLOCKS = false;
+    /** The entity variant the measured references ran with: none of the glow/keep/capture flags. */
+    private static final String celtium$REFERENCE_ENTITIES = "none";
 
     /** The entity flags that change the frame, as one token: the measured references were taken with none of them. */
     private static String celtium$entityVariant() {

@@ -89,6 +89,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.141 **監査 A03 修正: 参照較正キーが候補の property を読んでいた（ゲートの穴）**
+
+監査の指摘どおりだった。`celtium$referenceCalibrationKey` は `celtium$calibrationKey(scene, referencePose, REFERENCE_GUI_SCALE)` を呼び、
+その関数は **実行中 JVM の property**（`celtium.validation.worldLayers`・`blockSweep`・`allBlocks`・entity flags）を読む。
+→ **参照 variant が候補に追随**し、`runKey.equals(referenceKey)` が常に成立しうる。監査の実例: 候補が `allBlocks=true` の run で、
+参照（plain terrain で測定）まで allBlocks として報告されていた。**`sceneCalibrationKeyMatches=true` が意味を持たない**状態。
+
+**修正**: 参照キーを**定数から構築**（`REFERENCE_STACK="default"`・`REFERENCE_BLOCK_SWEEP=0`・`REFERENCE_ALL_BLOCKS=false`・
+`REFERENCE_ENTITIES="none"`・`REFERENCE_GUI_SCALE`）。候補側の既定 variant 文字列（`celtium$entityVariant()` は無指定で `"none"`、
+stack は既定で `"default"`）と**同じ形**なので、候補が参照と同じ variant で走れば一致し、`allBlocks` など別 variant なら**未較正**になる
+（監査が要求した「key 不一致を未較正として surface させる」形）。**失敗画像は FAILED のまま**で、ゲートは上書きしない。
+
+**検査**: `scripts/cpu-contract/reference_key_check.py` — メソッド本体が live property を読まないこと、候補側の property を読む関数を
+呼ばないことを検査する。**旧形に戻すと実際に落ちる**ことを確認済み（`the reference key calls celtium$calibrationKey, which reads the candidate's properties`）。
+lint であることは隠さず明記（挙動版には fixture の Scene インスタンスが要る）。
+
 ## 0.140 **wedge の判別結果: pitch 符号ではなく「固定回転」／N10 の UBO 経路が入った**
 
 ### 1. 判別測定（私が実行・同一カメラ・lookDown=true / pitch +75）
