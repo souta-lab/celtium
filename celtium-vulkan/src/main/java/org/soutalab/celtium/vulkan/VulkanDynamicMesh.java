@@ -117,8 +117,23 @@ public final class VulkanDynamicMesh {
             throw new IllegalArgumentException("context must not be null");
         }
         this.context = context;
-        this.vertices = new VulkanHostBuffer(context, INITIAL_VERTEX_BYTES, org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        this.indices = new VulkanHostBuffer(context, INITIAL_INDEX_BYTES, org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        // The first buffer is released if the second allocation fails (audit ownership gap). Without this, a mesh whose
+        // index buffer could not be created leaks the vertex buffer it already made - and a mesh is created per display
+        // list, so the leak scales with the model count rather than staying a one-off.
+        VulkanHostBuffer vertexBuffer = null;
+        try {
+            vertexBuffer = new VulkanHostBuffer(context, INITIAL_VERTEX_BYTES,
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            this.vertices = vertexBuffer;
+            this.indices = new VulkanHostBuffer(context, INITIAL_INDEX_BYTES,
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        } catch (RuntimeException | Error error) {
+            if (vertexBuffer != null) {
+                vertexBuffer.delete();
+                this.vertices = null;
+            }
+            throw error;
+        }
     }
 
     /** Starts a batch; anything previously written but not drawn is discarded. */

@@ -6170,7 +6170,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
             }
         }
+            VulkanDynamicMesh pending = null;
         try {
+            // The mesh being built, held so a failure before it reaches the table can still release it.
             for (int id : ids) {
                 org.soutalab.celtium.vulkan.VulkanModelQuadCapture.Snapshot snapshot =
                         org.soutalab.celtium.vulkan.VulkanModelQuadCapture.snapshot(id);
@@ -6182,6 +6184,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     continue;
                 }
                 VulkanDynamicMesh mesh = new VulkanDynamicMesh(this.context);
+                // The mesh exists before it is in the table, so a failure while filling it must release it here: the
+                // catch below can only discard what the table already holds, and this mesh is not in it yet (audit
+                // ownership gap - the model builder leaked the one mesh it was in the middle of building).
+                pending = mesh;
                 // The capture holds position and texture coordinates, which is the twenty-byte POSITION_TEX layout the
                 // sky and clouds already use. The normal the quad carried is not in the mesh: for the vanilla entity
                 // path the lighting comes from the light map, and the pipeline for this layout ignores a trailing
@@ -6244,9 +6250,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     continue;
                 }
                 built.put(Integer.valueOf(id), mesh);
+                pending = null;
                 builtGenerations.put(Integer.valueOf(id), Integer.valueOf(snapshot.generation));
             }
         } catch (RuntimeException | LinkageError error) {
+            if (pending != null) {
+                pending.discard();
+                pending = null;
+            }
             // A failure this far out is not attributable to one list, so the previous table stays in place - nothing
             // above touched it - and the meshes this attempt created are released rather than leaked. Before N02 the
             // table was replaced at the end and every newly built mesh stayed alive on this path.
