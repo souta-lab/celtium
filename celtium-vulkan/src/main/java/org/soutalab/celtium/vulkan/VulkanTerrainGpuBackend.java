@@ -1802,9 +1802,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * does itself.
      */
     public static long batchCallCpuNanos;
+    /**
+     * The thread MXBean, looked up once.
+     * <p>
+     * OPT-01: this used to be `ManagementFactory.getThreadMXBean()` on every call - twice per immediate batch for the
+     * preflight split, plus once per group and once per frame - and the lookup is a synchronised platform-MBean
+     * resolution, not a field read. The instrument's own cost is part of what a performance run measures, so the bean
+     * and its support flag are resolved once here.
+     */
+    private static final java.lang.management.ThreadMXBean THREAD_MX_BEAN =
+            java.lang.management.ManagementFactory.getThreadMXBean();
+
     /** Whether the JVM exposes per-thread CPU time here (it decides whether the split above means anything). */
-    public static final boolean THREAD_CPU_SUPPORTED =
-            java.lang.management.ManagementFactory.getThreadMXBean().isCurrentThreadCpuTimeSupported();
+    public static final boolean THREAD_CPU_SUPPORTED = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
     /**
      * How the render thread spent its non-running time, split by kind.
      * <p>
@@ -1816,8 +1826,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (!THREAD_CPU_SUPPORTED) {
             return -1L;
         }
-        java.lang.management.ThreadInfo info = java.lang.management.ManagementFactory.getThreadMXBean()
-                .getThreadInfo(Thread.currentThread().getId());
+        java.lang.management.ThreadInfo info = THREAD_MX_BEAN.getThreadInfo(Thread.currentThread().getId());
         return info == null ? -1L : info.getWaitedTime();
     }
 
@@ -1825,15 +1834,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (!THREAD_CPU_SUPPORTED) {
             return -1L;
         }
-        java.lang.management.ThreadInfo info = java.lang.management.ManagementFactory.getThreadMXBean()
-                .getThreadInfo(Thread.currentThread().getId());
+        java.lang.management.ThreadInfo info = THREAD_MX_BEAN.getThreadInfo(Thread.currentThread().getId());
         return info == null ? -1L : info.getBlockedTime();
     }
 
     /** The thread's CPU time right now, or -1 when unsupported. */
     public static long threadCpuNanos() {
-        return THREAD_CPU_SUPPORTED
-                ? java.lang.management.ManagementFactory.getThreadMXBean().getCurrentThreadCpuTime() : -1L;
+        return THREAD_CPU_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() : -1L;
     }
     public static long batchCallOpeningNanos;
     public static int batchCallOpeningCount;
@@ -1998,6 +2005,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void setBlendFunc(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha) {
         this.immediateState.blendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha);
+        this.immediateStateCalls++;
+    }
+
+    /** BH-07: the blend equation, on the mirror the capture reads when the stub is not installed (the bridge). */
+    @Override
+    public void blendEquation(int rgbEquation, int alphaEquation) {
+        this.immediateState.blendEquation(rgbEquation, alphaEquation);
+        this.immediateStateCalls++;
+    }
+
+    /** BH-10: the colour write mask, on the same mirror and for the same reason as the equation above. */
+    @Override
+    public void colorMask(int mask) {
+        this.immediateState.colorMask(mask);
         this.immediateStateCalls++;
     }
 
