@@ -135,6 +135,8 @@ public final class VulkanTextureRegistry {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.mirrorCapturedLevels", "true"));
     private static final boolean PATCH_MIP_LEVELS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.patchMipLevels", "true"));
+    /** Wrap answers that came from the GL default because the game never set that pname on that texture. */
+    private static int wrapDefaultsUsed;
     /** The GL texture ids that reach the readback refresh, recorded once each. */
     private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
     /**
@@ -580,6 +582,13 @@ public final class VulkanTextureRegistry {
      * the bridge the texture's own answer is the real one and is asked exactly as before.
      */
     private static boolean nearestFilterFor(int glTextureId, int x, int y, int width, int height) {
+        if (CeltiumGlStub.isInstalled()
+                && CeltiumGlStub.textureParameterRecorded(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)) {
+            // The stub now records glTexParameteri, so the texture's own answer is real under the stub too. The
+            // record wins over the write-shape inference below: the inference is a guess about which writes are the
+            // dynamic ones, and it is kept only for a texture whose MAG_FILTER the game never set.
+            return nearestFilterOf(glTextureId);
+        }
         if (!CeltiumGlStub.isInstalled()) {
             return nearestFilterOf(glTextureId);
         }
@@ -1469,7 +1478,8 @@ public final class VulkanTextureRegistry {
         // game pixels at all (an allocation with a NULL data pointer - the stub's own answer, not a pixel guess).
         return costs + " glLess[fromAnnouncement=" + this.filledFromAnnouncement + " fromCapture=" + this.filledFromCapture
                 + " noContent=" + this.readbacksSkippedWithoutContent
-                + " noGamePixels=" + this.capturesRefusedWithoutGamePixels + "]";
+                + " noGamePixels=" + this.capturesRefusedWithoutGamePixels
+                + " wrapDefaults=" + wrapDefaultsUsed + "]";
     }
 
     /** {@return how many 1x1 mirrors the last invalidation left alone}. */
@@ -1519,6 +1529,12 @@ public final class VulkanTextureRegistry {
         }
         Entry existing = this.entries.get(glTextureId);
         if (existing != null) {
+            // Once per mirror: the sampler is built when the mirror is created, and a texture's wrap parameters are
+            // set by the game *after* the upload that created it (SimpleTexture: image first, then setTextureClamped),
+            // so a sampler built at creation time can hold the default. Re-consulting the record here - the first
+            // lookup, which is a draw, after the upload completed - is what makes the mode the game's rather than
+            // whichever default was in force a moment earlier.
+            existing.texture.confirmWrapFromRecord(glTextureId);
             if (this.staleIds.remove(Integer.valueOf(glTextureId))) {
                 if (canSkipReadback(glTextureId)) {
                     // The write that made this texture stale announced its pixels, and they are already in this image:
@@ -1720,6 +1736,12 @@ public final class VulkanTextureRegistry {
      */
     private static boolean wrapRepeats(int glTextureId, int pname) {
         try {
+            if (CeltiumGlStub.isInstalled() && !CeltiumGlStub.textureParameterRecorded(glTextureId, pname)) {
+                // Nothing was recorded for this pname, so the answer is GL's context default - which for WRAP_S/T is
+                // GL_REPEAT (GlStateManager.Profile.DEFAULT re-asserts it), not the CLAMP the stub used to hardcode.
+                // Counted so a texture that relied on the default is distinguishable from one set to REPEAT.
+                wrapDefaultsUsed++;
+            }
             return org.lwjgl.opengl.GL45C.glGetTextureParameteri(glTextureId, pname)
                     == org.lwjgl.opengl.GL11.GL_REPEAT;
         } catch (RuntimeException | LinkageError error) {

@@ -133,6 +133,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.187 **実プレイ フィードバック（18:24 JST）の backlog 化と、ログ flood の修正（Lead）**
+
+ユーザーが自分の instance で実プレイし、**terrain/entity/空/雲が正常に描画される**ことを確認（これは前進として記録する。
+**全 family・全 driver の完成とは解釈しない**）。同時に得た観測をそのまま backlog へ入れ、既存 owner に割り当てた。
+**プレイ jar hash / 起動 flag / device はこの発言では未取得**なので、現行 HEAD で再現済みの欠陥とは断定しない。
+
+| ユーザー観測 | 帰属（task） |
+|---|---|
+| とてもラグい・画面が固まる | **task-44**（frame-composite）＋ **task-48**（acceptance: 通常プレイ受入行） |
+| ログを異常に吐きすぎ（Prism が「100,000 行を超えたので表示停止・ストレージを浪費」と警告） | **Lead が修正**（下記） |
+| アイテム画面で block が枠いっぱい・剣の持ち方が変・ドロップ item がでかすぎ | **task-43**（entity-models: item 変換 family を1バッチで比較） |
+| 攻撃時に赤くならない（hurt flash）・持ってる block が暗い | **task-45**（pipelines: lit ITEM shader の INTERPOLATE 分岐と lightmap 項） |
+| ロード画面が無い | weather-water（renderer を startGame の splash より前に install）＋ frame-composite（splash FBO の owned image） |
+| F3 が stub GL・driver が分からない | **task-46**（sky-draws: `VkPhysicalDeviceDriverProperties` の実値。文字置換で stub 値を Vulkan と見せない） |
+| video settings の色が違う・背景がバグ | gui-stage（背景＝texture wrap の REPEAT/CLAMP は weather-water 記録＋texture-mirror 消費）＋ **task-47**（acceptance: 床の provenance 修正） |
+
+**ログ flood の修正（Lead・jar `2a3c59fe21ae831b6a3d`）**: ユーザーの構成は `-Dceltium.vulkan.glless=true` **だけ**なのに、
+`CELTIUM_MODEL_MATRIX` が **model list ごと・フレームごと**に出ており（screenshot の Prism console は list=168..179 を延々と表示）、
+**ログが 100,000 行を超えて Prism が表示を停止**、ストレージも浪費していた。render thread 上の同期 stdout 書き込みは
+フレームコストでもある。→ `VulkanDiagnostics`（`-Dceltium.vulkan.diagnostics` または validation run のときだけ有効）を追加し、
+`CELTIUM_MODEL_MATRIX`（上限 `celtium.vulkan.modelMatrixLines`=200）・`CELTIUM_ACCEPTED`（500 batch ごと）・
+arena census（既定 true だった）を gate。**一回だけ出る構成識別行（GL-less marker・device・window renderer・backend 説明）は
+gate しない**——support log に必要な情報だから。**他の担当も繰り返し行は同じ gate を使うこと**。
+instance へ `2a3c59fe21ae831b6a3d` を install 済み。
+
 ## 0.186 **ユーザーの第2報: 固まる・GUI アイテムが枠いっぱい・ロード画面が無い・F3 は stub GL**
 
 同じセッションからの追加報告。**frame time の実測が最優先**になった:

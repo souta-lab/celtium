@@ -1413,6 +1413,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " refused=" + DRAWARRAY_REFUSED.get()
                 + " pureBlueGroups=" + DRAWARRAY_PURE_BLUE.get()
                 + " clientMemoryDecoded=" + clientPointerAccepted
+                + " ownedBufferDecoded=" + ownedClientBufferDecoded
+                + " pointerOnlyDecoded=" + pointerOnlyDecoded
+                + " ownedBufferMismatch=" + ownedClientBufferMismatch
                 + " readableRanges=" + readableMappingRanges
                 + " mappingFailure=" + readableMappingFailure
                 + " first=[" + drawArrayFirst + "]"
@@ -2738,6 +2741,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private void drawArrays(int mode, int first, int count) {
         DRAWARRAY_CALLS.incrementAndGet();
+        // The owned-buffer publication is consumed by every draw, matched or not: one publication belongs to the one
+        // glDrawArrays that follows it, and a publication left behind would otherwise be read as the next draw's
+        // ownership claim - which is the mistake this entry point exists to remove.
+        long[] owned = celtium$consumeOwnedClientBuffer();
         if (count <= 0) {
             // GL draws nothing for an empty range, and so does this: counting it as a gap would be a lie.
             DRAWARRAY_EMPTY.incrementAndGet();
@@ -2784,16 +2791,37 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (reason == null) {
             asked = (long) first * this.vertexPointerStride + (long) count * this.vertexPointerStride;
             if (clientMemory) {
-                // There is no capacity to compare against: a client pointer carries no length. Two bounds are
-                // available and both are used - a cap on how much one draw may ask for, and the process's own
-                // readable mappings, so a pointer that is not backed by readable memory is refused by name instead
-                // of being dereferenced.
+                // Two bounds are available for a client pointer, and they are not equal in strength.
+                //
+                // The owned-buffer publication is the strong one (B09): the game's own {@code BufferBuilder} buffer,
+                // named with its address and its capacity by the uploader mixin immediately before this draw, so the
+                // whole range is inside a buffer the process demonstrably owns and the length is known rather than
+                // guessed. The /proc mapping list is the weak one: it says a range is readable now, which is a guard
+                // against faulting the JVM, not a statement about who owns the memory or how long it lives - and it is
+                // Linux-only. A draw the publication covers needs no guard at all; a draw it does not cover (a mod's
+                // direct client-array call, or a pointer the publication does not describe) keeps the guard and the
+                // cap, and is counted separately so the two paths stay distinguishable.
+                boolean ownedCovers = owned != null && owned[1] > 0L && offset >= owned[0]
+                        && offset + asked <= owned[0] + owned[1];
                 if (asked > MAX_CLIENT_DRAW_BYTES) {
                     reason = "the draw asks for " + asked + " bytes of client memory, over the "
                             + MAX_CLIENT_DRAW_BYTES + "-byte cap one draw may read";
+                } else if (ownedCovers) {
+                    ownedClientBufferDecoded++;
+                    clientPointerAccepted++;
                 } else if (!celtium$readableMapping(offset, asked)) {
+                    if (owned != null) {
+                        // The uploader published a buffer and it does not cover this draw: the two entries are about
+                        // different memory, which is a decode gap worth naming rather than silently guarding.
+                        ownedClientBufferMismatch++;
+                    }
                     reason = "the client pointer 0x" + Long.toHexString(offset) + " + " + asked
-                            + " bytes is not inside a readable mapping of this process";
+                            + " bytes is not inside a readable mapping of this process"
+                            + (owned == null ? " and no owned buffer was published for it"
+                                    : " and the published owned buffer 0x" + Long.toHexString(owned[0]) + "+"
+                                            + owned[1] + " does not cover it");
+                } else {
+                    pointerOnlyDecoded++;
                 }
             } else {
                 end = offset + asked;
@@ -3036,15 +3064,23 @@ public final class CeltiumGlStub implements FunctionProvider {
     /**
      * {@return whether {@code [address, address + bytes)} lies inside one readable mapping of this process}.
      * <p>
-     * A client pointer carries no length and no owner: it is a process address the game wrote, and dereferencing one
-     * that is stale, freed or never valid faults the JVM, which is a worse outcome than the blank menu this task
-     * exists to fix. So the mapping list the kernel already keeps is read once and cached, and a draw is only decoded
-     * when the whole range it asks for is inside a single readable mapping. A miss refreshes the list once, because a
-     * buffer allocated since the last read is a legitimate miss; a second miss for the same address is a refusal, and
-     * the refresh rate is bounded so a run cannot turn a bad pointer into a parsing loop.
+     * This is the weak entry point, used only when the owned-buffer publication does not describe the draw. A client
+     * pointer carries no length and no owner: it is a process address the game wrote, and dereferencing one that is
+     * stale, freed or never valid faults the JVM, which is a worse outcome than the blank menu this task exists to
+     * fix. So the mapping list the kernel already keeps is read once and cached, and a draw is only decoded when the
+     * whole range it asks for is inside a single readable mapping. A miss refreshes the list once, because a buffer
+     * allocated since the last read is a legitimate miss; a second miss for the same address is a refusal, and the
+     * refresh rate is bounded so a run cannot turn a bad pointer into a parsing loop.
      * <p>
-     * Linux-only by construction ({@code /proc/self/maps}); where that file cannot be read this returns false, so the
-     * client-memory case stays a named refusal rather than becoming an unguarded read.
+     * What this is <em>not</em>: an ownership or lifetime record. A hit says the range is readable at this moment, not
+     * that it is still the game's buffer or that it will stay mapped; the cached list can also go stale between
+     * refreshes, and the refresh budget (64) is a bound on this guard rather than a property of the memory. The
+     * authoritative statement about a client-array draw is the {@link #publishClientArrayBuffer owned-buffer
+     * publication}; this function exists for the calls that do not come through Minecraft's uploader.
+     * <p>
+     * Linux-only by construction ({@code /proc/self/maps}); where that file cannot be read this returns false, so a
+     * pointer-only client-memory draw stays a named refusal rather than becoming an unguarded read - and on such a
+     * system the owned-buffer path still decodes the game's own batches.
      */
     private boolean celtium$readableMapping(long address, long bytes) {
         if (address <= 0L || bytes <= 0L) {
@@ -3164,10 +3200,66 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Diagnostics for the mapping guard: how many client-memory draws it let through, how many readable ranges the
      * last read of {@code /proc/self/maps} found, and why that read failed if it did. Static because the census line is
      * static, and one process has one mapping list.
+     * <p>
+     * The mapping guard is a <em>guard</em>, not an ownership record: it answers "is this range readable right now",
+     * not "who owns it, how long does it live, or is it still the buffer the game meant". It is also Linux-only. The
+     * authoritative client-memory entry point is the owned-buffer publication below; these two counters exist to keep
+     * the two apart in a run.
      */
     private static volatile long clientPointerAccepted;
+    private static volatile long ownedClientBufferDecoded;
+    private static volatile long pointerOnlyDecoded;
+    private static volatile long ownedClientBufferMismatch;
     private static volatile int readableMappingRanges = -1;
     private static volatile String readableMappingFailure = "none";
+
+    /**
+     * The game's own vertex buffer for the client-array draw that is about to be made from it (B09).
+     * <p>
+     * What this replaces: a client pointer is an address with no length and no owner, so the stub could only read it
+     * behind the {@code /proc/self/maps} guard, cap the range at 32 MiB, and refuse by name where that file cannot be
+     * read (any non-Linux OS) - and a mapping hit still says nothing about the buffer's lifetime. The uploader mixin
+     * ({@code ClientArrayBufferOwnershipMixin}) has the {@code BufferBuilder} itself in hand one instruction before
+     * {@code GlStateManager.glDrawArrays}, so it publishes the buffer's address <em>and its capacity</em> here. The
+     * next draw whose range is inside that buffer needs no guard: the length is the buffer's own, and the process
+     * demonstrably owns the memory.
+     * <p>
+     * Thread-local and consumed once per draw: two render threads may each be inside their own uploader, and a
+     * publication that outlived its draw would be read as the next draw's ownership claim. The slot is reused rather
+     * than reallocated - this is on the per-batch path, measured at tens of thousands of calls per run.
+     */
+    private static final ThreadLocal<long[]> OWNED_CLIENT_BUFFER =
+            ThreadLocal.withInitial(() -> new long[3]);
+
+    /**
+     * Publishes the game's own vertex buffer for the client-array draw that follows. Called by the uploader mixin with
+     * the {@code BufferBuilder}'s {@code ByteBuffer} address and capacity; a zero address or a zero length is ignored,
+     * so a caller cannot publish an empty claim.
+     */
+    public static void publishClientArrayBuffer(long address, long bytes) {
+        if (address == 0L || bytes <= 0L) {
+            return;
+        }
+        long[] slot = OWNED_CLIENT_BUFFER.get();
+        slot[0] = address;
+        slot[1] = bytes;
+        slot[2] = 1L;
+    }
+
+    /** {@return the published owned buffer as {address, bytes} once, or null when none is pending}. */
+    private static long[] celtium$consumeOwnedClientBuffer() {
+        long[] slot = OWNED_CLIENT_BUFFER.get();
+        if (slot == null || slot[2] == 0L) {
+            return null;
+        }
+        slot[2] = 0L;
+        return slot;
+    }
+
+    /** {@return how many draws the owned-buffer publication decoded, for the mixin's own census}. */
+    public static long ownedClientBufferDraws() {
+        return ownedClientBufferDecoded;
+    }
 
     /**
      * One line per distinct (client, stride, format, count) tuple that reaches the backend, bounded, printed once.

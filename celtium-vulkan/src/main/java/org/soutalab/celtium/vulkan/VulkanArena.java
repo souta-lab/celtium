@@ -51,9 +51,14 @@ public final class VulkanArena {
     /** Growth never asks for less than this, so small arenas do not grow on every other allocation. */
     private static final int MINIMUM_GROWTH_BYTES = 512 * 1024;
 
-    /** One census line per upload burst (one frame), on by default because it costs a counter and says the numbers. */
+    /**
+     * One census line per upload burst (one frame). It used to be on by default "because it costs a counter and says
+     * the numbers" - but on the operator's own session every one of those lines is a synchronous stdout write per
+     * frame, and the log passed 100,000 lines with nothing but {@code -Dceltium.vulkan.glless} set. It is now on for
+     * a diagnostics/validation run ({@link VulkanDiagnostics}) or when asked for explicitly.
+     */
     private static final boolean CENSUS_ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.arenaCensus", "true"));
+            Boolean.getBoolean("celtium.vulkan.arenaCensus") || VulkanDiagnostics.enabled();
     /** Off by default: the check drains the queue per write, which is a diagnostic cost, not a frame cost. */
     private static final boolean VERIFY_ENABLED = Boolean.getBoolean("celtium.vulkan.arenaVerify");
     /** Bytes of one write the check compares; a mesh is compared up to this prefix. */

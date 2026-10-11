@@ -39,6 +39,37 @@ Per-format accepted batches, from each run's own report (`acceptedByFormat`, and
 
 The ITEM family goes from **0 to 2744** exactly when the sky goes from pixel-identical to 17 % dark.
 
+## 3. RETRACTED 2026-10-11: the B05 attribution did not survive an equal-build-state re-take
+
+**The attribution below was withdrawn by measurement, and this section is kept as the record of what was wrong
+with it.** fog-path re-took the pair at equal build state and the 48 % was the build state, not the payload:
+
+| region | this pair (tick 200) | equal build state (521 vs 1384 world frames, both 43 listed sections) |
+|---|---|---|
+| sky band (0,0,1280,120) | 0.857,0.842,0.825 / 83.4 % over 8 | **0.992,0.991,0.991 / 1.28 %** |
+| horizon | 0.991,0.968,0.961 / 53.0 % | 1.019,1.000,0.988 / 16.48 % |
+| terrain centre | 1.023,1.014,0.985 / 35.9 % | 1.029,1.016,0.987 / 27.74 % |
+| hotbar strip | 0.975,0.996,0.993 / 0.0 % | 1.000,1.000,1.000 / 0.00 % |
+| whole frame | 0.970,0.968,0.949 / **48.0 %** | 1.016,1.005,0.990 / **10.88 %** |
+
+`cand3-inventory` had **54 world frames / 12 listed sections / 8 MiB** where `ref3-inventory` had **412 / 43 / 30 MiB**
+at the same tick, so the two legs were not a comparison at all. The correlation the attribution rested on was
+confounded by the same thing: `acceptedByFormat` is cumulative over the run, so **2744 ITEM batches over 54 frames**
+looked like a special rate while **28,927 over 521 frames** is the same rate (55.5/frame at equal build state against
+50.8/frame here). **No darkening at the same lit-batch rate means the lit batches are not the cause.**
+
+**What survives from this record:** the control in §1 - the sky is **pixel-identical with no screen open** (0 of
+153,600 pixels over 8, ratio exactly 1.000) and 17 % dark with the inventory open. That is what made the difference
+worth chasing, and it is unaffected by the build-state confound because both legs of the A pair agree to 0.1/255.
+
+**What is open instead:** at equal build state the remaining inventory difference is *the world behind the screen* -
+terrain centre 27.74 %, chat block 17.30 %, horizon 16.48 %, whole frame 10.88 % - while the same scene **without** a
+screen matches at 2.65 % on the terrain centre. The candidates are the dim overlay
+(`GuiScreen.drawWorldBackground`), the panel's own alpha/blend, or the panel simply covering. That is a GUI-stage
+question and the honest next measurement is the same scenes at equal build state with the same regions.
+
+## 3b. The withdrawn reasoning, kept verbatim
+
 ## 3. What this rules out, and what it names
 
 - **Not the projection or the ortho switch.** The sky band is at the right place with the right extent in B; only its

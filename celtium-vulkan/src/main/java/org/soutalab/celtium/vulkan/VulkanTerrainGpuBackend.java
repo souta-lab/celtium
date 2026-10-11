@@ -4337,7 +4337,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // acceptance side needed the same treatment - a count that only exists at the end cannot answer "was this taken"
                 // for a run that never reached the end.
                 this.immediateAcceptedTotal++;
-                if (this.immediateAcceptedTotal % 500 == 0) {
+                // Gated: one line per 500 accepted batches is a per-second line on the operator's own session, and it
+                // is a synchronous stdout write on the render thread. The same numbers are in the report.
+                if (this.immediateAcceptedTotal % 500 == 0 && VulkanDiagnostics.enabled()) {
                     StringBuilder accepted = new StringBuilder();
                     for (int i = 0; i < this.immediateAcceptedByFormat.length; i++) {
                         accepted.append(i).append(':').append(this.immediateAcceptedByFormat[i]).append(' ');
@@ -7948,6 +7950,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private String lastGroupDepthRow = "";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
+    /** Lines of {@code CELTIUM_MODEL_MATRIX} written this run; see {@link VulkanDiagnostics}. */
+    private int modelMatrixLines;
+    /** The bound for that line: it is per model list per frame, so it needs a cap even in a diagnostics run. */
+    private static final int MODEL_MATRIX_LINES = Integer.getInteger("celtium.vulkan.modelMatrixLines", 200);
 
     /**
      * Draws one captured display list natively, at the moment GL would have replayed it.
@@ -8095,13 +8101,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // switch was removed rather than kept.
             float[] projectionRemapped = new float[16];
             remapClipDepth(projectionNow, projectionRemapped);
-            System.out.println("[Celtium] CELTIUM_MODEL_MATRIX list=" + listId
-                    + " liveMVt=(" + round3(modelViewNow[12]) + "," + round3(modelViewNow[13]) + ","
-                    + round3(modelViewNow[14]) + ")"
-                    + " capturedMVt=(" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredMatrixTranslation()
-                    + ")"
-                    + " liveProj=(" + round3(projectionNow[0]) + "," + round3(projectionNow[5]) + ","
-                    + round3(projectionNow[10]) + ")");
+            // Gated and bounded: this line is per model list per frame, and on the operator's own session it was the
+            // flood that pushed the game's log past 100,000 lines with nothing but -Dceltium.vulkan.glless set.
+            if (VulkanDiagnostics.withinLimit(this.modelMatrixLines, MODEL_MATRIX_LINES)) {
+                this.modelMatrixLines++;
+                System.out.println("[Celtium] CELTIUM_MODEL_MATRIX list=" + listId
+                        + " liveMVt=(" + round3(modelViewNow[12]) + "," + round3(modelViewNow[13]) + ","
+                        + round3(modelViewNow[14]) + ")"
+                        + " capturedMVt=(" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredMatrixTranslation()
+                        + ")"
+                        + " liveProj=(" + round3(projectionNow[0]) + "," + round3(projectionNow[5]) + ","
+                        + round3(projectionNow[10]) + ")");
+            }
 
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
                     mesh.indexCount() / 6, celtium$envCombineColor())) {

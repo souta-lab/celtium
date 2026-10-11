@@ -25,7 +25,17 @@ layout(push_constant) uniform PushConstants {
 
 void main() {
     vec4 colour = texture(u_Texture, v_TexCoord) * v_Color;
-    if (celtium.u_AlphaRef > 0.0 && colour.a < celtium.u_AlphaRef) {
+    if (celtium.u_AlphaRef < 0.0) {
+        // The GL_COMBINE interpolate the fixed pipeline applies for the hurt flash and the team outline: a negative
+        // alpha reference marks the combine (alpha tests use non-negative references only), the constant sits in the
+        // colour slots and its alpha is the mix factor. Alpha comes through unchanged - the combine setup leaves it on
+        // unit 0's result. This branch is the second half of the hurt-flash path, and it was missing here after the
+        // entity and hand batches moved to the lit ITEM layout: the same branch exists in
+        // immediate_position_tex.frag, and the measured consequence of its absence was the reference shifting the
+        // zombie head (78.9,123.7,87.7) -> (117.3,105.0,79.4) and the creeper (74.1,140.8,87.4) -> (118.1,113.2,76.0)
+        // while ours moved by at most 1.8 pixels.
+        colour.rgb = mix(colour.rgb, vec3(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB), -celtium.u_AlphaRef);
+    } else if (celtium.u_AlphaRef > 0.0 && colour.a < celtium.u_AlphaRef) {
         discard;
     }
     fragColor = colour;

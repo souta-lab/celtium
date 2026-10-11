@@ -251,6 +251,8 @@ public final class VulkanGlTexture {
     /** The source GL texture's wrap on each axis: {@code true} for GL_REPEAT, {@code false} for a clamp mode. */
     private boolean wrapRepeatU;
     private boolean wrapRepeatV;
+    /** Whether the recorded wrap parameters were consulted once; see {@link #confirmWrapFromRecord}. */
+    private boolean wrapConfirmed;
 
     /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
     private long lastPixelHash;
@@ -1830,6 +1832,43 @@ public final class VulkanGlTexture {
     /** {@return the highest mip level this mirror's sampler may read}, i.e. the {@code maxLod} it was created with. */
     public int samplerMaxLod() {
         return this.samplerMaxLod;
+    }
+
+    /**
+     * Re-consults the game's recorded wrap parameters once, recreating the sampler when they differ from the modes it
+     * was built with.
+     * <p>
+     * The stub records {@code glTexParameteri} now, so the wrap a GL texture really has is readable under GL-less -
+     * but a mirror's sampler is created when the mirror is, and the game sets a texture's parameters after the upload
+     * that created it ({@code TextureUtil.uploadTextureImageAllocate}: image first, then {@code setTextureClamped}).
+     * Without this the tiled GUI background keeps the mode the default happened to be at creation time, which is the
+     * "one stretched tile" defect. Bounded to once per mirror; a change bumps the generation so descriptor caches
+     * keyed on {@link #key()} cannot keep naming the destroyed sampler.
+     */
+    public void confirmWrapFromRecord(int glTextureId) {
+        if (this.wrapConfirmed || glTextureId <= 0
+                || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            return;
+        }
+        this.wrapConfirmed = true;
+        boolean repeatU = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S) == org.lwjgl.opengl.GL11.GL_REPEAT;
+        boolean repeatV = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
+                org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T) == org.lwjgl.opengl.GL11.GL_REPEAT;
+        if (repeatU == this.wrapRepeatU && repeatV == this.wrapRepeatV) {
+            return;
+        }
+        this.wrapRepeatU = repeatU;
+        this.wrapRepeatV = repeatV;
+        if (this.sampler != 0L) {
+            org.lwjgl.vulkan.VK10.vkDestroySampler(this.context.device(), this.sampler, null);
+            this.sampler = 0L;
+        }
+        createSampler();
+        this.generation++;
+        System.out.println("[Celtium] CELTIUM_SAMPLER_WRAP glTexture=" + glTextureId + " repeatU=" + repeatU
+                + " repeatV=" + repeatV + " (from the stub's recorded glTexParameteri; the sampler was built before"
+                + " the game set it)");
     }
 
     /**
