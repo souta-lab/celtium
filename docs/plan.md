@@ -257,6 +257,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.265 **round 71: セッション末の回帰 leg（canon 行）— 描画カウンタは健全・picture gate は flag 依存で FAILED**
+
+- **leg `r69-canon`（terrain + keepGui + captureEntities + keepEntities・layers ON・`presentReadback`）**:
+  ```
+  drawnByFormat = [1:111 2:3214 3:0 4:36521 5:178 6:1236 7:1185 8:128 9:228 10:0]
+  windowFlushFailures = 0    nonPlayerEntitiesAtCapture = 9    worldTicksAtEnd = 241
+  presentedImageVerdict = FAILED_PRESENTED_IMAGE
+  ```
+  ＝**id9(entity/hand) 228・id4(terrain) 36521・flush failure 0・entity 9体**＝このセッションの修正群（frame arena・upload batch・clear 分類・clip no-flip・polygon offset 捕捉・font セパレータ・BH-22 退役・device feature）で**描画カウンタの回帰は無い**。
+- **picture gate は FAILED のまま**（未較正）。この leg は `keepGui`+`captureEntities`+`keepEntities` で**scene key が較正済みのものと異なる**ため、
+  既報の `UNCALIBRATED_PRESENTED_IMAGE` と同じ扱いにする（**成功扱いにしない**・較正済み leg での再取得が要る）。
+- **未了のまま次に残すもの**: (1) menu 経路の layout VUID（pair を sample する draw の特定 → per-descriptor 分岐）、
+  (2) OPT-09 step (3)（同一 geometry と透明順の比較）、(3) BH-14 per-identity pair、(4) goal (e) の3段階（変更→反映→復元/reload）、
+  (5) 較正済み scene での picture gate 再取得。
+
 ## 0.264 **round 70: 引き継ぎ整理 — パノラマは「pair を sample する draw の特定」だけが残り、他は受入済み**
 
 - **このセッションで確定したパノラマの事実（すべて測定済み）**:
