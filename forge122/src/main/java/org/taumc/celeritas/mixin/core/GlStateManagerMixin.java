@@ -173,6 +173,12 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179131_c", at = @At("HEAD"), require = 0)
     private static void celtium$color(float red, float green, float blue, float alpha, CallbackInfo info) {
+        // Published for the one path that needs the current colour as vertex data rather than as pipeline state: the
+        // font's glyph quads are POSITION_TEX_COLOR, whose fragment stage computes texture * v_Color, so the colour
+        // has to travel in the vertices. This hook is the same call the backend's own colour mirror is fed from
+        // (formats 6, 7 and 9 read it back for their group tint), so both see one value and cannot disagree. It is
+        // recorded before the mirror so a backend-less frame still leaves the font with the colour vanilla set.
+        CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
         celtium$mirror(backend -> backend.setColor(red, green, blue, alpha));
     }
 

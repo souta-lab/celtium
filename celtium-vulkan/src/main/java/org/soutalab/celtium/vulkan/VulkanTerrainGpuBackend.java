@@ -1259,7 +1259,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * hand, and the first thing to know is which formats its batches carry and whether they are served by Vulkan at all.
      * Reported once, at a count a run actually crosses.
      */
-    private final int[] immediateOfferedByFormat = new int[8];
+    // Sized from the format table, not from the eight ids that existed when this was written: an array of 8 silently
+    // truncated format 8 and 9 out of the per-format line, so batches that were offered and accepted (id8=128,
+    // id9=228 in one run) never appeared in the table the evidence is read from - the histogram and the accepted
+    // counters disagreed with each other and neither was wrong about what it had seen.
+    private final int[] immediateOfferedByFormat = new int[VulkanImmediateFormats.COUNT];
     private final int[] immediateAcceptedByFormat = new int[VulkanImmediateFormats.COUNT];
     /**
      * Whether this frame's submission actually reached the queue.
