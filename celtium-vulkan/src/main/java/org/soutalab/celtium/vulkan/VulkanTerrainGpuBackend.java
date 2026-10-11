@@ -5533,6 +5533,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         boolean offTarget = !this.currentRenderTargetIsMain;
         long identity = this.currentRenderTarget;
         this.immediateWindowBusy = true;
+        // BH-26: the owner state a recording consumes lives on the GL-less frame target, while this field is the
+        // FrameImageTarget interface - so the handle is resolved once here and both rollback sites use it. On the
+        // bridge (real GL) the target is not a GllessFrameTarget and both calls are skipped, which is correct: there
+        // is no owner state to put back.
+        GllessFrameTarget gllessTarget = this.frameTarget instanceof GllessFrameTarget
+                ? (GllessFrameTarget) this.frameTarget : null;
+        GllessFrameTarget.RecordingSnapshot recordingSnapshot =
+                gllessTarget == null ? null : gllessTarget.snapshotRecording();
         try {
             // Retry a pre-submit failure once. Never retry after vkQueueSubmit success/a fence timeout.
             for (int attempt = 0; attempt < 2; attempt++) {
@@ -5544,9 +5552,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.windowOpen = true;
                     beginCommands();
                     try (MemoryStack stack = MemoryStack.stackPush()) {
-                        this.frameTarget.recordAcquireBarriers(this.commandBuffer);
-                        recordImmediateOnlyPass(stack, terrain);
-                        this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                        // The acquire barriers advance owner state that only a submission makes true - the first
+                        // transition, the consumed clear, both layouts and both pairs' acquired flags. A record that is
+                        // discarded before it reaches the queue must put that state back, or the re-record skips the
+                        // transition and the clear it already consumed (BH-26).
+                        try {
+                            this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                            recordImmediateOnlyPass(stack, terrain);
+                            this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                        } catch (RuntimeException | LinkageError recordError) {
+                            if (gllessTarget != null) {
+                                gllessTarget.rollbackRecording(recordingSnapshot);
+                            }
+                            throw recordError;
+                        }
                     }
                     submitCommands();
                     if (!waitForIdle()) throw new IllegalStateException("immediate submission did not complete");
@@ -5576,6 +5595,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                             "vkResetCommandBuffer(abort)");
                     this.commandState.reset();
+                    // BH-26: this recording is discarded before the queue ever saw it, and the recovery below
+                    // re-records the acquire and release barriers on a fresh command buffer. Put the owner state back
+                    // first, or the second recording sees the first one's consumption - the first transition, the
+                    // consumed clear, the layouts - and skips the barrier the frame needs.
+                    if (gllessTarget != null) {
+                        gllessTarget.rollbackRecording(recordingSnapshot);
+                    }
                     for (ImmediateGroup group : this.recordedImmediateGroups) {
                         int batches = group.batches;
                         this.pendingImmediateIndices += group.mesh.indexCount();

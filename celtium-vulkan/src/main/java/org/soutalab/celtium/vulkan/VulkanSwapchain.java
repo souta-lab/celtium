@@ -1260,7 +1260,8 @@ public final class VulkanSwapchain {
             // probe-failure message, so the chosen image count, usage set, composite alpha and format were measurable
             // only when the call failed - and "the fields are set in the source" is not a measurement of the surface's
             // values. One line per swapchain, including the ones recreated by a VSync change or an out-of-date surface.
-            System.out.println("[Celtium] CELTIUM_SWAPCHAIN " + this.argumentSummary);
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN " + this.argumentSummary
+                    + " semaphorePoolRollbacks=" + semaphorePoolRollbacks);
             result = vkCreateSwapchainKHR(this.context.device(), create, null, handle);
             if (result != VK_SUCCESS) {
                 reasons.add("vkCreateSwapchainKHR returned " + result + " (formats " + availableFormats + ") ["
