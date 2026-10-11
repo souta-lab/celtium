@@ -182,12 +182,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
         long memory = VK_NULL_HANDLE;
         try (MemoryStack stack = stackPush()) {
             LongBuffer handle = stack.mallocLong(1);
-            int format = color ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_D32_SFLOAT;
+            // The depth format is chosen from what this device can do rather than fixed: AMD's RADV has no 24-bit
+            // depth format at all and Intel's UHD 630 has no D16_UNORM_S8_UINT, so a constant is wrong on one of the
+            // two GPUs this project verifies on. The usage gains SAMPLED_BIT because the contract the choice is made
+            // against is "a depth attachment that can also be sampled", and an image created without it would not be
+            // the image that predicate was verified for.
+            int format = color ? VK_FORMAT_R8G8B8A8_UNORM
+                    : VulkanDepthFormat.chosen(this.context.physicalDevice());
             int usage = color
                     ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                             | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                     : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
             VkImageCreateInfo createImage = VkImageCreateInfo.calloc(stack).sType$Default()
                     .imageType(VK_IMAGE_TYPE_2D).format(format).mipLevels(1).arrayLayers(1)
                     .samples(VK_SAMPLE_COUNT_1_BIT).tiling(VK_IMAGE_TILING_OPTIMAL).usage(usage)

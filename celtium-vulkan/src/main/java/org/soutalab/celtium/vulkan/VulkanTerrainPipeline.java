@@ -82,7 +82,9 @@ public final class VulkanTerrainPipeline {
     /**
      * The terrain depth attachment format, matching the depth image of the interop frame target.
      */
-    public static final int DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
+    // The depth attachment's format is no longer a constant: it comes from VulkanDepthFormat, which asks the device
+    // what it can use as a depth-stencil attachment that can also be sampled (see that class for why a fixed
+    // format is wrong on one of the two GPUs this project verifies on).
 
     /**
      * The layout the color attachment is expected to be in when the render pass begins, and the layout it is left
@@ -893,7 +895,10 @@ public final class VulkanTerrainPipeline {
                 .initialLayout(COLOR_ATTACHMENT_LAYOUT)
                 .finalLayout(COLOR_ATTACHMENT_LAYOUT);
         VkAttachmentDescription depth = attachments.get(1);
-        depth.format(DEPTH_FORMAT)
+        // The attachment must be the format the frame target's depth image was created with, and that is now chosen
+        // from the device's capabilities rather than fixed. A render pass declared with one depth format over an image
+        // created with another is invalid, which is why the two sites share one decision.
+        depth.format(VulkanDepthFormat.chosen())
                 .samples(VK_SAMPLE_COUNT_1_BIT)
                 .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD)
                 .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
