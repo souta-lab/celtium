@@ -1282,18 +1282,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     // appended before anything that came after them - never after. The counters say how each run went out, because a
     // batching that silently changed ordering is exactly the class of change this project has been bitten by.
     /**
-     * The batching, <b>off by default</b>: `-Dceltium.font.batching=true` enables it.
+     * The batching, on by default: `-Dceltium.font.batching=false` is the one-flag control.
      * <p>
-     * It is 16x cheaper per glyph when it applies - the user's own session with it on: 275,503 quads in 1,014 ms, 3.7 us
-     * per quad, against 59 us with it off - and it still corrupts the picture. On the jar that carries both the
-     * colour-witness fix and the matrix-boundary flush, the user's play and our own compositor capture both show the
-     * menu's button labels, the rotated splash text and the copyright line as blocks while the unscaled footer text stays
-     * legible. That is the same symptom as before the two fixes, so the mechanism is still open. An optimisation that
-     * garbles text is not a default: the code and the flag stay, and the default flips back when a leg shows legible text
-     * with it on.
+     * It is 16x cheaper per glyph (the user's session with it on: 275,503 quads in 1,014 ms = 3.7 us per quad, against
+     * 59 us with it off). It used to garble text, and the mechanism was that {@code submitImmediateBatch} captures the
+     * bound texture and the matrices at *submission* time: a run flushed at an intervening submission - which is what
+     * happens around the menu's buttons - was drawn with the intervening draw's texture and transform, while a run
+     * flushed at a boundary (the footer text, drawn last) was correct. `celtium$flushPendingFontBatch` now applies the
+     * state the run was appended under and restores it afterwards, and the menu text is legible with the batching on
+     * (compositor capture, jar 64923c0a: every button label, the splash line and the copyright line).
      */
     private static final boolean FONT_BATCHING = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.font.batching", "false"));
+            System.getProperty("celtium.font.batching", "true"));
 
     /** The run's vertices, owned by this backend and grown as needed; the font's own buffer is copied into it. */
     private java.nio.ByteBuffer pendingFontVertices;
@@ -3838,6 +3838,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         int drawMode = this.pendingFontDrawMode;
         int count = this.pendingFontVertexCount;
         long address = org.lwjgl.system.MemoryUtil.memAddress(this.pendingFontVertices, 0);
+        // The state the run was appended under. `submitImmediateBatch` captures the bound texture and the matrices at
+        // submission time, so a run flushed at an intervening submission used to be drawn with the *intervening* draw's
+        // texture and transform. That is the measured garbling: the menu's button labels, the rotated splash text and the
+        // copyright line came out as blocks while runs flushed at a boundary - the footer text, drawn last with nothing
+        // after it - stayed legible. The recorded state is applied around the submission and restored afterwards.
+        int runTexture = this.pendingFontTexture;
+        boolean runAlphaTest = this.pendingFontAlphaTest;
+        float runAlphaRef = this.pendingFontAlphaRef;
         this.pendingFontActive = false;
         this.pendingFontBytesUsed = 0;
         this.pendingFontVertexCount = 0;
@@ -3848,10 +3856,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } else {
             this.fontBatchesFlushedStateChange++;
         }
+        int savedTexture = this.immediateState.boundTextureName();
+        boolean savedTexture2d = this.immediateState.texture2dEnabled();
+        boolean savedAlphaTest = this.immediateState.alphaTestEnabled();
+        float savedAlphaRef = this.immediateState.alphaFuncReference();
+        float[] savedProjection = this.glProjection.clone();
+        float[] savedModelView = this.glModelView.clone();
         try {
+            this.immediateState.texture2dEnabled(true);
+            this.immediateState.bindTexture(runTexture);
+            this.immediateState.alphaTestEnabled(runAlphaTest);
+            this.immediateState.alphaFuncReference(runAlphaRef);
+            System.arraycopy(this.pendingFontProjection, 0, this.glProjection, 0, 16);
+            System.arraycopy(this.pendingFontModelView, 0, this.glModelView, 0, 16);
             submitImmediateBatch(format, stride, formatId, address, count, drawMode);
         } catch (RuntimeException | LinkageError error) {
             this.immediateLastRefusal = "the coalesced font run could not be submitted: " + error;
+        } finally {
+            this.immediateState.texture2dEnabled(savedTexture2d);
+            this.immediateState.bindTexture(savedTexture);
+            this.immediateState.alphaTestEnabled(savedAlphaTest);
+            this.immediateState.alphaFuncReference(savedAlphaRef);
+            System.arraycopy(savedProjection, 0, this.glProjection, 0, 16);
+            System.arraycopy(savedModelView, 0, this.glModelView, 0, 16);
         }
     }
 
