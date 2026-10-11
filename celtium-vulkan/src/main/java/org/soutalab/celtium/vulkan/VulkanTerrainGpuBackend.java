@@ -1150,6 +1150,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private final int[] postAcceptDroppedByFormat = new int[VulkanImmediateFormats.COUNT];
     private int passBoundaryFlushes;
+    /**
+     * Flushes made by the world-to-GUI ordering rule in {@link #endWorldPass()} - the counter that names the rule.
+     * <p>
+     * A run with pending world-pass groups at the boundary prints a non-zero value here and the groups are drawn
+     * before the GUI stage's depth-writing quad; without the rule the same groups were drawn afterwards and silently
+     * failed their depth test while still counting as drawn.
+     */
+    private int worldPassBoundaryFlushes;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
@@ -2543,6 +2551,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.stamp = new GroupStamp(this.frameId, this.targetGeneration, true, this.worldEpoch);
         this.immediateGroups.add(group);
         this.immediateGroupsClosed++;
+        if (target != this.mainTargetIdentity) {
+            // Off-target model batches are drawn in the pass that is open for their target, not carried in the queue.
+            // The immediate window draws the groups of `currentRenderTarget` only (`flushImmediateWindow`, "others
+            // remain owned in the queue"), and the window runs on the main target later in the frame, so a group stamped
+            // with another identity waits for a pass that belongs to it - which for the entity-outline framebuffer never
+            // comes, because that framebuffer is cleared and consumed by the outline chain within the same frame.
+            //
+            // That is the offer path's own rule, written down as audit A10 ("the queue never sees a non-main group
+            // afterwards"), and the model path has to follow it. Measured on the glow scene before this line: 931
+            // off-target model replays arrived from the outline pass (`CELTIUM_MODEL_OFFTARGET list=125 texture=124
+            // target=… main=… inTable=true verts=24`), all 931 were enqueued, and the outline target still held only the
+            // item's groups - because the silhouette the chain reads is read before the window that would have drawn
+            // them. Flushing here draws them while `currentRenderTarget` is still the outline framebuffer.
+            long recordedBefore = this.immediateRecordedBatches;
+            long flushesBefore = this.actualFlushes;
+            this.flushPendingBeforeGlDraw();
+            if (this.modelOffTargetFlushLogs < MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
+                this.modelOffTargetFlushLogs++;
+                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+" 
+                        + (this.immediateRecordedBatches - recordedBefore)
+                        + " flushes+" + (this.actualFlushes - flushesBefore)
+                        + " windowBusy=" + this.immediateWindowBusy
+                        + " target=" + target + " groupsLeft=" + this.immediateGroups.size());
+            }
+        }
         return true;
     }
 
@@ -3249,6 +3282,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     public void endWorldPass() {
         this.worldPassActive = false;
+        // The world-to-GUI ordering rule (task-14/37). A group offered inside the world pass tests against the depth
+        // the terrain pass wrote, and that depth is only valid until the GUI stage draws. One of the GUI stage's quads
+        // is a full-screen ortho quad with the depth test and the depth write both on at z = 0.50 (measured,
+        // CELTIUM_GROUP_BOUNDS: `fmt=2 worldPass=false vertices=4 ndc x[-1.00..1.00] y[-1.00..1.00] z[0.50..0.50]
+        // state=[depthTest=1 depthWrite=1]`); once it has run, every pending world group fails its LEQUAL test
+        // against 0.5 while its draw is still counted. That is exactly what the POSITION_NORMAL box measured: the
+        // group accepted, closed and drawn 62/62 with no pixels, and the same group in the picture (3,909 px) when it
+        // was the first thing drawn after the terrain pass. GL never sees this because the world is drawn before the
+        // GUI; the window path had left the group pending across two later windows.
+        //
+        // So the boundary is where the order is restored: whatever is still pending here was offered for this world
+        // pass (or is a leftover for another target, which the window's own target filter keeps out of this pass), and
+        // it is drawn now, in a window whose depth is the terrain's. Groups offered after this point belong to the GUI
+        // stage and still defer exactly as before - the rule adds an ordering boundary, it does not stop deferral.
+        if (!this.immediateGroups.isEmpty()) {
+            int pending = this.immediateGroups.size();
+            this.flushPendingBeforeGlDraw();
+            if (this.immediateGroups.size() < pending) {
+                // Counted only when the flush actually drew something: the ordering call also returns early for an
+                // empty queue, a framebuffer replacement and a stall, and a counter that moved on those would not
+                // describe the rule. Measured with the full default mask: 1 per world frame, and the box is then in
+                // the picture at the isolation leg's coordinates.
+                this.worldPassBoundaryFlushes++;
+            }
+        }
     }
 
     /**
@@ -4451,6 +4509,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // measures on-screen can still be rejected: a depth-tested quad drawn after the world pass is
                     // tested against the world's depth unless something cleared the depth attachment in between.
                     + " state=" + stateText(group.state)
+                    // The texture matrix the group was captured with, because it is the one input that moves a
+                    // correct-looking quad's UVs somewhere else: a stale affine left on unit 0 by an earlier draw
+                    // transforms this group's texture coordinates, and the sample then lands outside the sprite -
+                    // which the alpha test turns into "drawn, accepted, no pixels". The block-breaking overlay is the
+                    // measured case (its fragments are alpha-discarded with the real atlas bound), and this field is
+                    // what tells "the group carries a transform" from "it does not".
+                    + " texMat=" + (group.texMatrix == null ? "none"
+                            : round3(group.texMatrix[0]) + "," + round3(group.texMatrix[1]) + ","
+                                    + round3(group.texMatrix[2]) + "," + round3(group.texMatrix[3]) + ","
+                                    + round3(group.texMatrix[4]) + "," + round3(group.texMatrix[5]))
                     + " ndc " + bounds + chain);
             record("group " + this.immediateDiagnostics + ": vertices=" + vertices
                     + " indices=" + mesh.indexCount() + " colour0=" + colour
@@ -5838,6 +5906,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " imageUploadsSkipped="
                 + (this.textureRegistry != null ? this.textureRegistry.imageUploadsSkipped() : 0)
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
+                + " textureCopiesServed=" + this.textureCopiesServed
+                + " textureCopiesRefused=" + this.textureCopiesRefused
+                + " lastTextureCopyRefusal=[" + this.lastTextureCopyRefusal + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
                 + " dynamicTextureFills=" + this.dynamicTextureFills
@@ -5861,6 +5932,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
                 + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
+                + " worldPassBoundaryFlushes=" + this.worldPassBoundaryFlushes
                 + " textureDiagnostics=" + TEXTURE_DIAGNOSTICS + " diagnosed=" + this.diagnosedTextures.size()
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
@@ -7783,6 +7855,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The last off-target call count printed from the build, and how many such lines have printed. */
     private int modelOffTargetReported = -1;
     private int modelOffTargetReports;
+    /** How many flush-outcome lines have printed for off-target model batches. */
+    private int modelOffTargetFlushLogs;
+    private static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
     /** The bound on {@link #modelOffTargetLogs}: the entity scene has one list set per off-target pass. */
     private static final int MODEL_OFFTARGET_LOG_LIMIT = 24;
     /** Display lists seen replayed under a texture other than their compile texture, so a layer prints once. */
@@ -8477,6 +8552,226 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return true;
     }
 
+    // ---- glCopyTexImage2D / glCopyTexSubImage2D: the read side of the copy --------------------------------------
+    //
+    // The main menu's panorama is the measured caller (GuiMainMenu.renderSkybox -> drawPanorama -> 7x
+    // rotateAndBlurSkybox): 384 quads are drawn into the default framebuffer with a 256x256 viewport and then copied
+    // into a 256x256 dynamic texture with glCopyTexSubImage2D(3553, 0, 0, 0, 0, 0, 256, 256), seven times, each copy
+    // followed by three blur quads. Under GL-less the stub has no framebuffer to read, so those copies were a named
+    // refusal and the skybox texture kept the flat colour the game had uploaded - the menu's background.
+    //
+    // What the copy needs is the pixels the game's own draws put in the bound read framebuffer, and this renderer owns
+    // that image: identity 0 is the GL-less default framebuffer, whose draws the off-target pass puts in the frame
+    // target's default pair (see GllessFrameTarget.pairLabelForIdentity), and the game's main identity is drawn into
+    // the frame image the present path blits from. Nothing else is served: a read of a framebuffer this renderer does
+    // not own (a mod's own FBO) stays a refusal rather than reading whatever happens to be bound.
+
+    /** Copy requests served from an owned image, and those refused, with the reason of the last refusal. */
+    private int textureCopiesServed;
+    private int textureCopiesRefused;
+    private String lastTextureCopyRefusal = "none";
+
+    /**
+     * Serves one {@code glCopyTexImage2D}/{@code glCopyTexSubImage2D} from an image this renderer owns.
+     * <p>
+     * The caller is the GL-less stub, which knows the destination texture name, the level and offset the copy names,
+     * and the source rectangle. The pixels come from the same route the presented-image dump uses (a transfer-source
+     * copy into a host-visible buffer), but of a rectangle of the owned image rather than of the whole swapchain image
+     * at the swap point.
+     * <p>
+     * The copy is synchronous on purpose. The game draws the faces, copies them and then draws the blur from the copy
+     * in the same frame: a read that returned the previous frame's content would put the blur on the wrong pixels, and
+     * the ordering is the game's, not the renderer's to defer. So the pending groups are flushed (which submits and
+     * waits - the same immediate-window path an ordering flush uses) before the rectangle is read.
+     *
+     * @param destName the GL texture name the copy writes into
+     * @param level    the destination level; only level 0 is served, because the mirror's patch path is level 0
+     * @param xoffset  the destination offset inside that level
+     * @param yoffset  the destination offset inside that level
+     * @param x        the source rectangle's left edge in the read framebuffer
+     * @param y        the source rectangle's bottom edge in the read framebuffer (GL's origin)
+     * @param width    the source rectangle's width, also the copied width
+     * @param height   the source rectangle's height, also the copied height
+     * @param readFbo  the framebuffer the game bound for reading
+     * @return {@code "served"} when the pixels reached the destination mirror, otherwise a reason that names itself
+     */
+    public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
+            int x, int y, int width, int height, int readFbo) {
+        if (destName == 0 || width <= 0 || height <= 0) {
+            return celtium$refuseTextureCopy("invalid arguments: dest=" + destName + " " + width + "x" + height);
+        }
+        if (level != 0) {
+            // The mirror's patch path carries level 0 only (announceFullPixels walks data[level] from 0 and stops at the
+            // first absent level), so a copy into a higher level is named rather than written to level 0 as if it were
+            // the same image. No measured caller does this: the panorama copies into level 0.
+            return celtium$refuseTextureCopy("level " + level + " (the mirror's patch path serves level 0)");
+        }
+        long image = celtium$ownedReadImage(readFbo);
+        if (image == 0L) {
+            return celtium$refuseTextureCopy("read framebuffer " + readFbo + " is not an image this renderer owns");
+        }
+        // What the game drew into that image is still queued as groups: submitting them is what makes the read the
+        // frame the copy is about. flushPendingBeforeGlDraw draws into an open pass if there is one, otherwise it opens
+        // and completes an immediate window, which is the same ordering boundary the game's own draw calls use.
+        flushPendingBeforeGlDraw();
+        if (!waitForIdle()) {
+            return celtium$refuseTextureCopy("the GPU did not confirm the draws before the copy completed");
+        }
+        int[] pixels = celtium$readImageRectangle(image, x, y, width, height);
+        if (pixels == null) {
+            return celtium$refuseTextureCopy("the rectangle read of the owned image failed");
+        }
+        if (this.textureRegistry == null) {
+            this.textureRegistry = celtium$registry();
+        }
+        int[][] levels = new int[1][];
+        levels[0] = pixels;
+        boolean applied = this.textureRegistry.announceFullPixels(destName, levels, width, height, xoffset, yoffset);
+        if (!applied) {
+            return celtium$refuseTextureCopy("the destination mirror refused the pixels: "
+                    + this.textureRegistry.lastFailure());
+        }
+        this.textureCopiesServed++;
+        return "served";
+    }
+
+    /** {@return the image a copy's read framebuffer names, or 0 when this renderer does not own it}. */
+    private long celtium$ownedReadImage(int readFbo) {
+        GllessFrameTarget glless = offTargetTarget();
+        if (readFbo == 0 && glless != null) {
+            // Identity 0: the GL-less default framebuffer. Its draws are routed to the default pair, and the pair's
+            // image is the one the game's own finished-frame composite reads.
+            glless.ensureOffTarget(this.targetWidth, this.targetHeight);
+            return glless.offTargetColorImage();
+        }
+        if (readFbo != 0 && this.frameTarget != null && readFbo == (int) this.mainTargetIdentity) {
+            // The game's own main framebuffer: isMain draws go to the frame image the present path blits from.
+            return this.frameTarget.colorImage();
+        }
+        return 0L;
+    }
+
+    private String celtium$refuseTextureCopy(String reason) {
+        this.textureCopiesRefused++;
+        this.lastTextureCopyRefusal = reason;
+        return "refused-" + reason;
+    }
+
+    /**
+     * {@return rectangle {@code width x height} at {@code x,y} of an owned colour image as ARGB texels}, or null.
+     * <p>
+     * The image is a colour attachment in {@code VK_IMAGE_LAYOUT_GENERAL} (both the off-target pairs and the frame image
+     * are), and GENERAL is a legal transfer source - but the next frame attaches the image again, so the barrier pair
+     * below is GENERAL to TRANSFER_SRC and back to GENERAL and the target's own layout bookkeeping stays true. The copy
+     * goes through {@code VulkanContext.beginCommands}/{@code endCommands}, which waits for the queue before allocating
+     * and after submitting: that is the same route the swapchain's own presented-image readback takes.
+     */
+    private int[] celtium$readImageRectangle(long image, int x, int y, int width, int height) {
+        long buffer = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+        long memory = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long bytes = (long) width * (long) height * 4L;
+            org.lwjgl.vulkan.VkBufferCreateInfo bufferInfo = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
+                    .sType$Default().size(bytes)
+                    .usage(org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                    .sharingMode(org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE);
+            LongBuffer handle = stack.mallocLong(1);
+            if (org.lwjgl.vulkan.VK10.vkCreateBuffer(this.context.device(), bufferInfo, null, handle)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return null;
+            }
+            buffer = handle.get(0);
+            org.lwjgl.vulkan.VkMemoryRequirements requirements =
+                    org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
+            org.lwjgl.vulkan.VK10.vkGetBufferMemoryRequirements(this.context.device(), buffer, requirements);
+            org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
+                    .sType$Default().allocationSize(requirements.size())
+                    .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
+                            org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                                    | org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            "the texture-copy readback buffer"));
+            if (org.lwjgl.vulkan.VK10.vkAllocateMemory(this.context.device(), allocate, null, handle)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return null;
+            }
+            memory = handle.get(0);
+            org.lwjgl.vulkan.VK10.vkBindBufferMemory(this.context.device(), buffer, memory, 0);
+
+            VkCommandBuffer commands = this.context.beginCommands();
+            org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy =
+                    org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
+            copy.get(0).imageSubresource().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
+                    .mipLevel(0).baseArrayLayer(0).layerCount(1);
+            copy.get(0).imageOffset().set(x, y, 0);
+            copy.get(0).imageExtent().set(width, height, 1);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toTransfer =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            toTransfer.get(0).sType$Default()
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(image)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_WRITE_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
+            toTransfer.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
+                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toTransfer);
+            org.lwjgl.vulkan.VK10.vkCmdCopyImageToBuffer(commands, image,
+                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, copy);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer backToGeneral =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            backToGeneral.get(0).sType$Default()
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(image)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_READ_BIT);
+            backToGeneral.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
+                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
+            this.context.endCommands(commands);
+
+            org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
+            if (org.lwjgl.vulkan.VK10.vkMapMemory(this.context.device(), memory, 0, bytes, 0, mapped)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return null;
+            }
+            // The owned colour image is VK_FORMAT_R8G8B8A8_UNORM, so the bytes are R, G, B, A in that order - the ARGB
+            // int the mirror's patch path expects packs R in bits 16..23.
+            int[] pixels = new int[width * height];
+            for (int pixel = 0; pixel < pixels.length; pixel++) {
+                long at = mapped.get(0) + (long) pixel * 4L;
+                int r = MemoryUtil.memGetByte(at) & 0xFF;
+                int g = MemoryUtil.memGetByte(at + 1) & 0xFF;
+                int b = MemoryUtil.memGetByte(at + 2) & 0xFF;
+                int a = MemoryUtil.memGetByte(at + 3) & 0xFF;
+                pixels[pixel] = (a << 24) | (r << 16) | (g << 8) | b;
+            }
+            org.lwjgl.vulkan.VK10.vkUnmapMemory(this.context.device(), memory);
+            return pixels;
+        } catch (RuntimeException | LinkageError error) {
+            record("texture copy readback failed: " + describe(error));
+            return null;
+        } finally {
+            if (buffer != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                org.lwjgl.vulkan.VK10.vkDestroyBuffer(this.context.device(), buffer, null);
+            }
+            if (memory != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                org.lwjgl.vulkan.VK10.vkFreeMemory(this.context.device(), memory, null);
+            }
+        }
+    }
+
     /** {@return whether a requested presented-image dump has been written}. */
     public boolean celtium$presentedImageDumpWritten() {
         return this.presentedImageDumpRequested && this.swapchain != null && this.swapchain.lastDumpWritten();
@@ -9149,7 +9444,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Iterator<ImmediateGroup> iterator = this.immediateGroups.iterator();
             while (iterator.hasNext()) {
                 ImmediateGroup group = iterator.next();
-                if (group.target != target) continue; // kept for its own pass
+                if (group.target != target) {
+                    // Kept for its own pass, and now counted: this is the site the counter's name describes, and
+                    // without an increment here a "kept" group and a "dropped" one both read as zero. It counts
+                    // keep-events, like the pass-boundary counter counts boundary events, so a group held across
+                    // three flushes raises it three times.
+                    this.immediateGroupsKeptForOtherTargets++;
+                    continue;
+                }
                 if (group.stamp != null) {
                     GroupStamp stamp = group.stamp;
                     if (stamp.targetGeneration != this.targetGeneration) {

@@ -2319,15 +2319,33 @@ public final class CeltiumGlStub implements FunctionProvider {
                                           int x, int y, int width, int height) {
         this.textureCopyRequests++;
         Integer dest = this.textureBindings.get(Long.valueOf(texBindKey(target)));
+        int destName = dest == null ? 0 : dest.intValue();
+        // The source side lives with the frame target, which owns the image the read framebuffer names: ask it for the
+        // rectangle, and only a "served" answer skips the refusal below. Both copy entry points funnel through here, so
+        // this one call covers glCopyTexImage2D and glCopyTexSubImage2D alike; a foreign framebuffer, a non-zero level
+        // or a stalled device comes back as a reason and is printed on the same line as before.
+        String servedFrom;
+        try {
+            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                    ? vulkan.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
+                            this.readFbo)
+                    : "refused-no-vulkan-backend";
+        } catch (RuntimeException | LinkageError error) {
+            servedFrom = "refused-serve-failed: " + error;
+        }
+        if ("served".equals(servedFrom)) {
+            return;
+        }
         String key = name + "/" + target + "/" + width + "x" + height + "/readFbo=" + this.readFbo;
         if (TEXTURE_COPY_SHAPES.size() < 8 && TEXTURE_COPY_SHAPES.add(key)) {
             System.out.println("[Celtium] CELTIUM_TEX_COPY " + name
                     + " target=0x" + Integer.toHexString(target) + " level=" + level
-                    + " dest=" + (dest == null ? 0 : dest.intValue())
+                    + " dest=" + destName
                     + " destOffset=" + xoffset + "," + yoffset
                     + " source=" + x + "," + y + " " + width + "x" + height
                     + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
-                    + " servedFrom=refused-no-owned-image-readback requests=" + this.textureCopyRequests
+                    + " servedFrom=" + servedFrom + " requests=" + this.textureCopyRequests
                     + " site=[" + celtium$callSite(8) + "]");
         }
     }

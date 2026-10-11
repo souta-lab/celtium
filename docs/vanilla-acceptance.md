@@ -303,7 +303,8 @@ kept and this table says which jar produced them.
 | 17 | celtium `03c627cc52c8e566`, fixture `105598e0f89be16d` | self-comparison | one flag apart |
 | 19 | (plan §0.144 jar, not kept here) | stored | - |
 | 20, 21 | none current | stored / none | see the rows |
-| 22 | instance jar `bf5a4e144965d83b` (attempt 1, pre-task-15) → `4b913f91a9b3b032` (verdict leg) | none - a Prism launch | the user's own configuration; cross-check `ww-menu` harness jar `eed0f86f03402db5` |
+| 22 | celtium `8f3b34b68a1b2b80ad74` (`user-cfg-menu`, harness, no fixture) and `609eb69a9064df05` (`resize-menu`) | none - the user's configuration; cross-check `ww-menu` harness jar `eed0f86f03402db5` | menu drawn: 921 distinct colours; resize verified at 1920x1080 |
+| 23 | celtium `609eb69a9064df05`, fixture `f5b041ae841b2585`, JEI `e592b0019aa0cd32` | Celeritas + JEI leg in flight | mods load and their UI draws; verdict UNCALIBRATED (no calibrated jei+keep reference) |
 
 
 Cross-cutting counters from `acc2-glless`, the most recent GL-less run I read in full:

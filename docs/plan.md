@@ -133,6 +133,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.179 **地平線帯は「build 状態を揃える」ことで閉じた（task-33）／fixture jar の空コピーという罠**
+
+- **task-33（fog-path）の受入**: `captureCondition=sections captureSections=41 captureMinWorldFrames=295` で
+  両 leg が同じ listed sections に到達（候補 **41**・819 world frames／参照 43・405 frames）。
+  その状態での band rows 200-320 は **mean 0.403・>8 が 744/153,600 = 0.484%**（以前は 59%）。
+  sky rows 0-199 は **0/254,720**、terrain rows 320-720 は 0.012%、frame 全体 0.087%。
+  **22 vs 32・34 vs 41 は build throughput の差であり、culling 欠陥ではなかった**——我々は同じ section 数に達するのに
+  819 frame を要した（tick 200 では 106-162 frame・34 sections）。**帯の受入はこれで閉じた**。
+  残差 0.48% は frame の他領域と同じ桁で、task-26 の mip 内容が候補（`t33c-atlas1` の対照で sampler の去就を決める）。
+- **罠（私の失敗・記録）**: 私の `lead-1920`/`lead-instworld` が `MISSING_REPORT` になったのは、
+  **run の mods にコピーされた fixture jar が 22 バイトの空 zip（`PK\x05\x06`）だった**ため。
+  build が出力ファイルを作った直後に `cp` したためで、FML は正しく "non-mod file" として拒否していた
+  （Cleanroom の discovery は `Discovered mod ids: scalar, celeritas, fugue` の3つだけ）。
+  **build 中に jar をコピーしない**（`scripts/build.sh` の完了を待つ）。以後は凍結済み fixture を使う。
+- **Cleanroom 固有の罠（weather-water 実測）**: `GluProjectionMixin` の target `org.lwjgl.util.glu.Project` は
+  **この runtime に存在しない**（`org/lwjglx/util/glu/Project.class` が `lwjglxx-1.1.22.jar` にある）。
+  ログは毎回 `@Mixin target ... was not found` を出しており、**この mixin は一度も適用されていない**。
+  MCP の decompile は `org.lwjgl.util.glu` のままなので、stock Forge の前提がそのまま罠になる。
+  → proj-channel が `--notch`/`--cleanroom` で実名を確認して retarget か削除を判断する。
+- **spec の裏づけ（web）**: viewport は framebuffer 外の fragment を生成しない（rasterization 章）ため
+  1281x720 を 1280 target に適用して可視列を描くのが正しい。scissor は offset>=0 の VUID があるため
+  両方を target との交差へ clip する実装が正しい（vkCmdSetScissor の VUID 00595-00597）。
+
 ## 0.178 **この時間帯の実測（task-14 の結論・task-33 の等価比較・Intel 3場面・mod cohort）**
 
 - **メニューの「ズレ」は解消（ユーザー解像度で実証）**: frame-composite の `resizeworld1080` が

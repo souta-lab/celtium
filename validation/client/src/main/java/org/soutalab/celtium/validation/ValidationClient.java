@@ -1317,6 +1317,8 @@ public final class ValidationClient {
      * moved by the transfer, so a scene whose camera is at the target dimension's own pose had no entity in frame.
      */
     private boolean celtium$entitiesSpawnedAfterTransfer;
+    /** Ticks the post-transfer spawn waited for the pose and the chunks; reported with the spawn line. */
+    private int celtium$transferSpawnDeferrals;
     /** The renderer-less entity of {@code celtium.validation.rendererlessEntities}, spawned once at tick 60. */
     private boolean celtium$rendererlessSpawned;
     private boolean celtium$wallBuilt;
@@ -2530,21 +2532,42 @@ public final class ValidationClient {
             // Nether legs measured 0 mob pixels in the whole frame (both legs, task-21 `e11-on`/`e11-ref`) while the
             // model path still drew 794 times, which is why the light map on the model batch was unmeasurable - the
             // scene with the dark light map was the one scene whose entity set was 58 blocks below the camera.
-            // Same four families, same offsets, same tick on both sides; opt-in because it changes the picture and so
-            // the scene's calibration key, and pinned because at y=70 there is nothing under them.
+            // Same four families, same offsets on both sides; opt-in because it changes the picture and so the
+            // scene's calibration key, and pinned because at y=70 there is nothing under them.
+            //
+            // Two waits, both measured on the first attempt (t35-nether-ref): the arrival branch fires at tick 84
+            // while the player is still at the arrival spot (8,65,8) and the scene's pose (1.5,70,1.5) lands later,
+            // and `World.spawnEntity` returns false for a position whose chunk is not loaded - the first attempt
+            // logged `nonPlayer=0` because all four spawns were refused that way. So the set is spawned only once the
+            // player is at the pose and every one of the four positions is in a loaded chunk, and the spawn is
+            // atomic (checked before the first entity, so a retry cannot leave half a set behind).
             if (celtium$dimensionAtTick > 0 && celtium$arrivedAtTick >= 0 && !celtium$entitiesSpawnedAfterTransfer
                     && mc.player != null && mc.world != null && mc.player.dimension == celtium$dimension
                     && Boolean.getBoolean("celtium.validation.keepEntities")
                     && Boolean.getBoolean("celtium.validation.spawnEntitiesAfterTransfer")) {
-                celtium$entitiesSpawnedAfterTransfer = true;
-                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
-                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -10.0D);
-                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -8.0D);
-                celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -12.0D);
-                System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED_AFTER_TRANSFER tick=" + worldTicks
-                        + " dimension=" + mc.player.dimension + " arrivedAt=" + celtium$arrivedAtTick
-                        + " pose=" + (int) mc.player.posX + "," + (int) mc.player.posY + "," + (int) mc.player.posZ
-                        + " nonPlayer=" + countNonPlayerEntities(mc));
+                if (celtium$atScenePose(mc) && celtium$transferSpawnChunksLoaded(mc)) {
+                    celtium$entitiesSpawnedAfterTransfer = true;
+                    celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
+                    celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityZombie(mc.world), 0.0D, -10.0D);
+                    celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntitySpider(mc.world), 2.0D, -8.0D);
+                    celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityEnderman(mc.world), -3.0D, -12.0D);
+                    System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED_AFTER_TRANSFER tick=" + worldTicks
+                            + " dimension=" + mc.player.dimension + " arrivedAt=" + celtium$arrivedAtTick
+                            + " pose=" + (int) mc.player.posX + "," + (int) mc.player.posY + "," + (int) mc.player.posZ
+                            + " deferredTicks=" + celtium$transferSpawnDeferrals
+                            + " nonPlayer=" + countNonPlayerEntities(mc));
+                } else {
+                    celtium$transferSpawnDeferrals++;
+                    if (celtium$transferSpawnDeferrals == 1 || celtium$transferSpawnDeferrals % 20 == 0) {
+                        // Named rather than silent: a deferral that never ends is a scene with no mobs in it, and
+                        // "the entities are missing" must not be indistinguishable from "the spawn never ran".
+                        celtium$dimensionTrace("CELTIUM_ENTITIES_SPAWN_DEFERRED tick=" + worldTicks
+                                + " atPose=" + celtium$atScenePose(mc)
+                                + " chunksLoaded=" + celtium$transferSpawnChunksLoaded(mc)
+                                + " pos=" + (int) mc.player.posX + "," + (int) mc.player.posY + "," + (int) mc.player.posZ
+                                + " poseWanted=" + celtium$pose.describe());
+                    }
+                }
             }
             // Per-tick dimension trace while a dimension run is in flight: the Nether run arrived at tick 81 and was
             // back in dimension 0 by the capture, and a single reading cannot say when or why. The server side is asked
@@ -3084,6 +3107,32 @@ public final class ValidationClient {
             living.enablePersistence();
         }
         mc.world.spawnEntity(entity);
+    }
+
+    /** {@return whether the player is at the scene's own pose}, which is where the post-transfer set is spawned from. */
+    private boolean celtium$atScenePose(Minecraft mc) {
+        return Math.abs(mc.player.posX - celtium$pose.x) < 1.0D
+                && Math.abs(mc.player.posY - celtium$pose.y) < 1.0D
+                && Math.abs(mc.player.posZ - celtium$pose.z) < 1.0D;
+    }
+
+    /**
+     * {@return whether every one of the four post-transfer spawn positions is in a loaded chunk}.
+     * <p>
+     * {@code World.spawnEntity} returns false - and adds nothing - when the position's chunk is not loaded, which is
+     * why the first attempt logged {@code nonPlayer=0} one tick after the arrival: the mobs were refused, not moved.
+     * Asked before the first spawn so a retry cannot leave half a set behind.
+     */
+    private static boolean celtium$transferSpawnChunksLoaded(Minecraft mc) {
+        double[][] offsets = {{-2.0D, -8.0D}, {0.0D, -10.0D}, {2.0D, -8.0D}, {-3.0D, -12.0D}};
+        for (double[] offset : offsets) {
+            net.minecraft.util.math.BlockPos position = new net.minecraft.util.math.BlockPos(
+                    mc.player.posX + offset[0], mc.player.posY, mc.player.posZ + offset[1]);
+            if (!mc.world.isBlockLoaded(position)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Removes every non-player entity and returns how many were removed; the player and its vehicle stay. */
