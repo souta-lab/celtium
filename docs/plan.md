@@ -257,6 +257,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.263 **round 69: descriptor の imageLayout を GENERAL にした仮説も棄却（20+20 VUID に増加）・revert**
+
+- **仮説2（`VulkanImmediateTexturePipeline` の descriptor を `VK_IMAGE_LAYOUT_GENERAL` に）**: GENERAL は sampled にも attachment にも合法なので
+  VUID が構造的に消えるはず、という筋。
+- **測定（`r67-gen`・layers ON・menu hold 60）**: **`VUID-vkCmdDraw-None-09600` が 20件**＋**新たに `VUID-vkCmdDrawIndexed-imageLayout-00344` が 20件**、
+  copy は依然白。＝**棄却**（大多数の texture は SHADER_READ_ONLY にあり、descriptor を GENERAL にすると今度はそちらと食い違う）。
+- **revert**: 悪化させた変更は残さない（build 緑）。
+- **2つの棄却から確定したこと**: **layout と descriptor 宣言は大多数で整合しており（SHADER_READ_ONLY）、不一致は pair を sample する一部の draw だけ**。
+  したがって修正は**descriptor 単位の条件分岐**（その descriptor の view が `passAttachedColorImage` と一致するときだけ GENERAL、他は SHADER_READ_ONLY）が正しい形。
+- **次の測定**: その条件分岐を入れる前に、**VUID を出した draw の descriptor がどの view を指しているか**を印字する
+  （`passAttachedColorImage` と descriptor の view を並べる・bounded）。これで「pair を sample する draw が実在する」ことを確認してから直す。
+
 ## 0.262 **round 68: pass-end hand-back を試して測定 → VUID が 2→4 に増加＝仮説は棄却・revert（`eb147a5cc`）**
 
 - **実装した仮説（`51cf1ac14`）**: 2つの `vkCmdEndRenderPass` の直後で `passAttachedColorImage` を 0 にしてから
