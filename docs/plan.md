@@ -304,6 +304,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.301 **round 107: OPT-08 step1 撤回と ring-pressure の実測改善・層あり leg で現行 tree が緑（`fed5dafbe`）**
+
+- **OPT-08 step1（upload batch の semaphore handoff）は撤回（perf-ring）**: `flushUploads()` に **caller が2つ**あり
+  （`submitCommands`＝consumer が居る／ring-pressure の早期 flush＝**consumer が居ない**）、後者で **signal が消費されず次の flush が再 signal**＝
+  `VUID-vkQueueSubmit-pSignalSemaphores-00067`（層あり leg で10件）。**trace が handle を名指し**:
+  `CELTIUM_UPLOAD_SIGNAL … sem=0x1c800000001c8`（VUID の handle と一致）・連続 `signal=true`（7→8・12/13/14・28/29）・
+  ring-pressure 主体の leg では **frame 側 trace が0回**。＝**その10件は upload batch の semaphore**で、
+  **彼らの変更を撤回した現行 tree では 0件**（proj-channel の緑 leg と整合）。
+- **撤回時に残した実測改善2つ**:
+  1. **ring-pressure の早期 flush**（settled な one-copy 経路への fallback をやめる）＝
+     **1546/2419 copies が fallback していたのが 3/6306 に**（`uploadEarlyFlushesForRingPressure=136`）。
+  2. **frame 側の wait 計器** `frameFenceWaitMillis`/`…Count`/`…WorstMillis`＝**OPT-08 の2段目（2 frames in flight）の大きさを決める数値**。
+- **検証 leg（`chain-t51.sh`・層 ON・terrain + keepGui + captureEntities）**: **VUID 0行・`-4`/DEVICE_LOST なし・
+  `validationMessageCount=0`・`validationClean=true`・exit 0**（既知の `FAILED_PRESENTED_IMAGE` のみ）。同 leg:
+  3477 copies batched・fallback 3・frame wait **167 ms / 1201 waits（worst 5 ms）**・arena region 2809・host buffer 6。
+  ＝**現行 tree が層ありで緑**という独立の確認。
+- **次の attempt への規則（記録）**: **signal は `submitCommands` が行う flush からのみ**、または **timeline semaphore**（単調値で
+  outstanding-signal の状態機械自体を消す）。2段目が必要とする資源（command buffer・fence・uniform region・
+  frame-target の image/semaphore per slot）は `GllessFrameTarget` にあるため、**frame target の owner との joint unit**。
+
 ## 0.300 **round 106: 機序が1文で確定（frame 単位で引くと「present がまだ待っている semaphore を次 frame が再 signal する」）— 実装は runway のある担当へ**
 
 - **外部根拠（web 調査・Khronos の frames-in-flight 解説）**: なぜ frame index で引いてはいけないかが1文で書かれている —
