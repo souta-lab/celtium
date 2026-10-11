@@ -9732,18 +9732,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** {@return the image a copy's read framebuffer names, or 0 when this renderer does not own it}. */
     private long celtium$ownedReadImage(int readFbo) {
         GllessFrameTarget glless = offTargetTarget();
+        // The read framebuffer's GL name against the main framebuffer's own recorded GL name - not against the object
+        // identity, which is a different number space and made this branch unreachable. Measured: Minecraft's main
+        // framebuffer is the default one in this configuration (its bind reports GL name 0), its draws are routed to the
+        // frame image, and the panorama copy reads from GL name 0 - so resolving name 0 to the default pair read an image
+        // the cube faces never wrote and returned uniform white (`CELTIUM_TEX_COPY_SERVED … mean=255,255,255`).
+        if (this.frameTarget != null && this.mainTargetIdentity != Long.MIN_VALUE
+                && framebufferColorTextureName(this.mainTargetIdentity) == readFbo) {
+            return this.frameTarget.colorImage();
+        }
+        // The name comparison above can only fire when the game's main framebuffer is the one whose colour texture the
+        // bind census recorded, and the copy's read name is an FBO name while that census carries a texture name. The
+        // routing is the fact that does not depend on either: when the main framebuffer is what is bound, its draws went
+        // to the frame image, so a read from GL name 0 is a read of the frame image.
+        if (readFbo == 0 && this.currentRenderTargetIsMain && this.frameTarget != null) {
+            return this.frameTarget.colorImage();
+        }
         if (readFbo == 0 && glless != null) {
-            // Identity 0: the GL-less default framebuffer. Its draws are routed to the default pair, and the pair's
-            // image is the one the game's own finished-frame composite reads.
+            // GL name 0 with a non-main target bound: the game's own finished-frame composite stream, whose draws are
+            // routed to the default pair.
             glless.ensureOffTarget(this.targetWidth, this.targetHeight);
             return glless.offTargetColorImage();
-        }
-        if (readFbo != 0 && this.frameTarget != null && this.mainTargetIdentity != Long.MIN_VALUE
-                && (long) readFbo == this.mainTargetIdentity) {
-            // The game's own main framebuffer: isMain draws go to the frame image the present path blits from. The
-            // identity is compared as a long against the unset sentinel as well: it is Long.MIN_VALUE before any main
-            // bind, and a narrowing comparison would make that sentinel equal to the GL name 0.
-            return this.frameTarget.colorImage();
         }
         return 0L;
     }
