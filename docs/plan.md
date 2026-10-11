@@ -257,6 +257,17 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.269 **round 75: hold なしでは copy が走らない＝白の測定は hold leg に限られ、VUID と分離できない**
+
+- **測定（Lead の `r73-nohold`・menu・hold なし・layers ON）**: **VUID = 0**（VUID が hold 依存であることを再確認）だが、
+  **`CELTIUM_TEX_COPY_SERVED` が1行も出ない**＝**hold なしでは copy 経路が走らない**（menu 段階が短く `renderSkybox` に到達しない）。
+- **帰結**: 白い copy を測れるのは hold leg だけであり、**hold leg は必ず VUID を伴う**。
+  ＝**「白」と「VUID」は leg 形状では分離できない**。分離するには (a) hold 経路の VUID を先に直す、
+  (b) hold を別実装にする（menu を保持しつつ余計な pass を開かない）、(c) copy の read 経路を直接計装する（leg 形状に依存しない）、のいずれか。
+- **推奨する次の一手**: (c) **copy の read 経路を直接計装**する — `celtium$serveTextureCopy` が読む image の
+  layout・format・extent と、その image に最後に書いた pass を印字する。leg 形状に依存せず、白の原因を VUID と独立に決められる。
+- **未了（変更なし・revert 済みのみ）**: このセッションの3つの layout 仮説はいずれも棄却・revert 済みで、ツリーは `23759c228` 相当で緑。
+
 ## 0.268 **round 74: 重要な訂正 — VUID は menu hold の leg だけに出る（hold なしの menu leg は 0件）＝白い copy と VUID は独立**
 
 - **既存 leg の比較（Lead）**:
