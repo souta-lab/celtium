@@ -54,6 +54,34 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.126 **進行中**: フル監査（`docs/history/2026-10-11-full-audit-0903.md`）の P1/P2 を担当別に分割
+
+監査は17件（P1 6・P2 11）を挙げ、6つの契約バッチを提案している。現在の担当と所有は以下のとおり。
+
+| 監査 | 内容 | 所有ファイル | 状態 |
+|---|---|---|---|
+| N01 | model 頂点の上書き（`nextVertex()` が quad ごと） | — | **修正済み** `454fb3600`・AMD 36.9% 画素変化・Intel PASSED |
+| N02 | model mesh の generation/retire/部分構築回収 | `VulkanDynamicMesh`・`VulkanModelQuadCapture` | 担当稼働中（builder への patch はテキストで受領予定） |
+| N03 | 文字が GL-less の no-op 即時モードに落ちる | `FontRendererMixin`＋`impl/font/` | 担当稼働中（glyph 48000 提出/48000 受理/拒否0。実画像受入は未） |
+| N04 | bridge の post chain が空 stand-in を入力にする | `VulkanPostChain` | 担当稼働中 |
+| N05 | record した layout と submit した layout の不一致 | `VulkanPostChain`＋`VulkanGlTexture` | 担当稼働中 |
+| N06 | 画像ゲートが scene/pose/variant を区別しない | `ValidationClient` | 担当稼働中（camera を view entity にも適用する修正は受領済み） |
+| N07/N08/N17 | sprite の mip・ByteBuffer slice/境界・host 確保失敗の解放 | `VulkanGlTexture`・`VulkanTextureRegistry` | 担当稼働中 |
+| N10 | 能力ベースの depth attachment 選択 | `VulkanDepthFormat` 他 | **実装済み** `9655ff681`（run 検証待ち） |
+| N11 | 受理した線幅と実描画幅の不一致 | `VulkanTerrainGpuBackend` | **修正済み** `4b29bd028`（run 検証待ち） |
+| N12 | ベンチの条件一致が欠測を検出しない | `benchmark_celtium.py` | 担当が修復・実測済み `22de2155f`（欠測拒否の強化は残） |
+| N13 | README/plan/goal/配布物の同期 | docs 他 | 未着手 |
+| N14-N16 | bounded wait・census の意味・descriptor ring | 未割当 | 未着手 |
+
+**ビルド状態（この時点）**: 4担当が同時編集中のため `:celtium-vulkan:compileJava` は `VulkanGlTexture` の4エラーで止まる。
+私の commit は自分のファイルのみで、他担当の作業中ファイルは未変更のまま保全している。
+
+**運用上の確定事項（このセッションで学習）**
+- **counter の不在を描画の不在と読まない**（bridge のレポートに model カウンタが元から無い・§0.125）。
+- **ミキシン間で直接メソッドを呼ばない**（メソッドは対象クラスへマージされるため起動時 `NoClassDefFoundError`。§0.121 の経緯）。
+- **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
+- 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
+
 ## 0.125 **訂正**: bridge の「model draw 回帰」は証拠不足（カウンタが bridge レポートに存在しない）
 
 - ベンチ担当の観測「最新ビルドの bridge が 60Hz フロアに落ち、`CELTIUM_MODEL_MATRIX` 行が一切出ない」を受け、
