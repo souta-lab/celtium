@@ -257,6 +257,19 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.270 **round 76: copy の read 経路の実装を確認（`celtium$readImageRectangle` の readback）— 次の計装点を確定**
+
+- **コード確認（Lead）**: copy は `celtium$serveTextureCopy` から `celtium$readImageRectangle(image, x, y, w, h)` を呼び、
+  **その image を staging buffer へ readback して `int[]` を作り、mirror の level0 に書く**（`:11055`〜）。
+  既存 leg では `readImage == passImage == chain pair` を確認済み（＝**読む image は face が描いた pair と同一**）。
+- **残る問い（次に計装すべき1点）**: その readback が **pair のどの時点の内容**を読むか。
+  `celtium$readImageRectangle` の冒頭で **image handle・extent・その時点で backend が把握している pair の layout・
+  最後にその image へ書いた pass の frame** を bounded（数行）で印字すれば、白の原因を VUID と独立に決められる。
+- **この計装は leg 形状に依存しない**（hold なしでは copy 自体が走らないため、hold leg で読むことになるが、
+  印字内容は VUID と無関係に「どの image を・どの layout で・どの frame の内容として読んだか」を答える）。
+- **未了のまま残るもの（変更なし・revert 済みのみ・ツリー緑）**: menu hold 経路の VUID（hold 依存・別 unit）、
+  OPT-09 step(3)・BH-14・goal (e) の3段階・較正済み scene での picture gate 再取得。
+
 ## 0.269 **round 75: hold なしでは copy が走らない＝白の測定は hold leg に限られ、VUID と分離できない**
 
 - **測定（Lead の `r73-nohold`・menu・hold なし・layers ON）**: **VUID = 0**（VUID が hold 依存であることを再確認）だが、
