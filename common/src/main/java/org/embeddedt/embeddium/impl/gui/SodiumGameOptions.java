@@ -97,6 +97,14 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
         @SerializedName("use_quad_normals_for_shading_v2")
         public boolean useQuadNormalsForShading = true;
 
+        /**
+         * Chunk fade-in duration. Kept at 0 under the Vulkan renderer (BH-33): the native terrain shader declares the
+         * fade uniforms ({@code u_ChunkFadeEnabled} at push offset 60, {@code u_ChunkFadeParams} at 64 with the chunk
+         * age in y), but the backend's {@code writeUniforms(RenderRegion, TerrainRenderPass, CameraTransform)} has no
+         * per-section age to supply, so a non-zero value would be reported as active while every section faded by the
+         * same amount. The options page pins both binding directions to 0 and says why; the real port needs a
+         * section-age source at the draw site (a terrain-path task).
+         */
         public int chunkFadeInDuration = 0;
 
         public int legacyBiomeBlendRadius = 0;

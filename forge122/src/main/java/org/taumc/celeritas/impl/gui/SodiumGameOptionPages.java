@@ -220,13 +220,24 @@ public class SodiumGameOptionPages {
                         .setImpact(OptionImpact.LOW)
                         .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                         .build())
+                // BH-33: the native renderer does not carry a chunk fade. Its terrain shader does declare
+                // u_ChunkFadeEnabled (offset 60) and u_ChunkFadeParams (offset 64, x = duration ms, y = chunk age ms),
+                // but the backend's writeUniforms(RenderRegion, TerrainRenderPass, CameraTransform) has no per-section
+                // age to put in y, so it writes 0/0 and every section would fade by the same amount if a duration were
+                // written. The real port needs a section-age source at the draw site (a terrain-path task). Until then
+                // the option must not claim a duration it cannot carry: both binding directions are pinned to 0 and the
+                // tooltip says so, rather than a slider that looks effective and changes nothing.
                 .add(OptionImpl.createBuilder(int.class, sodiumOpts)
                         .setId(StandardOptions.Option.CHUNK_FADE_IN_DURATION.cast())
                         .setName(TextComponent.translatable("celeritas.options.chunk_fade_in_duration.name"))
-                        .setTooltip(TextComponent.translatable("celeritas.options.chunk_fade_in_duration.tooltip"))
-                        .setControl(o -> new SliderControl(o, 0, 2000, 100, ControlValueFormatter.translateVariable("celeritas.options.chunk_fade_in_duration.value")))
+                        // The tooltip is a literal rather than the translated one because the sentence below is the
+                        // point of this row now: the option is pinned to 0 and says so, instead of looking effective.
+                        .setTooltip(TextComponent.literal(
+                                "Chunk fade-in is not carried by the Vulkan renderer yet (it has no per-section chunk"
+                                        + " age at the draw site), so the value is fixed at 0."))
+                        .setControl(o -> new SliderControl(o, 0, 0, 1, ControlValueFormatter.translateVariable("celeritas.options.chunk_fade_in_duration.value")))
                         .setImpact(OptionImpact.LOW)
-                        .setBinding((opts, value) -> opts.quality.chunkFadeInDuration = value, opts -> opts.quality.chunkFadeInDuration)
+                        .setBinding((opts, value) -> opts.quality.chunkFadeInDuration = 0, opts -> 0)
                         .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                         .build())
                 .add(OptionImpl.createBuilder(boolean.class, vanillaOpts)
