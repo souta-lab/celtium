@@ -89,6 +89,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.134 **フル監査（2026-10-11 10:58）の受領と処置**
+
+監査は新規5件（P1 3・P2 2）と、所有権の穴3箇所、N01〜N17 の再監査、保持すべき改善の一覧を出した。
+
+| 監査 | 内容 | 処置 |
+|---|---|---|
+| **A01 P1** | glyph の `memAddress` が flip 無し＝1つ先を指す（両分岐） | **修正済 `aa041c2d4`**（flip＋書いた範囲の検査）。CPU 実測つき（`delta=96`→flip 後 0）。担当へ「過去の実験は無効」と通知済み |
+| **A02 P1** | bounded wait の timeout が無条件 finally で fence/buffer を破棄（VUID fence-01120 / commandBuffers-00047） | **修正済 `2fa82dac4`**: 3つの結果（submit 前失敗／完了／timeout）を分離。timeout は**隔離**し、context を unusable にして以後の submit を拒否、解放は `delete()` の device-wide wait 後のみ |
+| **A03 P1** | `ValidationClient.referenceCalibrationKey` が **現在の候補**の property を読むため、参照 variant が候補に追随する | **未着手**（fixture）: 参照キーを hash 固定した参照 run の不変メタデータにし、「候補を変えても参照キーが変わらない」CPU 検査を足す。**失敗画像は FAILED のまま**（ゲートを上書きしない） |
+| **A04 P2** | `requiredUploadBytes(MAX,MAX,direct)` が long 溢れで負を受容 | **修正済 `ae7801d5c`**（`multiplyExact`）。実測: 4x4=64 は不変・MAX×MAX は名前つき拒否 |
+| **A05 P2** | watchdog が共有フラグを読み、古い watchdog が新しい wait を偽 stall にできる | **修正済 `f82d750f9`**（呼び出しごとの token＋完了 token、stall は token を名乗る） |
+
+**所有権の穴（未着手・担当割当て待ち）**: `HostBuffer.create` の部分解放／`DynamicMesh` コンストラクタが2本目失敗時に1本目を漏らす／`buildModelMeshes` の catch が `built.put` 前の例外を回収しない。
+**N17 の image fault は `vkCreateImage` 前**に発火するため部分画像解放の証拠にならない（staging 側は実証済み）。
+
+**保持する改善（監査が明示）**: N01 の頂点ループ修正・layout token/ledger・per-mip upload と slice hash・幅の拒否・`COUNT` テーブル・ベンチの欠測拒否・Java21 配布検査（`verified=true errors=[]` class65 上限）。
+**未行使**: foreign transition の abandon（unit 5/5 だが実 run で未発火）。
+
+**画像は依然 FAILED**: `w9-only67` 巨大三角形/nonBg 0.364906・`iso-glow-after-a` 単色/nonBg 0。VUID0・exit0 でも `validationExit1`。
+**固定ピン**: 正常 `d2073e9456da7bcc` vs 退行 `c1d4e7db53465129`（比較用）。
+
 ## 0.133 **原典の正体を確定**: tree は既にパッチ済みで、真の差分は Cleanroom 自身の実行時パッチ（Kirino）
 
 「パッチ適用済みの deobf を既定にしろ」という指摘を受けて確定させた。
