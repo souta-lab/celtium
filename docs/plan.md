@@ -230,6 +230,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.233 **round 39: 文字間バーの機序を確定して修正（font run は strip）・パノラマは「描いている」と訂正（grep バグ）**
+
+- **文字間の 1px バー（ユーザー報告）— 機序確定＋修正（Lead・`51003a602`）**: font census が **`modes={5=84822}`**
+  ＝**全ての glyph window が GL_TRIANGLE_STRIP**。4N 頂点の strip は **4N−2 三角形**を描くので、**前の glyph の最後の頂点が次の glyph の最初の頂点と繋がる**
+  ＝quad 間の隙間に出るバーの形（quad なら連結しない）。`celtium$fontAppend` が strip/fan run の連続 glyph 間に
+  **退化頂点2つ**（前 glyph の最終頂点のコピー＋新 glyph の先頭頂点のコピー）を挿入し、接続三角形を**面積ゼロ**にして
+  何もラスタライズしないようにした（run は1回の submit のまま）。`fontStripSeparators` で計数。
+  mode はゲーム自身の `glBegin` から来るので**仮定せず census で測定**した。
+- **パノラマの訂正（fog-path・`a8ec86e38`）**: 以前の「`CELTIUM_DRAW_SITE` が0行」は**grep のバグ**だった（site 名が
+  `immediate-only-window` でハイフンを含むのに regex が `[a-zA-Z]+`）。実際は menu leg に **24行**あり、最初の行は
+  `CELTIUM_DRAW_SITE #1 frame=0 fmt=2 site=immediate-only-window target=1941007851 onMain=false passOpen=true vertices=8 indices=12 batches=2`
+  ＝**パノラマの face は実際に描かれている**（chain pair・batches=2・pass は開いている）。「描画ループに届いていない」という結論は**撤回**。
+  残る候補は**順序**: copy が face の pass より先に走る／pair が draw 後 copy 前に clear される／copy が別の image を読む。
+  次の測定は「draw site と copy の両方に frame 番号と image handle を載せる」こと（未実施・機序は未主張）。
+- **同じ leg の他の確定事項**: `offerStages` は全 stage 同数（stage 9 のみ欠落＝全 offer が acceptance 到達）、
+  `offTargetOffered=765 = acceptedForOtherTargets=765`、`flushEntries` は one-shot identity が **groups を持った状態で flush** されている、
+  font は `quads=84822 submitted=84822 accepted=84822 refused=0`。
+- **BH-06 は engine が駆動できる範囲で閉じた（texture-mirror）**: caller census により、全ての bind は texture upload か
+  framebuffer attach 由来で、**light map 自身の upload は default unit で bind する**（vanilla は light-map unit を *sampling* のために
+  unit 1 へ切り替える）＝`bindsOnOtherUnits=0` は**正しい挙動**。SRG 名は正しく unit switch も 24行見えている。
+  合成 reproducer（unit 0 に A → unit 2 に B → unit 0 に戻して A を sample）は fixture hook が要る。
+
 ## 0.232 **round 38: offer/accept の矛盾は terrain leg では存在しない（計器が解決）・off-target は 225 描画・verdict PASSED**
 
 - **`offerStages` leg の結果（fog-path の計器・jar `f115fe11c` 系）**:
