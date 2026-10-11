@@ -322,6 +322,18 @@ public interface TerrainGpuBackend {
     default void setShadeModel(int glMode) {
     }
 
+    /**
+     * The world light level of the draw that is about to happen, as the light-map coordinate pair the game sets with
+     * {@code OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, x, y)} (SRG {@code func_77475_a}).
+     * <p>
+     * It is set per draw - {@code RenderLiving.java:64} for every living entity, the TESR dispatcher, the held item
+     * and the layers - and it is the only carrier of the world light level for a batch whose vertices hold none (the
+     * ITEM layout's normal carries the fixed-function lighting, not the light level). The renderer samples the
+     * mirrored light map with it, which is what makes an entity dark at night.
+     */
+    default void setLightmapCoords(float x, float y) {
+    }
+
     // ------------------------------------------------------------------ fixed-function fog
 
     /**

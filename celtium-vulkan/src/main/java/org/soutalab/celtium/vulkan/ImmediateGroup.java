@@ -53,6 +53,13 @@ public final class ImmediateGroup {
      */
     public float[] lightParams;
     /**
+     * The world light level this batch was offered under, as the light-map coordinate pair the game set for the draw
+     * ({@code OpenGlHelper.setLightmapTextureCoords}), or {@code null} when none had been captured yet. It travels in
+     * the lit ITEM push block at 208 and is sampled against the light map, which is the term that makes an entity dark
+     * at night; captured per group for the same reason as the fog, because it changes for every entity.
+     */
+    public float[] lightmapCoords;
+    /**
      * The fixed-function fog this batch was offered under: eight floats {@code {selector, density, start, end, r, g, b,
      * weight}} in the push block's own layout, or {@code null} when fog was off. Captured per group rather than read at
      * flush time because {@code RenderGlobal.renderSky} enables fog for the sky dome and disables it again for the sun

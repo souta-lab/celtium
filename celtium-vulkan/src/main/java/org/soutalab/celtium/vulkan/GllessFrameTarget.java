@@ -106,6 +106,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private long depthMemory;
     private long depthView;
     private long waitSemaphore;
+    /** Whether {@link #beginFrame}'s wait signal is outstanding (no submission has waited on it yet). */
+    private boolean waitSignalled;
+    private int abandonedWaitsConsumed;
+    private int abandonedWaitFailures;
+    private String lastAbandonedWaitFailure = "none";
     private long doneSemaphore;
 
     /**
@@ -336,9 +341,71 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.frameOpen = false;
             this.abandonedFrames++;
             this.lastAbandonReason = "beginFrame found the previous frame open";
+            // The previous frame was never ended, so its wait signal is still outstanding and this frame's signal would
+            // be the second on the same binary semaphore.
+            consumeOutstandingWait("beginFrame found the previous frame open");
         }
         signalWait();
+        this.waitSignalled = true;
         this.frameOpen = true;
+    }
+
+    /**
+     * The frame's own submission waited on {@link #waitSemaphore()}: the signal is consumed.
+     * <p>
+     * Called by the backend where it submits with the frame's semaphores, and by {@code submitSignalOnly}. Without this
+     * the target cannot tell a frame that reached the queue from one that was abandoned before its first submission, and
+     * the two need opposite handling.
+     */
+    public void noteWaitConsumed() {
+        this.waitSignalled = false;
+    }
+
+    /** How many abandoned frames had their outstanding wait signal consumed. */
+    public int abandonedWaitsConsumed() {
+        return this.abandonedWaitsConsumed;
+    }
+
+    /**
+     * Consumes the wait signal a begun frame issued when nothing has waited on it.
+     * <p>
+     * A binary semaphore may not be signalled twice without an intervening wait. The measured chain: a frame abandoned
+     * at frame 0 (a failed window flush) left {@link #waitSemaphore()} signalled, the next {@code beginFrame} signalled it
+     * again, the validation layer reported {@code VUID-vkQueueSubmit-pSignalSemaphores-00067}, and RADV answered
+     * {@code VK_ERROR_DEVICE_LOST} - after which every submit failed and {@code settleGpu} latched the renderer. The
+     * failure is swallowed and counted: this runs inside abandonment, where throwing would replace a dropped frame with
+     * a crash.
+     */
+    private void consumeOutstandingWait(String reason) {
+        if (!this.waitSignalled || this.waitSemaphore == VK_NULL_HANDLE) {
+            return;
+        }
+        this.waitSignalled = false;
+        try (MemoryStack stack = stackPush()) {
+            LongBuffer wait = stack.mallocLong(1);
+            wait.put(0, this.waitSemaphore);
+            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
+                    .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
+                    .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
+            check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
+                    "vkQueueSubmit (glless abandoned frame wait)");
+            this.abandonedWaitsConsumed++;
+            if (this.abandonedWaitsConsumed <= 4) {
+                System.out.println("[Celtium] CELTIUM_ABANDON_WAIT_CONSUMED reason=" + reason.replace(' ', '_')
+                        + " (the frame was begun and abandoned before any submission waited on its wait semaphore;"
+                        + " leaving it signalled makes the next beginFrame signal a binary semaphore twice, which the"
+                        + " validation layer reports as VUID-vkQueueSubmit-pSignalSemaphores-00067 and RADV answers with"
+                        + " VK_ERROR_DEVICE_LOST)");
+            }
+        } catch (RuntimeException | LinkageError error) {
+            this.abandonedWaitFailures++;
+            this.lastAbandonedWaitFailure = reason + ": " + error;
+        }
+    }
+
+    /** How many attempts to consume an abandoned frame's wait signal failed (a device already lost, typically). */
+    public int abandonedWaitFailures() {
+        return this.abandonedWaitFailures;
     }
 
     @Override
@@ -354,6 +421,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         consumeDone();
         this.frameOpen = false;
+        this.waitSignalled = false;
     }
 
     @Override
@@ -367,6 +435,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.frameOpen = false;
             this.abandonedFrames++;
             this.lastAbandonReason = reason;
+            // A frame begun and abandoned before any submission waited on the semaphore must not leave it signalled:
+            // that is the measured VUID-00067 -> VK_ERROR_DEVICE_LOST chain.
+            consumeOutstandingWait(reason);
         }
     }
 

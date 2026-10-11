@@ -1049,6 +1049,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int lightmapReestablished;
     /** The GL texture unit the light map is bound on, passed in from the mod side; -1 until it is known. */
     private int lightmapUnit = -1;
+    /**
+     * The light-map coordinate pair the game last set, captured per draw from
+     * {@code OpenGlHelper.setLightmapTextureCoords} (see {@code LightmapCoordsMixin}). It is per draw and not per
+     * frame on purpose: it changes for every entity, TESR, held item and layer, and the group enqueued while it holds
+     * belongs to that draw.
+     */
+    private float lightmapCoordX;
+    private float lightmapCoordY;
+    /** How many captures arrived and how many groups carried one into the push block, for the night measurement. */
+    private int lightmapCoordCalls;
+    private int lightmapCoordGroups;
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
@@ -1276,8 +1287,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * still open. An unverified optimisation that corrupts text is not a default: the flag stays, the code stays, and
      * the fix lands when the mechanism is named rather than by widening the witness again.
      */
-    private static final boolean FONT_BATCHING = "true".equalsIgnoreCase(
-            System.getProperty("celtium.font.batching", "false"));
+    private static final boolean FONT_BATCHING = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.font.batching", "true"));
 
     /** The run's vertices, owned by this backend and grown as needed; the font's own buffer is copied into it. */
     private java.nio.ByteBuffer pendingFontVertices;
@@ -2699,6 +2710,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.combineColor = combineColor;
         group.texMatrix = celtium$textureAffine();
         group.lightParams = celtium$lightParams(state, modelView);
+        group.lightmapCoords = lightmapCoordKnown() ? lightmapCoords() : null;
         group.fog = celtium$fogSnapshot();
         group.batches = quads;
         group.viewportValues = this.currentGroupViewportValues;
@@ -2942,6 +2954,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void loadIdentity() {
+        celtium$fontMatrixBoundary();
         if (this.trace.size() < 40) {
             float[] v = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
             this.trace.add("L" + this.framesSeen + "[mv " + fmt3(v[12]) + "," + fmt3(v[13]) + "," + fmt3(v[14]) + "]");
@@ -2959,6 +2972,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void ortho(double left, double right, double bottom, double top, double near, double far) {
+        celtium$fontMatrixBoundary();
         // The GUI's projection arrives through this call. If it stops arriving, every GUI batch is drawn with whatever
         // perspective the world pass left in the mirror - which is a huge quad where the HUD should be.
         if (this.orthoCalls < 6) {
@@ -2983,6 +2997,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void translate(double x, double y, double z) {
+        celtium$fontMatrixBoundary();
         this.translateCalls++;
         if (this.trace.size() < 40) {
             this.trace.add("T" + this.framesSeen + "(" + fmt3(x) + "," + fmt3(y) + "," + fmt3(z) + ")");
@@ -2997,6 +3012,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void rotate(float angle, float x, float y, float z) {
+        celtium$fontMatrixBoundary();
         this.matricesDirty = true;
         if (GROUP_BOUNDS_DIAGNOSTICS) {
             while (this.rotationLog.size() >= ROTATION_LOG_LIMIT) {
@@ -3010,6 +3026,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void scale(float x, float y, float z) {
+        celtium$fontMatrixBoundary();
         this.matricesDirty = true;
         this.immediateState.scale(x, y, z);
         this.immediateStateCalls++;
@@ -3027,6 +3044,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void perspective(float fovDegrees, float aspect, float near, float far) {
+        celtium$fontMatrixBoundary();
         if (aspect == 0.0f || near == far) {
             return;
         }
@@ -3169,6 +3187,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void frustum(double left, double right, double bottom, double top, double near, double far) {
+        celtium$fontMatrixBoundary();
         double width = right - left;
         double height = top - bottom;
         double depth = far - near;
@@ -3193,6 +3212,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void multiplyMatrix(java.nio.FloatBuffer buffer) {
+        celtium$fontMatrixBoundary();
         this.matricesDirty = true;
         this.immediateState.multiplyMatrixBuffer(buffer);
         this.immediateStateCalls++;
@@ -3204,6 +3224,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void pushMatrix() {
+        celtium$fontMatrixBoundary();
         this.matricesDirty = true;
         this.immediateState.pushMatrix();
         this.immediateStateCalls++;
@@ -3211,6 +3232,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void popMatrix() {
+        celtium$fontMatrixBoundary();
         this.matricesDirty = true;
         this.immediateState.popMatrix();
         this.immediateStateCalls++;
@@ -3736,12 +3758,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private long fontAppendNanos;
 
+    /**
+     * A matrix change is a boundary for the coalesced font run (task-59). The run's quads were appended while these
+     * matrices were current, and the submission path captures the matrices at submit time - so a run held across a
+     * matrix change would be drawn with the transform of whatever came last (the measured symptom with the batching
+     * on: garbled menu button labels, a rotated splash and block-like copyright text). Flushing before the change is
+     * applied keeps every quad with the matrices it was written for.
+     */
+    private void celtium$fontMatrixBoundary() {
+        celtium$flushPendingFontBatch("state-change");
+    }
+
+
+
     /** The current colour as the four float bits, packed into one long: the run's colour witness. */
     private long celtium$fontColourBits() {
-        return ((long) Float.floatToRawIntBits(this.immediateState.colorRed()) << 48)
-                | ((long) (Float.floatToRawIntBits(this.immediateState.colorGreen()) & 0xFFFFL) << 32)
-                | ((long) (Float.floatToRawIntBits(this.immediateState.colorBlue()) & 0xFFFFL) << 16)
-                | (Float.floatToRawIntBits(this.immediateState.colorAlpha()) & 0xFFFFL);
+        // Packed as four bytes, not as float bit patterns: the first version shifted each 32-bit pattern by 48/32/16/0
+        // and masked the low 16 bits, which for ordinary colours (1.0f = 0x3F800000, 0.25f, 0.0f) is zero - the
+        // witness was 0 for almost every colour, so runs merged across colour changes, including the shadow pass and
+        // its light pass. The quantised byte is what the vertex data carries anyway.
+        return ((long) celtium$colourByte(this.immediateState.colorRed()) << 24)
+                | ((long) celtium$colourByte(this.immediateState.colorGreen()) << 16)
+                | ((long) celtium$colourByte(this.immediateState.colorBlue()) << 8)
+                | celtium$colourByte(this.immediateState.colorAlpha());
+    }
+
+    private static int celtium$colourByte(float value) {
+        int quantised = Math.round(value * 255.0f);
+        return quantised < 0 ? 0 : Math.min(quantised, 255);
     }
 
     private boolean celtium$fontRunMatches(int formatId, int stride, int drawMode, int texture, long colourBits,
@@ -5695,7 +5739,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     k -> VulkanImmediateItemPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
                             state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]),
                             state.length > 8 && state[8] != 0));
-            descriptor = celtium$descriptorSet(value.descriptorSetFor(texture), "prepare"); pipeline = value;
+            // The lit variant samples the light map on a second binding; the unlit one has only the model texture, so
+            // the set is built for the layout this variant declares. A lit batch with no mirrored light map gets
+            // descriptor 0 and is refused by name rather than drawn with a zero view (see the pipeline's guard).
+            descriptor = celtium$descriptorSet(value.lit()
+                    ? value.descriptorSetFor(texture, this.lightmapTexture)
+                    : value.descriptorSetFor(texture), "prepare");
+            pipeline = value;
         } else if (format == 3) {
             VulkanImmediateBlockPipeline value = this.blockPipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediateBlockPipeline.create(this.context, pass, state[0] != 0, state[1], state[2],
@@ -6180,6 +6230,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.viewportValues = this.currentGroupViewportValues;
             group.texMatrix = this.currentGroupTexMatrix;
             group.lightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
+            group.lightmapCoords = lightmapCoordKnown() ? lightmapCoords() : null;
             // The state captured when the group was opened, not the live state: see currentGroupFog.
             group.fog = this.currentGroupFog;
             celtium$noteFogCaptureDrift(group);
@@ -9137,6 +9188,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // runs before the early return that only looks at the outline's wrapper, because the other names are published
         // even when the outline never adopted anything (the vanilla loading screen's framebuffer is the measured case).
         if (!this.publishedFrameTextures.isEmpty()) {
+            GllessFrameTarget liveTarget = offTargetTarget();
+            long liveImage = liveTarget == null ? 0L : liveTarget.chainPairColorImage();
+            long liveView = liveTarget == null ? 0L : liveTarget.chainPairColorView();
             java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =
                     this.publishedFrameTextures.entrySet().iterator();
             while (iterator.hasNext()) {
@@ -9144,6 +9198,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 Long image = this.publishedFrameImages.get(entry.getKey());
                 if (image != null && image.longValue() == chainPairColorImage) {
                     continue;
+                }
+                // The pair was recreated, and the name's meaning is "the game framebuffer's colour texture, whose pixels
+                // the renderer serves from its pair image": it must follow the image to the new one. Dropping it here is
+                // what made the loading phase a uniform white field - the registry resolves a name with no external image
+                // through announcements and then the empty mirror, and the composite that samples it then paints the
+                // empty mirror. The re-pointing is the same rule `celtium$pruneStalePublishedNames` applies at the point
+                // of use, applied at the point of recreation, which is where it was measured to happen five times in one
+                // leg for glTexture=22.
+                if (liveImage != 0L && liveView != 0L) {
+                    VulkanGlTexture republished = celtium$registry().publishExternalImage(entry.getKey().intValue(),
+                            liveImage, liveView, this.targetWidth, this.targetHeight);
+                    if (republished != null) {
+                        entry.setValue(republished);
+                        this.publishedFrameImages.put(entry.getKey(), Long.valueOf(liveImage));
+                        this.publishedFrameTexturesRepublished++;
+                        continue;
+                    }
                 }
                 celtium$registry().unpublishExternalImage(entry.getKey().intValue());
                 this.publishedFrameImages.remove(entry.getKey());
@@ -9767,6 +9838,34 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     public void celtium$setLightmapUnit(int unit) {
         this.lightmapUnit = unit;
+    }
+
+    /**
+     * The light-map coordinate pair of the draw that is about to happen, captured from
+     * {@code OpenGlHelper.setLightmapTextureCoords} (SRG {@code func_77475_a}) by {@code LightmapCoordsMixin}.
+     * <p>
+     * This is the world light level, and it exists nowhere else for the model batch: the ITEM layout's vertices carry
+     * position, texture, colour and normal, the trailing normal carries the fixed-function lighting, and the light
+     * level only ever travelled as a texture coordinate on unit 1. Under the GL-less window that call is a no-op, so
+     * without this capture a light-map sampler would read one wrong texel for every batch - which is why the term
+     * could not be added to the shader alone.
+     */
+    @Override
+    public void setLightmapCoords(float x, float y) {
+        this.lightmapCoordX = x;
+        this.lightmapCoordY = y;
+        this.lightmapCoordCalls++;
+        this.immediateStateCalls++;
+    }
+
+    /** {@return whether a light-map coordinate has been captured since the renderer came up}. */
+    private boolean lightmapCoordKnown() {
+        return this.lightmapCoordCalls > 0;
+    }
+
+    /** The light-map coordinate pair the last capture stored, as {x, y}. */
+    private float[] lightmapCoords() {
+        return new float[] {this.lightmapCoordX, this.lightmapCoordY};
     }
 
     /**
@@ -10502,6 +10601,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     for (int i = 0; i < 20; ++i) {
                         push.putFloat(128 + i * 4, light[i]);
                     }
+                    // The world light level, at 208 in the lit layout: the pair the game set for this entity, which the
+                    // lit vertex shader samples against the light map. Only a lit group's block is read past 207, so
+                    // this write is guarded by the same `light != null` that makes the block lit.
+                    float[] coords = group.lightmapCoords;
+                    if (coords != null) {
+                        push.putFloat(208, coords[0]);
+                        push.putFloat(212, coords[1]);
+                        this.lightmapCoordGroups++;
+                    }
                 }
                 // The fog block, which lives in the same 128..207 region as the lighting payload: a lit group's block
                 // is the lighting and must not be overwritten, so the fog is written only for groups that do not carry
@@ -10821,6 +10929,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
             this.frameSubmitReachedQueue = true;
             this.lastFrameReachedQueue = true;
+            if (this.frameTarget instanceof GllessFrameTarget gllessTarget) {
+                // The signal-only submission waited on the wait semaphore and signalled the done semaphore: the pairing is
+                // complete for this frame, so nothing is outstanding to consume.
+                gllessTarget.noteWaitConsumed();
+            }
         }
     }
 
@@ -10900,6 +11013,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.recordedImmediateGroups.clear();
             this.frameSubmitReachedQueue = true;
             this.lastFrameReachedQueue = true;
+            if (withFrameSemaphores && this.frameTarget instanceof GllessFrameTarget gllessTarget) {
+                // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
+                // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
+                // outstanding and the next beginFrame signalled the same binary semaphore twice).
+                gllessTarget.noteWaitConsumed();
+            }
         }
     }
 

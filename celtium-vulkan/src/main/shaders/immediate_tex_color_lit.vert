@@ -23,7 +23,14 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 160) vec4 u_Ambient;
     layout(offset = 176) vec4 u_Diffuse0;
     layout(offset = 192) vec4 u_Diffuse1;
+    // The world light level: the light-map coordinate pair the game set for this draw with
+    // OpenGlHelper.setLightmapTextureCoords, captured per draw by LightmapCoordsMixin. Vanilla applies it on texture
+    // unit 1 through the fixed-function texture matrix, whose scale is 1/256, so the sample is u_LightCoord / 256.
+    layout(offset = 208) vec2 u_LightCoord;
 } celtium;
+
+layout(set = 0, binding = 0) uniform sampler2D u_Texture;
+layout(set = 0, binding = 1) uniform sampler2D u_Lightmap;
 
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec2 a_TexCoord;
@@ -44,6 +51,11 @@ void main() {
     vec3 lit = celtium.u_Ambient.rgb
             + celtium.u_Diffuse0.rgb * max(dot(n, celtium.u_Light0Dir.xyz), 0.0)
             + celtium.u_Diffuse1.rgb * max(dot(n, celtium.u_Light1Dir.xyz), 0.0);
-    v_Color = vec4(a_Color.rgb * lit, a_Color.a);
+    // The world light level, the term that makes an entity dark at night: the light map is the 16x16 texture vanilla
+    // modulates unit 1 with, and the coordinate is the pair the game set for this entity. Everything else here is the
+    // fixed-function lighting, which is a function of the normal and the light directions and so is identical at noon
+    // and at midnight - which is why the batch stayed bright without this line.
+    vec3 lightmap = texture(u_Lightmap, celtium.u_LightCoord / 256.0).rgb;
+    v_Color = vec4(a_Color.rgb * lit * lightmap, a_Color.a);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
 }
