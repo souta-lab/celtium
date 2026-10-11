@@ -824,6 +824,9 @@ public final class ValidationClient {
     private PictureEvidence celtium$vsPictureAfter;
     /** Set by the world stage for a GUI scene: the screen is opened on the next client tick, not inside a render pass. */
     private boolean celtium$guiOpenPending;
+    /** Bounded: the click failure and its cause stack are printed once per run. */
+    private boolean celtium$guiClickFailureLogged;
+
     private String celtium$guiClickResult = "not attempted";
     /** When the open screen was first seen to be a GuiVideoSettings, so its layout wait is measured from there. */
     private int celtium$guiSettingsAtTick = -1;
@@ -5922,7 +5925,17 @@ public final class ValidationClient {
             celtium$guiClickResult = "clicked " + how + " at " + (x + width / 2) + "," + (y + height / 2)
                     + " through GuiScreen.mouseClicked";
         } catch (Throwable error) {
-            celtium$openVideoSettingsDirectly(mc, "the click dispatch failed: " + error);
+            // mouseClicked is invoked reflectively, so this is an InvocationTargetException wrapper whose toString()
+            // never shows the cause - measured as a guiScreenOpenedVia entry that said a throw happened and nothing
+            // about what threw. Unwrap it, and print the cause's own stack once, so the artifact names the line.
+            Throwable cause = error instanceof java.lang.reflect.InvocationTargetException && error.getCause() != null
+                    ? error.getCause() : error;
+            if (!celtium$guiClickFailureLogged) {
+                celtium$guiClickFailureLogged = true;
+                System.out.println("[Celtium] CELTIUM_GUI_CLICK_FAILED " + cause);
+                cause.printStackTrace(System.out);
+            }
+            celtium$openVideoSettingsDirectly(mc, "the click dispatch failed: " + cause);
             return;
         }
         report.addProperty("guiClickResult", celtium$guiClickResult);
