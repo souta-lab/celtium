@@ -2616,6 +2616,38 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * The particle batch's own texture coordinates, for the first few accepted batches (task-54).
+     * <p>
+     * The question this answers is whether the sprite a particle asked for survives into the vertices: a
+     * {@code Particle} turns its {@code particleTextureIndexX/Y} into UVs in
+     * {@code Particle.renderParticle} ({@code index/16} .. {@code index/16 + 0.0624375}), so the batch's tex coords
+     * are the whole sprite selection - there is no separate index to lose. Printing the first vertices' UVs and the
+     * sprite cell they name tells "the glyph index arrived" from "the path substituted a default sprite" without
+     * needing to see the pixels, and the sprite cell is printed as the 16x16 grid position the particle atlas uses.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger PARTICLE_UV_LINES =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    private void celtium$noteParticleTexCoords(int formatId, long address, int count) {
+        if (formatId != FORMAT_PARTICLE || count <= 0 || address == 0L
+                || !org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(PARTICLE_UV_LINES.get(), 6)) {
+            return;
+        }
+        PARTICLE_UV_LINES.incrementAndGet();
+        StringBuilder uvs = new StringBuilder();
+        for (int i = 0; i < 4 && i < count; i++) {
+            long at = address + (long) i * this.vertexPointerStride + 12L;
+            float u = MemoryUtil.memGetFloat(at);
+            float v = MemoryUtil.memGetFloat(at + 4L);
+            uvs.append(i == 0 ? "" : " ").append('(').append(celtium$round3(u)).append(',').append(celtium$round3(v))
+                    .append(") cell=").append(Math.round(u * 16.0f)).append(',').append(Math.round(v * 16.0f));
+        }
+        System.out.println("[Celtium] CELTIUM_PARTICLE_UV count=" + count + " stride=" + this.vertexPointerStride
+                + " uvs=[" + uvs + "]");
+    }
+
+
+    /**
      * {@return the value a texture parameter query answers}: the record when the game set this pname on this texture,
      * otherwise GL's own initial state for the four pnames a fresh texture has, and 0 for everything else.
      * <p>
@@ -3002,6 +3034,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     DRAWARRAY_DRAWN.incrementAndGet();
                     DRAWARRAY_VERTICES.addAndGet(count);
                     celtium$noteAcceptedColor(backend, buffer, count);
+                    celtium$noteParticleTexCoords(formatId, address, count);
                     if (celtium$noteDrawArrayLayout(buffer) || DRAWARRAY_PROBE_LINES.getAndDecrement() > 0) {
                         // One line per distinct buffer, at its first accepted draw: what the batch contains, what the
                         // pointer state said it was, and the matrices the immediate path will draw it with. An accepted
@@ -3178,6 +3211,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int FORMAT_POSITION_TEX = 6;
     private static final int FORMAT_POSITION_TEX_NORMAL = 9;
     private static final int FORMAT_POSITION_NORMAL = 10;
+    /** PARTICLE_POSITION_TEX_COLOR_LMAP: 3f position, 2f tex, 4ub colour, 2s lightmap - the tex coords at byte 12. */
+    private static final int FORMAT_PARTICLE = 5;
 
     /**
      * {@return whether {@code [address, address + bytes)} lies inside one readable mapping of this process}.
