@@ -257,6 +257,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.249 **round 55: 原典がパノラマの texture を名指し（cube は panorama_N.png・copy 先は backgroundTexture）＝mirror が白いのは PNG の中身が announce されていない**
+
+- **原典確認（Lead）**: `GuiMainMenu`（decompile）:
+  - `:448` cube の 8×8 グリッドが `TITLE_PANORAMA_PATHS[k]` を bind
+  - `:480` `backgroundTexture` を bind → `:483` **`glCopyTexSubImage2D(3553,0,0,0,0,0,256,256)`**
+  - `TITLE_PANORAMA_PATHS` = `textures/gui/title/background/panorama_0..5.png`（**6枚の 256×256 PNG**）
+  ＝**id 8/13/45..49 は panorama PNG そのもの、id 20 は backgroundTexture** で、**id の取り違えではない**。
+  欠陥は「**PNG の mirror が白**」— `panorama_N.png` には実画素があるのに mirror は 65536 texel すべて `0xffffffff`。
+- **問いの形（texture-mirror へ）**: `announced=0`（int[] 経路）なので、`SimpleTexture` のロードが
+  `TextureUtil.uploadTextureImageAllocate` → **`glTexImage2D`（確保・データは空/白）** → 実画素は **`glTexSubImage2D`** という順なら、
+  `func_110988_a` hook が**確保の側で発火**していて PNG を運んでいないことになる。
+  分離: **id 8 の hook の caller census**（bounded・BH-06 の形）＋**同じ id に非白の2回目の announce が来るか**。
+  来なければ hook が確保のみ、来るのに白なら buffer を game が埋める前に読んでいる（hook の timing/aliasing）。
+- **受入は不変**: copy の mean が 255 から動き、menu crop にパノラマが出る。
+
 ## 0.248 **round 54: パノラマの白は「copy 先 20 と face が sample する 8 が別」＋両方とも announcement が白**
 
 - **既存 leg の grep で決定的な比較（Lead）**: texture-mirror の分析（`content=` は**announcement が渡した画素**を読む＝mirror ではなく announce 自体が白）を受けて、
