@@ -186,6 +186,38 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.225 **round 32-33: OPT-01/05・shader contract check・BH-06 SRG フック・BH-29 の half-texel 補正・BH-11/12 の counter 出力**
+
+- **OPT-01（Lead）**: `threadCpuNanos` の MXBean を static 化し、**per-batch CPU split を opt-in**
+  (`-Dceltium.vulkan.cpuSplit=true`) に。性能 run は「レンダラ」を測り、計装 run はそう名乗る。`threadWaitedMillis` 系は
+  レポート行 (`:6838`) からのみ呼ばれることを確認（hot path ではない）。
+- **shader push-constant overlap の CPU contract check（Lead）**: `scripts/cpu-contract/shader_push_constant_check.py`。
+  glslang は重複メンバーを許すが **spirv-val が拒否**し、`vkCreateShaderModule` 失敗＝**全 leg が真っ黒**になる。
+  現在 33 shader・0 問題。**負の対照**（問題になった offset 96 の重複を再挿入）で同じ文言で FAIL することを確認。
+- **BH-06 残り（Lead）**: `setActiveTexture` の注入だけが deobf 名で、`require = 0` のため**黙って適用されていなかった**
+  （実測 `CELTIUM_UNIT_SWITCH lines: 0`・`bindsOnUnit0=797 bindsOnOtherUnits=0`）。`scripts/mc-sources.sh --srg` で
+  **`func_179138_g`** と確定し `require = 1` に。再測でも 0 のままだが、texture-mirror の計器が**ログ予算を switch と
+  bind で共有**していた欠陥を特定（counter は real 0）。次の2手は彼らの instrument 修正と、`func_179144_i` の caller 追跡。
+- **OPT-05（perf-ring）**: `VulkanFrameArena` が frame ごとの host-visible slice（16 byte 境界・stride はそのまま）を所有し、
+  `VulkanDynamicMesh` が region を借りる形に。5つの即時パイプラインの draw は `mesh.bindAndDraw(commandBuffer)` に集約。
+  **terrain arena の `alignUnit = lcm(4, stride)`（BH-01）とは別契約**であることをコードに明記。
+- **BH-01（proj-channel）**: arena の capacity/split/exact-fit に alignUnit を適用し、`byteOffset` が stride の倍数になる
+  不変条件を回復（24 byte vertex × 524288 で remainder 8 が後続 range をずらしていた）。
+- **BH-29 / task-55（weather-water）**: light-map 項は既に vertex 側にあり、真因は **half-texel bias**
+  （vanilla の unit-1 texture matrix は scale 1/256 **と** translate 8/256）→ `(u_LightCoord + 8.0) / 256.0` に修正。
+  night/day leg を queued。
+- **BH-11/12 の counter 出力（Lead）**: acceptance が「`immediateDepthBiasedGroups` は宣言と加算のみで**print site が0**」と
+  指摘 → 検証サマリに追加。`lineBatchesNarrowed` の total も同様に追加。**BH-12 は受入済み**（`CELTIUM_LINE_NARROWED
+  requested=2.0 drawn=1.0` ×2・outline が presented frame に存在）。**BH-11 は counter leg 待ち**（break overlay の scene は
+  z-fight しないため絵では決まらない、と acceptance が実測で示した）。
+- **canon rows（acceptance・jar `9bc475cb`）**: HUD **1.87**・entity band **18.85**・hand **21.25**、`drawnByFormat` id9 **228/228**、
+  `windowFlushFailures=0`。**残差は shading**（candidate が一貫して暗い: hand `(114.3,96.6,83.9)` 対 `(131.2,102.8,91.1)`）
+  ＝BH-29 の補正と BH-31 の領域。
+- **BH-14/15/16 の機序確定（fog-path）**: `flushImmediateWindow` は**その時 bind されている target** で filter するため、
+  一度だけ bind されて二度と bind されない target（panorama の `572879803`・loading screen の one-shot identity）の group は
+  **永久に描かれない**。`offTargetPerTarget` は `677 offered / 32 atPass / 17 drawn`（identity 0 は 70/70/70）。
+  ＝image は空であって解決ミスではない。target-driven flush（＋BH-15 の drop 計数・BH-16 の clear）を実装中。
+
 ## 0.224 **round 29-32: 状態契約の統合（BH-07/10）・BH-08/11/12/13 着地・OPT-01・font artifact の測定**
 
 - **BH-07/BH-10 統合（blend-state・commit `2e49ce0f2`）**: `VulkanColorBlendState` が enable・RGB/alpha 4因子・2 equation・
