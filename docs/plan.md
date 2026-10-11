@@ -274,6 +274,19 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.284 **round 90: 引き継ぎ — パノラマは「draw の image と read の image の突き合わせ」1点だけが残る**
+
+- **このセッションで棄却した説明（再試行しない）**: pass 終了時の read-only hand-back（VUID 2→4）・descriptor 一律 GENERAL（2→20+20）・
+  per-descriptor 分岐（2→4）・serve 前の flush（白のまま・コストのみ）・「描かれていない」（fmt=2 が 24,738 描画）・「pending が flush されない」（submitted=30074・discarded=0）。
+- **確定した事実**: mirror は実内容（replay 修正）・bind は 42/44/45-48・group の捕捉は stale でない・clear は face の draw より前・
+  copy は panorama 自身（caller 連鎖 `GuiMainMenu.drawPanorama` → `renderSkybox`）・readback は 65536 画素すべて白（`nonWhite=0`）。
+- **次の1点（実装済みの計器で足りる）**: `CELTIUM_DRAW_SITE` は `target=` と `passImage=` を印字するので、
+  **`-Dceltium.vulkan.enqAll=true -Dceltium.vulkan.drawSiteLines=8` を付けた menu-hold leg** で
+  **fmt=2 の `passImage`** と **copy の `readImage`** を同一 console で比較する。同じなら readback 自体（layout/format/extent）、
+  違うなら identity→image の写像（routing 表）が owner。新しい計器は不要。
+- **計装は残置**（`CELTIUM_COPY_READ`・`CELTIUM_COPY_CALLER`＋state・`CELTIUM_CHAIN_PAIR_CLEAR`・firstPixels/nonWhite・`CELTIUM_READ_RESOLVE`）。
+  ツリーは緑・revert 済みのみ。
+
 ## 0.283 **round 89: faces は実際に描かれている（fmt=2 が 24,738）— 残る説明は「draw の image ≠ read の image」のみ**
 
 - **測定（Lead・`r86-both` のレポート）**:
