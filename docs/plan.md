@@ -257,6 +257,38 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.244 **round 50: BH-35（未モデル GL 入口の census）・SliderControl の縮退・パノラマは viewport へ・BH-14 census・device feature の前提**
+
+- **BH-35 実装（Lead・`c6a6d3c86`）**: stub は**全ての名前**に trampoline を返し、table 外の名前は generic no-op になるが**どの名前かは記録していなかった**
+  ＝mod が未モデルの GL 入口を呼んでも痕跡ゼロ。`celtium$noteUnknownSymbol` で**名前ごとに計数**し、終了時に
+  **`CELTIUM_UNKNOWN_SYMBOLS`（頻度順）**を印字、`-Dceltium.vulkan.strictSymbols=true` で到着ごとに印字（`strictSymbolLines` で bounded）。
+  ＝「未対応」を**記録された境界**にする（goal C の要求）。
+- **SliderControl の縮退（Lead・同 commit）**: 従来は `max > min` を assert し、control は**画面のページ構築中**に作られるため
+  **1つの縮退した範囲が画面全体を落としていた**（実測: Celeritas video-options が開けず vanilla へ fallback）。
+  3つの**計算された境界**が同じ形で縮退しうる（`computeMaxRangeForRenderDistance`・`ChunkBuilder.getMaxThreadCount`・
+  `MuiGuiScaleHook.getMaxGuiScale`）ため、**呼び出し側ではなくここで縮退**させる（範囲が動かない単一値 slider・範囲を割り切る interval）。
+- **パノラマは clip を棄却し viewport へ（fog-path・`fa8e304dd`）**: `c68ecefa` で再取得しても `mean=255,255,255`・`readImage == passImage`・
+  `completionsSinceDraw=6` は不変。**`CELTIUM_GROUP_SCISSOR` は1行も出ていない**（4行 bounded・最初の scissored group で出る）＝
+  **face の group は clip 矩形を持っていない**＝clip 仮説は棄却。残るのは viewport:
+  `gl=0,0 256x256 clipped=0,464 256x256 target=1280x720`（panorama face の pass）。
+  `0,464` は GL bottom-left → Vulkan top-left の**正しい**写像（`720-(0+256)`）だが、**face の pass は target の下端バンドに描く**。
+  もしその pass の geometry が逆の規約（top-left NDC vs bottom-left viewport）なら quad は viewport 矩形外で clip され、
+  **pass は走るが image は clear のまま**＝観測と一致。次の測定は **face の NDC bounds と viewport 矩形の比較**
+  （`-Dceltium.vulkan.groupBounds=true -Dceltium.vulkan.groupBoundsFormat=2`・一度試して slot wait で落ちた・未取得）。
+- **BH-14 の census 着地（sky-draws）**: `GllessFrameTarget.noteIdentityForCensus(identity, isMain)` が
+  **main/非main の distinct identity と各 pair の member 集合**を記録し、`identityPairCensus()` が
+  `mainIdentities=… nonMainIdentities=… pairs=… widestPair=<pair>(N identities share it) perPair=[chain=…,default=…]` を報告。
+  受入の形: 現在 `pairs=2` で widest pair が全非main identity を抱える → **per-identity image の修正で widestPair が 1 に落ち pairs が identity 数へ増える**。
+  per-identity image 本体は**未着手**（所有権変更の半端な land を避けた）。census の初回読取は leg 待ち（≥2 非main identity の scene＝glow/outline）。
+- **device feature の前提（proj-channel・重要な発見）**: `VulkanContext.createDevice` の `VkDeviceCreateInfo` に **`pEnabledFeatures` が無い**
+  ＝**全ての optional feature が off**（`multiDrawIndirect` を含む）。よって `vkCmdDrawIndexedIndirect` は RADV が advertise していても**合法でない**。
+  `maxDrawIndirectCount` は limit で `validateDeviceContract`（device 作成前）で読める。proj-channel は「query して**サポート時のみ** enable・limit 記録・
+  `CELTIUM_DEVICE_CONTRACT` に `indirect=[…]` 追加」を実装したが**予算内でコンパイルできず revert**（device 作成は半端な変更が致命的）。
+  次の分割: (1) 前提のみ（挙動不変・leg で `indirect=[multiDrawIndirect=true …]` と `maxDrawIndirectCount` を読む）、(2) flag-gated indirect path＋counters、(3) geometry/order 比較。
+- **videoSettings の残り（gui-stage）**: `guiClickDivertedTo` は Celeritas screen だが **`guiScreenClassAtCapture = GuiVideoSettings`**
+  ＝fixture の待機ループが vanilla 画面を再び開くため、**crop は vanilla のもの**。3段階受入の前に「capture される画面を Celeritas にする」修正が要る。
+  実ボタン経路は `GuiOptions.buttonList` が空（mod が `GuiOptions` 自体を引き継ぐ）ため**この画面では駆動できない**と判明・caveat 記録。
+
 ## 0.243 **round 49: video-options 画面が開いた（受入の第一段）・パノラマは clip 仮説の leg 待ち**
 
 - **videoSettings 修正の受入（gui-stage・`vs-open2`）**: `guiClickDivertedTo = org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen`・
