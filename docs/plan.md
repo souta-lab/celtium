@@ -54,6 +54,34 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
 
+## 0.124 **受入**: Intel 4-leg（Nether 含む）／format 5 の拒否を修正・検証／wedge の根因は format 8（fancy cloud）
+
+- **Intel 4-leg 受入（実測）**: `.celtium-work/intel-layout-evidence/leg{1,2,3,4}`、jar sha256
+  `b63a8a85...`（renderer）・`74985a85...`（fixture）。
+  - leg1 bridge terrain: PASSED・clean・0 VUID・band 平均 (102.561, 59.786, 54.992)
+  - leg2 GL-less terrain: PASSED・clean・0 VUID・band 平均 (102.561, 59.785, 54.992) ＝ leg1 と ±0.001（present 経路の証拠）
+  - leg3 **GL-less Nether（tick 80 で dimension -1）**: PASSED・clean・0 VUID・
+    **09600 も 01198 も出ない**（= present layout 修正が Intel の再構築経路でも効いている）・client/world/server すべて -1・
+    `dimensionFramesInTarget=114`・present 継続 failures=0
+  - leg4 bridge glow: FAILED_PRESENTED_IMAGE だが**画像を開くとローディング画面**（"is under development" 表示・78.7% black）。
+    AMD の同時 run `glow-bridge3` は同じ loading 画面でさらに暗い（90.4% black）＝ **Intel 固有ではなく scene のタイミング問題**。
+    旧 jar の PASSED は gate が絵を判定していなかっただけで、旧 PNG の rows 300-720 は純黒。
+  - **拡張/format/memory type/feature を名指すメッセージは 4 leg とも 0**。Intel の capability は externalMemoryFd/
+    externalSemaphoreFd true・問い合わせた6 format すべて対応。depth format の要求が2つの診断で食い違う
+    （capabilities `D24_UNORM_S8_UINT` vs `VulkanDeviceReport` の hardcode `D32_SFLOAT`）のは既存の未整理点。
+- **format 5（粒子）修正・検証（commit `1e08cfd60`）**: 根因は `canBuildDescriptor` の無名 `return false`
+  （`pipelineFor(lastUiPass)==null`、最初の terrain pass 前）。probe を描画経路と同じ規則
+  （terrain pass があればそれ、無ければ `uiRenderPass()`）に揃え、throw 経路も理由を記録。
+  検証: format 5 **73/73 受理**（従来 96/131）・probe 拒否 0（従来35）・**拒否 census が空**・fixture PASSED・clean・
+  画像 verdict PASSED（distinct 28170・black 0.0029）。
+- **wedge の根因（担当の実測・確定待ち）**: `mode=7` は `GL_QUADS` で topology 取り違えは否定。
+  format 8（`RenderGlobal.renderCloudsFancy` の fancy cloud）が **GL-less でのみ受理**され、
+  native immediate pipeline に cloud shader が無いため巨大な半透明クワッド/黒三角として出る。
+  bridge では `boundProgram != 0` の shutter で拒否され GL が正しく描くため、**GL-less 固有の構造欠陥**。
+  担当が `-Dceltium.vulkan.immediateFormats=8` の positive-form run で帰属を確定中で、修正は拒否規則（幾何ではない）。
+- **注意（受入の前提）**: これらの run の後も `ValidationClient.java` と `scripts/prism_validation.py` が編集されている。
+  次の受入は rebuild 後の jar で取ること。
+
 ## 0.123 **受入**: 条件 (c) 充足 —— 提示 frame が実際の window/compositor 出力に到達（marker 帰属 + 番号付き presented dump との画素完全一致）
 
 - 文書: **`docs/compositor-output-capture-2026-10-11.md`**。これは `scripts/compositor_capture.py` の docstring が引用していた文書で、
