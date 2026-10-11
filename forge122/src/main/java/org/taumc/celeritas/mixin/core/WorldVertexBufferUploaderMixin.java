@@ -161,10 +161,13 @@ public abstract class WorldVertexBufferUploaderMixin {
             return;
         }
         celtium$offers++;
-        if (celtium$offers % 1000 == 0) {
+        if (celtium$offers % 1000 == 0 && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
             // The decision, from the side that makes it: offers, how many the backend accepted, and how often the
             // vanilla body still completed. The audit asked for exactly this pair, because the image comparisons could
             // never distinguish replacement from GL drawing everything.
+            // Gated with the rest of the repeating diagnostics: measured in the user's own shape, this line and the
+            // arrival table below were 1,299 of 2,152 log lines in 120 s, which is the largest remaining log-volume
+            // source. A validation run or -Dceltium.vulkan.diagnostics=true keeps them.
             System.out.println("celtium offer decisions: offers=" + celtium$offers + " accepted="
                     + celtium$acceptedByBackend + " glBodyCompleted=" + celtium$glUploads);
             System.out.println("[Celtium] CELTIUM_REFUSALS_BY_FORMAT " + celtium$refusalsByFormat);
@@ -245,7 +248,8 @@ public abstract class WorldVertexBufferUploaderMixin {
                     Integer seen = celtium$unmappedShapes.get(key);
                     celtium$unmappedShapes.put(key, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
                 }
-                if (celtium$arrivalTotal % 500 == 0) {
+                if (celtium$arrivalTotal % 500 == 0
+                        && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
                     StringBuilder table = new StringBuilder();
                     for (int i = 0; i < celtium$arrivalsByFormat.length; i++) {
                         table.append(i).append(':').append(celtium$arrivalsByFormat[i]).append(' ');
