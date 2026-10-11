@@ -107,6 +107,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.170 **video settings の機能受入——確立した半分と、まだ必要な半分**
+
+ユーザーの指摘どおり video settings は**機能**の要件なので、fixture に機能検証を組み込んで追い込んだ。
+
+### 確立したこと
+
+- **ゲーム自身のクリック経路で開く**: fixture が `GuiScreen.mouseClicked` 経由で Video Settings ボタンを押し、
+  `guiClickResult = clicked button id 101 at 133,116 through GuiScreen.mouseClicked` ✓、`guiScreenOpenedVia` が開いた画面を記録。
+- その画面は **`org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen`**——この runtime の video settings UI は**mod の画面**であり、
+  比較対象の vanilla `GuiVideoSettings` は **"Done" 1つだけ**（実測）。だから vanilla 画面に向けた機能テストは押すものが無かった。
+- mod 画面のウィジェットは `buttonList` ではなく **controller** にある: controller の frame が **8つの control element**（`CyclingControlElement` を含む）
+  ＋ apply/close/undo ボタンを持つ ✓。**画の受入は既に mean 1.4 で参照と一致**。
+
+### まだ必要なこと
+
+**コントロールの押下が成立しない**: 8つ全てについて各 control 自身の `Dim2i` 中心で press+release を送ったが、
+controller の `hasPendingChanges` は false のまま。**理由はクラスに出ている**: mod 画面は `func_146274_d`（handleMouseInput）を
+override しており、**呼び出し側が渡す座標ではなく GLFW のグローバルなマウス状態を読む**ため、
+座標付きの合成クリックは widget に届かない。次の一手は **GLFW レベルでカーソルを動かしてボタンを押す**こと（fixture 側の変更）。
+計器（`videoSettingsFunctionScreen/Controls/Control/Pressed/ControlResponded/Applied`）は既にレポートに出ているので、
+次の試行は**測定から始められる**。
+
+**画面が壊れているわけではない**: ゲーム自身の経路で開き、描画され、コントロールも存在する。
+**未証明なのは「押すと設定が変わる」こと**であり、それがユーザーの問いの半分。
+
 ## 0.169 **ユーザーの起動は「真っ黒なウィンドウ」——client-memory 頂点配列が全拒否**
 
 ユーザーのインスタンスは `instance.cfg` に **`-Dceltium.vulkan.glless=true`** を持つ（＝手動起動は GL-less・fixture なし・validation client なし）。
