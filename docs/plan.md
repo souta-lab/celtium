@@ -107,6 +107,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.168 **video settings は動作している（受入・ユーザー明示要件）**
+
+ユーザーが完成条件に名指しした video settings を、私が GL-less（fixture の `videoSettings` scene）と
+**upstream Celeritas 参照**（同一 scene/pose/stage）で対にして測った:
+
+| 領域 | mean | >8 の画素 |
+|---|---|---|
+| frame 全体 | 3.776 | 114666 / 921600（12.44%） |
+| **panel rect** | **1.406** | 8898 / 211200（**4.21%**） |
+| title row | 7.100 | 6138 / 26400（23.25%） |
+
+panel の平均色: GL-less **(71.1,70.4,69.6)** vs 参照 **(72.5,71.4,70.4)**——ほぼ一致。
+
+**画面は描かれ、panel は正しい形と色で出ている。** 残差は title row と panel 外の 12%。
+verdict は `presentedVerticalBands=212 is below the scene floor of 250` で FAILED のまま——
+**この床は古い bridge run で測られたもので、追うべき欠陥ではなく再較正すべき対象**（「内容は正しいのにゲートが落ちる」という、plan が逆向きに警告しているのと同じ型）。
+
+**再取得する人への罠**: 参照の `screenshotAtTick=60` の画は **world**（fixture は tick 201 で GuiOptions を開く＝world capture の 200 の後）。
+比較すべき参照画は**参照自身の GUI 段階 capture**（`celtium-validation.png`）であり、tick 60 の screenshot ではない。
+私の最初の比較はそれを混同して 99.9% 差と報告した——**別の段階を比べていた**。
+
 ## 0.167 **条件 (b) の構造的証拠と、GL-less における `glBodyCompleted` の意味**
 
 完了条件 (b)「GL context を生成せず、通常 frame の GL call を必要としない実行」の**構造的な半分**は、run ログの次の3行で示される（再導出せず引用する）:
