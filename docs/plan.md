@@ -107,6 +107,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.163 **alpha 修正の受入（水）／参照 leg の検証**
+
+### 水の leg（alpha 修正の before/after・同一 pose・同一 stack）
+
+| | blackFraction | distinct colours | mean |
+|---|---|---|---|
+| 修正前（`ww-gl-water2`） | **1.0** | **1** | 0.0 |
+| 修正後（`ww6-gl-water`） | **0.324891** | **475** | 16.135 |
+
+水中 overlay は全画面 `POSITION_TEX` で色は `color(f,f,f,0.5)`、f は眼の光量で**水深5ブロックで 0**。
+色なし shader が fragment alpha を 1.0 に固定していたため**全画面を不透明で塗っていた**。
+**同じ push offset の2つの半分**（shader の `u_ColorA`・backend の `color[3]`）で画が場面になった。
+
+### 参照 leg（upstream Celeritas）の検証
+
+`ref-celeritas2`（私）と `sky-draws-ref`（担当）が**同一の数値** `nonBg 0.761173`・**PASSED**・tick 150 の screenshot 取得成功 ✓
+——参照手順が再現可能であることを2人が独立に確認した。
+
+### 今日の4つの欠陥に共通する形
+
+**「値はそこにあり、経路が運べなかった」**:
+panel（mirror に画素はあるが色なし variant が誤った stride で読む）・sky（dome が fog を切った後に fog を捕捉）・
+雨（表が名前を与えられない形式。私の2定数が `Short` を `Unsigned Short` と書いた）・水（alpha の行き先が無い）。
+
 ## 0.162 **fog の真因（close 時の snapshot）と、原典からの2つの訂正**
 
 ### fog（担当 fog-path・測定済み）
