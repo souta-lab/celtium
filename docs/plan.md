@@ -145,6 +145,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.216 **round 19: 起動の白は「白でクリアされた frame に何も描かれていない」・world の id1 拒否は mode 3（LINE_STRIP）**
+
+- **ロード画面（Lead 実測・jar `55542e67`）**: 起動 leg で `CELTIUM_EXTERNAL_IMAGE published glTexture=6 … size=1280x720` が
+  **1回だけ**で `dropped` なし（＝viewport 由来の 1281 は解消）、`REPLACE_DROP=0`。それでも白は残る（captures 24-31）。
+  分かったこと: **白は「白でクリアされた frame に何も描かれていない」**——game 自身の clear が白
+  (`CELTIUM_CLEAR_LATCH … colour=(1.0,1.0,1.0,0.0)`)、同じ leg の `CELTIUM_TEX_COPY_SERVED … mean=255,255,255` が
+  frame image から白を読んでいる。splash の group は届いている（`group=1 fmt=2 texture=8 target=<splash FBO>` →
+  `group=2 … texture=6 target=0`、`CELTIUM_WINDOW_ORDER frame=0 … groups=1`）。
+  ＝次の問いは「composite が frame image に届いているか」「logo quad が画面内に落ちているか」。
+- **world の id1 拒否（Lead 実測・`r16-diag`）**: `immediate formats offered/accepted: id1=39/2`、
+  `refusedByReason=[draw mode 3 is not handled (only 7 = GL_QUADS)=37; the mirrored projection is the identity at
+  draw time=4]`。**mode 3 = GL_LINE_STRIP は即時パスが扱わない**（1 batch も描かれない）。
+  `CELTIUM_GROUPS … targetGeneration=43 staleTargetGeneration=1 discarded=1 submitted=970 completed=971`＝
+  **frame target が43回作り直されている**（published name が消える原因の1つ）。
+- **entity**: `id4=43/43`・`id8` は histogram に出ない（world では model 経路）・`id5=78/78`・`id6=435/434`・`id7=366/366`・
+  `id9=228/228` ＝ **format 1 以外は受理されている**。
+
 ## 0.215 **round 17-18: 起動 phase の白は残る（target サイズは機序でない）・panorama copy は「白」を served・entity の list 捕捉の穴**
 
 - **ロード画面**: frame target を**窓の drawable サイズ**で決めるよう修正（viewport は最後に bind された framebuffer のものなので、
