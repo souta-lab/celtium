@@ -95,6 +95,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.152 **検証: 射影チャネルの mirror は存在するが呼び出し元が無い**
+
+stub 担当の読みを tree で確認した:
+
+- `TerrainGpuBackend.perspective`（`common/.../TerrainGpuBackend.java:123`）と `frustum`（`:130`）は interface の default として**存在する**。
+- `celtium-vulkan` と `forge122` を `.perspective(` / `.frustum(` で検索して**呼び出し元は 0**。
+
+→ **`Project.gluPerspective` を mirror へ運ぶはずのチャネルが、存在するのに未使用**。ゲームは world の射影と sky でその呼び出しに到達し、
+Kirino 下の `renderSky` 直前は `loadIdentity`（mirror 済み＝射影 mirror が identity 化）＋`gluPerspective`（GlStateManager を通らない）。
+**mirror の射影が sky を描くまさにそこで identity になりうる**——翼の形はこれと整合する。
+
+**これは撤回したフックが対象にしていたギャップそのもの**で、撤回は**到達範囲**の話だった（フックは world の可視セクション数を 23→8 に変え、terrain を失わせた）。
+
+**次の試行の形（試す順）**:
+1. **必要な描画（sky）にだけ**射影チャネルを供給し、culling が読むものは触らない。
+2. mirror の射影が信頼できない描画は、**名前つきで拒否**する——拒否は画の穴だが、誤った変換で描くのは**誤った画**であり、このプロジェクトは今日その違いを学んだ。
+
+**ここでは実装しない**: そのファイルは今ラウンド stub 担当が所有し、まさにこの問いを測定中。同じファイルに2人目の編集者が入るのが、2つの半修正を1つの壊れた tree にする道。
+
 ## 0.151 **翼は `glDrawArrays` 経路と計測で帰属／射影 mirror のギャップが原因候補**
 
 stub 担当の測定（同一 fixture・同一 pose・変更前 jar `0c90f819` vs 変更後 `d50f1a56`・両方 GL-less/allBlocks）:
