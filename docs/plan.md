@@ -230,6 +230,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.230 **round 36: BH-11 は「呼び出し・enable・描画」の3つに分離して計装・パノラマは同一 image 上で空と確定・BH-25 受入**
+
+- **BH-11 が break scene でも 0（acceptance・`41a72b6d2`）**: `immediateDepthBiasedGroups=0`。原因を推測せず3つに分離する計装を追加（`8e765012d`）:
+  `polygonOffsetCalls=`（stub に届いた glPolygonOffset の回数）・`polygonOffsetFillEnabled=`（`GL_POLYGON_OFFSET_FILL` の enable ビット）・
+  `polygonOffsetCalled=`。次の leg が「呼び出しが届いていない」「enable が記録されていない」「両方真で group が描画ループに届かない」を切り分ける。
+  （`GlStateManager.doPolygonOffset` は値が変わったときだけ `GL11.glPolygonOffset` を呼ぶ＝最初の変化は見えるはず）
+- **パノラマの再帰属（fog-path・`74b54512f`・単位既知）**: 1 frame で4つの計器を並べると
+  faces の enqueue `target=1941007851`・composite `target=0`・publish 名 `glTexture=6 image=0x…a4a0`・
+  読み候補 `frameImage=0x…d5a0 / defaultPair=0x…b0c0 / chainPair=0x…a4a0`・copy `mean=255,255,255`。
+  ＝**publish 名は chain-pair image**（`chainPair == published`、frameImage は別）で、faces・composite・copy が**同じ image を指している**。
+  ルーティング不一致は原因ではない。**`CELTIUM_DRAW_SITE` が `enqFormat=2` でも 0 行**＝fmt=2 の group が描画ループに1つも届いておらず、
+  その image は**白い clear のまま**。次の測定（`enqFormat=-1` で loop 自体が入るか）は fog-path が実施。
+  ロード画面の白も同じ機序の可能性が高く、同じ line で確認する。
+- **BH-25 受入（proj-channel・`ef7577cd5`）**: upload が例外を投げた region の**全 section を名指し**（`consumeFailedUploads()` を interface の default で追加）、
+  `RenderSectionManager.processChunkBuildResults` が**その section の commit を skip**（`updateSectionInfo`・translucency commit・build token clear・
+  `lastBuiltFrame` 前進を行わない＝再 build キューに残る）。fault 注入 leg: `regionUploadFailures=1`・`sectionsLeftUnbuilt=1`・exit 0・`validationMessageCount=0`。
+- **BH-01（proj-channel）**: `alignUnit = lcm(4, stride)` を capacity・split・exact-fit に適用。**landed-unverified** と明記し、
+  受入は `arenaVerify` ＋ segment ごとの stride 整合 assertion（GPU 不要）。
+- **未確立のまま記録**: BH-36/OPT-09（proj-channel が次）・OPT-07(b)（perf-ring）・BH-06 の unit 追跡・BH-22・BH-32/35・
+  F3 の縦バー（真因未特定・font run のバッファ再利用が最有力）・BH-17/19 の evidence。
+
 ## 0.229 **round 35-36: ホットバー暗転を上流参照で受入（light-map unit enable キー）・BH-11 counter は break overlay が呼び元**
 
 - **ホットバー暗転（ユーザー報告）を修正・受入（glyph-fix・`4883b1ba8`）**: 規則を **capture 時の light-map unit enable 状態**にキー。
