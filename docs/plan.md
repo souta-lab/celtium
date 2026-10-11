@@ -145,6 +145,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.222 **round 28: 聖典 item 2/3 を独立測定で受入・BH-09 完成（backend の scissor intersection）**
+
+- **item 3（エンティティ/HUD）受入（acceptance の独立 leg・jar `65a3e7f4`）**:
+  `drawnByFormat` **id9=228/228**・`windowFlushFailures=0`・`windowFlushDroppedBatches=0`・`modelDraws=2186`・
+  `immediateGroupsDrawn=3820`。presented frame に **creeper・zombie・spider・enderman・stone item・red item・一人称の腕**。
+  region: **mob band（chat 無し）mean|d| 19.57**・non-sky fraction **0.609 対 0.624**（同量の geometry が立っている）・
+  **hand 24.06（修正前 62.14）**・HUD **2.13**。**一様だったのは GL screenshot**（GL-less では `glReadPixels` が読む context が無く
+  黒になるのが当然）で、**gate が採点する presented dump は 17,408 色・nonBg 0.952515・716 bands**。
+  gate は `UNCALIBRATED_PRESENTED_IMAGE`（entity variant に較正 key が無い＝**失敗した floor は無い**）。
+  残差: candidate の chat overlay（35.36、chat 無しで 19.57）と build 状態差（60 対 155 frame）。
+- **item 2（文字）受入（texture-mirror の F3 leg・jar `7acf4a9d`）**: `PASSED`・`validationClean=true`・`validationMessageCount=0`。
+  `CELTIUM_SAMPLER_FILTER glTexture=8 … maxLod=0 (maxLod was 1, now from the record's GL_TEXTURE_MAX_LEVEL 0)`
+  ＝font sheet は GL が持つ level だけを読む。`CELTIUM_FONT_GLYPH_SUMMARY windows=687406 … refused=0 submitMillis=386`
+  ＝**1 glyph 0.56 µs**（要求帯 0.35〜0.65）・append 0.25 µs。crop は
+  `docs/history/evidence/texture-mirror-20261011/font-f3-overlay-text-block.png`（sha256 `38ca183c…`）。
+  主張は sampler line と crop で、全画面差分は 23.5% 床があるため使わない。
+- **BH-09 完成**: group の Vulkan scissor を「target 矩形 ∩ ゲームの glScissor box」（`GL_SCISSOR_TEST` 有効時・
+  GL の左下原点を Vulkan の左上へ反転・空 intersection は zero extent）に。**scissor は command state** なので
+  group key には入れない（BH-10 の write mask とは意図的に違う）。`immediateScissoredGroups` で到達数を数える。
+- **記録した計器の異常**: `drawnByFormat[4]=13163` 対 `acceptedByFormat[4]=47` は batch として読めない
+  （id4 は 280 倍）。accepted-vs-drawn として意味があるのは id9 の対のみ。
+
 ## 0.221 **round 27-28: エンティティ修正を picture で受入・font sampler reach 着地（leg は F3 で取る）**
 
 - **エンティティ受入（picture レベル・Lead 実測）**: `presentReadback=true` 付き leg で
