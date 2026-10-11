@@ -304,6 +304,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.300 **round 106: 機序が1文で確定（frame 単位で引くと「present がまだ待っている semaphore を次 frame が再 signal する」）— 実装は runway のある担当へ**
+
+- **外部根拠（web 調査・Khronos の frames-in-flight 解説）**: なぜ frame index で引いてはいけないかが1文で書かれている —
+  > `renderFinishedSemaphores` は graphics queue が**特定の swapchain image への描画を終えた**ときに signal され、
+  > **presentation engine が同じ image を present する前に wait** する。presentation engine は我々の `frameIndex` を知らず、
+  > **`acquireNextImage` が返した `imageIndex` しか知らない**。swapchain は `MAX_FRAMES_IN_FLIGHT` より多くの image を持ちうるし、
+  > 連続する acquire が同じ周期で index を返す保証も無いため、**frameIndex で大きさを決めた semaphore は、
+  > presentation engine がまだ前回の wait をしている最中に次の frame が再 signal する**ことになりうる。
+  > **実際の swapchain image 数で大きさを決めれば、image index だけで signal と wait が正しく対になる。**
+  （[Frames in flight](https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/03_Drawing/03_Frames_in_flight.html)・
+  [Swapchain Semaphore Reuse](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html)）
+- **Celtium への当てはめ**: `GllessFrameTarget.doneSemaphore` は **frame 単位の単一 long** で、
+  `VulkanSwapchain:850-851` が **present の `pWaitSemaphores` に渡している**＝**この1文そのもの**。
+  一方 `waitSemaphore` は **frame の submission が wait する側**で、両側が frame index で閉じるため frame 単位で正しい。
+  ＝**「どちら側が signal し、どちら側が wait するか」で大きさが決まる**という規則で、`doneSemaphore` だけが例外になっている。
+- **実装（次 unit・地図は §0.299）**: `GllessFrameTarget.doneSemaphore` を **image 数配列**に・`presentImageCount(int)` を
+  swapchain の create 成功後に呼ぶ・`presentImage` の中で **acquire 済み index** で引く（`:778` に既に index がある）・
+  `waitSemaphore` は frame 単位のまま・per-image の signal/wait counter を残す。
+  受入は **較正済み terrain leg（`validationMessageCount=0`）＋ resize leg**、両方 `pinSections`。
+- **この round で実装しなかった理由（正直に）**: この変更は **multi-file の semaphore 所有権リファクタ＋2 leg** を要し、
+  誤ると**deadlock か frame 破壊**になる（proj-channel の辞退理由と同じ）。**現状は緑**（VUID 0件・OPT-09 step(3) 閉止）なので、
+  **未検証の編集を入れるより地図と根拠を残す**方を選んだ。runway のある担当が §0.299 の地図から着手する。
+
 ## 0.299 **round 105: per-image doneSemaphore は「未着手・地図つき」で次 unit へ（proj-channel が runway 不足で辞退・理由を記録）**
 
 - **辞退の理由（proj-channel・記録に値する）**: 受入が **2 leg**（較正済み terrain ＋ **resize**）である以上、
