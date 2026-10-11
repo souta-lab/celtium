@@ -784,6 +784,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int chainAdoptions;
     /** Whether the chain recorded passes whose initialization barrier has not yet been confirmed submitted. */
     private boolean postChainCommitPending;
+    /** Cleared before a device-wide wait and set when it returns, so its watchdog can tell a stall from a slow wait. */
+    private volatile boolean deviceWaitFinished = true;
     /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
     private long currentFramebufferIdentity;
     private int chainAdoptionsRefused;
@@ -7584,12 +7586,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /**
      * Ends all work the device is doing, so resources can be released without the GPU still reading them.
      * <p>
-     * Bounded on purpose: a device that has stopped making progress must end the run with a message rather than hang
-     * it, which is what the audit asked for on every failure path. {@code vkDeviceWaitIdle} is the honest call here -
-     * submissions from several command buffers and from the bridge's handoffs are all outstanding - and the timeout is
-     * the same one the frame waits use.
+     * <b>This wait cannot be bounded by the API.</b> {@code vkDeviceWaitIdle} takes no timeout, and it is the honest
+     * call here because submissions from several command buffers and from the bridge's handoffs are outstanding at
+     * once. The comment used to claim the frame waits' timeout applied to it, which was not true of the call it
+     * describes - and a doc that promises a bound the code does not have is worse than no bound, because it stops
+     * anyone adding one.
+     * <p>
+     * What is done instead: a watchdog names the stall. If the call has not returned after the same timeout the frame
+     * waits use, one bounded line is recorded and {@code gpuStalled} is set, so a device that stopped making progress
+     * leaves evidence and every later path that must not reset, re-record or free in-use resources already refuses on
+     * that flag. The call itself still returns when the driver returns; nothing here can interrupt it.
+     * <p>
+     * The callers are the three non-per-frame paths - region eviction, backend deletion and frame-target recreation -
+     * so a stall here costs a teardown, not a frame.
      */
     private boolean settleGpu(String reason) {
+        celtium$watchDeviceWait(reason);
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
@@ -7602,6 +7614,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
+        this.deviceWaitFinished = true;
         if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
             this.noteStalled();
             throw new IllegalStateException("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
@@ -7611,6 +7624,33 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("settleGpu(" + reason + ") waited " + millis + "ms for the device");
         }
         return true;
+    }
+
+    /**
+     * Starts the watchdog that names a {@code vkDeviceWaitIdle} which never returns.
+     * <p>
+     * A daemon thread rather than an interrupt: the call cannot be interrupted, so the only useful thing a watchdog can
+     * do is leave evidence and set the flag the failure paths already key on. It is created per call and exits after
+     * firing once, so a normal run costs one short-lived thread per teardown.
+     */
+    private void celtium$watchDeviceWait(String reason) {
+        Thread watchdog = new Thread(() -> {
+            try {
+                Thread.sleep(IDLE_TIMEOUT_NANOS / 1_000_000L);
+            } catch (InterruptedException interrupted) {
+                return;
+            }
+            boolean fired = !this.deviceWaitFinished;
+            if (fired) {
+                this.gpuStalled = true;
+                record("settleGpu(" + reason + "): vkDeviceWaitIdle has not returned after "
+                        + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s; the device has stopped making progress."
+                        + " No recorded work is reset, re-recorded or freed from here on.");
+            }
+        }, "celtium-device-wait-watchdog");
+        watchdog.setDaemon(true);
+        this.deviceWaitFinished = false;
+        watchdog.start();
     }
 
     private boolean waitForIdle() {
