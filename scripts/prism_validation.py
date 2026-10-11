@@ -194,7 +194,18 @@ def main():
     source_game = instance / "minecraft"
     if game == source_game or game.is_relative_to(source_game) or source_game.is_relative_to(game):
         parser.error("The test directory must be separate from the source instance")
-    # Never merge another experiment or source game with these test writes.
+    # Never merge another experiment or source game with these test writes - but a directory left behind by a run that
+    # died before it started is not another experiment. A run killed while it waited for the game slot leaves the
+    # directory already created (the slot is taken before the launch), and the retry then failed with "File exists" and
+    # cost a second slot wait; acceptance hit exactly that. The directory is only reclaimed when it holds no report,
+    # which is the mark of a run that never produced evidence.
+    if game.exists():
+        report_path = game / "logs" / "celtium-validation.json"
+        leftovers = list(game.iterdir())
+        if not report_path.exists() and not (game / "screenshots").exists():
+            shutil.rmtree(game)
+        else:
+            parser.error(f"The test directory exists and holds a report or screenshots: {game}")
     game.mkdir(parents=True, exist_ok=False)
     # A jar the caller supplies with --mod is not copied from the instance, even when the instance has one with the
     # same name. It used to be a hard error ("Test mod would overwrite a copied mod"), which was right when the instance
