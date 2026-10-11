@@ -8,12 +8,24 @@ each paid for.
 
 ## What "done" means for your task
 
-A picture comparison against the GL bridge at the **same scene, same pose, same tick**, plus
-the counters that explain it. Specifically:
+A picture comparison at the **same scene, same pose, same tick**, plus the counters that explain
+it. The reference is one of these three, in this order of preference:
 
-- The bridge leg (`scripts/prism_validation.py` without `-Dceltium.vulkan.glless=true`) draws
-  with real OpenGL and is the reference.
-- The GL-less leg (`-Dceltium.vulkan.glless=true`) is what you are fixing.
+1. **Upstream Celeritas** (pinned 989ebf2e) — the real GL renderer, and the reference the user
+   chose: "glless vs celeritas のほうが楽だし、bridge の保守もいらなくなる". Run it as its own leg:
+   same fixture, same flags, but `--mod .celtium-work/upstream-baseline/build-1122/build/libs/2.5.12-upstream.989ebf2e/celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`
+   and **no** celtium jar and **no** `-Dceltium.vulkan.glless=true`. It draws with OpenGL, which is
+   what vanilla does.
+2. **Stored evidence** — the reference pictures and calibrated floors taken earlier. They remain
+   valid evidence of what vanilla drew, as long as you say which run and what its numbers were.
+3. **A self-comparison on one jar, one flag apart** (a refusal control, a feature toggle). Say so
+   explicitly; two GL-less legs on different jars are not a comparison.
+
+**The bridge leg is retired.** The user decided the GL-interop mode is not needed for the
+completion condition and does not want it maintained, so do not spend the slot on bridge legs and
+do not treat one as a reference.
+
+The GL-less leg (`-Dceltium.vulkan.glless=true`) is what you are fixing.
 - Compare **crops**, name their coordinates, and say what changed. Numbers alone have been
   misread repeatedly; a crop plus a number is the standard here.
 - `validationClean=true`, a missing verdict, an empty refusal census, or "the census no longer
