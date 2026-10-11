@@ -38,3 +38,16 @@ class (`7e3afed8d`, "the bridge done semaphore is signalled only when its previo
 `doneSemaphoreSignalOutstanding` is present in `FrameImageTarget`, `GllessFrameTarget` and `VulkanTerrainGpuBackend`
 in the built jar), so the guard does not cover the path this leg takes. Reported rather than smoothed: the
 `validationMessageCount=0` half of the acceptance **fails**, and that is a finding for the owner of that fix.
+
+## Two acceptance items that fail, and one instrument the acceptance names but the report does not carry
+
+* **`scissorCapturedGroups=0`** on this leg (read from the verification summary in `rendererLog`, the same line that
+  carries the group census). The plan's acceptance for this row wants `scissorCapturedGroups > 0`, so that half
+  **fails**: either the Celeritas screen does not draw through a scissored group, or the counter's site is not reached
+  on this path. It is a counter with a reading site, so this is a measurement, not an absence.
+* **`guiClickDivertedTo` does not exist in the report** - the acceptance names it as the field that says whether the
+  mod's screen opened, but no leg carries that key (`guiClickDivertedTo in json` is false for this leg, and the
+  fallback text lives in `guiScreenOpenedVia`). The field that *does* answer the question is
+  **`guiScreenClassAtCapture`**, which names `org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen` here. Either
+  the fixture should emit `guiClickDivertedTo` or the acceptance should name the class field; today they disagree.
+* **`validationMessageCount=10`** as above.
