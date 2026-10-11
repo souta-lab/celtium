@@ -111,6 +111,15 @@ public final class VulkanContext {
      * used rather than a print: an earlier attempt at printing from here coincided with a run whose terrain passes all
      * errored, and while that link is unproven, a counter costs nothing and cannot perturb anything.
      */
+    /** The bound on a submission's fence wait, matching the renderer's frame waits. */
+    private static final long SUBMIT_TIMEOUT_NANOS = 5_000_000_000L;
+    /**
+     * Queue waits on the bootstrap submit path, where the API offers no timeout. Reported at teardown so a run says
+     * how often the unbounded path was taken; the frame path never uses it.
+     */
+    public static int bootstrapQueueWaits;
+    /** Submissions whose fence did not signal within the bound: a stall, counted so it can be read after the fact. */
+    public static int submitTimeouts;
     public static int submitWithSemaphoresCalls;
     public static int submitWithSemaphoresWaits;
     private VkPhysicalDeviceMemoryProperties memoryProperties;
@@ -276,6 +285,10 @@ public final class VulkanContext {
         // queue is drained before a new one is allocated. Validation flags the alternative as a pending-state
         // reuse, and a half-rewritten command stream is exactly the kind of fault that makes a shader read the
         // wrong data. This is deliberately bootstrap quality; a real frame uses a small pool of buffers and fences.
+        bootstrapQueueWaits++;
+        // Unbounded by the API: vkQueueWaitIdle takes no timeout. Counted rather than described, so the claim that
+        // the frame path is bounded and only this bootstrap path is not can be read off a run instead of argued from
+        // the call sites (audit N14). The frame path waits on its own fence with a bound, and reports a stall by name.
         check(vkQueueWaitIdle(this.queue), "vkQueueWaitIdle(beginCommands)");
         VkCommandBuffer commandBuffer;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -384,7 +397,19 @@ public final class VulkanContext {
                     submit.pSignalSemaphores(stack.longs(signalHandles));
                 }
                 check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit(submitWithSemaphores)");
-                check(vkWaitForFences(this.device, fence, true, Long.MAX_VALUE), "vkWaitForFences(submitWithSemaphores)");
+                // Bounded, and it used to be Long.MAX_VALUE. This is the present path - the swapchain submits with
+                // semaphores every frame - so an unbounded wait here is a hang with no message at all when the device
+                // stops making progress, which is exactly what the audit's N14 asks to have proven rather than
+                // assumed. The timeout matches the backend's frame waits; a timeout is reported by name and the fence
+                // is left alone (never reset, never freed while the queue might still own it).
+                int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
+                if (waited == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
+                    submitTimeouts++;
+                    throw new IllegalStateException("vkWaitForFences(submitWithSemaphores): the submission did not"
+                            + " signal within " + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L) + "s; the device has stopped"
+                            + " making progress (submitWithSemaphores timeouts=" + submitTimeouts + ")");
+                }
+                check(waited, "vkWaitForFences(submitWithSemaphores)");
             }
         } finally {
             if (fence != VK_NULL_HANDLE) {
@@ -405,6 +430,7 @@ public final class VulkanContext {
                 VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                         .pCommandBuffers(stack.pointers(commandBuffer));
                 check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), "vkQueueSubmit");
+                bootstrapQueueWaits++;
                 check(vkQueueWaitIdle(this.queue), "vkQueueWaitIdle");
             }
         } finally {
@@ -503,6 +529,10 @@ public final class VulkanContext {
      */
     public void delete() {
         if (this.device != null) {
+            System.out.println("[Celtium] CELTIUM_WAIT_CENSUS bootstrapQueueWaits=" + bootstrapQueueWaits
+                    + " submitTimeouts=" + submitTimeouts
+                    + " (the bootstrap submit path waits on the queue, which the API cannot bound; the frame path"
+                    + " waits on its own fence with a 5s bound and reports a timeout as a stall)");
             // Every recorded copy is followed by a queue wait, so this only drains work that is already complete.
             vkDeviceWaitIdle(this.device);
             destroyStaging();
