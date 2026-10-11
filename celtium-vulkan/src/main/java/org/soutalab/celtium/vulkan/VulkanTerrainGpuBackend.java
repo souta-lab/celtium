@@ -4910,11 +4910,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // leg with the semaphore traced to this pair rather than the swapchain's. Presenting without the
                     // bridge pair is what the other two call sites already do, so the fallback is a shape the path
                     // has, and it is counted rather than silent.
-                    if (this.frameTarget.doneSemaphoreSignalOutstanding()) {
-                        this.presentBridgeSignalOutstanding++;
-                        bridgeWait = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
-                        bridgeDone = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
-                    } else if (bridgeDone != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                    // Do NOT skip the pair here. Measured: skipping it left the wait semaphore's signal unconsumed, so the
+                    // next beginFrame signalled it a second time - the VUID count stayed at ten and moved from the done
+                    // semaphore to the wait semaphore rather than disappearing. Both halves of the bridge pair must stay
+                    // 1:1, so the fix belongs in the frame-open contract (drain before re-signalling), not at this call
+                    // site. The tracking below is what such a drain would consult.
+                    if (bridgeDone != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
                         this.frameTarget.noteDoneSemaphoreSignalled();
                     }
                     int sourceLayout = this.frameTarget.colorImageLayout();
@@ -4937,6 +4938,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // set inside presentImage itself - the first attempt set them in the probe by mistake, which is why
                     // submitDone read false here and skipping endFrame broke the bridge's copy-back.
                     if (this.swapchain.lastPresentSubmitDone()) {
+                        // The present submit waited on the bridge's wait semaphore, so the target's signal is consumed -
+                        // and this path never said so. The flag stayed true after a perfectly normal frame, which is
+                        // what made every later "is it outstanding?" decision wrong: endFrame cleared it blindly (so a
+                        // spurious drain was the alternative), and the drain submitted a wait on an already-consumed
+                        // semaphore, which then consumed the *next* frame's signal and shifted the whole pairing by one
+                        // frame. Both are the same root cause - the consumer did not report the consumption - and this
+                        // is where the report belongs, next to the submit that did the waiting.
+                        if (this.frameTarget instanceof GllessFrameTarget gllessTarget) {
+                            gllessTarget.noteWaitConsumed();
+                        }
                         this.frameTarget.endFrame();
                     } else {
                         // The frame is open and its GL-to-Vulkan semaphore has been acquired, but nothing was submitted:
@@ -12744,6 +12755,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * seeded post-chain path synchronizes with the fence instead, and the frame's semaphores belong to whoever
      * opened the frame.
      */
+    /** Trace of what each frame submission actually carried, for naming a semaphore handoff that went wrong. */
+    private static final boolean UPLOAD_SUBMIT_TRACE = Boolean.getBoolean("celtium.vulkan.uploadTrace");
+
     private void submitCommands(boolean withFrameSemaphores) {
         if (this.gpuStalled) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
@@ -12795,6 +12809,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (waitCount > 0) {
                 submit.waitSemaphoreCount(waitCount);
                 submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages);
+            }
+            if (UPLOAD_SUBMIT_TRACE) {
+                System.out.println("[Celtium] CELTIUM_FRAME_SUBMIT frame=" + this.frameId
+                        + " withFrameSemaphores=" + withFrameSemaphores + " waitCount=" + waitCount
+                        + " uploadWait=0x" + Long.toHexString(uploadWait) + " signals="
+                        + (signalSemaphores == null ? 0 : signalSemaphores.remaining())
+                        + " boundWaitCount=" + submit.waitSemaphoreCount());
             }
             if (signalSemaphores != null) {
                 submit.pSignalSemaphores(signalSemaphores);
