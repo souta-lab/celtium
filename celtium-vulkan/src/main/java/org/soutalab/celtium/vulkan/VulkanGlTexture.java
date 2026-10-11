@@ -3023,6 +3023,13 @@ public final class VulkanGlTexture {
         if (captured == null) {
             throw captureMiss(glTextureId, level, "the stub captured no upload for this texture level");
         }
+        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelHasGamePixels(glTextureId, level)) {
+            // A surface exists but the game never wrote a pixel into it: the zero fill an allocation with a NULL data
+            // pointer leaves. There is nothing to read, which is the same condition as a missing capture - and copying
+            // the zeros would put them into a mirror that then samples as transparent content.
+            throw captureMiss(glTextureId, level, "the level was allocated with no data and no upload ever wrote pixels"
+                    + " into it, so the stub holds an extent but no game bytes");
+        }
         int capturedWidth = capturedSize[0];
         int capturedHeight = capturedSize[1];
         if (capturedWidth <= 0 || capturedHeight <= 0) {

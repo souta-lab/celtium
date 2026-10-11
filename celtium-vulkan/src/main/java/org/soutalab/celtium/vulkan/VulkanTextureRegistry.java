@@ -91,6 +91,15 @@ public final class VulkanTextureRegistry {
      */
     private int filledFromCapture;
     /**
+     * Under the GL stub, captured surfaces refused because the game never wrote a pixel into the level.
+     * <p>
+     * A level allocated with a NULL data pointer has a surface (zeros) but no game bytes; the stub answers that through
+     * {@code CeltiumGlStub.textureLevelHasGamePixels}. Filling a mirror from one would mark whole content over an image
+     * no upload ever filled - measured as two 1280x720 mirrors and the light map's first read reporting
+     * {@code opaque=0/… full=true}. Non-zero here is the number of times that was refused instead.
+     */
+    private int capturesRefusedWithoutGamePixels;
+    /**
      * Under the GL stub, readbacks that were not attempted because neither an announcement nor a captured upload held
      * pixels. The mirror keeps the content it already had, which is nothing when it never received any - and a mirror
      * whose whole content never arrived is refused by the sampling side rather than drawn.
@@ -611,6 +620,18 @@ public final class VulkanTextureRegistry {
         int[] extent = new int[2];
         java.nio.ByteBuffer rgba = capturedRgbaOf(glTextureId, extent);
         if (rgba == null) {
+            return false;
+        }
+        if (!CeltiumGlStub.textureLevelHasGamePixels(glTextureId, 0)) {
+            // A surface exists but the game never wrote a pixel into it: it is the zero fill an allocation with a NULL
+            // data pointer leaves so that later sub-image writes have somewhere to land. Copying it would mark a mirror
+            // whole over an image no upload ever filled, and the sampling side would draw those zeros as content. Two
+            // frame-sized colour textures and the light map's first read arrived exactly this way. Refused and counted:
+            // the mirror keeps whatever it had, and the announcement carrying the real pixels fills it as before.
+            this.capturesRefusedWithoutGamePixels++;
+            this.rejectPatch("GL-less mirror: the captured surface for GL texture " + glTextureId + " is " + extent[0]
+                    + "x" + extent[1] + " with no game pixels (an allocation with a NULL data pointer); a mirror is not"
+                    + " built from it");
             return false;
         }
         try {
@@ -1353,10 +1374,12 @@ public final class VulkanTextureRegistry {
             // The bridge's line stays exactly what it was: the split below only has a meaning where no readback exists.
             return costs;
         }
-        // The GL-less split: which source filled a mirror when no readback could, and how often a mirror was left without
-        // content because neither was there.
+        // The GL-less split: which source filled a mirror when no readback could, how often a mirror was left without
+        // content because neither was there, and how often a captured surface was refused because the level held no
+        // game pixels at all (an allocation with a NULL data pointer - the stub's own answer, not a pixel guess).
         return costs + " glLess[fromAnnouncement=" + this.filledFromAnnouncement + " fromCapture=" + this.filledFromCapture
-                + " noContent=" + this.readbacksSkippedWithoutContent + "]";
+                + " noContent=" + this.readbacksSkippedWithoutContent
+                + " noGamePixels=" + this.capturesRefusedWithoutGamePixels + "]";
     }
 
     /** {@return how many 1x1 mirrors the last invalidation left alone}. */

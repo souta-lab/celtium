@@ -4240,6 +4240,67 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * and using it would draw with a blend or depth combination the batch never asked for. The array is
      * {blend, srcFactor, dstFactor, depthTest, depthWrite, cull} with the factors already in Vulkan form.
      */
+    /**
+     * Whether the mirrored enable bits are reconciled with the GL enable record outside the world pass.
+     * <p>
+     * Default on. {@code -Dceltium.vulkan.overlayGlState=false} restores the previous behaviour exactly, so a run
+     * can compare the two without a second build.
+     */
+    private static final boolean OVERLAY_GL_STATE =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.overlayGlState", "true"));
+    /** Groups whose blend enable the GL record corrected, and the same for the depth test and culling. */
+    private int overlayBlendCorrections;
+    private int overlayDepthCorrections;
+    private int overlayCullCorrections;
+
+    /**
+     * Takes the enable bits from the GL enable record for a batch that is not part of the world pass.
+     * <p>
+     * Measured, not assumed: the mirror is fed at the head of every hooked {@code GlStateManager} call, and the GL
+     * enable record is fed by the {@code glEnable}/{@code glDisable} the game's own code issues. They are two copies
+     * of one fact, and a run that printed both side by side on every group found them disagreeing in <b>both</b>
+     * directions - 146 groups per run where the mirror said blending was off and GL said on, and 322 the other way
+     * (formats 1, 2, 4, 6, 7 and 8). The first is what the JEI category label exposes: its fourteen glyph quads are
+     * {@code POSITION_TEX_COLOR} with the mirror reporting {@code blend=0}, so the whole glyph quad is written
+     * instead of only the glyph's coverage, and the label comes out as black cells with the letters showing through
+     * where the same fixture, tick and code drawn by GL shows dark letters on the light label strip.
+     * <p>
+     * Outside the world pass the GL record is the authority, because it is the state the batch would really have been
+     * drawn with: the same reasoning the matrix capture already follows when it stops reading GL only after the two
+     * were measured to agree. Here they do not agree, so the record wins and each correction is counted - a run says
+     * how often the mirror was wrong rather than leaving it to be inferred from a picture. The world pass is left
+     * alone: its state has its own owners and a per-batch query there is the cost the plan calls dominant.
+     */
+    private void reconcileOverlayEnableState() {
+        if (!OVERLAY_GL_STATE || this.worldPassActive) {
+            return;
+        }
+        int glBlend = glEnableState(org.lwjgl.opengl.GL11.GL_BLEND);
+        if (glBlend >= 0 && (glBlend != 0) != this.immediateState.blendEnabled()) {
+            this.immediateState.blendEnabled(glBlend != 0);
+            this.overlayBlendCorrections++;
+        }
+        int glDepth = glEnableState(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+        if (glDepth >= 0 && (glDepth != 0) != this.immediateState.depthTestEnabled()) {
+            this.immediateState.depthTestEnabled(glDepth != 0);
+            this.overlayDepthCorrections++;
+        }
+        int glCull = glEnableState(org.lwjgl.opengl.GL11.GL_CULL_FACE);
+        if (glCull >= 0 && (glCull != 0) != this.immediateState.cullEnabled()) {
+            this.immediateState.cullEnabled(glCull != 0);
+            this.overlayCullCorrections++;
+        }
+    }
+
+    /** {@code 1}/{@code 0} for an enabled/disabled capability, or {@code -1} when the query is unavailable. */
+    private static int glEnableState(int capability) {
+        try {
+            return org.lwjgl.opengl.GL11.glIsEnabled(capability) ? 1 : 0;
+        } catch (RuntimeException | LinkageError error) {
+            return -1;
+        }
+    }
+
     private int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
 
@@ -5508,6 +5569,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
                 + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
+                // How often the mirrored enable bits disagreed with the GL enable record outside the world pass, and
+                // were corrected from it. Zero is the interesting value: it says the two copies agreed.
+                + " overlayGlState=" + OVERLAY_GL_STATE + " overlayBlendCorrections=" + this.overlayBlendCorrections
+                + " overlayDepthCorrections=" + this.overlayDepthCorrections
+                + " overlayCullCorrections=" + this.overlayCullCorrections
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
                 + " acceptedByFormat=1:" + this.acceptedByFormat[1] + ",2:" + this.acceptedByFormat[2]
                 + ",3:" + this.acceptedByFormat[3] + ",4:" + this.acceptedByFormat[4] + ",5:" + this.acceptedByFormat[5]

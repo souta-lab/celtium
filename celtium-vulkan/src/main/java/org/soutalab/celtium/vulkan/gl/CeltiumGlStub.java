@@ -583,6 +583,30 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * {@return whether the level holds pixels the game itself wrote}, false for the zero-filled surface a
+     * {@code glTexImage2D} with a NULL data pointer left behind.
+     * <p>
+     * {@link #textureUploadRgba8} answers "is there a surface", and an allocation with no data gives one: the game
+     * allocates every level of a texture that way and then fills it in patches, so the surface has to exist. What the
+     * surface cannot say is whether any of it is the game's, and a mirror built from allocation zeros claims whole
+     * content no upload ever put there - measured as two 1280x720 mirrors, and the light map's first read, reporting
+     * {@code opaque=0} over {@code full=true}. A level with any real upload - a full image or a single patch - answers
+     * true, because that surface is what GL holds: the patches where they were written, undefined (read as zeros)
+     * elsewhere.
+     *
+     * @param textureName the GL texture name
+     * @param level       the mip level
+     */
+    public static boolean textureLevelHasGamePixels(int textureName, int level) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return false;
+        }
+        TexCapture capture = stub.texCaptures.get(Long.valueOf(texLevelKey(textureName, level)));
+        return capture != null && capture.gamePixels;
+    }
+
+    /**
      * One line of capture diagnostics: the levels currently holding pixels, how many came from a full image, a
      * sub-image patch or an undefined level allocated with no data and zero-filled (the shape the game gives its
      * atlases before writing them sprite by sprite), the uploads that could not be converted (unsupported format/type
@@ -1778,11 +1802,23 @@ public final class CeltiumGlStub implements FunctionProvider {
         final int width;
         final int height;
         final ByteBuffer data;
+        /**
+         * Whether the game itself wrote a pixel into this level - true for a {@code glTexImage2D} that carried data and
+         * for a {@code glTexSubImage2D} patch, false for the zero-filled surface {@link #undefinedLevel} lays down for
+         * an allocation with a NULL data pointer.
+         * <p>
+         * The surface alone cannot answer this: an undefined level holds zeros whether the game filled it or not, and a
+         * mirror built from those zeros claims whole content that no upload ever put there. Consumers ask through
+         * {@link #textureLevelHasGamePixels}. Mutable because a patch is copied into an already filed surface, and
+         * volatile because the game thread writes it while a reader may be polling the record.
+         */
+        volatile boolean gamePixels;
 
-        TexCapture(int width, int height, ByteBuffer data) {
+        TexCapture(int width, int height, ByteBuffer data, boolean gamePixels) {
             this.width = width;
             this.height = height;
             this.data = data;
+            this.gamePixels = gamePixels;
         }
     }
 
@@ -1826,7 +1862,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         // Publishing a new record instead of rewriting the old one, so a reader polling the level sees one whole image.
-        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, rgba));
+        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, rgba, true));
         this.fullCaptures.incrementAndGet();
     }
 
@@ -1852,7 +1888,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small
         // buffer, and a garbage surface is exactly the silently wrong atlas this path exists to prevent.
         MemoryUtil.memSet(memAddress(zeros), 0, bytes);
-        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, zeros));
+        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, zeros, false));
         this.undefinedExtents.incrementAndGet();
     }
 
@@ -1888,7 +1924,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long key = texLevelKey(name, level);
         TexCapture existing = this.texCaptures.get(Long.valueOf(key));
         if (existing == null) {
-            this.texCaptures.put(Long.valueOf(key), new TexCapture(width, height, patch));
+            this.texCaptures.put(Long.valueOf(key), new TexCapture(width, height, patch, true));
             this.subCaptures.incrementAndGet();
             return;
         }
@@ -1902,6 +1938,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             // Absolute and whole-row, so the record's own position never moves under a concurrent reader.
             existing.data.put((y + row) * destinationStride + x * 4, patch, row * sourceStride, sourceStride);
         }
+        // The surface now holds game bytes even when it started as an undefined allocation: the level is what GL has
+        // (undefined elsewhere, this patch here), so a mirror may be built from it. Set after the copy, so a reader
+        // that sees the flag also sees the rows.
+        existing.gamePixels = true;
         this.subCaptures.incrementAndGet();
     }
 
