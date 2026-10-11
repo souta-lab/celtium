@@ -71,6 +71,8 @@ public final class VulkanSwapchain {
     private long[] renderFinishedSemaphores;
     private int renderFinishedCursor;
     private int presentTraces;
+    /** Partly built semaphore pools that were rolled back instead of abandoned (BH-20), for the report. */
+    private int semaphorePoolRollbacks;
 
     // ---- the present-mode contract (task-56) ---------------------------------------------------------------------
     //
@@ -463,6 +465,12 @@ public final class VulkanSwapchain {
             if (result != VK_SUCCESS || supported.get(0) != VK_TRUE) {
                 reasons.add("queue family " + context.queueFamilyIndex() + " cannot present to the surface"
                         + " (VkResult " + result + ", supported=" + (result == VK_SUCCESS ? supported.get(0) : -1) + ")");
+                // BH-20: this is the one refusal that happens *after* the surface exists and *before* a swapchain
+                // object owns it. Returning null here left the surface - and with it the platform connection - alive
+                // for a caller that has nothing to delete it with, on exactly the configuration the audit names
+                // (present unsupported on the chosen queue family), which is also the path BH-19 will make reachable
+                // when another candidate is considered. Released here so the next candidate starts clean.
+                vkDestroySurfaceKHR(context.instance(), surface, null);
                 return null;
             }
         }
@@ -902,6 +910,14 @@ public final class VulkanSwapchain {
             for (int i = 0; i < count; i++) {
                 if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
                         .sType$Default(), null, semaphore) != VK_SUCCESS) {
+                    // BH-20: the pool is local until it is complete, so a failure at semaphore i used to leak the i-1
+                    // that were already made - and this pool is rebuilt on every swapchain recreation, so a driver
+                    // under memory pressure would accumulate them. Roll back in reverse and leave the field null, so
+                    // the next attempt builds a fresh pool rather than a half one.
+                    for (int made = 0; made < i; made++) {
+                        vkDestroySemaphore(this.context.device(), pool[made], null);
+                    }
+                    semaphorePoolRollbacks++;
                     return VK_NULL_HANDLE;
                 }
                 pool[i] = semaphore.get(0);
@@ -922,6 +938,11 @@ public final class VulkanSwapchain {
             for (int i = 0; i < count; i++) {
                 if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
                         .sType$Default(), null, semaphore) != VK_SUCCESS) {
+                    // BH-20, same shape as the acquire pool: release what this attempt made before giving up.
+                    for (int made = 0; made < i; made++) {
+                        vkDestroySemaphore(this.context.device(), pool[made], null);
+                    }
+                    semaphorePoolRollbacks++;
                     return VK_NULL_HANDLE;
                 }
                 pool[i] = semaphore.get(0);
@@ -1235,6 +1256,11 @@ public final class VulkanSwapchain {
             // A null allocator is the correct way to ask for the implementation's default; a zeroed
             // VkAllocationCallbacks is invalid (its function pointers must be non-null) and the driver dereferenced
             // them, which crashed the client.
+            // BH-18: print the argument summary when the creation *succeeds*. It used to reach a log only inside the
+            // probe-failure message, so the chosen image count, usage set, composite alpha and format were measurable
+            // only when the call failed - and "the fields are set in the source" is not a measurement of the surface's
+            // values. One line per swapchain, including the ones recreated by a VSync change or an out-of-date surface.
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN " + this.argumentSummary);
             result = vkCreateSwapchainKHR(this.context.device(), create, null, handle);
             if (result != VK_SUCCESS) {
                 reasons.add("vkCreateSwapchainKHR returned " + result + " (formats " + availableFormats + ") ["

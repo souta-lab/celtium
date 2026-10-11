@@ -377,9 +377,20 @@ public final class VulkanGlState {
         return this.alphaRef;
     }
 
+    /**
+     * {@code GlStateManager.alphaFunc}: the comparison function and the reference value of the alpha test.
+     * <p>
+     * BH-03: this setter used to write {@code alphaRef} while the capture read {@code alphaFuncReference}, a second
+     * field nothing on the game path ever wrote - it started at 0.1 and stayed there unless the font path's temporary
+     * override touched it. Every {@code alphaFunc} the game made was therefore invisible: the batch was tested against
+     * 0.1 whatever reference the caller asked for, and cutout content whose alpha sits between the two kept or lost
+     * fragments against the wrong threshold. Both fields are written here so the two spellings of the same state cannot
+     * diverge again while the callers of the older accessor still work.
+     */
     public void alphaFunc(int func, float reference) {
         this.alphaFunc = func;
         this.alphaRef = reference;
+        this.alphaFuncReference = reference;
     }
 
     public boolean lightingEnabled() {
@@ -454,22 +465,59 @@ public final class VulkanGlState {
         return this.lightsEnabledMask;
     }
 
-    /** Records the GL name of the bound texture, as {@code GlStateManager.func_179144_i} reports it. */
+    /**
+     * Per-texture-unit binding and {@code TEXTURE_2D} enable.
+     * <p>
+     * BH-06: one field for both meant that a bind on unit 1 or 2 (the light map unit, a mod's own unit) replaced the
+     * name the immediate path reads for its base sampler, and a {@code disableTexture2D} on one unit disabled it for
+     * every unit. GL keeps both per unit, and vanilla's entity brightness path binds another unit and then returns to
+     * unit 0 without re-binding - which is exactly the sequence that made unit 0 read the wrong texture. The arrays
+     * are indexed by the unit number {@code activeTextureUnit} already tracks; unit 0 is the base sampler the
+     * immediate path and {@code invalidateBoundTexture} read, and it keeps the old no-argument accessors' meaning.
+     */
+    private final int[] boundTextureByUnit = new int[8];
+    private final boolean[] texture2dEnabledByUnit = new boolean[] {
+        true, true, true, true, true, true, true, true };
+
+    private int unitIndex(int unit) {
+        return unit >= 0 && unit < this.boundTextureByUnit.length ? unit : 0;
+    }
+
+    /** Records the GL name of the bound texture on the <em>active</em> unit, as {@code GlStateManager.func_179144_i} does. */
     public void bindTexture(int glTextureId) {
-        this.boundTextureName = glTextureId;
+        this.boundTextureByUnit[unitIndex(this.activeTextureUnit)] = glTextureId;
+        // Kept in step for the single-value readers that predate the per-unit model (the field is otherwise unused).
+        if (this.activeTextureUnit == 0) {
+            this.boundTextureName = glTextureId;
+        }
     }
 
-    /** {@return the GL name of the bound texture}, or 0 when nothing is bound */
+    /** {@return the GL name bound on {@code unit}}, or 0 when nothing is bound there. */
+    public int boundTextureName(int unit) {
+        return this.boundTextureByUnit[unitIndex(unit)];
+    }
+
+    /** {@return the GL name bound on unit 0}, the base sampler the immediate path reads. */
     public int boundTextureName() {
-        return this.boundTextureName;
+        return this.boundTextureByUnit[0];
     }
 
+    /** {@return whether {@code TEXTURE_2D} is enabled on unit 0}, the base sampler's unit. */
     public boolean texture2dEnabled() {
-        return this.texture2dEnabled;
+        return this.texture2dEnabledByUnit[0];
     }
 
+    /** {@return whether {@code TEXTURE_2D} is enabled on {@code unit}}. */
+    public boolean texture2dEnabled(int unit) {
+        return this.texture2dEnabledByUnit[unitIndex(unit)];
+    }
+
+    /** Enables or disables {@code TEXTURE_2D} on the <em>active</em> unit, as {@code GlStateManager} does. */
     public void texture2dEnabled(boolean enabled) {
-        this.texture2dEnabled = enabled;
+        this.texture2dEnabledByUnit[unitIndex(this.activeTextureUnit)] = enabled;
+        if (this.activeTextureUnit == 0) {
+            this.texture2dEnabled = enabled;
+        }
     }
 
     public int shadeModel() {

@@ -507,6 +507,82 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * The owner state a recording mutates, so a recording that is thrown away can put it back (BH-26).
+     * <p>
+     * {@link #recordAcquireBarriers} does not only record: it also advances this object's idea of the world - the
+     * first-acquire flag, the two image layouts, the "never cleared" flag, the latched clear it consumes, and both
+     * pairs' acquired flags. When the command buffer is reset before any submission (the backend's abort path), the
+     * recorded commands are gone but those flags stayed advanced, so the re-record skipped the first transition and
+     * the clear it had already consumed. The snapshot is taken before the record and handed back on the abort.
+     */
+    public static final class RecordingSnapshot {
+        private boolean firstAcquire;
+        private boolean neverCleared;
+        private int colorImageLayout;
+        private int depthImageLayout;
+        private boolean gameClearLatched;
+        private int gameClearLatchedMask;
+        private float latchedRed;
+        private float latchedGreen;
+        private float latchedBlue;
+        private float latchedAlpha;
+        private double latchedDepth;
+        private boolean defaultAcquired;
+        private boolean chainAcquired;
+    }
+
+    /** {@return the owner state as it is now}, to be handed to {@link #rollbackRecording} if the record is discarded. */
+    public RecordingSnapshot snapshotRecording() {
+        RecordingSnapshot snapshot = new RecordingSnapshot();
+        snapshot.firstAcquire = this.firstAcquire;
+        snapshot.neverCleared = this.neverCleared;
+        snapshot.colorImageLayout = this.colorImageLayout;
+        snapshot.depthImageLayout = this.depthImageLayout;
+        snapshot.gameClearLatched = this.gameClearLatched;
+        snapshot.gameClearLatchedMask = this.gameClearLatchedMask;
+        snapshot.latchedRed = this.gameClearLatchedRed;
+        snapshot.latchedGreen = this.gameClearLatchedGreen;
+        snapshot.latchedBlue = this.gameClearLatchedBlue;
+        snapshot.latchedAlpha = this.gameClearLatchedAlpha;
+        snapshot.latchedDepth = this.gameClearLatchedDepth;
+        snapshot.defaultAcquired = this.defaultPair.acquired;
+        snapshot.chainAcquired = this.chainPair.acquired;
+        return snapshot;
+    }
+
+    /**
+     * Puts the owner state back to what {@link #snapshotRecording} saw, because the commands that advanced it were
+     * never submitted. Counted ({@code recordingRollbacks}) so a run says how often a recording was discarded.
+     */
+    public void rollbackRecording(RecordingSnapshot snapshot) {
+        if (snapshot == null) {
+            return;
+        }
+        this.firstAcquire = snapshot.firstAcquire;
+        this.neverCleared = snapshot.neverCleared;
+        this.colorImageLayout = snapshot.colorImageLayout;
+        this.depthImageLayout = snapshot.depthImageLayout;
+        this.gameClearLatched = snapshot.gameClearLatched;
+        this.gameClearLatchedMask = snapshot.gameClearLatchedMask;
+        this.gameClearLatchedRed = snapshot.latchedRed;
+        this.gameClearLatchedGreen = snapshot.latchedGreen;
+        this.gameClearLatchedBlue = snapshot.latchedBlue;
+        this.gameClearLatchedAlpha = snapshot.latchedAlpha;
+        this.gameClearLatchedDepth = snapshot.latchedDepth;
+        this.defaultPair.acquired = snapshot.defaultAcquired;
+        this.chainPair.acquired = snapshot.chainAcquired;
+        this.recordingRollbacks++;
+    }
+
+    /** Recordings discarded before submission and rolled back (BH-26). */
+    private int recordingRollbacks;
+
+    /** {@return how many recordings were discarded and rolled back}. */
+    public int recordingRollbacks() {
+        return this.recordingRollbacks;
+    }
+
+    /**
      * Latches a clear the game asked for while the framebuffer it names was still bound, so it can be applied to the
      * image that framebuffer stands for rather than to whatever is bound when the request is finally read. The caller
      * is {@code VulkanTerrainGpuBackend.bindFramebuffer}, which is the only place that still knows both facts: the

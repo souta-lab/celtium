@@ -50,7 +50,10 @@ public final class VulkanImmediateItemPipeline {
     public static final int VERTEX_BYTES = 28;
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
     // inside the 128 bytes Vulkan guarantees (audit S19).
-    private static final int PUSH_CONSTANT_BYTES = 128;
+    // BH-30: the unlit variant pairs the shared immediate_tex_color pair, whose block now declares the fog region up
+    // to byte 207. A 128-byte range would make the shader's block exceed the declared range (VUID on the push range),
+    // so the unlit range grows to the 208 the shared layout needs; the lit range is unchanged at 216.
+    private static final int PUSH_CONSTANT_BYTES = 208;
     /**
      * The lit variant's block: the shared 128 plus five vec4 - two model-space light directions, the scene ambient,
      * and each light's diffuse - plus the light-map coordinate pair at 208, matching the layout
@@ -452,7 +455,12 @@ public final class VulkanImmediateItemPipeline {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ByteBuffer vertexCode = SpirvShaders.load(this.lit ? SpirvShaders.IMMEDIATE_TEX_COLOR_LIT_VERTEX
                     : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
-            ByteBuffer fragmentCode = SpirvShaders.load(SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
+            // BH-30: the lit variant has its own fragment without the fog input/math - its push block spends 128..215
+            // on the lighting payload, so the shared fragment's fog block cannot be declared there (and with the shared
+            // fragment the pipeline failed to create at all: fragment input 2 with no matching vertex output, which
+            // refused every lit ITEM/id9 batch, i.e. entities, the held item and TESR models).
+            ByteBuffer fragmentCode = SpirvShaders.load(this.lit
+                    ? SpirvShaders.IMMEDIATE_TEX_COLOR_LIT_FRAGMENT : SpirvShaders.IMMEDIATE_TEX_COLOR_FRAGMENT);
             long vertexModule = VK_NULL_HANDLE;
             long fragmentModule = VK_NULL_HANDLE;
             try {

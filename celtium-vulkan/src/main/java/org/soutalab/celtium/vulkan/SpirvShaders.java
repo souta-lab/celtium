@@ -64,6 +64,15 @@ public final class SpirvShaders {
     /** Fragment module for textured immediate-mode geometry. */
     public static final String IMMEDIATE_TEX_COLOR_FRAGMENT = "immediate_tex_color.frag";
 
+    /**
+     * Fragment module for the lit ITEM variant (BH-30's collision fix). It is the shared
+     * {@link #IMMEDIATE_TEX_COLOR_FRAGMENT} without the fog input and fog math, because the lit family's push block
+     * spends 128..215 on the lighting payload and the 80-byte fog block does not fit beside it on a 256-byte device.
+     * The SPIR-V interface rule is per pipeline, so this fragment is what makes the lit variant's pipeline creation
+     * legal again without moving any offset.
+     */
+    public static final String IMMEDIATE_TEX_COLOR_LIT_FRAGMENT = "immediate_tex_color_lit.frag";
+
     /** Vertex module for the lit variant - the fixed-function eval for the ITEM format's normal element. */
     public static final String IMMEDIATE_TEX_COLOR_LIT_VERTEX = "immediate_tex_color_lit.vert";
 

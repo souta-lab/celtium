@@ -615,6 +615,9 @@ public final class VulkanImmediateTexturePipeline {
 
     private void createPipeline() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            // BH-30: the shared pair carries the world fog block at 128..207, which this layout declares 208 bytes for
+            // and the backend writes for every group without a lighting payload. The lit ITEM variant has its own
+            // fragment (IMMEDIATE_TEX_COLOR_LIT_FRAGMENT) because its block spends 128..215 on lighting.
             ByteBuffer vertexCode = SpirvShaders.load(this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_VERTEX
                     : this.positionOnly ? SpirvShaders.IMMEDIATE_POSITION_TEX_VERTEX : SpirvShaders.IMMEDIATE_TEX_COLOR_VERTEX);
             ByteBuffer fragmentCode = SpirvShaders.load(this.positionNoTexture ? SpirvShaders.IMMEDIATE_POSITION_FRAGMENT
