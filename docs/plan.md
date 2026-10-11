@@ -274,6 +274,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.288 **round 94: 白の owner は id 8 の mirror（3つの独立読みで確定）・announcement の順序計装が着地・外部参考**
+
+- **パノラマの owner 確定（fog-path の測定＋Lead の比較）**: `passImage == readImage` が3 leg で一致し、readback は正しい。
+  **faces が白を書いている**ことが3つの独立した読みで確定:
+  (1) `vertexColour0=0xffffffff`（group 自身の頂点メモリから読んだ packed colour が不透明白）、
+  (2) `CELTIUM_MIRROR_SOURCE id=8 … opaque=65536/65536 firstOpaque=0xffffffff announced=0 hasEntry=true full=true`（mirror が一様白）、
+  (3) fragment は `texture × v_Color` で discard なし（`alphaFunc=0`・`alphaRef=0.0`・alphaTest off の A/B で mean 不変）。
+  ＝**owner は texture id 8 の mirror 内容**（何が埋めても白だった、または announcement が白を運んだ）。
+- **順序を答える計装が着地（texture-mirror）**: `CELTIUM_LIFECYCLE announceImage id=N seq=K size=WxH hasEntry=…` と
+  `CELTIUM_LIFECYCLE forgetTexture id=N seq=K hadEntry=… announcedUnconsumed=…` を **bounded 64・単調 seq** で印字
+  （frame 番号ではなく**イベント順序**であることを明記）。既存の `CELTIUM_UPLOAD_CALLER id=… WxH first=0x… callers=[…]` と並べれば
+  「`int[]` で先に白く埋められた名前へ `BufferedImage` announcement が後から来るか」が2行で決まる。
+- **原典の意味づけ（web 調査）**: `glTexImage2D`（**確保**・内容なし）と `glTexSubImage2D`（**更新**・内容あり）の区別が本質で、
+  確保だけを announcement として扱うと mirror が内容を持たない（[Khronos の glTexSubImage2D](https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexSubImage2D.xhtml)・
+  [OpenRA の glTexSubImage2D 議論](https://github.com/OpenRA/OpenRA/issues/22496)・[Khronos wiki](https://www.khronos.org/opengl/wiki/GlTexSubImage2D)）。
+  ＝**mirror は sub-image 更新から埋める**という設計判断の根拠。
+- **次の測定（1 leg・新計器不要）**: `CELTIUM_LIFECYCLE` の seq を panorama id について読み、`int[]`（splash の白）と
+  `announceImage`（PNG）の前後を確定する。announceImage が後なら**消費側が古い世代を掴んでいる**、来ないなら **hook が発火していない**。
+- **他の担当の着地**: BH-32 の実効 maxLod レポート・BH-22 の census・OPT-04 の残り site 修正（`0638777c6`）・
+  `pinSections`/`indirectToggleAtFrame` の決定・BH-03 の stub property 採用。
+
 ## 0.287 **round 93: OPT-04 の残り site を修正・OPT-09 step(3) は cross-boot 不能と判明（35.5% 差）・fixture の決定性 knob を配布**
 
 - **OPT-04 の残り site を修正（Lead・`0638777c6`）**: `ensureFramebuffer` が render pass handle の変化時に
