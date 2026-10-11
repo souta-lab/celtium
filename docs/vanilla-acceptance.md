@@ -843,9 +843,21 @@ draws were merged into a run opened under a different transform. **The batching 
 - row 23 (the mod cohort) - the JEI panel crop I read showed "Gold Ore" and the category label legible on jar
   `609eb69a9064df05`, so *that* jar's text was not garbled; that is one observation, not a batching control.
 
-They stay in the table with their numbers; with batching off by default they are re-takeable, and `r12-menu`
-(the user's shape with a compositor capture, current jar) is the re-take. Until it lands, the text status rests
-on the user's live screenshot above - legible - with the caveat that it is their capture.
+**The re-take is in, and it does not support "the menu text is legible": the button labels are still blocks.** On
+the batching-off jar `d805718167095c51` (`r12b-menu`, user's shape, compositor capture 22:38, best frame 1437
+distinct colours) the **footer is perfectly legible** ("Minecraft 1.12.2", "MCP 9.42", "Cleanroom
+0.6.13-alpha", "14 mods loaded, 14 mods active"), the **splash text is legible** ("Follow the train, CJ!"), the
+logo draws - and **every button label is a white/blue block**: `Singleplayer`, `Multiplayer`, `Options...`,
+`Language`, `Quit Game`. The user's own live capture at 21:25:28 shows **the same state**
+(`~/Pictures/screenshot_20261011_212528.png`, 1920x1079, preserved as
+`.celtium-work/acceptance/user-live/user-menu-212528.png`, sha256 `a35c8f3e3a338812…`: garbled buttons, legible
+footer, legible splash), and the batching-ON jar produces a **byte-identical button crop**. The font counters
+differ between the two jars - batching on: `accepted=0 refused=100 %`; batching off: `accepted=334620 refused=0` -
+so the font path accepts on the current jar and the labels are still blocks: **the defect is not the batching flag
+alone**, and the Lead's one-flag control does not reproduce on this jar. The explicit-flag control
+(`r12c-menu-explicit`, `-Dceltium.font.batching=false` on the same jar) is running to close the last gap. Crops:
+`.celtium-work/acceptance/r12b-menu-evidence/` (`menu-best.png` sha256 `dbfad9b5fa7a2f4f…`, `menu-buttons.png`,
+`menu-footer.png`, `menu-splash.png`). The text rows 13/19/23 are therefore **still not re-taken as legible**.
 
 ## 6h. The user-facing state at the start of round 12 (recorded, not re-litigated)
 
