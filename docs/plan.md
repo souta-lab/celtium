@@ -82,6 +82,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.127 **統合**: 失われた担当4体の作業を保全し、監査バッチの現状を固定（2026-10-11）
+
+4体の担当が同時に落ちた（最終報告の直後）。作業は**未commitのまま作業ツリーに残っていた**ため、コンパイルが通ることを確認したうえで単位ごとに保全した。
+
+| commit | 内容 | 受入の状態 |
+|---|---|---|
+| `aa9a02801` | N02 の寿命契約（`VulkanDynamicMesh` 389行・`VulkanModelQuadCapture` 171行・GlStateManagerMixin の injector 2本）＋ `ModelListLifecycleProbe` | 担当の10ステップ probe 通過（baseline live=2/buffers=4 → add 3 → recompile 4・retired 1・live 不変 → delete 2 → id 再利用 3）。world-switch/reload と、私の retire 順序変更後の再測定は未 |
+| `32528cccf` | N04 gate（`unsuppliedInput`）と N05 token（`commitPasses(int)`）＋ `ShaderGroupMixin` の guard | 担当の実測あり（bridge: `postChains=43 postAdopted=0 postRunsOnStandIn=43` → `postChains=0 postRunsOnStandIn=0`／fail-once: `postRepeatInits=1 postRecordingCommits=59 postStaleCommits=0`・frames 236 vs control 205・VUID 0）。**GL-less glow の end-to-end は未** |
+| `6a52c4002` | texture batch（`VulkanGlTexture` 1042行・registry・CPU contract check・`ForeignLayoutLedgerTest`） | **担当の報告が届いていない**。diff を読み、N07/N08/N17 の受入を取るのが次の作業 |
+| `9fea3dcc5` | font の glyph capture（mixin 2本＋`impl/font/`）＋監査文書 | 担当の実測: glyph 34000 提出/34000 受理/拒否0。**実画像受入は未**（live GUI frame で panel は出るが文字が見えない、が担当の最終観測） |
+
+**glow の設計結論（3つの一行変更が全て実測で失敗した末の確定）**
+
+| 試行 | commit | 結果 |
+|---|---|---|
+| identity 0（既定FB）の描画を拒否 | `b7b634179` | 絵が凍結（世界が届かない） |
+| identity 0 を main 扱い | `25e617340` → `4642c145e` で撤回 | `presentedDistinctColours=1`（自身へのコピー） |
+| composite が frame 自身の colour を sample する時 skip | 撤回済み | `presentedDistinctColours=1` |
+
+**結論**: adoption 構成では identity 0 の composite は**フレームを届ける pass そのもの**であり、off-target pair は**ゲームが adopt した colour image**。world・composite・silhouette が同じ image を通るのは正当で、欠陥は**outline chain がその共有 image を自分の入力にしている**側にある。修正は chain 専用の image を与えること（`GllessFrameTarget` に第2の pair を追加し、identity 0 と outline の identity で振り分ける）。述語 `celtium$isScreenSelfComposite` は**使用禁止**として測定記録つきで残した。
+
+**ハーネスの証拠整合（`51e75a14b`）**: `pictureFile_*` の stage 選択（`pictureStage` を報告）・presented-dump の PNG 実在検査（`pictureEvidenceProblem`）・`UNCALIBRATED_PRESENTED_IMAGE` を失敗経路にも合格経路にも畳まない（`fixtureUncalibrated` として報告）。
+
+**現在稼働中の担当（4体）**: texture batch の受入（N07/N08/N17/N10）／font の実画像受入（N03）／glow の設計修正（chain 専用 image）／wedge の残存原因の診断。
+
 ## 0.125 **訂正**: bridge の「model draw 回帰」は証拠不足（カウンタが bridge レポートに存在しない）
 
 - ベンチ担当の観測「最新ビルドの bridge が 60Hz フロアに落ち、`CELTIUM_MODEL_MATRIX` 行が一切出ない」を受け、
