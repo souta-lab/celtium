@@ -274,6 +274,34 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.290 **round 96: semaphore 二重 signal を修正・較正済み picture gate が PASSED・F3 の実コストを測定・video-settings の参照不能を確定**
+
+- **semaphore VUID を修正（Lead・`7e3afed8d`）**: proj-channel が `0x1eb00000001eb` を **GL-less frame target の bridge pair** と特定
+  （present submit が `doneSemaphore` の唯一の producer・`endFrame` の wait-only submission が唯一の consumer）。
+  frame target が **signal in flight を追跡**し（interface に accessor/note・既定は安全側）、wait-only submission が消費時に clear、
+  present 経路が bridge pair を渡す前に問い合わせる（outstanding なら bridge 無しで present＝他の2 call site と同じ形・
+  `presentBridgeSignalOutstanding` で計数）。swapchain の render-finished pool も **image 数に追従**（変更時に再構築・modulo を外す）。
+- **較正済み picture gate が PASSED（acceptance・`r39-cal`）**: 素の terrain（keepGui/entity flag 無し）で
+  **`PASSED`・assertion failure 0・`validationMessageCount=0`・`presentedDistinctColours=2142`・non-background 0.759463・628 bands・black 0.0**。
+  `keepGui+captureEntities` 変種は**未較正**（`UNCALIBRATED_PRESENTED_IMAGE`）と両方記録。**「gate は意味があり、床がある場所では緑」**が実測で確定。
+- **canon row（同一 tree・jar `4f56cad4`）**: HUD **1.93**・entity band **18.81**・hand **21.82**。hand 系列は BH-29 の方向（+2/+2/+4）を示すが**閉じておらず**、
+  red 差は約17。**pair は tick-keyed で build state が違う（75 対 217 world frame・8 対 7 entity）ため帰属不能**＝
+  `captureCondition=sections`＋最小 world frame の same-state pair が次（`pinSections` がまさにそれ）。
+- **BH-10 の one-flag cloud control（acceptance・`r40-clouds-*`）**: Fancy clouds ON で **`partialColorMaskGroups=506`**・
+  `colorMaskHistogram=[0x0:161 0x7:345 0xf:5483]`、OFF で **368**・`[0x0:2 …]`＝**159 group が zero write mask を得る**＝depth-only cloud pass の mask が
+  group と pipeline に届いている。絵はこの pose では scored band に雲が無いため counter が受入（crop には雲を写す pose が要る）。
+- **F3 の実コスト（glyph-fix・`7918203bf`・同一 jar・`showDebugInfo` のみ差）**: F3 ON は cold p50 **187.3 ms**・world frame **45**・glyph **1,020,000**、
+  OFF は **47.8 ms**・**154**・**60,000**。**capture 経路は 0.48 µs/glyph**（submit 0.26・window 0.05・hooks 0.17）＝text run は約 2.2 ms/frame、
+  追加 batch が約 1 ms/frame。**139 ms/frame の差のうち timer が覆うのは 3-4 ms だけ**で、残り約135 ms は
+  **vanilla の per-glyph 仕事（`FontRenderer.renderString` の per-character loop・毎 glyph の `bindTexture`・stub wrapper 呼び出し）**と
+  **per-frame の overlay 構築**（`GuiOverlayDebug.call()` の約20文字列・`getDebugInfoRenders()`）で、どちらも無計測。
+  次の計器（Profiler section か stub hook の timer）を glyph-fix に依頼済み。
+- **video-settings の参照は存在し得ないと確定（gui-stage）**: diverter は**我々の tree**（`MixinGuiOptions:20`）にあり、
+  upstream jar は vanilla `GuiVideoSettings` を開く。したがって **Celeritas 画面の same-screen 参照は取れない**。
+  **決定**: 受入は**自 jar の self-consistency claim**（`guiScreenClassAtCapture` が Celeritas を名指し・panel/rows/Done が描画・
+  `validationMessageCount=0`・`scissorCapturedGroups` 報告）とし、139 色の参照は **vanilla 画面のもの**で Celeritas には適用しない。
+  upstream の same-screen 参照は**その mixin を載せた upstream build** が要る＝build の決定であって leg ではない、と明記。
+
 ## 0.289 **round 95: OPT-09 step(3) を within-leg で受入（`match=true`・checksum 一致）・submit 経路に semaphore VUID 10件・`pinSections` 実装**
 
 - **OPT-09 step(3) の等価性を測定（proj-channel・`5cbeafcfa`・`-Dceltium.vulkan.indirectCompare=true`）**:
