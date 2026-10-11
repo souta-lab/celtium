@@ -26,6 +26,21 @@ public interface FrameImageTarget {
     default void noteDoneSemaphoreSignalled() {
     }
 
+    /**
+     * {@return the present-wait semaphore for a swapchain image}.
+     * <p>
+     * The present-wait semaphore must be sized by the swapchain image count and indexed by the acquired image,
+     * because the presentation engine knows only that index. Defaults fall back to the frame-close semaphore for an
+     * implementation with no per-image array.
+     */
+    default long presentDoneSemaphore(int imageIndex) {
+        return doneSemaphore();
+    }
+
+    /** Records which done semaphore a producer signalled, so the wait-only submission waits on that one. */
+    default void noteDoneSignalled(long semaphore) {
+    }
+
 
     /**
      * Marks the frame open: under the shared target the game framebuffer's content is copied in and the

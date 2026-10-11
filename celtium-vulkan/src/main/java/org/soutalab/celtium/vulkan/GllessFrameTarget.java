@@ -114,6 +114,19 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private long doneSemaphore;
     /** Whether the done semaphore has a signal in flight; cleared by the wait-only submission below. */
     private boolean doneSemaphoreOutstanding;
+    /**
+     * Present-wait semaphores, one per swapchain image, grown and never destroyed.
+     * <p>
+     * The Khronos guide states the rule this exists for: a present wait semaphore must be sized by the swapchain
+     * image count and indexed by the acquired image, because the presentation engine knows only that index - a
+     * semaphore sized by the frame index can be signalled again by a new frame while the presentation engine is
+     * still waiting on it from a previous one. Growing rather than re-creating matters because the swapchain
+     * recreation guidance defers destroying an old swapchain's semaphores until the first present of the new one
+     * has completed; a grow-only array has nothing to defer.
+     */
+    private long[] presentDoneSemaphores;
+    /** The done semaphore a producer last signalled, which is what {@link #consumeDone()} must wait on. */
+    private long lastSignalledDone;
 
     /**
      * The default-framebuffer pair: created by {@link #ensureOffTarget(int, int)} on first use, replaced when the
@@ -346,7 +359,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private void consumeDone() {
         try (MemoryStack stack = stackPush()) {
             LongBuffer wait = stack.mallocLong(1);
-            wait.put(0, this.doneSemaphore);
+            // The producer may have signalled a per-image present semaphore rather than the frame-close one, so the
+            // wait follows whichever was recorded: waiting on the frame-close semaphore when the present signalled
+            // the per-image one would block forever.
+            wait.put(0, this.lastSignalledDone != 0L ? this.lastSignalledDone : this.doneSemaphore);
             // The wait below is what makes the next signal legal: this is the one place the bridge's done semaphore
             // is consumed, so clearing the flag here keeps the invariant in the target that owns the semaphore.
             this.doneSemaphoreOutstanding = false;
@@ -520,6 +536,45 @@ public final class GllessFrameTarget implements FrameImageTarget {
         checkAlive();
         return this.doneSemaphore;
     }
+
+    /**
+     * {@return the present-wait semaphore for a swapchain image}, created on first use.
+     * <p>
+     * The array grows and existing entries are never destroyed, so a swapchain recreation that changes the image
+     * count cannot leave an in-flight present referring to a destroyed semaphore.
+     */
+    public long presentDoneSemaphore(int imageIndex) {
+        checkAlive();
+        if (imageIndex < 0) {
+            return this.doneSemaphore;
+        }
+        if (this.presentDoneSemaphores == null || imageIndex >= this.presentDoneSemaphores.length) {
+            int wanted = Math.max(imageIndex + 1, this.presentDoneSemaphores == null ? 2
+                    : this.presentDoneSemaphores.length * 2);
+            long[] grown = java.util.Arrays.copyOf(
+                    this.presentDoneSemaphores == null ? new long[0] : this.presentDoneSemaphores, wanted);
+            try (MemoryStack stack = stackPush()) {
+                LongBuffer handle = stack.mallocLong(1);
+                VkSemaphoreCreateInfo info = VkSemaphoreCreateInfo.calloc(stack).sType$Default();
+                for (int i = 0; i < grown.length; i++) {
+                    if (grown[i] == 0L) {
+                        if (vkCreateSemaphore(this.context.device(), info, null, handle) != VK_SUCCESS) {
+                            throw new IllegalStateException("vkCreateSemaphore(glless present done) failed");
+                        }
+                        grown[i] = handle.get(0);
+                    }
+                }
+            }
+            this.presentDoneSemaphores = grown;
+        }
+        return this.presentDoneSemaphores[imageIndex];
+    }
+
+    /** Records which done semaphore a producer signalled, so the wait-only submission waits on that one. */
+    public void noteDoneSignalled(long semaphore) {
+        this.lastSignalledDone = semaphore;
+    }
+
 
     @Override
     public void recordAcquireBarriers(VkCommandBuffer commandBuffer) {

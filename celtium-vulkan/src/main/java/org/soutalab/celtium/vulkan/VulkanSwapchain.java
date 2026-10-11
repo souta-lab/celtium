@@ -47,6 +47,13 @@ public final class VulkanSwapchain {
 
     private long swapchain = VK_NULL_HANDLE;
     private long[] images = new long[0];
+    /** The GL-less frame target whose present-wait semaphores this swapchain must signal, or null. */
+    private FrameImageTarget bridgeTarget;
+
+    /** Sets the frame target the present path signals; the backend calls this once. */
+    public void setBridgeTarget(FrameImageTarget target) {
+        this.bridgeTarget = target;
+    }
     private long[] views = new long[0];
     private int format;
     private int colorSpace;
@@ -849,8 +856,18 @@ public final class VulkanSwapchain {
                 // signalled - the latter because the frame target's endFrame makes GL wait on it. The three-argument form
                 // waits one and signals one, which is what this path used after a broad revert took the corrected call
                 // with it: the bridge's semaphores arrived as parameters and were never used.
+                // The present-wait semaphore is per swapchain image, not per frame: the presentation engine knows only
+                // the acquired image index, so a frame-sized semaphore can be signalled again while the engine still
+                // waits on it from a previous frame (VUID-vkQueueSubmit-pSignalSemaphores-00067). The frame target
+                // owns that array; the frame-close semaphore it also owns stays frame-sized because its own pair
+                // closes inside the frame.
+                long bridgeDone = this.bridgeTarget != null
+                        ? this.bridgeTarget.presentDoneSemaphore(index.get(0)) : bridgeDoneSemaphore;
                 this.context.submitWithSemaphores(commands, new long[] {acquire, bridgeWaitSemaphore},
-                        new long[] {renderFinished, bridgeDoneSemaphore});
+                        new long[] {renderFinished, bridgeDone});
+                if (this.bridgeTarget != null && bridgeDone != 0L) {
+                    this.bridgeTarget.noteDoneSignalled(bridgeDone);
+                }
                 this.lastPresentSubmitDone = true;
                 this.lastPresentSucceeded = false;
             }

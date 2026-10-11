@@ -4902,6 +4902,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.frameTarget.beginFrameForPresent();
                     long bridgeWait = this.frameTarget.waitSemaphore();
                     long bridgeDone = this.frameTarget.doneSemaphore();
+                    // The swapchain indexes the present-wait semaphore by the image it acquires, so it needs the
+                    // target that owns that array; set once here rather than threaded through every call.
+                    this.swapchain.setBridgeTarget(this.frameTarget);
                     // A binary semaphore may only be signalled again after its previous signal has been waited on, and
                     // the present submit is the only producer of this pair's done signal while endFrame is its only
                     // consumer. When a previous signal is still outstanding - a re-present, or a second
