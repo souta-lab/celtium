@@ -106,6 +106,19 @@ public final class CeltiumFontGlyphCapture {
     private static final boolean FORCE_QUADS = "quads".equals(System.getProperty("celtium.font.mode", ""));
 
     /**
+     * {@code -Dceltium.font.winding=swapped} offers the four vertices in the strip order with its middle pair exchanged
+     * (top-left, top-right, bottom-left, bottom-right), off by default.
+     * <p>
+     * The rectangle and every vertex's texture coordinate are unchanged; only the winding is. It exists because the
+     * measurement says the renderer keeps one winding and drops the other: a screen-filling quad offered as vanilla's
+     * strip order drew nothing at all, while the same quad offered as {@code GL_QUADS} drew exactly one of its two
+     * triangles - the one whose winding is the opposite of the strip's. Culling is on at the glyph (measured:
+     * {@code cull=true}), so if exchanging the middle pair makes the glyphs appear, the geometry was being culled for
+     * its winding and nothing else about the capture is at fault.
+     */
+    private static final boolean SWAP_WINDING = "swapped".equals(System.getProperty("celtium.font.winding", ""));
+
+    /**
      * {@code -Dceltium.font.screenFill=true} replaces the first submitted glyph with one huge quad, off by default.
      * <p>
      * The routing question - does anything offered from this path reach the image the window shows - is answered by a
@@ -124,6 +137,21 @@ public final class CeltiumFontGlyphCapture {
      */
     private static final boolean MATRIX_PROBE = Boolean.getBoolean("celtium.font.matrixProbe");
     private static int matrixProbeLines;
+
+    /**
+     * {@code -Dceltium.font.stateProbe=true} prints the live GL state and the mirrored matrices at a bounded number of
+     * glyphs, in either configuration, off by default.
+     * <p>
+     * The measured difference this exists for: the same screen-filling quad is invisible when it is offered as the
+     * strip vanilla used and visible (as one of its two triangles) when it is offered as {@code GL_QUADS}. Two
+     * triangles of one rectangle differ only in winding, so the state that decides winding - culling and which face
+     * is front - is the thing to read at the moment of the glyph rather than reason about. In the bridge the same
+     * line is the reference: that is the state real OpenGL draws these glyphs correctly under, with the same vanilla
+     * vertex order.
+     */
+    private static final boolean STATE_PROBE = Boolean.getBoolean("celtium.font.stateProbe");
+    private static int stateProbeLines;
+    private static int stateProbeGuiLines;
 
     /** The current colour, as the last {@code GlStateManager.color} call left it. */
     private static float colorRed = 1.0f;
@@ -198,6 +226,19 @@ public final class CeltiumFontGlyphCapture {
             bridgeWindows++;
         }
         armed = glless && TerrainGpuBackends.current() != null;
+        // The startup windows run before a backend exists and before the overlay matrices are installed (identity), so
+        // the lines worth having are the armed ones - the glyphs that are actually offered to the renderer. Three of
+        // those and three more under the overlay's orthographic projection, which is the state the GUI's text is drawn
+        // with; the bridge prints the same pair from real OpenGL, so the two configurations can be read side by side.
+        if (STATE_PROBE && stateProbeLines < 3) {
+            stateProbeLines++;
+            System.out.println("[Celtium] CELTIUM_FONT_STATE first glless=" + glless + " armed=" + armed
+                    + " unicode=" + unicode + " " + glState() + " " + matrices() + " " + mirroredMatrices());
+        } else if (STATE_PROBE && stateProbeGuiLines < 3 && overlayProjection()) {
+            stateProbeGuiLines++;
+            System.out.println("[Celtium] CELTIUM_FONT_STATE overlay glless=" + glless + " armed=" + armed
+                    + " unicode=" + unicode + " " + glState() + " " + matrices() + " " + mirroredMatrices());
+        }
         reset();
     }
 
@@ -313,19 +354,11 @@ public final class CeltiumFontGlyphCapture {
             blue = DEBUG_RGB & 0xFF;
             alpha = 0xFF;
         }
-        VERTEX.clear();
-        for (int i = 0; i < MAX_VERTICES; i++) {
-            VERTEX.putFloat(positionX[i]);
-            VERTEX.putFloat(positionY[i]);
-            VERTEX.putFloat(positionZ[i]);
-            VERTEX.putFloat(textureU[i]);
-            VERTEX.putFloat(textureV[i]);
-            VERTEX.put((byte) red);
-            VERTEX.put((byte) green);
-            VERTEX.put((byte) blue);
-            VERTEX.put((byte) alpha);
-        }
         if (SCREEN_FILL && !screenFillUsed) {
+            // Applied to the vertices before they are written, which is the whole of the probe: it was written after the
+            // buffer had already been filled, so the frame-filling quad the log printed was never the quad the backend
+            // received - the run reported a screen fill and submitted an ordinary glyph. The mutated arrays and the
+            // submitted bytes have to be the same vertices for the probe to answer anything.
             screenFillUsed = true;
             float[] huge = { -10000.0f, -10000.0f, 10000.0f, 10000.0f };
             positionX[0] = huge[0]; positionY[0] = huge[0];
@@ -337,6 +370,21 @@ public final class CeltiumFontGlyphCapture {
                 textureV[i] = 0.0f;
             }
         }
+        VERTEX.clear();
+        for (int i = 0; i < MAX_VERTICES; i++) {
+            // The middle pair exchanged when the winding probe is on: the same four corners with the same texture
+            // coordinates, in an order whose triangles face the other way.
+            int vertex = SWAP_WINDING ? (i == 1 ? 2 : i == 2 ? 1 : i) : i;
+            VERTEX.putFloat(positionX[vertex]);
+            VERTEX.putFloat(positionY[vertex]);
+            VERTEX.putFloat(positionZ[vertex]);
+            VERTEX.putFloat(textureU[vertex]);
+            VERTEX.putFloat(textureV[vertex]);
+            VERTEX.put((byte) red);
+            VERTEX.put((byte) green);
+            VERTEX.put((byte) blue);
+            VERTEX.put((byte) alpha);
+        }
         int drawMode = FORCE_QUADS ? GL_QUADS : mode;
         int formatId = FORMAT_ID;
         int stride = STRIDE;
@@ -346,9 +394,10 @@ public final class CeltiumFontGlyphCapture {
             java.nio.ByteBuffer isolated = ISOLATED;
             isolated.clear();
             for (int i = 0; i < MAX_VERTICES; i++) {
-                isolated.putFloat(positionX[i]);
-                isolated.putFloat(positionY[i]);
-                isolated.putFloat(positionZ[i]);
+                int vertex = SWAP_WINDING ? (i == 1 ? 2 : i == 2 ? 1 : i) : i;
+                isolated.putFloat(positionX[vertex]);
+                isolated.putFloat(positionY[vertex]);
+                isolated.putFloat(positionZ[vertex]);
                 isolated.put((byte) red);
                 isolated.put((byte) green);
                 isolated.put((byte) blue);
@@ -357,8 +406,27 @@ public final class CeltiumFontGlyphCapture {
             formatId = POSITION_COLOR_ID;
             stride = POSITION_COLOR_STRIDE;
             format = DefaultVertexFormats.POSITION_COLOR;
+            // flip() before the address, not after. MemoryUtil.memAddress(ByteBuffer) returns the base PLUS THE
+            // BUFFER'S POSITION, and the loop above left the position at the capacity - so the address handed to the
+            // backend was one past the last written byte, and the native batch read 4*16 bytes of whatever followed.
+            // Verified without a GPU (scripts/cpu-contract/GlyphAddressCheck.java): position=64, capacity=64,
+            // memAddress(buf) - memAddress(buf,0) = 64, and 0 after flip. That is why glyphs were accepted and the
+            // text was missing or garbage, with no validation error to show for it - nothing was out of bounds from
+            // Vulkan's point of view, it was simply the wrong bytes.
+            isolated.flip();
+            if (isolated.position() != 0 || isolated.limit() != MAX_VERTICES * POSITION_COLOR_STRIDE) {
+                refuse("address-extent", "isolated wrote " + isolated.limit() + " bytes, expected "
+                        + (MAX_VERTICES * POSITION_COLOR_STRIDE));
+                return;
+            }
             vertexAddress = MemoryUtil.memAddress(isolated);
         } else {
+            VERTEX.flip();
+            if (VERTEX.position() != 0 || VERTEX.limit() != MAX_VERTICES * STRIDE) {
+                refuse("address-extent", "VERTEX wrote " + VERTEX.limit() + " bytes, expected "
+                        + (MAX_VERTICES * STRIDE));
+                return;
+            }
             vertexAddress = MemoryUtil.memAddress(VERTEX);
         }
         submitted++;
@@ -408,6 +476,66 @@ public final class CeltiumFontGlyphCapture {
                     + modelView.get(14) + ")";
         } catch (RuntimeException | LinkageError error) {
             return "matrices-unreadable: " + error;
+        }
+    }
+
+    /**
+     * {@return whether the current projection is the overlay's orthographic one}, read the same way the matrix probe
+     * reads it. Minecraft's {@code setupOverlayRendering} installs {@code ortho(0, width, height, 0, 1000, 3000)},
+     * whose y scale is negative because the GUI's y axis points down; the world's perspective has a positive one.
+     */
+    private static boolean overlayProjection() {
+        try {
+            java.nio.FloatBuffer projection = org.lwjgl.BufferUtils.createFloatBuffer(16);
+            net.minecraft.client.renderer.GlStateManager.getFloat(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, projection);
+            return projection.get(5) < 0.0f && projection.get(15) == 1.0f;
+        } catch (RuntimeException | LinkageError error) {
+            return false;
+        }
+    }
+
+    /**
+     * {@return the live raster state the glyph is drawn under, read from the GL the game itself set}.
+     * <p>
+     * Culling is the one that decides whether a triangle of the glyph survives: real OpenGL draws the vanilla strip
+     * with these very vertices and the same state, so a Vulkan pipeline that drops it is disagreeing with GL about
+     * winding or about the front face, and only the state at the glyph can say which.
+     */
+    private static String glState() {
+        try {
+            return "cull=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_CULL_FACE)
+                    + " depthTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST)
+                    + " blend=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND)
+                    + " alphaTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_ALPHA_TEST)
+                    + " texture2d=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_TEXTURE_2D)
+                    + " boundTexture=" + celtium$boundTexture()
+                    + " frontFace=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_FRONT_FACE)
+                    + " cullMode=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_CULL_FACE_MODE);
+        } catch (RuntimeException | LinkageError error) {
+            return "state-unreadable: " + error;
+        }
+    }
+
+    /**
+     * {@return the matrices the renderer itself will draw this glyph with}, read from the backend's own mirror.
+     * <p>
+     * {@link #matrices()} asks GL, which under the stub answers from the stub's own record; the draw uses the
+     * backend's mirror. A geometry that is accepted and never seen is either drawn with the wrong matrix or not drawn
+     * at all, and printing both at the same instant is what separates those two.
+     */
+    private static String mirroredMatrices() {
+        try {
+            TerrainGpuBackend backend = TerrainGpuBackends.current();
+            if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
+                return "mirror=none";
+            }
+            float[] projection = vulkan.celtium$mirroredProjection();
+            float[] modelView = vulkan.celtium$mirroredModelView();
+            return "mirrorProj=[x " + projection[0] + " y " + projection[5] + " z " + projection[10] + " tx "
+                    + projection[12] + " ty " + projection[13] + " tz " + projection[14] + "] mirrorMvT=("
+                    + modelView[12] + "," + modelView[13] + "," + modelView[14] + ")";
+        } catch (RuntimeException | LinkageError error) {
+            return "mirror-unreadable: " + error;
         }
     }
 
