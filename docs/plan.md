@@ -125,6 +125,37 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.176 **ユーザー監査（15:54）のB01〜B12をownerへ割当て、通常起動のズレを修正**
+
+**監査**: `docs/history/2026-10-11-full-audit-1554.md`（証拠は `.celtium-work/audits/2026-10-11-1554/`・**公開gitへは入れない**）。
+**実装は止めず、既存ownerへルーティング**した（新規タスクは既存のtask番号体系に統合）。
+
+| 監査 | 内容 | 担当 |
+|---|---|---|
+| **B01+B05** | immediate が **208B push を無条件要求**（Vulkan の保証下限は1.3まで128B）＋ **fog と lighting が同じ 128..207B** を書く＝lit group に fog が無い | **task-29 → pipelines** |
+| **B02+B03+B04** | GL-less でも **external_memory_fd / external_semaphore_fd を要求・enable**／textured descriptor pool が **64固定・追加key最大63**／**submit後 wait の非TIMEOUT失敗で finally が GPU 所有資源を解放**（DEVICE_LOST は SUCCESS 相当なので同列にしない） | **task-30 → sky-draws** |
+| **B06** | panorama/subviewport と loading・退出・再入場の受入 | task-15（weather-water）＋task-28（frame-composite） |
+| **B07** | 2引数 blendFunc の mirror 欠落 | **完了**（task-27・`blend=1(1,1)`・GUI段は非退行） |
+| **B08** | video settings は「値が変わった」までで **Apply/保存/再開が未証明**（操作した画面と撮った画面も別） | **task-31 → gui-stage** |
+| **B09** | client-pointer 検査は Linux 限定・`/proc/self/maps` cache は所有/寿命の保証ではない・64回更新上限 | weather-water（stub）へ通達 |
+| **B10** | full teardown の所有が全cache・context・queued group を覆わない／queued group に world epoch が無い | **task-32 → frame-composite** |
+| **B11** | summary の format 集計が id9 止まり・drop は8要素・descriptor 計器が block/particle のみ | task-25 へ統合（pipelines） |
+| **B12** | docs が過去の JEI/AppleSkin/MapWriter run を全否定／配布物の説明と実jarの差 | **task-31 → gui-stage** |
+
+**通常起動の「ズレ」を修正（Lead・ユーザー報告）**: メニューが**右にズレてロゴと右端が切れ、フルスクリーンでも直らない**。
+原因は **`ensureSwapchain` の surface extent 検査が `frameId` gate だった**こと——`frameId` は world frame 境界でしか進まないので、
+**menu 中に起きた resize**（実起動は窓を小さく作ってから画面サイズへ広げる。ユーザーの log は 854x480 → 1920x1080）で
+swapchain が最初の present のサイズのまま残り、present blit は**左下アンカー・無スケール**なので
+**frame の左下だけが小さい swapchain に切られて表示**されていた（compositor が窓へ拡大）。
+修正: gate を外し **present ごとに surface capability を問い合わせる**（`lastSwapchainExtentCheck` は削除）。
+jar `8f3b34b68a1b2b80ad74`・実セッションで検証中。
+
+**task-18（GL-less post chain）の中間結果（proj-channel）**: chain が止まっていたのは readback ではなく
+**preflight の順序**（`unsuppliedInput` が `adoptChainFramebuffers` より先）。修正後は
+**`postChains=18 postPasses=72 postTargets=1 postAdopted=1`・VUID 0** で GL-less でも chain が native 実行。
+**ただし可視 glow は未完**: silhouette image に入るのは 19 group すべて `fmt=4 texture=12`（item entity 1体/フレーム）で、
+mob の outline replay が届かず `CELTIUM_MODEL_MISSING list=125 texture=124` が出る（model 経路側の次の測定）。
+
 ## 0.175 **このラウンドの割当（10人・task-11〜22）と、GL-less のクリティカルパス**
 
 ユーザー指示「quota復活。チーム10人。はやく GL-less で完璧に動作するその日を」で開始したラウンド。

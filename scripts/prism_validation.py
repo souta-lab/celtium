@@ -332,8 +332,10 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         if args.force_x11:
             environment.pop("WAYLAND_DISPLAY", None)
             environment.pop("WAYLAND_SOCKET", None)
-        # Keep the test client's OpenAL audio off the desktop speakers.
-        if args.headless:
+        # Keep the test client's OpenAL audio off the desktop speakers. Not only for --headless: a headless-compositor
+        # run still plays its music through the system mixer, which the user hears as "music only, and it is loud"
+        # from a run they cannot even see. A run that genuinely wants audio back sets CELTIUM_ALLOW_AUDIO=1.
+        if not os.environ.get("CELTIUM_ALLOW_AUDIO"):
             environment["ALSOFT_DRIVERS"] = "null"
         process = subprocess.Popen(command, cwd=game, env=environment, stdout=log, stderr=subprocess.STDOUT)
         ended_by = "process-exit"

@@ -26,6 +26,7 @@ import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkPhysicalDeviceIDProperties;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
+import org.lwjgl.vulkan.VkPhysicalDeviceProperties;
 import org.lwjgl.vulkan.VkPhysicalDeviceProperties2;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
@@ -96,6 +97,15 @@ public final class VulkanContext {
 
     private VkInstance instance;
     private VkPhysicalDevice physicalDevice;
+    /**
+     * Whether this context is the OpenGL-interop (bridge) configuration, i.e. whether a GL device identity was
+     * available to match against. It is the one thing that decides whether the fd-sharing extensions are part of the
+     * device contract: with a bridge there is a GL image and a GL semaphore to share by fd, and without one (the
+     * GL-less configuration, {@code openGl == null}) there is nothing on the other end of a fd. The audit's B02 is
+     * that the extensions were required and enabled unconditionally, which excluded devices that are otherwise valid
+     * for the native path and tied the GL-less path to Linux fd semantics it never uses.
+     */
+    private boolean interopPath;
     private VkDevice device;
     private VkQueue queue;
     private int queueFamilyIndex = -1;
@@ -120,6 +130,21 @@ public final class VulkanContext {
     public static int bootstrapQueueWaits;
     /** Submissions whose fence did not signal within the bound: a stall, counted so it can be read after the fact. */
     public static int submitTimeouts;
+    /**
+     * The rest of the wait-outcome matrix, one counter per named state (audit B04): a wait that confirmed completion,
+     * a wait that reported the device lost (completion-equivalent for pending/in-use purposes), and a wait that
+     * neither completed nor timed out - OOM or UNKNOWN - whose submission is quarantined because the queue may still
+     * own it. The four states are distinguished rather than collapsed into "the wait failed".
+     */
+    public static int submitCompletions;
+    public static int submitDeviceLost;
+    public static int submitWaitFailures;
+    /** Bootstrap-path queue waits that did not confirm completion, and were therefore not treated as done. */
+    public static int queueWaitFailures;
+    /** Device-wide waits at teardown that did not confirm idle, so quarantined resources were deliberately held. */
+    public static int deviceIdleFailures;
+    /** Command buffers whose queue wait failed and whose command buffer was therefore quarantined instead of freed. */
+    private int quarantinedQueueWaitBuffers;
     /** Command buffers and fences whose submission timed out: never freed while the queue may still own them. */
     private final java.util.Set<VkCommandBuffer> quarantinedCommandBuffers = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<Long> quarantinedFences = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -430,7 +455,41 @@ public final class VulkanContext {
                             + " marked unusable, and no further work is submitted on it"
                             + " (submitWithSemaphores timeouts=" + submitTimeouts + ")");
                 }
-                check(waited, "vkWaitForFences(submitWithSemaphores)");
+                // Audit B04. The three remaining outcomes are not one outcome, and the cleanup that is right for one
+                // is a validation error for another (VUID-vkDestroyFence-fence-01120,
+                // VUID-vkFreeCommandBuffers-pCommandBuffers-00047):
+                //
+                //   SUCCESS        the submission completed; the finally below is correct.
+                //   DEVICE_LOST    the device is gone. The spec treats a lost device as SUCCESS-equivalent for
+                //                  pending/in-use purposes, so nothing is still executing and the finally is correct
+                //                  too. This must NOT be grouped with "the wait did not complete" - the audit names
+                //                  that mistake explicitly ([R4]).
+                //   anything else  OUT_OF_HOST_MEMORY, OUT_OF_DEVICE_MEMORY, UNKNOWN: the wait did not confirm
+                //                  completion, so the queue may still own the buffer and the fence. They are
+                //                  quarantined exactly as on a timeout and the finally must not release them.
+                if (waited == VK_SUCCESS) {
+                    submitCompletions++;
+                } else if (waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                    submitDeviceLost++;
+                    this.usable = false;
+                    throw new IllegalStateException("vkWaitForFences(submitWithSemaphores) reported"
+                            + " VK_ERROR_DEVICE_LOST: the submission is not going to complete because the device is"
+                            + " gone. The command buffer and fence are released by the caller's cleanup, which is"
+                            + " correct here - a lost device is SUCCESS-equivalent for pending/in-use purposes, so the"
+                            + " queue no longer owns them (submitWithSemaphores lostDevices=" + submitDeviceLost + ")");
+                } else {
+                    submitWaitFailures++;
+                    quarantine(commandBuffer, fence);
+                    fence = VK_NULL_HANDLE;
+                    commandBuffer = null;
+                    this.usable = false;
+                    throw new IllegalStateException("vkWaitForFences(submitWithSemaphores) did not confirm completion"
+                            + " and did not time out: result=" + waited + ". The queue may still own the submission, so"
+                            + " its command buffer and fence are quarantined rather than freed, and the context is"
+                            + " marked unusable. This is not a lost device: only VK_ERROR_DEVICE_LOST is"
+                            + " completion-equivalent for pending/in-use purposes"
+                            + " (submitWithSemaphores waitFailures=" + submitWaitFailures + ")");
+                }
             }
         } finally {
             if (fence != VK_NULL_HANDLE) {
@@ -450,7 +509,11 @@ public final class VulkanContext {
      */
     private void quarantine(VkCommandBuffer commandBuffer, long fence) {
         this.quarantinedCommandBuffers.add(commandBuffer);
-        this.quarantinedFences.add(Long.valueOf(fence));
+        if (fence != VK_NULL_HANDLE) {
+            // A bootstrap-path submission carries no fence: the queue wait is the only completion signal there, and on
+            // a non-confirming result the command buffer alone is held.
+            this.quarantinedFences.add(Long.valueOf(fence));
+        }
     }
 
     /** {@return how many submissions timed out and left quarantined resources}, for the report. */
@@ -458,11 +521,25 @@ public final class VulkanContext {
         return submitTimeouts;
     }
 
+    /**
+     * {@return the wait-outcome matrix as one line}: how many waits confirmed completion, timed out, reported the
+     * device lost, or returned something else - each a state with its own cleanup rule (audit B04).
+     */
+    public static String waitOutcomeSummary() {
+        return "completions=" + submitCompletions
+                + " timeouts=" + submitTimeouts
+                + " lostDevices=" + submitDeviceLost
+                + " unconfirmed=" + submitWaitFailures
+                + " queueWaitFailures=" + queueWaitFailures
+                + " deviceIdleFailures=" + deviceIdleFailures;
+    }
+
     public void endCommands(VkCommandBuffer commandBuffer) {
         if (commandBuffer == null) {
             throw new IllegalArgumentException("commandBuffer must not be null");
         }
         requireUsable();
+        boolean releasedToQueue = true;
         try {
             check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -470,10 +547,33 @@ public final class VulkanContext {
                         .pCommandBuffers(stack.pointers(commandBuffer));
                 check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), "vkQueueSubmit");
                 bootstrapQueueWaits++;
-                check(vkQueueWaitIdle(this.queue), "vkQueueWaitIdle");
+                // Audit B04, the bootstrap half. Once the submit succeeded the queue owns the command buffer, and the
+                // only thing that makes freeing it correct is a queue wait that confirms the queue is idle. A wait
+                // that returns VK_ERROR_DEVICE_LOST does confirm that (the device is gone; the spec treats it as
+                // SUCCESS-equivalent for pending/in-use purposes); anything else does not, and the buffer is then
+                // quarantined instead of freed.
+                int idle = vkQueueWaitIdle(this.queue);
+                if (idle == VK_SUCCESS || idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                    if (idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                        submitDeviceLost++;
+                        this.usable = false;
+                    }
+                } else {
+                    queueWaitFailures++;
+                    this.usable = false;
+                    releasedToQueue = false;
+                    quarantine(commandBuffer, VK_NULL_HANDLE);
+                    throw new IllegalStateException("vkQueueWaitIdle did not confirm the queue was idle: result="
+                            + idle + ". The command buffer submitted just before it may still be owned by the queue,"
+                            + " so it is quarantined rather than freed (this is not a lost device: only"
+                            + " VK_ERROR_DEVICE_LOST is completion-equivalent for pending/in-use purposes)"
+                            + " (queueWaitFailures=" + queueWaitFailures + ")");
+                }
             }
         } finally {
-            vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+            if (releasedToQueue) {
+                vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+            }
         }
     }
 
@@ -570,20 +670,41 @@ public final class VulkanContext {
         if (this.device != null) {
             System.out.println("[Celtium] CELTIUM_WAIT_CENSUS bootstrapQueueWaits=" + bootstrapQueueWaits
                     + " submitTimeouts=" + submitTimeouts
+                    + " " + waitOutcomeSummary()
+                    + " quarantinedCommandBuffers=" + this.quarantinedCommandBuffers.size()
+                    + " quarantinedFences=" + this.quarantinedFences.size()
                     + " (the bootstrap submit path waits on the queue, which the API cannot bound; the frame path"
                     + " waits on its own fence with a 5s bound and reports a timeout as a stall)");
             // Every recorded copy is followed by a queue wait, so this only drains work that is already complete.
-            vkDeviceWaitIdle(this.device);
+            //
+            // Audit B04: this wait decides whether the quarantined resources may be released, and its result is
+            // therefore checked. A device that reports itself idle releases them; a device that is lost releases them
+            // too (SUCCESS-equivalent for pending/in-use purposes); a wait that fails for any other reason does NOT,
+            // because the queue may still own them and freeing here is the same VUID the quarantine exists to avoid.
+            // The resources are then left to the process teardown, and the count is reported.
+            int idle = vkDeviceWaitIdle(this.device);
+            boolean releaseQuarantined = idle == VK_SUCCESS
+                    || idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
+            if (!releaseQuarantined) {
+                deviceIdleFailures++;
+                System.out.println("[Celtium] CELTIUM_WAIT_CENSUS vkDeviceWaitIdle did not confirm the device was idle"
+                        + " (result=" + idle + "): " + this.quarantinedCommandBuffers.size() + " quarantined command"
+                        + " buffer(s) and " + this.quarantinedFences.size() + " fence(s) are NOT released - the queue"
+                        + " may still own them, and freeing here is what VUID-vkFreeCommandBuffers-pCommandBuffers-00047"
+                        + " and VUID-vkDestroyFence-fence-01120 describe");
+            }
             // The quarantined submissions are released here and only here: the device-wide wait above is the one point
             // where "the queue is finished with them" is a fact. Before this they are neither reset nor freed.
-            for (VkCommandBuffer quarantined : this.quarantinedCommandBuffers) {
-                vkFreeCommandBuffers(this.device, this.commandPool, quarantined);
+            if (releaseQuarantined) {
+                for (VkCommandBuffer quarantined : this.quarantinedCommandBuffers) {
+                    vkFreeCommandBuffers(this.device, this.commandPool, quarantined);
+                }
+                this.quarantinedCommandBuffers.clear();
+                for (Long quarantinedFence : this.quarantinedFences) {
+                    vkDestroyFence(this.device, quarantinedFence.longValue(), null);
+                }
+                this.quarantinedFences.clear();
             }
-            this.quarantinedCommandBuffers.clear();
-            for (Long quarantinedFence : this.quarantinedFences) {
-                vkDestroyFence(this.device, quarantinedFence.longValue(), null);
-            }
-            this.quarantinedFences.clear();
             destroyStaging();
             if (this.commandPool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
@@ -616,6 +737,7 @@ public final class VulkanContext {
     }
 
     private void initialize(String applicationName, GlDeviceIdentity openGl) {
+        this.interopPath = openGl != null;
         createInstance(applicationName);
         matchPhysicalDevice(openGl);
         createLogicalDevice();
@@ -762,6 +884,23 @@ public final class VulkanContext {
                         && VK_VERSION_MINOR(apiVersion) < REQUIRED_API_MINOR)) {
                     continue;
                 }
+                // Audit B02: the fd-sharing extensions are part of the *interop* contract, not of the native one. A
+                // candidate is now skipped for lacking them only when this context has an OpenGL identity to share
+                // images with; in the GL-less configuration there is no other end of a fd, so requiring them excluded
+                // otherwise valid devices (and tied the path to Linux fd semantics). The check moved into the loop
+                // for the same audit item: "choose first, then refuse the capability" turned a device that does not
+                // satisfy the contract into a failure after selection instead of a candidate that is passed over.
+                if (this.interopPath) {
+                    Set<String> candidateExtensions = deviceExtensionNames(stack, candidate);
+                    if (!candidateExtensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
+                            || !candidateExtensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)) {
+                        if (this.skippedForInteropExtensions == null) {
+                            this.skippedForInteropExtensions = new ArrayList<String>();
+                        }
+                        this.skippedForInteropExtensions.add(properties.properties().deviceNameString());
+                        continue;
+                    }
+                }
                 this.physicalDevice = candidate;
                 // Register it with the depth-format contract here, where a device first exists: the terrain pipeline and
                 // the render-pass builder are static callers that need a depth format whether or not a frame target
@@ -772,12 +911,15 @@ public final class VulkanContext {
                 break;
             }
             if (this.physicalDevice == null) {
+                String skipped = this.skippedForInteropExtensions == null ? ""
+                        : " Candidates skipped for lacking the interop fd extensions: "
+                                + String.join(", ", this.skippedForInteropExtensions) + ".";
                 throw new IllegalStateException(openGl == null
                         ? "No Vulkan physical device satisfies the requirements (no OpenGL identity to match against, which"
-                                + " is the no-bridge case)."
+                                + " is the no-bridge case)." + skipped
                         : "No Vulkan physical device matches the OpenGL device UUID "
                                 + String.join(", ", openGl.deviceUuids)
-                                + ". A different driver or a software Vulkan device is not used instead.");
+                                + ". A different driver or a software Vulkan device is not used instead." + skipped);
             }
             if (openGl == null) {
                 System.out.println("[Celtium] device chosen without matching an OpenGL device: " + this.deviceName
@@ -791,18 +933,81 @@ public final class VulkanContext {
             System.out.println("[Celtium] CELTIUM_NATIVE_DEVICE name=\"" + this.deviceName + "\" uuid="
                     + this.deviceUuid + " matchedOpenGl=" + (openGl != null));
             Set<String> extensions = deviceExtensionNames(stack, this.physicalDevice);
-            List<String> missing = new ArrayList<String>();
-            if (!extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {
-                missing.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+            // Audit B02: on the interop path the fd extensions are still the contract, and a device that lacked them
+            // was already skipped above - so this check can only fire if the device list changed under us. On the
+            // native (GL-less) path nothing is required of them, and the line below says what the contract is instead.
+            if (this.interopPath) {
+                List<String> missing = new ArrayList<String>();
+                if (!extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {
+                    missing.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+                }
+                if (!extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)) {
+                    missing.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+                }
+                if (!missing.isEmpty()) {
+                    throw new IllegalStateException("The matched Vulkan device " + this.deviceName
+                            + " is missing required interop device extensions: " + String.join(", ", missing) + ".");
+                }
             }
-            if (!extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)) {
-                missing.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
-            }
-            if (!missing.isEmpty()) {
-                throw new IllegalStateException("The matched Vulkan device " + this.deviceName
-                        + " is missing required device extensions: " + String.join(", ", missing) + ".");
-            }
+            reportDeviceContract(stack, extensions);
         }
+    }
+
+    /** Devices passed over because the interop path requires the fd-sharing extensions and they lack them. */
+    private List<String> skippedForInteropExtensions;
+    /** The device extensions this context actually enabled, named in the contract line rather than implied. */
+    private List<String> enabledDeviceExtensions = new ArrayList<String>();
+    /** The frame target's colour format and sample count: two of the native contract's fixed terms. */
+    private static final String COLOR_FORMAT_NAME = "R8G8B8A8_UNORM";
+    private static final int REQUIRED_SAMPLES = 1;
+    /**
+     * The largest push-constant block the immediate path uses - the fog-carrying POSITION layout's 208 bytes
+     * ({@code VulkanImmediateTexturePipeline.PUSH_CONSTANT_BYTES}) and the lit ITEM layout's, which are equal today.
+     * Reported beside the device's {@code maxPushConstantsSize} so the limit the renderer actually spends is named
+     * with the device's number next to it (audit B01/B11); this run does not enforce it, it reports it.
+     */
+    private static final int PUSH_CONSTANT_BYTES_USED = 208;
+
+    /**
+     * Prints the device contract this run was selected under, once, as {@code CELTIUM_DEVICE_CONTRACT}.
+     * <p>
+     * The audit's B02 asked for the native contract to be named rather than implied: the swapchain, a queue that can
+     * do graphics and transfer, the colour and depth formats, the API version, and the limits the renderer actually
+     * uses - instead of the retired interop extensions. The line carries both sides: what was required and which of it
+     * the device has, plus whether the fd extensions are part of the contract at all (they are not, on this path).
+     */
+    private void reportDeviceContract(MemoryStack stack, Set<String> extensions) {
+        VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
+        vkGetPhysicalDeviceProperties(this.physicalDevice, properties);
+        List<String> required = new ArrayList<String>();
+        required.add("api>=" + REQUIRED_API_MAJOR + "." + REQUIRED_API_MINOR);
+        required.add("queue=graphics+transfer");
+        if (this.interopPath) {
+            required.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+            required.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+        }
+        if (Boolean.getBoolean(SWAPCHAIN_PROPERTY)
+                || ! "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"))) {
+            required.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        }
+        required.add("color=" + COLOR_FORMAT_NAME + " depth=" + VulkanDepthFormat.chosenName()
+                + " samples=" + REQUIRED_SAMPLES);
+        int pushConstantLimit = properties.limits().maxPushConstantsSize();
+        System.out.println("[Celtium] CELTIUM_DEVICE_CONTRACT name=\"" + this.deviceName + "\" uuid=" + this.deviceUuid
+                + " deviceType=" + properties.deviceType()
+                + " apiVersion=" + VK_VERSION_MAJOR(properties.apiVersion()) + "."
+                + VK_VERSION_MINOR(properties.apiVersion())
+                + " queueFamily=" + this.queueFamilyIndex
+                + " required=[" + String.join(", ", required) + "]"
+                + " fdInterop=" + this.interopPath
+                + " enabledDeviceExtensions=[" + String.join(", ", this.enabledDeviceExtensions) + "]"
+                + " limits=[maxPushConstantsSize=" + pushConstantLimit + " immediatePushBytes=" + PUSH_CONSTANT_BYTES_USED
+                + " maxImageDimension2D=" + properties.limits().maxImageDimension2D() + "]"
+                + " advertised=[externalMemoryFd=" + extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
+                + " externalSemaphoreFd=" + extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)
+                + " swapchain=" + extensions.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME) + "]"
+                + (this.skippedForInteropExtensions == null ? ""
+                        : " skippedForInteropExtensions=[" + String.join(", ", this.skippedForInteropExtensions) + "]"));
     }
 
     private void createLogicalDevice() {
@@ -835,8 +1040,15 @@ public final class VulkanContext {
                     .queueFamilyIndex(this.queueFamilyIndex)
                     .pQueuePriorities(stack.floats(1.0f));
             List<String> deviceExtensions = new ArrayList<String>();
-            deviceExtensions.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
-            deviceExtensions.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+            // Audit B02: the fd-sharing extensions are enabled only on the interop path. With a GL identity there is a
+            // GL image and a GL semaphore to share by fd, and the two extensions are the contract for that; without
+            // one (the GL-less configuration) enabling them asks the driver for a capability this path never uses, and
+            // on a device that does not advertise them the unconditional enable would have failed the device creation
+            // for a path that does not need it.
+            if (this.interopPath) {
+                deviceExtensions.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+                deviceExtensions.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+            }
             // The swapchain functions live in a device extension, so a surface alone is not enough: without it
             // enabled the loader table has no vkCreateSwapchainKHR and LWJGL's own capability check reports a
             // NullPointerException on the missing function pointer, which is exactly what the first probes hit.
@@ -853,6 +1065,7 @@ public final class VulkanContext {
                 names.put(stack.UTF8(extension));
             }
             names.flip();
+            this.enabledDeviceExtensions = new ArrayList<String>(deviceExtensions);
             VkDeviceCreateInfo createInfo = VkDeviceCreateInfo.calloc(stack).sType$Default()
                     .pQueueCreateInfos(queues)
                     .ppEnabledExtensionNames(names);

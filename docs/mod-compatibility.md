@@ -25,13 +25,36 @@ run's own game directory, read from that directory and from the run log, not fro
 | `celtium-validation-client` | 2.5.12-celtium.0.1.0-dev.1 | the fixture, **not shipped** | drives the scene, camera, screen and capture |
 | Celtium | 2.5.12-celtium.0.1.0-dev.1 | the renderer under test | same |
 
-**No third-party content mod is in that set.** Every "mod compatibility" statement in this file is therefore about the
-*entry points* a mod would use, not about a mod that has been run. The one exception in older notes - "JEI" - is a
-mismatch worth naming: the flag `-Dceltium.validation.jeiScreen=true` opens
-`net.minecraft.client.gui.inventory.GuiInventory`, the **vanilla inventory**
-(`validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java:3032`), and **no JEI jar is loaded**
-in those runs (measured: the run's `mods/` directory and its `latest.log` contain no JEI entry at all). Older notes and
-run names that call that screen "JEI" are describing the vanilla inventory screen.
+**No third-party content mod is in the *current* cohort's set** - the table above is the whole of what the current
+Intel/AMD terrain runs load. That is a statement about this cohort, not a denial of the runs that came before it.
+
+**Correction, 2026-10-11 (audit B12).** An earlier version of this file went further and said no JEI jar was ever loaded,
+reading the run names as a misnomer. That was wrong, and it turned real past runs into a fabrication. Both things are
+true and they are different claims:
+
+- The *current* cohort (the runs cited in `docs/plan.md` and `docs/scope-and-limits.md`, and the `jeiScreen` flag) loads
+  no JEI: that flag opens `net.minecraft.client.gui.inventory.GuiInventory`
+  (`validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java:3032`), and the runs' `mods/`
+  directories and logs contain no JEI entry. "JEI" in *those* run names is the screen variant, not a loaded mod.
+- **Earlier runs on 2026-10-11 did load JEI and two other mods**, and their evidence is below. They are **past
+  evidence**, not current acceptance: none of them passed the picture gate, and the current cohort has not re-run them.
+
+## Past evidence: runs that did load content mods (2026-10-11, before this cohort)
+
+Read from each run's own lock file and log in `.celtium-work/`, not from memory. Every hash is the one the run recorded
+for the jar it loaded.
+
+| Run | 2026-10-11 | Leg | Mods (jar sha256 prefix) | Verdict | What it is evidence of |
+|---|---|---|---|---|---|
+| `mod3-glless-jei` | 01:10:56 | GL-less | **JEI `jei_1.12.2-4.22.0.1035.jar` `e592b0019aa0cd32`**, celtium `9b0913a314fe7bd4`, fixture `9ea72bc9df85d94c`, Fugue `438248925eb38d16`, Scalar `9fa05d84b72f31df` | `FAILED_PRESENTED_IMAGE` | JEI loaded and initialised (`latest.log`: 43 JEI lines, JEI startup present), the fixture opened its inventory screen at tick 30, and the run reached tick 202 under GL-less |
+| `mod5-bridge-jei` | 01:20 | GL bridge | the same JEI `e592b0019aa0cd32`, celtium `6dcfba123f51ee43`, fixture `99cf2e432e59774b` | `FAILED_PRESENTED_IMAGE`, `presentedNonBackgroundFraction=0.777045` | the same JEI jar under the bridge leg, with a picture |
+| `mod6-bridge-hudmods` | 01:24 | GL bridge | the same JEI jar, **AppleSkin `AppleSkin-mc1.12-1.0.14.jar` `4bbd37edecff0b42`**, **MapWriter `mapwriter-2.8.15.jar` `e9a0551013ab785e`**, celtium `6dcfba123f51ee43`, fixture `99cf2e432e59774b` | `FAILED_PRESENTED_IMAGE`, `presentedNonBackgroundFraction=0.791715` | three content/HUD mods loaded together in one run; their HUD and map drawing were in the frame |
+
+**What these runs do not show**, and must not be read as: a passing picture acceptance with JEI, AppleSkin or MapWriter
+(each verdict is `FAILED_PRESENTED_IMAGE`), correctness of JEI's recipe rendering, or anything about the current jar. The
+runs are from git heads `967ea5a8`, `ee397a6e` and `04a0ca8e` with dirty trees, hours before the current cohort, and
+**the current cohort has not been re-run with any of these mods**. Re-running them is the way to turn this table into a
+current claim; until then it stays a record of what was measured then.
 
 ## Covered: Forge API mods
 

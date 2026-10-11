@@ -85,26 +85,30 @@ public final class ImmediateGroup {
 }
 
 /**
- * The frame and target generation a group was accepted under.
+ * The frame, target generation and world a group was accepted under.
  * <p>
  * A frame target replacement destroys the render pass and pipeline a stale group was built for, so drawing it would
  * bind the wrong thing; {@code targetGeneration} lets the draw side retire such a group instead. {@code meshBorrowed}
  * keeps the retire path from freeing a mesh that belongs to a lender (captured model meshes are drawn every frame).
+ * <p>
+ * {@code worldEpoch} is the same idea one lifetime up: a queued group can outlive its world, and the world teardown
+ * releases the model meshes that a captured model group's mesh is borrowed from. {@code targetGeneration} says nothing
+ * about that, and waiting for GPU idle ends GPU-side use rather than CPU-side ownership, so a group whose world is
+ * gone is retired without being drawn.
  */
 final class GroupStamp {
     final long frameId;
     final int targetGeneration;
     /** {@code true} when the mesh belongs to someone else and must not be freed when the group retires. */
     final boolean meshBorrowed;
+    /** The world the group was accepted in; a group from an older world must never be drawn. */
+    final int worldEpoch;
 
-    GroupStamp(long frameId, int targetGeneration) {
-        this(frameId, targetGeneration, false);
-    }
-
-    GroupStamp(long frameId, int targetGeneration, boolean meshBorrowed) {
+    GroupStamp(long frameId, int targetGeneration, boolean meshBorrowed, int worldEpoch) {
         this.frameId = frameId;
         this.targetGeneration = targetGeneration;
         this.meshBorrowed = meshBorrowed;
+        this.worldEpoch = worldEpoch;
     }
 }
 

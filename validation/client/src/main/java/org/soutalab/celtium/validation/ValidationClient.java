@@ -446,6 +446,26 @@ public final class ValidationClient {
     /** The first world frame at which the renderer's presented-frame counter was above zero, or -1. */
     private int celtium$firstPresentedWorldFrame = -1;
     /**
+     * The renderer's presented-frame counter and this fixture's world-frame counter at the start of the current world.
+     * <p>
+     * The presented-frame assertion's purpose is that the frame written to the file is the frame the capture is about,
+     * and both numbers it compares only track inside one renderer lifetime. A dimension change recreates the frame
+     * target (handled by its own branch), and a quit-to-title followed by a second world makes the renderer adopt again:
+     * the presented counter restarts while {@code worldFrames} spans both worlds, so the whole-run comparison reads the
+     * restart as frames that never reached the window. Measured on a `worldSwitch` run with a real world frame:
+     * {@code pictureFrameDelta_world = -37} ({@code presentedImageFramesAtCapture=55} against
+     * {@code worldFramesAtCapture=93}). Both counters are therefore sampled at every world start - the fields default to
+     * zero, which is exactly the first world's start, so a single-world run keeps the comparison it always had - and the
+     * assertion compares the deltas inside that window. The whole-run delta is still recorded beside it.
+     */
+    private int celtium$presentedAtWorldStart;
+    private int celtium$worldFramesAtWorldStart;
+    /** How many worlds this run has started: 1 for a plain run, 2 for a quit-to-title and rejoin. */
+    private int celtium$worldStarts;
+    /** The presented counter at the previous world frame, so a restart is seen as a drop. */
+    private int celtium$lastPresentedSample = -1;
+    private int celtium$presentedCounterRestarts;
+    /**
      * The highest value the renderer's presented-frame counter has been seen at.
      * <p>
      * The counter belongs to the live frame target, and a dimension change recreates that target: the counter then
@@ -468,6 +488,43 @@ public final class ValidationClient {
      * target dimension again is not waited for at all.
      */
     private final int celtium$dimensionWaitUntilTick = Integer.getInteger("celtium.validation.dimensionWaitUntilTick", 240).intValue();
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Window resize transition (task-28). The harness cannot resize the window - it only sets the initial size - so
+    // the fixture drives GLFW itself, through reflection because this module compiles against the LWJGL 2 surface.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * The world tick at which to resize the window, and the size to ask for as {@code WxH}. 0 disables it.
+     * <p>
+     * The resize is the transition task-15's window-owned design has to survive: the game's framebuffer changes size,
+     * the swapchain no longer matches the surface extent, and the present path has to rebuild it without losing the
+     * frame target or the device. The harness only sets the size at launch ({@code --width}/{@code --height}), which is
+     * why this is driven from inside the game.
+     */
+    private final int celtium$resizeAtTick = Integer.getInteger("celtium.validation.resizeAtTick", 0).intValue();
+    private final String celtium$resizeTo = System.getProperty("celtium.validation.resizeTo", "1024x640");
+    /**
+     * Resize while the title screen is up, before the fixture launches its world, and hold the menu for
+     * {@link #celtium$resizeMenuHoldTicks} ticks so those frames are drawn at the new size.
+     */
+    private final boolean celtium$resizeDuringMenu = Boolean.getBoolean("celtium.validation.resizeDuringMenu");
+    private final int celtium$resizeMenuHoldTicks =
+            Integer.getInteger("celtium.validation.resizeMenuHoldTicks", 40).intValue();
+    private boolean celtium$resizeRequested;
+    private int celtium$resizeRequestedAtTick = -1;
+    private int celtium$resizeMenuHeldTicks;
+    /** The framebuffer size at the previous sample, so a change is reported as a change. */
+    private int celtium$lastFramebufferWidth = -1;
+    private int celtium$lastFramebufferHeight = -1;
+    /** The window's own size at the previous sample (GLFW's answer, which is not the game's framebuffer). */
+    private int celtium$lastWindowWidth = -1;
+    private int celtium$lastWindowHeight = -1;
+    private int celtium$windowSizeChanges;
+    private int celtium$framebufferSizeChanges;
+    private final StringBuilder celtium$resizeTrace = new StringBuilder();
+    private int celtium$resizeTraceLines;
+    private static final int RESIZE_TRACE_MAX_LINES = 200;
 
     // ---------------------------------------------------------------------------------------------------------------
     // Scene, camera pose and picture identity state.
@@ -521,6 +578,34 @@ public final class ValidationClient {
     private boolean celtium$guiClickPending;
     /** Set once the video settings screen's own buttons have been exercised for the functional acceptance. */
     private boolean celtium$videoSettingsExercised;
+    /**
+     * The functional video-settings chain, driven one step per client tick on the screen that is then captured.
+     * <p>
+     * Audit B08: the earlier version pressed a control on the screen the game's own button happened to open
+     * ({@code CeleritasVideoOptionsScreen} in this runtime) and returned as soon as an in-memory option value moved,
+     * while the picture captured was {@code GuiVideoSettings}. It never went through the screen's Apply/save, the
+     * option's name was null, and the operated screen was not the captured one. This chain runs on
+     * {@code GuiVideoSettings} itself, presses through that screen's own {@code mouseClicked} (which forwards to its
+     * {@code optionsRowList}, exactly as a real click does), presses its own Done button (id 200, whose handler calls
+     * {@code gameSettings.saveOptions()}), reads {@code options.txt} either side, reopens the screen through the
+     * game's own button path and reads the option again, then restores the original value so the captured frame is
+     * still the calibrated variant.
+     */
+    private int celtium$vsStep = -1;
+    private String celtium$vsOption = "none";
+    private String celtium$vsBefore = "none";
+    private String celtium$vsAfter = "none";
+    private String celtium$vsRenderedChange = "not measured";
+    private String celtium$vsFileBefore = "";
+    private String celtium$vsFileAfter = "";
+    private String celtium$vsFileChanged = "not measured";
+    private String celtium$vsReopened = "not attempted";
+    private String celtium$vsRestored = "not attempted";
+    private int celtium$vsPressX = -1;
+    private int celtium$vsPressY = -1;
+    /** The presented dump requested before the change and after it: two identities are a rendered-change measurement. */
+    private PictureEvidence celtium$vsPictureBefore;
+    private PictureEvidence celtium$vsPictureAfter;
     /** Set by the world stage for a GUI scene: the screen is opened on the next client tick, not inside a render pass. */
     private boolean celtium$guiOpenPending;
     private String celtium$guiClickResult = "not attempted";
@@ -2179,8 +2264,20 @@ public final class ValidationClient {
         Minecraft mc = Minecraft.getMinecraft();
         // N02 acceptance probe: display-list add/recompile/delete/re-use, off unless -Dceltium.validation.modelLifecycle.
         ModelListLifecycleProbe.tick(mc, worldTicks);
+        celtium$sampleFramebufferSize(mc);
         try {
             if (!launched && mc.currentScreen instanceof GuiMainMenu) {
+                // The menu-phase resize: ask for the new size while the title screen is up, and hold the world launch
+                // briefly so the menu's own frames are drawn at it. Holding for a few ticks is what makes this a
+                // resize *during the menu* rather than a resize immediately followed by a world load.
+                if (celtium$resizeDuringMenu && !celtium$resizeRequested) {
+                    celtium$requestResize(mc, "menu");
+                }
+                if (celtium$resizeDuringMenu && celtium$resizeMenuHeldTicks < celtium$resizeMenuHoldTicks) {
+                    celtium$resizeMenuHeldTicks++;
+                    report.addProperty("resizeMenuHeldTicks", Integer.valueOf(celtium$resizeMenuHeldTicks));
+                    return;
+                }
                 launched = true;
                 report.addProperty("scope", "fixed flat world startup, commands and GL framebuffer observation");
                 
@@ -2446,11 +2543,22 @@ public final class ValidationClient {
             if (celtium$rejoinPending && mc.world == null && mc.currentScreen instanceof GuiMainMenu) {
                 celtium$rejoinPending = false;
                 report.addProperty("rejoinedAtTick", worldTicks);
+                // A second world starts a new window for the presented-frame assertion: the renderer adopts the
+                // window-owned instance again and its presented counter restarts, while this fixture's worldFrames
+                // keeps counting from the first world. Sampling both here is what lets the assertion compare deltas
+                // inside the world the picture is from instead of across both (the -37 delta of the pre-fix run).
+                celtium$noteWorldStart("rejoin at tick " + worldTicks);
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 settings.setGeneratorOptions(celtium$worldLayers);
                 mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
             }
             if (mc.world == null || mc.player == null) return;
+            // The world-phase resize: once, at the requested tick, with a world loaded and the window-owned renderer
+            // presenting it. The capture tick is chosen later than this, so the picture the verdict judges is a frame
+            // drawn after the transition.
+            if (celtium$resizeAtTick > 0 && !celtium$resizeRequested && worldTicks >= celtium$resizeAtTick) {
+                celtium$requestResize(mc, "world");
+            }
             worldTicks++;
             // The value at the end of the run, so "the hook never fired" can be told apart from "the run never got there". Four
             // Intel runs at one budget reached tick 170 once and tick 160 not at all, which is only explicable with the number
@@ -2715,6 +2823,23 @@ public final class ValidationClient {
             if (presentedNow > celtium$presentedFramesHighWater) {
                 celtium$presentedFramesHighWater = presentedNow;
             }
+            // A drop in the presented counter is the renderer's own statement that a new world has adopted the
+            // window-owned instance and restarted its numbering (VulkanTerrainGpuBackend.celtium$adoptTerrainState).
+            // That instant - not the tick the fixture asked for the world - is where the second world's window starts,
+            // and the assertion below compares deltas measured from it. The counter is sampled every world frame, so the
+            // restart is seen within one frame of happening.
+            if (celtium$lastPresentedSample >= 0 && presentedNow < celtium$lastPresentedSample) {
+                celtium$presentedCounterRestarts++;
+                celtium$presentedAtWorldStart = presentedNow;
+                celtium$worldFramesAtWorldStart = worldFrames;
+                report.addProperty("presentedCounterRestarts", Integer.valueOf(celtium$presentedCounterRestarts));
+                report.addProperty("presentedRestartAtWorldFrame", Integer.valueOf(worldFrames));
+                report.addProperty("presentedRestartFrom", Integer.valueOf(celtium$lastPresentedSample));
+                String line = "CELTIUM_PRESENT_COUNTER_RESTART worldFrame=" + worldFrames + " from="
+                        + celtium$lastPresentedSample + " to=" + presentedNow + " worldStarts=" + celtium$worldStarts;
+                System.out.println("[Celtium] " + line);
+            }
+            celtium$lastPresentedSample = presentedNow;
             // Frames the target dimension itself drew, with nothing over them. The capture's claim for a dimension run is
             // that a frame of the new dimension was drawn there; a frame counted while the download-terrain screen is up
             // is that screen's background, not the scene, and a frame of the previous dimension is neither.
@@ -3338,8 +3463,13 @@ public final class ValidationClient {
                 && worldTicks <= 200) {
             net.minecraft.util.math.BlockPos target = celtium$breakTarget(mc);
             if (target != null) {
-                mc.renderGlobal.sendBlockBreakProgress(1, target, 5);
-                celtium$breakProgressCalls++;
+                // The control: place the subject but register no progress, so one run's frame has the block without the
+                // overlay and the next has it with. A picture difference between the two is then the overlay's doing and
+                // nothing else's.
+                if (!Boolean.getBoolean("celtium.validation.breakSubjectOnly")) {
+                    mc.renderGlobal.sendBlockBreakProgress(1, target, 5);
+                    celtium$breakProgressCalls++;
+                }
                 celtium$breakSubjectPos = target;
             }
         }
@@ -4025,6 +4155,199 @@ public final class ValidationClient {
         return count instanceof Integer ? ((Integer) count).intValue() : -1;
     }
 
+    /**
+     * Samples both frame counters at the start of a world, so the presented-frame assertion can be scoped to the world
+     * whose picture it judges.
+     * <p>
+     * Called at a rejoin (and by nothing for the first world, whose start is the zero the fields already hold). The
+     * counters are the renderer's presented-frame count and this fixture's world-frame count, and both are reported, so
+     * a run says which window the comparison used instead of leaving a reader to infer it from the numbers.
+     */
+    private void celtium$noteWorldStart(String reason) {
+        celtium$worldStarts++;
+        report.addProperty("worldStarts", Integer.valueOf(celtium$worldStarts));
+        report.addProperty("worldStartReason", reason);
+        // The presented counter is *not* sampled here: at the moment the fixture asks for the second world the renderer
+        // still holds the first world's numbering, and the restart happens later, when the new world renderer adopts the
+        // window instance. The world() hook detects that restart, which is the start this comparison is measured from.
+        System.out.println("[Celtium] CELTIUM_WORLD_START reason=" + reason + " worldStarts=" + celtium$worldStarts
+                + " worldFrames=" + worldFrames + " presented=" + celtium$presentedFrameCount());
+    }
+
+    /** The GLFW window the game is drawing into, by the same two routes the swapchain uses, or 0. */
+    private static long celtium$windowHandle() {
+        try {
+            Class<?> glfw = Class.forName("org.lwjgl.glfw.GLFW");
+            Object current = glfw.getMethod("glfwGetCurrentContext").invoke(null);
+            long window = current instanceof Long ? ((Long) current).longValue() : 0L;
+            if (window != 0L) {
+                return window;
+            }
+            Class<?> display = Class.forName("org.lwjgl.opengl.Display");
+            Object handle = display.getMethod("getWindow").invoke(null);
+            return handle instanceof Long ? ((Long) handle).longValue() : 0L;
+        } catch (ReflectiveOperationException | LinkageError error) {
+            System.out.println("[Celtium] CELTIUM_RESIZE no window handle: " + error);
+            return 0L;
+        }
+    }
+
+    /** {@return the window's own size as {width, height}, or null} - what GLFW thinks, not what the game uses. */
+    private static int[] celtium$glfwWindowSize(long window) {
+        if (window == 0L) {
+            return null;
+        }
+        try {
+            Class<?> glfw = Class.forName("org.lwjgl.glfw.GLFW");
+            int[] width = new int[1];
+            int[] height = new int[1];
+            glfw.getMethod("glfwGetWindowSize", long.class, int[].class, int[].class)
+                    .invoke(null, Long.valueOf(window), width, height);
+            return new int[] {width[0], height[0]};
+        } catch (ReflectiveOperationException | LinkageError error) {
+            return null;
+        }
+    }
+
+    /** {@return whether GLFW will resize this window} (GLFW_RESIZABLE), or null when it cannot be asked. */
+    private static Boolean celtium$glfwWindowResizable(long window) {
+        if (window == 0L) {
+            return null;
+        }
+        try {
+            Class<?> glfw = Class.forName("org.lwjgl.glfw.GLFW");
+            Object value = glfw.getMethod("glfwGetWindowAttrib", long.class, int.class)
+                    .invoke(null, Long.valueOf(window), Integer.valueOf(0x00020003));
+            return Boolean.valueOf(value instanceof Integer && ((Integer) value).intValue() == 1);
+        } catch (ReflectiveOperationException | LinkageError error) {
+            return null;
+        }
+    }
+
+    /** Parses {@code WxH}; null when the property is not of that shape, so a bad value fails loudly. */
+    private static int[] celtium$parseWindowSize(String text) {
+        if (text == null) {
+            return null;
+        }
+        String[] parts = text.trim().toLowerCase(java.util.Locale.ROOT).split("x");
+        if (parts.length != 2) {
+            return null;
+        }
+        try {
+            int width = Integer.parseInt(parts[0].trim());
+            int height = Integer.parseInt(parts[1].trim());
+            return width > 0 && height > 0 ? new int[] {width, height} : null;
+        } catch (NumberFormatException error) {
+            return null;
+        }
+    }
+
+    /**
+     * Asks GLFW to resize the window and records what was asked and what the game's framebuffer was before it. The
+     * request is asynchronous: the window system answers later, and the observation is the per-tick sampler below.
+     */
+    private boolean celtium$requestResize(Minecraft mc, String why) {
+        int[] size = celtium$parseWindowSize(celtium$resizeTo);
+        long window = celtium$windowHandle();
+        if (size == null || window == 0L) {
+            report.addProperty("resizeFailed", "why=" + why + " size=" + (size == null ? "unparsable:" + celtium$resizeTo
+                    : size[0] + "x" + size[1]) + " window=" + window);
+            celtium$resizeTrace("CELTIUM_RESIZE_FAILED why=" + why + " size=" + celtium$resizeTo + " window=" + window);
+            return false;
+        }
+        int beforeWidth = mc.displayWidth;
+        int beforeHeight = mc.displayHeight;
+        int[] windowBefore = celtium$glfwWindowSize(window);
+        Boolean resizable = celtium$glfwWindowResizable(window);
+        report.addProperty("resizeWindowSizeBefore", windowBefore == null ? "unreadable"
+                : windowBefore[0] + "x" + windowBefore[1]);
+        report.addProperty("resizeWindowResizable", resizable == null ? "unreadable" : resizable.toString());
+        try {
+            Class<?> glfw = Class.forName("org.lwjgl.glfw.GLFW");
+            // A window the game created non-resizable would ignore the size request, and "the window never resized" and
+            // "the renderer did not follow" are different findings: make it resizable first, and record whether that was
+            // necessary. GLFW_RESIZABLE is 0x00020003.
+            if (Boolean.FALSE.equals(resizable)) {
+                glfw.getMethod("glfwSetWindowAttrib", long.class, int.class, int.class)
+                        .invoke(null, Long.valueOf(window), Integer.valueOf(0x00020003), Integer.valueOf(1));
+            }
+            glfw.getMethod("glfwSetWindowSize", long.class, int.class, int.class)
+                    .invoke(null, Long.valueOf(window), Integer.valueOf(size[0]), Integer.valueOf(size[1]));
+        } catch (ReflectiveOperationException | LinkageError error) {
+            report.addProperty("resizeFailed", "why=" + why + " error=" + error);
+            celtium$resizeTrace("CELTIUM_RESIZE_FAILED why=" + why + " error=" + error);
+            return false;
+        }
+        celtium$resizeRequested = true;
+        celtium$resizeRequestedAtTick = worldTicks;
+        report.addProperty("resizeRequestedAtTick", Integer.valueOf(worldTicks));
+        report.addProperty("resizeReason", why);
+        report.addProperty("resizeWindowFrom", beforeWidth + "x" + beforeHeight);
+        report.addProperty("resizeWindowTo", size[0] + "x" + size[1]);
+        celtium$resizeTrace("CELTIUM_RESIZE_REQUEST tick=" + worldTicks + " why=" + why + " window=" + window
+                + " from=" + beforeWidth + "x" + beforeHeight + " to=" + size[0] + "x" + size[1]);
+        System.out.println("[Celtium] CELTIUM_RESIZE_REQUEST tick=" + worldTicks + " why=" + why
+                + " from=" + beforeWidth + "x" + beforeHeight + " to=" + size[0] + "x" + size[1]);
+        return true;
+    }
+
+    /**
+     * Samples the game's framebuffer size every tick and records each change, so "the resize took effect" is a
+     * measured transition rather than the assumption that the request worked.
+     */
+    private void celtium$sampleFramebufferSize(Minecraft mc) {
+        int width = mc.displayWidth;
+        int height = mc.displayHeight;
+        // The window's own size, from GLFW, is polled before the early return: it separates "the window never resized"
+        // (a request that could not take effect - a non-resizable window, for one) from "the window resized and the
+        // game's framebuffer did not follow", which are different findings and only this reading tells them apart.
+        int[] windowSize = celtium$glfwWindowSize(celtium$windowHandle());
+        if (windowSize != null) {
+            report.addProperty("glfwWindowSizeAtEnd", windowSize[0] + "x" + windowSize[1]);
+            if (celtium$lastWindowWidth != windowSize[0] || celtium$lastWindowHeight != windowSize[1]) {
+                if (celtium$lastWindowWidth > 0) {
+                    celtium$windowSizeChanges++;
+                    report.addProperty("windowSizeChanges", Integer.valueOf(celtium$windowSizeChanges));
+                    String line = "CELTIUM_WINDOW_SIZE_CHANGED tick=" + worldTicks + " from=" + celtium$lastWindowWidth
+                            + "x" + celtium$lastWindowHeight + " to=" + windowSize[0] + "x" + windowSize[1]
+                            + " gameFramebuffer=" + width + "x" + height;
+                    celtium$resizeTrace(line);
+                    System.out.println("[Celtium] " + line);
+                }
+                celtium$lastWindowWidth = windowSize[0];
+                celtium$lastWindowHeight = windowSize[1];
+            }
+        }
+        if (width == celtium$lastFramebufferWidth && height == celtium$lastFramebufferHeight) {
+            return;
+        }
+        if (celtium$lastFramebufferWidth > 0) {
+            celtium$framebufferSizeChanges++;
+            report.addProperty("framebufferSizeChanges", Integer.valueOf(celtium$framebufferSizeChanges));
+            if (celtium$resizeRequested && !report.has("resizeObservedAtTick")) {
+                report.addProperty("resizeObservedAtTick", Integer.valueOf(worldTicks));
+                report.addProperty("resizeObservedFrom", celtium$lastFramebufferWidth + "x" + celtium$lastFramebufferHeight);
+                report.addProperty("resizeObservedTo", width + "x" + height);
+            }
+            String line = "CELTIUM_RESIZE_OBSERVED tick=" + worldTicks + " from=" + celtium$lastFramebufferWidth + "x"
+                    + celtium$lastFramebufferHeight + " to=" + width + "x" + height;
+            celtium$resizeTrace(line);
+            System.out.println("[Celtium] " + line);
+        }
+        celtium$lastFramebufferWidth = width;
+        celtium$lastFramebufferHeight = height;
+        report.addProperty("framebufferSizeAtEnd", width + "x" + height);
+    }
+
+    private synchronized void celtium$resizeTrace(String line) {
+        if (celtium$resizeTraceLines >= RESIZE_TRACE_MAX_LINES) {
+            return;
+        }
+        celtium$resizeTraceLines++;
+        celtium$resizeTrace.append(line).append('\n');
+        report.addProperty("resizeTrace", celtium$resizeTrace.toString().trim());
+    }
+
     /** Every reason the capture tick cannot be accepted as a frame of the target dimension, with its numbers. */
     private java.util.List<String> celtium$dimensionGateFailures(Minecraft mc, int serverDimensionAtCapture,
             int presentedAtCapture) {
@@ -4656,174 +4979,361 @@ public final class ValidationClient {
 
     /** The same two calls the game's own handler makes for id 101, recorded as their own provenance. */
     /**
-     * The functional half of the video settings acceptance: press one of the screen's own setting buttons through its
-     * click dispatch and read the setting before and after.
+     * Drives the functional video-settings chain, one step per client tick, **on the screen that is then captured**.
      * <p>
-     * The picture half says the screen is drawn; it cannot say the screen works. A video settings screen whose rows are
-     * painted but whose buttons do nothing looks right in a screenshot and is broken to a player, so the two halves are
-     * measured separately: the button is found by its label in the screen's own button list, the click goes through
-     * {@code GuiScreen.mouseClicked} (the code a real click runs, which finds the button under the point and calls its
-     * handler), and the game's own setting is read either side of it. The setting chosen is the first of a list of
-     * vanilla ones that the screen actually shows, so the test is about the screen rather than about a button id.
+     * Audit B08: the previous version pressed a control on whichever screen the game's own Video Settings button
+     * opened - in this runtime the mod's {@code CeleritasVideoOptionsScreen} - and returned as soon as an in-memory
+     * option value moved. The picture that gets captured is Minecraft's own {@code GuiVideoSettings}, so the operated
+     * screen was not the captured screen; nothing went through Apply or a save; and the option's name was null in the
+     * report. This chain runs on {@code GuiVideoSettings} itself and presses through that screen's own
+     * {@code mouseClicked}, which is the code a real click runs: it forwards to the screen's {@code optionsRowList}
+     * ({@code GuiVideoSettings.java:105}) and to its {@code buttonList} (Done, id 200, whose handler calls
+     * {@code gameSettings.saveOptions()} and closes the screen, {@code GuiVideoSettings.java:76-83}).
+     * <p>
+     * It records, in order: the screen class and title, the option's name and its value before, the value after the
+     * press, the Done press, {@code options.txt} before and after with the lines that changed, a presented-frame dump
+     * requested either side of the change (two identities are the rendered-change measurement), the value read again
+     * after reopening the screen through the game's own button path, and the restore of the original value so the
+     * frame captured afterwards is still the calibrated variant.
+     *
+     * @return true when the chain has finished and the picture capture may proceed
      */
-    private void celtium$exerciseVideoSettings(Minecraft mc) {
+    private boolean celtium$runVideoSettingsChain(Minecraft mc) {
+        if (celtium$vsStep == 99) {
+            return true;
+        }
+        try {
+            switch (celtium$vsStep) {
+                case -1:
+                    return celtium$vsPressOption(mc);
+                case 0:
+                    return celtium$vsApplyAndSave(mc);
+                case 1:
+                    return celtium$vsAfterDumpAndReopen(mc);
+                case 2:
+                    return celtium$vsReadReopenedAndRestore(mc);
+                default:
+                    return celtium$vsReopenForCapture(mc);
+            }
+        } catch (Throwable error) {
+            report.addProperty("videoSettingsChainError", String.valueOf(error));
+            celtium$vsStep = 99;
+            return true;
+        }
+    }
+
+    /** Step 0: pick an option, record it and the settings file, and press it through the screen's own dispatch. */
+    private boolean celtium$vsPressOption(Minecraft mc) throws Exception {
+        net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
+        report.addProperty("videoSettingsChainScreen", screen.getClass().getName());
+        report.addProperty("videoSettingsChainTitle", celtium$guiScreenTitle(mc));
+        Object list = celtium$fieldValue(screen, new String[] {"optionsRowList", "field_146501_h"});
+        if (list == null) {
+            report.addProperty("videoSettingsChain", "the captured screen has no optionsRowList to press");
+            celtium$vsStep = 99;
+            return true;
+        }
+        Object[] found = celtium$vsFindOptionButton(list);
+        if (found == null) {
+            report.addProperty("videoSettingsChain", "no option button could be located in the screen's row list");
+            celtium$vsStep = 99;
+            return true;
+        }
+        Object button = found[0];
+        Object option = found[1];
+        celtium$vsOption = celtium$vsOptionName(option, button);
+        celtium$vsBefore = String.valueOf(celtium$fieldValue(button, new String[] {"displayString", "field_146126_j"}));
+        celtium$vsFileBefore = celtium$vsOptionsFile(mc);
+        report.addProperty("videoSettingsOptionName", celtium$vsOption);
+        report.addProperty("videoSettingsOptionBefore", celtium$vsBefore);
+        report.addProperty("videoSettingsOptionButton", button.getClass().getName());
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            celtium$vsPictureBefore = celtium$requestPresentedDump(mc, "vs-before");
+        }
+        int x = ((Number) celtium$fieldValue(button, new String[] {"x", "field_146128_h"})).intValue();
+        int y = ((Number) celtium$fieldValue(button, new String[] {"y", "field_146129_i"})).intValue();
+        int w = ((Number) celtium$fieldValue(button, new String[] {"width", "field_146120_f"})).intValue();
+        int h = ((Number) celtium$fieldValue(button, new String[] {"height", "field_146121_g"})).intValue();
+        celtium$vsPressX = x + w / 2;
+        celtium$vsPressY = y + h / 2;
+        // The screen's own mouseClicked, not the widget's method: GuiVideoSettings.mouseClicked forwards to
+        // optionsRowList.mouseClicked and to super (the Done button), which is the whole of what a real click does.
+        java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
+                new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
+        click.setAccessible(true);
+        click.invoke(screen, Integer.valueOf(celtium$vsPressX), Integer.valueOf(celtium$vsPressY), Integer.valueOf(0));
+        java.lang.reflect.Method release = celtium$requireMethod(screen.getClass(),
+                new String[] {"mouseReleased", "func_146286_b"}, int.class, int.class, int.class);
+        release.setAccessible(true);
+        release.invoke(screen, Integer.valueOf(celtium$vsPressX), Integer.valueOf(celtium$vsPressY), Integer.valueOf(0));
+        report.addProperty("videoSettingsPress",
+                "pressed " + celtium$vsOption + " at " + celtium$vsPressX + "," + celtium$vsPressY
+                        + " through " + screen.getClass().getName() + ".mouseClicked + mouseReleased");
+        celtium$vsStep = 0;
+        return false;
+    }
+
+    /** Step 1: read the value after the press, press Done (which saves), and read the settings file again. */
+    private boolean celtium$vsApplyAndSave(Minecraft mc) throws Exception {
         net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
         if (screen == null) {
-            report.addProperty("videoSettingsFunction", "no screen is open to press a setting in");
-            return;
+            report.addProperty("videoSettingsChain", "the screen closed before the Done press could be made");
+            celtium$vsStep = 99;
+            return true;
         }
-        report.addProperty("videoSettingsFunctionScreen", screen.getClass().getName());
-        // The screen this runtime shows keeps its widgets in a controller rather than in GuiScreen.buttonList - the
-        // vanilla GuiVideoSettings the scene is compared against holds nothing but Done (measured: one button), because
-        // this mod takes the video settings UI over. So the functional acceptance drives the controller: press inside
-        // the option area through the screen's own mouse dispatch and read whether a control took the press
-        // (hasPendingChanges), then press the controller's own Apply and read whether the change was committed.
-        Object controller = celtium$fieldValue(screen, new String[] {"controller"});
-        if (controller == null) {
-            report.addProperty("videoSettingsFunction", "the screen has no controller to press");
-            return;
+        Object list = celtium$fieldValue(screen, new String[] {"optionsRowList", "field_146501_h"});
+        Object[] found = list == null ? null : celtium$vsFindOptionButton(list);
+        if (found != null) {
+            celtium$vsAfter = String.valueOf(celtium$fieldValue(found[0], new String[] {"displayString", "field_146126_j"}));
         }
-        boolean pending = celtium$pendingChanges(controller);
-        report.addProperty("videoSettingsFunctionPendingBefore", Boolean.valueOf(pending));
-        // The widgets are the controller's frame's own control elements, each with its own rectangle - guessing points
-        // in the screen missed all of them (five presses, no control took one), which is why the coordinates come from
-        // the controls rather than from the middle of the screen.
-        Object frame = celtium$fieldValue(controller, new String[] {"frame"});
-        Object elements = frame == null ? null : celtium$fieldValue(frame, new String[] {"controlElements"});
-        if (!(elements instanceof java.util.List)) {
-            report.addProperty("videoSettingsFunction", "the controller's frame has no control elements to press");
-            return;
+        report.addProperty("videoSettingsOptionAfter", celtium$vsAfter);
+        report.addProperty("videoSettingsOptionChanged",
+                Boolean.valueOf(!celtium$vsAfter.equals(celtium$vsBefore)));
+        // Done is the screen's own Apply: actionPerformed(200) calls gameSettings.saveOptions() and closes the screen.
+        Object done = celtium$vsButtonById(screen, 200);
+        String pressed = "no Done button (id 200) in the captured screen";
+        if (done != null) {
+            int x = ((Number) celtium$fieldValue(done, new String[] {"x", "field_146128_h"})).intValue();
+            int y = ((Number) celtium$fieldValue(done, new String[] {"y", "field_146129_i"})).intValue();
+            int w = ((Number) celtium$fieldValue(done, new String[] {"width", "field_146120_f"})).intValue();
+            int h = ((Number) celtium$fieldValue(done, new String[] {"height", "field_146121_g"})).intValue();
+            java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
+                    new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
+            click.setAccessible(true);
+            click.invoke(screen, Integer.valueOf(x + w / 2), Integer.valueOf(y + h / 2), Integer.valueOf(0));
+            java.lang.reflect.Method release = celtium$requireMethod(screen.getClass(),
+                    new String[] {"mouseReleased", "func_146286_b"}, int.class, int.class, int.class);
+            release.setAccessible(true);
+            release.invoke(screen, Integer.valueOf(x + w / 2), Integer.valueOf(y + h / 2), Integer.valueOf(0));
+            pressed = "Done (id 200) pressed through " + screen.getClass().getName()
+                    + ".mouseClicked; its handler calls gameSettings.saveOptions()";
         }
-        int pressed = 0;
-        String pressedLabel = "none";
-        // The widget is asked directly, with the mod's own InteractionContext singleton, because the screen reads the
-        // global mouse state in func_146274_d rather than the coordinates a caller passes: eight controls took no press
-        // that way. ControlElement.mouseClicked(ctx, x, y, button) is the same entry point the screen's dispatch would
-        // reach, so this is the widget's own handler running, not a copy of it.
-        Object context = null;
-        try {
-            Class<?> vintage = Class.forName("org.taumc.celeritas.impl.gui.VintageInteractionContext");
-            context = vintage.getField("INSTANCE").get(null);
-        } catch (ReflectiveOperationException | LinkageError absent) {
-            report.addProperty("videoSettingsFunction", "the mod's interaction context is not on the classpath: " + absent);
-            return;
+        report.addProperty("videoSettingsApply", pressed);
+        celtium$vsFileAfter = celtium$vsOptionsFile(mc);
+        celtium$vsFileChanged = celtium$vsOptionsDiff(celtium$vsFileBefore, celtium$vsFileAfter);
+        report.addProperty("videoSettingsSettingsFileChanged", celtium$vsFileChanged);
+        celtium$vsStep = 1;
+        return false;
+    }
+
+    /** Step 2: dump the frame the change produced, then reopen the screen through the game's own button path. */
+    private boolean celtium$vsAfterDumpAndReopen(Minecraft mc) throws Exception {
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            celtium$vsPictureAfter = celtium$requestPresentedDump(mc, "vs-after");
         }
-        Object optionBefore = null;
-        for (Object element : (java.util.List<?>) elements) {
-            optionBefore = celtium$optionValue(element);
-            Object dim = celtium$fieldValue(element, new String[] {"dim"});
-            int cx;
-            int cy;
-            if (dim != null) {
-                Object centerX = celtium$invokeNoArg(dim, new String[] {"getCenterX", "centerX"});
-                Object centerY = celtium$invokeNoArg(dim, new String[] {"getCenterY", "centerY"});
-                if (!(centerX instanceof Number) || !(centerY instanceof Number)) {
-                    continue;
-                }
-                cx = ((Number) centerX).intValue();
-                cy = ((Number) centerY).intValue();
-            } else {
-                Object xValue = celtium$fieldValue(element, new String[] {"x", "field_146128_h"});
-                Object yValue = celtium$fieldValue(element, new String[] {"y", "field_146129_i"});
-                Object wValue = celtium$fieldValue(element, new String[] {"width", "field_146120_f"});
-                Object hValue = celtium$fieldValue(element, new String[] {"height", "field_146121_g"});
-                if (!(xValue instanceof Number) || !(yValue instanceof Number) || !(wValue instanceof Number)
-                        || !(hValue instanceof Number)) {
-                    continue;
-                }
-                cx = ((Number) xValue).intValue() + ((Number) wValue).intValue() / 2;
-                cy = ((Number) yValue).intValue() + ((Number) hValue).intValue() / 2;
+        celtium$vsOpenCapturedScreen(mc);
+        celtium$vsStep = 2;
+        return false;
+    }
+
+    /** Step 3: read the option again on the reopened screen, then press it back to its original value and save. */
+    private boolean celtium$vsReadReopenedAndRestore(Minecraft mc) throws Exception {
+        net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
+        if (screen == null) {
+            celtium$vsReopened = "the screen did not reopen";
+            report.addProperty("videoSettingsReopenedValue", celtium$vsReopened);
+            celtium$vsStep = 99;
+            return true;
+        }
+        Object list = celtium$fieldValue(screen, new String[] {"optionsRowList", "field_146501_h"});
+        Object[] found = list == null ? null : celtium$vsFindOptionButton(list, celtium$vsOption);
+        if (found == null) {
+            celtium$vsReopened = "the reopened screen (" + screen.getClass().getName()
+                    + ") does not show option " + celtium$vsOption;
+            report.addProperty("videoSettingsReopenedValue", celtium$vsReopened);
+            celtium$vsStep = 99;
+            return true;
+        }
+        String reopenedValue = String.valueOf(celtium$fieldValue(found[0], new String[] {"displayString", "field_146126_j"}));
+        celtium$vsReopened = "reopened " + screen.getClass().getName() + " shows " + celtium$vsOption
+                + " as '" + reopenedValue + "' (was '" + celtium$vsAfter + "' before the save)";
+        report.addProperty("videoSettingsReopenedValue", celtium$vsReopened);
+        report.addProperty("videoSettingsReopenedScreen", screen.getClass().getName());
+        // Restore: press the same option again and save, so the captured frame is the calibrated variant.
+        int x = ((Number) celtium$fieldValue(found[0], new String[] {"x", "field_146128_h"})).intValue();
+        int y = ((Number) celtium$fieldValue(found[0], new String[] {"y", "field_146129_i"})).intValue();
+        int w = ((Number) celtium$fieldValue(found[0], new String[] {"width", "field_146120_f"})).intValue();
+        int h = ((Number) celtium$fieldValue(found[0], new String[] {"height", "field_146121_g"})).intValue();
+        java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
+                new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
+        click.setAccessible(true);
+        click.invoke(screen, Integer.valueOf(x + w / 2), Integer.valueOf(y + h / 2), Integer.valueOf(0));
+        Object done = celtium$vsButtonById(screen, 200);
+        if (done != null) {
+            int dx = ((Number) celtium$fieldValue(done, new String[] {"x", "field_146128_h"})).intValue();
+            int dy = ((Number) celtium$fieldValue(done, new String[] {"y", "field_146129_i"})).intValue();
+            int dw = ((Number) celtium$fieldValue(done, new String[] {"width", "field_146120_f"})).intValue();
+            int dh = ((Number) celtium$fieldValue(done, new String[] {"height", "field_146121_g"})).intValue();
+            click.invoke(screen, Integer.valueOf(dx + dw / 2), Integer.valueOf(dy + dh / 2), Integer.valueOf(0));
+        }
+        celtium$vsRestored = "pressed " + celtium$vsOption + " again and Done, to put the value back before the capture";
+        report.addProperty("videoSettingsRestored", celtium$vsRestored);
+        celtium$vsStep = 3;
+        return false;
+    }
+
+    /** Step 4: reopen the captured screen for the picture, and let the capture proceed once it is up. */
+    private boolean celtium$vsReopenForCapture(Minecraft mc) throws Exception {
+        String name = celtium$screenName(mc);
+        if ("GuiVideoSettings".equals(name)) {
+            report.addProperty("videoSettingsChain",
+                    "the captured screen was the operated screen: " + celtium$vsOption + " '"
+                            + celtium$vsBefore + "' -> '" + celtium$vsAfter + "', saved, restored");
+            return true;
+        }
+        if (celtium$vsStep == 3) {
+            celtium$vsOpenCapturedScreen(mc);
+            celtium$vsStep = 4;
+            return false;
+        }
+        return false;
+    }
+
+    /** Opens Minecraft's own video settings screen: the game's button path first, the vanilla calls when diverted. */
+    private void celtium$vsOpenCapturedScreen(Minecraft mc) {
+        celtium$clickVideoSettingsButton(mc);
+        if (mc.currentScreen != null && !"GuiVideoSettings".equals(celtium$screenName(mc))) {
+            report.addProperty("guiClickDivertedTo", mc.currentScreen.getClass().getName());
+            celtium$openVideoSettingsDirectly(mc, "the Video Settings button opened "
+                    + mc.currentScreen.getClass().getName() + ", not Minecraft's own GuiVideoSettings");
+        }
+        celtium$guiSettingsAtTick = -1;
+        celtium$guiSettingsAtFrames = -1;
+        report.addProperty("guiScreenOpenedVia", celtium$guiScreenOpenedVia);
+    }
+
+    /** The screen's own button with the given id, or null. */
+    private static Object celtium$vsButtonById(net.minecraft.client.gui.GuiScreen screen, int id) {
+        Object list = celtium$fieldValue(screen, new String[] {"buttonList", "field_146292_n"});
+        if (!(list instanceof java.util.List)) {
+            return null;
+        }
+        for (Object candidate : (java.util.List<?>) list) {
+            Object value = celtium$fieldValue(candidate, new String[] {"id", "field_146127_k"});
+            if (value instanceof Integer && ((Integer) value).intValue() == id) {
+                return candidate;
             }
-            try {
-                java.lang.reflect.Method press = null;
-                for (Class<?> type = element.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
-                    for (java.lang.reflect.Method candidate : type.getDeclaredMethods()) {
-                        if (candidate.getName().equals("mouseClicked") && candidate.getParameterCount() == 4) {
-                            press = candidate;
+        }
+        return null;
+    }
+
+    /**
+     * The first option button in the screen's row list, preferring one whose change is visible in the frame.
+     * <p>
+     * Clouds, graphics, ambient occlusion and particles are tried in that order because a rendered change is part of
+     * the evidence chain; anything else pressable is the fallback. {@code GuiOptionsRowList.getListEntry(i)} returns a
+     * {@code Row} whose {@code buttonA}/{@code buttonB} are the widgets (read from the sources, not guessed).
+     */
+    private static Object[] celtium$vsFindOptionButton(Object list) {
+        return celtium$vsFindOptionButton(list, null);
+    }
+
+    private static Object[] celtium$vsFindOptionButton(Object list, String wantedOption) {
+        String[] preferred = {"RENDER_CLOUDS", "GRAPHICS", "AMBIENT_OCCLUSION", "PARTICLES"};
+        Object[] fallback = null;
+        for (int pass = 0; pass < preferred.length + 1; pass++) {
+            String want = pass < preferred.length ? preferred[pass] : null;
+            for (int i = 0; i < 64; i++) {
+                Object row;
+                try {
+                    // Both names: the development jar keeps `getListEntry`, the production jar carries the SRG name
+                    // (looked up, not guessed: GuiOptionsRowList.getListEntry -> func_148180_b).
+                    java.lang.reflect.Method get = null;
+                    for (String methodName : new String[] {"getListEntry", "func_148180_b"}) {
+                        try {
+                            get = list.getClass().getMethod(methodName, int.class);
                             break;
+                        } catch (NoSuchMethodException next) {
+                            // Try the other name.
                         }
                     }
-                    if (press != null) {
+                    if (get == null) {
                         break;
                     }
+                    get.setAccessible(true);
+                    row = get.invoke(list, Integer.valueOf(i));
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError absent) {
+                    break;
                 }
-                if (press == null) {
-                    continue;
+                if (row == null) {
+                    break;
                 }
-                press.setAccessible(true);
-                press.invoke(element, context, Integer.valueOf(cx), Integer.valueOf(cy), Integer.valueOf(0));
-            } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-                report.addProperty("videoSettingsFunction", "the control press threw: " + error);
-                return;
+                // GuiOptionsRowList$Row.buttonA/buttonB -> field_148323_b/field_148324_c (from the SRG tables).
+                for (String field : new String[] {"buttonA", "buttonB", "field_148323_b", "field_148324_c"}) {
+                    Object button = celtium$fieldValue(row, new String[] {field});
+                    if (button == null) {
+                        continue;
+                    }
+                    Object option = celtium$fieldValue(button, new String[] {"enumOptions", "field_146137_o"});
+                    if (option == null) {
+                        continue;
+                    }
+                    String name = celtium$vsOptionName(option, button);
+                    if (wantedOption != null && wantedOption.equals(name)) {
+                        return new Object[] {button, option};
+                    }
+                    if (wantedOption == null && want != null && want.equals(name)) {
+                        return new Object[] {button, option};
+                    }
+                    if (wantedOption == null && fallback == null) {
+                        fallback = new Object[] {button, option};
+                    }
+                }
             }
-            pressed++;
-            Object label = celtium$fieldValue(element, new String[] {"name", "text", "label"});
-            pressedLabel = label == null ? element.getClass().getSimpleName() : String.valueOf(label);
-            // The option's own value is the evidence, not the controller's pending flag: that flag is refreshed in
-            // updateControls during the controller's render, so it is still false at the moment a press returns, while
-            // the control's handler has already written the new value into the option it belongs to. Reading the value
-            // is what a player would observe, and it does not depend on when the next frame happens.
-            Object after = celtium$optionValue(element);
-            if (after != null && !after.equals(optionBefore)) {
-                report.addProperty("videoSettingsFunctionOption", String.valueOf(label));
-                report.addProperty("videoSettingsFunctionBefore", String.valueOf(optionBefore));
-                report.addProperty("videoSettingsFunctionAfter", String.valueOf(after));
-                report.addProperty("videoSettingsFunctionChanged", Boolean.TRUE);
-                report.addProperty("videoSettingsFunctionApplied",
-                        "the control's own handler changed its option: \"" + optionBefore + "\" -> \"" + after + "\"");
-                report.addProperty("videoSettingsFunction",
-                        "the screen's own control changed a setting after " + pressed + " press(es): \"" + label
-                                + "\" \"" + optionBefore + "\" -> \"" + after + "\"");
-                report.addProperty("videoSettingsFunctionControl", pressedLabel);
-                report.addProperty("videoSettingsFunctionControls", Integer.valueOf(((java.util.List<?>) elements).size()));
-                return;
-            }
-            if (celtium$pendingChanges(controller)) {
+            if (wantedOption != null) {
                 break;
             }
         }
-        report.addProperty("videoSettingsFunctionControls", Integer.valueOf(((java.util.List<?>) elements).size()));
-        report.addProperty("videoSettingsFunctionControl", pressedLabel);
-        report.addProperty("videoSettingsFunctionControls", Integer.valueOf(((java.util.List<?>) elements).size()));
-        boolean responded = celtium$pendingChanges(controller);
-        report.addProperty("videoSettingsFunctionPressed", Integer.valueOf(pressed));
-        report.addProperty("videoSettingsFunctionControlResponded", Boolean.valueOf(responded));
-        if (!responded) {
-            report.addProperty("videoSettingsFunction",
-                    "no control in the screen took a press at any of the " + pressed + " points tried");
-            return;
+        return fallback;
+    }
+
+    /** The option's stable name: the enum constant, falling back to the button's visible label. */
+    private static String celtium$vsOptionName(Object option, Object button) {
+        try {
+            java.lang.reflect.Method name = option.getClass().getMethod("name");
+            name.setAccessible(true);
+            Object value = name.invoke(option);
+            if (value != null) {
+                return String.valueOf(value);
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError absent) {
+            // Fall through to the label.
         }
-        // The screen's own Apply: pressing it is what commits a change, and whether the pending state clears is
-        // whether the control's value actually went somewhere.
-        Object apply = celtium$fieldValue(controller, new String[] {"applyButton"});
-        String applied = "the controller has no apply button to press";
-        if (apply != null) {
-            int x = ((Number) celtium$fieldValue(apply, new String[] {"x", "field_146128_h"})).intValue();
-            int y = ((Number) celtium$fieldValue(apply, new String[] {"y", "field_146129_i"})).intValue();
-            int width = ((Number) celtium$fieldValue(apply, new String[] {"width", "field_146120_f"})).intValue();
-            int height = ((Number) celtium$fieldValue(apply, new String[] {"height", "field_146121_g"})).intValue();
-            try {
-                java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
-                        new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
-                click.setAccessible(true);
-                click.invoke(screen, Integer.valueOf(x + width / 2), Integer.valueOf(y + height / 2),
-                        Integer.valueOf(0));
-                java.lang.reflect.Method release = celtium$requireMethod(screen.getClass(),
-                        new String[] {"mouseReleased", "func_146286_b"}, int.class, int.class, int.class);
-                release.setAccessible(true);
-                release.invoke(screen, Integer.valueOf(x + width / 2), Integer.valueOf(y + height / 2),
-                        Integer.valueOf(0));
-                applied = celtium$pendingChanges(controller)
-                        ? "the Apply button was pressed and the change is still pending"
-                        : "the Apply button was pressed and the change was committed";
-            } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-                applied = "the Apply click threw: " + error;
+        return String.valueOf(celtium$fieldValue(button, new String[] {"displayString", "field_146126_j"}));
+    }
+
+    /** The whole of {@code options.txt}, or a diagnostic string when it cannot be read. */
+    private static String celtium$vsOptionsFile(Minecraft mc) {
+        try {
+            java.io.File file = new java.io.File(mc.gameDir, "options.txt");
+            if (!file.isFile()) {
+                return "no options.txt at " + file;
+            }
+            return new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable error) {
+            return "options.txt unreadable: " + error;
+        }
+    }
+
+    /** The lines of {@code options.txt} that differ between the two reads, or why no difference can be reported. */
+    private static String celtium$vsOptionsDiff(String before, String after) {
+        if (before == null || after == null || before.isEmpty() || after.isEmpty()) {
+            return "not measured: the settings file could not be read on both sides";
+        }
+        java.util.Set<String> beforeLines = new java.util.LinkedHashSet<String>(java.util.Arrays.asList(before.split("\n")));
+        java.util.Set<String> afterLines = new java.util.LinkedHashSet<String>(java.util.Arrays.asList(after.split("\n")));
+        java.util.List<String> changed = new java.util.ArrayList<String>();
+        for (String line : afterLines) {
+            if (!beforeLines.contains(line)) {
+                changed.add("+" + line.trim());
             }
         }
-        report.addProperty("videoSettingsFunctionApplied", applied);
-        report.addProperty("videoSettingsFunctionChanged", Boolean.TRUE);
-        report.addProperty("videoSettingsFunction",
-                "the screen's own control took a press after " + pressed + " click(s) and " + applied);
+        for (String line : beforeLines) {
+            if (!afterLines.contains(line)) {
+                changed.add("-" + line.trim());
+            }
+        }
+        return changed.isEmpty() ? "no line of options.txt changed" : String.join(" ", changed);
     }
 
     /** The value the control's option currently holds, or null when it cannot be read. */
@@ -4882,12 +5392,10 @@ public final class ValidationClient {
         if (celtium$guiClickPending && worldTicks >= celtium$guiScreenOpenedAtTick + 1) {
             celtium$guiClickPending = false;
             celtium$clickVideoSettingsButton(mc);
-            // The screen the game's own click just opened is the video settings UI a player sees and presses - in this
-            // runtime that is Celeritas' screen, and the vanilla GuiVideoSettings this scene is compared against later
-            // holds nothing but Done (measured: one button, "Done", so there is nothing in it to press). The functional
-            // acceptance is therefore taken here, on the screen the game's own path produced, and the picture half
-            // stays where it was.
-            celtium$exerciseVideoSettings(mc);
+            // The functional acceptance is *not* taken here any more (audit B08): the screen this click opens is the
+            // mod's own in this runtime, and the picture that gets captured is Minecraft's GuiVideoSettings. Pressing
+            // a control here proved the mod screen's handler ran, not that the captured screen works or that anything
+            // was saved. It is taken below, on the screen that is captured, one step per tick.
             // The button is the game's, but a mod can claim it: with Celeritas installed the click through
             // GuiScreen.mouseClicked on button id 101 opened org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen
             // in the reference run, not GuiVideoSettings. What the scene asserts is Minecraft's own screen, so the
@@ -4927,6 +5435,12 @@ public final class ValidationClient {
         int layoutTicks = worldTicks - celtium$guiSettingsAtTick;
         int layoutFrames = worldFrames - celtium$guiSettingsAtFrames;
         if (layoutTicks < celtium$guiLayoutTicks || layoutFrames < celtium$guiMinFrames) {
+            return;
+        }
+        // The functional chain runs here, on the screen that is about to be captured and only after it has laid out,
+        // one step per tick. It restores the option before returning, so the frame captured below is still the
+        // calibrated variant.
+        if (!celtium$runVideoSettingsChain(mc)) {
             return;
         }
         celtium$stage = 2;
@@ -5304,13 +5818,28 @@ public final class ValidationClient {
                 }
                 return;
             }
-            int delta = evidence.presentedFrame - captureWorldFrames;
+            // Both counters only track inside one renderer lifetime, and a run can hold more than one world: a
+            // dimension change recreates the frame target (the branch above), and a quit-to-title and rejoin makes the
+            // window-owned renderer adopt again, restarting its presented counter while worldFrames spans both worlds.
+            // The assertion is therefore made inside the window the picture belongs to - the current world, whose start
+            // sampled both counters (zero for the first world, so a single-world run compares exactly what it always
+            // did) - and the whole-run delta is recorded beside it so the scoping is visible rather than implied.
+            int presentedInWorld = evidence.presentedFrame - celtium$presentedAtWorldStart;
+            int framesInWorld = captureWorldFrames - celtium$worldFramesAtWorldStart;
+            int delta = presentedInWorld - framesInWorld;
+            int wholeRunDelta = evidence.presentedFrame - captureWorldFrames;
             report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(delta));
+            report.addProperty("pictureFrameDeltaWholeRun_" + stage, Integer.valueOf(wholeRunDelta));
+            report.addProperty("pictureFrameScope_" + stage, "world window " + (celtium$worldStarts + 1) + ": the"
+                    + " picture's frame " + evidence.presentedFrame + " is " + presentedInWorld + " presents into this"
+                    + " world (presented counter " + celtium$presentedAtWorldStart + " at its start), which drew "
+                    + framesInWorld + " frames (worldFrames " + celtium$worldFramesAtWorldStart + " at its start, "
+                    + captureWorldFrames + " at the capture); the whole-run delta is " + wholeRunDelta);
             if (Math.abs(delta) > 1) {
                 failures.add("the picture for " + where + " is the frame the renderer presented at "
-                        + evidence.presentedFrame + ", which is " + delta + " away from the " + captureWorldFrames
-                        + " world frames the capture recorded: the frame in the file is not the frame the capture is"
-                        + " about");
+                        + evidence.presentedFrame + ", which is " + delta + " away from the " + framesInWorld
+                        + " world frames this world drew before the capture: the frame in the file is not the frame"
+                        + " the capture is about (whole-run delta " + wholeRunDelta + ")");
             }
         }
     }

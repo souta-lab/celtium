@@ -222,6 +222,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
     private int targetGeneration;
     private int groupsStaleTargetGeneration;
+    /**
+     * Bumped when a world's resources are released, so a queued group from the previous world can never be drawn.
+     * <p>
+     * The window-owned backend outlives a world: on a quit to the title screen the world renderer detaches and
+     * {@link #celtium$releaseWorldResources()} frees the model meshes that captured model groups borrow their meshes
+     * from. A group still in the queue at that moment would otherwise be drawn against a released buffer - the audit's
+     * B10 gap. Groups carry the epoch they were accepted in; the draw side retires a stale one instead of dereferencing
+     * it, and the teardown drops the queue rather than leaving it for the next world.
+     */
+    private int worldEpoch;
+    private int groupsStaleWorldEpoch;
+    private int groupsDiscardedAtWorldTeardown;
+    /** Groups retired by the one drain that has no later one: the backend's own last teardown. */
+    private int groupsDiscardedAtFullTeardown;
     private long immediateRecordedBatches, immediateSubmittedBatches, immediateCompletedBatches;
     private long offTargetRecordedBatches, offTargetCompletedBatches;
     private long invalidImmediateRecords;
@@ -484,6 +498,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " groupsRetired=" + this.retiredImmediateGroups.size()
                 + " groupsStaleTargetGeneration=" + this.groupsStaleTargetGeneration
                 + " targetGeneration=" + this.targetGeneration
+                + " groupsStaleWorldEpoch=" + this.groupsStaleWorldEpoch
+                + " worldEpoch=" + this.worldEpoch
+                + " groupsDiscardedAtWorldTeardown=" + this.groupsDiscardedAtWorldTeardown
+                + " groupsDiscardedAtFullTeardown=" + this.groupsDiscardedAtFullTeardown
                 + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
                 + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
                 + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
@@ -918,6 +936,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int preflightRefusalsReported;
     /** Bounded: how many chain-input state lines this run has printed. */
     private int chainInputReports;
+    /**
+     * Lab switch for the one ordering change this task makes: register the chain's reported input image before the
+     * preflight that judges it. Default on; {@code -Dceltium.vulkan.chainPreflightAdoption=false} restores the old
+     * order in the same jar, which is the A/B the chain's {@code postChains} counter is read against.
+     */
+    private static final boolean CHAIN_PREFLIGHT_ADOPTION =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.chainPreflightAdoption", "true"));
 
     /**
      * Token of the device-wide wait in progress, and the token whose wait has returned. Per-call rather than one
@@ -1283,6 +1308,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** {@code -Dceltium.vulkan.alphaTest=false} turns the immediate path's alpha test off, for measurements. */
     private static final boolean ALPHA_TEST_ENABLED = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.alphaTest", "true"));
+    /**
+     * {@code -Dceltium.vulkan.positionNormalDepthTest=false} builds the POSITION_NORMAL pipeline with its depth test
+     * off, for the one measurement that separates a depth rejection from a lost draw.
+     */
+    private static final boolean POSITION_NORMAL_DEPTH_TEST =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.positionNormalDepthTest", "true"));
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
@@ -1627,12 +1658,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateGroupsDrawn;
     private int immediateGroupsDiscarded;
     /**
-     * Groups drawn, by format id - the counter that pairs with {@code acceptedByFormat}.
+     * Batches drawn, by format id - the counter that pairs with {@code acceptedByFormat}.
      * <p>
      * {@code immediateGroupsDrawn} says how many groups reached a pipeline in total; it cannot say which layout they
-     * were. A group of POSITION_NORMAL that is accepted (48 batches), closed and counted as drawn while the box is
-     * absent from the picture is exactly the case where the total hides the answer, so the per-format row is what
-     * says whether the drop is in the queue (drawn 0) or after it (drawn 48 and no pixels).
+     * were, and a group is not the unit {@code acceptedByFormat} counts. The pair is read as
+     * {@code acceptedByFormat[10]} against {@code drawnByFormat[10]}: measured on the full mask, 103 accepted against
+     * 65 drawn, so the loss is real and per-batch rather than inferred from a group total.
      */
     private final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
     /**
@@ -2509,7 +2540,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
         // must not free it - which is the whole reason the stamp exists.
-        group.stamp = new GroupStamp(this.frameId, this.targetGeneration, true);
+        group.stamp = new GroupStamp(this.frameId, this.targetGeneration, true, this.worldEpoch);
         this.immediateGroups.add(group);
         this.immediateGroupsClosed++;
         return true;
@@ -2524,6 +2555,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " retired=" + this.retiredImmediateGroups.size()
                     + " staleTargetGeneration=" + this.groupsStaleTargetGeneration
                     + " targetGeneration=" + this.targetGeneration
+                    + " staleWorldEpoch=" + this.groupsStaleWorldEpoch
+                    + " worldEpoch=" + this.worldEpoch
+                    + " worldTeardownDiscards=" + this.groupsDiscardedAtWorldTeardown
+                    + " fullTeardownDiscards=" + this.groupsDiscardedAtFullTeardown
                     + " submitted=" + this.immediateSubmittedBatches + " completed=" + this.immediateCompletedBatches
                     + " discarded=" + this.immediateGroupsDiscarded
                     + " keptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
@@ -4645,16 +4680,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * frame. The audit describes exactly that: "small accepted batches wait for a threshold while the next unsupported
      * draw runs in GL immediately". Flushing here keeps the order; with nothing pending it does nothing.
      */
-    /** Every descriptor set the immediate pipelines have built, summed over their caches (audit S13). */
-    private long descriptorSetsCreated() {
-        long total = 0;
-        for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
-            total += block.setsCreated;
+    /**
+     * {@return one line of the descriptor-set census, with an entry per immediate family}.
+     * <p>
+     * Audit B11: this used to sum only the block and particle caches and print a single number, so the textured and
+     * item families - which allocate far more sets than either - were invisible, and the number that was printed read
+     * as a total for the whole immediate path. The four families now have four counters and four entries. The
+     * textured family is the largest by construction: it keeps a set per distinct texture view, so its row is the one
+     * that moves when a scene samples many textures.
+     */
+    private String descriptorSetCensus() {
+        long block = 0;
+        for (VulkanImmediateBlockPipeline pipeline : this.blockPipelineCache.values()) {
+            block += pipeline.setsCreated;
         }
-        for (VulkanImmediateParticlePipeline particle : this.particlePipelineCache.values()) {
-            total += particle.setsCreated;
+        long particle = 0;
+        for (VulkanImmediateParticlePipeline pipeline : this.particlePipelineCache.values()) {
+            particle += pipeline.setsCreated;
         }
-        return total;
+        long texture = VulkanImmediateTexturePipeline.DESCRIPTOR_SETS_ALLOCATED.get();
+        long item = VulkanImmediateItemPipeline.DESCRIPTOR_SETS_ALLOCATED.get();
+        return "[texture=" + texture + ",item=" + item + ",block=" + block + ",particle=" + particle
+                + ",total=" + (texture + item + block + particle) + "]";
     }
 
     /** Releases a mesh if it exists; returns 1 when something was released, so the teardown can count. */
@@ -4683,6 +4730,33 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("teardown step failed: " + describe(error));
             return 0;
         }
+    }
+
+    /**
+     * Releases one keyed cache of untextured or line immediate pipelines and empties it.
+     * <p>
+     * Every entry owns a pipeline layout and, for the line family, its own pipeline; the cache is keyed by the draw
+     * state and nothing else holds a reference once the held groups have been discarded, so dropping the map without
+     * walking it is a leak of one object set per distinct state key. The map is cleared whatever happens to an entry,
+     * so a second teardown sees an empty cache and releases nothing again.
+     */
+    private int releaseImmediatePipelineCache(java.util.Map<Long, VulkanImmediatePipeline> cache) {
+        int count = 0;
+        for (VulkanImmediatePipeline pipeline : cache.values()) {
+            count += releaseDirect(pipeline == null ? null : () -> pipeline.delete());
+        }
+        cache.clear();
+        return count;
+    }
+
+    /** Releases one keyed cache of textured immediate pipelines; see {@link #releaseImmediatePipelineCache}. */
+    private int releaseTexturePipelineCache(java.util.Map<Long, VulkanImmediateTexturePipeline> cache) {
+        int count = 0;
+        for (VulkanImmediateTexturePipeline pipeline : cache.values()) {
+            count += releaseDirect(pipeline == null ? null : () -> pipeline.delete());
+        }
+        cache.clear();
+        return count;
     }
 
     /** The viewport key that means "the whole render target", packed the same way {@code viewport} packs it. */
@@ -4969,7 +5043,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         int[] viewport = currentViewport();
-        if (viewport[0] != 0 || viewport[1] != 0) {
+        if (viewport[0] < 0 || viewport[1] < 0) {
             this.immediateLastRefusal = "target: the viewport origin is " + viewport[0] + "," + viewport[1];
             return false;
         }
@@ -4983,11 +5057,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateLastRefusal = "target: no frame target for " + this.targetWidth + "x" + this.targetHeight;
             return false;
         }
-        if (viewport[2] != this.targetWidth || viewport[3] != this.targetHeight) {
-            this.immediateLastRefusal = "target: the viewport is " + viewport[2] + "x" + viewport[3] + ", the target is "
-                    + this.targetWidth + "x" + this.targetHeight;
+        // A GL viewport is a rectangle of the drawable, and any rectangle inside it is legal - the renderer applies it
+        // as a Vulkan viewport and scissor rather than refusing the batch. Refusing was what kept the loading screen and
+        // the main menu's panorama out of the frame: those are 256x256 draws made into the window (measured: drawFbo=0,
+        // viewport 256x256, default framebuffer bound, `GuiMainMenu.renderSkybox` and Forge's splash), and every one of
+        // them was answered "the viewport is 256x256, the target is 1280x720". Only a rectangle that does not fit inside
+        // the target stays a refusal, with the numbers on the line: a viewport wider than the drawable is not something
+        // to clip silently. (Measured and named, not fixed here: the game asks for 1281x720 on a 1280x720 target in the
+        // frames before the world exists, which this rule still refuses.)
+        if (viewport[2] <= 0 || viewport[3] <= 0) {
+            this.immediateLastRefusal = "target: the viewport " + viewport[0] + "," + viewport[1] + " "
+                    + viewport[2] + "x" + viewport[3] + " has no area";
             return false;
         }
+        // A viewport larger than the target is legal in GL - it is clipped at rasterization - and it happens here: the
+        // GUI-stage composite is drawn at ScaledResolution.getScaledWidth() * getScaleFactor() = 427 * 3 = 1281 columns
+        // on a 1280-wide target (Minecraft.java:1007, measured by the projection worker). It is applied clipped to the
+        // target rather than refused, because the alternative is a GUI stage drawn by nobody. The clip itself lives in
+        // celtium$setGroupViewport, which is where the group's rectangle becomes the Vulkan viewport and scissor.
+
         if (!sharedComposite) {
             String violation = this.frameTarget.currentFramebufferViolation();
             if (violation != null) {
@@ -5066,8 +5154,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             VulkanImmediateTexturePipeline value = cache.get(key);
             if (value == null) {
                 int compareOp = celtium$vkCompareOp(state[7]);
+                // Experiment switch for the POSITION_NORMAL box: every one of its batches reaches this draw and the
+                // box is absent from the full-mask picture (62 accepted, 62 drawn, no pixels), while the same group
+                // drawn with format 10 alone lands exactly where GROUP_BOUNDS puts it. Turning its depth test off
+                // separates "the fragments are rejected by the depth the window draws against" from "the draw does not
+                // reach the image at all". Default on, so the shipped behaviour is unchanged.
+                boolean positionNormalDepthTest = state[3] != 0 && POSITION_NORMAL_DEPTH_TEST;
                 value = format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
-                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        state[0] != 0, state[1], state[2], positionNormalDepthTest, state[4] != 0, state[5] != 0,
+                        compareOp)
                         : format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
                         state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
@@ -5501,7 +5596,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The state captured when the group was opened, not the live state: see currentGroupFog.
             group.fog = this.currentGroupFog;
             celtium$noteFogCaptureDrift(group);
-            group.stamp = new GroupStamp(this.frameId, this.targetGeneration);
+            group.stamp = new GroupStamp(this.frameId, this.targetGeneration, false, this.worldEpoch);
             this.immediateGroups.add(group);
             if (GROUP_BOUNDS_DIAGNOSTICS) {
                 // Off by default: with the switch off this method keeps the "no caller" property it had, and no line
@@ -5515,9 +5610,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.currentGroupUsed = false;
     }
 
+    /**
+     * Ends the backend's use of the queue: the idle wait makes the recorded groups unreachable, and then everything the
+     * queue still holds is retired.
+     * <p>
+     * The drain runs again after the move, not only before it. The groups moved here were never submitted, so they are
+     * safe to free immediately, and leaving them in the retired list means the last teardown of the process - the one
+     * call that has no later drain - would free their meshes never rather than late. Emptying the list in the same call
+     * is what makes "released exactly once" true on the final path.
+     */
     private void discardImmediateGroups() {
         if (!waitForIdle()) return;
         releaseRetiredImmediateGroups();
+        int held = this.immediateGroups.size();
         for (ImmediateGroup group : this.immediateGroups) {
             this.retiredImmediateGroups.add(group);
         }
@@ -5528,6 +5633,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.currentImmediateMesh = null;
         }
         this.currentGroupUsed = false;
+        this.groupsDiscardedAtFullTeardown += held;
+        releaseRetiredImmediateGroups();
     }
 
     /**
@@ -5620,7 +5727,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
-                + " descriptorSets=" + this.descriptorSetsCreated()
+                + " descriptorSets=" + this.descriptorSetCensus()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
                 + " externalImages=[" + (this.textureRegistry != null
@@ -5732,6 +5839,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateDeferredNextFrame=" + this.immediateDeferredNextFrame
                 + " immediateRefusedWindowBudget=" + this.immediateRefusedWindowBudget
                 + " groupsStaleTargetGeneration=" + this.groupsStaleTargetGeneration
+                + " groupsStaleWorldEpoch=" + this.groupsStaleWorldEpoch
+                + " worldEpoch=" + this.worldEpoch
+                + " groupsDiscardedAtWorldTeardown=" + this.groupsDiscardedAtWorldTeardown
+                + " groupsDiscardedAtFullTeardown=" + this.groupsDiscardedAtFullTeardown
                 + " immediateWindows=" + this.immediateWindows
                 + " immediateWindowsThisFrame=" + this.immediateWindowsThisFrame
                 + " pendingImmediateIndices=" + this.pendingImmediateIndices
@@ -5964,6 +6075,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * next world recreates them from the configuration the adoption hands over.
      */
     private void celtium$releaseWorldResources() {
+        // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
+        // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
+        // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a
+        // group accepted between here and the next world's adoption from being drawn under the old stamp.
+        int orphans = this.immediateGroups.size();
+        if (orphans > 0) {
+            this.retiredImmediateGroups.addAll(this.immediateGroups);
+            this.immediateGroups.clear();
+            this.pendingImmediateIndices = 0;
+            this.groupsDiscardedAtWorldTeardown += orphans;
+            record("world teardown retired " + orphans + " queued immediate group(s) that the world owned");
+        }
+        this.worldEpoch++;
         if (this.modelMeshes != null) {
             for (VulkanDynamicMesh mesh : this.modelMeshes.values()) {
                 mesh.releaseAfterIdle();
@@ -6117,6 +6241,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             released += releaseDirect(particle == null ? null : () -> particle.delete());
         }
         this.particlePipelineCache.clear();
+        // The rest of the immediate pipeline families: each is a pipeline layout, a descriptor set layout and one or
+        // more descriptor pools, and a pool cannot be destroyed while a set allocated from it is alive, so a cache that
+        // is dropped without this leaks the whole family per backend. They are grouped here because they share one
+        // owner (this backend) and one lifetime (the device); the isolation pass's own pipeline and mesh belong to the
+        // same lifetime and are not part of any map.
+        released += releaseImmediatePipelineCache(this.immediatePipelineCache);
+        released += releaseImmediatePipelineCache(this.linePipelineCache);
+        released += releaseTexturePipelineCache(this.positionTexColorNormalPipelineCache);
+        released += releaseTexturePipelineCache(this.positionTexNormalPipelineCache);
+        released += releaseTexturePipelineCache(this.positionOnlyPipelineCache);
+        released += releaseTexturePipelineCache(this.positionNormalPipelineCache);
+        released += releaseTexturePipelineCache(this.positionTexPipelineCache);
+        released += releaseTexturePipelineCache(this.texturedPipelineCache);
+        for (VulkanImmediateItemPipeline item : this.itemPipelineCache.values()) {
+            released += releaseDirect(item == null ? null : () -> item.delete());
+        }
+        this.itemPipelineCache.clear();
+        released += releaseDirect(this.immediatePipeline == null ? null : () -> this.immediatePipeline.delete());
+        this.immediatePipeline = null;
+        released += releaseImmediateMesh(this.isolationMesh);
+        this.isolationMesh = null;
+        released += releaseDirect(this.descriptorProbe == null ? null : () -> this.descriptorProbe.delete());
+        this.descriptorProbe = null;
         if (this.uiPipeline != null) {
             released += releaseDirect(() -> this.uiPipeline.delete());
         }
@@ -7162,9 +7309,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
      * needs to present calls this instead, so the probe is only a probe.
      */
-    /** The frame the swapchain's extent was last compared against the surface's, so callers may ask every batch. */
-    private long lastSwapchainExtentCheck = -1L;
-
     private boolean ensureSwapchain() {
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
         // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
@@ -7196,18 +7340,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         if (this.swapchain != null) {
-            if (this.lastSwapchainExtentCheck != this.frameId) {
-                // The size the surface would give a fresh swapchain is the authority, not the driver's
-                // out-of-date report: the check runs once per frame because a window resize may never be
-                // reported at an acquire (the resize harness's compositor does not report it).
-                this.lastSwapchainExtentCheck = this.frameId;
-                if (!this.swapchain.matchesSurfaceExtent(framebufferWidth, framebufferHeight)) {
-                    record("the surface extent no longer matches the " + this.swapchain.width() + "x"
-                            + this.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
-                            + "x" + framebufferHeight + "), rebuilding it");
-                    this.swapchain.delete();
-                    this.swapchain = null;
-                }
+            // The size the surface would give a fresh swapchain is the authority, not the driver's out-of-date report.
+            // The check used to be gated on frameId, which only advances at a world frame boundary
+            // (captureWorldSnapshot) - so a window that was resized while the menu was up (which is what a real launch
+            // does: the window is created small and then sized to the display) kept the swapchain from its first
+            // present. The present blit is bottom-anchored and never scaled, so it then showed the frame's lower left
+            // clipped by the smaller swapchain: measured on the user's own session, the menu appeared shifted with its
+            // right side and logo cut off, and going fullscreen did not change it. A present-time check costs one
+            // surface-capabilities query per presented frame and is what makes the swapchain follow the window.
+            if (!this.swapchain.matchesSurfaceExtent(framebufferWidth, framebufferHeight)) {
+                record("the surface extent no longer matches the " + this.swapchain.width() + "x"
+                        + this.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
+                        + "x" + framebufferHeight + "), rebuilding it");
+                this.swapchain.delete();
+                this.swapchain = null;
             }
             if (this.swapchain != null) {
                 return true;
@@ -7810,7 +7956,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // call the frame-time path makes; it is idempotent for a matching image, and this method only declares the
         // identity when every check the frame-time path performs has already passed, so a preflight that passes here
         // is one the frame can really supply.
-        boolean inputDeclared = declareChainInputAdoption(passes);
+        boolean inputDeclared = CHAIN_PREFLIGHT_ADOPTION && declareChainInputAdoption(passes);
         String unsupplied = this.postChain.unsuppliedInput(passes);
         if (unsupplied != null) {
             // N04: the chain reads an image this renderer cannot supply - under the GL bridge that is a real GL
@@ -8921,6 +9067,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.immediateGroupsDiscarded++;
                         continue;
                     }
+                    if (stamp.worldEpoch != this.worldEpoch) {
+                        // Accepted under a world that has since been torn down. A captured model group's mesh is owned by
+                        // the model mesh it was lent from, and the world teardown has already released those, so drawing
+                        // this would read freed geometry. The target-generation stamp cannot see that: a frame target
+                        // survives a world change. Retired without drawing and counted; the mesh is freed by the next
+                        // completion drain, which is safe because the group was never submitted.
+                        iterator.remove();
+                        this.retiredImmediateGroups.add(group);
+                        this.groupsStaleWorldEpoch++;
+                        this.immediateGroupsDiscarded++;
+                        continue;
+                    }
                 }
                 VulkanDynamicMesh mesh = group.mesh;
                 if (mesh.isEmpty()) throw new IllegalStateException("accepted empty mesh");
@@ -8982,6 +9140,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (light == null) {
                     celtium$writeFogPush(group, push);
                 }
+                // The batch's own viewport, applied as the drawable sub-rect GL would have used. Without this the
+                // pipeline's baked-in viewport (set once per pass by setViewportAndScissor) would draw a 256x256 GUI
+                // batch across the whole target - wrong pixels, which is why the batch used to be refused instead.
+                celtium$setGroupViewport(stack, group);
                 Object pipeline = prepared.pipeline;
                 if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
@@ -8995,7 +9157,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.immediateFlushes++;
                 this.frameDrawn++;
                 if (group.formatId >= 0 && group.formatId < this.drawnByFormat.length) {
-                    this.drawnByFormat[group.formatId]++;
+                    // Batches, not groups: acceptedByFormat counts batches, so counting groups here would compare a
+                    // group against a batch and read as "38,123 accepted, 1,358 drawn" for formats whose batches merge
+                    // by the hundred. The unit is stated once and the two rows are subtracted by whoever reads them.
+                    this.drawnByFormat[group.formatId] += batches;
                 }
                 if (ENQ_ALL_GROUPS && (ENQ_FORMAT < 0 || ENQ_FORMAT == group.formatId)
                         && this.immediateDrawSiteLogged < DRAW_SITE_LIMIT) {
@@ -9020,8 +9185,74 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.pendingImmediateIndices -= mesh.indexCount();
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
             }
+            // Back to the pass's own rectangle: the groups above may have narrowed it, and whatever is drawn after this
+            // flush - terrain, another pass, the final blit - expects the target's viewport, not the last GUI batch's.
+            if (this.groupViewportNarrowed) {
+                this.groupViewportNarrowed = false;
+                setViewportAndScissor(stack);
+            }
         }
     }
+
+    /** Set when a group in the current flush asked for a sub-rectangle, so the pass viewport is restored once. */
+    private boolean groupViewportNarrowed;
+
+    /**
+     * Applies one group's GL viewport as a Vulkan viewport and scissor.
+     * <p>
+     * GL's viewport origin is the bottom-left of the drawable and Vulkan's is the top-left, and this renderer keeps the
+     * Vulkan convention unchanged (positive height, see {@code vulkanProjection()}), so the y is flipped here: a GL
+     * rectangle (x, y_bottom, w, h) becomes the Vulkan rectangle (x, targetHeight - y_bottom - h, w, h).
+     * <p>
+     * A group whose rectangle is the whole target does nothing - the pass already set exactly that - and the flag is
+     * set only when a narrow rectangle is applied, so the common case costs nothing and the restore happens once per
+     * flush rather than per group.
+     */
+    private void celtium$setGroupViewport(MemoryStack stack, ImmediateGroup group) {
+        int[] viewport = group.viewportValues;
+        if (viewport == null || viewport.length < 4) {
+            return;
+        }
+        // Clipped to the target: GL clips a viewport wider or taller than the drawable at rasterization, and the GUI
+        // stage really does ask for 1281 columns on a 1280 target. The intersection is what Vulkan is given.
+        int x0 = Math.max(0, viewport[0]);
+        int yBottom0 = Math.max(0, viewport[1]);
+        int x1 = Math.min(this.targetWidth, viewport[0] + viewport[2]);
+        int yBottom1 = Math.min(this.targetHeight, viewport[1] + viewport[3]);
+        if (x1 <= x0 || yBottom1 <= yBottom0) {
+            // Nothing of the rectangle is on the drawable; GL would draw nothing either. Counted so an entirely
+            // off-target viewport is visible rather than silently empty.
+            this.immediateOffTargetViewports++;
+            return;
+        }
+        int width = x1 - x0;
+        int height = yBottom1 - yBottom0;
+        if (x0 == 0 && yBottom0 == 0 && width == this.targetWidth && height == this.targetHeight) {
+            return; // the pass already set exactly this rectangle
+        }
+        int y = this.targetHeight - yBottom1;
+        org.lwjgl.vulkan.VkViewport.Buffer vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
+        vkViewport.get(0).x((float) x0).y((float) y)
+                .width((float) width).height((float) height)
+                .minDepth(0.0f).maxDepth(1.0f);
+        vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+        org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
+        scissor.get(0).offset().set(x0, y);
+        scissor.get(0).extent().set(width, height);
+        vkCmdSetScissor(this.commandBuffer, 0, scissor);
+        this.groupViewportNarrowed = true;
+        this.immediateNarrowViewports++;
+        if (this.immediateNarrowViewports <= 3) {
+            System.out.println("[Celtium] CELTIUM_GROUP_VIEWPORT gl=" + viewport[0] + "," + viewport[1] + " "
+                    + viewport[2] + "x" + viewport[3] + " clipped=" + x0 + "," + y + " " + width + "x" + height
+                    + " target=" + this.targetWidth + "x" + this.targetHeight);
+        }
+    }
+
+    /** Groups drawn with a viewport narrower than the target: the counter that says the sub-rect path is live. */
+    private long immediateNarrowViewports;
+    /** Groups whose clipped viewport is empty: an off-drawable rectangle, which GL would also draw nothing for. */
+    private long immediateOffTargetViewports;
 
 
     /**

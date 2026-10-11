@@ -280,14 +280,35 @@ public final class VulkanGlTexture {
     private static final long[] PATCH_LEVEL_HISTOGRAM = new long[12];
 
     /**
-     * The highest mip level this class's samplers can read, which is the {@code maxLod} they are created with.
+     * The {@code maxLod} a mirror's sampler is created with when nothing better is known.
      * <p>
-     * One number, named once: {@link #createSampler} passes it to {@code vkCreateSampler} and
-     * {@link #mirrorLevelSummary()} uses it to say whether a patch left a level the sampler can actually reach
-     * unwritten. If the clamp is ever raised or removed, both move together and the census cannot keep claiming a
-     * reach of one level while the sampler reads four.
+     * Measured law, five configurations against the same GL reference: 1.0 gives 0.21-0.28% and the full chain's
+     * highest level (8 or 9) gives 8.77-8.82%, so this is the conservative default for a mirror whose levels above 1
+     * were generated here rather than written by the game (see {@link #samplerMaxLod}).
      */
-    private static final int SAMPLER_MAX_LOD = 1;
+    private static final int SAMPLER_MAX_LOD_DEFAULT = 1;
+
+    /**
+     * The highest mip level <em>this mirror's</em> sampler may read, which is the {@code maxLod} it is created with.
+     * <p>
+     * The global clamp of one level was wrong for a texture the game itself gives a deeper chain: Minecraft's atlas is
+     * allocated with {@code GL_TEXTURE_MAX_LEVEL}/{@code GL_TEXTURE_MAX_LOD} 4 ({@code TextureUtil:215/:217},
+     * {@code TextureMap:225}) and its levels 0..4 are the game's own per-sprite averages, while this class regenerated
+     * levels above 0 with a whole-image blit that averages across sprite borders. The reach is therefore a property of
+     * the content:
+     * <ul>
+     *   <li>a mirror filled from the game's own per-level surfaces ({@link #uploadCapturedLevels}) carries the levels
+     *       the game wrote, so it may read exactly those - the deepest one, which is what the game's own sampler
+     *       reaches;</li>
+     *   <li>a mirror whose chain was generated here keeps {@link #SAMPLER_MAX_LOD_DEFAULT}, because a deeper read
+     *       would sample averages no producer wrote (measured at 8.77% against 0.21-0.28%).</li>
+     * </ul>
+     * {@code GL_TEXTURE_MAX_LEVEL} is the ceiling when a GL context exists; under the stub the parameter is not
+     * recorded, so the deepest captured level is the whole answer there.
+     */
+    private int samplerMaxLod = SAMPLER_MAX_LOD_DEFAULT;
+    /** The highest reach any sampler in this process was created with, so the census reports what was built. */
+    private static int samplerReachObserved = SAMPLER_MAX_LOD_DEFAULT;
 
     private static final int BYTES_PER_PIXEL = 4;
 
@@ -1521,7 +1542,7 @@ public final class VulkanGlTexture {
             // Levels inside the producer's chain that this write did not reach, plus levels the producer supplied
             // that this image has no room for. Both are levels the producer believes it patched and the image did not.
             patchLevelsBeyondProducerChain += Math.max(0, producerDepth - depth) + beyondMirror;
-            if (depth <= SAMPLER_MAX_LOD) {
+            if (depth <= this.samplerMaxLod) {
                 // The sampler can read a level this patch did not write. For a producer that supplies its own chain
                 // this cannot happen; it is the case N07 names, and it is counted rather than inferred.
                 patchReachUnwritten++;
@@ -1577,7 +1598,8 @@ public final class VulkanGlTexture {
      * supplies level 0 only; its higher levels then hold what the last whole upload or patch put there, which is the
      * same content OpenGL holds for that texture after the same {@code glTexSubImage2D}.
      * <p>
-     * {@code samplerReach} is the highest level this class's samplers can read ({@link #SAMPLER_MAX_LOD}) and
+     * {@code samplerReach} is the highest level any sampler in this process was created with (the per-mirror
+     * {@link #samplerMaxLod}, whose default is {@link #SAMPLER_MAX_LOD_DEFAULT}) and
      * {@code reachUnwritten} counts the patches that left a level inside that reach unwritten. That number being zero
      * is the guarantee audit N07 asks for: the levels the sampler can reach are the levels the producer patched. The
      * levels above the reach are counted separately and are not a staleness claim - the sampler never reads them, and
@@ -1593,7 +1615,7 @@ public final class VulkanGlTexture {
             }
             return text.append("] written=").append(patchLevelsWritten)
                     .append(" beyondProducerChain=").append(patchLevelsBeyondProducerChain)
-                    .append(" samplerReach=").append(SAMPLER_MAX_LOD)
+                    .append(" samplerReach=").append(samplerReachObserved)
                     .append(" reachUnwritten=").append(patchReachUnwritten)
                     .append(" refusals=").append(patchRefusals).toString();
         }
@@ -1803,6 +1825,75 @@ public final class VulkanGlTexture {
     public long sampler() {
         logZeroHandle("sampler");
         return sampler;
+    }
+
+    /** {@return the highest mip level this mirror's sampler may read}, i.e. the {@code maxLod} it was created with. */
+    public int samplerMaxLod() {
+        return this.samplerMaxLod;
+    }
+
+    /**
+     * Raises this mirror's sampler reach to a level its content actually holds, recreating the sampler.
+     * <p>
+     * Never lowered here: a later write through a shallower path (an announcement carrying level 0 only) must not
+     * shrink a reach the game's own chain justified, and the clamp's purpose - never reading a level no producer
+     * wrote - is served by the caller only ever passing a level it has content for.
+     */
+    private void setSamplerReach(int maxLod) {
+        int wanted = Math.max(0, Math.min(maxLod, Math.max(1, this.mipLevels) - 1));
+        if (wanted <= this.samplerMaxLod) {
+            return;
+        }
+        this.samplerMaxLod = wanted;
+        if (this.sampler != 0L) {
+            org.lwjgl.vulkan.VK10.vkDestroySampler(this.context.device(), this.sampler, null);
+            this.sampler = 0L;
+        }
+        createSampler();
+        // The sampler is one of the descriptor's inputs, and the descriptor caches key on key() - the view and the
+        // generation. Without this bump a set written before the reach changed would keep naming the sampler just
+        // destroyed, which validation reports and sampling reads as undefined. Bumped after the new sampler exists,
+        // so a reader that sees the new key also sees a live handle.
+        this.generation++;
+        System.out.println("[Celtium] CELTIUM_SAMPLER_REACH glTextureReach=" + wanted + " imageLevels=" + this.mipLevels
+                + " (the mirror holds the game's own levels 0.." + wanted + "; a generated chain keeps the default "
+                + SAMPLER_MAX_LOD_DEFAULT + ")");
+    }
+
+    /**
+     * Fills this mirror from the per-level surfaces a producer captured, one level at a time, instead of writing
+     * level 0 and regenerating the chain with a whole-image blit.
+     * <p>
+     * The difference is content, not cost: OpenGL's atlas levels above 0 are generated per sprite
+     * ({@code TextureAtlasSprite.generateMipmaps}) and uploaded level by level by
+     * {@code TextureUtil.uploadTextureMipmap}, so GL's level 4 is a per-sprite average. A blit of the whole image
+     * averages across sprite borders and produced the flat, red-shifted near-horizon band fog-path measured
+     * ({@code (102.0,63.0,58.0)} against the reference's {@code (112.9,110.7,99.7)}). This entry point hands each
+     * captured level to the per-level patch writer, which already writes every level at its own scaled extent with
+     * its own barriers (audit N07), so the levels the sampler can reach are the game's own data.
+     *
+     * @param levelCount the number of levels supplied, level 0 first, each {@code base >> level} in extent
+     * @return the number of levels applied, or 0 when the content was already in the image; 1 means the caller
+     *         supplied level 0 only and the ordinary whole-image path ran, leaving the chain generated here
+     */
+    public int uploadCapturedLevels(int glTextureId, int baseWidth, int baseHeight,
+            java.nio.ByteBuffer[] levels, int levelCount) {
+        if (levels == null || levelCount <= 0 || levels[0] == null) {
+            throw new IllegalArgumentException("A per-level upload needs at least level 0, but got "
+                    + (levels == null ? "no array" : levelCount + " level(s)"));
+        }
+        if (levelCount <= 1) {
+            return uploadFromImage(baseWidth, baseHeight, levels[0]) ? 1 : 0;
+        }
+        requireOwned("a per-level whole-image upload");
+        requireAlive();
+        // The whole texture, written level by level: x=0,y=0 at the base extent makes the patch writer treat this as
+        // an initialization (fullContentArrived), which is what it is - the game's own chain arrived.
+        if (!uploadPatchedLevels(baseWidth, baseHeight, 0, 0, levels, levelCount, glTextureId)) {
+            return 0;
+        }
+        setSamplerReach(levelCount - 1);
+        return levelCount;
     }
 
     /**
@@ -2044,12 +2135,15 @@ public final class VulkanGlTexture {
                     // The same number the patch census reports as the sampler's reach (SAMPLER_MAX_LOD): the clamp and
                     // the claim about which levels must not be stale move together or neither is a statement about
                     // this sampler.
-                    .maxLod((float) SAMPLER_MAX_LOD)
+                    .maxLod((float) this.samplerMaxLod)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateSampler(device, create, null, handle), "vkCreateSampler(mirrored texture)");
             sampler = handle.get(0);
+            if (this.samplerMaxLod > samplerReachObserved) {
+                samplerReachObserved = this.samplerMaxLod;
+            }
             if (SAMPLER_DIAGNOSTICS) {
                 // What was actually handed to the driver, rather than what a configuration is called. The clamp's value is
                 // the variable every mip measurement has disagreed about, and this is the only place that knows it.

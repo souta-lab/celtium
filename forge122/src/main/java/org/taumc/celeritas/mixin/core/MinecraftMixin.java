@@ -70,6 +70,7 @@ public class MinecraftMixin {
         if (celtium$windowRendererAttempts > 0 && now < celtium$windowRendererNextTick) {
             return;
         }
+        java.util.List<String> reasons = new java.util.ArrayList<String>();
         try {
             if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
                 // A bridge frame draws its menu with OpenGL, so the world-time creation stays the only one.
@@ -82,7 +83,6 @@ public class MinecraftMixin {
             }
             celtium$windowRendererAttempts++;
             celtium$windowRendererNextTick = now + celtium$WINDOW_RENDERER_RETRY_TICKS * 50;
-            java.util.List<String> reasons = new java.util.ArrayList<String>();
             Class<?> factory = Class.forName("org.soutalab.celtium.vulkan.VulkanTerrainFactory");
             Object backend = factory.getMethod("createForWindow", java.util.List.class).invoke(null, reasons);
             celtium$windowRendererCreated = backend != null;
@@ -94,8 +94,24 @@ public class MinecraftMixin {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             // Fail-closed: without a renderer the menu is blank, which is the state this replaces, and the reason is on
             // the line rather than in a stack trace nobody reads. The next attempt is a few dozen ticks away.
+            // The cause chain is printed too: the call is reflective, so what arrives here is an
+            // InvocationTargetException whose own message names nothing - measured on the user's own launch, where six
+            // attempts all reported exactly that and the reason the renderer could not be created was invisible.
+            Throwable cause = error;
+            StringBuilder chain = new StringBuilder();
+            int depth = 0;
+            while (cause != null && depth < 6) {
+                chain.append(depth == 0 ? "" : " <- ").append(cause.getClass().getName());
+                String message = cause.getMessage();
+                if (message != null) {
+                    chain.append(": ").append(message);
+                }
+                cause = cause.getCause();
+                depth++;
+            }
             System.out.println("[Celtium] CELTIUM_WINDOW_RENDERER failed: attempt=" + celtium$windowRendererAttempts
-                    + " error=" + error);
+                    + " error=" + chain + " reasons=" + reasons);
+            error.printStackTrace(System.out);
         }
     }
 

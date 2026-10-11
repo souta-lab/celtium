@@ -433,6 +433,11 @@ public abstract class RenderSectionManager {
     private static final int LIST_INPUT_LOG_LIMIT =
             Integer.getInteger("celtium.debug.listInputLog", 6).intValue();
     private static int listInputLogs;
+    /** Lines {@link #updateChunks} may print for the render list's size; see {@link #LIST_SIZE_LOG_LIMIT}. */
+    private static final int LIST_SIZE_LOG_LIMIT =
+            Integer.getInteger("celtium.debug.listSizeLog", 0).intValue();
+    private int listSizeLogs;
+    private int listSizeFrames;
 
     private void createTerrainRenderList(Viewport viewport, Matrix4fc projectionMatrix, int frame, boolean spectator) {
         final var searchDistance = this.getSearchDistance(projectionMatrix);
@@ -441,6 +446,27 @@ public abstract class RenderSectionManager {
         if (listInputLogs < LIST_INPUT_LOG_LIMIT) {
             listInputLogs++;
             var color = this.getFogService().getFogColor();
+            var transform = viewport.getTransform();
+            double camX = transform.intX + (double) transform.fracX;
+            double camY = transform.intY + (double) transform.fracY;
+            double camZ = transform.intZ + (double) transform.fracZ;
+            // The frustum's own reach, probed rather than inferred: a ring of eight boxes at each distance, so the
+            // line says where the frustum stops accepting geometry instead of only what distance it was asked for.
+            StringBuilder rings = new StringBuilder();
+            double[] probes = {96.0, 112.0, 120.0, 128.0, 136.0, 144.0, 160.0, 176.0, 192.0};
+            double[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {0.7071, 0.7071}, {0.7071, -0.7071},
+                    {-0.7071, 0.7071}, {-0.7071, -0.7071}};
+            for (double probe : probes) {
+                int visible = 0;
+                for (double[] direction : directions) {
+                    double x = camX + direction[0] * probe;
+                    double z = camZ + direction[1] * probe;
+                    if (viewport.isBoxVisible(x - 8.0, camY - 8.0, z - 8.0, x + 8.0, camY + 8.0, z + 8.0)) {
+                        visible++;
+                    }
+                }
+                rings.append(rings.length() == 0 ? "" : ",").append((int) probe).append(":").append(visible);
+            }
             System.out.println("[Celtium] CELTIUM_LIST_INPUT frame=" + frame
                     + " renderDistance=" + this.getRenderDistance()
                     + " fogCutoff=" + this.getFogService().getFogCutoff()
@@ -451,6 +477,8 @@ public abstract class RenderSectionManager {
                     + " occlusionTraversal=" + useOcclusionCulling
                     + " graphSections=" + this.getTotalSections()
                     + " regions=" + this.regions.getRegionIdsLength()
+                    + " camera=[" + camX + "," + camY + "," + camZ + "]"
+                    + " rings=" + rings
                     + " proj=[" + (projectionMatrix == null ? "null"
                             : projectionMatrix.m00() + "," + projectionMatrix.m11() + ","
                             + projectionMatrix.m22() + "," + projectionMatrix.m23() + ","
@@ -604,6 +632,25 @@ public abstract class RenderSectionManager {
     public void updateChunks(boolean updateImmediately) {
         this.terrainBackend.updateRegions();
         this.jobMetricsTracker.tick();
+
+        // The render list's own size over time, so a single captured frame can be told from a settled one. The
+        // reference's list holds 41 sections and ours 34 at the same pose and tick; if ours reaches 41 on other
+        // frames, the difference is when the capture landed, not a culling rule, and this is the line that says so.
+        // `-Dceltium.debug.listSizeLog=N` bounds it (default 0: nothing printed).
+        if (listSizeLogs < LIST_SIZE_LOG_LIMIT) {
+            listSizeFrames++;
+            if (listSizeFrames % 10 == 0) {
+                listSizeLogs++;
+                StringBuilder counts = new StringBuilder();
+                var statistics = this.getCurrentRenderListManager().getDebugStatistics();
+                statistics.renderPassCounts().object2IntEntrySet().forEach(entry ->
+                        counts.append(counts.length() == 0 ? "" : ",").append(entry.getKey().name())
+                                .append("=").append(entry.getIntValue()));
+                System.out.println("[Celtium] CELTIUM_LIST_SIZE call=" + listSizeFrames
+                        + " graphSections=" + this.getTotalSections()
+                        + " passCounts=[" + counts + "]");
+            }
+        }
 
         // Advance the scheduling controller once per frame, before any dispatch reads the budget. This runs only
         // on the main terrain pass so that an additional shadow pass in the same frame does not double-tick the

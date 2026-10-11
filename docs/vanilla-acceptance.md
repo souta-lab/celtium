@@ -261,10 +261,10 @@ fixture changes (`ValidationClient`, N06), reported by me and not made.
 
 | # | vanilla stage | status | reference | evidence | owner |
 |---|---|---|---|---|---|
-| 1 | terrain / chunk layers | **V** | celeritas | `acc2-glless` (13:47 GL-less, jar `b074fbb9b659729e`, fixture `0355ffcd40c22a24`, AMD RX 6400, scene=terrain, pose `0.5/12/0.5 yaw 180 pitch 20`, `captureStartTick=200`, `sceneCalibrationKeyMatches=true`, `PASSED`, `passes=1063 skipped=0 lastSections=28`) against `ref-celeritas2` (upstream Celeritas `d12425ea…`, fixture `1ac3021812f75aba`, same scene/pose/tick, `nonBg=0.761173`, `PASSED`): terrain centre `(320,300,960,640)` **5832 px of 204800 (2.68 %) differ >8, mean 0.885**; bottom corners 4 px each; HUD strip 6 px; hotbar strip **0**; means equal to 1 decimal. Against the same-jar stored picture it is **1 px of 204800**, bottom-right **0** - the same-code regression check. Crops `crops/acc3/` and `crops/acc2/`. | terrain backend; depth-format defect = N10, fixed |
-| 2 | sky dome | **V** on `a106e84ac2f26a84`, **W** on `b074fbb9b659729e` | celeritas | **Superseded**: on jar `a106e84ac2f26a84` (fixture `77453688bac95a4b`) the dome matches the Celeritas reference - `sky-draws-final` vs `sky-draws-ref`, rows 0-199 = **0 of 256000 px** differ >8 (max 4, mean 0.844), **63 distinct colours on both sides**, row means equal to a tenth; the `sky-draws-final-control` leg with format 7 refused is the flat one (1 distinct colour `(179,207,255)`, 52.9 % of that band differs). The older numbers are kept as the record of what was measured when. On jar `b074fbb9b659729e`: Celeritas: `acc2-glless` vs `ref-celeritas2`, sky band `(0,0,1280,120)` **153600 of 153600 px (100 %)** differ >8, mean 38.1, Celeritas `(158.1,192.9,255.0)` - the same top colour the stored picture has, so the defect is not a bridge artefact. Stored (same jar): GL-less is the single colour `(120,167,255)` where the stored picture has the dome gradient. The path exists (`RenderGlobal.renderSky` → `VertexBuffer.drawArrays` → `glDrawArrays`; landed in `95d74bac6`, gate `celtium.glstub.skyFrameGate` default `capability`). Its census in this run: `glDrawArraysCalls=667 drawn=157 vertices=106132 empty=0 refused=510 pureBlueGroups=0`, refused by reason `no GL_ARRAY_BUFFER is bound (the pointer would be client memory, which the stub does not mirror)`; the draws that do arrive are `mode=7 format=7 stride=12` = POSITION, 12 bytes. The star group is refused by the gate itself: `CELTIUM_SKY_REFUSAL buffer=17 count=3120 gate=capability fogEnabled=false colour=(0.046,0.046,0.046,0.046)`. The blue-wing artefact is gone (`pureBlueGroups=0`). **Accepted is not visible**: id 7 (POSITION) is accepted 792 times in the last histogram while the sky band has no dome pixels. | sky-draws (task-3), pipelines (task-6) |
+| 1 | terrain / chunk layers | **V** | celeritas | **Current: `cand3-terrain`** (GL-less, jar `7ac31c7601be73c7c26a`, fixture `acfb62b16ed70ac3`, AMD RX 6400, scene=terrain, pose `0.5/12/0.5 yaw 180 pitch 20`, tick 207, `PASSED`, `pictureFrameDelta_world=0`, `passes=969 skipped=0`) against `ref3-terrain` (Celeritas `d12425ea…`, tick 200): terrain centre `(320,300,960,640)` 5770 px of 204800 (2.65 %, mean 0.868), bottom corners 4 px each, hud strip 6 px, hotbar strip **0**, sky band **0 px**. Earlier, same shape: `acc2-glless` (jar `b074fbb9b659729e`) against `ref-celeritas2` 5832 px / mean 0.885; against the stored same-jar picture 1 px. §6c, §6a. | terrain backend; depth-format defect = N10, fixed |
+| 2 | sky dome | **V** on `7ac31c7601be73c7c26a` and `a106e84ac2f26a84`, **W** on `b074fbb9b659729e` | celeritas | **Current: the dome matches the Celeritas reference on the counter-reset jar.** `cand3-terrain` and `cand3-entity` (jar `7ac31c7601be73c7c26a`) vs `ref3-terrain`/`ref3-entity`: sky band `(0,0,1280,120)` **0 of 153600 px differ >8** (mean 1.365, max 4) in both scenes; rows 0-199 = 0 of 256000 on the sky-draws pair of jar `a106e84ac2f26a84`. The control with format 7 refused is the flat one (1 distinct colour). The older jar `b074fbb9b659729e` read 100 % of the band different with the flat `(120,167,255)`; that reading is kept as the record of what was measured when. §6c. | sky-draws (task-3), pipelines (task-6) |
 | 3 | stars | **U** | none | `pinnedWorldTime=6000` in every report (noon; star brightness 0 by construction) and no counter distinguishes a star draw. The candidate is the refused group above (`colour alpha 0.046` = the mirrored star alpha, refused because the position shaders hardcode alpha 1.0). Needs a night scene flag, which does not exist. | sky-draws (task-3) |
-| 4 | horizon plane | **W** | celeritas | The remaining sky defect on the newest jar, localised by me from the same pair (jar `a106e84ac2f26a84` vs `sky-draws-ref`): rows 0-199 are **identical**, and the difference starts at row 200 - `200-219`: 6749 px (26.4 %) mean 38.9, candidate `(176.7,202.9,249.3)` vs reference `(161.6,181.7,214.1)`; `220-239`: 25247 px (98.6 %) mean 100.2, `(120.3,109.4,115.4)` vs `(113.8,112.2,102.0)`; `240-259`: 25598 px mean 81.5, `(101.8,68.0,62.2)` vs `(112.7,108.2,97.5)`; `260-299`: 22913/13485 px. The candidate is **brighter and less hazy** than the reference in exactly the band where Celeritas fogs the distant terrain, which points at the fog ramp rather than at a missing quad (task-2 owns it; row 17). Whole horizon band `(0,120,1280,300)`: 93992 of 230400 px (40.8 %) differ, mean 30.2, max 252. On the older jar `b074fbb9b659729e`: 153573 px (66.7 %) vs `ref-celeritas2`, and 108089 px (46.9 %) vs the stored same-jar picture. | sky-draws (task-3), fog-path (task-2) |
+| 4 | horizon plane | **W** | celeritas | **Current (jar `7ac31c7601be73c7c26a`)**: horizon band `(0,120,1280,300)` 80380 of 230400 px (34.9 %, mean 21.8) differ in the terrain scene and 75959 px (33.0 %, mean 36.7) in the entity scene; the GL-less leg is **brighter and less hazy** than the reference (`cand3-terrain` `(150.1,152.8,181.0)` vs `ref3-terrain` `(148.9,156.0,178.7)`; entity `(156.5,170.6,204.5)` vs `(144.7,153.7,175.2)`), and the per-row profile from the sky-draws pair localises it to rows 200-320, where Celeritas fogs distant terrain and the GL-less leg does not. On jar `a106e84ac2f26a84`: 93992 px (40.8 %) with the same shape. On jar `b074fbb9b659729e`: 153573 px (66.7 %). The dome itself is identical in rows 0-199 (row 2), so this is the fog ramp, not a missing quad. | sky-draws (task-3), fog-path (task-2) |
 | 5 | clouds | **U** | celeritas (reference only) | Counter defect, measured in two independent runs on older jars: in `acc2-glless` (jar `b074fbb9b659729e`) and `ww-gl-cloud` (13:38, jar `ff68da097c102e47`) format 8 (`POSITION_TEX_COLOR_NORMAL`, 28 B / 5 elements - the fancy-cloud layout) reaches `128/128` in the **first** histogram line and never changes again while every other id grows: the cloud batches are submitted in frame 1 and never again. Newest state: the Celeritas reference for the look-up pose exists - `ww7-ref-cloud` (14:2x, celeritas `d12425ea…`, fixture `1ac3021812f75aba`, pitch -20, `distinct=16561`, `nonBg=0.776253`, `UNCALIBRATED` because the pose is new - correct, not a failure) - but the matching GL-less leg `ww6-gl-cloud` produced **no report and no screenshots at all**, so there is no pair. No cloud pixel is identified in any GL-less picture. | weather-water (task-9) |
 | 6 | water surface | **U** | none | `ww-br-water`/`ww-gl-water` (13:37/13:38, jar `ff68da097c102e47`): both `UNCALIBRATED_PRESENTED_IMAGE` (new pose - correct, not a failure), and the bottom band `(600,720)` has the **same mean in both** `(82.1,107.1,50.4)` = grass. The GL-less picture is flat sky over grass with no water-tinted pixel, so the run demonstrates neither water drawn nor water missing. Needs the camera in/over the water layer and a named crop. | weather-water (task-9) |
 | 7 | weather (rain/snow) | **U** | celeritas | Newest pair, both on the same scene/pose/tick 200: `ww6-gl-base` (GL-less, jar `f21bc38693c8dadb`, fixture `f03a129610323819`, `weather=true particles=true`, `distinct=5096`, `nonBg=0.747739`, `bg=0x571716`, `PASSED`) vs `ww7-ref-base` (Celeritas `d12425ea…`, fixture `1ac3021812f75aba`, `distinct=19106`, `nonBg=0.780331`, `bg=0x571715`, `PASSED`). My stage comparison: sky band 20.7 % >8 (mean 6.1), horizon 54.0 % (mean 30.8), terrain centre 16.1 % (mean 6.7), whole frame 26.5 % (mean 12.7); every region's mean agrees to about 1 count. Both legs draw the same content; rain is stochastic between runs, so the residual cannot be attributed without a one-flag control (weather on/off, one jar). Older pair (`ff68da097c102e47`, bridge leg): sky 87.9 %, horizon 40.2 %, terrain 8.8 %. | weather-water (task-9) |
@@ -282,6 +282,7 @@ fixture changes (`ValidationClient`, N06), reported by me and not made.
 | 19 | text / font (N03) | **V** | stored | `plan.md` §0.144 (`quads=52406 submitted=52406 accepted=52406 refused=0`, `unicodeWindows=40548`) plus the JEI pair's crops, where the text is the same size and position in both legs (I read them). Row 13's missing box is not the font. | font / N03 |
 | 20 | video settings (the screen, its widgets and its own frame) | **U** | stored (void for terrain) | The scene exists in the fixture: `VIDEO_SETTINGS("videoSettings", true, true)` - `GuiVideoSettings` opened through `displayGuiScreen` and clicked, with a GUI stage and its own gate; knob `-Dceltium.validation.scene=videoSettings`. Stored references exist (`scene-floors/video-a` 09:11, `video-b` 09:12, `scene-ref-video2` 01:18). **35 runs in the workspace use the scene, and none of them is current**: the newest are `n03-u-clean`, `n03-v-cleanbridge`, `n03-z-final`, `n03-aa-accept`, `n03-ab-accept-ja` (11:49-12:15) and `n03-ak-jei-vs35` (12:31), every one `FAILED_PRESENTED_IMAGE`, none after the depth fix, no Celeritas leg. So the user-named stage is unmeasured on the current tree; the experiment is one GL-less leg and one Celeritas leg of the same scene, and the fixture already knows how to drive it. | gui-stage (task-5), fixture |
 | 21 | Intel UHD 630 leg (condition (d) on the GL-less path) | **U** | none | 153 reports in the workspace carry an Intel GL renderer (`Mesa Intel(R) UHD Graphics 630 (CFL GT2)`), and **0 of them set `-Dceltium.vulkan.glless=true`**: no Intel leg of the GL-less path has ever been taken. The newest Intel run is `intel-layout-glow` (09:01 today, `FAILED_PRESENTED_IMAGE`, pre-depth-fix, bridge leg), so nothing on the current tree says whether the Vulkan path works on Intel at all. Owner: task-11 (sky-draws). | sky-draws (task-11) |
+| 22 | the user's own launch: menu and loading screen (task-22) | **U** (menu content verified on a harness leg; the swapchain-fix check in flight) | none - the user's configuration through the harness, with a harness capture as cross-check | Menu content: the Lead's `.celtium-work/ww-menu-caps/compositor-0018.png` is 1280x720, sha256 `ade674e0be57ea63…`, **889 distinct colours**, 720 distinct rows, not uniform, and I measured its predecessor `compositor-0000.png` as **uniform black (1 colour)** - a quantified before/after of "a window with nothing in it" (harness leg, jar `eed0f86f03402db5`). The Prism-launcher attempt (`user-prism-launch-check`, instance jar `bf5a4e144965d83b`) is **not** the user's configuration: a GUI launcher cannot be driven headlessly, its captures are the launcher's modal, and its log shows `CELTIUM_WINDOW_RENDERER failed: attempt=1..8`. Shifted-menu fix (jar `8f3b34b68a1b2b80ad74`, in the instance since 16:42): independent check `user-real-real-resize` - a real-session launch (no `--headless`), grim on the window rectangle at 1280x720 then 1920x1080, distinct colours / black fraction / edge means, plus the game log's surface-extent rebuild record. §6b. | acceptance (task-22); menu fix = task-15; extent fix = Lead |
 
 ### 3a. Jar provenance per row
 
@@ -290,9 +291,9 @@ kept and this table says which jar produced them.
 
 | row | candidate jar (bytes the run loaded) | reference jar | note |
 |---|---|---|---|
-| 1, 18 | celtium `b074fbb9b659729e`, fixture `0355ffcd40c22a24` | celeritas `d12425eaaf184e79` (`ref-celeritas2`, fixture `1ac3021812f75aba`) | the pair in §6 |
-| 2 | celtium `b074fbb9b659729e` (superseded) → `a106e84ac2f26a84`, fixture `77453688bac95a4b` | celeritas `d12425eaaf184e79` (`sky-draws-ref`, fixture `f03a129610323819`) | dome fixed on the newer jar |
-| 4 | celtium `a106e84ac2f26a84`; older `b074fbb9b659729e` | celeritas `d12425eaaf184e79` | rows 200-320 are the remaining difference |
+| 1, 18 | **current** celtium `7ac31c7601be73c7c26a` (`cand3-terrain`, fixture `acfb62b16ed70ac3`); earlier `b074fbb9b659729e`, fixture `0355ffcd40c22a24` | celeritas `d12425eaaf184e79` (`ref3-terrain`, fixture `acfb62b16ed70ac3`; earlier `ref-celeritas2`) | the §6c pair, PASSED with `pictureFrameDelta_world=0` |
+| 2 | celtium `7ac31c7601be73c7c26a` (current, 0 px) and `a106e84ac2f26a84` (0 px) → `b074fbb9b659729e` (100 %, superseded) | celeritas `d12425eaaf184e79` (`ref3-terrain`/`ref3-entity`, and `sky-draws-ref`) | dome fixed on both newer jars |
+| 4 | celtium `7ac31c7601be73c7c26a` (34.9 % / 33.0 %); `a106e84ac2f26a84` (40.8 %); `b074fbb9b659729e` (66.7 %) | celeritas `d12425eaaf184e79` | rows 200-320 are the remaining difference |
 | 5 | celtium `b074fbb9b659729e` / `ff68da097c102e47` (counter) | celeritas `d12425eaaf184e79` (`ww7-ref-cloud`, fixture `1ac3021812f75aba`) | no GL-less picture to pair with |
 | 6 | celtium `f21bc38693c8dadb` (`ww6-gl-water`) | celeritas `d12425eaaf184e79` (`ww7-ref-water`: `NO_CAPTURE`) | no usable pair |
 | 7, 8 | celtium `f21bc38693c8dadb`, fixture `f03a129610323819` | celeritas `d12425eaaf184e79` (`ww7-ref-base`, fixture `1ac3021812f75aba`) | `id5=142/142`, no `id0` |
@@ -301,6 +302,7 @@ kept and this table says which jar produced them.
 | 17 | celtium `03c627cc52c8e566`, fixture `105598e0f89be16d` | self-comparison | one flag apart |
 | 19 | (plan §0.144 jar, not kept here) | stored | - |
 | 20, 21 | none current | stored / none | see the rows |
+| 22 | instance jar `bf5a4e144965d83b` (attempt 1, pre-task-15) → `4b913f91a9b3b032` (verdict leg) | none - a Prism launch | the user's own configuration; cross-check `ww-menu` harness jar `eed0f86f03402db5` |
 
 
 Cross-cutting counters from `acc2-glless`, the most recent GL-less run I read in full:
@@ -527,9 +529,98 @@ useful candidate, but it is not this configuration, so the verdict leg is taken 
 **Instrument checks already taken, so the verdict leg is not also an instrument debug:** Prism 11.1
 starts on the private display and stays alive (25 s, `live.check` written), its window is
 `app_id=org.prismlauncher.PrismLauncher` titled "Prism Launcher 11.1.0", and `grim` captures it
-(67347 bytes) - `.celtium-work/runtime/prism-smoke/`. The `--launch` path itself is being validated by
-`user-prism-launch-check` (a pre-task-15 jar, labelled as an instrument check, not a verdict); the
-verdict leg waits for task-15's jar hash as instructed.
+(67347 bytes) - `.celtium-work/runtime/prism-smoke/`.
+
+**First `--launch` attempt (`user-prism-launch-check`, 16:24-16:27): the instrument worked, the jar
+was stale, and the leg is not the user's configuration.** 48 captures in 115 s, every one with
+pixels, the largest **820 distinct colours** (`capture-0002.png`, sha256 `8b5621ed9a2bb4c0…`, 16768
+bytes) - but the compositor's window tree at every shutter holds **only Prism's own dialog**,
+"Account refresh failed — Prism Launcher 11.1.0" (504x104 floating), and `gamePids=0`. The
+instance's own log for that window is unambiguous:
+`CELTIUM_GLLESS stub GL provider installed`, `CELTIUM_GLLESS window hinted GLFW_NO_API`,
+`CELTIUM_GLLESS splash progress skipped (no shared GL context)`, `CELTIUM_SWAPPOINT calls=1 … 2700`,
+and **`CELTIUM_WINDOW_RENDERER failed: attempt=1..8 error=java.lang.reflect.InvocationTargetException`**.
+The instance's mod jar at that moment was `bf5a4e144965d83b` (15:16) - a build from before task-15.
+
+**Correction, and it is mine to record.** A GUI launcher cannot be driven headlessly: the captures
+show the launcher's modal, not the game, and no game window was ever mapped on that output. So that
+leg is **not** the user's configuration and its PNGs are **not evidence about the renderer** - only
+about the instrument (Prism starts, grim captures, the distinct-colour counter reads a real window).
+The user-configuration leg is taken instead through the harness with the user's instance and an
+explicit `--mod`, no fixture and no validation client, with `--jvm-arg=-Dceltium.vulkan.glless=true`,
+and each run's captures in **its own directory** (the shared one collides across runs).
+
+**Cross-check of the reported menu capture, by my own measurement.** The Lead's
+`.celtium-work/ww-menu-caps/compositor-0018.png` is 1280x720, sha256 `ade674e0be57ea63…`, 44841 bytes,
+**distinctColours=889**, `distinctRows=720`, meanRGB (113.894, 113.646, 114.231), not uniform - and the
+same directory's `compositor-0000.png` is **uniform black (1 distinct colour)**, with
+`compositor-0010.png` at 831. That is a quantified before/after of the user's complaint ("a window
+with nothing in it") in one capture directory; it is a *harness* leg on jar `eed0f86f03402db5`
+(`ww-menu`), not a Prism launch, so it supports the menu row without being it.
+
+**The swapchain/surface-extent fix, and the check it needs (jar `8f3b34b68a1b2b80ad74`).** The user
+reported the menu drawn but **shifted**, with its right side and logo cut off, unchanged by
+fullscreen. Cause, diagnosed by the Lead: `ensureSwapchain`'s surface-extent test was gated on
+`frameId`, a *world-frame* counter, so a window resized while the menu was up kept the swapchain from
+its first present and the bottom-anchored unscaled blit showed only the frame's lower left. The fix
+is in jar `8f3b34b68a1b2b80ad74`, installed into the user's instance (16:42, frozen here as
+`frozen/user-real-8f3b34b6.jar`). The independent check is a **real-session launch** (no `--headless`,
+so the window is real): `.celtium-work/acceptance/user-real.py` launches the user's configuration
+through `prism_validation.py` with `--force-x11` and no headless compositor, waits for the Cleanroom
+window in the *user's own* sway tree (matching class `Cleanroom`, not Prism's console window whose
+title also contains the instance name), photographs the window rectangle with `grim -g`, floats and
+resizes it to 1920x1080, photographs again, and measures both: distinct colours, distinct rows,
+uniformity, pure-black fraction and the mean colour of each edge band against the centre. It also
+reads the game's own log for the surface-extent rebuild record. Run `user-real-real-resize`; the
+result is recorded here when it lands.
+
+**Second attempt, with the instance's jar refreshed to `4b913f91a9b3b032`:** `user-prism-verdict`
+(150 s) is in flight; it records the instance's mod hashes itself, so the row will name the jar the
+user's own launch actually loaded. The verdict leg is `user-prism-verdict`, not the harness legs.
+
+### 6c. The task-22 harness legs: GL-less against the ref3 Celeritas references
+
+Candidate jar `7ac31c7601be73c7c26a` (weather-water's presented-frame counter reset; frozen copy
+`.celtium-work/acceptance/frozen/cand3-celtium-7ac31c76.jar`), fixture `acfb62b16ed70ac3` (the same
+fixture as the references), AMD Radeon RX 6400, scene/pose/ticks as §1d. Scripts `cand3-legs.sh`,
+`cand3-compare.sh`.
+
+| leg | verdict | distinct | nonBg | bg | `pictureFrameDelta_world` | `passes`/`skipped` |
+|---|---|---|---|---|---|---|
+| `cand3-terrain` | **PASSED** | 2054 | 0.759463 | `0x571716` | **0** | 969 / 0 |
+| `cand3-entity` | UNCALIBRATED (variant differs - correct) | 2927 | 0.773387 | `0x571716` | **0** | 1027 / 0 |
+| `cand3-inventory` | UNCALIBRATED (variant differs - correct) | 4892 | 0.923916 | `0x8B8B8B` | **0** | - |
+
+**A GL-less acceptance run reaches PASSED** (`cand3-terrain`, jar `7ac31c76`), with
+`pictureFrameDelta_world=0`, so the identity gate is green on this jar and the picture comparison is
+accepted, not merely measured. The two `UNCALIBRATED` verdicts are the correct outcome for variants
+that are not the calibrated plain-terrain one, exactly as the reference legs are.
+
+Stage comparisons, GL-less presented dump against the Celeritas picture of the same fixture/scene
+(ticks: terrain 207 vs 200, entity 202 vs 200, inventory 200 vs 200 - the terrain and entity captures
+landed a few ticks after the reference's, which the pinned scene makes immaterial; the sky band is
+pixel-identical at 0 px, which is what shows the tick did not matter):
+
+| stage | terrain: >8 (mean) | entity: >8 (mean) | inventory: >8 (mean) |
+|---|---|---|---|
+| sky band (top) | **0 px** (1.365) | **0 px** (1.365) | 128052 px 83.4 % (14.849) |
+| horizon band | 80380 px 34.9 % (21.818) | 75959 px 33.0 % (36.668) | 122130 px 53.0 % (15.411) |
+| terrain centre | 5770 px 2.65 % (0.868) | 6663 px 3.06 % (1.833) | 78079 px 35.9 % (18.890) |
+| bottom-left / bottom-right | 4 / 4 px | 4 / 4 px | 19959 / 10356 px |
+| hud strip | 6 px | 6 px | 7389 px |
+| chat block | 4714 px 2.38 % | 4338 px 2.19 % | 128201 px 64.7 % |
+| hotbar strip | **0 px** | **0 px** | **0 px** |
+| tooltip region | 593 px 9.27 % | 347 px 5.42 % | 240 px 3.75 % |
+| whole frame | 95460 px 10.36 % (6.228) | 91932 px 9.98 % (10.167) | 442175 px 47.98 % (14.054) |
+
+Reading, with the jar named: the **sky dome now matches the Celeritas reference exactly** in the
+terrain and entity scenes (0 of 153600 px, mean 1.365, max 4 - the same sub-tolerance residual the
+sky-draws pair shows), so rows 2 and 4 of §3 are superseded again, this time by a *Celeritas*
+comparison on the counter-reset jar. The **horizon band remains the largest sky-side difference**
+(34.9 % / 33.0 %, the GL-less leg brighter and less hazy than the reference), and the terrain
+centre's ~2.7-3.1 % at mean <2 counts is the stable Celtium-vs-Celeritas terrain difference first
+measured in §6a. The inventory scene is the one that does not match: 48 % of the frame differs, and
+the sky band behind the GUI is 83.4 % different, while the hotbar strip is 0 px in all three scenes.
 
 ## 7. Instruments and artifacts
 

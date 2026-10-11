@@ -594,6 +594,47 @@ public final class VulkanTextureRegistry {
     }
 
     /**
+     * The per-level surfaces the stub captured for a texture, level 0 first, each at half the extent of the one below.
+     * <p>
+     * This is what lets a mirror hold the game's own mip chain instead of a chain generated here. Minecraft uploads the
+     * atlas level by level ({@code TextureUtil.uploadTextureMipmap}), each level generated per sprite
+     * ({@code TextureAtlasSprite.generateMipmaps}), and the stub records every one of those uploads separately - so
+     * level 4 can be the per-sprite average GL holds rather than a whole-image blit that averages across sprite
+     * borders. The walk stops at the first level with no capture, with an extent that is not {@code base >> level}, or
+     * with no game pixels (an allocation that no upload ever wrote): a level the game did not write is not content, and
+     * the sampler must not be allowed to reach it.
+     *
+     * @return the levels found, always at least level 0 when the caller's own level-0 checks passed
+     */
+    private static java.nio.ByteBuffer[] celtium$capturedLevels(int glTextureId, int baseWidth, int baseHeight) {
+        int maxLevels = 1;
+        while ((baseWidth >> maxLevels) > 0 && (baseHeight >> maxLevels) > 0) {
+            maxLevels++;
+        }
+        java.nio.ByteBuffer[] found = new java.nio.ByteBuffer[maxLevels];
+        int count = 0;
+        for (int level = 0; level < maxLevels; level++) {
+            int expectedWidth = Math.max(1, baseWidth >> level);
+            int expectedHeight = Math.max(1, baseHeight >> level);
+            int[] extent = new int[2];
+            java.nio.ByteBuffer captured = CeltiumGlStub.textureUploadRgba8(glTextureId, level, extent);
+            if (captured == null || extent[0] != expectedWidth || extent[1] != expectedHeight
+                    || captured.remaining() < expectedWidth * expectedHeight * 4
+                    || !CeltiumGlStub.textureLevelHasGamePixels(glTextureId, level)) {
+                break;
+            }
+            found[level] = captured;
+            count++;
+        }
+        if (count == maxLevels) {
+            return found;
+        }
+        java.nio.ByteBuffer[] truncated = new java.nio.ByteBuffer[Math.max(1, count)];
+        System.arraycopy(found, 0, truncated, 0, count);
+        return truncated;
+    }
+
+    /**
      * Fills a mirror from the upload the stub captured, without reading anything back from GL.
      * <p>
      * This is the source the announcements do not cover. The block atlas is uploaded one sprite at a time and never
@@ -677,7 +718,10 @@ public final class VulkanTextureRegistry {
                 this.entries.put(id, entry);
                 this.mirrorCount++;
             }
-            if (!entry.texture.uploadFromNamedImage(glTextureId, extent[0], extent[1], rgba)) {
+            java.nio.ByteBuffer[] levels = celtium$capturedLevels(glTextureId, extent[0], extent[1]);
+            int appliedLevels = entry.texture.uploadCapturedLevels(glTextureId, extent[0], extent[1], levels,
+                    levels.length);
+            if (appliedLevels == 0) {
                 // The content was already in the image, so it needs no second transfer and no second count.
                 this.imageUploadsSkipped++;
                 return true;
@@ -693,7 +737,7 @@ public final class VulkanTextureRegistry {
             recordApplication(glTextureId, true);
             this.staleIds.remove(id);
             this.filledFromCapture++;
-            celtium$noteMirrorSource(glTextureId, "capture", extent[0], extent[1], rgba);
+            celtium$noteMirrorSource(glTextureId, "capture", extent[0], extent[1], rgba, appliedLevels);
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
@@ -1162,6 +1206,18 @@ public final class VulkanTextureRegistry {
      */
     private void celtium$noteMirrorSource(int glTextureId, String source, int width, int height,
             java.nio.ByteBuffer rgba) {
+        celtium$noteMirrorSource(glTextureId, source, width, height, rgba, -1);
+    }
+
+    /**
+     * As the four-argument form, with the number of mip levels the fill applied.
+     * <p>
+     * {@code levels} is the fact the near-horizon band turned on: a mirror filled from the game's own per-level
+     * surfaces carries the chain GL carries, while a mirror filled from a single surface has levels above 0 generated
+     * here. {@code -1} means the caller has no level count to give (a patch, a readback, an announced image).
+     */
+    private void celtium$noteMirrorSource(int glTextureId, String source, int width, int height,
+            java.nio.ByteBuffer rgba, int levels) {
         this.mirrorFillsBySource.merge(source, Integer.valueOf(1), Integer::sum);
         Integer id = Integer.valueOf(glTextureId);
         String previous = this.mirrorSourceById.put(id, source);
@@ -1180,6 +1236,7 @@ public final class VulkanTextureRegistry {
                 + " announced=" + countFor(this.announcementsById, id)
                 + " droppedAnnouncements=" + countFor(this.droppedAnnouncementsById, id)
                 + " hasEntry=" + this.entries.containsKey(id) + " stale=" + this.staleIds.contains(id)
+                + (levels > 0 ? " levels=" + levels + " samplerMaxLod=" + filled.texture.samplerMaxLod() : "")
                 + (filled == null ? "" : " obj=" + Integer.toHexString(System.identityHashCode(filled.texture))
                         + " full=" + filled.texture.hasFullContent())
                 + " glLess=" + CeltiumGlStub.isInstalled());

@@ -62,10 +62,28 @@ public final class VulkanImmediateItemPipeline {
     /** When the vertex stage runs the fixed-function lighting eval and the normal attribute is real input. */
     private final boolean lit;
 
+    /**
+     * Descriptor sets this family has allocated, process-wide.
+     * <p>
+     * Its own counter rather than the textured family's: the summary prints one census entry per family (audit B11),
+     * and incrementing the textured pipeline's static from here made "texture" a name for two families and hid which
+     * one the sets belonged to.
+     */
+    public static final java.util.concurrent.atomic.AtomicLong DESCRIPTOR_SETS_ALLOCATED =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
     private long descriptorSetLayout = VK_NULL_HANDLE;
-    private long descriptorPool = VK_NULL_HANDLE;
+    /**
+     * Every descriptor pool this pipeline has allocated sets from, oldest first; all are destroyed in {@link #delete()}.
+     * <p>
+     * The item family had {@code maxSets(8192)} with {@code descriptorCount(64)} per set: the descriptor count is the
+     * real bound, so it could allocate 64 sets and no more - the same audit-B03 lifetime as the textured pipeline,
+     * with a larger-looking constant hiding it. The pools now grow on demand like that one, and the growth is counted
+     * in the shared {@link VulkanImmediateTexturePipeline#descriptorPoolSummary()} line.
+     */
+    private final java.util.List<Long> descriptorPools = new java.util.ArrayList<Long>();
     private long descriptorSet = VK_NULL_HANDLE;
     private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
 
@@ -170,7 +188,7 @@ public final class VulkanImmediateItemPipeline {
      * exhausted, so the caller refuses the batch instead of drawing with a stale binding.
      */
     public long descriptorSetFor(VulkanGlTexture texture) {
-        if (this.descriptorPool == VK_NULL_HANDLE || texture == null) {
+        if (this.descriptorPools.isEmpty() || texture == null) {
             return 0L;
         }
         Long existing = this.setsByTextureView.get(Long.valueOf(texture.key()));
@@ -178,15 +196,10 @@ public final class VulkanImmediateItemPipeline {
             return existing.longValue();
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
-                    org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
-                            .descriptorPool(this.descriptorPool)
-                            .pSetLayouts(stack.longs(this.descriptorSetLayout));
-            LongBuffer handle = stack.mallocLong(1);
-            if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) != VK_SUCCESS) {
+            long set = allocateDescriptorSet(stack);
+            if (set == 0L) {
                 return 0L;
             }
-            long set = handle.get(0);
             VkDescriptorImageInfo.Buffer image = VkDescriptorImageInfo.calloc(1, stack);
             image.get(0).imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                     .imageView(texture.view())
@@ -201,11 +214,68 @@ public final class VulkanImmediateItemPipeline {
                     .pImageInfo(image);
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(Long.valueOf(texture.key()), Long.valueOf(set));
+            VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
             return 0L;
         }
     }
+
+    /**
+     * Creates one more pool and appends it to {@link #descriptorPools}; the item family shares the textured family's
+     * pool sizing and counters, because the failure it guards against is the same one (audit B03).
+     *
+     * @return the new pool, or {@link VK_NULL_HANDLE} when the pipeline has already grown to its limit
+     */
+    private long createDescriptorPool() {
+        if (this.descriptorPools.size() >= DESCRIPTOR_POOL_LIMIT) {
+            return VK_NULL_HANDLE;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
+                    org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
+            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(DESCRIPTOR_SETS_PER_POOL);
+            org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
+                    org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
+                            .maxSets(DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
+            LongBuffer poolHandle = stack.mallocLong(1);
+            if (vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            this.descriptorPools.add(Long.valueOf(poolHandle.get(0)));
+            VulkanImmediateTexturePipeline.DESCRIPTOR_POOLS_CREATED.incrementAndGet();
+            if (this.descriptorPools.size() > 1) {
+                VulkanImmediateTexturePipeline.DESCRIPTOR_POOL_GROWTHS.incrementAndGet();
+            }
+            return poolHandle.get(0);
+        }
+    }
+
+    /** {@return a descriptor set from the newest pool, growing the pool when it is full}, or 0 when it cannot. */
+    private long allocateDescriptorSet(MemoryStack stack) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            Long pool = this.descriptorPools.get(this.descriptorPools.size() - 1);
+            org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
+                    org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                            .descriptorPool(pool.longValue())
+                            .pSetLayouts(stack.longs(this.descriptorSetLayout));
+            LongBuffer handle = stack.mallocLong(1);
+            if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) == VK_SUCCESS) {
+                DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
+                return handle.get(0);
+            }
+            if (createDescriptorPool() == VK_NULL_HANDLE) {
+                break;
+            }
+        }
+        VulkanImmediateTexturePipeline.DESCRIPTOR_ALLOCATION_FAILURES.incrementAndGet();
+        return 0L;
+    }
+
+    /** Sets one pool holds and how many pools a pipeline may grow to, shared with the textured family. */
+    private static final int DESCRIPTOR_SETS_PER_POOL = VulkanImmediateTexturePipeline.DESCRIPTOR_SETS_PER_POOL;
+    private static final int DESCRIPTOR_POOL_LIMIT = VulkanImmediateTexturePipeline.DESCRIPTOR_POOL_LIMIT;
 
     public void delete() {
         if (this.pipeline != VK_NULL_HANDLE) {
@@ -213,11 +283,11 @@ public final class VulkanImmediateItemPipeline {
             this.pipeline = VK_NULL_HANDLE;
         }
         this.setsByTextureView.clear();
-        if (this.descriptorPool != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
-            this.descriptorPool = VK_NULL_HANDLE;
-            this.descriptorSet = VK_NULL_HANDLE;
+        for (int i = 0; i < this.descriptorPools.size(); i++) {
+            vkDestroyDescriptorPool(this.context.device(), this.descriptorPools.get(i).longValue(), null);
         }
+        this.descriptorPools.clear();
+        this.descriptorSet = VK_NULL_HANDLE;
         if (this.descriptorSetLayout != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);
             this.descriptorSetLayout = VK_NULL_HANDLE;
@@ -243,31 +313,21 @@ public final class VulkanImmediateItemPipeline {
             check(vkCreateDescriptorSetLayout(this.context.device(), layoutInfo, null, layoutHandle),
                     "vkCreateDescriptorSetLayout(immediate textured)");
             this.descriptorSetLayout = layoutHandle.get(0);
-            org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer poolSize =
-                    org.lwjgl.vulkan.VkDescriptorPoolSize.calloc(1, stack);
-            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(64);
-            // One set per distinct texture the frame binds; the pool refuses beyond that and the caller then refuses
-            // the batch rather than drawing with the wrong image.
-            org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
-                    org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                            // Sized for a session rather than for a scene: the set is cached per texture view and nothing
-                            // evicts it, so 64 was reached in ordinary play and every later allocation failed - which is why the
-                            // particle family, with the most distinct views, was taken and then dropped. A pool this size is
-                            // the smallest change that stops exhaustion; eviction by texture generation is the proper fix
-                            // and is recorded as open.
-                            .maxSets(8192).pPoolSizes(poolSize);
-            LongBuffer poolHandle = stack.mallocLong(1);
-            check(vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle),
-                    "vkCreateDescriptorPool(immediate textured)");
-            this.descriptorPool = poolHandle.get(0);
+            // The first of the pipeline's pools. maxSets was 8192 here while descriptorCount was 64, and the descriptor
+            // count is the binding limit: the pool could never hold more than 64 sets. Both numbers are now
+            // DESCRIPTOR_SETS_PER_POOL and allocateDescriptorSet grows a new pool when one is full (audit B03).
+            if (createDescriptorPool() == VK_NULL_HANDLE) {
+                throw new IllegalStateException("vkCreateDescriptorPool(immediate item) failed");
+            }
             org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
                     org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
-                            .descriptorPool(this.descriptorPool)
+                            .descriptorPool(this.descriptorPools.get(0).longValue())
                             .pSetLayouts(stack.longs(this.descriptorSetLayout));
             LongBuffer setHandle = stack.mallocLong(1);
             check(vkAllocateDescriptorSets(this.context.device(), allocate, setHandle),
-                    "vkAllocateDescriptorSets(immediate textured)");
+                    "vkAllocateDescriptorSets(immediate item)");
             this.descriptorSet = setHandle.get(0);
+            DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
             VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack);
             // The fragment stage reads the alpha-test reference at offset 128, so the range must be visible to both
             // stages: declaring it for the vertex stage alone is a shader-interface mismatch.

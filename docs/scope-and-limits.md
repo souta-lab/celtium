@@ -208,6 +208,17 @@ build, of different configurations:
 - **The decompiled Minecraft and Forge sources** that `scripts/mc-sources.sh` produces are reference material extracted
   on demand from the jar the build already uses. They are **not redistributed in the jar** (measured: no
   `net/minecraft` entry) and are Mojang/Forge-licensed material kept out of the distribution.
+- **A shipped jar and the source tree are two different claims, and this file must not merge them** (audit B12). Every
+  statement above about class majors, notices, `mcmod.info` and bundled packages is read **from a named jar** by
+  `unzip` and `scripts/verify_forge_jar.py`, and describes *that* artifact at *that* sha256 - not the working tree,
+  which several people edit at any moment, and not a jar built a few minutes earlier. The rule holds in the other
+  direction too: a fix that exists in the sources is not in the shipped jar until a build produces a jar the
+  measurement can name. Where a number here comes from a jar, the jar's identity is recorded with it; where it comes
+  from the sources (an enforced `file:line`), the file and line are recorded instead.
+- **`mcmod.info` and the GL-less execution contract are separate statements.** The description says what draws where in
+  each configuration; it is not a claim about which configuration a run used. An earlier revision said the
+  post-process chains "otherwise fall back to OpenGL", which is false under GL-less: there is no GL context there to
+  fall back to, and a refused post is drawn by nobody. Corrected 2026-10-11.
 - **The verifier now checks the licence content, not just its presence** (`scripts/verify_forge_jar.py`, extended
   2026-10-11): it requires `COPYING`/`COPYING.LESSER`/`META-INF/LICENSE`/the two downgrader notices, reads
   `META-INF/LICENSE` and fails unless it is the JOML MIT notice *while* relocated JOML classes are bundled, prints a
