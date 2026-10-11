@@ -107,6 +107,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.172 **残る欠陥の一覧（担当つき）と stride の全数**
+
+チームの task-1〜10 はほぼ完了。**残るものと担当**:
+
+| task | 担当 | 内容（測定が名指ししたもの） |
+|---|---|---|
+| 11 | sky-draws | **Intel UHD 630 leg**。これまでの測定は全て AMD RX 6400。depth format chooser は両社が 24-bit で食い違うために存在する＝形式的な追加ではない |
+| 13 | weather-water | **Forge の雲**が stub 経由で描かれ、頂点が 24バイト（decoder は 12 のみ）で拒否 |
+| 14 | pipelines | **受理・close・rasterize 実証済みの group が、format 2/6/7 が同居すると frame から落ちる**（6 leg の bisect で測定）。format 表ではなく flush/window/deferral 経路 |
+| 15 | weather-water | **client-memory 配列**——ユーザーが見た「中身の無いウィンドウ」の正体。メニュー/ローディング画面の全描画が process memory の頂点 |
+| 16 | fog-path | **地平線直下の terrain 帯**。3人が「空でも fog でも GUI でもない」と測定済み——参照は平坦な面、私たちは縞、参照の端が約3行遠い |
+
+**task-13/15 が共有する stride の全数**（全て `size=3 type=0x1406`＝float3 位置）:
+
+```
+ 99x stride=12  POSITION(id7)         既に decode 済み（sky dome）
+ 12x stride=16  POSITION_COLOR(id1)   client-memory ケース（task-15）
+  8x stride=20  POSITION_TEX(id6)
+101x stride=24  POSITION_TEX_COLOR(id2)  Forge の雲（task-13）
+ 42x stride=28  ITEM/BLOCK/PARTICLE(4/3/5)  stride だけでは区別不能——有効な client array が判別子
+```
+
 ## 0.171 **現行ツリーの frame 差は client-memory 欠落が支配している（task-15 の重要性の実証）**
 
 committed tree で新たに pair を取った（GL-less entity scene vs upstream Celeritas・同一 scene/pose/tick）:
