@@ -352,11 +352,63 @@ public final class ValidationClient {
         final String margin;
         /** False when this scene has no measured reference yet: its floors are reported as missing, not enforced. */
         final boolean calibrated;
+        /** The GUI stage's own floors, from the reference run's GUI frame; {@code none} when the scene has no GUI stage. */
+        final FrameFloors guiFloors;
+
+        /**
+         * The floors for one frame of a scene, with the frame they were derived from.
+         * <p>
+         * A scene with a GUI stage shows two different pictures, and a floor measured on one does not describe the
+         * other. The video settings scene's GUI frame is a flat panel over a dark background whose band and colour
+         * counts are a fraction of its world frame's, and keeping one set of floors for both is how the reference came
+         * to fail its own gate: {@code presentedVerticalBands=229} against a floor of 250 derived from the world
+         * frame's 638 (measured in `.celtium-work/runtime/vs-pic-ref`). Each set therefore names the run and the frame
+         * it came from, because a floor whose source is another frame is not a floor for this picture.
+         */
+        static final class FrameFloors {
+            final double minNonBackgroundFraction;
+            final int minVerticalBands;
+            final double maxBlackFraction;
+            /** Which run and which frame of it the floors were derived from. */
+            final String source;
+            /** What that frame measured. */
+            final String numbers;
+            /** The rule that turned those numbers into these floors. */
+            final String margin;
+            final boolean calibrated;
+
+            FrameFloors(double minNonBackgroundFraction, int minVerticalBands, double maxBlackFraction, String source,
+                    String numbers, String margin, boolean calibrated) {
+                this.minNonBackgroundFraction = minNonBackgroundFraction;
+                this.minVerticalBands = minVerticalBands;
+                this.maxBlackFraction = maxBlackFraction;
+                this.source = source;
+                this.numbers = numbers;
+                this.margin = margin;
+                this.calibrated = calibrated;
+            }
+
+            /** A stage this scene does not have: its floors are reported as absent rather than enforced. */
+            static FrameFloors none(String why) {
+                return new FrameFloors(0.0D, 0, 1.0D, "no frame of this scene is judged by these floors: " + why,
+                        "none", "none", false);
+            }
+        }
 
         SceneGate(int minDistinctColours, double minNonBackgroundFraction, int minVerticalBands, double maxBlackFraction,
                 double minPanelChangedFraction, double minPanelStrongFraction, int minPanelDistinctColours,
                 double minPanelRowAmplitude, String reference, String referenceRuns, String referenceNumbers,
                 String margin, boolean calibrated) {
+            this(minDistinctColours, minNonBackgroundFraction, minVerticalBands, maxBlackFraction,
+                    minPanelChangedFraction, minPanelStrongFraction, minPanelDistinctColours, minPanelRowAmplitude,
+                    reference, referenceRuns, referenceNumbers, margin, calibrated,
+                    FrameFloors.none("this scene takes one picture (no GUI stage)"));
+        }
+
+        SceneGate(int minDistinctColours, double minNonBackgroundFraction, int minVerticalBands, double maxBlackFraction,
+                double minPanelChangedFraction, double minPanelStrongFraction, int minPanelDistinctColours,
+                double minPanelRowAmplitude, String reference, String referenceRuns, String referenceNumbers,
+                String margin, boolean calibrated, FrameFloors guiFloors) {
             this.calibrated = calibrated;
             this.minDistinctColours = minDistinctColours;
             this.minNonBackgroundFraction = minNonBackgroundFraction;
@@ -370,6 +422,14 @@ public final class ValidationClient {
             this.referenceRuns = referenceRuns;
             this.referenceNumbers = referenceNumbers;
             this.margin = margin;
+            this.guiFloors = guiFloors;
+        }
+
+        /** The floors that judge a stage's frame, and the frame they came from. */
+        FrameFloors floorsFor(String stage) {
+            return "gui".equals(stage) && guiFloors.calibrated ? guiFloors
+                    : new FrameFloors(minNonBackgroundFraction, minVerticalBands, maxBlackFraction, referenceRuns,
+                            referenceNumbers, margin, calibrated);
         }
     }
 
@@ -962,8 +1022,29 @@ public final class ValidationClient {
                 + " nonBackgroundFraction>=0.40, verticalBands>=250, blackFraction<=0.05, panelChangedFraction>=0.30,"
                 + " panelStrongFraction>=0.25, panelDistinctColours>=4000, panelRowAmplitude>=0.25 (flatness guard);"
                 + " margin: " + margin;
+        // The GUI stage is a different picture from the world stage, so it gets its own floors from its own frame.
+        // Before this, the four world floors above were applied to it as well: the reference's own GUI frame has 229
+        // bands and 145 colours in `.celtium-work/runtime/vs-pic-ref` while the world frame's floor asked for 250, so
+        // the reference failed the gate it had calibrated (task-47). The numbers below are the same reference runs'
+        // GUI frames - the file named here is the GUI frame, not the world frame - and the margin rule is the same one
+        // the world floors use.
+        String guiNumbers = "gui frame: distinctColours=17626/17699 nonBackgroundFraction=0.837541/0.836627"
+                + " verticalBands=720/720 blackFraction=0.000000/0.000000 (spread: 73 colours, 0.000914"
+                + " non-background, 0 bands, 0.000000 black)";
+        String guiMargin = "nonBackgroundFraction floor 0.46 = 55% of the smaller reference 0.836627 (69x the measured"
+                + " spread of 0.000914); verticalBands floor 280 = 39% of the smaller reference 720 (spread 0 rows);"
+                + " blackFraction ceiling 0.05 = measured 0.000000 + 0.05, the same rule as the world frame's";
+        String guiSource = "gl-bridge scene-floors/video-a (2026-10-11 09:11) and scene-floors/video-b (09:12), both"
+                + " scene=videoSettings at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20, 1280x720, guiScale=3, screen="
+                + "net.minecraft.client.gui.GuiVideoSettings, GUI FRAME=screenshots/celtium-validation.png (the file"
+                + " the GUI stage's verdict reads; the world frame of the same runs is"
+                + " screenshots/celtium-validation-world.png and is not the frame these floors describe)";
+        String guiReference = "gl-bridge " + guiSource + ": " + guiNumbers + " -> gui floors nonBackgroundFraction>=0.46,"
+                + " verticalBands>=280, blackFraction<=0.05; margin: " + guiMargin;
+        SceneGate.FrameFloors guiFloors = new SceneGate.FrameFloors(0.46D, 280, 0.05D, guiReference, guiNumbers,
+                guiMargin, true);
         return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.40D, 250, 0.05D, 0.30D, 0.25D, 4000, 0.25D, reference,
-                runs, numbers, margin, true);
+                runs, numbers, margin, true, guiFloors);
     }
 
     /**
@@ -2769,10 +2850,15 @@ public final class ValidationClient {
                 report.addProperty("sceneGuiStage", Boolean.valueOf(celtium$scene.guiStage));
                 report.addProperty("runId", celtium$runId);
                 report.addProperty("cameraRequested", celtium$pose.describe());
-                report.addProperty("sceneGateSource", celtium$gate.reference);
+                report.addProperty("sceneGateSource", celtium$gateSource());
                 report.addProperty("sceneGateReferenceRuns", celtium$gate.referenceRuns);
                 report.addProperty("sceneGateReferenceNumbers", celtium$gate.referenceNumbers);
                 report.addProperty("sceneGateMargin", celtium$gate.margin);
+                report.addProperty("sceneGateGuiFloors", celtium$gate.guiFloors.calibrated
+                        ? "gui stage: nonBackgroundFraction>=" + celtium$gate.guiFloors.minNonBackgroundFraction
+                                + " verticalBands>=" + celtium$gate.guiFloors.minVerticalBands + " blackFraction<="
+                                + celtium$gate.guiFloors.maxBlackFraction
+                        : "gui stage: " + celtium$gate.guiFloors.source);
                 report.addProperty("sceneGateCalibrated", Boolean.valueOf(celtium$gate.calibrated));
                 boolean earlyVariantMeasured = celtium$variantMeasuredAtVerdict();
                 report.addProperty("sceneGateFloorsEnforced",
@@ -6326,6 +6412,9 @@ public final class ValidationClient {
         PresentedImageStats stats = picture.stats();
         boolean primary = "world".equals(stage) ? !celtium$scene.guiStage : celtium$scene.guiStage;
         String prefix = "world".equals(stage) ? "worldFrame" : "guiFrame";
+        // The floors this stage's picture is judged by, and the frame they came from. A scene with two stages shows two
+        // different pictures, so the GUI stage is held to floors derived from the reference's GUI frame (task-47).
+        SceneGate.FrameFloors floors = celtium$gate.floorsFor(stage);
         // What a failure names: the scene and the world it is of, the stage, the file, its identity sidecar, where the
         // picture came from, and the frame it is: a reader has to be able to open the image a verdict is about.
         String label = "scene=" + celtium$scene.name + " (" + celtium$sceneDimension() + ") stage=" + stage
@@ -6340,6 +6429,14 @@ public final class ValidationClient {
         report.addProperty(prefix + "BlackFraction", Double.valueOf(stats.blackFraction));
         report.addProperty(prefix + "BackgroundColour", celtium$hexColour(stats.backgroundColour));
         report.addProperty(prefix + "Pixels", Integer.valueOf(stats.width * stats.height));
+        // Per stage, so a reader can tell which frame each floor was measured on without reconstructing it from prose.
+        report.addProperty(prefix + "GateFloors", floors.calibrated
+                ? "nonBackgroundFraction>=" + floors.minNonBackgroundFraction + " verticalBands>=" + floors.minVerticalBands
+                        + " blackFraction<=" + floors.maxBlackFraction
+                : "NOT CALIBRATED for this stage: " + floors.source);
+        report.addProperty(prefix + "GateSource", floors.calibrated ? floors.source : "none: " + floors.source);
+        report.addProperty(prefix + "GateNumbers", floors.numbers);
+        report.addProperty(prefix + "GateMargin", floors.margin);
         if (primary) {
             // The canonical names, so existing tools and reports stay readable: they describe the picture this scene's
             // acceptance is about.
@@ -6375,24 +6472,24 @@ public final class ValidationClient {
                     + stats.nonBackgroundFraction + ", verticalBands=" + stats.verticalBands + ", blackFraction="
                     + stats.blackFraction + ")");
         }
-        if (celtium$gateEnforced && stats.nonBackgroundFraction < celtium$gate.minNonBackgroundFraction) {
+        if (celtium$gateEnforced && floors.calibrated && stats.nonBackgroundFraction < floors.minNonBackgroundFraction) {
             failures.add("presentedNonBackgroundFraction=" + stats.nonBackgroundFraction + " is below the scene floor of "
-                    + celtium$gate.minNonBackgroundFraction + " for " + label + " (backgroundColour="
+                    + floors.minNonBackgroundFraction + " for " + label + " (backgroundColour="
                     + celtium$hexColour(stats.backgroundColour) + " covers "
-                    + Math.round((1.0D - stats.nonBackgroundFraction) * 1000000.0D) / 10000.0D + "% of the frame; scene"
-                    + " floor measured in " + celtium$gate.referenceRuns + ")");
+                    + Math.round((1.0D - stats.nonBackgroundFraction) * 1000000.0D) / 10000.0D + "% of the frame; this"
+                    + " floor was measured on " + floors.source + ")");
         }
-        if (celtium$gateEnforced && stats.verticalBands < celtium$gate.minVerticalBands) {
+        if (celtium$gateEnforced && floors.calibrated && stats.verticalBands < floors.minVerticalBands) {
             failures.add("presentedVerticalBands=" + stats.verticalBands + " is below the scene floor of "
-                    + celtium$gate.minVerticalBands + " for " + label + ": the frame has too few row transitions to be"
-                    + " a picture of this scene (scene floor measured in " + celtium$gate.referenceRuns + ")");
+                    + floors.minVerticalBands + " for " + label + ": the frame has too few row transitions to be"
+                    + " a picture of this scene (this floor was measured on " + floors.source + ")");
         }
-        if (celtium$gateEnforced && stats.blackFraction > celtium$gate.maxBlackFraction) {
+        if (celtium$gateEnforced && floors.calibrated && stats.blackFraction > floors.maxBlackFraction) {
             failures.add("presentedBlackFraction=" + stats.blackFraction + " is above the scene ceiling of "
-                    + celtium$gate.maxBlackFraction + " for " + label + ": " + Math.round(stats.blackFraction * 10000.0D)
+                    + floors.maxBlackFraction + " for " + label + ": " + Math.round(stats.blackFraction * 10000.0D)
                     / 100.0D + "% of the frame is black in every channel, which is the large-black-region defect the"
-                    + " colour count alone passed (outline2: 11751 colours, two thirds black; scene ceiling measured in "
-                    + celtium$gate.referenceRuns + ")");
+                    + " colour count alone passed (outline2: 11751 colours, two thirds black; this ceiling was measured"
+                    + " on " + floors.source + ")");
         }
         return failures;
     }

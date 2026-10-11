@@ -71,6 +71,8 @@ against the reference `vs-pic-ref` (upstream Celeritas, tick 235). Both keys ide
 | **Done button (340,640,940,690)** | 110.1,110.1,110.1 | 110.1,110.1,110.1 | **1.000,1.000,1.000** | **8 of 30,000 (0.03 %)** |
 | whole frame | 52.9,49.9,47.6 | 55.1,51.7,48.9 | 0.959,0.966,0.972 | 114,666 of 921,600 (12.44 %) |
 
+**The title band is its own finding, not part of the panel number.** It is the largest of the screen's regions at 18.16 % and it is the font path: the same residual appeared as the label row in the HUD measurement (47.9 % against the stored reference before the alpha-test fix, 0.00 % after it), so the shape is known and it belongs to the font/text work rather than to the panel. It is listed as its own row above so it cannot hide inside the panel figure.
+
 The screen's own content matches: the Done button is pixel-identical, the option rows and the panel are within
 1-2 % of the reference's means, and the title band is the largest of the screen's regions at 18.16 % - the font path,
 not the panel. The whole-frame 12.44 % is dominated by the world behind the screen, which is the separate open

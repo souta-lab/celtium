@@ -140,6 +140,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.191 **GUI アイテムが平坦なのは Forge の生 `glMultMatrix` が mirror を迂回していたため（Lead が原典で特定・task-50）**
+
+ユーザーの「アイテム画面、ブロックが枠いっぱいに表示されている」の**根因を両側の原典で確定**した（推測ではない）:
+
+1. Forge は item の `ItemCameraTransforms` を **GlStateManager を迂回する生 GL 呼び出し**で適用する:
+   `ForgeHooksClient.handleCameraTransforms`（Forge 1.12.2-14.23.5.2847・`ForgeHooksClient.java:425-440`）→
+   `multiplyCurrentGlMatrix(matrix)`（同 `:444-455`）の本体が **`GL11.glMultMatrix(matrixBuf)`**。
+2. 他の行列呼び出しは vanilla が `GlStateManager` を通るので `GlStateManagerMixin` が mirror する
+   （`func_179109_b`=translate float・`func_179139_a`=scale double・`func_179130_a`=ortho 等）。
+3. **`glMultMatrixf` は stub の no-op 表にある**（`CeltiumGlStub.java:381`。`:1284` の `MIRROR_REQUIRED` は到着 census のみ）——
+   数えられるが**適用されない**。よって GUI item group の modelview は GUI ortho のままで、block model の6面が同じ正方形に落ちる
+   ＝**スロットを平坦なテクスチャが埋める**という症状そのもの。
+4. 受け側は既にある: `VulkanGlState.multiplyMatrix(float[])`（`VulkanGlState.java:219`）を translate/scale/rotate が使っている。
+   backend に `multMatrix` の入口だけが無い。
+
+**task-50**（stub 半分＝weather-water・backend 半分＝pipelines）で、stub に `glMultMatrixf`/`glMultMatrixd` の意味論 case を足し、
+backend に `multMatrix` を足す。**受入**: inventory/JEI のスロットと hotbar が等角の block アイコンになり（等価 build 状態で参照と crop 比較）、
+world 段が不変（sky 0/256,000・terrain centre 1〜6%）・`validationMessageCount=0`。`GluProjectionMixin` も同じ生
+`GL11.glMultMatrixf` を使うので、射影チャネルの mirror が何を得るかも記録する。
+
 ## 0.190 **video settings の画は一致（task-42 完了）・chain は絵に寄与しない（noise floor）・黒四分円は per-boot**
 
 - **task-42 完了（gui-stage）**: 参照 `vs-pic-ref`（upstream Celeritas・tick 235）と候補 `vs-pic-cand`（GL-less・jar `28dabb1dde958a7f`・
