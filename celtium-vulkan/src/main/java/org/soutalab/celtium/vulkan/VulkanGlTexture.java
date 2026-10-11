@@ -1652,7 +1652,18 @@ public final class VulkanGlTexture {
             throw new IllegalArgumentException(what + ": the declared extent " + pixelWidth + "x" + pixelHeight
                     + " is not positive, so no texel is addressed");
         }
-        long required = (long) pixelWidth * (long) pixelHeight * BYTES_PER_PIXEL;
+        // multiplyExact, not a cast and a comparison. `(long) w * (long) h * 4` still overflows long for
+        // w = h = Integer.MAX_VALUE - the product is 2^64 - and a wrapped negative value passes the
+        // `required > Integer.MAX_VALUE` test below, so the helper accepted an extent whose byte count was
+        // -17179869180 (audit A04). Checked arithmetic refuses the multiplication itself.
+        long required;
+        try {
+            required = Math.multiplyExact(Math.multiplyExact((long) pixelWidth, (long) pixelHeight),
+                    (long) BYTES_PER_PIXEL);
+        } catch (ArithmeticException overflow) {
+            throw new IllegalArgumentException(what + ": the declared extent " + pixelWidth + "x" + pixelHeight
+                    + " overflows when converted to RGBA8 bytes, so no byte count can be trusted for it");
+        }
         if (required > Integer.MAX_VALUE) {
             throw new IllegalArgumentException(what + ": the declared extent " + pixelWidth + "x" + pixelHeight
                     + " needs " + required + " bytes, which exceeds the largest storable image");
