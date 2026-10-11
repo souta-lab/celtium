@@ -7595,10 +7595,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " batchSize=" + batch.size()
                         + " sharedIndexPrimitives=" + this.sharedIndexPrimitives.get(primitiveType));
             }
+            // BH-02: which index buffer a command reads is decided by the pass, not by the offset value. A sorted
+            // (transparent) pass writes real index positions into the region's arena, and 0 is a legal position in it -
+            // the first command of the first such region lands there. The old test read `byteOffset == 0` as "the shared
+            // quad index is bound" and drew that command out of the shared buffer instead, mixing the transparent
+            // geometry with the unsorted quad pattern; whether it happened depended on whether a positive-offset command
+            // had preceded it, which is why it was invisible most of the time. The shared quad index remains the index
+            // source for every unsorted pass, whose offsets are 0 by construction.
+            boolean sortedPass = pass.isSorted();
             for (int command = 0; command < batch.size(); command++) {
                 long byteOffset = batch.indexByteOffset(command);
                 int firstIndex;
-                if (byteOffset == 0) {
+                if (sortedPass) {
+                    if (resources.indexArena == null) {
+                        continue;
+                    }
+                    bindIndexBuffer(stack, resources.indexArena.buffer());
+                    firstIndex = (int) (byteOffset / 4);
+                } else if (byteOffset == 0) {
                     firstIndex = 0;
                 } else if (resources.indexArena != null) {
                     bindIndexBuffer(stack, resources.indexArena.buffer());
