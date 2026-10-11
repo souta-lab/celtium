@@ -5071,6 +5071,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.captureStateNanos += System.nanoTime() - captureStart;
             long keyStart = System.nanoTime();
             long stateKey = celtium$stateKey(formatId, state);
+            // A bound-texture term was tried here and reverted: the reuse predicate already compares
+            // `currentGroupTexture != boundTexture` (below), and an A/B on two menu-hold legs of the same scene shows
+            // the group ids are 45/46/48/49/50 both with and without it - it only split 901 groups into 1285.
             if (VulkanImmediateDrawer.isLineMode(drawMode)) {
                 // A bit of its own, so the preflight can pick the line pipeline without being told the mode again.
                 stateKey |= 1L << 61;

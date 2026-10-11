@@ -527,6 +527,13 @@ public final class VulkanTextureRegistry {
     }
 
     public void announceImage(int glTextureId, java.awt.image.BufferedImage image) {
+        if (glTextureId == 8 || glTextureId == 20) {
+            // Bounded lifecycle line for the panorama/splash name: which of the three branches is true needs the
+            // announce and the forget ordered against each other, not inferred.
+            System.out.println("[Celtium] CELTIUM_LIFECYCLE announceImage id=" + glTextureId
+                    + " size=" + (image == null ? "null" : image.getWidth() + "x" + image.getHeight())
+                    + " hasEntry=" + this.entries.containsKey(Integer.valueOf(glTextureId)));
+        }
         if (glTextureId == 0 || image == null) {
             return;
         }
@@ -1381,6 +1388,11 @@ public final class VulkanTextureRegistry {
      * retire queue because a frame that was already recorded may still reference it.
      */
     public void forgetTexture(int glTextureId) {
+        if (glTextureId == 8 || glTextureId == 20) {
+            System.out.println("[Celtium] CELTIUM_LIFECYCLE forgetTexture id=" + glTextureId
+                    + " hadEntry=" + this.entries.containsKey(Integer.valueOf(glTextureId))
+                    + " announcedUnconsumed=" + announcementUnconsumed(Integer.valueOf(glTextureId)));
+        }
         Integer id = Integer.valueOf(glTextureId);
         // A published image is dropped, never destroyed: the registry does not own it, and its owner (the renderer's
         // off-target pair, or whatever else published it) is the only thing that may free it. The GL name is going

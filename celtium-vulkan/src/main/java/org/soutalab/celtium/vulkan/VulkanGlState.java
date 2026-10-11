@@ -599,7 +599,9 @@ public final class VulkanGlState {
         } else {
             bindsOnOtherUnits++;
         }
-        if (unitLogs < UNIT_LOG_LIMIT) {
+        // Raised bound plus an unconditional line for the panorama ids (45-49): the first ~22 binds never reached
+        // them, which is the one measurement left between the panorama's mirror and the faces' group.
+        if (unitLogs < 96 || (glTextureId >= 40 && glTextureId <= 60)) {
             unitLogs++;
             System.out.println("[Celtium] CELTIUM_UNIT_BIND bind texture=" + glTextureId
                     + " activeUnit=" + this.activeTextureUnit + " bindsOnUnit0=" + bindsOnUnitZero
