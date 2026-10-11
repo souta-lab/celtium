@@ -1143,6 +1143,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The same refusals grouped by program alone. */
     private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedPrograms = new java.util.LinkedHashMap<>();
     private int postAcceptDroppedGroups;
+    /** Groups dropped because no pass could draw their target, and passes that failed (BH-15). */
+    private int unflushedTargetGroupsDropped;
+    private int unflushedTargetGroupsDroppedLogged;
+    private int unflushedTargetPassFailures;
+    private String lastUnflushedTargetFailure = "none";
+
     /** Bounded lines for the copy's read resolution (see celtium$ownedReadImage). */
     private static final int READ_RESOLVE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.readResolveLog", 6).intValue();
@@ -5875,8 +5881,69 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    /** Synchronous same-target LOAD window; no draw command is emitted outside this backend's pass. */
+    /**
+     * Drains the pending immediate groups of <em>every</em> target they were accepted for, each into a pass of its
+     * own, instead of only the target that happens to be bound when this runs (BH-14/15/16).
+     * <p>
+     * The flush used to return as soon as the bound target had no groups ({@code others remain owned in the queue}),
+     * so a target's groups waited for a bind of their own target - and a framebuffer bound once and never again (the
+     * menu panorama's, the loading screen's one-shot identity) never got one. Measured: {@code offTargetPerTarget}
+     * read {@code 63482454: offered=677, atPass=32, drawnPasses=17}, and the panorama's copy of that image returned
+     * uniform white because the image was never written.
+     * <p>
+     * Anything that cannot be drawn is dropped here and counted ({@code unflushedTargetGroupsDropped}), never left
+     * queued forever and never silently re-routed into another target's pass (BH-15).
+     */
     private void flushImmediateWindow() {
+        if (this.immediateWindowBusy) return;
+        closeCurrentImmediateGroup();
+        if (this.immediateGroups.isEmpty()) return;
+        java.util.LinkedHashSet<Long> targets = new java.util.LinkedHashSet<Long>();
+        targets.add(Long.valueOf(this.currentRenderTarget));
+        for (ImmediateGroup group : this.immediateGroups) {
+            targets.add(Long.valueOf(group.target));
+        }
+        for (Long target : targets) {
+            long identity = target.longValue();
+            if (countGroupsForTarget(identity) == 0) {
+                continue;
+            }
+            long savedTarget = this.currentRenderTarget;
+            boolean savedIsMain = this.currentRenderTargetIsMain;
+            this.currentRenderTarget = identity;
+            this.currentRenderTargetIsMain = identity == this.mainTargetIdentity;
+            try {
+                flushImmediateWindowForTarget();
+            } catch (RuntimeException | LinkageError error) {
+                // One target's pass failing must not lose the others': the failure is counted against that target and
+                // the drain continues with the next one.
+                this.unflushedTargetPassFailures++;
+                this.lastUnflushedTargetFailure = describe(error);
+                record("target " + identity + " could not be drawn (" + this.lastUnflushedTargetFailure + ")");
+            } finally {
+                this.currentRenderTarget = savedTarget;
+                this.currentRenderTargetIsMain = savedIsMain;
+            }
+        }
+        // Whatever is still queued after every target had its pass cannot be drawn by anybody: drop it and say so.
+        if (!this.immediateGroups.isEmpty()) {
+            int dropped = 0;
+            for (ImmediateGroup group : this.immediateGroups) {
+                dropped += group.batches;
+            }
+            this.unflushedTargetGroupsDropped += dropped;
+            if (this.unflushedTargetGroupsDropped <= this.unflushedTargetGroupsDroppedLogged + 3) {
+                this.unflushedTargetGroupsDroppedLogged++;
+                record("dropping " + dropped + " accepted immediate batches whose target could not be drawn"
+                        + " (total " + this.unflushedTargetGroupsDropped + ")");
+            }
+            this.immediateGroups.clear();
+            this.pendingImmediateIndices = 0;
+        }
+    }
+
+    /** The per-target window flush; called once per pending target by {@link #flushImmediateWindow()}. */
+    private void flushImmediateWindowForTarget() {
         if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
@@ -6807,6 +6874,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
+                + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
+                + " unflushedTargetPassFailures=" + this.unflushedTargetPassFailures
+                + " lastUnflushedTargetFailure=" + (this.lastUnflushedTargetFailure == null ? "none"
+                        : this.lastUnflushedTargetFailure.replace(' ', '_').substring(0,
+                                Math.min(120, this.lastUnflushedTargetFailure.length())))
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
                 + " gpuStalled=" + this.gpuStalled
                 + " deviceWaitToken=" + this.deviceWaitToken
