@@ -145,6 +145,34 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.218 **round 24-25: 37件のbug huntを全担当へ配布・lit ITEM パイプライン復活（entity経路の阻塞解除）・BH-02/04/05/18/23/27/30/34 着地**
+
+- **lit ITEM パイプラインの復活（最重要・entity/手持ち/TESR 経路）**: 全 validation leg を落としていた
+  `VUID-RuntimeSpirv-OpEntryPoint-08743`（fragment input location 2 に対応する vertex output が無い）の原因は
+  **fog ブロック 128..207 と lighting 128..207 + `u_LightCoord` 208 の同一バイト衝突**。
+  proj-channel の算術（fog は 80B・lit は 216B・このデバイスの `maxPush=256`）で「fog を 224+ へ移す」案は**棄却**。
+  weather-water が **`immediate_tex_color_lit.frag`**（共有 fragment から location 2 と fog 演算を除いたもの）を新設し、
+  lit variant をそこへ向けた＝**パイプライン生成が復活**。unlit 側の range は 128→208。
+  **lit 家系は fog 無しのまま**（UBO 再構成＝BH-17 が前提）。検証: `ww43-bh30-after`・`bh2-verify`（両方 clean・VUID 0）。
+- **BH-30（world fog）受入**: 同一 jar・`-Dceltium.vulkan.immediateFog=false` の one-flag 対照で
+  空バンド **70.1% >8**・遠景 28.3%・近景 **2.9%** ＝**距離依存**（finding の要求どおり）。
+- **BH-02（透明地形 index offset 0）**: `pass.isSorted()` で index 源を選ぶよう修正（commit `4955563e6`）。
+  前後 leg とも clean で **107,046 px = 11.62% が変化**（小さい差が全体に広がる＝透明 index 修正の期待形）。
+  ただし「vanilla に近づいた」は未主張（未較正 variant）＝上流 leg が次の受入。
+- **BH-27（queue 全体待ち）**: `bootstrapQueueWaitMillis` **316→0**（worst 13→0）、per-submission fence 待ち 2994・worst 6ms・
+  `submitTimeouts=0`・`gpuStalled=false`。絵は不変（nonBg 0.952222→0.95232・bands 707→707）だが**画素一致は未確立**（別 build 状態の leg）。
+- **BH-18（swapchain 引数）**・**BH-23（sampler 再照会）**・**BH-34（`glTexEnvf` の bit 列）**・**BH-04 colour 半分**・
+  **BH-05（lighting を group 生成時に捕捉）** 着地。BH-37 は既存ルールで被覆。BH-22 は診断のみ（GPU完了順序が前提）。
+- **BH-09 の正しいフック位置（gui-stage の原典確認）**: `GlStateManager` に scissor メソッドが無く、
+  呼び元は Celeritas 自身の `VintageDrawContext` の直接 LWJGL 呼び出し。**`CeltiumGlStub` の NOOP 表（`:386`）が
+  矩形を捨てている**箇所が真の修正点（Lead が編集許可を出した）。scissor は **command state** なので pipeline key ではなく
+  group の矩形に入れる（BH-10 とは意図的に違う）。
+- **未着手の残りと担当**: BH-01/03/07/08/13/25/36＋BH-04 の残り半分（proj-channel）、
+  BH-21/24/26/28/12/14/15/16（fog-path）、BH-06/22（texture-mirror）、BH-09/10/11（gui-stage）、
+  BH-17/19/20＋BH-18 の成功路 print（sky-draws）、BH-29/31/32/33/35（weather-water）。
+- **ユーザー可視の残件**: エンティティ/手持ち（lit パイプライン復活で前進・受入測定中）、文字（font counter は refused=0・
+  可読 crop あり）、HUD（受入 leg で参照一致 1.81）。
+
 ## 0.217 **round 21: entity は「受理されたが描かれない」（id9/id4）・HUD は出ている（fixture の hideGUI が罠）・splash group は off-screen**
 
 - **acceptance の決定的測定（`r18h-cand`/`r18h-ref`・jar `6a89906b`・`keepGui=true captureEntities=true`）**:
