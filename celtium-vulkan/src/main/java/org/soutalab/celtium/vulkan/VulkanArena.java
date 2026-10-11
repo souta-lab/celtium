@@ -67,6 +67,24 @@ public final class VulkanArena {
     /** How many successful checks print a line before only failures speak. */
     private static final int VERIFY_OK_REPORTS = Integer.getInteger("celtium.vulkan.arenaVerifyOkReports", 8).intValue();
 
+    /**
+     * BH-01's acceptance, counted: how many segments were handed out with an offset on the stride, and how many were
+     * not.
+     * <p>
+     * The check runs in {@link #allocate} whenever {@code -Dceltium.vulkan.arenaVerify=true} is set, so one ordinary
+     * leg covers the initial capacity, every split, every reuse and every post-grow range without a GPU-side test of
+     * its own. A violation is not counted and passed on: {@code Segment.getOffset()} divides the offset by the stride,
+     * so an unaligned segment is geometry read from the wrong field boundary - the fault this finding is about - and it
+     * throws with the numbers rather than drawing it. Before the fix the whole run would have been silent about it.
+     */
+    private static long alignmentChecks;
+    private static long alignmentViolations;
+
+    /** {@return BH-01's acceptance line}: how many segments were aligned, and how many were not. */
+    public static String alignmentSummary() {
+        return "arenaSegmentAlignChecks=" + alignmentChecks + " arenaSegmentAlignViolations=" + alignmentViolations;
+    }
+
     private final VulkanContext context;
     /** {@code VK_BUFFER_USAGE_*} flags, kept so a census line can name what the arena holds. */
     private final int usageFlags;
@@ -198,7 +216,35 @@ public final class VulkanArena {
             free.next = result;
         }
         this.used += result.length;
+        if (VERIFY_ENABLED) {
+            verifyAlignment(result);
+        }
         return result;
+    }
+
+    /**
+     * BH-01's check: a segment must start on a whole stride element and be a whole number of them long.
+     * <p>
+     * {@link Segment#getOffset()} is {@code byteOffset / stride}, so an offset that is not a multiple of the stride is
+     * silently truncated and the vertices are read from the wrong field boundary. That is the defect this finding
+     * names, so the check throws rather than returning: a caller that wanted geometry and got a misaligned range must
+     * not draw it. Counted either way, so the acceptance line says how many segments were examined.
+     */
+    private void verifyAlignment(Segment segment) {
+        alignmentChecks++;
+        if (segment.offset % this.stride != 0) {
+            alignmentViolations++;
+            throw new IllegalStateException("BH-01: arena segment starts at byte " + segment.offset
+                    + ", which is not a multiple of the stride " + this.stride
+                    + " (offset/stride would truncate to " + (segment.offset / this.stride) + "; capacity="
+                    + this.capacity + ", alignUnit=" + this.alignUnit + ")");
+        }
+        if (segment.length % this.alignUnit != 0) {
+            alignmentViolations++;
+            throw new IllegalStateException("BH-01: arena segment at byte " + segment.offset + " is " + segment.length
+                    + " bytes long, which is not a multiple of the arena's unit " + this.alignUnit
+                    + " (stride=" + this.stride + ")");
+        }
     }
 
     /**

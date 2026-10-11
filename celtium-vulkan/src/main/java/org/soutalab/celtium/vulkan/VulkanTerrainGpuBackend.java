@@ -2095,6 +2095,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * 65 drawn, so the loss is real and per-batch rather than inferred from a group total.
      */
     private final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
+
+    /**
+     * Sets the offer stage and counts how many offers reached it (BH-15's open question).
+     * <p>
+     * The stage field alone reaches a report only when a refusal names it, so an offer that stops between the offer
+     * increment and the acceptance increment leaves no trace: the terrain legs read {@code offTargetOffered=793} with
+     * {@code acceptedForOtherTargets=7} and every refusal counter at zero, which is a contradiction no existing
+     * counter resolves. This histogram is the counter that resolves it - the highest stage with a non-zero count is
+     * where the missing offers stop.
+     */
+    private void celtium$offerStage(int stage) {
+        this.offerStage = stage;
+        if (stage >= 0 && stage < this.offerStageReached.length) {
+            this.offerStageReached[stage]++;
+        }
+    }
+
+    /** Offers that reached each stage index; printed as {@code offerStages=[1:..,2:..]}. */
+    private final int[] offerStageReached = new int[16];
+
+    /** {@return the offer-stage histogram}, so a stopped offer names its branch. */
+    private String offerStageSummary() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < this.offerStageReached.length; i++) {
+            if (this.offerStageReached[i] != 0) {
+                text.append(i).append(':').append(this.offerStageReached[i]).append(' ');
+            }
+        }
+        return text.length() == 0 ? "none" : text.toString().trim();
+    }
+
     /**
      * Where the draw loop was entered from, for the bounded {@code CELTIUM_DRAW_SITE} record.
      * <p>
@@ -4439,7 +4470,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        this.offerStage = 1;
+        celtium$offerStage(1);
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode)) {
             // Lines are drawn, not refused. The refusal that used to be here was right about one thing - the
@@ -4539,7 +4570,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
         // controls in practice is which format-2 batches the present path may take; everything else falls through to
         // the immediate path. Recorded so the name is not read as evidence that a present happens.
-        this.offerStage = 2;
+        celtium$offerStage(2);
         if (formatId == 2 && SKIP_GL_COMPOSITE && this.framePresentedFromVulkan > 0
                 && this.currentRenderTargetIsMain) {
             // The frame is already on the swapchain (a present really happened for it), so the game's own composite would
@@ -4557,7 +4588,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.glCompositesSkipped++;
             return true;
         }
-        this.offerStage = 3;
+        celtium$offerStage(3);
         if (formatId == 2 && PRESENT_FROM_COMPOSITE && (this.currentRenderTargetIsMain
                 || celtium$samplesBoundFramebufferColor(this.immediateState.boundTextureName()))) {
             // The audit's S17: this layout is not only the screen composite. `Framebuffer.func_178038_a` uses it to blend
@@ -4677,14 +4708,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateLastRefusal = "reentrant upload during bridge handoff";
             return false;
         }
-        this.offerStage = 4;
+        celtium$offerStage(4);
         if (!supportedImmediateTarget()) {
             // The gate names the failing condition itself; overwriting it here is what hid which one refused 820
             // format-2 batches in a run.
             flushPendingBeforeGlDraw();
             return false;
         }
-        this.offerStage = 5;
+        celtium$offerStage(5);
         if (!celtium$formatAccepted(formatId)) {
             // Attribution switch: restricting which layouts this backend accepts makes the image difference
             // measurable per format instead of as one aggregate number. Refused batches are drawn by GL as usual.
@@ -4696,7 +4727,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        this.offerStage = 6;
+        celtium$offerStage(6);
         if (formatId < 1 || formatId > VulkanImmediateFormats.POSITION_NORMAL) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
@@ -4718,7 +4749,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        this.offerStage = 7;
+        celtium$offerStage(7);
         if (vertexStride != expectedStride) {
             // Both sides named: the layout the mapping chose and the width it actually has. The pair disagreed in silence
             // for two layouts - id 9 was accepted at 24 bytes while its format is 28 - and a refusal that reads
@@ -4742,7 +4773,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.flushPendingBeforeGlDraw();
             return false;
         }
-        this.offerStage = 8;
+        celtium$offerStage(8);
         if (formatId >= 2 && this.immediateState.boundTextureName() == 0 && !celtium$layoutHasNoTexture(formatId)) {
             this.immediateLastRefusal = "textured batch with no texture bound";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
@@ -5054,7 +5085,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.programQueryCount++;
             if (boundProgram != 0) {
                 // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
-                this.offerStage = 9;
+                celtium$offerStage(9);
         if (formatId == 8 && !this.entityProgramLogged) {
                     // The entity layout is refused in every scene (acceptedByFormat 8:0). Which program is bound when it
                     // is offered decides whether the custom-program shutter is what keeps entities on GL - and that is
@@ -5112,7 +5143,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.flushPendingBeforeGlDraw();
                 return false;
             }
-            this.offerStage = 10;
+            celtium$offerStage(10);
         if (formatId == 5 && !canBuildDescriptor(boundTexture)) {
                 // The particle family is the one that dropped: every post-accept drop counted so far is format 5, which is
                 // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
@@ -5159,7 +5190,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
             }
 
-            this.offerStage = 11;
+            celtium$offerStage(11);
             if (formatId >= 0 && formatId < this.acceptedByFormat.length) {
 
                 this.acceptedByFormat[formatId]++;
@@ -7111,6 +7142,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
+                + " offerStages=[" + offerStageSummary() + "]
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
                 + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
                 + " drainedOtherTargetPasses=" + this.drainedOtherTargetPasses
@@ -7185,6 +7217,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " lastUniformPreparationFailure=" + this.lastUniformPreparationFailure
                 + " regionUploadFailures=" + this.regionUploadFailures
                 + " sectionsLeftUnbuilt=" + this.sectionsLeftUnbuilt
+                + " " + org.soutalab.celtium.vulkan.VulkanArena.alignmentSummary()
                 + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
                 + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
                 + (this.preflightCpuNanos / 1000000L) + ", append " + (this.appendNanos / 1000000L) + "/"
