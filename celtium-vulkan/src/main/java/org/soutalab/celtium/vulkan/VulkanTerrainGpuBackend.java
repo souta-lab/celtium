@@ -7532,6 +7532,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " stalledGeometryDroppedBatches=" + this.stalledGeometryDroppedBatches
                 + " stallOrigin=" + (this.stallOrigin == null ? "none" : this.stallOrigin.replace(' ', '_'))
                 + " windowFlushFailures=" + this.windowFlushFailures
+                // Printed, not just counted: a zero that never reaches the artifact is an absence rather than a
+                // measurement, and this number is the one that says whether the frame-close producer (the second
+                // producer of the done semaphore) ran at all - the path the per-image change could have broken.
+                + " signalOnlySubmissions=" + this.signalOnlySubmissions
                 + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
                 + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
                 + " groupViewportSets=" + this.groupViewportSets
