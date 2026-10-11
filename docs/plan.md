@@ -140,6 +140,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.201 **VUID 検出（`vkCmdDraw-None-09600`・sampled image が GENERAL）＝splash publication の layout 遷移欠落へ帰属**
+
+- **sky-draws の `vsync-leg`（AMD・fixture PASSED・picture あり）で `validationClean=false`・10 ×
+  `VUID-vkCmdDraw-None-09600`**: `VkImage … (mipLevel 0, arrayLayer 0) は SHADER_READ_ONLY_OPTIMAL を期待されているが
+  現在 GENERAL`、3つの image（`0x1400000000140`・`0x19b000000019b`・`0x2260000000226`）で `vkQueueSubmit` 時。
+  同日の以前の leg は `validationClean=true` だったので**新しい状態**。
+  **帰属**: frame-composite が自分で名指ししていた `celtium$publishFrameTexture` の layout 問題——
+  publish した name を main pass の descriptor（`SHADER_READ_ONLY`）が sample するが、image は chain pair の
+  `GENERAL` のまま。**outline の name だけが sampling-site 遷移を受けている**。→ 全ての published name に遷移を適用し、
+  pair が再び書く時に戻す（unpublish も同様）。**受入は `validationClean=true` の復帰＋最初の loading frame が画面に出ること**。
+  再現: `.celtium-work/runtime/vsync-leg`・凍結 jar `.celtium-work/runtime/intel-legs/jars/celtium-vsync.jar`・`--validation`。
+  **VUID は証拠であり、受入が黙って通してはいけない**（AGENTS.md の規則）。
+- **task-56（sky-draws）実装済み**: VSync on=FIFO（全 surface が必ず提供）／off=MAILBOX→IMMEDIATE、どちらも無ければ
+  FIFO へ**fallback を名指しして計数**（`PRESENT_MODE_FALLBACKS`）。`CELTIUM_PRESENT_MODE requested/chosen/supported` を
+  作成ごとに、`_REQUEST` を変更時に、`presentModeStale()`/`presentModeRebuilds` で surface 変更と同じ経路から rebuild。
+  実測 `requested=vsync-on(FIFO) chosen=FIFO supported=[IMMEDIATE,MAILBOX,FIFO,FIFO_RELAXED] fallbacks=0 changes=0`。
+  **未検証**: option page の setter 経由の toggle（fixture は field を直接書き換えるため経路を通らない）——
+  **startup property で policy を反転させる shortcut は採らない**（ユーザーの経路を測るため）。fixture flag の diff を私が入れる。
+- **item 3 の option 表（正直な形）**: mipmap は native module が触れている（6ファイル・要測定）、
+  **render distance / fullscreen / GUI scale / frame cap / cloud quality は native module に現れない＝「未追跡」**（どちらとも主張しない）。
+- **task-46 完了**: `glRendererPreflight` が driver summary を end-to-end で返すことを実機で確認
+  （`driverName="radv" driverID=3(MESA_RADV) driverInfo="Mesa 26.2.4-1" driverVersion=109060100(26.2.4 …) … apiVersion=1.4.354 via Celtium Vulkan`）。
+
 ## 0.200 **証拠保存方針の変更（ユーザー指示）: 最新1 run のみ保存・チームへ周知**
 
 ユーザーが「全 run の実データ保存」を撤回し、**直近1件のみ保存**へ変更。実施済み:

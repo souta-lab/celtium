@@ -75,6 +75,38 @@ The video-settings discriminator leg (`wbs-vs-cand`) was still running when this
 (tick 886, 44 sections). The reading in the section above is unchanged and its inputs are: this control, fog-path's
 inventory column, and the discriminator leg when it lands.
 
+## The discriminator leg landed — and its reference had already been deleted
+
+`wbs-vs-cand` completed: `GuiVideoSettings` open at the capture (`guiCaptureTick=1782`, `captureListedSections=46`),
+chain ran and restored, picture `screenshots/celtium-presented-gui-run-16141606e16d3-66d3c617-kept.png`.
+
+**The pair cannot be computed**: `wbs-vs-ref`'s screenshot and logs were deleted by the retention policy
+(`.celtium-work/disk-cleanup-latest-only-20261011.json`) while the candidate leg was still queued. Only its
+`validation-command.json` and `validation-process.json` survive, and neither carries pixel statistics. So the
+three-scene comparison stops one frame short, and that is a fact about the retention policy rather than about the
+renderer.
+
+**What the candidate frame alone shows** (self-comparison on one jar, one scene flag apart - the candidate's own
+video-settings frame against the candidate's own no-screen frame, whose recorded means are in the control table above):
+
+| region of the candidate's video-settings frame | mean | candidate no-screen mean | factor |
+|---|---|---|---|
+| sky band (0,0,1280,120) | 35.4,27.4,21.5 | 158.1,192.9,255.0 | 0.22,0.14,0.08 |
+| left margin (0,80,170,640) | 15.2,11.3,7.5 | - | - |
+| right margin (1110,80,1280,640) | 23.8,20.8,18.0 | - | - |
+| bottom band (0,690,1280,720) | 27.8,21.6,17.2 | - | - |
+| whole frame | 52.9,49.9,47.5 | 123.4,105.7,118.4 | 0.43,0.47,0.40 |
+
+**The candidate's video-settings screen does dim the world behind it, heavily** (sky band to 0.22 of the undimmed
+value). So the shared dim overlay is present behind this screen too, which points away from "the inventory panel is
+uniquely at fault" and towards the shared `GuiScreen.drawWorldBackground` - **but this is a candidate-side observation,
+not a pair**, and the decisive half is the reference's own video-settings frame. Recorded as such rather than promoted.
+
+**What recovers it:** re-run one leg, `wbs-vs-ref` (`nohup ./.celtium-work/gui-stage/run-wbs.sh` re-runs the set; the
+reference alone is enough), and compare immediately - before the next run completes and the retention policy removes
+the frame. The candidate's frame is preserved as a 50 % copy at
+`.celtium-work/sky-ratio/wbs-crops/wbs-vs-cand-gui-small.png`.
+
 ## Status when this was written
 
 All four legs were **queued behind the single-game slot** (the machine was at 10/15 GB with several harness scripts

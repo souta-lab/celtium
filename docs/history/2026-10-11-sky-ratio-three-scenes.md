@@ -1,3 +1,7 @@
+> **Retention note (2026-10-11):** the disk policy keeps only the most recent completed run, so the image paths
+> cited below (`.celtium-work/acceptance/crops/cand3-inventory/`, `.celtium-work/sky-ratio/crops/`) may no longer
+> resolve. The numbers are the record; do not cite a path here as read without checking it first.
+
 # task-38 — why the sky is 17 % dark with a screen open and pixel-identical without one
 
 Date: 2026-10-11. Scene: `terrain`, pose `x=0.5 y=12.0 z=0.5 yaw=180 pitch=20`, 1280x720, tick 200.
