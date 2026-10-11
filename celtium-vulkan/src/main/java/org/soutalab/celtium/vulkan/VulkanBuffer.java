@@ -110,6 +110,9 @@ public final class VulkanBuffer {
             throw new IllegalArgumentException("A read of " + length + " bytes does not fit the destination buffer of "
                     + destination.size() + " bytes.");
         }
+        // A copy of this buffer may still be pending in the frame's upload batch, and this read has to see it: the
+        // batch is submitted and waited for here rather than assuming it already went out (OPT-07).
+        this.context.flushUploads();
         VkCommandBuffer commandBuffer = this.context.beginCommands();
         try {
             try (MemoryStack stack = MemoryStack.stackPush()) {

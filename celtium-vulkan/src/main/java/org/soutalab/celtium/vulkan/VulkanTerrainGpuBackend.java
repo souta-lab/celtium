@@ -1076,6 +1076,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * a hotbar item is still drawn with the world's light, whatever the picture looks like.
      */
     private int lightmapFullBrightGroups;
+    /**
+     * The ITEM family's batches split by which variant they got and by the stage they were offered in. This is the
+     * instrument the hotbar measurement needed and did not have: a GUI item that arrives unlit never samples the light
+     * map, so no light-map coordinate - captured or full-bright - can change its brightness, and a leg that reports
+     * only the coordinate counters cannot tell that apart from "the rule did nothing".
+     */
+    private int itemLitGroups;
+    private int itemLitGuiGroups;
+    private int itemUnlitGroups;
+    private int itemUnlitGuiGroups;
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
@@ -1143,6 +1153,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The same refusals grouped by program alone. */
     private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedPrograms = new java.util.LinkedHashMap<>();
     private int postAcceptDroppedGroups;
+    /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
+    private final java.util.Map<Long, Integer> flushEntryGroupsByTarget = new java.util.HashMap<Long, Integer>();
+    private final java.util.Map<Long, Integer> flushEntryPassesByTarget = new java.util.HashMap<Long, Integer>();
+    /** Flush entries whose target was not the bound one: the drain's own work (BH-14/15/16). */
+    private int drainedOtherTargetPasses;
+
+    /** {@return one line per target the drain visited}, with its entry counts. */
+    private String flushEntrySummary() {
+        if (this.flushEntryPassesByTarget.isEmpty()) {
+            return "none";
+        }
+        StringBuilder text = new StringBuilder();
+        for (java.util.Map.Entry<Long, Integer> entry : this.flushEntryPassesByTarget.entrySet()) {
+            text.append(Long.toHexString(entry.getKey().longValue())).append(":entries=").append(entry.getValue())
+                    .append(",groupsAtEntry=")
+                    .append(this.flushEntryGroupsByTarget.getOrDefault(entry.getKey(), Integer.valueOf(0)))
+                    .append(' ');
+        }
+        return text.toString().trim();
+    }
+
     /** Groups dropped because no pass could draw their target, and passes that failed (BH-15). */
     private int unflushedTargetGroupsDropped;
     private int unflushedTargetGroupsDroppedLogged;
@@ -5925,6 +5956,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (countGroupsForTarget(identity) == 0) {
                 continue;
             }
+            // Where the drain's own question is answered: how many groups of this target were present at flush
+            // entry, and how often the target was not the bound one. A target whose entry count is zero was never
+            // in the queue at a flush at all, which is a different defect from one that was present and not drawn.
+            int present = countGroupsForTarget(identity);
+            this.flushEntryGroupsByTarget.merge(Long.valueOf(identity), Integer.valueOf(present), Integer::sum);
+            this.flushEntryPassesByTarget.merge(Long.valueOf(identity), Integer.valueOf(1), Integer::sum);
+            if (identity != this.currentRenderTarget) {
+                this.drainedOtherTargetPasses++;
+            }
             long savedTarget = this.currentRenderTarget;
             boolean savedIsMain = this.currentRenderTargetIsMain;
             this.currentRenderTarget = identity;
@@ -6317,10 +6357,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             true, false, false, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format == 4) {
+            // Which variant each ITEM batch gets, split by stage. The GUI stage is where the hotbar and the inventory
+            // items are drawn, and whether they arrive lit decides whether the light map can darken them at all: the
+            // full-bright rule at celtium$lightmapForGroup() writes a coordinate that only a lit group ever reads.
+            boolean itemLit = state.length > 8 && state[8] != 0;
+            if (itemLit) {
+                this.itemLitGroups++;
+                if (!this.worldPassActive) this.itemLitGuiGroups++;
+            } else {
+                this.itemUnlitGroups++;
+                if (!this.worldPassActive) this.itemUnlitGuiGroups++;
+            }
             VulkanImmediateItemPipeline value = this.itemPipelineCache.computeIfAbsent(key,
                     k -> VulkanImmediateItemPipeline.create(this.context, pass, celtium$blendState(state),
-                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]),
-                            state.length > 8 && state[8] != 0));
+                            state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7]), itemLit));
             // The lit variant samples the light map on a second binding; the unlit one has only the model texture, so
             // the set is built for the layout this variant declares. A lit batch with no mirrored light map gets
             // descriptor 0 and is refused by name rather than drawn with a zero view (see the pipeline's guard).
@@ -6909,12 +6959,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapSubmitWaits=" + VulkanContext.bootstrapSubmitWaits
                 + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
+                + " " + this.context.uploadBatchSummary()
                 + " " + (this.frameArena == null ? "frameArena=not-created" : this.frameArena.describe())
                 + " frameArenaFallbackGroups=" + this.frameArenaFallbackGroups
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
+                + " drainedOtherTargetPasses=" + this.drainedOtherTargetPasses
+                + " flushEntries=[" + flushEntrySummary() + "]"
                 + " unflushedTargetPassFailures=" + this.unflushedTargetPassFailures
                 + " lastUnflushedTargetFailure=" + (this.lastUnflushedTargetFailure == null ? "none"
                         : this.lastUnflushedTargetFailure.replace(' ', '_').substring(0,
@@ -6931,6 +6984,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " groupViewportSets=" + this.groupViewportSets
                 + " cullEnabledGroups=" + this.cullEnabledGroups
                 + " cullDisabledGroups=" + this.cullDisabledGroups
+                // BH-11 and BH-12's counters, at the same place as BH-08's. acceptance found
+                // immediateDepthBiasedGroups declared and incremented with zero print sites, so "the bias was
+                // applied" had no evidence in any artifact; the narrowed-line total had the same gap (only the
+                // first four events printed). Both are now in the verification summary.
+                + " immediateDepthBiasedGroups=" + this.immediateDepthBiasedGroups
+                + " lineBatchesNarrowed=" + this.lineBatchesNarrowed
                 // BH-07/BH-10/BH-03's counters, at the same place as BH-08's: captured per batch, so a leg says how
                 // many batches carried an alpha pair the old pipelines could not express, how many carried a write
                 // mask that was not all four channels, and which alpha comparison reached the shader. Before the fix
@@ -7177,6 +7236,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " lightmapCoordCalls=" + this.lightmapCoordCalls
                 + " lightmapCoordGroups=" + this.lightmapCoordGroups
                 + " lightmapFullBrightGroups=" + this.lightmapFullBrightGroups
+                // The ITEM variant split, so "the GUI item is bright" can be read as "it was lit and the coordinate was
+                // full-bright" or as "it was never lit at all" rather than assumed from the picture.
+                + " itemLitGroups=" + this.itemLitGroups
+                + " itemLitGuiGroups=" + this.itemLitGuiGroups
+                + " itemUnlitGroups=" + this.itemUnlitGroups
+                + " itemUnlitGuiGroups=" + this.itemUnlitGuiGroups
                 + " immediateGroupsDiscarded=" + this.immediateGroupsDiscarded
                 + " immediateGroupsKeptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                 + " immediateDeferredNextFrame=" + this.immediateDeferredNextFrame
@@ -11873,6 +11938,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // reported, after the pass-level ones.
             return;
         }
+        // OPT-07: every copy the frame recorded goes out as one submission before this one, so the vertices, indices
+        // and uniform bytes this command buffer reads are in place. It is a no-op when nothing is pending, and it is
+        // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
+        this.context.flushUploads();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             check(vkEndCommandBuffer(this.commandBuffer), "vkEndCommandBuffer");
             this.commandState.end();

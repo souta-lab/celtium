@@ -213,6 +213,32 @@ public final class VulkanContext {
     private long stagingBuffer = VK_NULL_HANDLE;
     private long stagingMemory = VK_NULL_HANDLE;
     private long stagingMappedAddress;
+    /**
+     * OPT-07's staging ring: the bytes of the copies this frame has recorded but not yet submitted.
+     * <p>
+     * The single staging buffer above serves the immediate one-copy path (a copy larger than a ring slot, and the
+     * resource build that must be complete before it returns). Every ordinary upload writes into a slot of this ring
+     * and appends a copy record instead of submitting anything; {@link #flushUploads()} turns all of them into one
+     * command buffer, one submission and one fence wait. The slot is freed by that submission's fence and by nothing
+     * else: the ring's cursor is only moved on after the wait that confirmed the copies completed (OPT-04).
+     */
+    private static final int UPLOAD_SLOT_COUNT = 4;
+    private static final long UPLOAD_SLOT_BYTES = 1L << 20;
+    private long uploadRingBuffer = VK_NULL_HANDLE;
+    private long uploadRingMemory = VK_NULL_HANDLE;
+    private long uploadRingMapped;
+    private long uploadRingCapacity;
+    private final long[] uploadSlotCursor = new long[UPLOAD_SLOT_COUNT];
+    private int uploadSlot = -1;
+    /** {destination buffer handle, destination offset, staging offset, size} for every copy not yet submitted. */
+    private final java.util.List<long[]> pendingUploads = new java.util.ArrayList<long[]>();
+    private long uploadCopiesBatched;
+    private long uploadCopiesFlushed;
+    private long uploadFlushes;
+    private long uploadFlushMillis;
+    private long uploadFlushWorstMillis;
+    private long uploadFallbackCopies;
+    private long uploadDroppedCopies;
     private long stagingCapacityBytes;
 
     private VulkanContext() {
@@ -687,10 +713,18 @@ public final class VulkanContext {
             return;
         }
         long paddedLength = alignUp4(length);
-        ensureStagingCapacity(paddedLength);
-        MemoryUtil.memCopy(sourceAddress, this.stagingMappedAddress, length);
-        zeroStagingTail(length, paddedLength);
-        recordStagingCopy(destination, destinationOffset, paddedLength);
+        long stagingOffset = celtium$reserveUploadSlot(paddedLength);
+        if (stagingOffset < 0L) {
+            // Larger than a ring slot: the one-copy path, which blocks until the copy has completed. Counted, so a
+            // workload that needs the blocking form says so instead of hiding inside the batch counters.
+            this.uploadFallbackCopies++;
+            celtium$immediateStagingCopy(destination, destinationOffset, sourceAddress, length, paddedLength);
+            return;
+        }
+        MemoryUtil.memCopy(sourceAddress, this.uploadRingMapped + stagingOffset, length);
+        celtium$zeroUploadTail(stagingOffset, length, paddedLength);
+        this.pendingUploads.add(new long[] {destination, destinationOffset, stagingOffset, paddedLength});
+        this.uploadCopiesBatched++;
     }
 
     /**
@@ -710,11 +744,17 @@ public final class VulkanContext {
             return;
         }
         long paddedLength = alignUp4(length);
-        ensureStagingCapacity(paddedLength);
-        ByteBuffer staging = MemoryUtil.memByteBuffer(this.stagingMappedAddress, (int) paddedLength);
+        long stagingOffset = celtium$reserveUploadSlot(paddedLength);
+        if (stagingOffset < 0L) {
+            this.uploadFallbackCopies++;
+            celtium$immediateStagingCopy(destination, destinationOffset, source, paddedLength);
+            return;
+        }
+        ByteBuffer staging = MemoryUtil.memByteBuffer(this.uploadRingMapped + stagingOffset, (int) paddedLength);
         MemoryUtil.memCopy(source.duplicate(), staging);
-        zeroStagingTail(length, paddedLength);
-        recordStagingCopy(destination, destinationOffset, paddedLength);
+        celtium$zeroUploadTail(stagingOffset, length, paddedLength);
+        this.pendingUploads.add(new long[] {destination, destinationOffset, stagingOffset, paddedLength});
+        this.uploadCopiesBatched++;
     }
 
     /**
@@ -779,6 +819,7 @@ public final class VulkanContext {
                     + " bootstrapQueueWaitWorstMillis=" + bootstrapQueueWaitWorstMillis
                     + " submitTimeouts=" + submitTimeouts
                     + " " + waitOutcomeSummary()
+                    + " " + uploadBatchSummary()
                     + " quarantinedCommandBuffers=" + this.quarantinedCommandBuffers.size()
                     + " quarantinedFences=" + this.quarantinedFences.size()
                     + " (the bootstrap submit path waits on the queue, which the API cannot bound; the frame path"
@@ -814,6 +855,7 @@ public final class VulkanContext {
                 this.quarantinedFences.clear();
             }
             destroyStaging();
+            destroyUploadRing();
             if (this.commandPool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
                 this.commandPool = VK_NULL_HANDLE;
@@ -1475,6 +1517,29 @@ public final class VulkanContext {
         this.stagingCapacityBytes = bytes;
     }
 
+    /** Releases the upload ring; any copy still pending is dropped and counted, because nothing will submit it. */
+    private void destroyUploadRing() {
+        this.uploadDroppedCopies += this.pendingUploads.size();
+        this.pendingUploads.clear();
+        if (this.uploadRingMapped != 0L) {
+            vkUnmapMemory(this.device, this.uploadRingMemory);
+            this.uploadRingMapped = 0L;
+        }
+        if (this.uploadRingBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(this.device, this.uploadRingBuffer, null);
+            this.uploadRingBuffer = VK_NULL_HANDLE;
+        }
+        if (this.uploadRingMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(this.device, this.uploadRingMemory, null);
+            this.uploadRingMemory = VK_NULL_HANDLE;
+        }
+        this.uploadRingCapacity = 0L;
+        for (int slot = 0; slot < this.uploadSlotCursor.length; slot++) {
+            this.uploadSlotCursor[slot] = 0L;
+        }
+        this.uploadSlot = -1;
+    }
+
     private void destroyStaging() {
         if (this.stagingMappedAddress != 0L) {
             vkUnmapMemory(this.device, this.stagingMemory);
@@ -1505,6 +1570,177 @@ public final class VulkanContext {
      * Records the staged copy and submits it. Queue submission is the implicit memory dependency that makes the
      * host writes to the coherent staging memory visible to the transfer read; no explicit barrier is needed.
      */
+    /**
+     * Reserves {@code bytes} of the staging ring for one copy of the frame's pending batch.
+     *
+     * @return the byte offset to write at inside the ring's mapped memory, or -1 when the copy is larger than a slot
+     *         (the caller then uses the one-copy path)
+     */
+    private long celtium$reserveUploadSlot(long bytes) {
+        if (bytes > UPLOAD_SLOT_BYTES) {
+            return -1L;
+        }
+        celtium$ensureUploadRing();
+        if (this.uploadSlot < 0 || this.uploadSlotCursor[this.uploadSlot] + bytes > UPLOAD_SLOT_BYTES) {
+            // A batch that fills its slot is submitted and waited for here, which is the fence that frees it; the next
+            // batch then starts in the next slot, so the bytes being written are never the bytes the previous batch
+            // was reading. Slots are freed by that fence and by nothing else, and the cursor reset below happens only
+            // after it has signalled.
+            flushUploads();
+            this.uploadSlot = (this.uploadSlot + 1) % UPLOAD_SLOT_COUNT;
+            this.uploadSlotCursor[this.uploadSlot] = 0L;
+        }
+        long offset = this.uploadSlot * UPLOAD_SLOT_BYTES + this.uploadSlotCursor[this.uploadSlot];
+        this.uploadSlotCursor[this.uploadSlot] += bytes;
+        return offset;
+    }
+
+    /** Creates the staging ring on first use: one host-visible buffer, {@link #UPLOAD_SLOT_COUNT} slots inside it. */
+    private void celtium$ensureUploadRing() {
+        if (this.uploadRingBuffer != VK_NULL_HANDLE) {
+            return;
+        }
+        long bytes = UPLOAD_SLOT_COUNT * UPLOAD_SLOT_BYTES;
+        long buffer = VK_NULL_HANDLE;
+        long memory = VK_NULL_HANDLE;
+        long mapped = 0L;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack).sType$Default()
+                    .size(bytes)
+                    .usage(VK_BUFFER_USAGE_TRANSFER_SRC_BIT)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+            LongBuffer bufferHandle = stack.mallocLong(1);
+            check(vkCreateBuffer(this.device, createInfo, null, bufferHandle),
+                    "vkCreateBuffer(upload ring, " + bytes + " bytes)");
+            buffer = bufferHandle.get(0);
+            VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+            vkGetBufferMemoryRequirements(this.device, buffer, requirements);
+            int memoryType = memoryTypeIndex(requirements.memoryTypeBits(),
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    "a host-visible, host-coherent upload ring of " + bytes + " bytes");
+            VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
+                    .allocationSize(requirements.size())
+                    .memoryTypeIndex(memoryType);
+            LongBuffer memoryHandle = stack.mallocLong(1);
+            check(vkAllocateMemory(this.device, allocate, null, memoryHandle),
+                    "vkAllocateMemory(upload ring, " + requirements.size() + " bytes)");
+            memory = memoryHandle.get(0);
+            if (vkBindBufferMemory(this.device, buffer, memory, 0L) != VK_SUCCESS) {
+                vkDestroyBuffer(this.device, buffer, null);
+                vkFreeMemory(this.device, memory, null);
+                throw new IllegalStateException("vkBindBufferMemory(upload ring) failed");
+            }
+            org.lwjgl.PointerBuffer pointer = stack.mallocPointer(1);
+            if (vkMapMemory(this.device, memory, 0L, bytes, 0, pointer) != VK_SUCCESS) {
+                vkDestroyBuffer(this.device, buffer, null);
+                vkFreeMemory(this.device, memory, null);
+                throw new IllegalStateException("vkMapMemory(upload ring) failed");
+            }
+            mapped = pointer.get(0);
+        }
+        this.uploadRingBuffer = buffer;
+        this.uploadRingMemory = memory;
+        this.uploadRingMapped = mapped;
+        this.uploadRingCapacity = bytes;
+    }
+
+    /** Zeroes the padding bytes of one ring copy, so a copy never publishes uninitialised staging bytes. */
+    private void celtium$zeroUploadTail(long stagingOffset, long length, long paddedLength) {
+        for (long i = length; i < paddedLength; i++) {
+            MemoryUtil.memPutByte(this.uploadRingMapped + stagingOffset + i, (byte) 0);
+        }
+    }
+
+    /** The one-copy path: copy into the single staging buffer, submit one command buffer and wait for it. */
+    private void celtium$immediateStagingCopy(long destination, long destinationOffset, long sourceAddress,
+            long length, long paddedLength) {
+        ensureStagingCapacity(paddedLength);
+        MemoryUtil.memCopy(sourceAddress, this.stagingMappedAddress, length);
+        zeroStagingTail(length, paddedLength);
+        recordStagingCopy(destination, destinationOffset, paddedLength);
+    }
+
+    /** The {@link ByteBuffer} half of {@link #celtium$immediateStagingCopy}. */
+    private void celtium$immediateStagingCopy(long destination, long destinationOffset, ByteBuffer source,
+            long paddedLength) {
+        ensureStagingCapacity(paddedLength);
+        ByteBuffer staging = MemoryUtil.memByteBuffer(this.stagingMappedAddress, (int) paddedLength);
+        MemoryUtil.memCopy(source.duplicate(), staging);
+        zeroStagingTail(source.remaining(), paddedLength);
+        recordStagingCopy(destination, destinationOffset, paddedLength);
+    }
+
+    /**
+     * Turns every copy the frame has recorded into one command buffer, one submission and one fence wait (OPT-07).
+     * <p>
+     * Before this, each copy submitted its own command buffer and waited for its own fence - measured on the
+     * user-shaped leg at 11,303 submissions and 465 ms of CPU fence wait for one run, 3,265 of them inside the cold
+     * window. The batch is submitted as a whole and waited for as a whole, so the copies are complete before the
+     * caller's own submission reads them, which is the ordering the per-copy wait used to provide. The staging slot is
+     * freed by that fence and by nothing else.
+     * <p>
+     * Render thread only. A caller that is about to submit work reading a destination of a pending copy must call this
+     * first: the frame's own submission does, at its start.
+     */
+    public void flushUploads() {
+        if (this.pendingUploads.isEmpty()) {
+            return;
+        }
+        long started = System.nanoTime();
+        VkCommandBuffer commandBuffer = beginCommands();
+        try {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
+                for (long[] pending : this.pendingUploads) {
+                    copy.get(0).srcOffset(pending[2]).dstOffset(pending[1]).size(pending[3]);
+                    vkCmdCopyBuffer(commandBuffer, this.uploadRingBuffer, pending[0], copy);
+                }
+                // The copies are transfer writes; making them available to every later stage here means the caller's
+                // submission needs no barrier of its own. One barrier per batch, not per copy.
+                org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+                barrier.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT
+                                | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT
+                                | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT
+                                | VK_ACCESS_MEMORY_READ_BIT);
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, barrier, null, null);
+            }
+        } finally {
+            // endCommands submits with the batch's own fence and waits on it: the wait is what frees the ring slot,
+            // and what makes the copies complete before whatever the caller submits next. The batch is cleared
+            // whatever the submit did, because re-recording it later would copy from slots whose contents have been
+            // overwritten by newer copies - a wrong picture rather than a failed one.
+            try {
+                endCommands(commandBuffer);
+            } finally {
+                this.uploadCopiesFlushed += this.pendingUploads.size();
+                this.pendingUploads.clear();
+                for (int slot = 0; slot < this.uploadSlotCursor.length; slot++) {
+                    this.uploadSlotCursor[slot] = 0L;
+                }
+            }
+        }
+        this.uploadFlushes++;
+        long millis = (System.nanoTime() - started) / 1_000_000L;
+        this.uploadFlushMillis += millis;
+        if (millis > this.uploadFlushWorstMillis) {
+            this.uploadFlushWorstMillis = millis;
+        }
+    }
+
+    /** {@return the batched upload path's census, for the run report}. */
+    public String uploadBatchSummary() {
+        return "uploadCopiesBatched=" + this.uploadCopiesBatched + " uploadCopiesFlushed=" + this.uploadCopiesFlushed
+                + " uploadFlushes=" + this.uploadFlushes + " uploadFlushMillis=" + this.uploadFlushMillis
+                + " uploadFlushWorstMillis=" + this.uploadFlushWorstMillis
+                + " uploadPendingCopies=" + this.pendingUploads.size()
+                + " uploadRingBytes=" + this.uploadRingCapacity
+                + " uploadFallbackCopies=" + this.uploadFallbackCopies
+                + " uploadDroppedCopies=" + this.uploadDroppedCopies;
+    }
+
     private void recordStagingCopy(long destination, long destinationOffset, long length) {
         VkCommandBuffer commandBuffer = beginCommands();
         try (MemoryStack stack = MemoryStack.stackPush()) {
