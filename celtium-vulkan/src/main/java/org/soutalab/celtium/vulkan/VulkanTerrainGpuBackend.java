@@ -7142,7 +7142,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
-                + " offerStages=[" + offerStageSummary() + "]
+                + " offerStages=[" + offerStageSummary() + "]"
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
                 + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
                 + " drainedOtherTargetPasses=" + this.drainedOtherTargetPasses
