@@ -304,6 +304,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.311 **round 117: resize leg を `resizeAtTick` 付きで再取得 — 緑だが resize の痕跡は無し（受入は未取得のまま）・VVL の既知 false positive を記録**
+
+- **測定（Lead の `r109-resize`・jar `2b5859ab0`・層あり・`pinSections=60`・`resizeAtTick=200`・`resizeTo=1024x640`・150 s）**:
+  **VUID 0 行**・exit 143（`endedBy=time-limit`）＝**hang せず完走**。ただし **console に `resizeRequestedAtTick` も window size の変化も出ていない**
+  （`resize` の一致は全て**パス名** `r109-resize/mods/...`）＝**resize が実際に発火した証拠が無い**。
+  ＝**proj-channel の leg と同じ形**（緑だが経路未踏）。**resize 受入は未取得のまま**として記録する（受入扱いにしない）。
+- **重要な外部知見（web 調査・VVL の既知問題）**: **VVL issue #10364「Potential false positive 00067 after swapchain recreation (resize)」** は
+  **まさに resize 後の present semaphore 再利用で 00067 が出る**という報告で、Khronos 側が**バグと認めて PR #10396「Track present semaphores from old swapchain」で修正**、
+  **「次の SDK には間に合わない」**としている（[issue #10364](https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/10364)）。
+  ＝**今後 resize leg で 00067 が出た場合、それが我々の欠陥か layer の false positive かを区別する必要がある**。
+  区別の材料: 我々の per-image 化は**古い swapchain の semaphore を破棄しない**（成長のみ）ため、この false positive の条件（旧 swapchain の semaphore 再利用）に**構造的に当たりにくい**。
+- **現状（3者一致のまま）**: per-image ユニットは **実装済・通常経路は4 leg 緑**（`opt09f-close`・`owed-resize`・`so-baseline`・`r109-resize`・
+  全て `validationMessageCount=0` か VUID 0・stream equality 不変）。**未取得**: **image 数の変化**（2回試して経路未踏）・
+  **frame-close の pairing**（この fixture では到達不能・counter は可視化済み）。
+
 ## 0.310 **round 116: `resizeAtTick` は既存だった（fixture 変更は不要・flag の問題）・counter に print site 追加（`2dc4b5aaf`）**
 
 - **gui-stage の指摘（正しい）**: world leg の**一度きり resize は既に存在**する —
