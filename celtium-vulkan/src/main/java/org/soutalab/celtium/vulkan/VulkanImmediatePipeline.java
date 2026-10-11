@@ -44,7 +44,11 @@ public final class VulkanImmediatePipeline {
     public static final int VERTEX_BYTES = 16;
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
     // inside the 128 bytes Vulkan guarantees (audit S19).
-    private static final int PUSH_CONSTANT_BYTES = 128;
+    // 208 since the fixed-function fog landed: the fragment stage reads the fog block at 128..207 (colour, params and
+    // the model view the fog coordinate is computed from), so the pipeline layout's range has to cover it. This is the
+    // size the lit ITEM pipeline has required of the device since the lighting block arrived, so it asks for nothing
+    // the tree did not already.
+    private static final int PUSH_CONSTANT_BYTES = 208;
 
     private final VulkanContext context;
     private final long renderPass;

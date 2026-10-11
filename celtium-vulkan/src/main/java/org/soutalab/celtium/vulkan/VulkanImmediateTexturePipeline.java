@@ -48,13 +48,34 @@ public final class VulkanImmediateTexturePipeline {
     public static final int POSITION_TEX_BYTES = 20;
     /** Position only: three floats and nothing else. */
     public static final int POSITION_BYTES = 12;
-    /** Position, texture, colour and a normal the shaders do not read: the entity/TESR layout. */
+    /** Position, texture, colour and a normal the shaders do not read: the entity/TESR layout, 28 bytes. */
     public static final int POSITION_TEX_COLOR_NORMAL_BYTES = 28;
-    /** Position, texture and a normal: the composite batch's layout. */
+    /**
+     * Position, texture and a normal, 24 bytes: the composite batch's layout, and {@code POSITION_TEX_NORMAL} and
+     * {@code OLDMODEL_POSITION_TEX_NORMAL} with it.
+     * <p>
+     * 12 + 8 + 3 + 1. These widths are the runtime ones and not a rounded stride: vanilla's {@code VertexFormat} advances
+     * by the element's own {@code getSize()} and pads nothing, so this layout is 24 and not 28 while the colour-carrying
+     * {@code POSITION_TEX_COLOR_NORMAL} really is 28. This constant said 24 while the id it belongs to was never assigned
+     * and the id it was confused with was answered instead, so nothing ever compared the two.
+     */
     public static final int POSITION_TEX_NORMAL_BYTES = 24;
+    /**
+     * Position, a normal and a padding byte: 16 bytes, {@code DefaultVertexFormats.POSITION_NORMAL}.
+     * <p>
+     * 12 + 3 + 1. Nothing is written in the top byte of each vertex, and the shader reads only the position, but the
+     * binding still has to step the width the format really has: a stride of 12 would read the next vertex's first
+     * position byte as this vertex's normal, and the vertices are written end to end at no other stride.
+     */
+    public static final int POSITION_NORMAL_BYTES = 16;
     // 116, not 132: projection 64 + the model view's three affine columns 48 + alpha reference 4, all
     // inside the 128 bytes Vulkan guarantees (audit S19).
-    private static final int PUSH_CONSTANT_BYTES = 128;
+    // 208 since the fixed-function fog landed: the fragment stage reads the fog block at 128..207 (colour, params and
+    // the model view the fog coordinate is computed from), so the pipeline layout's range has to cover it. This is the
+    // size the lit ITEM pipeline has required of the device since the lighting block arrived, so it asks for nothing
+    // the tree did not already. This class carries the POSITION (sky dome, horizon plane) and POSITION_TEX (water
+    // surface, sun, moon, clouds) layouts, which is where the fog is visible.
+    private static final int PUSH_CONSTANT_BYTES = 208;
 
     private final VulkanContext context;
     private final long renderPass;
@@ -64,6 +85,14 @@ public final class VulkanImmediateTexturePipeline {
     private boolean positionNoTexture;
     /** Non-zero when the layout is one of the wider standard formats whose extra element the shaders ignore. */
     private int extraTrailingElementBytes;
+    /**
+     * A stride that is neither the base layout's nor one of the trailing-element ones.
+     * <p>
+     * {@code POSITION_NORMAL} is 16 bytes and carries a normal rather than trailing padding, so neither of the two fields
+     * above describes it. Rather than let it fall into a default that would be wrong, the stride lives in one place and the
+     * default is only reached when none of the three is set.
+     */
+    private int explicitStride;
 
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -110,20 +139,41 @@ public final class VulkanImmediateTexturePipeline {
     /** Creates the colourless {@code POSITION_TEX} variant, which is how the sky, the clouds and the water arrive. */
     public static VulkanImmediateTexturePipeline createForPositionTex(VulkanContext context, long renderPass, boolean blend,
             int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
-        return pipeline;
+        return pipeline.build();
     }
 
     /** Creates the {@code POSITION} variant: twelve bytes, one attribute, no colour and no texture. */
     public static VulkanImmediateTexturePipeline createForPosition(VulkanContext context, long renderPass, boolean blend,
             int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
         pipeline.positionNoTexture = true;
-        return pipeline;
+        return pipeline.build();
+    }
+
+    /**
+     * Creates the {@code POSITION_NORMAL} variant: 16 bytes, position and a normal, no colour and no texture.
+     * <p>
+     * The white box {@code Render.renderOffsetAABB} draws for an entity with no renderer, and the reason this variant
+     * exists: without it that box is refused by the uploader (it had no id at all before) and, under the GL-less window,
+     * drawn by nobody. The shaders are the colourless position ones - this renderer evaluates no fixed-function lighting, so
+     * the normal cannot change the picture, and the vertex's colour comes from the push block the way the position-only
+     * layout's does. The stride is the whole of what makes it a different pipeline from {@link #createForPosition}: the
+     * binding has to step 16 bytes, not the position-only layout's 12.
+     */
+    public static VulkanImmediateTexturePipeline createForPositionNormal(VulkanContext context, long renderPass,
+            boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+            int depthCompareOp) {
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+                depthWrite, cull, depthCompareOp);
+        pipeline.positionOnly = true;
+        pipeline.positionNoTexture = true;
+        pipeline.explicitStride = POSITION_NORMAL_BYTES;
+        return pipeline.build();
     }
 
     /**
@@ -134,32 +184,59 @@ public final class VulkanImmediateTexturePipeline {
     public static VulkanImmediateTexturePipeline createForPositionTexColorNormal(VulkanContext context, long renderPass,
             boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
             int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.extraTrailingElementBytes = POSITION_TEX_COLOR_NORMAL_BYTES;
-        return pipeline;
+        return pipeline.build();
     }
 
-    /** Creates the {@code POSITION_TEX_NORMAL} variant for the composite batch: colourless shaders, wider stride. */
+    /** Creates the {@code POSITION_TEX_NORMAL} variant, 24 bytes: colourless shaders, wider stride than the 20-byte one. */
     public static VulkanImmediateTexturePipeline createForPositionTexNormal(VulkanContext context, long renderPass,
             boolean blend, int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
             int depthCompareOp) {
-        VulkanImmediateTexturePipeline pipeline = create(context, renderPass, blend, srcFactor, dstFactor, depthTest,
+        VulkanImmediateTexturePipeline pipeline = allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest,
                 depthWrite, cull, depthCompareOp);
         pipeline.positionOnly = true;
         pipeline.extraTrailingElementBytes = POSITION_TEX_NORMAL_BYTES;
-        return pipeline;
+        return pipeline.build();
     }
 
     public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, boolean blend, int srcFactor, int dstFactor,
                             boolean depthTest, boolean depthWrite, boolean cull, int depthCompareOp) {
+        return allocate(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, depthCompareOp).build();
+    }
+
+    /**
+     * Allocates the pipeline without building it, so a variant factory can set the fields that decide its layout first.
+     * <p>
+     * This split is the whole fix for the defect the sky dome measured. {@link #create} builds the pipeline inside the
+     * call, and every variant factory used to call it and then set {@code positionOnly} / {@code positionNoTexture} /
+     * {@code extraTrailingElementBytes} / {@code explicitStride} on the finished object - so those fields were still at
+     * their defaults when {@link #createPipeline} read them, and <b>every</b> variant was built as the base
+     * {@code POSITION_TEX_COLOR} pipeline: three attributes, a 24-byte binding stride, and a colour attribute at byte
+     * 20 read as {@code R8G8B8A8_UNORM}. Measured on the sky dome, whose real layout is 12 bytes of position: the
+     * attribute at 20 landed on the vertex data's own floats, and since every coordinate of that dome is a multiple of
+     * 64 or +-16 (low two bytes zero) the fragments came out with red and green exactly zero and blue in
+     * {0,64,128,160,192} interpolated across the quad - the 176,633 pure-blue pixels the frame gained. The index
+     * expansion stayed the 676-vertex one, so the quads sheared into the wedges and read past the end of the mesh.
+     * {@code VulkanImmediatePipeline} does this correctly by passing its variant through the constructor; this class
+     * now builds only after its fields are final.
+     */
+    private static VulkanImmediateTexturePipeline allocate(VulkanContext context, long renderPass, boolean blend,
+                            int srcFactor, int dstFactor, boolean depthTest, boolean depthWrite, boolean cull,
+                            int depthCompareOp) {
         if (context == null || renderPass == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("context and renderPass must be set");
         }
-        VulkanImmediateTexturePipeline result = new VulkanImmediateTexturePipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite, cull, depthCompareOp);
-        result.createPipelineLayout();
-        result.createPipeline();
-        return result;
+        return new VulkanImmediateTexturePipeline(context, renderPass, blend, srcFactor, dstFactor, depthTest, depthWrite,
+                cull, depthCompareOp);
+    }
+
+    /** Builds the layout and the pipeline from the fields as they stand; call only once they are final. */
+    private VulkanImmediateTexturePipeline build() {
+        this.createPipelineLayout();
+        this.createPipeline();
+        return this;
     }
 
     /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
@@ -187,6 +264,24 @@ public final class VulkanImmediateTexturePipeline {
 
     public int vertexBytes() {
         return VERTEX_BYTES;
+    }
+
+    /**
+     * {@return the stride this variant's vertex binding declares}.
+     * <p>
+     * One place, in the order the variants are built: an explicit stride wins (the position-normal layout is neither of the
+     * shortages below), then a trailing element that widens the vertex, then the three base layouts. The expression used to
+     * be inlined in the binding and read the three flags in an order that made {@code POSITION_NORMAL} unwritable without a
+     * fourth branch.
+     */
+    private int vertexStride() {
+        if (this.explicitStride != 0) {
+            return this.explicitStride;
+        }
+        if (this.extraTrailingElementBytes != 0) {
+            return this.extraTrailingElementBytes;
+        }
+        return this.positionNoTexture ? POSITION_BYTES : this.positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES;
     }
 
     /**
@@ -403,13 +498,15 @@ public final class VulkanImmediateTexturePipeline {
                         .pName(stack.UTF8("main"));
 
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(this.extraTrailingElementBytes != 0 ? this.extraTrailingElementBytes
-                        : this.positionNoTexture ? POSITION_BYTES : this.positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES)
-                        .inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(vertexStride()).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
                 VkVertexInputAttributeDescription.Buffer attributes =
                         VkVertexInputAttributeDescription.calloc(this.positionNoTexture ? 1 : this.positionOnly ? 2 : 3, stack);
                 attributes.get(0).location(0).binding(0).format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
+                if (!this.positionNoTexture) {
+                    // Only the variants that declare a texture coordinate have anything at offset 12; writing this
+                    // struct for the one-attribute layouts wrote 16 bytes past the end of a one-element array.
+                    attributes.get(1).location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(12);
+                }
                 if (!this.positionOnly && !this.positionNoTexture) {
                     // The colourless format has nothing at offset 20 - describing an attribute there would read past
                     // the end of every vertex.

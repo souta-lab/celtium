@@ -144,6 +144,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
     private int defaultPairClears;
     private int chainPairClears;
+    /**
+     * glClear attribution, counted where the request is read: {@code gameClearsLatchedForFrame} were issued while the
+     * game's own main framebuffer was bound (they clear the delivered image), {@code gameClearsRoutedToPairs} while
+     * one of its other framebuffers was (their pair carries them, exactly as it did before this latch existed, and the
+     * frame image must not see them). Both are reported by {@code takeTimingSummary}, and the first few are printed as
+     * {@code CELTIUM_CLEAR_LATCH} lines with the values they carried.
+     */
+    private int gameClearsLatchedForFrame;
+    private int gameClearsRoutedToPairs;
+    private int gameClearLatchLog;
+    private static final int GAME_CLEAR_LATCH_LINES =
+            Integer.getInteger("celtium.clearlatch.lines", 6).intValue();
     private int offTargetPassFailures;
     private String lastOffTargetFailure = "none";
 
@@ -756,6 +768,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
     private int announcedUploads;
+    /**
+     * Invalidation requests that were not honoured because there is no GL texture to re-read.
+     * <p>
+     * Non-zero in the GL-less configuration is expected and correct; the number is here so a reader can tell "the
+     * mirror was kept because there is no GL" from "the mirror was dropped and the draw had nothing".
+     */
+    private int textureInvalidationsKeptGlless;
     private int animatedImageFills;
     private int directMirrorFromAnnouncement;
     /** Readbacks that were skipped because the announced pixels had already been applied to the sampled image. */
@@ -1006,8 +1025,58 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Boolean.getBoolean("celtium.vulkan.groupBounds");
     private static final int GROUP_BOUNDS_FORMAT =
             Integer.getInteger("celtium.vulkan.groupBoundsFormat", -1).intValue();
+    /**
+     * The layouts {@link #reportGroupBounds} reports, from {@code groupBoundsFormat} as a comma-separated list.
+     * <p>
+     * A single id was enough while one question was being asked of one family. The sky is not one family: the sun and
+     * the moon are {@code POSITION_TEX} (6) while the sky dome and the horizon plane are {@code POSITION} (7), and a
+     * filter that can only name one of them hides whichever the artefact turns out to belong to - which is what
+     * happened here. {@code -1} still means every layout.
+     */
+    private static final boolean[] GROUP_BOUNDS_FORMATS = groupBoundsFormats();
+
+    private static boolean[] groupBoundsFormats() {
+        if (GROUP_BOUNDS_FORMAT < 0) {
+            return null;
+        }
+        boolean[] wanted = new boolean[VulkanImmediateFormats.COUNT + 1];
+        for (String part : System.getProperty("celtium.vulkan.groupBoundsFormat", "").split(",")) {
+            try {
+                int id = Integer.parseInt(part.trim());
+                if (id >= 0 && id < wanted.length) {
+                    wanted[id] = true;
+                }
+            } catch (NumberFormatException notAnId) {
+                // An unreadable entry narrows nothing; the ids that did parse still apply.
+            }
+        }
+        boolean any = false;
+        for (boolean value : wanted) {
+            any |= value;
+        }
+        return any ? wanted : null;
+    }
+
+    private static boolean wantedGroupBoundsFormat(int formatId) {
+        return GROUP_BOUNDS_FORMATS == null
+                || (formatId >= 0 && formatId < GROUP_BOUNDS_FORMATS.length && GROUP_BOUNDS_FORMATS[formatId]);
+    }
     private static final int GROUP_BOUNDS_LIMIT =
             Integer.getInteger("celtium.vulkan.groupBoundsCount", 200).intValue();
+    /**
+     * Diagnostic only: the rotations the mirror applied since this frame's camera boundary, oldest first.
+     * <p>
+     * A group's model-view is the camera base times whatever {@code GlStateManager.rotate} calls the pass made on top
+     * of it, so a quad drawn in the wrong place can be a wrong base, a rotation that never arrived, one that arrived
+     * twice, or one that landed on the other matrix stack. The base alone cannot tell those apart. This log, printed
+     * beside the group's own model-view, is what does - and it is the measurement the sky defect needs, because the
+     * only thing between the camera and the sun/moon quads is two rotations that the group's matrix should contain.
+     * Bounded, so a frame that rotates a thousand models cannot grow it.
+     */
+    private static final int ROTATION_LOG_LIMIT = 12;
+    private final java.util.ArrayDeque<String> rotationLog = new java.util.ArrayDeque<String>();
+    /** The rotations in {@link #rotationLog} at the moment the current group's matrices were captured. */
+    private String currentGroupRotations = "";
     /**
      * Diagnostic only: {@code CELTIUM_IMMEDIATE_ENQ} for every group instead of the first eight.
      * <p>
@@ -1041,6 +1110,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Per-channel counters: which mirror actually reaches the backend is measured, not assumed. */
     private int perspectiveCalls;
     private int frustumCalls;
+    /**
+     * The GLU channel: calls that reached the mirror, calls that could not, and the distinct shapes they installed.
+     * <p>
+     * {@code gluPerspective} is the one projection step no {@code GlStateManager} hook can carry, so these counters
+     * say whether the channel is live at all: a zero with sky draws in the frame means the call never arrived here,
+     * and a non-zero one with the identity still at the sky draw means it arrived and did not take. The shapes bound
+     * the census line to one line per distinct projection rather than one per frame.
+     */
+    private int mirroredGluPerspectives;
+    private int skippedGluPerspectives;
+    private final java.util.Set<String> gluPerspectiveShapes = new java.util.LinkedHashSet<String>();
+    private final java.util.Set<String> gluPerspectiveSkips = new java.util.LinkedHashSet<String>();
     private int matrixModeCalls;
     private int loadIdentityCalls;
     private int bindTextureCalls;
@@ -1085,6 +1166,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
+    /**
+     * One pipeline per state for {@code POSITION_NORMAL}: seventeen-byte vertices.
+     * <p>
+     * It cannot share the position-only cache: the two differ in their vertex binding's stride, which is baked into the
+     * pipeline, and 17 is not a width any other layout has. Its one user is the white box {@code Render.renderOffsetAABB}
+     * draws for a renderer-less entity, so an empty cache here means that box is not drawn.
+     */
+    private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionNormalPipelineCache =
+            new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> positionTexPipelineCache =
             new java.util.HashMap<Long, VulkanImmediateTexturePipeline>();
     private final java.util.Map<Long, VulkanImmediateTexturePipeline> texturedPipelineCache =
@@ -1119,12 +1209,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", VulkanImmediateFormats.DEFAULT_ACCEPTED);
 
     private static boolean celtium$formatAccepted(int formatId) {
+        // Comma-separated ids, not digit-by-digit: the matcher walked the string's characters and compared each to the
+        // format id, so an id of 10 could never be accepted - the mask would have to be the single character ':' or a
+        // duplicate 1, and the first version of this line silently admitted every format-1 batch instead. Reading the
+        // entries as numbers is what lets the mask grow past nine ids, which is where the layouts are now.
         String accepted = ACCEPTED_FORMATS;
-        for (int i = 0; i < accepted.length(); i++) {
-            char c = accepted.charAt(i);
-            if (c >= '0' && c <= '9' && (c - '0') == formatId) {
-                return true;
+        int start = 0;
+        while (start <= accepted.length()) {
+            int comma = accepted.indexOf(',', start);
+            String entry = comma < 0 ? accepted.substring(start) : accepted.substring(start, comma);
+            try {
+                if (Integer.parseInt(entry.trim()) == formatId) {
+                    return true;
+                }
+            } catch (NumberFormatException notAnId) {
+                // An unreadable entry admits nothing; the ids that did parse still apply.
             }
+            if (comma < 0) {
+                break;
+            }
+            start = comma + 1;
         }
         return false;
     }
@@ -1454,6 +1558,256 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateStateCalls++;
     }
 
+    // ----------------------------------------------------------------------------------------------
+    // Fixed-function fog, mirrored from GlStateManager by GlStateManagerFogMixin.
+    //
+    // The immediate path had no fog of any kind, so every batch vanilla blends into the horizon - the
+    // sky dome, the horizon plane, the water surface, the clouds - arrived as its own flat colour: the
+    // sky dome is two flat grids and the fog ramp across them is the whole of its gradient. The state
+    // is captured per batch (celtium$fogSnapshot, taken where the other per-group state is taken)
+    // rather than read at flush time, because RenderGlobal.renderSky turns fog on for the dome and off
+    // again for the sun and the moon inside the same pass.
+    //
+    // The values travel in a push-constant block appended after the existing 128 bytes:
+    //   128 vec4 u_FogColor (rgb, mix weight)   144 vec4 u_FogParams (density, start, end, selector)
+    //   160/176/192 vec4 the model view's three affine rows plus its translation
+    // so the fog coordinate is the true eye-space distance for camera-space geometry (the sky) and for
+    // object-space geometry (entities, TESRs) alike. The block ends at 208, the size the lit ITEM
+    // pipeline already requires of the device, so nothing here asks the device for more than the tree
+    // already did.
+    // ----------------------------------------------------------------------------------------------
+
+    /**
+     * The kill switch, so the fog can be measured as one flag apart on one jar: with this false the family is mirrored
+     * and the push block is still written, but its selector says "no fog" - exactly the picture the path produced
+     * before the family existed.
+     */
+    private static final boolean IMMEDIATE_FOG =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.immediateFog", "true"));
+    /**
+     * Which distance the fog coordinate uses: {@code radial} (the distance from the eye), {@code planar} (the
+     * eye-space depth) or {@code auto} (whichever the game asked for with {@code GL_NV_fog_distance}).
+     * <p>
+     * The default is radial rather than auto because the GL-less leg cannot answer the extension query - the stub
+     * returns an empty extension string, so {@code setupFog} never sets {@code GL_EYE_RADIAL_NV} there while the same
+     * game code does on a driver that has the extension. Radial is also what the terrain path already uses for its own
+     * fog (sodium's {@code getFragDistance} is the camera distance) and that path is accepted against the GL bridge.
+     * The run's {@code CELTIUM_IMMEDIATE_FOG} line records which mode was used and what the game asked for.
+     */
+    private static final String IMMEDIATE_FOG_DISTANCE =
+            System.getProperty("celtium.vulkan.immediateFogDistance", "radial").trim().toLowerCase();
+    /** Bounded, like the other per-run diagnostics: the fog state changes a handful of times per frame. */
+    private static final int IMMEDIATE_FOG_LOG_LIMIT =
+            Integer.getInteger("celtium.vulkan.immediateFogLog", 8).intValue();
+
+    private boolean fogEnabled;
+    /** The GL fog mode: 9729 LINEAR, 2048 EXP, 2049 EXP2 - the values {@code GlStateManager.FogState} carries. */
+    private int fogGlMode = 2048;
+    private float fogDensity = 1.0f;
+    private float fogStart;
+    private float fogEnd = 1.0f;
+    private float fogRed;
+    private float fogGreen;
+    private float fogBlue;
+    /** Set when the game asks for {@code GL_EYE_RADIAL_NV}; the GL-less stub's empty extension list keeps it false. */
+    private boolean fogRadialRequested;
+    /**
+     * Set the first time any fog state arrives from {@code GlStateManager}. This is what {@link #immediateFogAvailable()}
+     * answers with: a mixin that did not apply leaves it false, and a caller that would refuse a fogged draw on the
+     * grounds that the path has no fog must keep refusing in that case rather than draw the raw colour.
+     */
+    private boolean fogMirrored;
+    /** Groups drawn with fog on: the number the fog line reports beside the state. */
+    private int fogGroups;
+    private int fogLogs;
+    /** The last line this diagnostic printed, so a change is logged rather than every frame's repeat. */
+    private String fogLastLogged = "";
+
+    @Override
+    public void setFogEnabled(boolean enabled) {
+        this.fogEnabled = enabled;
+        this.fogMirrored = true;
+        this.immediateStateCalls++;
+        celtium$logFogState("enable=" + enabled);
+    }
+
+    @Override
+    public void setFogMode(int glMode) {
+        this.fogGlMode = glMode;
+        this.fogMirrored = true;
+        this.immediateStateCalls++;
+        celtium$logFogState("mode=" + glMode);
+    }
+
+    @Override
+    public void setFogDensity(float density) {
+        this.fogDensity = density;
+        this.fogMirrored = true;
+        this.immediateStateCalls++;
+    }
+
+    @Override
+    public void setFogStart(float start) {
+        this.fogStart = start;
+        this.fogMirrored = true;
+        this.immediateStateCalls++;
+        celtium$logFogState("start=" + start);
+    }
+
+    @Override
+    public void setFogEnd(float end) {
+        this.fogEnd = end;
+        this.fogMirrored = true;
+        this.immediateStateCalls++;
+        celtium$logFogState("end=" + end);
+    }
+
+    @Override
+    public void setFogColor(float red, float green, float blue) {
+        this.fogRed = red;
+        this.fogGreen = green;
+        this.fogBlue = blue;
+        this.fogMirrored = true;
+        this.immediateStateCalls++;
+        celtium$logFogState("colour=" + red + "," + green + "," + blue);
+    }
+
+    @Override
+    public void setFogRadial(boolean radial) {
+        this.fogRadialRequested = radial;
+        this.fogMirrored = true;
+        this.immediateStateCalls++;
+        celtium$logFogState("radial=" + radial);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * "Available" means the game's own fog state has reached this backend at least once ({@code fogMirrored}), not that
+     * the feature is configured on. The difference matters to the caller: the GL-less stub's sky gate refuses a fogged
+     * sky draw because the immediate path used to have no fog, and it may only stop refusing once the state the shaders
+     * would use has really arrived. A mixin whose target names differed applies nothing and this stays false, so the
+     * gate keeps refusing instead of letting the batch through with the field defaults.
+     */
+    @Override
+    public boolean immediateFogAvailable() {
+        return IMMEDIATE_FOG && this.fogMirrored;
+    }
+
+    /**
+     * The shader's fog selector: {@code mode + 8 * shape}, both small integers so the float is exact.
+     * <p>
+     * The mode numbering is the terrain block's ({@code 0 none, 1 exp2, 2 exp, 3 linear}) so the two fog paths in this
+     * renderer can be read side by side, and the shape numbering is {@code FogService}'s ({@code 0 spherical}, the
+     * radial distance, and {@code 2 planar}). {@code 1} (cylindrical) is never produced here: the fixed pipeline has no
+     * such mode, it is sodium's.
+     */
+    private int celtium$fogSelector() {
+        if (!IMMEDIATE_FOG || !this.fogEnabled) {
+            return 0;
+        }
+        int mode;
+        if (this.fogGlMode == 9729) {
+            mode = 3; // GL_LINEAR
+        } else if (this.fogGlMode == 2049) {
+            mode = 1; // GL_EXP2
+        } else {
+            mode = 2; // GL_EXP, which is also GlStateManager.FogState's default
+        }
+        boolean planar;
+        if ("planar".equals(IMMEDIATE_FOG_DISTANCE)) {
+            planar = true;
+        } else if ("auto".equals(IMMEDIATE_FOG_DISTANCE)) {
+            planar = !this.fogRadialRequested;
+        } else {
+            planar = false; // radial
+        }
+        return mode + (planar ? 16 : 0); // shape 2 = planar, and 2 << 3 = 16
+    }
+
+    /**
+     * The per-batch fog payload: eight floats {@code {selector, density, start, end, r, g, b, weight}}, or {@code null}
+     * when fog is off for this batch.
+     * <p>
+     * Taken where the other per-group state is taken, so the group is drawn with the fog the game had set when the batch
+     * was offered - which is the whole point, since {@code renderSky} brackets the dome with enable/disable.
+     */
+    private float[] celtium$fogSnapshot() {
+        int selector = celtium$fogSelector();
+        if (selector == 0) {
+            return null;
+        }
+        return new float[] {
+                selector, this.fogDensity, this.fogStart, this.fogEnd,
+                this.fogRed, this.fogGreen, this.fogBlue,
+                // The GL fog blend uses the fog colour's RGB only. The weight is 1.0 in vanilla and is kept as its own
+                // field so a mod's non-opaque fog colour cannot silently change the blend here.
+                1.0f,
+        };
+    }
+
+    /**
+     * Writes the fog block (128..207) for one group into the shared push buffer.
+     * <p>
+     * The block layout, matching the fragment shaders' declaration: {@code u_FogColor} at 128 (rgb plus the blend
+     * weight), {@code u_FogParams} at 144 (density, start, end, selector), and the model view's three affine rows at
+     * 160/176/192 - each row's fourth component is that row's translation, so {@code eye = M * position} is three dot
+     * products in the vertex shader. The selector is written even when the group has no fog, because the push buffer is
+     * shared by every group in a flush and a stale selector from the previous group would fog this draw.
+     */
+    private void celtium$writeFogPush(ImmediateGroup group, ByteBuffer push) {
+        float[] fog = group.fog;
+        if (fog == null) {
+            push.putFloat(144 + 12, 0.0f); // u_FogParams.w: 0 = mode NONE
+            return;
+        }
+        float[] mv = group.modelView;
+        if (mv == null || mv.length < 16) {
+            push.putFloat(144 + 12, 0.0f);
+            return;
+        }
+        push.putFloat(128, fog[4]);
+        push.putFloat(132, fog[5]);
+        push.putFloat(136, fog[6]);
+        push.putFloat(140, fog[7]);
+        push.putFloat(144, fog[1]);
+        push.putFloat(148, fog[2]);
+        push.putFloat(152, fog[3]);
+        push.putFloat(156, fog[0]);
+        // Row 0 of the affine model view plus its translation: [m00 m01 m02 tx].
+        push.putFloat(160, mv[0]);
+        push.putFloat(164, mv[4]);
+        push.putFloat(168, mv[8]);
+        push.putFloat(172, mv[12]);
+        push.putFloat(176, mv[1]);
+        push.putFloat(180, mv[5]);
+        push.putFloat(184, mv[9]);
+        push.putFloat(188, mv[13]);
+        push.putFloat(192, mv[2]);
+        push.putFloat(196, mv[6]);
+        push.putFloat(200, mv[10]);
+        push.putFloat(204, mv[14]);
+        this.fogGroups++;
+    }
+
+    /** A bounded record of what the game set, so a run with no fog in it can be told from a run with black fog. */
+    private void celtium$logFogState(String what) {
+        if (!IMMEDIATE_FOG || this.fogLogs >= IMMEDIATE_FOG_LOG_LIMIT) {
+            return;
+        }
+        String line = what + " enabled=" + this.fogEnabled + " glMode=" + this.fogGlMode
+                + " density=" + this.fogDensity + " start=" + this.fogStart + " end=" + this.fogEnd
+                + " colour=" + this.fogRed + "," + this.fogGreen + "," + this.fogBlue
+                + " radialRequested=" + this.fogRadialRequested + " distance=" + IMMEDIATE_FOG_DISTANCE
+                + " selector=" + celtium$fogSelector();
+        if (line.equals(this.fogLastLogged)) {
+            return;
+        }
+        this.fogLastLogged = line;
+        this.fogLogs++;
+        System.out.println("[Celtium] CELTIUM_IMMEDIATE_FOG frame=" + this.frameId + " " + line);
+    }
+
     /**
      * Announces a dynamic texture's write, which arrives as a flat pixel array.
      * <p>
@@ -1596,6 +1950,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // The registry is created lazily, and Minecraft uploads textures - it registers them - before any world draw:
         // invalidating through a registry that does not exist yet is what made the first attempt crash during
         // "Registering texture".
+        //
+        // That contract assumes there is a GL texture to re-read, and in the GL-less configuration there is not: the
+        // registry's image is the only source of pixels, so dropping it leaves every draw that samples the texture with
+        // nothing. It was measured rather than reasoned about - the GUI panels and slot backgrounds were submitted and
+        // accepted (the per-format histogram has id6 accepted, the group bounds put the JEI slot cells at the panel's
+        // own NDC) and produced no pixels, because the upload hook announces the image and then invalidates it, and the
+        // re-read the invalidation relies on cannot happen. Keeping the mirror is the correct behaviour there: the
+        // announcement that arrives with the upload is the new content.
+        // The predicate is the GL provider, not the frame target: textures are uploaded while the game registers them,
+        // which is before any frame target exists, so a frame-target check would answer "GL is there" for exactly the
+        // uploads that matter. isInstalled() is true from the moment the stub takes over the GL entry points.
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            this.textureInvalidationsKeptGlless++;
+            celtium$reportGllessInvalidation(glTextureId);
+            return;
+        }
         if (this.textureRegistry != null) {
             this.textureRegistry.invalidate(glTextureId);
         }
@@ -1883,6 +2253,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.combineColor = combineColor;
         group.texMatrix = celtium$textureAffine();
         group.lightParams = celtium$lightParams(state, modelView);
+        group.fog = celtium$fogSnapshot();
         group.batches = quads;
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
@@ -1942,7 +2313,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " lightmapGlId=" + this.lightmapSourceGlId
                     + " deletions=" + this.glTextureDeletions + " reestablished=" + this.atlasReestablished
                     + "/" + this.lightmapReestablished
-                    + (this.textureRegistry == null ? "" : " cost=[" + this.textureRegistry.patchCostSummary() + "]"));
+                    + (this.textureRegistry == null ? ""
+                            : " invalidationsKeptNoGl=" + this.textureInvalidationsKeptGlless
+                            + " mirrorSources=[" + this.textureRegistry.mirrorSourceSummary() + "]"
+                            + " " + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureCaptureSummary()
+                            + " cost=[" + this.textureRegistry.patchCostSummary() + "]"));
         }
     }
 
@@ -1953,6 +2328,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (bound != 0) {
             invalidateTexture(bound);
         }
+    }
+
+    /**
+     * Names what the GL-less invalidation did, on a gate that can actually fire there.
+     * <p>
+     * The texture summary line ({@code CELTIUM_ANIM}) is gated on {@code directMirrorRefreshes} changing, and this
+     * branch is what stops that counter from moving: with the stub installed the line prints once at startup, when the
+     * registry does not exist yet, so everything it says about mirrors - the kept-invalidation count, the fills by
+     * source and the stub's own capture census - was unreachable in exactly the configuration it was written for. This
+     * prints the same facts from the branch itself, bounded to the first and then every five hundredth invalidation so
+     * an animated texture cannot flood the log.
+     * <p>
+     * {@code unconverted} in the capture census is the number that matters here: it counts uploads the stub could not
+     * turn into pixels (a compressed payload, a format/type pair it does not model), and each of those is a texture
+     * whose mirror has no source except the announcement. A non-zero value is the measurement that justifies keeping
+     * announcements alive across a delete-and-reallocate.
+     */
+    private void celtium$reportGllessInvalidation(int glTextureId) {
+        int kept = this.textureInvalidationsKeptGlless;
+        if (kept != 1 && kept % 500 != 0) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_GLESS_INVALIDATE kept=" + kept + " glTexture=" + glTextureId
+                + " atlasGlId=" + this.atlasSourceGlId + " lightmapGlId=" + this.lightmapSourceGlId
+                + (this.textureRegistry == null ? " registry=none"
+                        : " retainedAnnouncements=" + this.textureRegistry.retainedAnnouncements()
+                        + " fills=[" + this.textureRegistry.mirrorSourceSummary() + "]")
+                + " " + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureCaptureSummary()
+                + " (no GL readback exists under the stub: a mirror is refreshed from the announced image the game"
+                + " handed over, which now survives the texture's own delete-and-reallocate, and otherwise from the"
+                + " upload the stub captured)");
     }
 
     @Override
@@ -2093,6 +2499,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void rotate(float angle, float x, float y, float z) {
         this.matricesDirty = true;
+        if (GROUP_BOUNDS_DIAGNOSTICS) {
+            while (this.rotationLog.size() >= ROTATION_LOG_LIMIT) {
+                this.rotationLog.poll();
+            }
+            this.rotationLog.add(fmt3(angle) + "@" + fmt3(x) + "," + fmt3(y) + "," + fmt3(z));
+        }
         this.immediateState.rotate(angle, x, y, z);
         this.immediateStateCalls++;
     }
@@ -2132,6 +2544,128 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateState.multiplyMatrix(frustum);
         this.immediateState.matrixMode(mode);
         this.immediateStateCalls++;
+    }
+
+    /**
+     * The GLU helper's whole call, mirrored as the load it is.
+     * <p>
+     * {@link #perspective} mirrors what {@code Project.gluPerspective} does to GL - multiply a fresh frustum in - but
+     * not what the stack holds underneath it. Every call site in {@code EntityRenderer} puts
+     * {@code matrixMode(GL_PROJECTION)} and {@code loadIdentity()} in front of the call, and the mirrored
+     * {@code loadIdentity} does leave the mirror's projection at the identity - and then
+     * {@code applyDerivedProjection} writes the pass projection over it, because the field of view is an argument to
+     * this very call and its hook fires while the arguments are evaluated. So at the instant the frustum is
+     * multiplied, GL is at the identity and the mirror is at the pass projection: the mirror has to reset the stack to
+     * what GL holds first, or the pass projection is applied twice.
+     * <p>
+     * That double application is measured, not inferred. Hooking the channel without the reset ({@code f82bf4612})
+     * took the visible sections from 23 to 8 on the same camera and fixture, because the culling reads this same
+     * mirror through {@code ClippingHelperImpl.getInstance()} -> {@code GlStateManager.getFloat(GL_PROJECTION_MATRIX)}
+     * and a squared projection culls the world away. With the reset, the camera's own call ends with the projection it
+     * already had (the two are the same matrix: the same field of view, aspect, near and far), and only the calls that
+     * genuinely install a different projection - the sky's ({@code farPlaneDistance * 2.0}), the clouds'
+     * ({@code * 4.0}), the hand's ({@code getFOVModifier(partialTicks, false)}) - change what the mirror holds, each
+     * to exactly the value GL holds.
+     *
+     * @return whether the call reached the mirror; {@code false} when LWJGL's own helper would have returned before
+     *         touching GL, or when GL state was unavailable
+     */
+    @Override
+    public boolean mirrorGluPerspective(float fovDegrees, float aspect, float near, float far) {
+        // The shapes LWJGL 2's Project.gluPerspective returns early on (its own `if (deltaZ == 0 || sine == 0 ||
+        // aspect == 0) return;`, read from lwjgl_util-2.9.4's bytecode): it touches no GL state in either, so neither
+        // may the mirror. A non-finite argument is added here rather than in LWJGL: multiplying NaN into the mirrored
+        // projection would poison every later draw, and no guard downstream could tell that from a real projection.
+        if (aspect == 0.0f || near == far || fovDegrees % 360.0f == 0.0f
+                || !Float.isFinite(fovDegrees) || !Float.isFinite(aspect)
+                || !Float.isFinite(near) || !Float.isFinite(far)) {
+            this.skippedGluPerspectives++;
+            reportSkippedGluPerspective(fovDegrees, aspect, near, far);
+            return false;
+        }
+        float[] before = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        // The mirrored loadIdentity this call site always performs, applied to the projection stack whether or not the
+        // mirror's mode still points at it: the stack whose value GL is replacing is the projection stack.
+        int mode = this.immediateState.matrixMode();
+        this.immediateState.matrixMode(VulkanGlState.MATRIX_MODE_PROJECTION);
+        this.immediateState.loadIdentity();
+        this.immediateState.matrixMode(mode);
+        this.perspective(fovDegrees, aspect, near, far);
+        this.mirroredGluPerspectives++;
+        reportGluPerspective(fovDegrees, aspect, near, far, before);
+        return true;
+    }
+
+    /**
+     * One line per distinct projection the GLU channel installs, named with the game-side call site that installed it.
+     * <p>
+     * This is the census that separates the explanations a wrong sky draw can have: the channel is not live (no line
+     * at all), the channel is live but the call site is not the one that draws the sky, or the channel is live and
+     * installed exactly what vanilla installs - which the projection itself says, since the field of view, the aspect
+     * and the far plane are all printed. The value the mirror held <em>before</em> the call is printed beside it,
+     * because the identity there is the defect this channel exists to remove.
+     * <p>
+     * Keyed on the call site rather than on the projection: the field of view moves every frame, so a value key fills
+     * its bound with camera lines inside the first frames and hides the sites it was written to name - measured on the
+     * first run of this hook, where eight shapes were the camera's and only two lines named anything else.
+     */
+    private void reportGluPerspective(float fovDegrees, float aspect, float near, float far, float[] before) {
+        String site = gluPerspectiveSite();
+        if (this.gluPerspectiveShapes.size() >= 12 || !this.gluPerspectiveShapes.add(site)) {
+            return;
+        }
+        float[] after = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        System.out.println("[Celtium] CELTIUM_GLUPERSPECTIVE fov=" + round3(fovDegrees) + " aspect=" + round3(aspect)
+                + " near=" + round3(near) + " far=" + round3(far)
+                + " after=[m00=" + round3(after[0]) + ",m11=" + round3(after[5]) + ",m22=" + round3(after[10])
+                + ",m23=" + round3(after[11]) + ",m32=" + round3(after[14]) + ",m33=" + round3(after[15]) + "]"
+                + " before=[m00=" + round3(before[0]) + ",m11=" + round3(before[5]) + ",m22=" + round3(before[10])
+                + ",m23=" + round3(before[11]) + ",m32=" + round3(before[14]) + ",m33=" + round3(before[15]) + "]"
+                + " site=[" + site + "]");
+    }
+
+    /**
+     * One line per distinct call site whose projection could not be mirrored, with the reason.
+     * <p>
+     * A skip is where the mirror and GL part company by construction: LWJGL returns before touching GL for these
+     * arguments, so GL keeps the identity the mirrored {@code loadIdentity} left - which is what the stub's draw census
+     * then reports as "the mirrored projection is the identity at draw time". Naming the site and the argument is what
+     * tells that (correct, and vanilla's own behaviour) apart from the channel not arriving, which is the defect.
+     */
+    private void reportSkippedGluPerspective(float fovDegrees, float aspect, float near, float far) {
+        String reason = aspect == 0.0f ? "aspect=0 (LWJGL returns before touching GL)"
+                : near == far ? "deltaZ=0 (LWJGL returns before touching GL)"
+                : fovDegrees % 360.0f == 0.0f ? "fov is a multiple of 360 (sine=0)"
+                : "a non-finite argument";
+        String site = gluPerspectiveSite() + " " + reason;
+        if (this.gluPerspectiveSkips.size() >= 8 || !this.gluPerspectiveSkips.add(site)) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_GLUPERSPECTIVE_SKIP fov=" + round3(fovDegrees) + " aspect="
+                + round3(aspect) + " near=" + round3(near) + " far=" + round3(far) + " reason=[" + reason
+                + "] site=[" + gluPerspectiveSite() + "]");
+    }
+
+    /** The game-side frames of the current call stack, innermost first: which call site this projection came from. */
+    private static String gluPerspectiveSite() {
+        StackTraceElement[] stack = new Throwable().getStackTrace();
+        StringBuilder frames = new StringBuilder();
+        int taken = 0;
+        for (StackTraceElement frame : stack) {
+            String name = frame.getClassName();
+            if (name.startsWith("org.soutalab.celtium") || name.startsWith("org.taumc.celeritas")
+                    || name.startsWith("org.spongepowered") || name.startsWith("org.lwjgl")) {
+                continue;
+            }
+            if (taken > 0) {
+                frames.append(" <- ");
+            }
+            frames.append(name).append('.').append(frame.getMethodName()).append(':').append(frame.getLineNumber());
+            if (++taken >= 2) {
+                break;
+            }
+        }
+        return frames.length() == 0 ? "unknown" : frames.toString();
     }
 
     @Override
@@ -2349,6 +2883,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
+        // First, while the fields below still describe the framebuffer that is bound: the game clears a framebuffer
+        // between binding it and binding the next one, so this is the only moment a glClear can be attributed to the
+        // image it names. See celtium$latchGameClearAtTargetChange for what the two routes mean.
+        celtium$latchGameClearAtTargetChange();
         if (!this.immediateWindowBusy && targetIdentity != this.currentRenderTarget && !this.framebufferReplacing) {
             // Framebuffer.bind HEAD: the OLD framebuffer is still bound, so complete its accepted draws before switching.
             flushPendingBeforeGlDraw();
@@ -2458,6 +2996,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_PROJECTION, this.worldSnapshotProjection);
         this.immediateState.setMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW, this.worldSnapshotModelView);
         this.snapshotCaptures++;
+        if (GROUP_BOUNDS_DIAGNOSTICS) {
+            // The base every group of this pass is measured against, printed once per camera boundary: with the group's
+            // own model-view and the rotations that arrived in between, the whole chain from the camera to the quad is
+            // in the log, and "the base is wrong" can be told from "the rotation never arrived" without a second run.
+            int cleared = this.rotationLog.size();
+            this.rotationLog.clear();
+            this.currentGroupRotations = "";
+            System.out.println("[Celtium] CELTIUM_FRAME_BASE frame=" + this.frameId
+                    + " mv=" + matrixText(this.worldSnapshotModelView)
+                    + " proj=" + matrixText(this.worldSnapshotProjection)
+                    + " rotationsCleared=" + cleared);
+        }
     }
 
     /**
@@ -2550,6 +3100,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The mirrored texture matrix of the active unit, which is what the mirror's texture mode addresses. */
     public float[] celtium$mirroredTexture() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_TEXTURE);
+    }
+
+    /**
+     * The colour the immediate path's mirror currently holds, as {r,g,b,a}.
+     * <p>
+     * Formats 6, 7 and 9 carry no colour in their vertices, so the group that draws them takes this value at the
+     * moment the group opens - which makes it the only thing that says what colour a position-only batch was drawn
+     * in. Read by the GL-less stub's own draw census ({@code CELTIUM_DRAWARRAY_LAYOUT}), where "the sky plane is
+     * drawn in the wrong colour" and "the wrong geometry was submitted" look identical in the frame.
+     */
+    public float[] celtium$mirroredColor() {
+        return new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
+                this.immediateState.colorBlue(), this.immediateState.colorAlpha()};
     }
 
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
@@ -2740,7 +3303,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.lightCoordLogged = 4;
             }
         }
-        int expectedStride = formatId == 9 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES
+        int expectedStride = formatId == 10 ? VulkanImmediateTexturePipeline.POSITION_NORMAL_BYTES
+                : formatId == 9 ? VulkanImmediateTexturePipeline.POSITION_TEX_NORMAL_BYTES
                 : formatId == 8 ? VulkanImmediateTexturePipeline.POSITION_TEX_COLOR_NORMAL_BYTES
                 : formatId == 7 ? VulkanImmediateTexturePipeline.POSITION_BYTES
                 : formatId == 6 ? VulkanImmediateTexturePipeline.POSITION_TEX_BYTES
@@ -2892,26 +3456,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (!celtium$formatAccepted(formatId)) {
             // Attribution switch: restricting which layouts this backend accepts makes the image difference
             // measurable per format instead of as one aggregate number. Refused batches are drawn by GL as usual.
-            this.immediateLastRefusal = "format " + formatId + " not in celtium.vulkan.immediateFormats";
+            // The name is carried beside the number: "format 9 not in celtium.vulkan.immediateFormats" does not say which
+            // of the vanilla layouts the mask is holding back, and the mask is a comma-separated list of numbers.
+            this.immediateLastRefusal = "format " + formatId + " ("
+                    + VulkanImmediateFormats.nameOf(formatId) + ") not in celtium.vulkan.immediateFormats";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             this.flushPendingBeforeGlDraw();
             return false;
         }
         this.offerStage = 6;
-        if (formatId < 1 || formatId > VulkanImmediateFormats.POSITION_TEX_NORMAL) {
+        if (formatId < 1 || formatId > VulkanImmediateFormats.POSITION_NORMAL) {
             // The layout is identified structurally by the Mixin (element list, not class or stride), so an unknown
             // one is refused with its size rather than drawn with a pipeline that would misread its vertices. The upper
             // bound was 5, written before id 6 existed: position-plus-texture - the sky, the clouds, the water surface -
             // passed the mapping, passed the acceptance mask, and was then refused here as an unknown layout by a range
-            // check that simply predated the format.
-            this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId + ")";
+            // check that simply predated the format. It is the highest id the formats class declares, not a literal, for
+            // the same reason: the literal was the defect.
+            this.immediateLastRefusal = "no pipeline yet for a " + vertexStride + "-byte vertex (id " + formatId
+                    + ", no such layout)";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             this.flushPendingBeforeGlDraw();
             return false;
         }
         this.offerStage = 7;
         if (vertexStride != expectedStride) {
-            this.immediateLastRefusal = "layout id " + formatId + " has stride " + vertexStride + ", expected "
+            // Both sides named: the layout the mapping chose and the width it actually has. The pair disagreed in silence
+            // for two layouts - id 9 was accepted at 24 bytes while its format is 28 - and a refusal that reads
+            // "id 9 has stride 28, expected 24" is what names the constant to fix.
+            this.immediateLastRefusal = "layout id " + formatId + " ("
+                    + VulkanImmediateFormats.nameOf(formatId) + ") has stride " + vertexStride + ", expected "
                     + expectedStride;
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             this.flushPendingBeforeGlDraw();
@@ -3074,6 +3647,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentPreparedImmediate = prepared;
                 System.arraycopy(this.glProjection, 0, this.currentGroupProjection, 0, 16);
                 System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
+                if (GROUP_BOUNDS_DIAGNOSTICS) {
+                    // Captured with the matrices, not read at close time: the log belongs to the moment the group's
+                    // matrices were taken, and a later group's rotations must not be attributed to this one.
+                    this.currentGroupRotations = String.join(" ", this.rotationLog);
+                }
                 this.currentGroupFormatId = formatId;
                 this.currentGroupTexture = boundTexture;
                 this.currentGroupStateKey = stateKey;
@@ -3357,7 +3935,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * can. The packed colour identifies the test geometry (the fixture draws with 255, 64, 64, 200).
      */
     private void reportGroupBounds(ImmediateGroup group) {
-        if (GROUP_BOUNDS_FORMAT >= 0 && group.formatId != GROUP_BOUNDS_FORMAT) {
+        if (!wantedGroupBoundsFormat(group.formatId)) {
             // The format filter is checked before the cap so that a run narrowed to one layout is not spent on the
             // first six groups of every other layout.
             return;
@@ -3373,6 +3951,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             float[] modelView = group.modelView;
             long base = mesh.vertexAddress();
             int vertices = mesh.vertexCount();
+            // The stride the mesh was built with, not a pipeline constant: an immediate group copies the caller's
+            // vertices unchanged and records their own stride in the layout, and for POSITION_TEX that is 20 bytes
+            // (position 12 + texture 8), not the 16 of the base immediate layout. Reading the wrong stride put every
+            // vertex after the first at an offset inside another vertex's texture data: measured on the sun and moon
+            // groups, it reported y ranges of 100+ NDC units for quads whose real extent is 0.9, which is how a
+            // correct quad came to be described as a frame-covering wedge. The vertices, the per-vertex clip
+            // positions and the model-view are all printed now, so the reading can be checked rather than believed.
+            int stride = mesh.layout() != null ? mesh.layout().stride : VulkanImmediatePipeline.VERTEX_BYTES;
             float[] mvp = new float[16];
             for (int column = 0; column < 4; column++) {
                 for (int row = 0; row < 4; row++) {
@@ -3390,8 +3976,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             float minZ = Float.MAX_VALUE;
             float maxZ = -Float.MAX_VALUE;
             int behind = 0;
+            StringBuilder perVertex = new StringBuilder();
+            StringBuilder positions = new StringBuilder();
+            StringBuilder uvs = new StringBuilder();
             for (int vertex = 0; vertex < vertices; vertex++) {
-                long offset = base + ((long) vertex * VulkanImmediatePipeline.VERTEX_BYTES);
+                long offset = base + ((long) vertex * stride);
                 float x = MemoryUtil.memGetFloat(offset);
                 float y = MemoryUtil.memGetFloat(offset + 4);
                 float z = MemoryUtil.memGetFloat(offset + 8);
@@ -3399,6 +3988,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 float cy = (mvp[1] * x) + (mvp[5] * y) + (mvp[9] * z) + mvp[13];
                 float cz = (mvp[2] * x) + (mvp[6] * y) + (mvp[10] * z) + mvp[14];
                 float cw = (mvp[3] * x) + (mvp[7] * y) + (mvp[11] * z) + mvp[15];
+                if (vertex < 8) {
+                    // The vertices themselves, beside the bounds: the bounds say where the group lands, and these say
+                    // whether the geometry the group was built from is the quad the caller drew. A defect in either
+                    // would move the picture, and the two are indistinguishable from the bounds alone. The same
+                    // stride applies to the texture coordinates, which is what names the quad (the sun's is u=0,
+                    // the moon's first vertex u=0.25 of the phase atlas).
+                    positions.append(vertex > 0 ? ";" : "").append(round3(x)).append(',').append(round3(y))
+                            .append(',').append(round3(z));
+                    if (stride >= 20) {
+                        uvs.append(vertex > 0 ? ";" : "")
+                                .append(round3(MemoryUtil.memGetFloat(offset + 12))).append(',')
+                                .append(round3(MemoryUtil.memGetFloat(offset + 16)));
+                    }
+                    perVertex.append(vertex > 0 ? ";" : "").append(round3(cx / cw)).append(',')
+                            .append(round3(cy / cw)).append(',').append(round3(cz / cw)).append(',')
+                            .append(round3(cw));
+                }
                 if (cw <= 0.0f) {
                     behind++;
                     continue;
@@ -3414,6 +4020,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     : String.format("x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f] behind=%d",
                             minX, maxX, minY, maxY, minZ, maxZ, behind);
             String colour = "0x" + Integer.toHexString(MemoryUtil.memGetInt(base + 12));
+            // The world-pass POSITION_TEX family is the sky - the sun, the moon, the water surface - and it is the one
+            // family whose model-view is the camera times two rotations the pass itself makes. For those groups the
+            // line carries the whole chain: the group's own model-view, the vertices it was built from, each vertex's
+            // clip-space position, and the rotations that reached the mirror since the camera boundary. Nothing else is
+            // added, and with the switch off none of it is even computed.
+            String chain = "";
+            if ((group.formatId == 6 || group.formatId == 7) && this.worldPassActive) {
+                chain = " mv=" + matrixText(modelView)
+                        + " verts=[" + positions + "]"
+                        + " uv=[" + uvs + "]"
+                        + " clip=[" + perVertex + "]"
+                        + " rot=[" + this.currentGroupRotations + "]";
+            }
             // On stdout as well as in the report: the report keeps only the last recorded line, and the question this
             // answers - which groups an artefact frame is made of - is a sequence, not a sample. frame/group tie the
             // line to the frame dump the PNG is of, and the projection's own columns say whether the group was
@@ -3426,7 +4045,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " colour0=" + colour
                     + " proj=[m00=" + fmt3(projection[0]) + " m11=" + fmt3(projection[5])
                     + " m22=" + fmt3(projection[10]) + " m32=" + fmt3(projection[14]) + "]"
-                    + " ndc " + bounds);
+                    + " ndc " + bounds + chain);
             record("group " + this.immediateDiagnostics + ": vertices=" + vertices
                     + " indices=" + mesh.indexCount() + " colour0=" + colour
                     + " proj=[m00=" + projection[0] + " m11=" + projection[5] + "] ndc " + bounds);
@@ -3526,6 +4145,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private static String round3(float value) {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
+    }
+
+    /** A column-major matrix or vector as one bracketed, comma-separated line, for the diagnostic prints. */
+    private static String matrixText(float[] values) {
+        StringBuilder text = new StringBuilder("[");
+        for (int i = 0; i < values.length; i++) {
+            if (i > 0) {
+                text.append(',');
+            }
+            text.append(round3(values[i]));
+        }
+        return text.append(']').toString();
     }
 
     private static long celtium$stateKey(int formatId, int[] state) {
@@ -4054,13 +4685,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             state[3] != 0, state[4] != 0, state[5] != 0, celtium$vkCompareOp(state[7])));
             descriptor = celtium$descriptorSet(value.descriptorSetFor(texture, this.lightmapTexture), "prepare"); pipeline = value;
         } else if (format >= 2) {
-            java.util.Map<Long, VulkanImmediateTexturePipeline> cache = format == 9 ? this.positionTexNormalPipelineCache
+            java.util.Map<Long, VulkanImmediateTexturePipeline> cache = format == 10 ? this.positionNormalPipelineCache
+                    : format == 9 ? this.positionTexNormalPipelineCache
                     : format == 8 ? this.positionTexColorNormalPipelineCache : format == 7 ? this.positionOnlyPipelineCache
                     : format == 6 ? this.positionTexPipelineCache : this.texturedPipelineCache;
             VulkanImmediateTexturePipeline value = cache.get(key);
             if (value == null) {
                 int compareOp = celtium$vkCompareOp(state[7]);
-                value = format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
+                value = format == 10 ? VulkanImmediateTexturePipeline.createForPositionNormal(this.context, pass,
+                        state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
+                        : format == 9 ? VulkanImmediateTexturePipeline.createForPositionTexNormal(this.context, pass,
                         state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
                         : format == 8 ? VulkanImmediateTexturePipeline.createForPositionTexColorNormal(this.context, pass,
                         state[0] != 0, state[1], state[2], state[3] != 0, state[4] != 0, state[5] != 0, compareOp)
@@ -4487,6 +5121,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.viewportValues = this.currentGroupViewportValues;
             group.texMatrix = this.currentGroupTexMatrix;
             group.lightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
+            group.fog = celtium$fogSnapshot();
             group.stamp = new GroupStamp(this.frameId, this.targetGeneration);
             this.immediateGroups.add(group);
             if (GROUP_BOUNDS_DIAGNOSTICS) {
@@ -4584,6 +5219,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " offTargetPairs=[" + frameTargetPairSummary() + "]"
                 + " offTargetPairClears=[default-pair=" + this.defaultPairClears
                 + ",chain-pair=" + this.chainPairClears + "]"
+                + " gameClearAttribution=[latchedForFrame=" + this.gameClearsLatchedForFrame
+                + ",routedToPairs=" + this.gameClearsRoutedToPairs + "]"
                 + " offTargetPairFramebuffers=[default-pair=" + this.offTargetFramebufferCreations
                 + ",chain-pair=" + this.chainPairFramebufferCreations + "]"
                 + " otherTargetGroups=[atMainFlush=" + this.otherTargetGroupsAtMainFlush
@@ -4714,6 +5351,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
+                + ",gluPerspective:" + this.mirroredGluPerspectives + ",gluSkipped:"
+                + this.skippedGluPerspectives + ",gluSites:" + this.gluPerspectiveShapes.size()
+                + ",gluSkipSites:" + this.gluPerspectiveSkips.size()
                 + ",mode:" + this.matrixModeCalls + ",identity:" + this.loadIdentityCalls
                 + ",texture:" + this.bindTextureCalls;
     }
@@ -5738,6 +6378,80 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The owned off-target image pair, or null when this configuration has none (the GL bridge has real ones). */
     private GllessFrameTarget offTargetTarget() {
         return this.frameTarget instanceof GllessFrameTarget ? (GllessFrameTarget) this.frameTarget : null;
+    }
+
+    /**
+     * Attributes the game's pending {@code glClear} request to the framebuffer that was bound when it was issued.
+     * <p>
+     * A GL clear belongs to the framebuffer bound at the moment it is called, and the game clears three of them every
+     * glow frame: its own main framebuffer (this delivered image) with the fog colour
+     * ({@code EntityRenderer.updateFogColor} then {@code clear(16640)} at EntityRenderer.java:1326-1327), the
+     * entity-outline framebuffer (the chain pair) with transparent black
+     * ({@code RenderGlobal.java:679} {@code entityOutlineFramebuffer.framebufferClear()}, whose
+     * {@code Framebuffer.java:276-288} sets {@code glClearColor(this.framebufferColor)} - (0,0,0,0) - before its own
+     * clear), and the default framebuffer (the default pair). Only the first is this image, and until this latch
+     * existed nothing downstream could tell them apart: the stub keeps one buffer mask and one live colour, and
+     * {@code GllessFrameTarget.applyGameClears} read both at the <em>next</em> frame's acquire, when the last
+     * {@code glClearColor} of the previous frame is the outline framebuffer's transparent black. Every glow frame
+     * therefore cleared the delivered image black, and the sky - which no pass redraws, because the sky draws are
+     * gated by {@code celtium.glstub.skyFrameGate} while fog is on - kept that black. That is the black region:
+     * measured at 0.18984 of the presented frame in run {@code glow688} (scene terrain + glowEntities), 0.335 in
+     * {@code glow}, and 0.006 in the same terrain scene without glow entities, where no outline framebuffer is
+     * cleared.
+     * <p>
+     * The other route needs no clear here at all: a clear addressed to the default framebuffer or to a framebuffer of
+     * the game's own is a clear of the pair that stands for it, and both pairs are cleared once per frame by
+     * {@code clearOffTarget} / {@code clearChainPair} with exactly those values (transparent black, depth 1). What
+     * this method must not do is let that request reach the frame image, which is what it did.
+     */
+    private void celtium$latchGameClearAtTargetChange() {
+        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+            // The bridge leg has real GL: it clears for itself, and the stub's request is not this path's to consume.
+            return;
+        }
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null) {
+            return;
+        }
+        int mask = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+        if (mask == 0) {
+            return;
+        }
+        float[] rgba = new float[4];
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(rgba);
+        double depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+        if (!this.currentRenderTargetIsMain) {
+            // The default framebuffer's or one of the game's own: its pair carries that clear already.
+            this.gameClearsRoutedToPairs++;
+            celtium$reportGameClearLatch("pair", mask, rgba, depth);
+            return;
+        }
+        glless.noteGameClear(mask, rgba[0], rgba[1], rgba[2], rgba[3], depth);
+        this.gameClearsLatchedForFrame++;
+        celtium$reportGameClearLatch("frame", mask, rgba, depth);
+    }
+
+    /** Bounded, so a run states the attribution a few times instead of once per bind. */
+    private void celtium$reportGameClearLatch(String route, int mask, float[] rgba, double depth) {
+        if (this.gameClearLatchLog >= GAME_CLEAR_LATCH_LINES) {
+            return;
+        }
+        this.gameClearLatchLog++;
+        System.out.println("[Celtium] CELTIUM_CLEAR_LATCH route=" + route
+                + " boundIdentity=0x" + Long.toHexString(this.currentRenderTarget)
+                + " boundIsMain=" + this.currentRenderTargetIsMain
+                + " mask=0x" + Integer.toHexString(mask)
+                + " colour=(" + celtium$round3(rgba[0]) + "," + celtium$round3(rgba[1]) + "," + celtium$round3(rgba[2])
+                + "," + celtium$round3(rgba[3]) + ") depth=" + (float) depth
+                + " meaning=[" + ("frame".equals(route)
+                        ? "the game cleared its own main framebuffer; the delivered image is cleared with this colour"
+                        : "the game cleared another framebuffer; its owned pair carries this clear, not the frame image")
+                + "]");
+    }
+
+    /** Three decimals, the precision the renderer's own state lines use. */
+    private static float celtium$round3(float value) {
+        return (float) (Math.round(value * 1000.0D) / 1000.0D);
     }
 
     private void destroyOffTargetFramebuffer() {
@@ -7521,7 +8235,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 MemoryUtil.memFree(vertices);
             }
         }
-        ByteBuffer push = MemoryUtil.memAlloc(128);
+        // 208, not 128: the pipeline's push range now covers the fog block the fragment stage reads at 128..207, and a
+        // push shorter than the layout's range would leave those bytes undefined for this draw.
+        ByteBuffer push = MemoryUtil.memAlloc(208);
         try {
             // Identity matrices: with z = 0 the vertex is already inside Vulkan's 0..1 depth range, so no clip-depth
             // remap is wanted here.
@@ -7534,6 +8250,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             push.putFloat(80, 1.0f);
             push.putFloat(96, 1.0f);
             push.putFloat(112, 0.0f);
+            // Fog off for the isolation quad: its machinery is what is under test, not the world's fog. The selector is
+            // the only field the shaders branch on, and the rest of the block is left at this buffer's own zeros.
+            push.putFloat(156, 0.0f);
             this.immediatePipeline.draw(this.commandBuffer, this.isolationMesh, push);
             this.immediateIsolationDraws++;
         } finally {
@@ -7621,6 +8340,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     for (int i = 0; i < 20; ++i) {
                         push.putFloat(128 + i * 4, light[i]);
                     }
+                }
+                // The fog block, which lives in the same 128..207 region as the lighting payload: a lit group's block
+                // is the lighting and must not be overwritten, so the fog is written only for groups that do not carry
+                // one. Everything that can arrive here with fog on is camera-space or object-space world geometry;
+                // the selector is 0 for a group offered while the game had fog off, so the shaders' fog branch is a
+                // no-op there. The ITEM pipeline's lit layout is the one family whose shaders do not declare this
+                // block at all (see the report: lit items and entities are the unfogged part of the immediate path).
+                if (light == null) {
+                    celtium$writeFogPush(group, push);
                 }
                 Object pipeline = prepared.pipeline;
                 if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);

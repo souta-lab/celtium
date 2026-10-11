@@ -1,0 +1,100 @@
+Process started with PID 1842871 (shell: /bin/bash)
+Initial output:
+/home/s0u7a/.profile: line 46: /home/s0u7a/.cargo/env: No such file or directory
+TEST_TMP /tmp/celtium-audit-cpu-20261011-vwxi9pkn
+JARS 8e09c7c1f59ad7df99ab5df5a7d09bfb8298db9f1cf25b13b23fe4bf047a099f 68c6f5041945395f5fc396a05d8a331b49611e4bca82f88aa70c43482302cacf
+COMPILE 0 
+TextureContractCheck 0 CELTIUM_CPU_CONTRACT PASS
+ 
+AuditCpu 0 GLYPH_SIZE=96 position=96 remaining=0 addressDelta=96 explicitBaseDelta=0
+AFTER_FLIP addressDelta=0 remaining=96
+GLYPH_SIZE=64 position=64 remaining=0 addressDelta=64 explicitBaseDelta=0
+AFTER_FLIP addressDelta=0 remaining=64
+EXTENT_BUG acceptedBytes=-17179869180
+ WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.lwjgl.system.Library$$Lambda/0x0000000072043b00 in an unnamed module (file:/home/s0u7a/.gradle/caches/modules-2/files-2.1/org.lwjgl/lwjgl/3.4.1/6105690714874b995aa7812e4f7732a21109276c/lwjgl-3.4.1.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+
+ACTUAL_DISTRIBUTABLE_CHECK
+{"sha256": "68c6f5041945395f5fc396a05d8a331b49611e4bca82f88aa70c43482302cacf", "classVersions": {"46": 111, "51": 1, "52": 613, "65": 87}, "errors": [], "verified": true, "scope": "packaging-only; no Minecraft startup or GL/Vulkan interoperability claim"}
+BYTECODE org.soutalab.celtium.vulkan.VulkanContext
+TAIL          6: iconst_0
+         7: lload_2
+         8: lastore
+         9: iconst_1
+        10: newarray       long
+        12: dup
+        13: iconst_0
+        14: lload         4
+        16: lastore
+        17: invokevirtual #277                // Method submitWithSemaphores:(Lorg/lwjgl/vulkan/VkCommandBuffer;[J[J)V
+        20: return
+
+BYTECODE org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture
+TAIL   private static void submit();
+    Code:
+
+
+[executed on device: s0u7a-optiplex3060 (6ed27c09-53f3-47d3-b79f-beaa97b32de1)]
+
+Process started with PID 1843948 (shell: /bin/bash)
+Initial output:
+/home/s0u7a/.profile: line 46: /home/s0u7a/.cargo/env: No such file or directory
+BYTECODE org.soutalab.celtium.vulkan.VulkanContext
+        14: athrow
+       424: invokestatic  #377                // Method org/lwjgl/vulkan/VK10.vkQueueSubmit:(Lorg/lwjgl/vulkan/VkQueue;Lorg/lwjgl/vulkan/VkSubmitInfo;J)I
+       427: ldc_w         #381                // String vkQueueSubmit(submitWithSemaphores)
+       443: invokestatic  #385                // Method org/lwjgl/vulkan/VK10.vkWaitForFences:(Lorg/lwjgl/vulkan/VkDevice;JZJ)I
+       477: athrow
+       480: ldc_w         #395                // String vkWaitForFences(submitWithSemaphores)
+       525: athrow
+       540: invokestatic  #397                // Method org/lwjgl/vulkan/VK10.vkDestroyFence:(Lorg/lwjgl/vulkan/VkDevice;JLorg/lwjgl/vulkan/VkAllocationCallbacks;)V
+       552: invokestatic  #272                // Method org/lwjgl/vulkan/VK10.vkFreeCommandBuffers:(Lorg/lwjgl/vulkan/VkDevice;JLorg/lwjgl/vulkan/VkCommandBuffer;)V
+       574: invokestatic  #397                // Method org/lwjgl/vulkan/VK10.vkDestroyFence:(Lorg/lwjgl/vulkan/VkDevice;JLorg/lwjgl/vulkan/VkAllocationCallbacks;)V
+       586: invokestatic  #272                // Method org/lwjgl/vulkan/VK10.vkFreeCommandBuffers:(Lorg/lwjgl/vulkan/VkDevice;JLorg/lwjgl/vulkan/VkCommandBuffer;)V
+       591: athrow
+      Exception table:
+         from    to  target type
+            54   486   499   Class java/lang/Throwable
+           506   511   514   Class java/lang/Throwable
+TAIL        577: aload_0
+       578: getfield      #117                // Field device:Lorg/lwjgl/vulkan/VkDevice;
+       581: aload_0
+       582: getfield      #23                 // Field commandPool:J
+       585: aload_1
+       586: invokestatic  #272                // Method org/lwjgl/vulkan/VK10.vkFreeCommandBuffers:(Lorg/lwjgl/vulkan/VkDevice;JLorg/lwjgl/vulkan/VkCommandBuffer;)V
+       589: aload         16
+       591: athrow
+       592: return
+      Exception table:
+         from    to  target type
+            54   486   499   Class java/lang/Throwable
+           506   511   514   Class java/lang/Throwable
+            39   526   558   any
+           558   560   558   any
+
+BYTECODE org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture
+       508: invokestatic  #301                // Method org/lwjgl/system/MemoryUtil.memAddress:(Ljava/nio/ByteBuffer;)J
+       518: invokestatic  #301                // Method org/lwjgl/system/MemoryUtil.memAddress:(Ljava/nio/ByteBuffer;)J
+       753: athrow
+      Exception table:
+         from    to  target type
+           675   693   709   Class java/lang/Throwable
+TAIL       1054: ifnull        1065
+      1057: aload         14
+      1059: invokevirtual #386                // Method java/lang/String.isEmpty:()Z
+      1062: ifeq          1071
+      1065: ldc_w         #388                // String no reason recorded
+      1068: goto          1073
+      1071: aload         14
+      1073: invokestatic  #219                // Method refuse:(Ljava/lang/String;Ljava/lang/String;)V
+      1076: return
+      Exception table:
+         from    to  target type
+           675   693   709   Class java/lang/Throwable
+           675   693   736   any
+           709   722   736   any
+           736   738   736   any
+

@@ -1708,11 +1708,27 @@ public final class VulkanGlTexture {
         return hash;
     }
 
+    /**
+     * As {@link #uploadFromImage(int, int, java.nio.ByteBuffer)}, with the GL name the pixels belong to.
+     * <p>
+     * The name is what the diagnostic switches are keyed on, and this path had none to give: {@code mirrorPoisonFlat},
+     * {@code mirrorPoison} and {@code mirrorEncode} were armed only by {@link #uploadFromGlTexture}, so a mirror whose
+     * content arrived from an announcement or from the upload the stub captured could not be poisoned - which is
+     * exactly the population a GL-less run's textures belong to. With the name supplied, "does this draw sample this
+     * image" is a question the frame answers for a GUI texture the same way it already did for the atlas.
+     */
+    public boolean uploadFromNamedImage(int glTextureId, int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
+        // The poisons are STICKY: they are set here and never cleared, so a later write through any path - the
+        // announced image, the captured surface, a readback - cannot put the real pixels back and make a poisoned run
+        // look like a run that never sampled this image. Measured at draw time is the only measurement that counts.
+        this.poisonColour = poisonFor(glTextureId);
+        this.flatPoisonColour = flatPoisonFor(glTextureId);
+        this.encodeLabel = glTextureId;
+        return uploadFromImage(pixelWidth, pixelHeight, rgba);
+    }
+
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
         requireOwned("a whole-image upload");
-        // The poisons are STICKY: they are set by the GL-name entry point and never cleared, so a later write through
-        // this path - the announced image, the captured surface - cannot put the real pixels back and make a poisoned
-        // run look like a run that never sampled this image. Measured at draw time is the only measurement that counts.
         requireAlive();
         // The hash and the copy read the same slice: the declared extent must fit the buffer's remaining bytes from
         // its current position, which is where MemoryUtil.memAddress starts (audit N08). Validated before the hash, so

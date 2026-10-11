@@ -115,6 +115,27 @@ public final class VulkanTextureRegistry {
     /** The GL texture ids that reach the readback refresh, recorded once each. */
     private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
     /**
+     * Which source filled each mirror's content, by GL name, and the census of those fills.
+     * <p>
+     * The defect this exists for: under the GL-less window a mirror's content can only come from an announcement or
+     * from the upload the stub captured, and "the batch is submitted and accepted and produces no pixels" is what a
+     * mirror filled with nothing looks like from the frame. The counters that existed said how many fills happened
+     * ({@code fromAnnouncement}, {@code fromCapture}, {@code noContent}) but not <em>which texture</em> got which, so
+     * a GUI panel that never appears could not be attributed to its own mirror. Each id is named once per source it
+     * is filled from, with the source's own pixels summarised, so the mirror a missing batch samples is a fact in the
+     * log rather than an inference.
+     */
+    private final java.util.Map<Integer, String> mirrorSourceById = new java.util.HashMap<Integer, String>();
+    private final java.util.Map<String, Integer> mirrorFillsBySource = new java.util.LinkedHashMap<String, Integer>();
+    /** Announcements made per GL name, and the ones a {@code forgetTexture} dropped before a mirror consumed them. */
+    private final java.util.Map<Integer, Integer> announcementsById = new java.util.HashMap<Integer, Integer>();
+    private final java.util.Map<Integer, Integer> droppedAnnouncementsById = new java.util.HashMap<Integer, Integer>();
+    /** Lines printed, bounded like every other per-texture census in this class. */
+    private static final int MIRROR_SOURCE_LOG_LIMIT = 32;
+    private int mirrorSourceLogs;
+    /** Announcements an image-less delete kept alive, because no mirror had consumed them yet. */
+    private int retainedAnnouncements;
+    /**
      * The last image announced for each texture.
      * <p>
      * Kept rather than consumed. Consuming it meant the announcement was spent by whichever refresh asked first, and every
@@ -492,6 +513,7 @@ public final class VulkanTextureRegistry {
             return;
         }
         this.announcedImages.put(Integer.valueOf(glTextureId), image);
+        this.announcementsById.merge(Integer.valueOf(glTextureId), Integer.valueOf(1), Integer::sum);
         // A generation, not the image identity: Minecraft updates a DynamicTexture in place, so the same BufferedImage
         // object arrives with different pixels. The generation changes on every announcement and is consumed when the
         // mirror is built from it, which is what makes "already converted this one" safe to skip.
@@ -623,7 +645,7 @@ public final class VulkanTextureRegistry {
                 this.entries.put(id, entry);
                 this.mirrorCount++;
             }
-            if (!entry.texture.uploadFromImage(extent[0], extent[1], rgba)) {
+            if (!entry.texture.uploadFromNamedImage(glTextureId, extent[0], extent[1], rgba)) {
                 // The content was already in the image, so it needs no second transfer and no second count.
                 this.imageUploadsSkipped++;
                 return true;
@@ -639,6 +661,7 @@ public final class VulkanTextureRegistry {
             recordApplication(glTextureId, true);
             this.staleIds.remove(id);
             this.filledFromCapture++;
+            celtium$noteMirrorSource(glTextureId, "capture", extent[0], extent[1], rgba);
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;
@@ -668,12 +691,13 @@ public final class VulkanTextureRegistry {
                 this.entries.put(glTextureId, entry);
                 this.mirrorCount++;
             }
-            if (texture.uploadFromImage(width, height, rgba)) {
+            if (texture.uploadFromNamedImage(glTextureId, width, height, rgba)) {
                 // Counted only when the pixels were transferred, and the metadata follows the image: a full upload may resize
                 // the Vulkan image, and a stale entry size then makes every later patch bounds check wrong (audit A07).
                 this.imageUploads++;
                 entry.width = width;
                 entry.height = height;
+                celtium$noteMirrorSource(glTextureId, "announcement", width, height, rgba);
                 // The announcement carries the whole texture - announceImage is only ever reached by a full upload -
                 // so a successful conversion is an initialization, the same fact the readback path records. Without
                 // this mark the image holds full content while fullyInitialized does not know it, and every later
@@ -890,7 +914,7 @@ public final class VulkanTextureRegistry {
             }
             long applicationStart = System.nanoTime();
             if (wholeTexture) {
-                entry.texture.uploadFromImage(width, height, levelBytes[0]);
+                entry.texture.uploadFromNamedImage(glTextureId, width, height, levelBytes[0]);
             } else {
                 entry.texture.uploadPatchedLevels(width, height, x, y, levelBytes, appliedLevels, glTextureId);
             }
@@ -909,6 +933,9 @@ public final class VulkanTextureRegistry {
             this.imageUploads++;
             this.staleIds.remove(Integer.valueOf(glTextureId));
             recordApplication(glTextureId, wholeTexture);
+            if (wholeTexture) {
+                celtium$noteMirrorSource(glTextureId, "announced-int[]", width, height, levelBytes[0]);
+            }
             if (CeltiumGlStub.isInstalled()) {
                 // Which source filled the mirror under the stub: the game's pixels, not a readback.
                 this.filledFromAnnouncement++;
@@ -1087,6 +1114,96 @@ public final class VulkanTextureRegistry {
         return this.readbacksSkippedWithoutContent;
     }
 
+    /**
+     * Names the source a mirror's content came from, and what that source's pixels look like, once per name and
+     * source.
+     * <p>
+     * The question it answers is the one the GUI defect needed and no counter could: which of the sources filled the
+     * mirror for this GL name, at what size, and whether the pixels that went in were opaque, transparent, or absent.
+     * {@code droppedAnnouncements} is the other half: an announcement for a name that a {@code forgetTexture} removed
+     * before any mirror consumed it is pixels the game handed over and this registry threw away, and the texture that
+     * loses them is left to the captured upload - or to nothing.
+     * <p>
+     * The pixel walk runs only when a line is actually due, so a per-frame animation cannot pay for the census.
+     *
+     * @param rgba the pixels about to be written, or {@code null} when this source has none to summarise
+     */
+    private void celtium$noteMirrorSource(int glTextureId, String source, int width, int height,
+            java.nio.ByteBuffer rgba) {
+        this.mirrorFillsBySource.merge(source, Integer.valueOf(1), Integer::sum);
+        Integer id = Integer.valueOf(glTextureId);
+        String previous = this.mirrorSourceById.put(id, source);
+        if (source.equals(previous) || this.mirrorSourceLogs >= MIRROR_SOURCE_LOG_LIMIT) {
+            return;
+        }
+        this.mirrorSourceLogs++;
+        System.out.println("[Celtium] CELTIUM_MIRROR_SOURCE id=" + glTextureId + " source=" + source
+                + " size=" + width + "x" + height + " content=" + contentOf(rgba, width, height)
+                + " announced=" + countFor(this.announcementsById, id)
+                + " droppedAnnouncements=" + countFor(this.droppedAnnouncementsById, id)
+                + " hasEntry=" + this.entries.containsKey(id) + " stale=" + this.staleIds.contains(id)
+                + " glLess=" + CeltiumGlStub.isInstalled());
+    }
+
+    private static int countFor(java.util.Map<Integer, Integer> counts, Integer id) {
+        Integer value = counts.get(id);
+        return value == null ? 0 : value.intValue();
+    }
+
+    /**
+     * {@return a one-line summary of the source buffer's level 0} - how many of its texels are opaque, out of how
+     * many the size declares, and the first opaque texel's ARGB.
+     * <p>
+     * A mirror with the right size and no pixels and a mirror with the right size and transparent pixels are the same
+     * thing in a frame and different findings in the log. The first opaque texel is printed because a GUI sheet is
+     * mostly transparent and its content is where the panel is - "opaque=60000" and "opaque=1" are different textures.
+     */
+    private static String contentOf(java.nio.ByteBuffer rgba, int width, int height) {
+        if (rgba == null || width <= 0 || height <= 0) {
+            return "not-carried";
+        }
+        int base = rgba.position();
+        long declared = (long) width * (long) height;
+        long available = rgba.remaining() / 4L;
+        if (available <= 0) {
+            return "empty-buffer";
+        }
+        long texels = Math.min(declared, available);
+        long opaque = 0;
+        int first = 0;
+        boolean seen = false;
+        for (long texel = 0; texel < texels; texel++) {
+            int at = base + (int) texel * 4;
+            int alpha = rgba.get(at + 3) & 0xFF;
+            if (alpha == 0) {
+                continue;
+            }
+            opaque++;
+            if (!seen) {
+                seen = true;
+                first = (alpha << 24) | ((rgba.get(at) & 0xFF) << 16) | ((rgba.get(at + 1) & 0xFF) << 8)
+                        | (rgba.get(at + 2) & 0xFF);
+            }
+        }
+        return "opaque=" + opaque + "/" + declared + (seen ? " firstOpaque=0x" + Integer.toHexString(first) : "");
+    }
+
+    /** {@return the fills by source and the announcement drops, for the texture summary line}. */
+    public String mirrorSourceSummary() {
+        StringBuilder sources = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> entry : this.mirrorFillsBySource.entrySet()) {
+            if (sources.length() > 0) {
+                sources.append(',');
+            }
+            sources.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        int dropped = 0;
+        for (Integer count : this.droppedAnnouncementsById.values()) {
+            dropped += count.intValue();
+        }
+        return (sources.length() == 0 ? "none" : sources.toString()) + " announcedDropped=" + dropped;
+    }
+
     /** Split of the registry lookup cost: announced-image conversions, stale GL re-uploads, plain hits. */
     public static long ANNOUNCED_NANOS;
     public static long ANNOUNCED_CALLS;
@@ -1147,9 +1264,28 @@ public final class VulkanTextureRegistry {
         }
         Entry entry = this.entries.remove(id);
         this.fullyInitialized.remove(id);
-        this.announcedGeneration.remove(id);
-        this.consumedGeneration.remove(id);
-        this.announcedImages.remove(id);
+        if (CeltiumGlStub.isInstalled() && announcementUnconsumed(id)) {
+            // The GL-less case, and the reason this is not the plain removal below: the game's own upload utility
+            // deletes the id inside the very call that announced its image
+            // ({@code TextureUtil.uploadTextureImageAllocate} -> {@code allocateTexture} -> {@code deleteTexture}),
+            // so the announcement arrives, this method drops it microseconds later, and the mirror is then built from
+            // whatever the stub captured - or from nothing when the stub could not convert that upload. An
+            // announcement no mirror has consumed is the game's own pixels for this name and the newest statement
+            // about its content, so it survives the delete-and-reallocate; a consumed one is dropped as before,
+            // which is what keeps a name that was deleted and reused for something else from sampling old pixels.
+            // Bounded to the stub on purpose: with a GL context the readback below is the better source and the
+            // bridge leg's behaviour is left exactly as it was.
+            this.retainedAnnouncements++;
+        } else {
+            this.announcedGeneration.remove(id);
+            this.consumedGeneration.remove(id);
+            if (this.announcedImages.remove(id) != null) {
+                // A pending announcement dropped with the mirror. Counted per name because the GUI defect turns on it:
+                // an announcement that has not been turned into a mirror yet is pixels the game handed over and this
+                // method threw away - and the texture is then left to the captured upload, or to nothing.
+                this.droppedAnnouncementsById.merge(id, Integer.valueOf(1), Integer::sum);
+            }
+        }
         if (entry != null) {
             this.forgotten++;
             final VulkanGlTexture image = entry.texture;
@@ -1162,8 +1298,29 @@ public final class VulkanTextureRegistry {
         }
     }
 
-    /** {@return whether a mirror already exists for this id at exactly this size} */
-    public boolean hasEntry(int glTextureId, int width, int height) {
+    /**
+     * {@return whether this name has an announced image that no mirror has been built from yet}.
+     * <p>
+     * The generation comparison is what makes the preservation rule safe: an announcement a lookup already consumed
+     * describes content the image this method is about to drop was built from, so it goes with the mirror. Only an
+     * announcement that arrived and was never used is the newer statement, and that is exactly the one the game's
+     * delete-and-reallocate sequence would otherwise destroy.
+     */
+    private boolean announcementUnconsumed(Integer id) {
+        Integer announced = this.announcedGeneration.get(id);
+        if (announced == null || !this.announcedImages.containsKey(id)) {
+            return false;
+        }
+        Integer consumed = this.consumedGeneration.get(id);
+        return consumed == null || announced.intValue() > consumed.intValue();
+    }
+
+    /** {@return announcements an image-less delete kept alive, for the census and the summary line} */
+    public int retainedAnnouncements() {
+        return this.retainedAnnouncements;
+    }
+
+    /** {@return whether a mirror already exists for this id at exactly this size} */    public boolean hasEntry(int glTextureId, int width, int height) {
         VulkanGlTexture external = this.externalImages.get(Integer.valueOf(glTextureId));
         if (external != null) {
             // "There is an image for this name at this size" is the question the callers ask, and a published image
@@ -1228,8 +1385,12 @@ public final class VulkanTextureRegistry {
                 VulkanGlTexture converted = this.fromImage(glTextureId, announced, nearestFilter);
                 if (converted != null) {
                     this.consumedGeneration.put(Integer.valueOf(glTextureId), current);
+                    return converted;
                 }
-                return converted;
+                // The announcement could not become an image - an unreadable size, a buffer that would not fit, a
+                // device failure - and returning null here would refuse every batch that samples this name while the
+                // captured upload below holds the same pixels. The capture is asked instead, which is the other source
+                // this registry documents; the announced image is left in place for the next lookup.
             } finally {
                 ANNOUNCED_NANOS += System.nanoTime() - announcedStart;
                 ANNOUNCED_CALLS++;
@@ -1271,6 +1432,7 @@ public final class VulkanTextureRegistry {
                     STALE_NANOS += System.nanoTime() - uploadStart;
                     STALE_CALLS++;
                     this.inPlaceRefreshes++;
+                    celtium$noteMirrorSource(glTextureId, "stale-readback", existing.width, existing.height, null);
                     // Which origin produced this refresh. The counters say most updates are served from announcements and a thousand
                     // are not; this says which caller the thousand belong to, rather than another name being guessed at.
                     this.readbackByOrigin.merge(this.currentOrigin, Integer.valueOf(1), Integer::sum);
@@ -1320,6 +1482,7 @@ public final class VulkanTextureRegistry {
             VulkanGlTexture empty = VulkanGlTexture.create(this.context, width, height, nearestFilter);
             this.entries.put(glTextureId, new Entry(glTextureId, width, height, empty));
             this.mirrorCount++;
+            celtium$noteMirrorSource(glTextureId, "none", width, height, null);
             this.rejectPatch("GL-less mirror: GL texture " + glTextureId + " has no announced pixels and no captured"
                     + " upload; mirror created content-less at " + width + "x" + height);
             HIT_CALLS++;
@@ -1354,6 +1517,7 @@ public final class VulkanTextureRegistry {
                 System.out.println(where);
             }
             this.mirrorCount++;
+            celtium$noteMirrorSource(glTextureId, "readback", width, height, null);
             return texture;
         } catch (RuntimeException | LinkageError error) {
             this.failureCount++;

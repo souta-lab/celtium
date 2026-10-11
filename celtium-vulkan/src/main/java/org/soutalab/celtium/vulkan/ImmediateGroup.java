@@ -52,6 +52,13 @@ public final class ImmediateGroup {
      * unlit group, which is also how the draw loop knows whether to write the extended push range.
      */
     public float[] lightParams;
+    /**
+     * The fixed-function fog this batch was offered under: eight floats {@code {selector, density, start, end, r, g, b,
+     * weight}} in the push block's own layout, or {@code null} when fog was off. Captured per group rather than read at
+     * flush time because {@code RenderGlobal.renderSky} enables fog for the sky dome and disables it again for the sun
+     * and the moon inside one pass.
+     */
+    public float[] fog;
     /** Blend factors when the group needs them for the pipeline selection. */
     public int blendSrc;
     public int blendDst;

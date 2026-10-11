@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
 import org.lwjgl.system.APIUtil;
 import org.lwjgl.system.Callback;
 import org.lwjgl.system.FunctionProvider;
@@ -111,6 +112,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_TEXSUBIMAGE = 40;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
     private static final int SEM_COMPRESSED_TEXIMAGE = 41; // (target,level,internal,w,h,border,size,data) -> extent only
     private static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
+    private static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
+    private static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -283,6 +286,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glCallList", R_VOID, SEM_CALL_LIST, A_INT);
         fn("glBindVertexArray", R_VOID, SEM_BIND_VERTEX_ARRAY, A_INT);
         fn("glBufferSubData", R_VOID, SEM_BUFFER_SUBDATA, A_INT, A_LONG, A_LONG, A_PTR);
+        // ---- client-array drawing: the pointer state that says how to read the bound array buffer's bytes, and the
+        // draw that uses it. This is the VBO path RenderGlobal.renderSky takes (`skyVBO.drawArrays(7)` ->
+        // VertexBuffer.drawArrays -> GlStateManager.glDrawArrays -> GL11.glDrawArrays), and it is the one entry point
+        // here that produces geometry rather than state: answering it with a no-op is a hole in the picture, not a
+        // state detail - measured as a GL-less world frame with no sky dome, no stars and no horizon plane while no
+        // counter mentioned them.
+        //
+        // glEnableClientState/glDisableClientState are the same capability bits glEnable sets (GL_VERTEX_ARRAY is
+        // 32884), so they share those semantics: glIsEnabled answers from the same record, as GL does.
+        fn("glEnableClientState", R_VOID, SEM_ENABLE, A_INT);
+        fn("glDisableClientState", R_VOID, SEM_DISABLE, A_INT);
+        fn("glVertexPointer", R_VOID, SEM_VERTEX_POINTER, A_INT, A_INT, A_INT, A_PTR);
+        fn("glDrawArrays", R_VOID, SEM_DRAW_ARRAYS, A_INT, A_INT, A_INT);
         // ---- DSA create-functions: same out-array shape as the glGen* family
         fn("glCreateTextures", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
         fn("glCreateBuffers", R_VOID, SEM_GEN, A_INT, A_PTR);
@@ -323,7 +339,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glUniformMatrix2fv", "glUniformMatrix3fv", "glUniformMatrix4fv", "glEnableVertexAttribArray",
                 "glDisableVertexAttribArray", "glVertexAttribPointer", "glVertexAttribIPointer",
                 "glVertexAttribLPointer", "glVertexAttribDivisor", "glVertexAttrib1f", "glVertexAttrib2f",
-                "glVertexAttrib3f", "glVertexAttrib4f", "glVertexAttrib4Nub", "glDrawArrays", "glDrawElements",
+                "glVertexAttrib3f", "glVertexAttrib4f", "glVertexAttrib4Nub", "glDrawElements",
                 "glDrawRangeElements", "glDrawElementsInstanced", "glDrawArraysInstanced", "glMultiDrawArrays",
                 "glMultiDrawElements", "glDrawElementsBaseVertex", "glBeginQuery", "glEndQuery", "glBeginQueryIndexed",
                 "glEndQueryIndexed", "glClientWaitSync", "glWaitSync", "glFlush", "glFinish", "glPushAttrib",
@@ -338,7 +354,6 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glCompressedTexSubImage2D", "glGetTexImage",
                 "glGetCompressedTexImage", "glMapBuffer", "glMapBufferRange",
                 "glCopyBufferSubData", "glFlushMappedBufferRange", "glGetBufferSubData",
-                "glEnableClientState", "glDisableClientState", "glVertexPointer",
                 "glTexCoordPointer", "glColorPointer", "glNormalPointer", "glIndexPointer", "glEdgeFlagPointer",
                 "glSecondaryColorPointer", "glFogCoordPointer", "glInterleavedArrays", "glArrayElement",
                 "glDrawBuffer", "glRects", "glClipPlane", "glTexEnv", "glSecondaryColor3fv", "glColor4fv",
@@ -420,6 +435,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile float lineWidth = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList;
+    /**
+     * The client-array pointer state: {@code glVertexPointer(size, type, stride, pointer)}. GL keeps exactly one of
+     * these, and it is the only thing that says how the bound array buffer's bytes are to be read - the bytes alone
+     * are anonymous. Recorded rather than no-opped for the same reason the buffer storage is mirrored: a draw that
+     * arrives without it cannot be decoded, and guessing a layout would submit the wrong bytes rather than none.
+     */
+    private volatile int vertexPointerSize, vertexPointerType, vertexPointerStride;
+    private volatile long vertexPointerOffset;
 
     /** The installed stub - one per process; GL capabilities are process-global so this is a singleton. */
     private static CeltiumGlStub installed;
@@ -436,10 +459,23 @@ public final class CeltiumGlStub implements FunctionProvider {
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
             // The census has to be readable after the run: the harness reads logs, and the renderer's own report
-            // only carries the strings it knows to ask for. One line at exit, bounded.
-            Runtime.getRuntime().addShutdownHook(new Thread(() ->
-                    System.out.println("[Celtium] CELTIUM_NOOP_CENSUS " + noopCensusSummary()),
-                    "celtium-noop-census"));
+            // only carries the strings it knows to ask for. One line at exit, bounded. The glDrawArrays line sits
+            // beside it because the two answer the same question from opposite sides: the census says which drawing
+            // entry points reached no image, and the array line says what happened to the one that used to be on it.
+            //
+            // Written to the process's own stdout rather than through System.out, and that is a measurement, not a
+            // preference: Forge routes System.out into Log4j, Log4j's own shutdown hook stops the appenders, and the
+            // shutdown hooks run concurrently - so this line came out or did not depending on which hook won. Measured
+            // over three runs of the same fixture: one run has CELTIUM_NOOP_CENSUS in its log, two have none (the
+            // font capture's hook line appears in one of those, so hook output is not lost wholesale - it is a race).
+            // A census that exists only in the runs that win a race is not an instrument; FileDescriptor.out is the
+            // file the process was started with and stays writable through the teardown. The content is unchanged.
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                celtium$printAtExit("CELTIUM_NOOP_CENSUS " + noopCensusSummary());
+                if (DRAWARRAY_CALLS.get() > 0L) {
+                    celtium$printAtExit("CELTIUM_DRAWARRAYS " + drawArraySummary());
+                }
+            }, "celtium-noop-census"));
         }
         return installed;
     }
@@ -450,6 +486,32 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static boolean isInstalled() {
         return installed != null;
+    }
+
+    /** The stream the exit census is written to: the process's own stdout, not the logger Forge put in front of it. */
+    private static volatile java.io.PrintStream exitStream;
+
+    /**
+     * Writes one census line where it will still exist when the process is gone.
+     * <p>
+     * {@code System.out} is routed into Log4j by Forge, and Log4j's shutdown hook stops the appenders; hooks run
+     * concurrently, so a census printed from a hook is dropped whenever the logging hook gets there first. The file
+     * descriptor the process started with is not part of that teardown. Falls back to {@code System.out} when the
+     * descriptor cannot be wrapped - a census that might be lost is still better than none.
+     */
+    private static void celtium$printAtExit(String line) {
+        String text = "[Celtium] " + line;
+        try {
+            java.io.PrintStream stream = exitStream;
+            if (stream == null) {
+                stream = new java.io.PrintStream(new java.io.FileOutputStream(java.io.FileDescriptor.out), true,
+                        java.nio.charset.StandardCharsets.UTF_8);
+                exitStream = stream;
+            }
+            stream.println(text);
+        } catch (RuntimeException | LinkageError error) {
+            System.out.println(text);
+        }
     }
 
     /**
@@ -1034,6 +1096,28 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_BIND_VERTEX_ARRAY:
                 this.boundVertexArray = (int) c[0];
                 return 0L;
+            case SEM_VERTEX_POINTER:
+                // GL keeps one client vertex-array pointer; the last glVertexPointer wins, exactly as it does in a
+                // driver. The pointer is a byte offset into the bound array buffer (GL_ARRAY_BUFFER) - the value the
+                // game passes when a buffer is bound, which is the only case drawArrays() decodes.
+                this.vertexPointerSize = (int) c[0];
+                this.vertexPointerType = (int) c[1];
+                this.vertexPointerStride = (int) c[2];
+                this.vertexPointerOffset = c[3];
+                // Bounded, and only while the layout census has room: the recorded tuple has to be attributable to a
+                // call site, because a stride that does not match the sources' glVertexPointer(3, GL_FLOAT, 12, 0)
+                // is either a call this class mis-reads or a caller nobody has looked at yet, and those two need
+                // different fixes.
+                if (VERTEX_POINTER_SITES.size() < 12
+                        && VERTEX_POINTER_SITES.add(Integer.valueOf((int) c[0] * 31 + (int) c[1] * 7 + (int) c[2]))) {
+                    System.out.println("[Celtium] CELTIUM_VERTEXPOINTER size=" + (int) c[0] + " type=0x"
+                            + Integer.toHexString((int) c[1]) + " stride=" + (int) c[2] + " offset=" + c[3]
+                            + " site=[" + celtium$callSite(8) + "]");
+                }
+                return 0L;
+            case SEM_DRAW_ARRAYS:
+                drawArrays((int) c[0], (int) c[1], (int) c[2]);
+                return 0L;
             case SEM_ROUTE:
                 route(fn, c);
                 return 0L;
@@ -1118,6 +1202,88 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         return "noopEntryPoints=" + NOOP_CALLS.size() + " noopCalls=" + total
                 + " top=[" + String.join(" ", noopCensus(15)) + "]";
+    }
+
+    // ---- the glDrawArrays census ---------------------------------------------------------------------------------
+    //
+    // glDrawArrays left the no-op census because it is now drawn, and that is a claim the run has to be able to
+    // check: "no longer in the no-op list" is also what a draw that was refused everywhere would look like. The
+    // counters below separate the three outcomes - drawn, empty, refused with a named reason - and the accepted
+    // count is the one that says the geometry reached the frame. Read them together; none of them alone is evidence.
+
+    /** Arrivals at {@code glDrawArrays} since the process started. */
+    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Draws assembled from the mirrored array buffer and handed to the immediate path (accepted by it). */
+    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_DRAWN =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Draws with no vertices at all: legitimate, and nothing is dropped because there was nothing to draw. */
+    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_EMPTY =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Draws this class would not decode, or the backend would not take. Each one names its reason below. */
+    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_REFUSED =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Vertices in the draws that were handed over, so "drawn" is a quantity and not only a call count. */
+    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_VERTICES =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Refusals by reason, bounded by the number of distinct reasons this class can produce. */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> DRAWARRAY_REFUSALS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+    /** The first accepted draw, in one line: the evidence that the layout decoded as position-only really did. */
+    private static volatile String drawArrayFirst = "none";
+
+    private static void celtium$noteDrawArrayRefusal(String reason) {
+        DRAWARRAY_REFUSED.incrementAndGet();
+        java.util.concurrent.atomic.AtomicLong counter = DRAWARRAY_REFUSALS.get(reason);
+        if (counter == null) {
+            counter = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong existing = DRAWARRAY_REFUSALS.putIfAbsent(reason, counter);
+            if (existing != null) {
+                counter = existing;
+            }
+        }
+        counter.incrementAndGet();
+    }
+
+    /**
+     * Prints the census line at powers of two of the arrival count, in addition to the line at exit.
+     * <p>
+     * The exit line is the complete one and the one to read. This exists because a run can end without reaching it -
+     * the process is torn down, or the fixture exits - and "the counter has no value" was the shape of a previous
+     * mistake here. Powers of two bound the output to about twenty lines for any run length, and put the first line
+     * in the log after the very first draw rather than after the last.
+     */
+    private static void celtium$reportDrawArrays() {
+        long calls = DRAWARRAY_CALLS.get();
+        if (calls > 0L && (calls & (calls - 1L)) == 0L) {
+            System.out.println("[Celtium] CELTIUM_DRAWARRAYS " + drawArraySummary());
+        }
+    }
+
+    /**
+     * {@return the {@code glDrawArrays} census as one line: arrivals, drawn, empty, refused and why}.
+     * <p>
+     * The refusals are listed with their reasons rather than counted, because the reasons are the point: a draw this
+     * class does not decode is a named gap, and a bare number would leave the next reader to guess which layout or
+     * which mode it was. Sorted, so two runs of the same scene compare line by line.
+     */
+    public static String drawArraySummary() {
+        StringBuilder reasons = new StringBuilder();
+        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
+                : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(DRAWARRAY_REFUSALS).entrySet()) {
+            if (reasons.length() > 0) {
+                reasons.append("; ");
+            }
+            reasons.append(entry.getKey()).append('=').append(entry.getValue().get());
+        }
+        return "glDrawArraysCalls=" + DRAWARRAY_CALLS.get()
+                + " drawn=" + DRAWARRAY_DRAWN.get()
+                + " vertices=" + DRAWARRAY_VERTICES.get()
+                + " empty=" + DRAWARRAY_EMPTY.get()
+                + " refused=" + DRAWARRAY_REFUSED.get()
+                + " pureBlueGroups=" + DRAWARRAY_PURE_BLUE.get()
+                + " first=[" + drawArrayFirst + "]"
+                + " refusedByReason=[" + (reasons.length() == 0 ? "none" : reasons.toString()) + "]";
     }
 
     private static void celtium$noteMirrorMiss(String name) {
@@ -1948,6 +2114,533 @@ public final class CeltiumGlStub implements FunctionProvider {
             return base + offset;
         }
         return base;
+    }
+
+    // ---- client-array drawing: the one GL drawing entry point that leaves this class for the frame ---------------
+
+    /** GL_ARRAY_BUFFER: the binding a client vertex pointer is an offset into (not a client address). */
+    private static final int GL_ARRAY_BUFFER = 0x8892;
+    /** The client-array capabilities: the vertex array is the one this path decodes, the others would add attributes. */
+    private static final int GL_VERTEX_ARRAY = 0x8074;
+    private static final int GL_NORMAL_ARRAY = 0x8075;
+    private static final int GL_COLOR_ARRAY = 0x8076;
+    private static final int GL_TEXTURE_COORD_ARRAY = 0x8078;
+    /** GL_FLOAT, the only vertex-pointer element type this path decodes. */
+    private static final int GL_FLOAT = 0x1406;
+    /** GL_TEXTURE_2D, whose enable bit is reported beside each layout: an untextured pipeline needs it off. */
+    private static final int GL_TEXTURE_2D = 0x0DE1;
+    /**
+     * GL_FOG: the enable bit {@code RenderGlobal.renderSky} sets around the sky dome (RenderGlobal.java:1337-1345) and
+     * around the horizon plane (:1478-1471) and clears before the stars (:1354). It is read at draw time, because the
+     * immediate path's fog is per batch, not per frame.
+     */
+    private static final int GL_FOG = 0x0B60;
+    /**
+     * Which sky draws this path refuses, from {@code celtium.glstub.skyFrameGate}: {@code capability} (default),
+     * {@code all} (the blanket refusal this path shipped with, kept as the control) or {@code off} (draw everything the
+     * decode accepts). One flag, so the picture can be taken one flag apart on one jar; see
+     * {@link #celtium$frameChangeRefusal} for what each setting refuses and why.
+     */
+    private static final String SKY_FRAME_GATE =
+            System.getProperty("celtium.glstub.skyFrameGate", "capability").trim().toLowerCase();
+    /** GL_QUADS: every {@code VertexBuffer.drawArrays} caller in the 1.12.2 sources passes 7. */
+    private static final int GL_QUADS = 7;
+    /**
+     * The layout id this path offers the backend: three floats per vertex, no colour, no texture. It is
+     * {@code VulkanImmediateFormats.POSITION} (7), the same id the uploader mixin gives
+     * {@code DefaultVertexFormats.POSITION} - the format every one of those VertexBuffers was built with.
+     */
+    private static final int VERTEX_FORMAT_POSITION = 7;
+    /** Bytes per vertex of that layout. */
+    private static final int POSITION_STRIDE = 12;
+    /** Guards the one-off "first draw" line, so a run records what it decoded once instead of per frame. */
+    private static final java.util.concurrent.atomic.AtomicBoolean DRAWARRAY_FIRST_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * One {@code glDrawArrays}, assembled from the mirrored array buffer and handed to the immediate path.
+     * <p>
+     * This exists because the sky, the stars and the horizon plane reach the screen through exactly this call and no
+     * other. {@code RenderGlobal.renderSky} binds {@code skyVBO}/{@code starVBO}/{@code sky2VBO}, sets
+     * {@code glVertexPointer(3, GL_FLOAT, 12, 0)} and calls {@code VertexBuffer.drawArrays(7)}, which is one line:
+     * {@code GlStateManager.glDrawArrays(mode, 0, count)}. With no GL context that call used to end in this class's
+     * generic no-op, so a GL-less frame had no sky at all while every counter reported a complete one.
+     * <p>
+     * What is decoded is deliberately one case, and it is the case those three draws are: a non-zero
+     * {@code GL_ARRAY_BUFFER} binding whose bytes the stub mirrored, {@code GL_VERTEX_ARRAY} enabled, a
+     * {@code GL_FLOAT} x3 pointer with stride 12 (three floats per vertex, position only) and mode 7
+     * ({@code GL_QUADS}). Anything else is refused by name rather than submitted as a guess: the buffer bytes are
+     * anonymous, and 28-byte {@code VboRenderList} chunk vertices decoded as 12-byte positions would draw terrain
+     * from the wrong offsets - wrong pixels, with nothing in the frame to say so.
+     * <p>
+     * The colour does not travel in these vertices. Format 7 reads it from the backend's own colour mirror
+     * ({@code VulkanTerrainGpuBackend.immediateState}), which is fed by {@code GlStateManagerMixin}'s
+     * {@code GlStateManager.color} hook - the same value the font capture reads through
+     * {@code CeltiumFontGlyphCapture.currentColor}. That is the colour {@code renderSky} sets immediately before each
+     * of the three draws (the sky colour, the star brightness, then black for the horizon plane), so the sky arrives
+     * tinted the way vanilla draws it without this class holding a second copy of the value.
+     */
+    private void drawArrays(int mode, int first, int count) {
+        DRAWARRAY_CALLS.incrementAndGet();
+        if (count <= 0) {
+            // GL draws nothing for an empty range, and so does this: counting it as a gap would be a lie.
+            DRAWARRAY_EMPTY.incrementAndGet();
+            celtium$reportDrawArrays();
+            return;
+        }
+        Integer boundName = this.bufferBindings.get(Integer.valueOf(GL_ARRAY_BUFFER));
+        int buffer = boundName == null ? 0 : boundName.intValue();
+        ByteBuffer storage = buffer == 0 ? null : this.bufferStore.get(Integer.valueOf(buffer));
+        long offset = this.vertexPointerOffset;
+        long end = 0L;
+        String reason = null;
+        if (storage == null) {
+            reason = buffer == 0
+                    ? "no GL_ARRAY_BUFFER is bound (the pointer would be client memory, which the stub does not mirror)"
+                    : "the bound array buffer " + buffer + " has no mirrored storage";
+        } else if (!this.enables.getOrDefault(Integer.valueOf(GL_VERTEX_ARRAY), Boolean.FALSE).booleanValue()) {
+            reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
+        } else if (mode != GL_QUADS) {
+            reason = "draw mode " + mode + " is not handled (only 7 = GL_QUADS)";
+        } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
+                || this.vertexPointerStride != POSITION_STRIDE) {
+            // The pointer state is the contract: format 7 is three floats per vertex, and anything else is a
+            // different format whose bytes read as positions would be wrong rather than absent.
+            reason = "vertex pointer size=" + this.vertexPointerSize + " type=0x"
+                    + Integer.toHexString(this.vertexPointerType) + " stride=" + this.vertexPointerStride
+                    + " is not the position-only float3/" + POSITION_STRIDE + " this path decodes";
+        } else {
+            String extra = celtium$otherClientArrays();
+            if (extra != null) {
+                // Those arrays are enabled, so GL would have drawn attributes this format does not carry. Refused:
+                // an absent sky is visible, a sky drawn from the wrong offsets is not.
+                reason = "client arrays are enabled that format 7 does not read: " + extra;
+            }
+        }
+        if (reason == null && (first < 0 || offset < 0L)) {
+            reason = "first=" + first + " and pointer offset=" + offset + " must not be negative";
+        }
+        if (reason == null) {
+            end = offset + (long) first * POSITION_STRIDE + (long) count * POSITION_STRIDE;
+            if (end > storage.capacity()) {
+                reason = "the draw reads to byte " + end + " of a " + storage.capacity() + "-byte buffer";
+            }
+        }
+        long address = 0L;
+        if (reason == null) {
+            address = memAddress(storage, 0) + offset + (long) first * POSITION_STRIDE;
+            TerrainGpuBackend backend;
+            try {
+                // Resolved here rather than held as a field: this class is installed when the window is created, the
+                // backend only when the renderer comes up, and a field captured early would be permanently null.
+                backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            } catch (RuntimeException | LinkageError error) {
+                backend = null;
+                reason = "the terrain backend could not be reached: " + error;
+            }
+            if (backend == null && reason == null) {
+                reason = "no terrain backend is installed";
+            }
+            if (backend != null && reason == null) {
+                reason = celtium$projectionRefusal(backend);
+            }
+            if (backend != null && reason == null) {
+                reason = celtium$frameChangeRefusal(backend, buffer, count);
+            }
+            if (backend != null && reason == null) {
+                boolean taken;
+                try {
+                    // null vertexFormat: the backend keys this batch on the format id and never reads the object.
+                    // A refused batch is drawn by nobody under the GL-less window, which is why the reason is kept.
+                    taken = backend.submitImmediateBatch(null, POSITION_STRIDE, VERTEX_FORMAT_POSITION, address,
+                            count, mode);
+                } catch (RuntimeException | LinkageError error) {
+                    taken = false;
+                    reason = "the backend threw: " + error;
+                }
+                if (taken) {
+                    DRAWARRAY_DRAWN.incrementAndGet();
+                    DRAWARRAY_VERTICES.addAndGet(count);
+                    celtium$noteAcceptedColor(backend, buffer, count);
+                    if (celtium$noteDrawArrayLayout(buffer) || DRAWARRAY_PROBE_LINES.getAndDecrement() > 0) {
+                        // One line per distinct buffer, at its first accepted draw: what the batch contains, what the
+                        // pointer state said it was, and the matrices the immediate path will draw it with. An accepted
+                        // draw whose transform is wrong is a wrong picture, and the two halves have to be told apart
+                        // from the outside - "the vertices are not the sky" and "the sky is drawn with the identity"
+                        // look the same in the frame and are different findings.
+                        StringBuilder vertices = new StringBuilder();
+                        for (int i = 0; i < 4 && i < count; i++) {
+                            long at = address + (long) i * POSITION_STRIDE;
+                            vertices.append(i == 0 ? "" : " ").append('(')
+                                    .append(celtium$round3(MemoryUtil.memGetFloat(at))).append(',')
+                                    .append(celtium$round3(MemoryUtil.memGetFloat(at + 4))).append(',')
+                                    .append(celtium$round3(MemoryUtil.memGetFloat(at + 8))).append(')');
+                        }
+                        System.out.println("[Celtium] CELTIUM_DRAWARRAY_LAYOUT first=" + first + " count=" + count
+                                + " stride=" + POSITION_STRIDE + " format=" + VERTEX_FORMAT_POSITION + " mode=" + mode
+                                + " buffer=" + buffer + " pointerOffset=" + offset
+                                + " pointerSize=" + this.vertexPointerSize + " pointerType=0x"
+                                + Integer.toHexString(this.vertexPointerType) + " pointerStride="
+                                + this.vertexPointerStride + " v0..v3=[" + vertices + "] "
+                                + celtium$mirroredMatrices(backend)
+                                + " texture2dEnabled=" + this.enables.getOrDefault(Integer.valueOf(GL_TEXTURE_2D), Boolean.FALSE)
+                                + " site=[" + celtium$callSite(10) + "]");
+                        drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
+                                + POSITION_STRIDE + " format=" + VERTEX_FORMAT_POSITION + " buffer=" + buffer
+                                + " pointerOffset=" + offset + " address=0x" + Long.toHexString(address);
+                    }
+                    celtium$reportDrawArrays();
+                    return;
+                }
+                if (reason == null) {
+                    String refusal = backend.lastRefusal();
+                    reason = "the backend refused it: "
+                            + (refusal == null || refusal.isEmpty() ? "no reason recorded" : refusal);
+                }
+            }
+        }
+        celtium$noteDrawArrayRefusal(reason);
+        celtium$reportDrawArrays();
+    }
+
+    /**
+     * {@return the enabled client arrays other than the vertex array, or {@code null} when only the vertex array is on}.
+     * <p>
+     * A 12-byte stride describes a vertex only if the vertex array is the only one in play. GL is asked through the
+     * same enable record {@code glEnableClientState} writes, so this is the state the draw would really have seen.
+     */
+    private String celtium$otherClientArrays() {
+        StringBuilder enabled = new StringBuilder();
+        int[] caps = { GL_NORMAL_ARRAY, GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY };
+        String[] names = { "GL_NORMAL_ARRAY", "GL_COLOR_ARRAY", "GL_TEXTURE_COORD_ARRAY" };
+        for (int i = 0; i < caps.length; i++) {
+            if (this.enables.getOrDefault(Integer.valueOf(caps[i]), Boolean.FALSE).booleanValue()) {
+                if (enabled.length() > 0) {
+                    enabled.append(", ");
+                }
+                enabled.append(names[i]);
+            }
+        }
+        return enabled.length() == 0 ? null : enabled.toString();
+    }
+
+    /** Distinct (size,type,stride) vertex-pointer tuples already described, bounded to twelve lines. */
+    private static final java.util.Set<Integer> VERTEX_POINTER_SITES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Buffers whose first accepted draw has already been described, bounded: one line per distinct array buffer. */
+    private static final java.util.Set<Integer> DRAWARRAY_LAYOUTS_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * Accepted draws still to be described in full, counted down.
+     * <p>
+     * Per-buffer lines said what the buffers are; this says what colour each accepted draw is made in. The group
+     * takes its colour when it opens, so a probe that prints the mirror's colour at the draw is printing the value
+     * the group will carry - and a format with no colour in its vertices is drawn entirely in that value.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger DRAWARRAY_PROBE_LINES =
+            new java.util.concurrent.atomic.AtomicInteger(
+                    Integer.getInteger("celtium.glstub.drawArrayProbeLines", 12).intValue());
+    /**
+     * Accepted draws whose group colour has red and green at exactly zero.
+     * <p>
+     * The colour of a format-7 batch is not in its vertices: the group takes it when it opens. So a frame that shows
+     * pure blue (0,0,B) geometry can only have got it from a group whose colour is pure blue, and counting those among
+     * the accepted draws is what tells "the immediate path drew it in that colour" from "the immediate path displaced
+     * something else that drew it". One number, and the first three sites when it is not zero.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_PURE_BLUE =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicInteger DRAWARRAY_PURE_BLUE_LOGGED =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * {@return whether the first accepted draw from this buffer still needs its one line}.
+     * <p>
+     * Bounded on purpose: {@code DrawArraysCensus} lines are per buffer, not per draw, so a run of ten thousand draws
+     * adds three or four lines rather than ten thousand.
+     */
+    private static boolean celtium$noteDrawArrayLayout(int buffer) {
+        return DRAWARRAY_LAYOUTS_LOGGED.size() < 8 && DRAWARRAY_LAYOUTS_LOGGED.add(Integer.valueOf(buffer));
+    }
+
+    /**
+     * {@return the matrices the immediate path will draw the batch with, read from the renderer's own mirror}.
+     * <p>
+     * This is a probe, not a decision: it is read once per buffer and never gates a draw. It exists because the frame
+     * cannot tell "the vertices are not the sky" from "the sky is drawn with the identity matrix" - and the second is
+     * a property of the renderer's matrix channel, not of this class's decoding.
+     */
+    private static String celtium$mirroredMatrices(TerrainGpuBackend backend) {
+        try {
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                float[] projection = vulkan.celtium$mirroredProjection();
+                float[] modelView = vulkan.celtium$mirroredModelView();
+                float[] colour = vulkan.celtium$mirroredColor();
+                return "mirroredProjection=[" + celtium$round3(projection[0]) + "," + celtium$round3(projection[5])
+                        + "," + celtium$round3(projection[10]) + "," + celtium$round3(projection[11]) + ","
+                        + celtium$round3(projection[14]) + "," + celtium$round3(projection[15]) + "]"
+                        + " mirroredModelViewT=(" + celtium$round3(modelView[12]) + "," + celtium$round3(modelView[13])
+                        + "," + celtium$round3(modelView[14]) + ")"
+                        + " mirroredColor=(" + celtium$round3(colour[0]) + "," + celtium$round3(colour[1]) + ","
+                        + celtium$round3(colour[2]) + "," + celtium$round3(colour[3]) + ")";
+            }
+        } catch (RuntimeException | LinkageError error) {
+            return "mirroredMatrices=unreadable(" + error + ")";
+        }
+        return "mirroredMatrices=not-a-vulkan-backend";
+    }
+
+    /**
+     * Counts accepted draws whose group colour is pure blue (red and green exactly zero), and names the first three.
+     * <p>
+     * The question it was built to answer: the presented image gained ~170,000 pixels whose red and green are exactly
+     * zero while this path was enabled, and a flat-coloured shader can only produce those from a group colour of
+     * (0,0,B). <b>It answered {@code pureBlueGroups=0} over 64 accepted draws while the frame held 176,633 such
+     * pixels</b>, and that negative is the measurement that mattered: the group colour never was pure blue, so the
+     * colour did not come from the push block at all. It came from the vertex data, read as a colour attribute by a
+     * pipeline that had been built as {@code POSITION_TEX_COLOR} whatever variant it was asked for - see
+     * {@link #celtium$frameChangeRefusal} and {@code VulkanImmediateTexturePipeline.allocate}. Kept because it is
+     * still the only counter that would catch a *deliberate* pure-blue group, but it must never again be read as
+     * "the path did not paint those pixels": the instrument's premise (the drawn colour is the group colour) is
+     * exactly what was false.
+     */
+    private static void celtium$noteAcceptedColor(TerrainGpuBackend backend, int buffer, int count) {
+        try {
+            if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
+                return;
+            }
+            float[] colour = vulkan.celtium$mirroredColor();
+            if (colour == null || colour[0] != 0.0F || colour[1] != 0.0F) {
+                return;
+            }
+            DRAWARRAY_PURE_BLUE.incrementAndGet();
+            if (DRAWARRAY_PURE_BLUE_LOGGED.incrementAndGet() <= 3) {
+                System.out.println("[Celtium] CELTIUM_DRAWARRAY_PUREBLUE buffer=" + buffer + " count=" + count
+                        + " colour=(" + celtium$round3(colour[0]) + "," + celtium$round3(colour[1]) + ","
+                        + celtium$round3(colour[2]) + "," + celtium$round3(colour[3]) + ") site=["
+                        + celtium$callSite(8) + "]");
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A probe that fails is a measurement lost, never a frame lost.
+        }
+    }
+
+    /** Three decimals, which is the precision the renderer's own matrix lines use. */
+    private static float celtium$round3(float value) {
+        return (float) (Math.round(value * 1000.0D) / 1000.0D);
+    }
+
+    /**
+     * {@return why this batch must not be submitted, or {@code null} when its transform is usable}.
+     * <p>
+     * The vertices can be decoded perfectly and the draw still be wrong: the transform the immediate path applies is
+     * the renderer's mirrored projection times its mirrored model-view, and under Cleanroom's Kirino the projection
+     * mirror misses the world's real projection. Kirino calls {@code GlStateManager.loadIdentity} (mirrored) before
+     * each pass and then its own {@code Project.gluPerspective}, which never passes through {@code GlStateManager} -
+     * so between those two calls the mirror holds the identity while GL holds the perspective, and a batch offered in
+     * that window is drawn by a matrix that collapses the scene.
+     * <p>
+     * Measured, not assumed: the sky dome's own vertices decode exactly as {@code RenderGlobal.renderSky} builds them
+     * (a 13x13 grid of 64-block quads at y=+16, first vertex (-384, 16, -384), 676 vertices) and the mirrored
+     * projection at that accepted draw was {@code [1,1,1,0,0,1]} in one run and
+     * {@code [0.805,1.431,-1.001,-1.0,-0.1,0]} in another. Runs of the first kind have ~90,000 pixels of pure blue
+     * (0,0,B) in the presented frame where the plane is clipped down to slivers along the frustum edges; the second
+     * kind draws the plane itself. Refusing the degenerate transform keeps the wrong pixels out of the frame and
+     * names the gap instead of hiding it - the projection channel is the fix, not this class.
+     */
+    private static String celtium$projectionRefusal(TerrainGpuBackend backend) {
+        if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
+            return null;
+        }
+        float[] projection;
+        try {
+            projection = vulkan.celtium$mirroredProjection();
+        } catch (RuntimeException | LinkageError error) {
+            return null;
+        }
+        if (projection == null || projection.length < 16) {
+            return null;
+        }
+        float m00 = projection[0];
+        float m11 = projection[5];
+        float m22 = projection[10];
+        float m23 = projection[11];
+        float m32 = projection[14];
+        float m33 = projection[15];
+        if (Math.abs(m00) < 1.0E-4F || Math.abs(m11) < 1.0E-4F) {
+            return "the mirrored projection collapses x or y (m00=" + celtium$round3(m00) + " m11="
+                    + celtium$round3(m11) + "), so this batch would be drawn with the wrong transform";
+        }
+        if (Math.abs(m00 - 1.0F) < 1.0E-4F && Math.abs(m11 - 1.0F) < 1.0E-4F && Math.abs(m22 - 1.0F) < 1.0E-4F
+                && Math.abs(m23) < 1.0E-4F && Math.abs(m32) < 1.0E-4F && Math.abs(m33 - 1.0F) < 1.0E-4F) {
+            return "the mirrored projection is the identity at draw time (Kirino's gluPerspective does not reach the"
+                    + " mirror), so this batch would be drawn with the wrong transform";
+        }
+        return null;
+    }
+
+    /**
+     * Whether this batch is one the immediate path provably cannot reproduce yet, or {@code null} when it may be drawn.
+     * <p>
+     * The first version of this gate refused every draw unconditionally, because the frame measurably got worse when
+     * the path was enabled: ~174,000 pixels with red and green exactly zero against ~10,000 with format 7 refused. That
+     * measurement was right and its explanation was wrong - it was not coverage, not blend, not the frame target's
+     * alpha and not fog. It was {@code VulkanImmediateTexturePipeline}: every variant factory called
+     * {@code create(...)}, which builds the pipeline immediately, and set {@code positionOnly} /
+     * {@code positionNoTexture} afterwards, so all of them were built as the base {@code POSITION_TEX_COLOR} pipeline -
+     * three attributes, a 24-byte binding stride, and a colour attribute at byte 20. The dome's real layout is twelve
+     * bytes of position, and every coordinate of it is a multiple of 64 or +-16 (low two bytes zero), so the attribute
+     * at 20 read the vertex data itself as {@code R8G8B8A8_UNORM}: red and green exactly zero and blue in
+     * {0,64,128,160,192}, interpolated across each quad - the pure-blue pixels, in the wedges the 676-vertex index
+     * expansion makes when it is applied to a 24-byte read. That is fixed at its source, not here.
+     * <p>
+     * What is left here is the part this class can actually answer, and each branch names a capability the immediate
+     * path does not have rather than a symptom in the frame:
+     * <ul>
+     *   <li><b>The group colour's alpha.</b> The position shaders hardcode the fragment alpha,
+     *       {@code v_Color = vec4(u_ColorR, u_ColorG, u_ColorB, 1.0)} (immediate_position.vert:56), so a translucent
+     *       batch is drawn opaque. The stars are exactly that: the star draw's mirrored colour is
+     *       (0.044,0.044,0.044,0.044) - measured, and its fog bit is off while the dome's is on, which is vanilla's
+     *       own bracketing (RenderGlobal.java:1354) - and vanilla blends it with {@code SRC_ALPHA, ONE_MINUS_SRC_ALPHA},
+     *       so at that brightness it darkens the sky by about seven counts instead of covering it. This path would draw
+     *       it as opaque near-black, which is a visible dot vanilla does not have. That needs the push block to carry
+     *       the colour's alpha into the shader, which is the pipeline's side, not this class's.</li>
+     *   <li><b>Fog, conditionally.</b> The immediate path now applies the fixed-function fog (worker F's shader and
+     *       push-block work: {@code u_FogColor}/{@code u_FogParams}/{@code u_FogRow0..2} at 128..207), so a fogged
+     *       batch is drawn the way vanilla draws it and this branch stays silent. It refuses only when the capability
+     *       answers that it is absent ({@code TerrainGpuBackend.immediateFogAvailable()}, which is false until fog
+     *       state has actually arrived from {@code GlStateManager}) - a mixin whose target names differ applies
+     *       nothing, and then a fogged sky draw really would paint the batch's raw colour where vanilla's is the fog
+     *       mix.</li>
+     * </ul>
+     * <p>
+     * <b>The fog branch used to refuse every fogged draw unconditionally, and that was the wrong way round.</b> The
+     * dome is a flat plane four blocks above the eye (camera y=12.0 against the plane's y=16.0 - both measured: the
+     * group-bounds vertex dump and the fixture's own {@code regionOffset}), and the fog the sky is drawn under is
+     * {@code LINEAR 0..128} (worker F's {@code CELTIUM_IMMEDIATE_FOG}, {@code start=0.0 end=128.0 glMode=9729}). A
+     * view ray at elevation theta meets that plane at 4/sin(theta) blocks, so the fog factor across the visible band
+     * runs from 0 at the horizon to ~0.96 overhead: the dome is *mostly unfogged* over the part of the frame it
+     * covers, and vanilla's sky there is close to the dome's raw colour. That is what a working GL bridge leg shows -
+     * {@code n03-ah-jei-bridge} (scene=terrain, stage=world, source=gl-screenshot, 1280x720) reads (140,179,251) at
+     * row 0, (148,184,253) at row 60, (167,199,254) at row 120 and reaches the fog colour (179,207,255) only at row
+     * 180 - a gradient, not a flat fill. Refusing the dome left the fog colour over the whole band, which is the
+     * *worse* of the two wrong pictures; drawing it fogged is the right one.
+     * <p>
+     * The gate is one flag so the picture can be taken one flag apart on one jar:
+     * {@code -Dceltium.glstub.skyFrameGate=capability} (default, the two conditions above),
+     * {@code =all} (the blanket refusal this path shipped with, kept as the control) and {@code =off} (draw whatever the
+     * decode accepts, which is how the alpha refusal's own cost is measured).
+     */
+    private String celtium$frameChangeRefusal(TerrainGpuBackend backend, int buffer, int count) {
+        if ("off".equals(SKY_FRAME_GATE)) {
+            return null;
+        }
+        String reason;
+        if ("all".equals(SKY_FRAME_GATE)) {
+            reason = "the blanket gate (celtium.glstub.skyFrameGate=all) refuses every sky draw; the decode is fine"
+                    + " (buffer=" + buffer + " count=" + count + ")";
+        } else if (this.enables.getOrDefault(Integer.valueOf(GL_FOG), Boolean.FALSE).booleanValue()
+                && !backend.immediateFogAvailable()) {
+            // The capability this branch names now exists (the immediate path applies the fixed-function fog, mirrored
+            // from GlStateManager and carried in the push block's 128..207), so the refusal is conditional on it rather
+            // than permanent. It stays for the case the capability cannot cover: a mixin whose target names differ
+            // applies nothing, `immediateFogAvailable()` then answers false, and this draw would be the batch's raw
+            // colour where vanilla's is the fog colour - the picture this gate was written for.
+            reason = "fog is enabled for this draw (buffer=" + buffer + " count=" + count + ") and the immediate path"
+                    + " has no fog: vanilla's fragments here are the fog colour, which is also what the frame target was"
+                    + " cleared to, so drawing it would replace that with the batch's raw colour"
+                    + " (see CELTIUM_SKY_REFUSAL for the mirrored colour and the clear colour)";
+        } else {
+            float[] colour = celtium$mirroredColour(backend);
+            if (colour == null || colour.length < 4 || !(colour[3] < 1.0F)) {
+                return null;
+            }
+            reason = "the group colour's alpha is " + celtium$round3(colour[3]) + " (buffer=" + buffer + " count="
+                    + count + ") and the position shaders hardcode the fragment alpha to 1.0"
+                    + " (immediate_position.vert:22), so this translucent batch would be drawn opaque";
+        }
+        celtium$noteSkyRefusal(backend, buffer, count, reason);
+        return reason;
+    }
+
+    /** Bounded, so a run records the gate's own facts a few times instead of once per draw. */
+    private static final java.util.concurrent.atomic.AtomicInteger SKY_REFUSAL_LINES =
+            new java.util.concurrent.atomic.AtomicInteger(
+                    Integer.getInteger("celtium.glstub.skyRefusalLines", 4).intValue());
+
+    /**
+     * Prints the facts each gate decision rests on, once per bounded group of refusals.
+     * <p>
+     * The gate is a judgement about pixels, so it has to carry the values it judged: the enabled fog bit, the colour
+     * mirror the batch would have been drawn in, and the clear colour of the frame target - which is the colour the
+     * game's own {@code glClearColor} asked for and, in this scene, the fog colour the dome's fragments would have
+     * come out as. Without them the refusal line is a claim; with them it is checkable from the log alone.
+     */
+    private void celtium$noteSkyRefusal(TerrainGpuBackend backend, int buffer, int count, String reason) {
+        if (SKY_REFUSAL_LINES.getAndDecrement() <= 0) {
+            return;
+        }
+        float[] clear = new float[4];
+        clearColor(clear);
+        System.out.println("[Celtium] CELTIUM_SKY_REFUSAL buffer=" + buffer + " count=" + count
+                + " gate=" + SKY_FRAME_GATE
+                + " fogEnabled=" + this.enables.getOrDefault(Integer.valueOf(GL_FOG), Boolean.FALSE)
+                + " clearColor=(" + celtium$round3(clear[0]) + "," + celtium$round3(clear[1]) + ","
+                + celtium$round3(clear[2]) + "," + celtium$round3(clear[3]) + ")"
+                + " colour=(" + celtium$colourQuad(celtium$mirroredColour(backend)) + ")"
+                + " reason=[" + reason + "]");
+    }
+
+    /** {@return the mirrored colour as one bracketed quad of three-decimal values}, or {@code unknown}. */
+    private static String celtium$colourQuad(float[] colour) {
+        if (colour == null || colour.length < 4) {
+            return "unknown";
+        }
+        return celtium$round3(colour[0]) + "," + celtium$round3(colour[1]) + "," + celtium$round3(colour[2]) + ","
+                + celtium$round3(colour[3]);
+    }
+
+    /** {@return the renderer's own colour mirror}, or {@code null} when this backend does not expose one. */
+    private static float[] celtium$mirroredColour(TerrainGpuBackend backend) {
+        try {
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                return vulkan.celtium$mirroredColor();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A probe that fails is a measurement lost, never a frame lost.
+        }
+        return null;
+    }
+
+    /**
+     * {@return the game-side frames of the current call stack, innermost first}.
+     * <p>
+     * The same filter the uploader hook uses: the renderer's own classes and the mixin machinery are skipped, so what
+     * is left is Minecraft, Forge, Celeritas' call sites and the mod that made the call. Which call site a draw came
+     * from is not decoration here - the 1.12.2 sources contain four different {@code vertexbuffer.drawArrays(7)}
+     * callers with three different strides, and "the sky" and "a chunk list" are told apart by the site, not by the
+     * shape of the call.
+     */
+    private static String celtium$callSite(int limit) {
+        StackTraceElement[] stack = new Throwable().getStackTrace();
+        StringBuilder frames = new StringBuilder();
+        int taken = 0;
+        for (StackTraceElement frame : stack) {
+            String name = frame.getClassName();
+            if (name.startsWith("org.soutalab.celtium") || name.startsWith("org.taumc.celeritas")
+                    || name.startsWith("org.spongepowered") || name.contains("$celtium$")) {
+                continue;
+            }
+            if (taken > 0) {
+                frames.append(" <- ");
+            }
+            frames.append(name).append('.').append(frame.getMethodName()).append(':').append(frame.getLineNumber());
+            if (++taken >= limit) {
+                break;
+            }
+        }
+        return frames.toString();
     }
 
     /**

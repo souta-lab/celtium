@@ -15,6 +15,13 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;
     layout(offset = 124) float u_ColorB;
+
+    // ---- fixed-function fog, appended after the original 128 bytes (declared identically in the fragment stage) ----
+    layout(offset = 128) vec4 u_FogColor;   // rgb = GL_FOG_COLOR, a = blend weight (1.0 in vanilla)
+    layout(offset = 144) vec4 u_FogParams;  // x density, y start, z end, w = mode + 8 * shape
+    layout(offset = 160) vec4 u_FogRow0;    // the model view's row 0 (m00,m01,m02) and its translation tx
+    layout(offset = 176) vec4 u_FogRow1;    // row 1 (m10,m11,m12) and ty
+    layout(offset = 192) vec4 u_FogRow2;    // row 2 (m20,m21,m22) and tz
 } celtium;
 
 layout(location = 0) in vec3 a_Position;
@@ -22,6 +29,22 @@ layout(location = 1) in vec2 a_TexCoord;
 
 layout(location = 0) out vec2 v_TexCoord;
 layout(location = 1) out vec4 v_Color;
+layout(location = 2) out float v_FogDistance;
+
+/**
+ * The fog coordinate, in eye space: {@code M * position} for this batch's own model view.
+ * <p>
+ * The model view is not the texture matrix in the block above - that affine applies to the texture coordinates - so the
+ * fog rows are carried separately at 160..207. Planar fog (the eye-space depth) is the OpenGL default; radial is what
+ * {@code EntityRenderer.setupFog} asks for with {@code GL_NV_fog_distance}.
+ */
+float celtiumFogDistance(vec3 position) {
+    vec3 eye = vec3(dot(position, celtium.u_FogRow0.xyz) + celtium.u_FogRow0.w,
+                    dot(position, celtium.u_FogRow1.xyz) + celtium.u_FogRow1.w,
+                    dot(position, celtium.u_FogRow2.xyz) + celtium.u_FogRow2.w);
+    int selector = int(celtium.u_FogParams.w + 0.5);
+    return (selector >> 3) == 2 ? abs(eye.z) : length(eye);
+}
 
 void main() {
     if (celtium.u_TexB.z > 0.5) {
@@ -37,4 +60,7 @@ void main() {
     // colour slots carry the constant the fragment mixes toward - applying it here too would double the tint.
     v_Color = celtium.u_AlphaRef < 0.0 ? vec4(1.0) : vec4(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB, 1.0);
     gl_Position = celtium.u_ProjectionMatrix * vec4(a_Position, 1.0);
+    // Mode 0 means "no fog for this batch", and the rows above are then whatever the previous group left in the shared
+    // push block, so the coordinate is not computed at all in that case.
+    v_FogDistance = (int(celtium.u_FogParams.w + 0.5) & 7) == 0 ? 0.0 : celtiumFogDistance(a_Position);
 }

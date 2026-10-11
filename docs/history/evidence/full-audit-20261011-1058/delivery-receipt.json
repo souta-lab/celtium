@@ -1,0 +1,26 @@
+{
+  "mdSha256AtDispatch": "b6c8766a48c6e8c5f72ebd90c255ead416061b0fdf26d5d6afb7d56f366ba632",
+  "receipts": [
+    {
+      "recipient": "SWE2 root",
+      "requestId": "af8e1ae7-4b1a-4fd4-bc51-3d56d4920066",
+      "time": "2026-10-11T11:23:08.972892+09:00",
+      "accepted": true,
+      "inboxConfirmed": true,
+      "runningAtConfirmation": true
+    },
+    {
+      "recipient": "N03 font native glyph acceptance",
+      "requestId": "b56619c8-845c-4f4b-9f04-7f6b73c111f5",
+      "time": "2026-10-11T11:26:12.671865+09:00",
+      "messageId": "d4336d0f-73d1-4473-85fd-264f6dabe42d",
+      "inboxConfirmed": true,
+      "runningAtConfirmation": true,
+      "delivery": "queue",
+      "mode": "continuable"
+    }
+  ],
+  "rootGoalRevisionAtDelivery": 66,
+  "rootGoalPhaseAtDelivery": "active",
+  "mdSha256WithReceipts": "c35362ac487c4aca3287f53b8c6641529a0977310e3f481bf6008e05e01e38b5"
+}

@@ -877,8 +877,84 @@ public final class VulkanModelQuadCapture {
             }
             text.append("capturedNothing[").append(empty).append(']');
         }
+        if (text.length() > 0) {
+            text.append(" | ");
+        }
+        text.append(owners());
         return text.length() == 0 ? "none" : text.toString();
     }
+
+    /**
+     * {@return every captured list id under the renderer that compiled it, ranges compressed}.
+     * <p>
+     * The eight-list sample above is ordered by quad count, which in a scene where every model part is one six-quad box
+     * says nothing about which family was captured: the creeper's six lists, the chest's three and the sign's two all
+     * sort arbitrarily among each other. The acceptance is per family - "the mobs, the chest, the sign, the held and
+     * dropped items" - so the family has to be the key of the line, and the ids have to be on it, because the ids are
+     * what {@code notDrawn[...]}, {@code CELTIUM_MODEL_MISSING list=N} and the display-list census name a missing
+     * family by. Measured with it: the chest (three lists) and the sign (two) are captured, built and replayed exactly
+     * like the mobs, which is what moved their difference off the capture and onto the draw.
+     * <p>
+     * The owner is the first frame above {@code ModelRenderer} in the compile stack, so a family is one entry whether
+     * its model has one box or twenty (the spider's eleven). Capped at {@link #OWNER_TABLE_LIMIT} families for a scene
+     * that compiles a different model in every block.
+     */
+    public static synchronized String owners() {
+        java.util.Map<String, java.util.List<Integer>> byOwner =
+                new java.util.LinkedHashMap<String, java.util.List<Integer>>();
+        for (ListGeometry geometry : LISTS.values()) {
+            String owner = celtium$owner(geometry.source);
+            java.util.List<Integer> ids = byOwner.get(owner);
+            if (ids == null) {
+                ids = new java.util.ArrayList<Integer>();
+                byOwner.put(owner, ids);
+            }
+            ids.add(Integer.valueOf(geometry.listId));
+        }
+        StringBuilder text = new StringBuilder("capturedOwners=");
+        int shown = 0;
+        for (java.util.Map.Entry<String, java.util.List<Integer>> entry : byOwner.entrySet()) {
+            if (shown++ >= OWNER_TABLE_LIMIT) {
+                text.append(" +").append(byOwner.size() - OWNER_TABLE_LIMIT).append(" owners");
+                break;
+            }
+            java.util.Collections.sort(entry.getValue());
+            if (shown > 1) {
+                text.append(' ');
+            }
+            text.append(entry.getKey()).append('[');
+            int runStart = -1;
+            int previous = Integer.MIN_VALUE;
+            for (Integer id : entry.getValue()) {
+                if (runStart < 0) {
+                    runStart = id.intValue();
+                } else if (id.intValue() != previous + 1) {
+                    celtium$appendRange(text, runStart, previous);
+                    runStart = id.intValue();
+                }
+                previous = id.intValue();
+            }
+            if (runStart >= 0) {
+                celtium$appendRange(text, runStart, previous);
+            }
+            text.append(']');
+        }
+        return byOwner.isEmpty() ? "capturedOwners=none" : text.toString();
+    }
+
+    /** Appends one id, or {@code first-last} when a run of ids is longer than one. */
+    private static void celtium$appendRange(StringBuilder text, int first, int last) {
+        if (text.charAt(text.length() - 1) != '[') {
+            text.append(',');
+        }
+        text.append(first);
+        if (last != first) {
+            text.append('-').append(last);
+        }
+    }
+
+    /** How many families {@link #owners()} names before it summarises the rest. */
+    private static final int OWNER_TABLE_LIMIT = 12;
 
     /** {@return how many quads have been captured}. */
     public static synchronized long quads() {

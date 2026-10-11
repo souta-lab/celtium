@@ -967,7 +967,8 @@ public final class ValidationClient {
     private static String celtium$entityVariant() {
         StringBuilder variant = new StringBuilder();
         String[] flags = {"celtium.validation.keepEntities", "celtium.validation.captureEntities",
-                "celtium.validation.glowEntities", "celtium.validation.spawnEntities"};
+                "celtium.validation.glowEntities", "celtium.validation.spawnEntities",
+                "celtium.validation.rendererlessEntities"};
         for (String flag : flags) {
             if (Boolean.getBoolean(flag)) {
                 if (variant.length() > 0) {
@@ -1139,6 +1140,8 @@ public final class ValidationClient {
      */
     private boolean celtium$flyingSet;
     private boolean celtium$entitiesSpawned;
+    /** The renderer-less entity of {@code celtium.validation.rendererlessEntities}, spawned once at tick 60. */
+    private boolean celtium$rendererlessSpawned;
     private boolean celtium$wallBuilt;
     private boolean celtium$heldItemSet;
     private boolean celtium$jeiClosed;
@@ -2576,6 +2579,30 @@ public final class ValidationClient {
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
             }
+            if (worldTicks >= 60 && !celtium$rendererlessSpawned
+                    && Boolean.getBoolean("celtium.validation.rendererlessEntities")) {
+                celtium$rendererlessSpawned = true;
+                // The renderer-less entity: a bare Entity, for which RenderManager.getEntityRenderObject returns the
+                // fallback RenderEntity registered against Entity.class, whose doRender is a single call to
+                // Render.renderOffsetAABB - the white box. That is the only user of DefaultVertexFormats.POSITION_NORMAL
+                // in the game, and under the GL-less window the box is drawn by nobody unless the immediate path takes
+                // the layout, so this is the fixture half of that acceptance.
+                //
+                // Its own flag rather than part of keepEntities: it changes the picture, so it changes the scene's
+                // calibration key, and the measured references were taken without it.
+                int lx = (int) Math.floor(mc.player.posX), lz = (int) Math.floor(mc.player.posZ);
+                int lg = mc.world.getHeight(lx, lz - 8);
+                net.minecraft.entity.Entity rendererless = new celtium$RendererlessEntity(mc.world);
+                rendererless.setPositionAndUpdate(mc.player.posX - 1.5D, lg + 0.5D, mc.player.posZ - 8.0D);
+                rendererless.motionX = 0.0D; rendererless.motionY = 0.0D; rendererless.motionZ = 0.0D;
+                // A ground height, not the player's own y: the generic spawn helper puts an entity at the eye's level,
+                // which is inside the ground here. Placed like this the box stands on the surface in the view cone.
+                mc.world.spawnEntity(rendererless);
+                System.out.println("[Celtium] CELTIUM_RENDERERLESS_ENTITY_SPAWNED tick=" + worldTicks
+                        + " pos=" + rendererless.posX + "," + rendererless.posY + "," + rendererless.posZ
+                        + " box=" + rendererless.getEntityBoundingBox()
+                        + " nonPlayer=" + countNonPlayerEntities(mc));
+            }
             if (worldTicks >= 60 && !celtium$wallBuilt && Boolean.getBoolean("celtium.validation.allBlocks")) {
                 celtium$wallBuilt = true;
                 // The registry sweep: one of every registered block, laid out as a wall the camera sees whole, so
@@ -2727,6 +2754,46 @@ public final class ValidationClient {
             }
         }
         return null;
+    }
+
+    /**
+     * The renderer-less entity of {@code celtium.validation.rendererlessEntities}: a bare {@code Entity}.
+     * <p>
+     * A bare {@code Entity} cannot be instantiated - the class is abstract - and this adds nothing to it. Its whole point is
+     * that it is the least entity there is: {@code RenderManager}'s map holds {@code Entity.class} against the fallback
+     * {@code RenderEntity}, every concrete subclass with a renderer of its own takes precedence over that entry, and this
+     * has none. So it draws through {@code RenderEntity.doRender} and therefore through
+     * {@code Render.renderOffsetAABB} - the white box, and the only caller of
+     * {@code DefaultVertexFormats.POSITION_NORMAL} in the game.
+     * <p>
+     * {@code onUpdate} is empty so the entity is exactly where it was put at capture time: a real entity falling or walking
+     * would make two runs of the same scene draw different boxes, and the comparison would be measuring the fall.
+     */
+    private static final class celtium$RendererlessEntity extends net.minecraft.entity.Entity {
+        celtium$RendererlessEntity(net.minecraft.world.World world) {
+            super(world);
+            setSize(1.0F, 1.0F);
+        }
+
+        @Override
+        public void onUpdate() {
+            // Deliberately empty: see the class comment.
+        }
+
+        // Entity declares these abstract, so a concrete subclass has to answer them even though this one exists only to
+        // be drawn. Nothing reads them: the entity is spawned on the client world and never saved.
+        @Override
+        protected void writeEntityToNBT(net.minecraft.nbt.NBTTagCompound compound) {
+        }
+
+        @Override
+        protected void readEntityFromNBT(net.minecraft.nbt.NBTTagCompound compound) {
+        }
+
+        @Override
+        protected void entityInit() {
+            // Entity's third abstract method. Nothing is registered: this entity carries no data and is only drawn.
+        }
     }
 
     /** Puts one entity next to the player, on the client world the renderer draws from. */

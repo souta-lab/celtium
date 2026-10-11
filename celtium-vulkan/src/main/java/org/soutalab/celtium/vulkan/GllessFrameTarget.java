@@ -130,6 +130,31 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private boolean firstAcquire = true;
     /** The first acquire clears both images whatever the game asked: their content starts undefined. */
     private boolean neverCleared = true;
+
+    /**
+     * The clear the game issued while <em>its own main framebuffer</em> was bound, latched by
+     * {@code VulkanTerrainGpuBackend.bindFramebuffer} at the binding change that ends it.
+     * <p>
+     * The game clears three different framebuffers and only one of them is this image: its own main framebuffer is
+     * the delivered frame, the entity-outline framebuffer is {@link #chainPair} and the default framebuffer is
+     * {@link #defaultPair}. The stub records a clear's buffer mask and the colour it would use, but neither says
+     * <em>which</em> framebuffer was bound when the game asked for it, and the request is consumed at the next
+     * frame's acquire - by which time the previous frame's last {@code glClearColor} is the outline framebuffer's
+     * transparent black. Applying that request here cleared the whole delivered image black once per glow frame, and
+     * the sky kept that black wherever nothing drew over it (measured: {@code presentedBlackFraction=0.18984}, run
+     * {@code glow688}). The latch is taken where both facts are still true, and is the only clear this image is
+     * cleared with while one is held.
+     */
+    private boolean gameClearLatched;
+    private int gameClearLatchedMask;
+    private float gameClearLatchedRed;
+    private float gameClearLatchedGreen;
+    private float gameClearLatchedBlue;
+    private float gameClearLatchedAlpha;
+    private double gameClearLatchedDepth = 1.0D;
+    /** How many clears came from the latch and how many still had to be read live, for this target's summary. */
+    private int latchedGameClears;
+    private int liveGameClears;
     private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int abandonedFrames;
@@ -411,6 +436,34 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * Latches a clear the game asked for while the framebuffer it names was still bound, so it can be applied to the
+     * image that framebuffer stands for rather than to whatever is bound when the request is finally read. The caller
+     * is {@code VulkanTerrainGpuBackend.bindFramebuffer}, which is the only place that still knows both facts: the
+     * target the clear was issued against and the colour, depth and buffer mask in effect at that moment.
+     *
+     * @param mask  the {@code GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT} bits the game asked for
+     * @param red   the clear colour in effect when the clear was issued
+     * @param green the clear colour's green channel
+     * @param blue  the clear colour's blue channel
+     * @param alpha the clear colour's alpha channel
+     * @param depth the depth value in effect when the clear was issued
+     */
+    public void noteGameClear(int mask, float red, float green, float blue, float alpha, double depth) {
+        this.gameClearLatched = true;
+        this.gameClearLatchedMask = mask;
+        this.gameClearLatchedRed = red;
+        this.gameClearLatchedGreen = green;
+        this.gameClearLatchedBlue = blue;
+        this.gameClearLatchedAlpha = alpha;
+        this.gameClearLatchedDepth = depth;
+    }
+
+    /** {@return whether a clear addressed to this image is waiting to be recorded}, consuming nothing. */
+    public boolean gameClearLatched() {
+        return this.gameClearLatched;
+    }
+
+    /**
      * Clears what the game asked {@code glClear} to clear while no GL framebuffer existed to clear.
      * <p>
      * This is not a nicety: a depth buffer that is never cleared holds undefined values for the whole session, and
@@ -418,16 +471,44 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * request is carried over from the stub because {@code glClear} is the game's, not ours - the colour it names is
      * the sky or the menu background, and the depth is what makes the next draw's test meaningful.
      * <p>
+     * A latched clear - one the game issued while its own main framebuffer was bound - is preferred, and carries the
+     * colour and depth of the moment it was asked for. The live read is the fallback for a clear that was issued with
+     * no binding change after it, and it is the path that used to run always: it reads {@code glClearColor} at the
+     * acquire, one frame late, which is how the entity-outline framebuffer's transparent black came to clear the
+     * delivered image (the black region). Both counts are reported, so a run says which path its frames took.
+     * <p>
      * The image is in {@link #COLOR_RENDER_LAYOUT} here, which is {@code VK_IMAGE_LAYOUT_GENERAL}, one of the two
      * layouts {@code vkCmdClear*Image} accepts, so no extra transition is needed.
      */
     private void applyGameClears(VkCommandBuffer command) {
-        int clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
         boolean first = this.neverCleared;
+        boolean latched = this.gameClearLatched;
+        int clears;
+        float latchedRed = 0.0F;
+        float latchedGreen = 0.0F;
+        float latchedBlue = 0.0F;
+        float latchedAlpha = 0.0F;
+        double latchedDepth = 1.0D;
+        if (latched) {
+            clears = this.gameClearLatchedMask;
+            latchedRed = this.gameClearLatchedRed;
+            latchedGreen = this.gameClearLatchedGreen;
+            latchedBlue = this.gameClearLatchedBlue;
+            latchedAlpha = this.gameClearLatchedAlpha;
+            latchedDepth = this.gameClearLatchedDepth;
+            this.gameClearLatched = false;
+        } else {
+            clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+        }
         if (clears == 0 && !first) {
             return;
         }
         this.neverCleared = false;
+        if (latched) {
+            this.latchedGameClears++;
+        } else {
+            this.liveGameClears++;
+        }
         // GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
         boolean color = first || (clears & 0x4000) != 0 || (clears & 0x1000) != 0;
         boolean depth = first || (clears & 0x0100) != 0;
@@ -436,7 +517,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     org.lwjgl.vulkan.VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
             if (color) {
                 float[] rgba = new float[4];
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(rgba);
+                if (latched) {
+                    rgba[0] = latchedRed;
+                    rgba[1] = latchedGreen;
+                    rgba[2] = latchedBlue;
+                    rgba[3] = latchedAlpha;
+                } else {
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(rgba);
+                }
                 org.lwjgl.vulkan.VkClearColorValue value =
                         org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
                 value.float32(0, rgba[0]);
@@ -448,9 +536,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         value, range);
             }
             if (depth) {
+                double depthValue = latched ? latchedDepth
+                        : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
                 org.lwjgl.vulkan.VkClearDepthStencilValue value =
                         org.lwjgl.vulkan.VkClearDepthStencilValue.calloc(stack);
-                value.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
+                value.depth((float) depthValue).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_RENDER_LAYOUT,
                         value, range);
@@ -957,6 +1047,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         // second pair a bare "offTargetClears=" would be read as if it covered both images.
         return "glless target: no handoff, abandoned=" + this.abandonedFrames
                 + " lastAbandon=[" + this.lastAbandonReason + "]"
+                + " gameClears=[latched=" + this.latchedGameClears + ",live=" + this.liveGameClears + "]"
                 + " offTargetPairs=[" + pairSummary() + "]";
     }
 

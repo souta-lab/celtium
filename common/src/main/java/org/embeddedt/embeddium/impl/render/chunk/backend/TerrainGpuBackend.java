@@ -117,8 +117,9 @@ public interface TerrainGpuBackend {
 
     /**
      * Mirrors {@code Project.gluPerspective(fov, aspect, near, far)}, which builds the world's projection and
-     * installs it with {@code GL11.glFrustum} - it never passes through {@code GlStateManager}, so a Mixin on that
-     * class alone cannot see it.
+     * installs it with {@code GL11.glMultMatrixf} of a freshly built frustum - it never passes through
+     * {@code GlStateManager}, so a Mixin on that class alone cannot see it, and the stack it multiplies onto is
+     * whatever the game's own mirrored {@code loadIdentity} left there.
      */
     default void perspective(float fovDegrees, float aspect, float near, float far) {
     }
@@ -128,6 +129,26 @@ public interface TerrainGpuBackend {
      * in and the one a mod reaches for directly when it builds its own projection.
      */
     default void frustum(double left, double right, double bottom, double top, double near, double far) {
+    }
+
+    /**
+     * Mirrors one whole {@code Project.gluPerspective(fovy, aspect, zNear, zFar)} call into the projection stack.
+     * <p>
+     * This is {@link #perspective} plus the one thing that call site knows and the frustum alone does not: what the
+     * projection stack holds when the frustum is multiplied in. Every {@code gluPerspective} call in
+     * {@code EntityRenderer} is preceded by the game's own mirrored
+     * {@code matrixMode(GL_PROJECTION); loadIdentity();}, so GL multiplies the frustum onto the identity - while the
+     * mirror, at that same instant, holds the pass projection that {@code applyDerivedProjection} has just written
+     * over it (it runs from the field-of-view argument of this very call). Multiplying there applies the pass
+     * projection twice, which is the measured shape of {@code f82bf4612}: the culling reads the mirror, and the
+     * visible sections fell from 23 to 8. The implementation resets the mirrored stack to what GL holds before it
+     * multiplies, so the mirror ends holding exactly the projection the call installs - at the camera's own call too,
+     * where that value is the one the pass already draws with, so the culling reads the same frustum it read before.
+     *
+     * @return whether the call reached the mirror; a backend that does not mirror matrices answers {@code false}
+     */
+    default boolean mirrorGluPerspective(float fovDegrees, float aspect, float near, float far) {
+        return false;
     }
 
     default void popMatrix() {
@@ -286,5 +307,76 @@ public interface TerrainGpuBackend {
 
     /** {@code GlStateManager.shadeModel}: flat versus smooth, which fixed-function lighting honours per primitive. */
     default void setShadeModel(int glMode) {
+    }
+
+    // ------------------------------------------------------------------ fixed-function fog
+
+    /**
+     * Mirrors {@code GlStateManager.enableFog()} / {@code disableFog()} ({@code func_179127_m} / {@code func_179106_n}).
+     * <p>
+     * The immediate path drew no fog at all before this family existed, and the sky dome is where that shows: the dome
+     * is two <em>flat</em> grids ({@code RenderGlobal.renderSky(BufferBuilder, float, boolean)} builds them at
+     * {@code y = ±16}), and what makes a flat grid read as a sky is the fog ramp across it - looking up you see the
+     * near part of the plane (16 units away), looking at the horizon the far part (hundreds). Without the blend the
+     * plane is one flat colour, which is exactly the "flat polygons" the vanilla-completion brief names.
+     */
+    default void setFogEnabled(boolean enabled) {
+    }
+
+    /**
+     * Mirrors {@code GlStateManager.setFog(FogMode)}, i.e. the {@code glFogi(GL_FOG_MODE, ...)} the game issues:
+     * {@code 9729} LINEAR, {@code 2048} EXP, {@code 2049} EXP2. The GL constant is passed through rather than an
+     * ordinal, so a caller can compare it against {@code GL11} directly.
+     */
+    default void setFogMode(int glMode) {
+    }
+
+    /** Mirrors {@code GlStateManager.setFogDensity(float)} ({@code func_179095_a}); read by EXP and EXP2. */
+    default void setFogDensity(float density) {
+    }
+
+    /** Mirrors {@code GlStateManager.setFogStart(float)} ({@code func_179102_b}); read by LINEAR. */
+    default void setFogStart(float start) {
+    }
+
+    /** Mirrors {@code GlStateManager.setFogEnd(float)} ({@code func_179153_c}); read by LINEAR. */
+    default void setFogEnd(float end) {
+    }
+
+    /**
+     * Mirrors {@code GlStateManager.glFog(GL_FOG_COLOR, buffer)} ({@code func_187402_b} with pname {@code 2918}).
+     * <p>
+     * This is how the fog colour reaches GL: 1.12.2 keeps it in {@code EntityRenderer.fogColorRed/Green/Blue} and
+     * pushes it through this call in {@code setupFogColor} before every {@code setupFog}. The alpha of the GL fog
+     * colour is 1.0 in vanilla and the GL blend uses the RGB only.
+     */
+    default void setFogColor(float red, float green, float blue) {
+    }
+
+    /**
+     * Mirrors {@code GlStateManager.glFogi(GL_FOG_DISTANCE_MODE_NV, GL_EYE_RADIAL_NV)} ({@code func_187412_c} with
+     * pname {@code 34138}).
+     * <p>
+     * {@code EntityRenderer.setupFog} asks for radial fog when {@code GL_NV_fog_distance} is present, which makes the
+     * fog coordinate the distance from the eye rather than the eye-space depth. The two differ everywhere off the view
+     * axis, so a renderer that computes the coordinate itself has to be told which one the game asked for. The GL-less
+     * stub answers the extension query with an empty string, so under GL-less this stays false while the same game code
+     * on a driver that has the extension sets it - which is why the backend's own distance mode can be pinned, and why
+     * this mirror records what the game asked for either way.
+     */
+    default void setFogRadial(boolean radial) {
+    }
+
+    /**
+     * {@return whether this backend would really apply the fixed-function fog to an immediate batch}.
+     * <p>
+     * The question exists because a caller has to decide whether a fogged draw it would otherwise refuse is now drawn
+     * correctly. It has to be a capability and not a flag: a mixin whose target names differ applies nothing
+     * ({@code require = 0}), and a renderer that answered "fog works" on the strength of its own configuration would
+     * then let a batch through unfogged - which is the wrong picture the refusal existed to prevent. So an
+     * implementation answers "yes" only once the game's own state has actually arrived.
+     */
+    default boolean immediateFogAvailable() {
+        return false;
     }
 }

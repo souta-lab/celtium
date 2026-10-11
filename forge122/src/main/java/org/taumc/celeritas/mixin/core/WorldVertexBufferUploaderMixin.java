@@ -45,6 +45,9 @@ public abstract class WorldVertexBufferUploaderMixin {
     private static int celtium$positionTexRefusals;
     private static int celtium$positionRefusals;
     private static int celtium$compositeLayoutRefusals;
+    /** Bounded prints for the layouts whose refusal used to have to be derived from a number: 10 and the unmapped case. */
+    private static int celtium$positionNormalRefusals;
+    private static int celtium$unmappedRefusals;
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
     /** Refusals by "format reason": the family-specific prints did not cover every format. */
     private static final java.util.LinkedHashMap<String, Integer> celtium$refusalsByFormat =
@@ -55,6 +58,41 @@ public abstract class WorldVertexBufferUploaderMixin {
     /** The distinct shapes arriving with no mapped id, counted by element signature. */
     private static final java.util.Map<String, Integer> celtium$unmappedShapes =
             new java.util.LinkedHashMap<String, Integer>();
+
+    /** How many distinct unmapped layouts are described once each, with the standard format carrying the same list. */
+    private static final int SIGNATURE_REPORTS = 8;
+    private static int celtium$signatureReports;
+
+    /**
+     * {@return the element list written the way {@code VertexFormatElement.toString()} writes it}.
+     * <p>
+     * One element is {@code count,usage,type}, elements separated by a space - the text a reader of the log already knows
+     * from the format dumps, and the text {@link org.soutalab.celtium.vulkan.VulkanImmediateFormats#layout} is keyed on. The
+     * mapping used to compare element objects one at a time in a chain of branches, which is the shape that could not tell
+     * the 28-byte normal layout from the 32-byte one: the list was the same and the width was never asked about.
+     */
+    private static String celtium$signature(VertexFormat format) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < format.getElementCount(); i++) {
+            if (i > 0) {
+                text.append(' ');
+            }
+            text.append(format.getElement(i));
+        }
+        return text.toString();
+    }
+
+    /**
+     * {@return the id of the layout, or 0 when no known layout has this element list and width}.
+     * <p>
+     * The width is passed with the list because two of vanilla's own formats differ in nothing else: {@code
+     * POSITION_TEX_COLOR_NORMAL} is 32 bytes and {@code POSITION_TEX_NORMAL} is 28, and the second used to be answered with
+     * the first's id and then refused by the backend for carrying the wrong stride.
+     */
+    private static int celtium$mappedId(VertexFormat format) {
+        return org.soutalab.celtium.vulkan.VulkanImmediateFormats.layout(celtium$signature(format), format.getSize(),
+                format.getElementCount());
+    }
 
     /** Describes a format the same way the dump does, so an unmatched shape can be put beside a known one. */
     private static String celtium$describe(VertexFormat format) {
@@ -203,12 +241,7 @@ public abstract class WorldVertexBufferUploaderMixin {
                     // The largest category still going to OpenGL, identified rather than counted: the shapes that reach the
                     // mapping and are not recognised, by their element signature. Format 0 means "no id", so the only way to
                     // name what it is made of is to describe each arrival.
-                    StringBuilder signature = new StringBuilder();
-                    for (int i = 0; i < format.getElementCount(); i++) {
-                        signature.append(format.getElement(i)).append(' ');
-                    }
-                    String key = signature.toString().trim() + " | size=" + format.getSize()
-                            + " count=" + format.getElementCount();
+                    String key = celtium$describeUnmapped(format);
                     Integer seen = celtium$unmappedShapes.get(key);
                     celtium$unmappedShapes.put(key, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
                 }
@@ -300,6 +333,27 @@ public abstract class WorldVertexBufferUploaderMixin {
                 System.out.println("[Celtium] CELTIUM_POSITION_REFUSED reason=" + backend.lastRefusal()
                         + " stride=" + stride + " vertices=" + vertices);
             }
+            if (!accepted && formatId == org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_NORMAL
+                    && celtium$positionNormalRefusals < 3) {
+                // The white box Render.renderOffsetAABB draws for a renderer-less entity. It is mapped and in the acceptance
+                // mask now, so a refusal here is the backend's own reason rather than the mapping: without this line the
+                // failure mode is the one this format had for its whole life - the box simply is not in the picture and the
+                // census says "id 0" or a stride, never "POSITION_NORMAL".
+                celtium$positionNormalRefusals++;
+                System.out.println("[Celtium] CELTIUM_POSITION_NORMAL_REFUSED format="
+                        + org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(formatId)
+                        + " reason=" + backend.lastRefusal() + " stride=" + stride + " vertices=" + vertices);
+            }
+            if (!accepted && formatId == 0 && celtium$unmappedRefusals < 3) {
+                // The only refusal that has to be read with the format's own name, because there is no id to look up: the
+                // backend refuses id 0 from the start of submitImmediateBatch, before any pipeline is chosen. The name is the
+                // element list and the width, which is what a reader would otherwise re-derive by hand from the arrival
+                // census - and "id 0" is what POSITION_NORMAL reported while it had no branch.
+                celtium$unmappedRefusals++;
+                System.out.println("[Celtium] CELTIUM_UNMAPPED_REFUSED format="
+                        + org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(0) + " reason=" + backend.lastRefusal()
+                        + " layout=[" + celtium$describeUnmapped(format) + "] vertices=" + vertices);
+            }
             if (!accepted && formatId == 6 && celtium$positionTexRefusals < 3) {
                 // The sky, the clouds and the water surface are mapped now, so a refusal here is a guard downstream of the
                 // mapping. Printing the backend's own reason is what identified the composite's, and it is the same question.
@@ -363,11 +417,27 @@ public abstract class WorldVertexBufferUploaderMixin {
     }
 
     /**
-     * Identifies the layout by comparing its element list with vanilla's own formats.
+     * Identifies the layout by comparing its element list and its width with vanilla's own formats.
      * <p>
-     * Class identity would fail for formats a mod builds itself, and a stride alone is ambiguous - 28 bytes is BLOCK,
-     * ITEM and the particle layout, which differ in element order. The element instances are shared, so comparing them
-     * is exact, and the result is cached per format instance because this runs for every batch.
+     * Class identity would fail for formats a mod builds itself, and a stride alone is ambiguous - 28 bytes is BLOCK, the
+     * particle layout and {@code POSITION_TEX_COLOR_NORMAL}, which differ in element order and in element count. The
+     * element instances are shared, so comparing their text and their count is exact, and the result is cached per format
+     * instance because this runs for every batch.
+     * <p>
+     * The mapping is the table in {@link org.soutalab.celtium.vulkan.VulkanImmediateFormats#layout}, which lists every
+     * format {@code DefaultVertexFormats} declares with the id it has and the width it has it at. The widths there are the
+     * runtime ones - vanilla's {@code VertexFormat.addElement} pads nothing, so the normal layouts are 16 and 24 bytes
+     * rather than the multiples of four a stride table would guess. Two facts about that table are worth having here,
+     * because both were live defects:
+     * <ul>
+     * <li>{@code POSITION_NORMAL} - the white box {@code Render.renderOffsetAABB} draws for an entity whose renderer is
+     * missing - had no branch at all and fell to 0. It is 16 bytes (position 12, normal 3, padding 1), which is why no
+     * stride-shaped rule could have found it either.</li>
+     * <li>{@code POSITION_TEX_NORMAL} (24 bytes: position, texture, normal, padding) has the same element list as {@code
+     * POSITION_TEX_COLOR_NORMAL} (28 bytes: position, texture, colour, normal, padding) minus its colour - so the 24-byte
+     * format was answered with id 8 and refused for carrying 24 bytes where 28 were expected. The game uses it in four
+     * places: the fishing line, both fireballs, the dragon fireball and the painting.</li>
+     * </ul>
      */
     private static int celtium$formatId(VertexFormat format) {
         if (format == null) {
@@ -377,37 +447,12 @@ public abstract class WorldVertexBufferUploaderMixin {
         if (cached != null) {
             return cached.intValue();
         }
-        int id;
-        if (celtium$sameElements(format, DefaultVertexFormats.POSITION_COLOR)) {
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_COLOR;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX_COLOR)) {
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_TEX_COLOR;        } else if (celtium$sameElements(format, DefaultVertexFormats.BLOCK)) {
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.BLOCK;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.ITEM)) {
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.ITEM;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP)) {
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.PARTICLE;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX_COLOR_NORMAL)) {
-            // Position, texture, colour and a normal: the entity and TESR layout. Only the trailing normal is unread.
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_TEX_COLOR_NORMAL;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX_NORMAL)) {
-            // Position, texture and a normal: what the final composite batch carries.
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION_TEX_NORMAL;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION)) {
-            // Position only: twelve bytes, one element, no colour and no texture coordinates. The arrival census found this to
-            // be the largest single category still going to OpenGL, and the reason it could not be taken is that its colour is
-            // not in the vertex data - it is whatever the game had current, which is now passed in the push block.
-            id = org.soutalab.celtium.vulkan.VulkanImmediateFormats.POSITION;
-        } else if (celtium$sameElements(format, DefaultVertexFormats.POSITION_TEX)
-                || format.equals(DefaultVertexFormats.POSITION_TEX)) {
-            // The branch that was missing. Position+texture is the shape the sky, the clouds and the water surface upload, it is
-            // byte-for-byte the standard POSITION_TEX format, and a pipeline for id 6 already existed in the backend - but this
-            // chain never assigned 6, so those batches fell through to "unrecognised" and went to OpenGL. Six mapping rules
-            // were tried against the shape before anyone compared it with a known format on one line and then read the chain:
-            // there was nothing wrong with the comparison, and nothing for a rule to fix.
-            id = 6;
-        } else {
-            id = 0;
+        int id = celtium$mappedId(format);
+        if (id == 0) {
+            // The list and the width together did not name a layout. If one of vanilla's own constants has this element list
+            // then the table and the game disagree about the width, which is a defect in this file rather than an unmapped
+            // mod format - and it is exactly the shape of the id-8/id-9 error, which nothing reported while it was live.
+            celtium$reportSignatureMismatch(format);
         }
         if (id != 0) {
             // Only hits are cached. A miss depends on the stride this upload happens to carry, and storing it meant the
@@ -415,6 +460,58 @@ public abstract class WorldVertexBufferUploaderMixin {
             celtium$formatIds.put(format, Integer.valueOf(id));
         }
         return id;
+    }
+
+    /**
+     * {@return the text an unmapped format is filed under}, which is the element list and the width.
+     * <p>
+     * The width is in the key because it is part of what a layout is: two entries whose lists differ only in element order
+     * would otherwise share a line, and the 28/32-byte pair is exactly that case.
+     */
+    private static String celtium$describeUnmapped(VertexFormat format) {
+        if (format == null) {
+            return "null format";
+        }
+        return celtium$signature(format) + " | size=" + format.getSize() + " count=" + format.getElementCount();
+    }
+
+    /**
+     * Prints the once-per-process warning that a format carrying a vanilla element list was not mapped.
+     * <p>
+     * Bounded to {@link #SIGNATURE_REPORTS} lines: the arrival census already counts every unmapped shape, so what this adds
+     * is the comparison against the standard formats - which one has this element list, and at what width - and that is the
+     * same answer for every batch of a shape.
+     */
+    private static void celtium$reportSignatureMismatch(VertexFormat format) {
+        if (celtium$signatureReports >= SIGNATURE_REPORTS) {
+            return;
+        }
+        VertexFormat[] known = {
+                DefaultVertexFormats.POSITION_COLOR, DefaultVertexFormats.POSITION_TEX_COLOR,
+                DefaultVertexFormats.BLOCK, DefaultVertexFormats.ITEM,
+                DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP, DefaultVertexFormats.POSITION_TEX,
+                DefaultVertexFormats.POSITION, DefaultVertexFormats.POSITION_TEX_COLOR_NORMAL,
+                DefaultVertexFormats.POSITION_TEX_NORMAL, DefaultVertexFormats.POSITION_NORMAL,
+                DefaultVertexFormats.OLDMODEL_POSITION_TEX_NORMAL, DefaultVertexFormats.POSITION_TEX_LMAP_COLOR,
+        };
+        String signature = celtium$signature(format);
+        StringBuilder sameList = new StringBuilder();
+        for (VertexFormat candidate : known) {
+            if (celtium$sameElements(format, candidate)) {
+                if (sameList.length() > 0) {
+                    sameList.append(", ");
+                }
+                sameList.append(org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(
+                                celtium$mappedId(candidate)))
+                        .append(" at ").append(candidate.getSize()).append(" bytes");
+            }
+        }
+        celtium$signatureReports++;
+        System.out.println("[Celtium] CELTIUM_UNMAPPED_LAYOUT arrivals=" + celtium$signatureReports
+                + " width=" + format.getSize() + " elements=[" + signature + "]"
+                + " sameElementList=[" + (sameList.length() == 0 ? "none of the standard formats" : sameList) + "]"
+                + " => " + org.soutalab.celtium.vulkan.VulkanImmediateFormats.describeUnknown(signature,
+                        format.getSize(), format.getElementCount()));
     }
 
     private static boolean celtium$sameElements(VertexFormat left, VertexFormat right) {
