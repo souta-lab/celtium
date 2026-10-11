@@ -257,6 +257,19 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.264 **round 70: 引き継ぎ整理 — パノラマは「pair を sample する draw の特定」だけが残り、他は受入済み**
+
+- **このセッションで確定したパノラマの事実（すべて測定済み）**:
+  1. 早期 announcement の replay が効く（`id=45 firstOpaque=0xff8fa3ff` 等・実内容の mirror）＝修正 `a86273436`。
+  2. menu hold で copy が走る（`menuHoldTicks`・gui-stage `81d29010a`）。
+  3. bind は正しい（42/44/45-48 を unit 0 に）／group の texture 捕捉は stale ではない（A/B で確定・probe 削除）。
+  4. copy は依然 `mean=255,255,255`、`VUID-vkCmdDraw-None-09600` が2件（handle `0x360000000036`）。
+- **棄却済みの仮説（再試行しない）**: pass 終了時の read-only hand-back（VUID 2→4）・descriptor の一律 GENERAL（2→20+20）。
+- **残る唯一の作業**: **pair を sample する draw の特定**（descriptor の view と `passAttachedColorImage` を並べる bounded 計器）。
+  その上で **per-descriptor 条件分岐**（view が pass-attached image と一致するときだけ GENERAL、他は SHADER_READ_ONLY）を入れる。
+  受入は menu-hold leg で `validationMessageCount=0` かつ copy の `mean=` が 255 から動くこと。
+- **注意（このセッションの教訓）**: barrier/descriptor の変更は必ず leg で測る。2つの仮説はいずれも「もっともらしい」が測定で棄却された。
+
 ## 0.263 **round 69: descriptor の imageLayout を GENERAL にした仮説も棄却（20+20 VUID に増加）・revert**
 
 - **仮説2（`VulkanImmediateTexturePipeline` の descriptor を `VK_IMAGE_LAYOUT_GENERAL` に）**: GENERAL は sampled にも attachment にも合法なので
