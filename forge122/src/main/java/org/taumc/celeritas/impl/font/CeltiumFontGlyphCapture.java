@@ -182,9 +182,15 @@ public final class CeltiumFontGlyphCapture {
     private static long refused;
     private static boolean firstQuadReported;
     private static final Map<String, Integer> REFUSALS = new LinkedHashMap<String, Integer>();
-    /** One progress line per this many outcomes, and at most {@link #PROGRESS_LINES} of them. */
+    /**
+     * One progress line per this many outcomes, and at most {@link #PROGRESS_LINES} of them.
+     * <p>
+     * The cap is 64 lines, not 24: a GUI scene offers more than 48000 glyph quads (measured 52406 in the video
+     * settings scene and 75790 in its unicode variant), so a cap of 24 stopped the counter lines before the run did
+     * and left the totals readable only by adding them up. 64 lines covers 128000 outcomes and still bounds the log.
+     */
     private static final int PROGRESS_STRIDE = 2000;
-    private static final int PROGRESS_LINES = 24;
+    private static final int PROGRESS_LINES = 64;
     private static int progressLines;
 
     private CeltiumFontGlyphCapture() {
