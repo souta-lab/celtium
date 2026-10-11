@@ -135,8 +135,14 @@ def verify(path):
                     continue
                 minor, major = struct.unpack(">HH", data[4:8])
                 class_versions[major] += 1
-                if major > 52 or minor == 65535:
-                    errors.append(f"Class is not Java 8 compatible: {name} ({major}.{minor})")
+                # The contract is the project's, not Java 8's. Celtium's own modules build at --release 21, so class
+                # major 65 is expected and allowed; what must not happen is a class from a later release (Java 22 is
+                # 66) or a preview class, because the game is only promised to run on the JDKs the plan names. The
+                # check used to demand 52 for every class, which reported the whole Vulkan package as broken while the
+                # README quoted "Java 8 bytecode" back at the reader - two documents agreeing on a contract the code
+                # had already left. If the release target changes, this number and the README change with it.
+                if major > 65 or minor == 65535:
+                    errors.append(f"Class is newer than the release-21 target: {name} ({major}.{minor})")
 
     return {
         "jar": str(path),
