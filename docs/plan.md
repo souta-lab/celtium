@@ -230,6 +230,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.228 **round 35: scissor を group へ捕捉（OPT-10 gap #3）・BH-15 の安全な半分・BH-29 night/day 受入**
+
+- **scissor の group 捕捉（Lead・`c4f72b15f`）**: `glScissor` の矩形と enable を **group を開いた時点で捕捉**し（fog・state と同じ場所）、
+  `ImmediateGroup` に保存して flush 時に**そこから読む**。従来は flush 時に live な stub 記録を読んでいたため、group が scissor 変更を
+  またぐ場合（F3 のリスト・スクロールするパネル）**最後の矩形が全 batch に適用**されていた。OPT-10 が名指しした3つの key gap のうち
+  実バグである1つ。残り2つ（fog が key に無い・light params が enable bit のみ）は**未着手と明記**。
+- **BH-15 の安全な半分（fog-path・`49b1f5dff`）**: frame 境界で残った group を **target ごとに drop して計数**
+  （`unflushedTargetGroupsDropped`・`unflushedTargetDropTargets`）。受入 leg は device loss なし・`unflushedTargetGroupsDropped=0`・
+  `nonBg=0.951773`・`worldTicksAtEnd=206`。**per-target pass は未着手**（下記の単位修正で動機が消えたため）。
+- **単位の訂正（fog-path・重要）**: `offTargetPerTarget` の `offered` は **batches**、`atPass` は **groups**、`drawnPasses` は **passes**。
+  `677/32/17` は「645 group 未描画」ではなく「677 batch が 32 group として pass に到達し 17 pass が描いた」＝**identity は pass を得ている**。
+  以前の attribution とその上に作った drain は前提が崩れ、列名を `batchesOffered=`/`groupsAtPass=`/`drawnPasses=` に改名して理由をコードに明記。
+  **パノラマとロード画面の白は単位が既知の測定から再帰属する**（`CELTIUM_TEX_COPY_SERVED … mean=255`・`CELTIUM_READ_RESOLVE` の3候補 image・
+  enqueue の `target=`・修正済み列）。
+- **BH-29 night/day 受入（weather-water）**: 両 leg `validationClean=true`・`validationMessageCount=0`。
+  entity band luma **night 35.3 対 day 134.6（3.8倍暗い）**、entity/terrain luma 比 **0.581（夜）対 1.788（昼）**＝light-map 項の signature。
+  未主張: 上流参照との同一 pose/tick 比較。
+- **BH-11 の検証シーンは既存（gui-stage）**: fixture の `keepEntities` 経路が **chest と sign を配置**（`ValidationClient.java:3025/3027`）。
+  新しい hook は不要で、entity leg ＋ chest/sign の edge crop ＋ `immediateDepthBiasedGroups` が受入。
+- **OPT-04 の訂正（frame-composite）**: region teardown は**既に confirmed-idle 基準**（`settleGpu("region eviction")` の後）で以前の分類は誤り。
+  実該当は present-mode rebuild の `swapchain.delete()` で、契約をコードに明記。
+- **OPT-07 再挑戦は shape (b)**（perf-ring）: batched copy が `VulkanBuffer` 参照を持ち flush 時に handle を解決、消えた buffer は copy を skip して計数。
+  **arena segment 再利用は gate 不要**（CPU 書込順＝submit 順）。`ensureCapacity` は grow 前に pending copy を flush。stale handle のクラスを消す形。
+
 ## 0.227 **round 34: P0 は2つの独立した原因だった（OPT-07 の batched copy ＋ BH-14 の drain）・両方 revert・安定確認・OPT-05 受入**
 
 - **P0 の原因は2つ**（それぞれ独立に device lost を起こす）:
