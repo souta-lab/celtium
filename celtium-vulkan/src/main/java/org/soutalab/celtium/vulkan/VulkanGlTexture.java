@@ -297,6 +297,9 @@ public final class VulkanGlTexture {
      */
     private static final int SAMPLER_MAX_LOD_DEFAULT = 1;
 
+    /** {@code GL_TEXTURE_MAX_LEVEL}: the deepest level the GL texture has, which the stub records. */
+    private static final int GL_TEXTURE_MAX_LEVEL = 0x813D;
+
     /**
      * The highest mip level <em>this mirror's</em> sampler may read, which is the {@code maxLod} it is created with.
      * <p>
@@ -1891,8 +1894,21 @@ public final class VulkanGlTexture {
                     || min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST
                     || min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
         }
+        // The sampler's reach, from the game's own GL_TEXTURE_MAX_LEVEL when it was recorded. The stub records every
+        // pname except the border colour, and TextureUtil.allocateTextureImpl sets MAX_LEVEL from the texture's
+        // mipmapLevels - so this is the one place the mirror can learn that a texture has *no* mip chain. The font
+        // sheet is the case: allocateTexture(id, w, h) allocates level 0 only, GL samples level 0 only, and the
+        // mirror's generated level 1 is a blur GL does not have. The record is authoritative here and may lower the
+        // reach (unlike setSamplerReach, which only raises it for content the game wrote); the block atlas records 4,
+        // which is the reach its own per-level content already justified, so the terrain measurement is unchanged.
+        boolean maxLevelRecorded = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameterRecorded(glTextureId,
+                GL_TEXTURE_MAX_LEVEL);
+        int recordedMaxLevel = maxLevelRecorded
+                ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId, GL_TEXTURE_MAX_LEVEL) : -1;
+        boolean reachChanges = maxLevelRecorded && recordedMaxLevel >= 0
+                && recordedMaxLevel != this.samplerMaxLod;
         if (repeatU == this.wrapRepeatU && repeatV == this.wrapRepeatV
-                && magNearest == this.nearestFilter && minNearest == this.nearestMinFilter) {
+                && magNearest == this.nearestFilter && minNearest == this.nearestMinFilter && !reachChanges) {
             return;
         }
         String source = "mag=" + (magRecorded ? "record" : "inference") + " min=" + (minRecorded ? "record" : "inference");
@@ -1903,6 +1919,10 @@ public final class VulkanGlTexture {
         this.wrapRepeatV = repeatV;
         this.nearestFilter = magNearest;
         this.nearestMinFilter = minNearest;
+        int reachWas = this.samplerMaxLod;
+        if (reachChanges) {
+            this.samplerMaxLod = Math.max(0, Math.min(recordedMaxLevel, Math.max(1, this.mipLevels) - 1));
+        }
         if (this.sampler != 0L) {
             org.lwjgl.vulkan.VK10.vkDestroySampler(this.context.device(), this.sampler, null);
             this.sampler = 0L;
@@ -1913,6 +1933,8 @@ public final class VulkanGlTexture {
                 + " repeatV=" + repeatV + " mag=" + (this.nearestFilter ? "NEAREST" : "LINEAR")
                 + " min=" + (this.nearestMinFilter ? "NEAREST" : "LINEAR")
                 + " mipmapMode=LINEAR maxLod=" + this.samplerMaxLod
+                + (reachChanges ? " (maxLod was " + reachWas + ", now from the record's GL_TEXTURE_MAX_LEVEL "
+                        + recordedMaxLevel + ")" : "")
                 + " (" + source + "; the sampler was built before the game set it) " + was);
     }
 
