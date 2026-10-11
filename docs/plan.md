@@ -89,6 +89,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.131 **フック撤回後の実測**: terrain が戻り、glow シーンは黒率で落ちる
+
+フック撤回（`f82bf4612`）後の現ツリーで測定:
+
+| run | scene | nonBg | mean | distinct | verdict |
+|---|---|---|---|---|---|
+| `ab-noglu` | allBlocks | **0.838628** | 44.0 | 22706 | **PASSED** |
+| `glow-after-revert` | allBlocks + glowEntities | **0.784304** | 155.41 | 49800 | FAILED |
+
+`glow-after-revert` の失敗理由は具体的で、追跡可能:
+
+```
+FAILED: presentedBlackFraction=0.215696 is above the scene ceiling of 0.05
+        for scene=terrain (overworld (dimension 0))
+```
+
+**21.6% が黒**——glow シーンで輪郭チェーンが入った状態の画が、黒い領域を大きく残している。ゲートは正しく働いている（床を下げない）。
+
+**未確認**: この run の artifact に `postChains` / `postAdopted` / `offTargetPairs` / `chain-pair=` が**出ていない**（`logs/` にも console にも無し）。
+計器は実装されているのに、この構成ではレポートへ届いていない——**「計器を作ったのに読めない」型**なので、次に閉じる。
+そのため「glow 経路が発火したか」はまだ言えない。
+
 ## 0.130 **重大な誤りの訂正**: GL-less の terrain 欠落は 09:33 からの退行で、ゲートは正しく FAIL と言っていた
 
 ### 観測（wedge 担当の測定・時系列は artifact から再構成）
