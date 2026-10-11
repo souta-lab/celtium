@@ -24,9 +24,166 @@ public final class TextureContractCheck {
         checkFlatTexelContract();
         checkTwoIndependentPatchesPreserveTheRest();
         checkTwoIndependentTargets();
+        checkUploadSliceContract();
+        checkPerLevelPatchConversion();
         System.out.println(failures == 0 ? "CELTIUM_CPU_CONTRACT PASS" : "CELTIUM_CPU_CONTRACT FAIL failures=" + failures);
         if (failures != 0) {
             System.exit(1);
+        }
+    }
+
+    /**
+     * N08: one slice for the hash and the copy, validated against the declared extent.
+     *
+     * <p>The rule {@code VulkanGlTexture.requiredUploadBytes} enforces is that a caller must supply
+     * {@code width * height * 4} readable bytes <em>from the buffer's current position</em>, because that is where the
+     * native address the copy takes starts and where the hash now starts too. The regression this fails on: hashing
+     * from absolute index 0 while the copy starts at the position (two different slices), or trusting the caller for
+     * the length and reading past a short buffer.
+     */
+    private static void checkUploadSliceContract() {
+        // An exact-size direct buffer from position 0 is accepted and reports the byte count the copy will use.
+        ByteBuffer exact = direct(16);
+        expect("N08 exact-size bytes", 16L,
+                org.soutalab.celtium.vulkan.VulkanGlTexture.requiredUploadBytes("test", 2, 2, exact));
+
+        // A non-zero position is the case the audit found: four payload bytes sit at offset 4, the buffer has room for
+        // them from there, and the position and limit must not be touched by the check.
+        ByteBuffer offset = direct(32);
+        offset.position(4);
+        offset.limit(20);
+        int positionBefore = offset.position();
+        int limitBefore = offset.limit();
+        expect("N08 offset slice bytes", 16L,
+                org.soutalab.celtium.vulkan.VulkanGlTexture.requiredUploadBytes("test", 2, 2, offset));
+        expect("N08 the caller's position is unchanged", positionBefore, offset.position());
+        expect("N08 the caller's limit is unchanged", limitBefore, offset.limit());
+
+        // A short buffer is refused by name rather than read past: 15 readable bytes cannot hold 16.
+        ByteBuffer shortBuffer = direct(15);
+        expectRefused("N08 a short buffer is refused", "test", 2, 2, shortBuffer);
+        // ... and the check counts the readable bytes, not the capacity: a 32-byte buffer with a limit of 8 is short.
+        ByteBuffer limited = direct(32);
+        limited.limit(8);
+        expectRefused("N08 a buffer whose limit is short is refused", "test", 2, 2, limited);
+        // A position that leaves too little is refused as well, even though the buffer is large.
+        ByteBuffer latePosition = direct(32);
+        latePosition.position(20);
+        expectRefused("N08 a late position with too little remaining is refused", "test", 2, 2, latePosition);
+        // Extents that are not positive, or whose byte count overflows, are refused before any arithmetic is trusted.
+        expectRefused("N08 a zero width is refused", "test", 0, 4, direct(16));
+        expectRefused("N08 a negative height is refused", "test", 4, -1, direct(16));
+        expectRefused("N08 an extent above the int range is refused", "test", 1 << 15, 1 << 15, direct(16));
+        expectRefused("N08 a null buffer is refused", "test", 2, 2, null);
+        // A heap buffer has no native address to copy from, which is what the GL-less capture path relies on being
+        // refused rather than silently mis-copied.
+        expectRefused("N08 a heap buffer is refused", "test", 2, 2, ByteBuffer.allocate(16));
+
+        checkHashSliceContract();
+    }
+
+    /**
+     * N08, the hash half: the duplicate-detection hash must describe the same slice the copy takes.
+     *
+     * <p>The regression this fails on is the one the audit describes: hashing from absolute index 0 while the copy
+     * starts at the buffer's position. With a non-zero position the hash window then ends before the payload does, so
+     * a payload whose earlier bytes did not change hashes the same as the old content and the upload is skipped - the
+     * changed texels never reach the image.
+     */
+    private static void checkHashSliceContract() {
+        // Payload P1 at offset 4, with four bytes of prefix in front of it. The prefix is the same in every buffer, so
+        // only the payload decides the hash of the slice the copy reads.
+        ByteBuffer first = sliced(4, new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+        // The same payload: the hash must not depend on what precedes the position when that prefix is equal...
+        ByteBuffer same = sliced(4, new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+        // ... and a payload that differs only in its LAST byte must hash differently, which is exactly the byte the
+        // old window (absolute 0 for min(remaining/height, width*4)*height bytes) could miss.
+        ByteBuffer changedTail = sliced(4, new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 99});
+        long hashFirst = org.soutalab.celtium.vulkan.VulkanGlTexture.hashUploadSlice(first, 16);
+        expect("N08 the same slice hashes the same", true,
+                hashFirst == org.soutalab.celtium.vulkan.VulkanGlTexture.hashUploadSlice(same, 16));
+        expect("N08 a changed tail byte changes the hash of the slice", true,
+                hashFirst != org.soutalab.celtium.vulkan.VulkanGlTexture.hashUploadSlice(changedTail, 16));
+        // A different prefix in front of the same payload must not change the hash of the slice: the copy reads from
+        // the position, so the hash must ignore what precedes it.
+        ByteBuffer otherPrefix = sliced(4, new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+        ((ByteBuffer) otherPrefix).put(0, (byte) 0x77);
+        expect("N08 the prefix before the position does not enter the slice hash", true,
+                hashFirst == org.soutalab.celtium.vulkan.VulkanGlTexture.hashUploadSlice(otherPrefix, 16));
+        // Hashing more than the buffer can read is refused by name rather than read past the end.
+        try {
+            org.soutalab.celtium.vulkan.VulkanGlTexture.hashUploadSlice(first, 17);
+            failures++;
+            System.out.println("  FAIL N08 a slice hash past the remaining bytes was accepted");
+        } catch (IllegalArgumentException expected) {
+            // The reason names the shortfall; nothing was read.
+        }
+    }
+
+    /** A direct buffer holding {@code prefix} bytes then {@code payload}, positioned at the payload. */
+    private static ByteBuffer sliced(int prefix, byte[] payload) {
+        ByteBuffer buffer = ByteBuffer.allocateDirect(prefix + payload.length);
+        for (int i = 0; i < prefix; i++) {
+            buffer.put(i, (byte) (0x40 + i));
+        }
+        for (int i = 0; i < payload.length; i++) {
+            buffer.put(prefix + i, payload[i]);
+        }
+        buffer.position(prefix);
+        buffer.limit(prefix + payload.length);
+        return buffer;
+    }
+
+    /**
+     * N07: the per-level conversion reads {@code data[level]}, so an announcement's levels above 0 carry their own
+     * pixels instead of level 0's (or zeroes). The regression this fails on: applying level 0's texels to every level,
+     * or converting {@code data[0]} whatever level was asked for.
+     */
+    private static void checkPerLevelPatchConversion() {
+        int[][] data = {
+                {0x11223344, 0x55667788, 0x99AABBCC, 0xDDEEFF11},
+                {0x0A0B0C0D, 0x1A1B1C1D, 0x2A2B2C2D, 0x3A3B3C3D},
+        };
+        ByteBuffer level0 = ByteBuffer.allocate(16);
+        ByteBuffer level1 = ByteBuffer.allocate(16);
+        org.soutalab.celtium.vulkan.VulkanTextureRegistry.toRgba(data, 2, 2, level0);
+        org.soutalab.celtium.vulkan.VulkanTextureRegistry.toRgba(data, 1, 2, 2, level1);
+        expect("N07 level 1 first texel red", 0x0B, level1.get(0) & 0xFF);
+        expect("N07 level 1 first texel alpha", 0x0A, level1.get(3) & 0xFF);
+        expect("N07 level 1 last texel red", 0x3B, level1.get(12) & 0xFF);
+        expect("N07 level 1 differs from level 0", true, (level1.get(0) & 0xFF) != (level0.get(0) & 0xFF));
+        // A level the producer did not supply converts to zeroes, which the caller refuses before it reaches the
+        // image: it must not silently reuse level 0.
+        ByteBuffer absent = ByteBuffer.allocate(16);
+        org.soutalab.celtium.vulkan.VulkanTextureRegistry.toRgba(data, 5, 2, 2, absent);
+        expect("N07 an absent level converts to zeroes, not to level 0", 0, absent.get(0) & 0xFF);
+    }
+
+    /**
+     * Allocates a direct buffer of {@code bytes} whose readable range starts at position 0.
+     *
+     * <p>{@code ByteBuffer.allocateDirect} rather than {@code MemoryUtil.memAlloc} on purpose: this check is meant to
+     * run with nothing but the renderer's classes on the classpath, and touching {@code MemoryUtil} would make it need
+     * the LWJGL natives for a question that is about buffer slicing, not about native memory.
+     */
+    private static ByteBuffer direct(int bytes) {
+        ByteBuffer buffer = ByteBuffer.allocateDirect(bytes);
+        buffer.limit(bytes);
+        return buffer;
+    }
+
+    /** Expects the slice check to refuse the arguments, with the declared extent named in the message. */
+    private static void expectRefused(String what, String label, int width, int height, ByteBuffer pixels) {
+        try {
+            org.soutalab.celtium.vulkan.VulkanGlTexture.requiredUploadBytes(label, width, height, pixels);
+            failures++;
+            System.out.println("  FAIL " + what + ": the check accepted the buffer");
+        } catch (IllegalArgumentException expected) {
+            if (expected.getMessage() == null || !expected.getMessage().contains(label)) {
+                failures++;
+                System.out.println("  FAIL " + what + ": the refusal does not name what was checked ("
+                        + expected.getMessage() + ")");
+            }
         }
     }
 

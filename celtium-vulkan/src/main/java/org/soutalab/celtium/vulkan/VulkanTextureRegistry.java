@@ -101,6 +101,16 @@ public final class VulkanTextureRegistry {
     private String currentOrigin = "unknown";
     /** The distinct reasons a patch was refused, each printed once. */
     private final java.util.Set<String> patchRejections = new java.util.HashSet<String>();
+    /**
+     * Whether a region patch applies every mip level Minecraft supplied (the default) or only level 0.
+     * <p>
+     * The second setting is the pre-N07 behaviour and exists as a measurement control, not as a way to run the
+     * renderer: the per-level census in {@link VulkanGlTexture#mirrorLevelSummary()} and the mirror dump's
+     * {@code writes=}/{@code behind=} fields are what make the difference between "the producer's levels were applied"
+     * and "the levels above 0 kept whatever the last whole upload put there" a pair of numbers from the same binary.
+     */
+    private static final boolean PATCH_MIP_LEVELS =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.patchMipLevels", "true"));
     /** The GL texture ids that reach the readback refresh, recorded once each. */
     private final java.util.Set<Integer> readbackIds = new java.util.HashSet<Integer>();
     /**
@@ -694,12 +704,28 @@ public final class VulkanTextureRegistry {
      * @return the number of texels written
      */
     public static int toRgba(int[][] data, int width, int height, java.nio.ByteBuffer out) {
-        int[] level0 = data != null && data.length > 0 && data[0] != null ? data[0] : new int[0];
+        return toRgba(data, 0, width, height, out);
+    }
+
+    /**
+     * Converts one mip level of the animation method's array into RGBA bytes.
+     * <p>
+     * Same shape as {@link #toRgba(int[][], int, int, java.nio.ByteBuffer)} with the outer index selected: level 0 is
+     * the patch being written, level {@code i} is the same patch at its scaled extent. A level the producer did not
+     * supply - an index past the array, or a {@code null} entry - converts to zeroes and is refused by the caller
+     * before it reaches the image, rather than being written as transparent texels.
+     *
+     * @param level the mip level to read out of {@code data}
+     * @return the number of texels written
+     */
+    public static int toRgba(int[][] data, int level, int width, int height, java.nio.ByteBuffer out) {
+        int[] texels = data != null && level >= 0 && level < data.length && data[level] != null ? data[level]
+                : new int[0];
         int written = 0;
         for (int row = 0; row < height; row++) {
             for (int col = 0; col < width; col++) {
                 int texel = row * width + col;
-                int argb = texel < level0.length ? level0[texel] : 0;
+                int argb = texel < texels.length ? texels[texel] : 0;
                 out.put((byte) ((argb >> 16) & 0xFF));
                 out.put((byte) ((argb >> 8) & 0xFF));
                 out.put((byte) (argb & 0xFF));
@@ -811,20 +837,48 @@ public final class VulkanTextureRegistry {
                     + entry.width + "x" + entry.height);
             return false;
         }
-        java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
-        try {
-            // The array the animation method passes is int[mipLevel][y * width + x], not an array of rows. The first index is
-            // the mip level and the second is the flat texel index, so level 0 is the whole patch and the indexing below is
-            // one-dimensional. Treating data[row] as a row read the wrong texels for every patch of every animated sprite,
-            // and a producer that splits a flat int[] that way loses every row but the first - see toRgba's own note.
-            toRgba(data, width, height, rgba);
-            rgba.flip();
-            long applicationStart = System.nanoTime();
-            if (wholeTexture) {
-                entry.texture.uploadFromImage(width, height, rgba);
-            } else {
-                entry.texture.uploadPatchFromPixels(width, height, x, y, rgba);
+        // How many mip levels this announcement carries, using Minecraft's own rule: uploadTextureMipmap walks
+        // data[level] and breaks as soon as a scaled extent reaches zero. A null entry stops the walk for the same
+        // reason it would stop the GL upload - there is no data for that level and none for any level above it.
+        int suppliedLevels = 0;
+        for (int level = 0; level < data.length; level++) {
+            if ((width >> level) <= 0 || (height >> level) <= 0 || data[level] == null) {
+                break;
             }
+            suppliedLevels++;
+        }
+        if (suppliedLevels == 0) {
+            this.failureCount++;
+            this.lastFailure = "announced pixels for GL texture " + glTextureId + " carry no level-0 data";
+            this.rejectPatch("announced " + width + "x" + height + " at " + x + "," + y + " for GL texture "
+                    + glTextureId + " carry no level-0 data");
+            return false;
+        }
+        // A region patch applies every level the producer sent, each at its own scaled region: that is what keeps the
+        // levels the sampler can reach in step with level 0 (audit N07). A whole-texture write keeps the generated
+        // chain instead - level 0 is copied and the levels above it are regenerated from it, which is the
+        // configuration this project measured as the closest to the GL reference, and leaves no level stale. The
+        // patchMipLevels property turns the per-level application off for measurement only; see PATCH_MIP_LEVELS.
+        int appliedLevels = wholeTexture || !PATCH_MIP_LEVELS ? 1 : suppliedLevels;
+        java.nio.ByteBuffer[] levelBytes = new java.nio.ByteBuffer[appliedLevels];
+        try {
+            for (int level = 0; level < appliedLevels; level++) {
+                int levelWidth = width >> level;
+                int levelHeight = height >> level;
+                java.nio.ByteBuffer buffer = org.lwjgl.system.MemoryUtil.memAlloc(levelWidth * levelHeight * 4);
+                levelBytes[level] = buffer;
+                // The array the animation method passes is int[mipLevel][y * width + x], not an array of rows. The first
+                // index is the mip level and the second is the flat texel index, so level 0 is the whole patch and the
+                // indexing below is one-dimensional. Treating data[row] as a row read the wrong texels for every patch
+                // of every animated sprite, and a producer that splits a flat int[] that way loses every row but the
+                // first - see toRgba's own note.
+                toRgba(data, level, levelWidth, levelHeight, buffer);
+                buffer.flip();
+            }
+            long applicationStart = System.nanoTime();
+            boolean applied = wholeTexture
+                    ? entry.texture.uploadFromImage(width, height, levelBytes[0])
+                    : entry.texture.uploadPatchedLevels(width, height, x, y, levelBytes, appliedLevels, glTextureId);
             long applicationNanos = System.nanoTime() - applicationStart;
             if (wholeTexture) {
                 this.fullImageCount++;
@@ -834,6 +888,8 @@ public final class VulkanTextureRegistry {
                 this.patchCount++;
                 this.patchBytes += (long) width * height * 4L;
                 this.patchNanos += applicationNanos;
+                logPatchLevelContract(glTextureId, width, height, x, y, appliedLevels, suppliedLevels,
+                        entry.texture, applied);
             }
             this.imageUploads++;
             this.staleIds.remove(Integer.valueOf(glTextureId));
@@ -849,9 +905,45 @@ public final class VulkanTextureRegistry {
             this.rejectPatch("conversion or upload failed: " + error);
             return false;
         } finally {
-            org.lwjgl.system.MemoryUtil.memFree(rgba);
+            for (java.nio.ByteBuffer buffer : levelBytes) {
+                if (buffer != null) {
+                    org.lwjgl.system.MemoryUtil.memFree(buffer);
+                }
+            }
         }
     }
+
+    /**
+     * Names the mip-level contract of one animated patch, once per GL texture (audit N07).
+     * <p>
+     * The question this answers in a run's log is the one the audit raised: which levels did the announcement update,
+     * and what does a sampler above level 0 therefore read? {@code appliedLevels} is what went into the image;
+     * {@code suppliedLevels} is what the producer sent; any mirror level between them - and any level above the
+     * producer's chain - keeps the content the last whole upload or patch put there, which is exactly what the GL
+     * texture holds for the same level after the same {@code glTexSubImage2D} call. The sampler's {@code maxLod} is
+     * 1.0, so level 1 is the highest level it can reach.
+     */
+    private void logPatchLevelContract(int glTextureId, int width, int height, int x, int y, int appliedLevels,
+            int suppliedLevels, VulkanGlTexture texture, boolean applied) {
+        Integer id = Integer.valueOf(glTextureId);
+        Integer seen = this.patchLevelLogged.get(id);
+        int count = seen == null ? 0 : seen.intValue();
+        // The first few patches of a texture, not just the first: the census is cumulative, so one sample cannot show
+        // the levels catching up across an animation.
+        if (count >= 3 || this.patchLevelLogged.size() >= 8 && seen == null) {
+            return;
+        }
+        this.patchLevelLogged.put(id, Integer.valueOf(count + 1));
+        System.out.println("[Celtium] CELTIUM_MIRROR_PATCH glTexture=" + glTextureId + " region=" + width + "x" + height
+                + " at " + x + "," + y + " suppliedLevels=" + suppliedLevels + " appliedLevels=" + appliedLevels
+                + " mirrorLevels=" + texture.mipLevels() + " applied=" + applied + " patch#" + (count + 1)
+                + " (each applied level is written at x>>level,width>>level; a level the producer did not supply keeps"
+                + " the content GL also keeps for it; the sampler's maxLod 1.0 reaches level 1)"
+                + " census[" + VulkanGlTexture.mirrorLevelSummary() + "]");
+    }
+
+    /** GL names whose per-level patch contract has been printed, with how many times, so an animation cannot flood the log. */
+    private final java.util.Map<Integer, Integer> patchLevelLogged = new java.util.HashMap<Integer, Integer>();
 
     /**
      * Reports a refused patch once per reason.

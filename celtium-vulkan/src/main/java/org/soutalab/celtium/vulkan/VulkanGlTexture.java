@@ -32,14 +32,38 @@ import static org.lwjgl.vulkan.VK11.*;
  * never saw is not uploaded at all - the mirror keeps no content and says so through {@link #hasFullContent}
  * (see {@link #readCapturedLevel}). {@link #capturedUploadSummary} counts both outcomes.
  * <p>
- * <b>What is mirrored.</b> Only mip level 0 is copied. Minecraft's atlas has a mip chain, but this image has a
- * single level and the sampler clamps the LOD to 0, so terrain always samples the base level. That is a deliberate
- * simplification of the first mirroring implementation, not an accident.
+ * <b>Which mip levels are updated, and what a sampler above level 0 must expect (audit N07).</b> The image holds a
+ * full chain ({@link #mipLevelsFor}), and the sampler reads it with {@code mipmapMode LINEAR} and {@code maxLod 1.0},
+ * so level 1 is reachable and is blended with level 0 at grazing angles. Two write paths exist and they give
+ * different guarantees:
+ * <ul>
+ *   <li><b>Whole-image writes</b> ({@link #uploadFromImage}, {@link #uploadFromGlTexture}) write level 0 and then
+ *       regenerate levels 1..N from it by blitting ({@code recordMipChain}), so every level holds content derived
+ *       from the pixels that were just uploaded. No level is left behind.</li>
+ *   <li><b>Region patches</b> ({@link #uploadPatchedLevels}) write exactly the levels the producer supplied, each at
+ *       its own scaled region ({@code x >> level}, {@code width >> level}) - the same arithmetic
+ *       {@code TextureUtil.uploadTextureMipmap} uses for OpenGL. A level the producer did not supply keeps the
+ *       content it already had, which is exactly what the GL texture holds for the same level after the same call:
+ *       OpenGL's {@code glTexSubImage2D} does not regenerate the chain either. That is a contract, not an accident,
+ *       and {@link #patchLevelsBehind()} plus the {@code CELTIUM_MIRROR_PATCH} line report every level left untouched
+ *       so a stale level is never silent.</li>
+ * </ul>
+ * A patch therefore does <em>not</em> regenerate the whole chain: the cheap correct path is the producer's own
+ * per-level data, which is what Minecraft hands over for animated sprites.
  * <p>
  * <b>Layout invariant.</b> The image is in {@code VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} at rest: it is put there
  * when it is created and again at the end of every upload, so a descriptor written by
  * {@code VulkanTerrainPipeline.bindTextures} is valid as soon as {@link #create} or {@link #uploadFromGlTexture}
  * returns.
+ * <p>
+ * <b>A shared image's layout is a submission fact, not a recording fact (audit N05).</b> The transitions
+ * {@link #ensureSampledLayout} and {@link #ensureGeneralLayout} record are bound to the command buffer they are
+ * recorded into, through the {@link #beginLayoutRecording(VkCommandBuffer)} /
+ * {@link #commitLayoutRecording(VkCommandBuffer)} pair: the image's recorded layout changes only once the submission
+ * that carries the barrier has been accepted by the queue. A recording that is abandoned - a refused submit, a
+ * reset, a new recording started before the previous one was confirmed - rolls its transitions back, so the next
+ * {@code ensure*} call re-records the barrier the dropped buffer never executed. Every wrapper that stands for the
+ * same {@code VkImage} shares one layout fact, so a published image and any other wrapper of it cannot disagree.
  * <p>
  * <b>Threading.</b> All methods run on the render thread. {@link #uploadFromGlTexture} additionally requires the
  * current GL context (it issues GL calls). Because {@link #create} and a size-changing upload destroy device
@@ -230,6 +254,27 @@ public final class VulkanGlTexture {
     /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
     private long lastPixelHash;
 
+    /**
+     * Per-level write provenance, which is what makes "which levels did this write touch" a number rather than a
+     * reading of the code (audit N07).
+     * <p>
+     * {@link #levelWrites} counts the writes each level received and {@link #levelLastWrite} is the value of
+     * {@link #writeSerial} at the last of them. {@link #levelZeroWriteSerial} is the serial of the newest write that
+     * touched level 0 - a patch or a whole-image upload - so a level whose last write is older than that does not
+     * contain the newest level-0 content and the mirror dump prints it as behind. Levels above a patch's supplied
+     * depth are expected to be behind, because OpenGL leaves them exactly the same way; this is the field that says so
+     * instead of leaving it implicit.
+     */
+    private long[] levelWrites = new long[0];
+    private long[] levelLastWrite = new long[0];
+    private long levelZeroWriteSerial;
+    private long writeSerial;
+
+    /** Levels a patch left untouched because the producer supplied no data for them; the run's census of staleness. */
+    private static long patchLevelsBehind;
+    private static long patchLevelsWritten;
+    private static final long[] PATCH_LEVEL_HISTOGRAM = new long[12];
+
     private static final int BYTES_PER_PIXEL = 4;
 
     /**
@@ -257,21 +302,358 @@ public final class VulkanGlTexture {
     /** Layout handshakes recorded and skipped for shared images, so a run says whether the caller's calls arrived. */
     private static long foreignLayoutTransitions;
     private static long foreignLayoutSkips;
+    /** Recordings whose submission was accepted, and recordings that were dropped with their transitions rolled back. */
+    private static long foreignLayoutCommits;
+    private static long foreignLayoutAbandons;
+    private static long foreignLayoutDroppedTransitions;
+    /**
+     * Transitions recorded with no submission token open for their command buffer.
+     * <p>
+     * The pre-N05 fallback: nothing can confirm such a recording, so the fact is taken as soon as the barrier is
+     * recorded. A run that reports this above zero is running without the token binding, which is exactly the state
+     * the audit describes - the number is what says whether the fix is in effect.
+     */
+    private static long foreignLayoutUnbound;
+    /** Wrappers of one image that declared a layout contradicting the shared fact; the recorded handshake wins. */
+    private static long foreignLayoutDeclaredMismatches;
     /**
      * How many handshake lines a run prints. The order matters more than the count: a hand-back recorded after the
-     * chain's forward transition and before the pass that samples the image is the ordering that leaves the sampled
-     * image in GENERAL, and it is visible only as lines in sequence. Bounded so a per-frame handshake cannot flood a
-     * log, with a periodic line afterwards so a long run still shows the counters.
+     * chain's forward transition and before the pass that samples the image is exactly the sequence that leaves a
+     * sampled image in GENERAL, and it is visible only as lines in sequence. Bounded so a per-frame handshake cannot
+     * flood a log, with a periodic line afterwards so a long run still shows the counters.
      */
     private static final int SHARED_LAYOUT_LOGS = 24;
     private static final int SHARED_LAYOUT_PERIODIC = 200;
     private static int sharedLayoutLogs;
 
+    /**
+     * One foreign image's layout fact, shared by every wrapper that stands for that image (audit N05).
+     * <p>
+     * {@link #confirmed} is the layout the image is in as far as accepted submissions go: a transition recorded into
+     * a command buffer does not change it, only {@link #commitLayoutRecording(VkCommandBuffer)} does. That is the
+     * whole point - the wrapper used to move this fact at recording time, so a barrier that was recorded and then
+     * dropped with its command buffer made the next {@code ensure*} skip a transition the image still needed.
+     */
+    static final class ForeignLayoutState {
+        final long image;
+        /** Wrappers naming this image; the fact is dropped when the last of them is deleted. */
+        int wrappers;
+        int confirmed;
+
+        ForeignLayoutState(long image, int confirmed) {
+            this.image = image;
+            this.confirmed = confirmed;
+        }
+    }
+
+    private static final java.util.Map<Long, ForeignLayoutState> FOREIGN_STATES =
+            new java.util.HashMap<Long, ForeignLayoutState>();
+
+    /**
+     * The transitions recorded into one command buffer and not yet accepted by the queue.
+     * <p>
+     * A recording is one command-buffer recording session: {@link #beginLayoutRecording(VkCommandBuffer)} opens it,
+     * {@link #commitLayoutRecording(VkCommandBuffer)} makes its transitions fact, and abandoning it - explicitly, or
+     * implicitly when the next recording opens on the same handle - drops them. Within a recording, a second
+     * transition for the same image chains from the first one's target ({@link #pending}), which is valid because
+     * both barriers execute in the same submission, in order.
+     */
+    private static final class LayoutRecording {
+        final long commandBuffer;
+        final long id;
+        /**
+         * Per image: {@code {oldLayout, newLayout}} of the last transition recorded for it, where {@code oldLayout} is
+         * the layout the image is in at the start of the recording and {@code newLayout} the layout the recording
+         * leaves it in. {@code newLayout} is what a later transition in the same recording must name as its
+         * {@code oldLayout}.
+         */
+        final java.util.LinkedHashMap<Long, int[]> pending = new java.util.LinkedHashMap<Long, int[]>();
+        /** True for the fallback recording opened when the caller never declared one; see {@link #foreignLayoutUnbound}. */
+        final boolean unbound;
+
+        LayoutRecording(long commandBuffer, long id, boolean unbound) {
+            this.commandBuffer = commandBuffer;
+            this.id = id;
+            this.unbound = unbound;
+        }
+    }
+
+    private static final java.util.Map<Long, LayoutRecording> RECORDINGS =
+            new java.util.HashMap<Long, LayoutRecording>();
+    private static long layoutRecordingIds;
+
     /** {@return one line with the shared-image layout handshake counters}, for the run's report. */
     public static String foreignLayoutSummary() {
         synchronized (VulkanGlTexture.class) {
-            return "transitions=" + foreignLayoutTransitions + " skips=" + foreignLayoutSkips;
+            return "transitions=" + foreignLayoutTransitions + " skips=" + foreignLayoutSkips
+                    + " commits=" + foreignLayoutCommits + " abandons=" + foreignLayoutAbandons
+                    + " dropped=" + foreignLayoutDroppedTransitions + " open=" + RECORDINGS.size()
+                    + " unbound=" + foreignLayoutUnbound + " declaredMismatches=" + foreignLayoutDeclaredMismatches;
         }
+    }
+
+    /**
+     * Opens a layout recording for a command buffer, so the transitions recorded into it become fact only when the
+     * submission that carries them is accepted (audit N05).
+     * <p>
+     * Call this from the recording entry point of the command buffer the handshake is recorded into, and
+     * {@link #commitLayoutRecording(VkCommandBuffer)} once {@code vkQueueSubmit} has returned success. A recording
+     * that is abandoned rather than committed - the submit was refused, the buffer was reset, or the next recording
+     * opened first - drops its transitions, and the next {@link #ensureSampledLayout} or
+     * {@link #ensureGeneralLayout} re-records the barrier that never executed.
+     * <p>
+     * Opening a recording on a handle that already has an uncommitted one abandons the previous one, counted as
+     * {@code abandons} in {@link #foreignLayoutSummary()}. It is safe to call this per frame, and it is the only way
+     * the wrapper can distinguish "the previous submission carried my barrier" from "the previous recording was
+     * thrown away": both leave the same command buffer handle behind.
+     */
+    public static void beginLayoutRecording(VkCommandBuffer commandBuffer) {
+        if (commandBuffer == null || commandBuffer.address() == 0L) {
+            throw new IllegalArgumentException("A layout recording needs a live command buffer");
+        }
+        beginLayoutRecording(commandBuffer.address(), "frame recording");
+    }
+
+    /**
+     * Device-free form of {@link #beginLayoutRecording(VkCommandBuffer)}, so the rollback rule can be exercised
+     * without a GPU.
+     *
+     * @param commandBuffer the command buffer address the recording belongs to
+     * @param label         what opened the recording, printed by the abandon line
+     */
+    static void beginLayoutRecording(long commandBuffer, String label) {
+        synchronized (VulkanGlTexture.class) {
+            LayoutRecording previous = RECORDINGS.remove(Long.valueOf(commandBuffer));
+            if (previous != null && !previous.pending.isEmpty()) {
+                // The previous recording was never confirmed. Its barriers may never have executed, so its
+                // transitions are dropped and the layouts stay where the last accepted submission left them.
+                foreignLayoutDroppedTransitions += previous.pending.size();
+                foreignLayoutAbandons++;
+                System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT_ABANDON cmd=0x" + Long.toHexString(commandBuffer)
+                        + " token=" + previous.id + " dropped=" + previous.pending.size()
+                        + " reason=[a new recording began before this one was confirmed: " + label + "]"
+                        + " abandons=" + foreignLayoutAbandons);
+            }
+            RECORDINGS.put(Long.valueOf(commandBuffer),
+                    new LayoutRecording(commandBuffer, ++layoutRecordingIds, false));
+        }
+    }
+
+    /**
+     * Makes every transition recorded into this command buffer fact: the submission that carries them was accepted by
+     * the queue.
+     * <p>
+     * Call this immediately after {@code vkQueueSubmit} returned success - not before it, and not for a recovery
+     * submission that re-records the buffer, because the transitions were in the recording that was discarded.
+     */
+    public static void commitLayoutRecording(VkCommandBuffer commandBuffer) {
+        if (commandBuffer != null) {
+            commitLayoutRecording(commandBuffer.address());
+        }
+    }
+
+    /** Device-free form of {@link #commitLayoutRecording(VkCommandBuffer)}, so the ledger can be tested without a GPU. */
+    static void commitLayoutRecording(long address) {
+        if (address == 0L) {
+            return;
+        }
+        synchronized (VulkanGlTexture.class) {
+            LayoutRecording recording = RECORDINGS.remove(Long.valueOf(address));
+            if (recording == null) {
+                return;
+            }
+            int applied = 0;
+            for (java.util.Map.Entry<Long, int[]> entry : recording.pending.entrySet()) {
+                ForeignLayoutState state = FOREIGN_STATES.get(entry.getKey());
+                if (state == null) {
+                    // The last wrapper of this image was deleted between recording and commit; the image is retired,
+                    // so there is no fact left to move.
+                    continue;
+                }
+                state.confirmed = entry.getValue()[1];
+                applied++;
+            }
+            foreignLayoutCommits++;
+            if (applied > 0 && (sharedLayoutLogs < SHARED_LAYOUT_LOGS
+                    || foreignLayoutCommits % SHARED_LAYOUT_PERIODIC == 0)) {
+                sharedLayoutLogs++;
+                System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT_COMMIT cmd=0x" + Long.toHexString(address)
+                        + " token=" + recording.id + " applied=" + applied + " commits=" + foreignLayoutCommits);
+            }
+        }
+    }
+
+    /**
+     * Drops the transitions recorded into a command buffer without applying them, because the submission that would
+     * have carried them was refused or its recording thrown away. The reason is printed once so a failed run says
+     * which path abandoned the recording.
+     */
+    public static void abandonLayoutRecording(VkCommandBuffer commandBuffer, String reason) {
+        if (commandBuffer != null) {
+            abandonLayoutRecording(commandBuffer.address(), reason);
+        }
+    }
+
+    /** Device-free form of {@link #abandonLayoutRecording(VkCommandBuffer, String)}. */
+    static void abandonLayoutRecording(long address, String reason) {
+        if (address == 0L) {
+            return;
+        }
+        synchronized (VulkanGlTexture.class) {
+            LayoutRecording recording = RECORDINGS.remove(Long.valueOf(address));
+            if (recording == null) {
+                return;
+            }
+            foreignLayoutAbandons++;
+            if (!recording.pending.isEmpty()) {
+                foreignLayoutDroppedTransitions += recording.pending.size();
+            }
+            System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT_ABANDON cmd=0x" + Long.toHexString(address)
+                    + " token=" + recording.id + " dropped=" + recording.pending.size()
+                    + " reason=[" + reason + "] abandons=" + foreignLayoutAbandons);
+        }
+    }
+
+    /**
+     * Declares the layout a foreign image is in and returns the fact all its wrappers share.
+     * <p>
+     * The first wrapper of an image establishes the fact from the owner's declaration. A later wrapper of the same
+     * image does not get a second, private belief: it shares this one, and a declaration that contradicts it is
+     * counted and printed rather than silently adopted, because two wrappers disagreeing about their barrier's
+     * {@code oldLayout} is the class of fault this exists to remove. Only the recorded handshake moves the fact.
+     */
+    static ForeignLayoutState declareForeignImage(long image, int declaredLayout) {
+        synchronized (VulkanGlTexture.class) {
+            Long key = Long.valueOf(image);
+            ForeignLayoutState state = FOREIGN_STATES.get(key);
+            if (state == null) {
+                state = new ForeignLayoutState(image, declaredLayout);
+                FOREIGN_STATES.put(key, state);
+            } else if (state.confirmed != declaredLayout) {
+                foreignLayoutDeclaredMismatches++;
+                if (foreignLayoutDeclaredMismatches <= 4) {
+                    System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT_DECLARED image=0x" + Long.toHexString(image)
+                            + " declared=" + layoutName(declaredLayout) + " known=" + layoutName(state.confirmed)
+                            + " (the wrappers of one image share one layout fact and the recorded handshake wins)"
+                            + " mismatches=" + foreignLayoutDeclaredMismatches);
+                }
+            }
+            state.wrappers++;
+            return state;
+        }
+    }
+
+    /** Drops one wrapper's reference to its image's shared fact, removing the fact with the last wrapper. */
+    private void releaseForeignImage() {
+        if (this.foreignState == null) {
+            return;
+        }
+        synchronized (VulkanGlTexture.class) {
+            ForeignLayoutState state = this.foreignState;
+            this.foreignState = null;
+            state.wrappers--;
+            if (state.wrappers <= 0) {
+                FOREIGN_STATES.remove(Long.valueOf(state.image));
+            }
+        }
+    }
+
+    /** {@return the confirmed layout of a foreign image, or {@code UNDEFINED} when nothing has declared it}. */
+    static int foreignLayoutOf(long image) {
+        synchronized (VulkanGlTexture.class) {
+            ForeignLayoutState state = FOREIGN_STATES.get(Long.valueOf(image));
+            return state == null ? VK_IMAGE_LAYOUT_UNDEFINED : state.confirmed;
+        }
+    }
+
+    /**
+     * {@return the layout the image will be in once the open recording for this command buffer executes}, falling
+     * back to the confirmed layout when no transition for it is pending there.
+     */
+    static int recordingLayoutOf(long commandBuffer, long image) {
+        synchronized (VulkanGlTexture.class) {
+            LayoutRecording recording = RECORDINGS.get(Long.valueOf(commandBuffer));
+            if (recording != null) {
+                int[] pending = recording.pending.get(Long.valueOf(image));
+                if (pending != null) {
+                    return pending[1];
+                }
+            }
+            ForeignLayoutState state = FOREIGN_STATES.get(Long.valueOf(image));
+            return state == null ? VK_IMAGE_LAYOUT_UNDEFINED : state.confirmed;
+        }
+    }
+
+    /**
+     * Decides the {@code oldLayout} of a barrier that must leave a foreign image in {@code wanted}.
+     * <p>
+     * Pure: it changes nothing, so a barrier whose recording then fails leaves the ledger exactly as it was and the
+     * retry declares the same source layout. The transition is registered by {@link #noteForeignTransition} once the
+     * barrier is actually in the command buffer.
+     *
+     * @return the layout the barrier must declare as its source, or {@code -1} when the image is already (or will
+     *         already be, through a barrier recorded earlier in this same command buffer) in {@code wanted}
+     */
+    static int foreignTransitionFrom(long commandBuffer, long image, int wanted) {
+        synchronized (VulkanGlTexture.class) {
+            Long key = Long.valueOf(image);
+            LayoutRecording recording = RECORDINGS.get(Long.valueOf(commandBuffer));
+            int current = confirmedOf(key);
+            if (recording != null) {
+                int[] pending = recording.pending.get(key);
+                if (pending != null) {
+                    current = pending[1];
+                }
+            }
+            return current == wanted ? -1 : current;
+        }
+    }
+
+    /**
+     * Registers a barrier that was just recorded: the image will be in {@code to} if the submission carrying this
+     * command buffer is accepted, and this is the layout a later transition in the same recording must chain from.
+     * <p>
+     * With no recording open for the command buffer one is opened as {@code unbound} and the fact is applied
+     * immediately - the pre-N05 contract, kept so a caller that has not adopted the token API still works, and
+     * counted in {@link #foreignLayoutSummary()} so a run says the binding is not in effect.
+     *
+     * @param from       the layout the barrier declared as its source
+     * @param to         the layout the barrier leaves the image in
+     * @param unboundOut receives whether the recording was unbound, for the caller's log line; may be {@code null}
+     */
+    static void noteForeignTransition(long commandBuffer, long image, int from, int to, boolean[] unboundOut) {
+        synchronized (VulkanGlTexture.class) {
+            Long key = Long.valueOf(image);
+            Long address = Long.valueOf(commandBuffer);
+            LayoutRecording recording = RECORDINGS.get(address);
+            if (recording == null) {
+                recording = new LayoutRecording(commandBuffer, ++layoutRecordingIds, true);
+                RECORDINGS.put(address, recording);
+                foreignLayoutUnbound++;
+                if (foreignLayoutUnbound <= 3 || foreignLayoutUnbound % 500 == 0) {
+                    System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT_UNBOUND cmd=0x"
+                            + Long.toHexString(commandBuffer) + " image=0x" + Long.toHexString(image)
+                            + " (no submission token is open for this command buffer, so a recorded transition is"
+                            + " treated as accepted at recording time; call VulkanGlTexture.beginLayoutRecording /"
+                            + " commitLayoutRecording around the submission to bind it) count=" + foreignLayoutUnbound);
+                }
+            }
+            recording.pending.put(key, new int[] {from, to});
+            if (unboundOut != null) {
+                unboundOut[0] = recording.unbound;
+            }
+            if (recording.unbound) {
+                ForeignLayoutState state = FOREIGN_STATES.get(key);
+                if (state != null) {
+                    state.confirmed = to;
+                }
+            }
+        }
+    }
+
+    private static int confirmedOf(Long image) {
+        ForeignLayoutState state = FOREIGN_STATES.get(image);
+        return state == null ? VK_IMAGE_LAYOUT_UNDEFINED : state.confirmed;
     }
 
     private final VulkanContext context;
@@ -288,11 +670,14 @@ public final class VulkanGlTexture {
     private boolean ownsImage = true;
 
     /**
-     * The layout a foreign image is known to be in, tracked by {@link #ensureSampledLayout} and
-     * {@link #ensureGeneralLayout}. Only meaningful while {@link #ownsImage} is false; an owned mirror keeps its
-     * per-level bookkeeping in {@link #levelLayouts} instead.
+     * The layout fact this wrapper shares with every other wrapper of the same foreign image.
+     * <p>
+     * Only meaningful while {@link #ownsImage} is false; an owned mirror keeps its per-level bookkeeping in
+     * {@link #levelLayouts} instead. The fact lives in {@link #FOREIGN_STATES}, keyed by the {@code VkImage} handle,
+     * so a published image and a second wrapper built for it (an adopted target, a second GL name) can never hold two
+     * different beliefs about the layout their barrier will declare as {@code oldLayout} (audit N05).
      */
-    private int foreignLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    private ForeignLayoutState foreignState;
 
     /**
      * Generations for wrappers built by {@link #shareExternal}, from one counter.
@@ -447,7 +832,9 @@ public final class VulkanGlTexture {
         // One level: the off-target image is created with mipLevels 1 and its view covers exactly that. The sampler
         // is told the same number, so its LOD clamp cannot reach a level the view does not have.
         result.mipLevels = 1;
-        result.foreignLayout = declaredLayout;
+        // The one layout fact for this image: every wrapper of the same VkImage shares it, and only an accepted
+        // submission moves it (see the recording API below).
+        result.foreignState = declareForeignImage(image, declaredLayout);
         result.fullContentArrived = true;
         result.generation = SHARED_GENERATIONS.incrementAndGet();
         // Linear and clamp-to-edge, the state a game framebuffer texture is created with: the composite is a
@@ -487,8 +874,15 @@ public final class VulkanGlTexture {
      * Records the transition that makes a foreign image samplable, if it is not already in that layout.
      * <p>
      * Called by the owner (the backend) at a point it controls, in the command buffer that will do the sampling and
-     * before the sampling command is recorded. Idempotent: a second call in the same layout records nothing, so a
-     * call site may be reached once per frame without a barrier per frame.
+     * before the sampling command is recorded. Idempotent within a recording: a second call that would leave the
+     * image in the same layout records nothing, so a call site may be reached once per frame without a barrier per
+     * frame - and a call that repeats the layout a previous call in the same command buffer already recorded is also
+     * a skip, because both barriers execute in that one submission or neither does.
+     * <p>
+     * The barrier is pending, not fact, until the submission carrying it is accepted: the caller opens the recording
+     * with {@link #beginLayoutRecording(VkCommandBuffer)} and confirms it with
+     * {@link #commitLayoutRecording(VkCommandBuffer)}. A recording that is abandoned leaves the image's recorded
+     * layout untouched, so the next call here re-records the barrier the dropped buffer never executed (audit N05).
      *
      * @param commandBuffer the command buffer the sampling draw is recorded into
      * @throws IllegalStateException if this is an owned mirror (its layout is this class's own bookkeeping), if the
@@ -513,9 +907,28 @@ public final class VulkanGlTexture {
         transitionForeignLayout(commandBuffer, VK_IMAGE_LAYOUT_GENERAL);
     }
 
-    /** {@return the layout this wrapper last recorded for a foreign image}, for reports and tests. */
+    /**
+     * {@return the layout this image is in as far as accepted submissions go}, shared with every other wrapper of the
+     * same image; {@code UNDEFINED} for an owned mirror, whose layouts this class keeps per level instead.
+     * <p>
+     * Deliberately not "the layout the last recording asked for": a barrier that was recorded into a command buffer
+     * the queue never received does not move the image, so it must not move this fact either (audit N05).
+     */
     public int foreignLayout() {
-        return this.foreignLayout;
+        requireAlive();
+        return this.foreignState == null ? VK_IMAGE_LAYOUT_UNDEFINED : this.foreignState.confirmed;
+    }
+
+    /**
+     * {@return the layout the open recording for this command buffer would leave the image in, or the confirmed
+     * layout when nothing is pending there}, for reports and acceptance checks.
+     */
+    public int foreignLayoutIn(VkCommandBuffer commandBuffer) {
+        requireForeign("a layout report");
+        if (commandBuffer == null || commandBuffer.address() == 0L) {
+            throw new IllegalArgumentException("A pending-layout report needs a command buffer");
+        }
+        return recordingLayoutOf(commandBuffer.address(), this.foreignState.image);
     }
 
     private void requireForeign(String what) {
@@ -524,7 +937,7 @@ public final class VulkanGlTexture {
             throw new IllegalStateException(what + " is for an image this class does not own; a mirrored texture's"
                     + " layouts are recorded by its own upload path");
         }
-        if (this.foreignLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+        if (this.foreignState == null || this.foreignState.confirmed == VK_IMAGE_LAYOUT_UNDEFINED) {
             throw new IllegalStateException(what + ": the shared image's layout was never declared");
         }
     }
@@ -537,9 +950,20 @@ public final class VulkanGlTexture {
      * ({@code COLOR_ATTACHMENT_WRITE}) and sampled or written by the post chain's fragment shaders
      * ({@code SHADER_READ} / {@code SHADER_WRITE}). Naming a stage or access that the image does not actually see is
      * harmless; leaving out one it does see is the missing-dependency bug this exists to prevent.
+     * <p>
+     * The source layout is the one the shared fact (or an earlier barrier already recorded in the same command
+     * buffer) says the image is in, and the transition only becomes fact when that command buffer's submission is
+     * accepted. If the recording fails between the decision and the ledger update the ledger is left untouched, so a
+     * retry declares the same source layout.
      */
     private void transitionForeignLayout(VkCommandBuffer commandBuffer, int newLayout) {
-        if (this.foreignLayout == newLayout) {
+        if (commandBuffer == null || commandBuffer.address() == 0L) {
+            throw new IllegalArgumentException("A shared image layout transition needs a command buffer");
+        }
+        final long address = commandBuffer.address();
+        boolean[] unbound = new boolean[1];
+        final int oldLayout = foreignTransitionFrom(address, this.foreignState.image, newLayout);
+        if (oldLayout < 0) {
             synchronized (VulkanGlTexture.class) {
                 foreignLayoutSkips++;
                 if (sharedLayoutLogs < SHARED_LAYOUT_LOGS) {
@@ -551,10 +975,6 @@ public final class VulkanGlTexture {
             }
             return;
         }
-        if (commandBuffer == null || commandBuffer.address() == 0L) {
-            throw new IllegalArgumentException("A shared image layout transition needs a command buffer");
-        }
-        final int oldLayout = this.foreignLayout;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default()
@@ -570,7 +990,11 @@ public final class VulkanGlTexture {
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
             vkCmdPipelineBarrier(commandBuffer, WORKING_STAGES, WORKING_STAGES, 0, null, null, barrier);
         }
-        this.foreignLayout = newLayout;
+        // The barrier is in the command buffer now, so the transition is pending: it becomes fact when this command
+        // buffer's submission is accepted, and it is dropped if the recording is abandoned. Nothing was written to the
+        // ledger before the barrier existed, so a recording failure needs no rollback - the next call re-decides from
+        // the same source layout.
+        noteForeignTransition(address, this.foreignState.image, oldLayout, newLayout, unbound);
         synchronized (VulkanGlTexture.class) {
             foreignLayoutTransitions++;
             // The order of these lines against the owner's own recording is the measurement: a hand-back printed
@@ -581,7 +1005,8 @@ public final class VulkanGlTexture {
                 sharedLayoutLogs++;
                 System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT image=0x" + Long.toHexString(this.image)
                         + " view=0x" + Long.toHexString(this.view) + " " + layoutName(oldLayout) + " -> "
-                        + layoutName(newLayout) + " cmd=0x" + Long.toHexString(commandBuffer.address())
+                        + layoutName(newLayout) + " cmd=0x" + Long.toHexString(address)
+                        + " token=" + (unbound[0] ? "unbound" : "pending")
                         + " transition#" + foreignLayoutTransitions);
             }
         }
@@ -856,25 +1281,375 @@ public final class VulkanGlTexture {
         this.fullContentArrived = true;
     }
 
+    /**
+     * Writes one region of level 0, leaving the levels above it exactly as they were.
+     * <p>
+     * Kept for callers that have only level-0 data (and for the CPU contract check). The per-level entry point is
+     * {@link #uploadPatchedLevels}, which is what an animated sprite's announcement carries and what keeps the levels
+     * a sampler can reach in step with level 0 (audit N07).
+     */
     public boolean uploadPatchFromPixels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer rgba) {
+        return uploadPatchedLevels(pixelWidth, pixelHeight, x, y, new java.nio.ByteBuffer[] {rgba}, 1);
+    }
+
+    /**
+     * Writes a region of each mip level the producer supplied, at that level's own scaled region.
+     * <p>
+     * This is Minecraft's own contract, mirrored rather than invented: {@code TextureUtil.uploadTextureMipmap} walks
+     * {@code data[mipLevel]} and calls {@code glTexSubImage2D(level, x >> level, y >> level, width >> level,
+     * height >> level)} for each one, breaking as soon as a scaled extent reaches zero. An animated sprite therefore
+     * patches level 0 <em>and</em> every level above it in one call, and the levels the sampler can reach (level 0 and,
+     * with this class's {@code maxLod} of 1.0, level 1) stay in the same phase as the frame the game just drew.
+     * <p>
+     * <b>Levels the producer did not supply keep their previous content</b> - the same thing OpenGL does for the same
+     * texture after the same call, because {@code glTexSubImage2D} does not regenerate a chain either. That is why
+     * this path does not blit a new chain over the whole image: it would replace the untouched levels with content the
+     * GL reference does not have. Each call reports how many mirror levels it left untouched
+     * ({@link #mirrorLevelSummary()}), so "level 1 is stale because the producer only sent level 0" is a number in the
+     * run rather than a silence.
+     * <p>
+     * All supplied levels travel in one staging buffer and one command buffer: one submit and one queue drain per
+     * patch, not one per level.
+     *
+     * @param pixelWidth     the level-0 width of the region
+     * @param pixelHeight    the level-0 height of the region
+     * @param x              the level-0 x offset of the region inside the image
+     * @param y              the level-0 y offset of the region inside the image
+     * @param levels         per level, the tightly packed RGBA8 rows of that level's region; {@code null} where the
+     *                       producer supplied nothing (an entry after a gap is not read)
+     * @param suppliedLevels how many entries of {@code levels} are usable, at least 1
+     * @return whether the image was written
+     * @throws IllegalArgumentException if no usable level was supplied, if a region falls outside the image level, or
+     *                                  if a level's buffer does not hold its declared extent (audit N08)
+     */
+    public boolean uploadPatchedLevels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer[] levels,
+            int suppliedLevels) {
+        return uploadPatchedLevels(pixelWidth, pixelHeight, x, y, levels, suppliedLevels, -1);
+    }
+
+    /**
+     * The same patch upload with the source GL name, so the mirror dump can name the levels it just wrote.
+     *
+     * @param glTextureId the GL name the pixels came from, or {@code -1} when the caller has none; used only by the
+     *                    diagnostic dump, which is what makes a per-level census possible after a patch
+     */
+    public boolean uploadPatchedLevels(int pixelWidth, int pixelHeight, int x, int y, java.nio.ByteBuffer[] levels,
+            int suppliedLevels, int glTextureId) {
         requireOwned("a patch upload");
-        // Sticky, like uploadFromImage: a patch over a poisoned mirror is poisoned as well.
+        if (levels == null || suppliedLevels <= 0 || levels.length < suppliedLevels) {
+            throw new IllegalArgumentException("A patch upload of " + pixelWidth + "x" + pixelHeight + " at " + x + ","
+                    + y + " declares " + suppliedLevels + " supplied mip level(s) but carries "
+                    + (levels == null ? "no array" : levels.length + " entries"));
+        }
+        if (pixelWidth <= 0 || pixelHeight <= 0) {
+            throw new IllegalArgumentException("A patch upload of " + pixelWidth + "x" + pixelHeight + " pixels has no"
+                    + " positive extent, so no texel is addressed");
+        }
         if (x < 0 || y < 0 || x + pixelWidth > width || y + pixelHeight > height) {
+            // Sticky, like uploadFromImage: a patch over a poisoned mirror is poisoned as well.
+            refusePatch("region " + pixelWidth + "x" + pixelHeight + " at " + x + "," + y + " outside the mirror "
+                    + width + "x" + height);
             return false;
         }
-        copyToImage(rgba, pixelWidth, pixelHeight, 0, x, y, true);
-        if (x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height) {
-            // A "patch" that covers the image is a full initialization: the light map arrives this way.
-            this.fullContentArrived = true;
-            // A whole-texture write is what the light map is made of, so a dump here names its content: black light
-            // map in, black terrain and black GUI text out.
-            dumpMirrorPixels(-1);
+        final int mirrorLevels = Math.max(1, this.mipLevels);
+        // The depth the producer actually supplied, using Minecraft's own break rule: a level whose scaled extent
+        // reaches zero is not uploaded, and a null entry means there is no data for that level or any above it. The
+        // patch then writes as many of those levels as the mirror has - a producer that supplies more levels than the
+        // mirror's chain is counted, not silently truncated.
+        int producerDepth = 0;
+        for (int level = 0; level < suppliedLevels; level++) {
+            if ((pixelWidth >> level) <= 0 || (pixelHeight >> level) <= 0) {
+                break;
+            }
+            if (levels[level] == null) {
+                break;
+            }
+            producerDepth++;
         }
+        if (producerDepth == 0) {
+            refusePatch("no usable mip level: level 0 is " + (levels[0] == null ? "absent" : "present")
+                    + " and the region is " + pixelWidth + "x" + pixelHeight + " at " + x + "," + y);
+            return false;
+        }
+        final int depth = Math.min(producerDepth, mirrorLevels);
+        // Every region and every buffer is checked before anything is copied, so a patch that would write past a
+        // level or read past a buffer leaves the image untouched instead of half-written (audit N08).
+        long[] offsets = new long[depth];
+        long packed = 0L;
+        for (int level = 0; level < depth; level++) {
+            int levelWidth = Math.max(1, width >> level);
+            int levelHeight = Math.max(1, height >> level);
+            int patchWidth = pixelWidth >> level;
+            int patchHeight = pixelHeight >> level;
+            int levelX = x >> level;
+            int levelY = y >> level;
+            if (levelX + patchWidth > levelWidth || levelY + patchHeight > levelHeight) {
+                refusePatch("level " + level + " region " + patchWidth + "x" + patchHeight + " at " + levelX + ","
+                        + levelY + " outside the mirror level " + levelWidth + "x" + levelHeight);
+                return false;
+            }
+            long bytes = requiredUploadBytes("mip level " + level + " of a patch at " + x + "," + y, patchWidth,
+                    patchHeight, levels[level]);
+            offsets[level] = packed;
+            packed += bytes;
+        }
+
+        // All levels in one staging allocation: offsets stay multiples of four because every RGBA8 row is.
+        ensureStaging(packed);
+        for (int level = 0; level < depth; level++) {
+            putStagingPixels(stagingAddress + offsets[level], levels[level], pixelWidth >> level,
+                    pixelHeight >> level);
+        }
+        if (!stagingCoherent) {
+            flushStaging();
+        }
+
+        VkCommandBuffer commandBuffer = context.beginCommands();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+            for (int level = 0; level < depth; level++) {
+                int patchWidth = pixelWidth >> level;
+                int patchHeight = pixelHeight >> level;
+                int oldLayout = levelLayout(level);
+                // A patch reads what is already in the level (it writes a region, not the whole level) and a previous
+                // frame may still have it bound for sampling, so both the shader reads and any transfer role are named
+                // as sources. A broader source mask only orders more; a missing one is a lost dependency.
+                barrier.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT
+                                | VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        // The layout this level is recorded in. UNDEFINED means nothing has established its content,
+                        // and declaring UNDEFINED is then exactly right: there is nothing to preserve.
+                        .oldLayout(oldLayout)
+                        .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                        .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                        .image(image);
+                barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+                vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+
+                region.get(0).bufferOffset(offsets[level]).bufferRowLength(0).bufferImageHeight(0);
+                region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                        .mipLevel(level).baseArrayLayer(0).layerCount(1);
+                region.get(0).imageOffset().set(x >> level, y >> level, 0);
+                region.get(0).imageExtent().set(patchWidth, patchHeight, 1);
+                vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+
+                barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                        .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                        .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
+                        barrier);
+            }
+        } finally {
+            // Submitted and waited for by the helper, so the image holds the levels when this returns.
+            context.endCommands(commandBuffer);
+        }
+        this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        for (int level = 0; level < depth; level++) {
+            setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        recordPatchWrite(depth, mirrorLevels, Math.max(0, producerDepth - mirrorLevels));
+        boolean wholeImage = x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height;
+        if (wholeImage) {
+            // A "patch" that covers level 0 of the image is a full initialization for the level-0 content: the light
+            // map arrives this way. Levels above it are still exactly what this patch wrote (the producer's own data
+            // where supplied, the previous content elsewhere), which the census above counts.
+            this.fullContentArrived = true;
+        }
+        // The dump is the measurement that says which levels this patch actually reached: each level's write count is
+        // printed next to whether it is behind level 0, so a patch that covered only level 0 is visible as a number
+        // rather than inferred from the code (audit N07). Diagnostic only, and the dump's own caps apply.
+        dumpMirrorPixels(glTextureId);
         // The image no longer holds what the last full upload put there, so the hash identifying that content is stale. Without
         // this a later full upload of the same pixels is skipped as a duplicate and the patch survives in a texture that should
         // have been replaced wholesale (audit A06).
         this.lastPixelHash = 0L;
         return true;
+    }
+
+    /**
+     * Counts one patch's level coverage and writes it onto this object's per-level provenance.
+     * <p>
+     * The two numbers the audit's N07 asks for: which levels this write put pixels into, and how many levels of the
+     * mirror it left holding older content. The second is not automatically a fault - the producer may not have sent
+     * those levels, exactly as OpenGL's own patch would not have - but it must be visible.
+     */
+    private void recordPatchWrite(int depth, int mirrorLevels, int beyondMirror) {
+        this.writeSerial++;
+        long serial = this.writeSerial;
+        if (this.levelWrites.length < mirrorLevels) {
+            this.levelWrites = java.util.Arrays.copyOf(this.levelWrites, mirrorLevels);
+            this.levelLastWrite = java.util.Arrays.copyOf(this.levelLastWrite, mirrorLevels);
+        }
+        for (int level = 0; level < depth; level++) {
+            this.levelWrites[level]++;
+            this.levelLastWrite[level] = serial;
+        }
+        if (depth > 0) {
+            this.levelZeroWriteSerial = serial;
+        }
+        synchronized (VulkanGlTexture.class) {
+            for (int level = 0; level < depth; level++) {
+                if (level < PATCH_LEVEL_HISTOGRAM.length) {
+                    PATCH_LEVEL_HISTOGRAM[level]++;
+                }
+            }
+            patchLevelsWritten += depth;
+            patchLevelsBehind += Math.max(0, mirrorLevels - depth) + beyondMirror;
+            if (beyondMirror > 0 && patchBeyondMirrorLogs < 4) {
+                patchBeyondMirrorLogs++;
+                System.out.println("[Celtium] CELTIUM_MIRROR_PATCH_BEYOND_MIRROR image=0x"
+                        + Long.toHexString(this.image) + " supplied=" + (depth + beyondMirror) + " mirrorLevels="
+                        + mirrorLevels + " (the producer patched " + beyondMirror + " level(s) this image does not"
+                        + " have; they were not written) logs=" + patchBeyondMirrorLogs);
+            }
+        }
+    }
+
+    private static int patchBeyondMirrorLogs;
+
+    /** {@return how many writes a level has received}, for the mirror dump's provenance line. */
+    private long levelWrites(int level) {
+        return level >= 0 && level < this.levelWrites.length ? this.levelWrites[level] : 0L;
+    }
+
+    /**
+     * Records a whole-image upload: level 0 was copied and every level above it was regenerated from it, so all of
+     * them now hold content from this one write and none of them is behind.
+     */
+    private void recordWholeImageWrite() {
+        this.writeSerial++;
+        long serial = this.writeSerial;
+        int mirrorLevels = Math.max(1, this.mipLevels);
+        if (this.levelWrites.length < mirrorLevels) {
+            this.levelWrites = java.util.Arrays.copyOf(this.levelWrites, mirrorLevels);
+            this.levelLastWrite = java.util.Arrays.copyOf(this.levelLastWrite, mirrorLevels);
+        }
+        for (int level = 0; level < mirrorLevels; level++) {
+            this.levelWrites[level]++;
+            this.levelLastWrite[level] = serial;
+        }
+        this.levelZeroWriteSerial = serial;
+    }
+
+    /** {@return whether a level's last write predates the newest level-0 write}, i.e. it is behind level 0. */
+    private boolean levelBehind(int level) {
+        return level > 0 && level < this.levelLastWrite.length && this.levelLastWrite[level] < this.levelZeroWriteSerial;
+    }
+
+    /**
+     * {@return one line with the per-level patch census}, so a run says which mip levels the animated writes reached
+     * and how many mirror levels they left holding older content (audit N07).
+     * <p>
+     * {@code levels=[0:12 1:12 2:12]} is a producer that supplies the chain; {@code levels=[0:12]} with
+     * {@code leftUntouched} rising is a producer that supplies level 0 only, whose higher levels therefore hold what
+     * the last whole upload or patch put there - the same content OpenGL holds for that texture.
+     */
+    public static String mirrorLevelSummary() {
+        synchronized (VulkanGlTexture.class) {
+            StringBuilder text = new StringBuilder("levels=[");
+            for (int level = 0; level < PATCH_LEVEL_HISTOGRAM.length; level++) {
+                if (PATCH_LEVEL_HISTOGRAM[level] > 0) {
+                    text.append(level).append(':').append(PATCH_LEVEL_HISTOGRAM[level]).append(' ');
+                }
+            }
+            return text.append("] written=").append(patchLevelsWritten)
+                    .append(" leftUntouched=").append(patchLevelsBehind).toString();
+        }
+    }
+
+    /** Counts a patch refused before any copy, and prints the reason once so a run says why the mirror did not move. */
+    private static void refusePatch(String reason) {
+        synchronized (VulkanGlTexture.class) {
+            patchRefusals++;
+            if (patchRefusalReasons.size() < 8 && patchRefusalReasons.add(reason)) {
+                System.out.println("[Celtium] CELTIUM_MIRROR_PATCH_REFUSED " + reason
+                        + " refusals=" + patchRefusals);
+            }
+        }
+    }
+
+    private static long patchRefusals;
+    private static final java.util.Set<String> patchRefusalReasons = new java.util.HashSet<String>();
+
+    /**
+     * Validates a pixel buffer against the extent a caller declares for it, and refuses with the reason when the
+     * buffer cannot supply that many bytes (audit N08).
+     * <p>
+     * One place decides the slice every write path uses, so the hash and the copy can never disagree about where the
+     * pixels start or how many there are:
+     * <ul>
+     *   <li>the extent must be positive and its byte count must fit an {@code int};</li>
+     *   <li>the buffer must be direct, because the copy takes its native address;</li>
+     *   <li>at least {@code width * height * 4} bytes must be readable <em>from the buffer's current position</em>,
+     *       which is where {@code MemoryUtil.memAddress} and the absolute-index hash both start. The position and
+     *       limit themselves are never modified.</li>
+     * </ul>
+     *
+     * @param what        what is being validated, used in the refusal message
+     * @param pixelWidth  the declared width in texels
+     * @param pixelHeight the declared height in texels
+     * @param pixels      the buffer the pixels would be copied from
+     * @return the number of bytes the extent needs, as a {@code long} that is known to fit an {@code int}
+     * @throws IllegalArgumentException if the buffer cannot supply the declared extent
+     */
+    public static long requiredUploadBytes(String what, int pixelWidth, int pixelHeight, java.nio.ByteBuffer pixels) {
+        if (pixels == null) {
+            throw new IllegalArgumentException(what + ": no pixel buffer was supplied for a declared extent of "
+                    + pixelWidth + "x" + pixelHeight);
+        }
+        if (pixelWidth <= 0 || pixelHeight <= 0) {
+            throw new IllegalArgumentException(what + ": the declared extent " + pixelWidth + "x" + pixelHeight
+                    + " is not positive, so no texel is addressed");
+        }
+        long required = (long) pixelWidth * (long) pixelHeight * BYTES_PER_PIXEL;
+        if (required > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(what + ": the declared extent " + pixelWidth + "x" + pixelHeight
+                    + " needs " + required + " bytes, which exceeds the largest storable image");
+        }
+        if (!pixels.isDirect()) {
+            throw new IllegalArgumentException(what + ": the pixel buffer is a heap buffer, so its bytes have no"
+                    + " native address to copy from; a direct buffer is required");
+        }
+        int remaining = pixels.remaining();
+        if (remaining < (int) required) {
+            throw new IllegalArgumentException(what + ": the pixel buffer holds " + remaining + " readable bytes from"
+                    + " position " + pixels.position() + " (limit " + pixels.limit() + "), but " + required
+                    + " are required for " + pixelWidth + "x" + pixelHeight + " RGBA8 texels");
+        }
+        return required;
+    }
+
+    /**
+     * The FNV-1a hash of exactly the bytes a copy of this extent would take: {@code bytes} readable bytes starting at
+     * the buffer's current position (audit N08).
+     * <p>
+     * The hash decides whether an upload is skipped as a duplicate, so it has to describe the same slice
+     * {@code MemoryUtil.memAddress} hands the copy. Hashing from absolute index 0 while the copy starts at the
+     * position made a payload whose bytes before the position were unchanged look like the old content: the window
+     * ended before the changed texels, the hash matched, and the new pixels were never uploaded. The caller's
+     * position and limit are not modified.
+     *
+     * @param pixels the buffer the copy would read
+     * @param bytes  the number of bytes the copy would read, already validated against {@code pixels.remaining()}
+     * @return the hash of that slice
+     */
+    public static long hashUploadSlice(java.nio.ByteBuffer pixels, int bytes) {
+        if (pixels == null || bytes < 0 || bytes > pixels.remaining()) {
+            throw new IllegalArgumentException("A slice hash of " + bytes + " bytes does not fit the buffer's "
+                    + (pixels == null ? "missing storage" : pixels.remaining() + " readable bytes"));
+        }
+        final int base = pixels.position();
+        long hash = 1469598103934665603L;
+        for (int i = 0; i < bytes; i++) {
+            hash = (hash ^ (pixels.get(base + i) & 0xFF)) * 1099511628211L;
+        }
+        return hash;
     }
 
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
@@ -883,11 +1658,12 @@ public final class VulkanGlTexture {
         // this path - the announced image, the captured surface - cannot put the real pixels back and make a poisoned
         // run look like a run that never sampled this image. Measured at draw time is the only measurement that counts.
         requireAlive();
-        long hash = 1469598103934665603L;
-        int stride = Math.min(rgba.remaining() / Math.max(1, pixelHeight), pixelWidth * BYTES_PER_PIXEL);
-        for (int i = 0; i < stride * pixelHeight; i++) {
-            hash = (hash ^ (rgba.get(i) & 0xFF)) * 1099511628211L;
-        }
+        // The hash and the copy read the same slice: the declared extent must fit the buffer's remaining bytes from
+        // its current position, which is where MemoryUtil.memAddress starts (audit N08). Validated before the hash, so
+        // a short buffer is refused by name instead of hashing past its end and copying native bytes nothing owns.
+        long required = requiredUploadBytes("a whole-image upload of " + pixelWidth + "x" + pixelHeight, pixelWidth,
+                pixelHeight, rgba);
+        long hash = hashUploadSlice(rgba, (int) required);
         if (hash == lastPixelHash && pixelWidth == width && pixelHeight == height) {
             this.imageUploadsSkipped++;
             return false;
@@ -977,6 +1753,15 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * {@return how many mip levels the image has}, which is the number of levels a patch can address and the number a
+     * sampler's LOD clamp could reach if it were not clamped below it (see {@link #mirrorLevelSummary()} for the
+     * patch census and the class comment for the level contract).
+     */
+    public int mipLevels() {
+        return Math.max(1, this.mipLevels);
+    }
+
+    /**
      * Destroys the image view, the image, its memory, the sampler and the staging buffer.
      * <p>
      * Idempotent: a second call, or a call after a partially failed {@link #create}, does nothing. The caller must
@@ -993,6 +1778,9 @@ public final class VulkanGlTexture {
         // wrapper (the next publish builds a new one for the same image), and destroying it here would take the
         // silhouette with it. The handles are cleared so nothing can reach the retired image through this object.
         destroyImageResources();
+        // The shared layout fact is dropped with the last wrapper that named the image, so a later image that reuses
+        // the handle starts from its own declaration rather than from a retired one (audit N05).
+        releaseForeignImage();
         if (sampler != 0L) {
             final long retiredSampler = sampler;
             VulkanRetireQueue.retire(() -> vkDestroySampler(context.device(), retiredSampler, null));
@@ -1026,7 +1814,8 @@ public final class VulkanGlTexture {
                     + " pixels is not usable");
         }
         VkDevice device = context.device();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
+        try {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(context.physicalDevice(), properties);
             int maxDimension = properties.limits().maxImageDimension2D();
@@ -1086,9 +1875,39 @@ public final class VulkanGlTexture {
             createView.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
             check(vkCreateImageView(device, createView, null, handle), "vkCreateImageView(mirrored texture)");
             view = handle.get(0);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            // A half-built image - the image created but its memory missing, or the view missing - must not survive as
+            // this object's image: a later patch or descriptor would name it and the object would claim a size it no
+            // longer has content for. Whatever was created is retired and the object is left empty and unusable by
+            // name, so the next upload rebuilds it and the descriptor decision refuses it until then (audit N17).
+            long releasedImage = image;
+            long releasedMemory = memory;
+            long releasedView = view;
+            destroyImageResources();
+            this.width = 0;
+            this.height = 0;
+            this.fullContentArrived = false;
+            this.lastPixelHash = 0L;
+            this.levelWrites = new long[0];
+            this.levelLastWrite = new long[0];
+            synchronized (VulkanGlTexture.class) {
+                imageReleases++;
+                if (imageReleases <= 4) {
+                    System.out.println("[Celtium] CELTIUM_IMAGE_RELEASED image=0x" + Long.toHexString(releasedImage)
+                            + " memory=0x" + Long.toHexString(releasedMemory) + " view=0x"
+                            + Long.toHexString(releasedView) + " requested=" + newWidth + "x" + newHeight
+                            + " bytes=[" + error + "] (a half-built image was retired and the object left empty, so"
+                            + " no descriptor can be built on it) releases=" + imageReleases);
+                }
+            }
+            throw error;
         }
         this.width = newWidth;
         this.height = newHeight;
+        // The new image is empty: any content fact from the image it replaces is gone with it.
+        this.levelWrites = new long[this.mipLevels];
+        this.levelLastWrite = new long[this.mipLevels];
         // Make the resting layout true for a brand new image too, so a descriptor bound before the first upload is
         // already valid. The contents stay undefined until the first upload, which is correct for a fresh mirror.
         transitionToShaderRead();
@@ -1175,6 +1994,14 @@ public final class VulkanGlTexture {
         transitionToShaderRead();
     }
 
+    /**
+     * Drops the image, its view and its memory, and with them every claim about the image's content (audit N17).
+     * <p>
+     * The caller of a resize has already destroyed the previous pixels, so a hash or a "whole content arrived" flag
+     * left over from them would describe an image that no longer exists: the next upload of the same pixels would be
+     * skipped as a duplicate and the descriptor would be built on an image holding nothing. Clearing the content facts
+     * here - not after the new image has been created - keeps that window closed even when the creation itself fails.
+     */
     private void destroyImageResources() {
         if (!this.ownsImage) {
             // A foreign image and its view belong to whoever published them. Only the wrapper's references go.
@@ -1183,6 +2010,11 @@ public final class VulkanGlTexture {
             memory = 0L;
             return;
         }
+        this.fullContentArrived = false;
+        this.lastPixelHash = 0L;
+        this.levelWrites = new long[0];
+        this.levelLastWrite = new long[0];
+        this.levelLayouts = new int[0];
         VkDevice device = context.device();
         if (view != 0L) {
             // Retired rather than destroyed: a command buffer recorded earlier may still name this view (audit S12).
@@ -1345,9 +2177,13 @@ public final class VulkanGlTexture {
             try {
                 int levelWidth = Math.max(1, this.width >> level);
                 int levelHeight = Math.max(1, this.height >> level);
+                // The provenance is part of the line because the pixels alone cannot say whether a level is behind:
+                // a level whose last write predates the newest level-0 write does not contain that content, which is
+                // exactly the state audit N07 describes for a sprite that patches level 0 only.
                 System.out.println("[Celtium] CELTIUM_MIRROR_LEVEL glTexture=" + glTextureId + " level=" + level
-                        + " size=" + levelWidth + "x" + levelHeight + " layout=" + layoutName(levelLayout(level)) + " "
-                        + pixelSummary(read, levelWidth, levelHeight));
+                        + " size=" + levelWidth + "x" + levelHeight + " layout=" + layoutName(levelLayout(level))
+                        + " writes=" + levelWrites(level) + " behind=" + (levelBehind(level) ? "yes" : "no")
+                        + " " + pixelSummary(read, levelWidth, levelHeight));
                 if ((long) levelWidth * levelHeight > MIRROR_DUMP_MAX_PIXELS) {
                     // The numbers above are the measurement; a megapixel PNG would only cost the frame it measures.
                     continue;
@@ -1605,41 +2441,24 @@ public final class VulkanGlTexture {
     }
 
     /**
-     * Copies pixels into a sub-region of a level, which is what the atlas's per-sprite animation needs.
+     * Writes one level's pixels into mapped staging memory at {@code destination}.
      * <p>
-     * Vulkan's buffer-to-image copy takes a destination offset natively, so a sprite's frame - thirty-two by thirty-two at
-     * some position inside a two-hundred-and-fifty-six atlas - can be written straight into the image. That is the whole
-     * reason the animated writes do not have to be read back out of GL.
+     * The single place the poison, coordinate-encode and row-order rules are applied, so the per-level patch path
+     * (audit N07) and the whole-image path cannot drift apart on which pixels reach the device. The source address is
+     * {@link MemoryUtil#memAddress(ByteBuffer)}, which starts at the buffer's current position, so the bytes written
+     * are exactly the slice {@link #requiredUploadBytes} validated.
      */
-    private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX,
-            int offsetY) {
-        copyToImage(pixels, pixelWidth, pixelHeight, level, offsetX, offsetY, false);
-    }
-
-    /**
-     * Copies pixels into the image, optionally preserving what is already there.
-     * <p>
-     * A full upload rewrites every level, so it may start from {@code UNDEFINED} and record a mip chain. A patch must not: it
-     * covers one sprite's frame inside the atlas, so it starts from the layout that level is actually in, writes only that
-     * level, skips the chain, and transitions back over that level alone.
-     */
-    private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX, int offsetY,
-            boolean preserve) {
+    private void putStagingPixels(long destination, ByteBuffer pixels, int pixelWidth, int pixelHeight) {
         long bytes = (long) pixelWidth * (long) pixelHeight * BYTES_PER_PIXEL;
-        ensureStaging(bytes);
-        // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
-        // buffer into device visible memory without an intermediate Java array. The row order is kept as GL
-        // returned it; a vertical flip here made the whole terrain black, so the orientation question is not
-        // settled and must be answered with a controlled pattern instead of by flipping this copy.
         if (this.flatPoisonColour != 0) {
             // One colour over every texel: the frame then answers "does this draw sample this image" with no masking
             // case, because there is no second colour to land on.
             int colour = this.flatPoisonColour;
             for (long offset = 0; offset < bytes; offset += BYTES_PER_PIXEL) {
-                MemoryUtil.memPutByte(stagingAddress + offset, (byte) (colour >> 16));
-                MemoryUtil.memPutByte(stagingAddress + offset + 1, (byte) (colour >> 8));
-                MemoryUtil.memPutByte(stagingAddress + offset + 2, (byte) colour);
-                MemoryUtil.memPutByte(stagingAddress + offset + 3, (byte) (colour >>> 24));
+                MemoryUtil.memPutByte(destination + offset, (byte) (colour >> 16));
+                MemoryUtil.memPutByte(destination + offset + 1, (byte) (colour >> 8));
+                MemoryUtil.memPutByte(destination + offset + 2, (byte) colour);
+                MemoryUtil.memPutByte(destination + offset + 3, (byte) (colour >>> 24));
             }
         } else if (encodeIds.contains(Integer.valueOf(this.encodeLabel))) {
             // Coordinate encoding: R and G carry the sampled texel's position in the atlas, so the frame reads back the
@@ -1647,7 +2466,7 @@ public final class VulkanGlTexture {
             // landing on an empty texel, and that is the difference between a broken vertex attribute and an empty atlas.
             int rowBytes = pixelWidth * BYTES_PER_PIXEL;
             for (int y = 0; y < pixelHeight; y++) {
-                long rowBase = stagingAddress + (long) y * rowBytes;
+                long rowBase = destination + (long) y * rowBytes;
                 int g = pixelHeight > 1 ? (y * 255) / (pixelHeight - 1) : 0;
                 for (int x = 0; x < pixelWidth; x++) {
                     int r = pixelWidth > 1 ? (x * 255) / (pixelWidth - 1) : 0;
@@ -1667,7 +2486,7 @@ public final class VulkanGlTexture {
             int inverse = argb ^ 0x00FFFFFF;
             int rowBytes = pixelWidth * BYTES_PER_PIXEL;
             for (int y = 0; y < pixelHeight; y++) {
-                long rowBase = stagingAddress + (long) y * rowBytes;
+                long rowBase = destination + (long) y * rowBytes;
                 for (int x = 0; x < pixelWidth; x++) {
                     int colour = ((x + y) & 1) == 0 ? argb : inverse;
                     long offset = rowBase + (long) x * BYTES_PER_PIXEL;
@@ -1686,11 +2505,32 @@ public final class VulkanGlTexture {
             int rowBytes = pixelWidth * BYTES_PER_PIXEL;
             for (int y = 0; y < pixelHeight; y++) {
                 MemoryUtil.memCopy(MemoryUtil.memAddress(pixels) + (long) y * rowBytes,
-                        stagingAddress + (long) (pixelHeight - 1 - y) * rowBytes, rowBytes);
+                        destination + (long) (pixelHeight - 1 - y) * rowBytes, rowBytes);
             }
         } else {
-            MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), stagingAddress, bytes);
+            MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), destination, bytes);
         }
+    }
+
+    /**
+     * Copies pixels into the image, optionally preserving what is already there.
+     * <p>
+     * A whole upload rewrites every level, so it starts from {@code UNDEFINED} and records a mip chain. A region patch
+     * must not, and no longer comes through here: it writes only the levels its producer supplied, each in its own
+     * layout, in {@link #uploadPatchedLevels}.
+     */
+    private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX, int offsetY) {
+        // Every path that reaches the staging buffer goes through the same slice validation: the declared extent must
+        // fit the buffer's remaining bytes from its current position, which is where the address the copy takes starts
+        // (audit N08). Refused by name, before ensureStaging allocates anything.
+        long bytes = requiredUploadBytes("a whole-image upload of " + pixelWidth + "x" + pixelHeight, pixelWidth,
+                pixelHeight, pixels);
+        ensureStaging(bytes);
+        // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
+        // buffer into device visible memory without an intermediate Java array. The row order is kept as GL
+        // returned it; a vertical flip here made the whole terrain black, so the orientation question is not
+        // settled and must be answered with a controlled pattern instead of by flipping this copy.
+        putStagingPixels(stagingAddress, pixels, pixelWidth, pixelHeight);
         if (!stagingCoherent) {
             // Non-coherent host memory needs an explicit flush before the copy; coherent memory (the common case)
             // is made available to the device by the queue submission itself.
@@ -1706,13 +2546,12 @@ public final class VulkanGlTexture {
             barrier.get(0).sType$Default()
                     .srcAccessMask(0)
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .oldLayout(preserve ? levelLayout(level) : VK_IMAGE_LAYOUT_UNDEFINED)
+                    .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED)
                     .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level,
-                    preserve ? 1 : this.mipLevels, 0, 1);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, this.mipLevels, 0, 1);
             if (level == 0) { vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, barrier); }
 
@@ -1725,21 +2564,16 @@ public final class VulkanGlTexture {
             region.get(0).imageExtent().set(pixelWidth, pixelHeight, 1);
             vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
             this.currentLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            for (int covered = level; covered < (preserve ? level + 1 : this.mipLevels); covered++) {
+            for (int covered = level; covered < this.mipLevels; covered++) {
                 setLevelLayout(covered, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             }
 
-            if (!preserve) {
-                recordMipChain(commandBuffer, pixelWidth, pixelHeight, stack);
-            }
+            recordMipChain(commandBuffer, pixelWidth, pixelHeight, stack);
 
             // Reuse the same barrier struct for the way back: the image and subresource range are unchanged, only
             // the access masks and layouts differ.
             // Every level ends in a different transfer layout (the blit chain leaves levels in TRANSFER_SRC or
             // TRANSFER_DST), so the range covers them all and the source accesses include both transfer roles.
-            if (preserve) {
-                barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
-            }
             barrier.get(0)
                     .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
@@ -1751,16 +2585,10 @@ public final class VulkanGlTexture {
             // The tail transition belongs to whichever call finishes the chain: the last mirrored level, or level 0
                 // when the chain is generated by blitting below. Getting this wrong left images in a transfer layout -
                 // ten validation errors and no SHADER_READ_ONLY for the atlas (audit S23).
-                // A patch writes level 0 of a multi-level image, so it does its own transition; a full upload keeps the original
-                // condition, whose barrier covers the whole chain - which is what makes every level end up sampled.
-                if (preserve || level == this.mipLevels - 1 || level == 0) {
-                    if (preserve) {
-                        barrier.get(0).oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-                    }
+                if (level == this.mipLevels - 1 || level == 0) {
                     vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
                             barrier);
-                    for (int covered = preserve ? level : 0; covered < (preserve ? level + 1 : this.mipLevels);
-                            covered++) {
+                    for (int covered = 0; covered < this.mipLevels; covered++) {
                         setLevelLayout(covered, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                     }
                 }
@@ -1769,6 +2597,10 @@ public final class VulkanGlTexture {
             // context's helper never keeps an open command buffer around.
             context.endCommands(commandBuffer);
         }
+        // The copy and the blitted chain are submitted and waited for, so every level now holds content from this
+        // write: level 0 from the copy, the levels above it from the chain. Recorded after the wait, never before, so
+        // a failed upload cannot claim levels it did not write (audit N07).
+        recordWholeImageWrite();
     }
 
     /**
@@ -1847,6 +2679,16 @@ public final class VulkanGlTexture {
         }
     }
 
+    /**
+     * Makes the cached staging buffer at least {@code required} bytes, recreating it when it is too small.
+     * <p>
+     * The buffer, its memory and its mapping are the three things this can create, and a failure part-way through
+     * must not leave any of them behind: the fields used to be assigned as each step succeeded, so an injected
+     * allocation failure after {@code vkCreateBuffer} left a buffer no later call would ever size or free, and an
+     * object whose staging area was half-built but whose capacity still read zero. The cleanup below releases
+     * everything created so far and leaves the object exactly as it was before the call, so the next upload can try
+     * again and a failed one cannot be mistaken for a working staging area (audit N17).
+     */
     private void ensureStaging(long required) {
         if (stagingBuffer != 0L && stagingCapacity >= required) {
             return;
@@ -1888,8 +2730,32 @@ public final class VulkanGlTexture {
             stagingAddress = pointer.get(0);
             stagingCapacity = requirements.size();
             stagingCoherent = isHostCoherent(memoryType);
+        } catch (RuntimeException | LinkageError error) {
+            // The buffer may exist with no memory, the memory with no mapping, or the mapping with no capacity
+            // recorded. All three are released and the capacity stays zero, so nothing can copy through a staging
+            // area that was never finished (audit N17).
+            long releasedBuffer = stagingBuffer;
+            long releasedMemory = stagingMemory;
+            boolean releasedMapping = stagingAddress != 0L;
+            destroyStaging();
+            synchronized (VulkanGlTexture.class) {
+                stagingReleases++;
+                if (stagingReleases <= 4 || stagingReleases % 100 == 0) {
+                    System.out.println("[Celtium] CELTIUM_STAGING_RELEASED buffer=0x"
+                            + Long.toHexString(releasedBuffer) + " memory=0x" + Long.toHexString(releasedMemory)
+                            + " unmapped=" + releasedMapping + " requested=" + required + " bytes=[" + error
+                            + "] (a staging allocation that failed part-way released what it created; the next upload"
+                            + " rebuilds it) releases=" + stagingReleases);
+                }
+            }
+            throw error;
         }
     }
+
+    /** Staging allocations that failed part-way and were released; a run says whether the path was exercised. */
+    private static long stagingReleases;
+    /** Images whose creation failed part-way and whose remains were retired; see {@link #createImageResources}. */
+    private static long imageReleases;
 
     private void destroyStaging() {
         VkDevice device = context.device();
