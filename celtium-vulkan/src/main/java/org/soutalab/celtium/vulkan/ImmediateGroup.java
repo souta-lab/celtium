@@ -86,6 +86,19 @@ public final class ImmediateGroup {
     public int[] scissorBox;
     /** Whether the clip was enabled when this group was opened. */
     public boolean scissorEnabled;
+
+    /**
+     * GL's polygon offset, captured when this group was opened.
+     * <p>
+     * The draw site used to read the live stub record, but vanilla brackets the break overlay with
+     * {@code preRenderDamagedBlocks}/{@code postRenderDamagedBlocks} (RenderGlobal:1914-1925): the offset is enabled
+     * for the overlay's own draw calls and disabled again immediately after, so a group holding those batches but
+     * flushed later read the disabled state and got no bias - the accept-vs-flush class BH-04/BH-05 fixed for the
+     * colour and the lighting.
+     */
+    public float polygonOffsetFactor;
+    public float polygonOffsetUnits;
+    public boolean polygonOffsetEnabled;
     /** Frame and target-generation stamp: groups of a destroyed frame target must be retired, not drawn. */
     public GroupStamp stamp;
 

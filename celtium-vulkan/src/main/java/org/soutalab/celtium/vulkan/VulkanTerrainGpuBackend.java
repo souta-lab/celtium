@@ -1667,6 +1667,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int[] currentGroupScissor;
     /** Whether the clip was enabled when the open group was created. */
     private boolean currentGroupScissorEnabled;
+    /** GL's polygon offset captured with the open group (BH-11: the live state is disabled around the overlay). */
+    private boolean currentGroupPolygonOffsetEnabled;
+    private float currentGroupPolygonOffsetFactor;
+    private float currentGroupPolygonOffsetUnits;
     /** The colour GL had current when a position-only batch was offered; null for every other format. */
     private float[] currentGroupColor;
     /**
@@ -4983,6 +4987,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupFog = null;
                 this.currentGroupScissor = null;
                 this.currentGroupScissorEnabled = false;
+                this.currentGroupPolygonOffsetEnabled = false;
+                this.currentGroupPolygonOffsetFactor = 0.0F;
+                this.currentGroupPolygonOffsetUnits = 0.0F;
                 this.currentGroupBatches = 0;
                 this.currentGroupViewportValues = currentViewport();
                 this.currentPreparedImmediate = prepared;
@@ -5017,6 +5024,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupScissor = liveScissor == null ? null : liveScissor.clone();
                 this.currentGroupScissorEnabled = liveScissor != null
                         && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest();
+                // BH-11: the polygon offset the batch was offered under, captured here for the same reason - vanilla
+                // brackets the break overlay's draws with enable/disable, so reading it at draw time loses it.
+                this.currentGroupPolygonOffsetEnabled = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled();
+                this.currentGroupPolygonOffsetFactor = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFactor() : 0.0F;
+                this.currentGroupPolygonOffsetUnits = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetUnits() : 0.0F;
                 // BH-05: the lighting belongs to the batch that opened the group, so it is read from the state saved
                 // two lines above while that state is still the live one. Reading it at close time instead let a later
                 // light change shade vertices that had already been accepted.
@@ -7074,6 +7090,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.fog = this.currentGroupFog;
             group.scissorBox = this.currentGroupScissor;
             group.scissorEnabled = this.currentGroupScissorEnabled;
+            group.polygonOffsetEnabled = this.currentGroupPolygonOffsetEnabled;
+            group.polygonOffsetFactor = this.currentGroupPolygonOffsetFactor;
+            group.polygonOffsetUnits = this.currentGroupPolygonOffsetUnits;
             celtium$noteFogCaptureDrift(group);
             group.stamp = new GroupStamp(this.frameId, this.targetGeneration, false, this.worldEpoch);
             this.immediateGroups.add(group);
@@ -11852,13 +11871,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // across unchanged (smaller is nearer in both). Block entities and the break overlay are the callers:
                 // with the offset dropped, the TESR and the block face it sits on z-fight. Issued only when the game
                 // has actually called glPolygonOffset, so a scene that never uses it pays one branch.
-                boolean offsetEnabled = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled();
-                float constantFactor = offsetEnabled
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetUnits() : 0.0F;
-                float slopeFactor = offsetEnabled
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFactor() : 0.0F;
+                // The group's own captured offset, not the live record: vanilla enables the offset around the break
+                // overlay's draws and disables it immediately after, so a group flushed later used to read the
+                // disabled state and draw the overlay with no bias at all (measured: 62 glPolygonOffset calls, the
+                // overlay in the frame, and immediateDepthBiasedGroups=0).
+                boolean offsetEnabled = group.polygonOffsetEnabled;
+                float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
+                float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
                 // Issued for every group, not only when the game has called glPolygonOffset: the pipelines declare
                 // depthBiasEnable statically, so a draw whose command buffer never saw vkCmdSetDepthBias is a
                 // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
