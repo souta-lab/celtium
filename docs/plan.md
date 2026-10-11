@@ -89,6 +89,49 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.129 **原典から確定したこと（デコンパイル済みソース）** — 推測で潰していた問いの決着
+
+`.celtium-work/mc-sources/` の原典を引いた結果、**推測で何度も往復していた問いに直接の答えが出た**。以下はすべてソースの行番号つきで、
+bytecode 読みや仮説ではない。
+
+### 1. バニラの描画パス × 頂点形式の全表（`client/renderer` ほか）
+
+| mode | format | 回数 | 私たちの id | 代表 |
+|---|---|---|---|---|
+| 7 QUADS | `POSITION_TEX` | 11 | **6** | 空・雲・水面・太陽/月（`RenderGlobal:1409`） |
+| 7 QUADS | `POSITION_TEX_COLOR` | 5 | **2** | 天球の帯・天候（`RenderGlobal:1288`） |
+| 7 QUADS | `POSITION_TEX_NORMAL` | 4 | **9** | 最終 composite |
+| 5 STRIP | `POSITION_COLOR` | 4 | **1** | 天球 gradient の一部・線 |
+| 7 QUADS | `POSITION_COLOR` | 3 | **1** | 汎用 |
+| 7 QUADS | `PARTICLE…LMAP` | 3 | **5** | 粒子 |
+| 3 LINE_STRIP | `POSITION_COLOR` | 3 | **1** | デバッグ線 |
+| 7 QUADS | `POSITION_TEX_COLOR_NORMAL` | 2 | **8** | **fancy cloud（`RenderGlobal:1676`）**・XP orb（`RenderXPOrb:63`） |
+| 7 QUADS | `POSITION` | 2 | **7** | 影・帯 |
+| 7 QUADS | `ITEM` / `BLOCK` | 各2 | **4 / 3** | item・block |
+| 1 LINES | `POSITION_COLOR` | 2 | **1** | 線 |
+| 7 QUADS | **`POSITION_NORMAL`** | 1 | **未対応（id 0）** | **`Render.renderOffsetAABB`（`Render.java:297`）** |
+| 6 FAN | `POSITION_COLOR` | 1 | **1** | **天球 gradient（`RenderGlobal:1383`）** |
+| 5 STRIP | `POSITION_TEX_COLOR` | 1 | **2** | **font glyph（`FontRenderer:238`）** |
+
+**確定した事実**: 天球の gradient は **mode 6 = TRIANGLE_FAN・POSITION_COLOR（id 1）**、太陽/月は **mode 7 QUADS・POSITION_TEX（id 6）**、
+fancy cloud は **mode 7 QUADS・POSITION_TEX_COLOR_NORMAL（id 8）**。したがって pitch=-14（見上げた画）で上端に出る帯・三角の候補は
+**天球 gradient（fan）・太陽/月（quads+tex）・雲（quads+tex+color+normal）**の3つに絞られる。format-8 帰属が撤回された理由づけもこれで明確になった
+（雲は format 8 だが、同じ画には fan と tex のパスも写っている）。
+
+### 2. **未対応のバニラ描画パスを1つ発見**: `POSITION_NORMAL`
+
+`DefaultVertexFormats.POSITION_NORMAL` は uploader mixin の対応表（`celtium$formatId`）に**どの分岐も無く id 0 ＝拒否**になる。
+唯一の利用元は `Render.renderOffsetAABB`（`Render.java:290-…`、`begin(7, POSITION_NORMAL)`）で、その呼び出し元は
+`RenderEntity.doRender`（`RenderEntity.java:24`）——**専用レンダラを持たない entity の白い箱**である。
+GL-less ではこの箱は描かれない（bridge では GL が描く）。id を1つ足す（`POSITION_NORMAL = 10`）＋対応表＋パイプラインで閉じる作業として記録する。
+
+### 3. font glyph の意味的契約（原典）
+
+`FontRenderer.renderDefaultChar`（230-248）: `bindTexture(locationFontTexture)` → `glBegin(5)` →
+各頂点の直前に `glTexCoord2f`、頂点は `k = italic ? 1 : 0` と `f = charWidth[ch] - 0.01` を使い、**戻り値は `charWidth[ch]`**。
+`renderUnicodeChar`（272-303）も同じ形。`drawChar`（223）が `unicodeFlag` で振り分ける。
+→ capture が UV とテクスチャ identity を落としていれば「受理されるが絵が出ない」になる（担当の観測と一致）。
+
 ## 0.128 **開発環境の活用**: デコンパイル済みソースを手元に置き、`runClient` の位置づけを確定（2026-10-11）
 
 CleanroomMC の ForgeDevEnv テンプレート（RFG 2.0.3・Java 25・mixin/coremod 対応の 1.12.2 mod 開発テンプレート）を確認した。
