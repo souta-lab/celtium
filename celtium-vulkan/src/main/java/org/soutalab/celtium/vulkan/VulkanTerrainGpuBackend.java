@@ -4822,6 +4822,33 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * textured family is the largest by construction: it keeps a set per distinct texture view, so its row is the one
      * that moves when a scene samples many textures.
      */
+    /**
+     * {@return the uploads every live region arena has performed}, the volume that makes {@code bootstrapQueueWaits}
+     * readable as a cost per upload rather than a bare count (task-51).
+     */
+    private long celtium$arenaUploadCount() {
+        long total = 0;
+        for (RegionResources resources : this.regionResources.values()) {
+            total += resources.vertexArena.uploadCount();
+            if (resources.indexArena != null) {
+                total += resources.indexArena.uploadCount();
+            }
+        }
+        return total;
+    }
+
+    /** {@return the bytes those uploads carried}, the other half of the same cost pair (task-51). */
+    private long celtium$arenaUploadedBytes() {
+        long total = 0;
+        for (RegionResources resources : this.regionResources.values()) {
+            total += resources.vertexArena.uploadedBytes();
+            if (resources.indexArena != null) {
+                total += resources.indexArena.uploadedBytes();
+            }
+        }
+        return total;
+    }
+
     private String descriptorSetCensus() {
         long block = 0;
         for (VulkanImmediateBlockPipeline pipeline : this.blockPipelineCache.values()) {
@@ -6001,6 +6028,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
                 + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
                 + " worldPassBoundaryFlushes=" + this.worldPassBoundaryFlushes
+                // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
+                // reports. VulkanContext.bootstrapQueueWaits is incremented by beginCommands()'s vkQueueWaitIdle and
+                // was printed only by CELTIUM_WAIT_CENSUS from VulkanContext.delete(), which appears in no run at all -
+                // a counter that cannot be read is not a measurement. The arena totals beside it are what make the
+                // cost per upload readable instead of the wait count alone.
+                + " bootstrapQueueWaits=" + VulkanContext.bootstrapQueueWaits
+                + " arenaUploads=" + this.celtium$arenaUploadCount() + " arenaUploadedBytes="
+                + this.celtium$arenaUploadedBytes()
                 + " textureDiagnostics=" + TEXTURE_DIAGNOSTICS + " diagnosed=" + this.diagnosedTextures.size()
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored

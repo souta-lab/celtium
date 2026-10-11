@@ -1524,18 +1524,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * The one matrix multiply the stub owns: {@code glMultMatrixf/d} multiplies whatever stack {@code glMatrixMode}
-     * selected, and the mirror is what receives it. The backend's entry point is the existing
-     * {@code TerrainGpuBackend.multiplyMatrix(FloatBuffer)} - the same method {@code GlStateManager}'s own
-     * {@code func_179110_a(FloatBuffer)} hook uses - so there is no second matrix path beside the mirrored one.
-     * <p>
-     * The game's buffer is read, never kept: the float form is wrapped in a view over the caller's memory and the
-     * mirror copies the sixteen floats before returning (it uses absolute gets, so the game's buffer position is not
-     * touched); the double form is converted through a thread-local scratch array. A call with no backend, or one the
-     * backend refuses, is counted rather than silently dropped - an unapplied transform is a wrong picture, which is
-     * what the census is for.
-     */
-    /**
      * Census only, and deliberately so: {@code glMultMatrixf} is the GL-API-wide call Forge's item transform uses
      * ({@code ForgeHooksClient.multiplyCurrentGlMatrix}) <b>and</b> the call {@code org.lwjglx.util.glu.Project}
      * reaches at the end of {@code gluPerspective}, whose frustum {@code GluProjectionMixin} has already mirrored
@@ -3656,12 +3644,32 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (taken > 0) {
                 frames.append(" <- ");
             }
-            frames.append(name).append('.').append(frame.getMethodName()).append(':').append(frame.getLineNumber());
+            frames.append(celtium$shortSiteName(name)).append('.').append(frame.getMethodName()).append(':')
+                    .append(frame.getLineNumber());
             if (++taken >= limit) {
                 break;
             }
         }
         return frames.toString();
+    }
+
+    /**
+     * Shortens a frame's class name for a diagnostic line.
+     * <p>
+     * The operator read a Vulkan-only session's log and asked why it was full of "opengl". The answer was these site
+     * strings: every instrumented line named {@code org.lwjgl.opengl.GL11} and {@code org.lwjgl.opengl.GL11C} in full
+     * while the renderer used no GL at all, so the log read as if it did. The class is still named, without the
+     * package prefix that caused the misreading.
+     */
+    private static String celtium$shortSiteName(String className) {
+        String shortened = className;
+        for (String prefix : new String[] { "org.lwjgl.opengl.", "org.lwjgl.util.", "org.lwjgl.", "org.lwjglx.",
+                "net.minecraftforge.", "net.minecraft." }) {
+            if (shortened.startsWith(prefix)) {
+                shortened = shortened.substring(prefix.length());
+            }
+        }
+        return shortened;
     }
 
     /**

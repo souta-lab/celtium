@@ -140,6 +140,32 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.197 **実プレイ第3報: 直った4件と残る5件（night lightmap・glyph particle・lag/audio・loading・item 解像度・ログの opengl 表記）**
+
+ユーザーの実プレイ報告（jar `8c5d7b96` 期）:
+
+**直った（実プレイで確認）**: **entity のダメージ赤**（task-45 の INTERPOLATE 分岐）・**item 変換**（GUI アイコンが等角に・
+`ww23` の kept frame で私も確認）・**剣の持ち方**（task-50）・**Nether ポータルのパーティクルと画面効果**・**fog**・**夕日**。
+
+**残る（帰属済み）**:
+1. **夜の雲が明るすぎる・夜の entity が明るい** → **task-55**（pipelines）。lit ITEM fragment が `u_Texture`×`v_Color` のみで
+   **lightmap の項が無い**（entity/cloud/held item は全てこの layout）。**定数で明るさを合わせず項を入れる**——
+   day の terrain・sky band（0/256,000）・GUI item を動かさない。受入は night scene の参照比較。
+2. **アイテムは直ったが解像度が低い** → **task-52**（texture-mirror）。shape は正しく blurry＝**sampler の LOD/filter**。
+   task-26 で atlas の reach を最深 level に上げた（`samplerMaxLod=4`）ため、GUI の 1:1 描画で LOD 0 を引くべき所を
+   上位 level から引いている可能性。**per-texture で直す**（terrain band 6.207/5.86% は reach 依存）。
+3. **ラグは未改善・音声がとぎれとぎれ** → **task-53**（frame-composite）＋ **task-51**（pipelines）。
+   最有力は upload 経路の `vkQueueWaitIdle`（per segment・`bootstrapQueueWaits`）。**まず計器を届かせる**
+   （`CELTIUM_WAIT_CENSUS` は `VulkanContext.delete()` からのみで**どの run にも出ていない**＝現状は測定不能）。
+4. **ロード画面が出ない** → weather-water（splash は renderer に届いた）＋ frame-composite（splash FBO の owned image）。
+5. **エンチャント台の文字パーティクルが出ない**（本は出る）→ **task-54**（weather-water）。本は `TileEntityEnchantmentTableRenderer` で正常、
+   文字は `ENCHANTMENT_TABLE` の**パーティクル**（`particleTextureIndex` の sprite 選択）——既定 sprite で描いているか未到達かを測定。
+6. **手持ちアイテムになぞの枠** → pipelines の次の leg で crop を取って正体を特定（item texture の縁か・outline pass か・rescaleNormal/blend か）。
+7. **「vulkanonlyなのにログに opengl が大量」** → 原因は **`site=[…]` のスタック文字列が `org.lwjgl.opengl.GL11` を毎行フルで書いていた**こと
+   （実測 83/813 行が "opengl" を含み、大半がこれ）。`celtium$callSite` に `celtium$shortSiteName` を入れ、
+   `org.lwjgl.opengl.` 等の prefix を落として `GL11.glDrawArrays:2559 <- …` の形にした（jar `9b1ecb1acd183e3cc554` を instance へ投入）。
+   stub の残る周期診断も `VulkanDiagnostics` で gate するよう weather-water へ依頼。
+
 ## 0.196 **item 変換の owner を1つに固定（Lead）・画面なし統制 0.19%・最適化の継承ギャップ（task-51）**
 
 - **二重適用の回避（Lead・jar `79fb7c3ca93a450ebfb1` を instance へ投入）**: weather-water の stub 版は

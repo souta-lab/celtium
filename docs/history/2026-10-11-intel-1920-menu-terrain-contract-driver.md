@@ -93,13 +93,15 @@ the report), printed from the live `VulkanContext` after the device is chosen. T
 which GL identity exists and what could be shared with it by fd - and the plan already records that a probe
 result must not be read as the live renderer's state. `GlDeviceIdentity` (the probe) is untouched by this work.
 
-**The stub string:** `CeltiumGlStub.celtium$nativeRendererName()` (weather-water's) already returns
-`<device name> via Celtium Vulkan` when a device exists, and the Intel leg's `glRendererPreflight` reads
-`Intel(R) UHD Graphics 630 (CFL GT2) via Celtium Vulkan`, so the label route is live. What it does **not** yet
-carry is the driver name/info/version; the one-function change is
-`VulkanContext.driverSummary()` in place of (or appended to) the device name there, with the existing
-fallback kept as the "unavailable" case. That file is outside this task's write scope and the Lead asked to be
-told first, so the diff is proposed rather than landed.
+**The stub string: landed.** `CeltiumGlStub.celtium$nativeRendererName()` returned only
+`<device name> via Celtium Vulkan`; with the Lead's approval and weather-water's agreement (that file is
+theirs and was hot with task-50) it now returns `VulkanContext.driverSummary() + " via Celtium Vulkan"` when a
+Vulkan backend exists and the summary is not `"unavailable"`, and **`"unavailable"`** otherwise - no stub
+string presented as a driver, which is the user's own constraint. `GL_VENDOR` is untouched ("Celtium").
+Consequence for every later report: `glRendererPreflight` is now the longer driver summary rather than
+`<device> via Celtium Vulkan`, from the same source (`GL11.glGetString(GL_RENDERER)` -> the stub);
+`--require-gpu AMD` still matches because `gpuRequirementSource` is `nativeDeviceName` and the device name
+appears inside the summary.
 
 **The user's own session (item 3).** Their instance log (`…/cleanroom-0.6.13-alpha/minecraft/logs/latest.log`,
 18:27) contains `CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400 (RADV NAVI24)" … matchedOpenGl=false` and the
