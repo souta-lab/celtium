@@ -274,6 +274,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.287 **round 93: OPT-04 の残り site を修正・OPT-09 step(3) は cross-boot 不能と判明（35.5% 差）・fixture の決定性 knob を配布**
+
+- **OPT-04 の残り site を修正（Lead・`0638777c6`）**: `ensureFramebuffer` が render pass handle の変化時に
+  **settleGpu なしで `destroyFramebuffer()`** を呼んでいた（frame-composite が特定）。兄弟 site（frame target recreation）は
+  既に guard 済みで、validation layer が規則を名指ししている（`vkDestroyFramebuffer()` は使用中の framebuffer に呼べない）。
+  同 guard を適用し `framebufferSettleFailures` で計数・**fail closed**（settle できないときは旧 handle を保持）。
+- **OPT-09 step(3) は cross-boot では取れない（proj-channel・同一 jar `e3005991`・flag のみ差）**:
+  | | indirect ON | indirect OFF |
+  |---|---|---|
+  | verdict | PASSED | PASSED |
+  | `terrainIndirect` | `offers=696 calls=696 draws=8422 clamps=0 fallbacks=0` | `offers=0 fallbacks=1` |
+  | passes / lastSections | **992 / 40** | **1309 / 53** |
+  | picture 差 | — | **327,323 px（35.5%）** |
+  ＝**2 leg は同じ workload ではない**（entity scene の 23.5% 床より大きい）。cross-leg の絵/geometry 比較は
+  「同じ world の2経路」ではなく「別の world」を比べることになる。**両 leg が calibrated gate を通るのは実 signal だが、
+  tolerance が2つの section 集合を許すほど広い**ことも判明。within-leg では `draws=8422` が batch の command 数と一致し
+  fallback 0・packet は batch 順で書かれるので sorted pass の順序は構成上保たれている。
+- **決定（Lead）**: (a) **`-Dceltium.validation.indirectToggleAtFrame=<n>`**（同一 leg 内で flag を frame 境界で切替・次 frame で capture）
+  を proj-channel が実装（confound を減らすのではなく**消す**形）。(b) **`-Dceltium.validation.pinSections=<n>`**（section 数が n 以下で
+  連続 frame 安定してから capture・値を報告）を gui-stage が実装＝**team の全 cross-leg 比較**（canon row・probe・resize・OPT-09）を守る。
+- **BH-03 の hook 決定**: fixture knob ではなく **stub property**（`-Dceltium.glstub.alphaFuncOverride=<GL enum>`・weather-water のファイル）を採用。
+  fixture が GL state ごとに knob を増やさないため。
+- **BH-32 の実効 maxLod レポート**（`CELTIUM_ATLAS_SAMPLER maxLod=… configured=… mirrorLevels=… source=…`・bounded 6行）が着地。
+  mipmap knob の gap は**未確立のまま明記**（別 scene で偽装しない）。
+
 ## 0.286 **round 92: 決定的 — `passImage == readImage`（copy は正しい image を読む）・それでも全白＝draw が白を書いている**
 
 - **測定（Lead・既存 2 leg の比較）**:
