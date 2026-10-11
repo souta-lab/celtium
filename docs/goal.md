@@ -1,4 +1,4 @@
-# Celtium goal — 2026-10-11 更新（revision 61, phase active / activation armed）
+# Celtium goal — 2026-10-11 更新（revision 65, phase active / activation armed）
 
 goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
 
@@ -20,6 +20,16 @@ goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
 - 影 mod / shader pack 互換は本体の shaderless 完成後。バニラの ShaderGroup・spectator 効果・entity outline は本体機能として省略しない。
 - 一括削除・全面書き直しをしない。有効な修正を保持し、一つの根因の所有・状態契約を揃える小さな修正を進める。
 
+## 原典を読む（必須・2026-10-11 追加）
+- build は**デコンパイル済み Minecraft/Forge ソースと SRG 名表**を通常の build の一部として生成している。
+  `scripts/mc-sources.sh` がパスを示し、`--grep` で検索し、`--srg` で deobf↔SRG を両方向に引く。
+  これらは数週間未読のまま、署名・draw mode・vertex format・呼び出し順序・shader 入力を推測で決めて何 round も往復した。**二度としない。**
+- mixin の target、format id、draw mode、shader 入力、順序の議論を書く前に原典で確認する。`javap` は原典が扱わないクラスの fallback。
+- このプロジェクト自身の計器（counter・dump・report）にも同じ規則: 既にあるものを読む。新しく足したら報告に名前を書く。
+  担当を起動する時は原典のパスと `scripts/mc-sources.sh` を必ず渡す。
+- 規則は `AGENTS.md`（新規参加者と担当が最初に読むファイル）に置く。
+- 原典で確定した事実は plan §0.129（バニラの (mode, format) 全表・`POSITION_NORMAL` が未対応・font glyph の契約）。
+
 ## 現在の到達点（2026-10-11 実測・詳細は plan §0.100〜§0.126）
 - **GL context なしの window が実 scene を描いて提示する**。AMD/Intel とも bridge/GL-less 両 leg が PASSED・clean・VUID 0。
   標準 GL-less allBlocks は offers 5000 / accepted 4705（94.1%）、粒子修正後の run は**拒否 census が空**。
@@ -34,10 +44,10 @@ goal ID: `goal-0d07c3b5-8a9f-4698-9996-95bc88a28c68`
 - **性能（制限付き）**: GL-less p50 3.94ms / bridge 4.89ms / 参照 16.10ms。参照は 60Hz フロアであり「4倍速い」とは主張しない。
 
 ## 未完（優先順は plan の実行順）
-文字（N03 実画像受入）・可視 glow（identity 0 が運ぶ pass と composite の分離＝設計変更）・wedge の残存・
-bridge の model 計器・post chain の受入・model mesh 寿命の受入・mip/ByteBuffer 契約・FBO/postprocess・
-全 entity/TESR の画質・mod 互換（D1 文字が最上位）・ベンチの欠測検出・docs/配布物の同期・bounded wait/census/ring・
-リブランド/配布。
+文字（N03 実画像受入）・可視 glow（chain 専用 image へ設計変更中）・wedge の残存（原典が示す3候補から識別）・
+**`POSITION_NORMAL` の native 化**（原典で発見した未対応パス）・bridge の model 計器・post chain の受入・
+model mesh 寿命の受入・mip/ByteBuffer 契約・FBO/postprocess・全 entity/TESR の画質・mod 互換（文字が最上位）・
+ベンチの欠測検出・docs/配布物の同期・bounded wait/census/ring・リブランド/配布。
 
 ## 使ってはいけない古い主張
 旧「Nether 両GPU受入」（撤回）・旧「bridge で model draw 回帰」（bridge のレポートにカウンタが元から無い）・
