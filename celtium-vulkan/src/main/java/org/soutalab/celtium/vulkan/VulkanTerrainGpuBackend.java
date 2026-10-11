@@ -1140,6 +1140,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int windowFlushFailures;
     private long windowFlushFailureFrame = -1L;
     private long windowFlushDroppedBatches;
+    /** Viewports issued per group; BH-13's counter, so "the rectangle was restored" is readable, not assumed. */
+    private long groupViewportSets;
     /**
      * Batches a failed window flush puts back on the queue instead of throwing away.
      * <p>
@@ -6443,6 +6445,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " windowFlushFailures=" + this.windowFlushFailures
                 + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
                 + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
+                + " groupViewportSets=" + this.groupViewportSets
                 + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
                 + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
                         : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
@@ -10958,23 +10961,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         int yBottom0 = Math.max(0, viewport[1]);
         int x1 = Math.min(this.targetWidth, viewport[0] + viewport[2]);
         int yBottom1 = Math.min(this.targetHeight, viewport[1] + viewport[3]);
-        if (x1 <= x0 || yBottom1 <= yBottom0) {
+        // BH-13: the viewport is dynamic command state, so it is set for *every* group - and this is exactly where
+        // the old code went wrong twice. It returned early when the group's rectangle was the full target, on the
+        // assumption that "the pass already set exactly this rectangle": true at the pass's first group, false after
+        // any narrower group has run, which left the narrow rectangle in place for everything that followed. It also
+        // returned without setting anything when the rectangle was entirely off the drawable, so that group inherited
+        // whichever rectangle the previous one had set instead of drawing nothing. The rules Vulkan actually needs:
+        // a full rectangle is re-issued (it is one command), and an empty intersection becomes a zero-extent viewport,
+        // which is legal and rasterizes nothing.
+        boolean empty = x1 <= x0 || yBottom1 <= yBottom0;
+        int width = empty ? 0 : x1 - x0;
+        int height = empty ? 0 : yBottom1 - yBottom0;
+        int y = empty ? 0 : this.targetHeight - yBottom1;
+        if (empty) {
             // Nothing of the rectangle is on the drawable; GL would draw nothing either. Counted so an entirely
             // off-target viewport is visible rather than silently empty.
             this.immediateOffTargetViewports++;
-            return;
         }
-        int width = x1 - x0;
-        int height = yBottom1 - yBottom0;
-        if (x0 == 0 && yBottom0 == 0 && width == this.targetWidth && height == this.targetHeight) {
-            return; // the pass already set exactly this rectangle
-        }
-        int y = this.targetHeight - yBottom1;
         org.lwjgl.vulkan.VkViewport.Buffer vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
         vkViewport.get(0).x((float) x0).y((float) y)
                 .width((float) width).height((float) height)
                 .minDepth(0.0f).maxDepth(1.0f);
         vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+        this.groupViewportSets++;
         // BH-09: the game's own clip rectangle. Celeritas' UI calls GL11.glScissor directly (VintageDrawContext),
         // which the stub now records instead of dropping, and this is the one place a group's rectangle becomes the
         // Vulkan scissor - so the clip is applied here as the intersection of the target rectangle and the game's box,
