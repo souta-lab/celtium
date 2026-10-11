@@ -133,6 +133,32 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.189 **splash が renderer に届いた・F3 が実 driver を名乗る・wrap の実測・frame interval は「cold」だった**
+
+- **ww19（weather-water）**: `CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0 **stage=createDisplay**`。
+  `no terrain backend is installed` は **0件**（ww12 は3件）。run の最初の immediate group が splash 自身:
+  `CELTIUM_IMMEDIATE_ENQ frame=0 group=1 proj=0.0,0.0,0.0,-0.5 mvT=0.0,0.0,-2000.0 fmt=2 texture=8 batches=2
+  target=1563611679 mirrored=true worldPass=false`——`mvT z=-2000` は `Minecraft.drawSplashScreen` の translate、
+  texture 8 は Mojang logo、target は **splash 自身の FBO**。world leg は **PASSED**・VUID 0・
+  **`World.getSkyColorBody` NPE は再発せず**（crash retake 完了）。
+  **F3 検証**: `glRendererPreflight="AMD Radeon RX 6400 (RADV NAVI24) via Celtium Vulkan"`（以前は "Celtium stub GL"）。
+  **残り**: splash の内容は FBO に入り、最後の `framebufferRender` がその colour texture の mirror を sample する——
+  GL-less では空（frame-composite の owned image 待ち）。
+- **texture-mirror（task-39）**:
+  - **混同の決着**（3 leg）: per-level+reach4 = band **6.207**/5.86%・terrain centre 0.010／generated+reach1 = 26.728/50%・1.256／
+    **generated+reach4 = 21.309**/50%・1.256。**content が支配的**（reach 単独は mean を約5.4改善するが >8 を動かさない）。
+  - **rows 225-256 の残差は build 状態**（pin では **bit-identical 0 px**）。terrain sampler の実効は rows 210-219 の **959 px**で、
+    以前の 8,474 px という見積りは build 状態だった（task-26 の数字を下方修正）。
+  - **wrap の実測**: `CELTIUM_TEX_PARAM_CENSUS recorded=194 textures=29 wrapRepeat=38 wrapClamp=0 calls=20592`——
+    **ゲームは REPEAT を38回設定し CLAMP は一度も設定しない**＝hardcoded CLAMP が bug だった（record を mirror が消費）。
+  - **しかし panel はまだ平坦**: `guiPanelDistinctColours=133`（参照 **15,805**）・`changedFraction 0.999996`・
+    key 一致で FAILED。**wrap は必要だが十分ではない**——次の測定は GUI frame の panel crop と背景 texture の mirror dump。
+- **frame interval の測定法（重要）**: fixture は **`worldTicks >= 120 && < 200`** でしか frame interval を取らない
+  （= chunk build の窓）。benchmark は 600 tick warmup 後。よって記録にある 91.8/109/189/222/261/989 ms は**すべて cold**で、
+  古い jar が 535 ms と「悪い」のも build throughput の差。**warm/cold を1つの report で分けて出す**よう frame-composite へ依頼。
+- **マシン負荷**: 15 GB 中 10 used・Gradle daemon 2・**harness script 15 が queue**。weather-water の `ww18` は
+  例外なしで SIGKILL（外部 kill・memory pressure と推定）。**1担当あたり queue は最大2 leg**に。
+
 ## 0.188 **F3 の実機表示が動いた（Intel 1920x1080 menu）・splash の install 前倒し・B09 owned-buffer**
 
 - **Intel の 1920x1080 menu leg（task-40・sky-draws）**: `resizeCompositorResult mode=1920x1080@60Hz exit=0 success`・

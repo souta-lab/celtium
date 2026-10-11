@@ -1091,7 +1091,8 @@ public final class VulkanContext {
                 info = driver.driverInfoString();
             }
             id = driver.driverID();
-            version = Integer.toUnsignedLong(driver.driverVersion());
+            // The version is not in this struct: it is VkPhysicalDeviceProperties.driverVersion.
+            version = Integer.toUnsignedLong(properties.properties().driverVersion());
         } catch (RuntimeException | LinkageError error) {
             name = "unavailable (" + error.getClass().getSimpleName() + ")";
         }
@@ -1119,9 +1120,11 @@ public final class VulkanContext {
             case KHRDriverProperties.VK_DRIVER_ID_NVIDIA_PROPRIETARY_KHR: return "NVIDIA_PROPRIETARY";
             case KHRDriverProperties.VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS_KHR: return "INTEL_PROPRIETARY_WINDOWS";
             case KHRDriverProperties.VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA_KHR: return "INTEL_OPEN_SOURCE_MESA";
-            case KHRDriverProperties.VK_DRIVER_ID_MESA_LLVMPIPE_KHR: return "MESA_LLVMPIPE";
-            case KHRDriverProperties.VK_DRIVER_ID_MESA_DOZEN_KHR: return "MESA_DOZEN";
-            case KHRDriverProperties.VK_DRIVER_ID_MESA_NVK_KHR: return "MESA_NVK";
+            // Not declared by this LWJGL build (they arrived in later headers), so the spec's numbers are used:
+            // VK_DRIVER_ID_MESA_LLVMPIPE = 13, MESA_DOZEN = 18, MESA_NVK = 19.
+            case 13: return "MESA_LLVMPIPE";
+            case 18: return "MESA_DOZEN";
+            case 19: return "MESA_NVK";
             default: return "unknown";
         }
     }
@@ -1141,9 +1144,7 @@ public final class VulkanContext {
         if (id == KHRDriverProperties.VK_DRIVER_ID_MESA_RADV_KHR
                 || id == KHRDriverProperties.VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA_KHR
                 || id == KHRDriverProperties.VK_DRIVER_ID_AMD_OPEN_SOURCE_KHR
-                || id == KHRDriverProperties.VK_DRIVER_ID_MESA_LLVMPIPE_KHR
-                || id == KHRDriverProperties.VK_DRIVER_ID_MESA_DOZEN_KHR
-                || id == KHRDriverProperties.VK_DRIVER_ID_MESA_NVK_KHR) {
+                || id == 13 || id == 18 || id == 19) {
             return VK_VERSION_MAJOR((int) version) + "." + VK_VERSION_MINOR((int) version) + "."
                     + VK_VERSION_PATCH((int) version) + " (mesa vk-version layout)";
         }

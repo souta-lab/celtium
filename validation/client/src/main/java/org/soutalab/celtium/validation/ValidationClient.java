@@ -93,6 +93,16 @@ public final class ValidationClient {
     private final JsonObject report = new JsonObject();
     private net.minecraft.client.shader.Framebuffer celtium$secondary;
     private final List<Double> frameIntervals = new ArrayList<Double>();
+    /**
+     * The warm window's intervals, sampled after the world is built.
+     * <p>
+     * {@link #frameIntervals} is sampled at world ticks 120-200, which is the chunk-build window: every
+     * {@code frameIntervalP50Ms} in the record is therefore a *cold* number, and the benchmark that measured GL-less at
+     * 3.94 ms sampled after a 600-tick warmup. Comparing the two was a method error, and one report has to carry both
+     * windows so it cannot happen again. This list starts at {@code -Dceltium.validation.warmFromTick} (default 400)
+     * and stops at {@code warmToTick} (default 600).
+     */
+    private final List<Double> warmFrameIntervals = new ArrayList<Double>();
     private boolean enabled;
     private boolean launched;
     private boolean celtium$leftWorld;
@@ -3553,6 +3563,11 @@ public final class ValidationClient {
         if (worldTicks >= 120 && worldTicks < 200 && previousFrame != 0) {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
+        int warmFrom = Integer.getInteger("celtium.validation.warmFromTick", 400).intValue();
+        int warmTo = Integer.getInteger("celtium.validation.warmToTick", 600).intValue();
+        if (worldTicks >= warmFrom && worldTicks < warmTo && previousFrame != 0) {
+            warmFrameIntervals.add((now - previousFrame) / 1_000_000.0);
+        }
         previousFrame = now;
         if (worldTicks >= 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
             celtium$reloaded = true;
@@ -4193,7 +4208,20 @@ public final class ValidationClient {
             report.addProperty("frameIntervalP50Ms", percentile(0.50));
             report.addProperty("frameIntervalP95Ms", percentile(0.95));
             report.addProperty("frameIntervalP99Ms", percentile(0.99));
-            report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a performance benchmark");
+            Collections.sort(warmFrameIntervals);
+            report.addProperty("frameIntervalWarmSampleCount", warmFrameIntervals.size());
+            report.addProperty("frameIntervalWarmP50Ms", percentile(warmFrameIntervals, 0.50));
+            report.addProperty("frameIntervalWarmP95Ms", percentile(warmFrameIntervals, 0.95));
+            report.addProperty("frameIntervalWarmP99Ms", percentile(warmFrameIntervals, 0.99));
+            report.addProperty("frameIntervalWindows",
+                    "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are"
+                            + " this one) warm=worldTicks " + Integer.getInteger("celtium.validation.warmFromTick", 400)
+                            + ".." + Integer.getInteger("celtium.validation.warmToTick", 600)
+                            + " (after the world is built; compare this one with a warmed benchmark, never the cold"
+                            + " one)");
+            report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a"
+                    + " performance benchmark; the cold window is the chunk-build window, the warm window is the"
+                    + " steady state");
             if (!interopRun) {
                 celtium$logFrameSample(mc);
                 // The game's own screenshot, at the game's own path: the fixture's convention, the harness's evidence
@@ -4242,6 +4270,18 @@ public final class ValidationClient {
     private double percentile(double fraction) {
         if (frameIntervals.isEmpty()) throw new IllegalStateException("No frame interval samples");
         return frameIntervals.get(Math.min(frameIntervals.size() - 1, (int) Math.ceil(fraction * frameIntervals.size()) - 1));
+    }
+
+    /**
+     * The same percentile of a named list. {@return -1 when the list is empty}: the warm window may legitimately have
+     * no samples (a run that ends before the world is built), and that is a fact about the run rather than a failure.
+     */
+    private static double percentile(List<Double> samples, double fraction) {
+        if (samples.isEmpty()) {
+            return -1.0D;
+        }
+        return samples.get(Math.min(samples.size() - 1, (int) Math.ceil(fraction * samples.size()) - 1))
+                .doubleValue();
     }
 
     private void fail(Minecraft mc, Throwable error) {
