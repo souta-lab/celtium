@@ -2145,6 +2145,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean frameSubmitReachedQueue;
     /** Times a present skipped the bridge semaphore pair because its done signal was still outstanding. */
     private int presentBridgeSignalOutstanding;
+    /** Times the frame-close submission (the second producer of the done semaphore) ran. */
+    private int signalOnlySubmissions;
     private int emptyFrameReleases;
 
     /**
@@ -12729,6 +12731,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * GL wait inside {@code endFrame} has nothing to wait for and blocks the render thread for good (audit S18).
      */
     private void submitSignalOnly() {
+        // Counted, so a leg can say whether the frame-close path fired rather than whether the leg was green: the
+        // per-image change made consumeDone wait on whichever done semaphore was recorded, and this is the producer
+        // whose pairing that could break. Two legs were green without this path firing at all, which is a leg about
+        // the other path - the counter is what turns that into evidence either way.
+        this.signalOnlySubmissions++;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
             LongBuffer waitSemaphores = stack.mallocLong(1);
