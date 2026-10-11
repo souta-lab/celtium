@@ -55,3 +55,12 @@ are the `recordedImmediateGroups` path (groups recorded into a pass before the f
 
 `validationMessageCount` is not carried by this leg's report (layers are off for the frame budget); the harness
 reported the leg clean and the picture PASSED.
+
+## The instrument for the open question (added after the acceptance leg)
+
+`flushEntrySummary()` reports, per target, `entries=` (how often the drain visited it) and `groupsAtEntry=`
+(how many of its groups were present at flush entry), plus `drainedOtherTargetPasses` (flush entries whose
+target was not the bound one). The three reach the report as
+`drainedOtherTargetPasses=… flushEntries=[…]`. A target with `groupsAtEntry=0` was **never in the queue at a
+flush**, which is a different defect from one that was present and not drawn - and the next leg reads which of
+the two the one-shot identity is, without another code change.
