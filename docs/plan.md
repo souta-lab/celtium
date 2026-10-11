@@ -145,6 +145,37 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.219 **round 26: エンティティ不可視の根因を特定・修正（push block 208→216）・font overhaul を聖典に追加**
+
+- **根因（acceptance の実測 + Lead の修正）**: `drawPendingImmediate` の push block が **208 byte** なのに、
+  lit ITEM の light-map 座標を **offset 208/212** に書いていた（`push.putFloat(208, …)`）。light-map 座標を持つ
+  group＝**model/item の batch** を描くたびに `IndexOutOfBoundsException` が window flush から飛び、catch が
+  **即時キュー全体を clear** していた。
+  実測（修正前・acceptance）: `windowFlushFailures=64`・`windowFlushDroppedBatches=9680`・
+  `acceptedByFormat` id4=30/id9=228 に対し `drawnByFormat` id4=0/id9=0・最初の失敗 frame 43-46・
+  `immediateGroupsDiscarded=0`・`pending=4`。
+  **修正**: block を lit パイプラインの宣言どおり **216 byte**（`PUSH_CONSTANT_BYTES_LIT`）に。
+- **修正後の実測（Lead・jar `5a181988`・terrain・`keepEntities=true`+`captureEntities=true`+`keepGui=true`）**:
+  `windowFlushFailures=0`・`windowFlushDroppedBatches=0`・`immediateGroupsDrawn=5297`（前 1408）・`modelDraws=2981`、
+  **`drawnByFormat` id4=17940（前 0）・id9=228（前 0）**、`nonPlayerEntitiesAtCapture=9`。
+  ＝**model/item batch が実際に描かれるようになった**。
+- **未解決（次の測定）**: 同 leg の `presentedImageVerdict=FAILED_PRESENTED_IMAGE` で、
+  `screenshots/celtium-validation.png` が**一様（1色・2759 byte）**。group は 5297 描かれているのに presented が
+  一様なので、**presented 画像の経路**（readback/dump か最終合成）を次の leg で切り分ける。失敗ゲートは証拠として扱う。
+- **flush 失敗時の契約（proj-channel 着地・pending）**: catch と give-up（`attempt == 1`）の**両方**で clear せず retain し、
+  `windowFlushRetainedBatches` を数える（group は「描かれるか、落ちたと数えられるか」）。give-up 側が実際の drop 源
+  だったことは `ent3-verify`（`windowFlushRetainedBatches=0`・`windowFlushDroppedBatches=11051`）で確認。
+- **font renderer overhaul（ユーザー提案・聖典 item 4）**: Smooth Font 的に、バニラ 128x128 glyph sheet の拡大ではなく
+  **高解像度 glyph atlas（4x 再ラスタライズ）＋ linear/mipmap ＋ subpixel advance** を実装し、滑らかさ・安定性・速度を
+  同時に改善する。受入は (a) F3/chat/メニューの crop が現行より滑らかで可読、(b) `refused=0` 維持、
+  (c) glyph あたり submit 費用が悪化しない（現行 0.35〜0.65 µs/glyph）、(d) 同一 scene/pose/tick の crop と p50/p95、
+  (e) 未較正 scene のノイズ床 23.5% を踏まえて主張は較正 leg か crop 目視で行う。
+  設計前に原典（`scripts/mc-sources.sh --grep FontRenderer`）と現行 font 経路
+  （`FontRenderer.renderStringAtPos` → 1 glyph 1 batch → font run batching、format id2、`CeltiumFontGlyphCapture`）を読む。
+- **BH-09（scissor）第1段**: stub の NOOP 表から `glScissor` を外し、矩形を記録（`scissorBox()`）、
+  `scissorTest()` は `glEnable`/`glDisable` と同じ `enables` を読む（二重mirrorにしない）。backend の
+  intersection は次段。
+
 ## 0.218 **round 24-25: 37件のbug huntを全担当へ配布・lit ITEM パイプライン復活（entity経路の阻塞解除）・BH-02/04/05/18/23/27/30/34 着地**
 
 - **lit ITEM パイプラインの復活（最重要・entity/手持ち/TESR 経路）**: 全 validation leg を落としていた
