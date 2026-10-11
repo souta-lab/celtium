@@ -274,6 +274,35 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.292 **round 98: semaphore VUID は私の guard をすり抜けた（10件のまま）— 二重 signal は `doneSemaphore` ではなく `waitSemaphore` の見込み**
+
+- **測定（Lead の `r94-opt09`・修正 `7e3afed8d` 入り jar `a1a3aa96`・`pinSections=60`・`indirectCompare=true`）**: **VUID=10（変わらず）**。
+  さらに glyph-fix の `vs-celeritas` leg も **`validationMessageCount=10`** で、彼らは**修正がビルドに入っていることを確認した上で**報告している
+  （`doneSemaphoreSignalOutstanding` が `FrameImageTarget`・`GllessFrameTarget`・`VulkanTerrainGpuBackend` に存在）。
+  ＝**私の guard はこの経路を覆っていない**。正直に記録する。
+- **コードから見た残る producer**: `GllessFrameTarget.signalWait()`（`:311-321`）は
+  **空の submission で `waitSemaphore` を毎回 signal する**（`beginFrame()` `:362` / `beginFrameForPresent()` `:436` から呼ばれる）。
+  ＝**present の wait が前の signal を消費する前に frame が2回開けば、`waitSemaphore` が2回 signal される**＝VUID-00067。
+  私が守ったのは `doneSemaphore`（present が signal する側）で、**露呈しているのは `waitSemaphore`（frame が signal する側）**の可能性が高い。
+- **修正の形（推測で着地させない）**: 単に skip すると「signal の無い semaphore を frame の submission が wait する」＝
+  待ちが成立しない危険があるため、**「outstanding なら再 signal の前に drain する」**（proj-channel が名指しした形）が正しい。
+  `beginFrame` が2回開く経路（present retry/fallback）を特定してから、**frame の open 契約として**1箇所で直す。
+  proj-channel に依頼する（彼らが producer/consumer を追えている）。
+- **video-settings の self-consistency 受入（glyph-fix・`vs-celeritas`）**: **`guiScreenClassAtCapture = CeleritasVideoOptionsScreen`** ＝
+  **Celeritas 画面が捕捉されている**。panel crop `(180,80,1100,624)` は **587 distinct colours**（rows-left 506・Done 145・world strip 103）、
+  frame sha256 `7ab2ffa5…`・crop sha256 `a8253fb5…`。**比率列は報告しない**（同じ leg の早期 dump は world であり、
+  same-screen の upstream 参照は存在し得ないため）。**未達3点を明示**: `validationMessageCount=10`・
+  **`scissorCapturedGroups=0`（plan の `>0` が失敗）**・**`guiClickDivertedTo` はどの leg の report field でもない**（受入と fixture が不一致）。
+- **F3 の split 計器が着地（glyph-fix・`5d5cbce73`/`5783eb6cf`）**: 1,280,000 glyph window・2,785 string で
+  `stringMillis=4701`（1.69 ms/string）・**`glyphMillis=4635`（3.62 µs/glyph）**・我々の capture は 582 ms（0.45 µs/glyph）。
+  ＝**vanilla の glyph 本体が 4,053 ms / 4,701 ms（3.17 µs/glyph）**で、`bindTexture` 毎 glyph ＋ 9つの `GlStateManager` wrapper が実体。
+  **~15 ms/frame が vanilla 側・~2 ms/frame が我々**で、overlay の 139 ms のうち text 経路は ~22 ms。残りは per-frame の overlay 構築と追加 immediate group。
+  次の実験は **per-glyph `bindTexture` の mirror 経路（変化しない bind の cache/short-circuit）**＝**我々の hook 側**。
+- **blend-state の2件も閉じた（`6afbf1a91`）**: BH-10 の雲 scene は **pass は frame に居るが scene が解像しない**
+  （`fmt=2 worldPass=true batches=1 vertices=5104 state=[… mask=0x0]`・1 frame 1 group・`drawnByFormat[8]=0`）、
+  scatter の機構は **`captureWorldFrames` と sky mean の r=0.945**（fixture は tick を pin するが frame phase を pin しない→`partialTicks` が動く）。
+  light-params 境界は **lit-only 化**で terrain 416→**17**・videoSettings 425→**2**（両 leg clean）。crop には synthetic lit draw が要る（未了と明記）。
+
 ## 0.291 **round 97: F3 のコストを原典と外部前例で裏づけ（vanilla の per-glyph `charmap.indexOf` と `bindTexture`）**
 
 - **原典の構造（web 調査・1.12.2 の `FontRenderer`）**: `drawString` → `renderString` → **`renderStringAtPos`**（1文字ずつ
