@@ -26,3 +26,11 @@ instance signature stays.
 No patch is required. If a future edit does need one, the anchor is:
   celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java, verificationSummary(),
   the "externalImages=[" term.
+
+The run quoted above (10:58) is a known regression under investigation, not the scene's normal state. Every GL-less
+allBlocks run from 09:33 onward reports presentedNonBackgroundFraction=0.364906 with background 0xB3CFFF - sky only,
+no terrain pixels - while the last runs that still drew the floor are 09:06-09:16 (0.657788-0.822577). The window is
+09:17-09:30 (b7b634179 unbound-framebuffer, 30a30a375 the projection hook, 9655ff681 the depth format); the depth
+format is ruled out on AMD by the probe, so the projection hook is the suspect. The counters in this note are
+texture-upload and layout-handshake counts, which is why they remain valid evidence even though the frame is not. Do
+not read "validationClean=true" beside those numbers as a statement about the picture.
