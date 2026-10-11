@@ -107,6 +107,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.167 **条件 (b) の構造的証拠と、GL-less における `glBodyCompleted` の意味**
+
+完了条件 (b)「GL context を生成せず、通常 frame の GL call を必要としない実行」の**構造的な半分**は、run ログの次の3行で示される（再導出せず引用する）:
+
+```
+CELTIUM_GLLESS window hinted GLFW_NO_API
+CELTIUM_GLLESS stub GL provider installed
+CELTIUM_GLLESS splash progress skipped (no shared GL context)
+```
+
+＝**GL context は存在せず**、GL の全エントリは**私たち自身の stub** に解決し、ゲームの splash 経路もそれを認識している。
+この構成での「GL call」は**ドライバではなく私たちの関数テーブルへの呼び出し**であり、present が swapchain 画像を直接書く理由でもある。
+
+**誤読してはいけない値**: `glBodyCompleted`（uploader の `celtium$glUploads`）は GL body に到達した batch 数だが、
+**GL-less ではその body が stub** なので、非ゼロは**誰も描かない batch**（被覆の穴）であって **GL 依存の証拠ではない**。
+最新 run: `offers=2000 accepted=1771 glBodyCompleted=275` = 1771 が native・275 が stub 行き。
+**この数が残る被覆ギャップの正直な大きさ**で、拒否 census と並べて受入表に載せるべきもの。
+
+**併記**: `CELTIUM_NOOP_CENSUS` は依然として競合で、出力経路を logger から移した後もこの run には出ていない。
+**その不在はどのエントリが呼ばれたかについて何も言わない。**
+
 ## 0.166 **task-3（sky）完了——担当の帰属測定と、この fixture では行使できない段階**
 
 担当 sky-draws が task-3 を完了。**rows 0-199 の 256,000 画素のうち 8 を超えて異なるものは 0**（max 4・mean 0.453）、
