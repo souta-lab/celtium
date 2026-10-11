@@ -922,9 +922,13 @@ public final class ValidationClient {
         double minPanelRowAmplitude = Double.parseDouble(System.getProperty(
                 "celtium.validation.gate.minPanelRowAmplitude",
                 Double.toString(measured.minPanelRowAmplitude)));
+        // The GUI stage's floors are carried through: rebuilding the gate with the 13-argument constructor dropped
+        // them, so a scene that had just been given per-stage floors was still judged by its world frame's - the
+        // override path was the last place the provenance fix could be lost (found by the first verification run,
+        // whose report still read `verticalBands>=250` for the GUI stage).
         return new SceneGate(minDistinctColours, minNonBackground, minBands, maxBlack, minPanelChanged, minPanelStrong,
                 minPanelColours, minPanelRowAmplitude, measured.reference, measured.referenceRuns,
-                measured.referenceNumbers, measured.margin, measured.calibrated);
+                measured.referenceNumbers, measured.margin, measured.calibrated, measured.guiFloors);
     }
 
     /** The measured gate for a scene: the scene's own reference runs, their numbers, and the floors derived from them. */
