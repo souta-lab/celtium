@@ -95,6 +95,62 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.158 **bridge は 09:47 から地形を描いていなかった——depth format が GL-less でしか選ばれていなかった**
+
+担当 A が**レポートを読んで**（verdict ではなく）発見した、その日で最も重要な欠陥。
+
+```
+bridge run            mtime   nonBg     passes/skipped
+glow-bridge5          09:02   0.748878  passes=909 skipped=0   <- 最後の正常な bridge
+bridge-model          09:47   0.149201  passes=0   skipped=447
+n03-ae-terrain-bridge 12:23   0.813402  passes=0   skipped=936   <- 「PASSED」だが地形は無い
+van-bridge2           12:59   0.153832  passes=0   skipped=1122
+```
+
+すべて `skipReason=translucent:_no_pipeline` と
+`pipeline for solid|cutout_mipped|translucent failed: IllegalStateException: the depth format was asked for before anything chose one` を伴う。
+
+**連鎖**: `VulkanDepthFormat.chosen()`（引数なし）は未選択なら**例外**。選択する唯一の呼び出し元は `GllessFrameTarget:187`（**GL-less 専用**）。
+`VulkanTerrainPipeline:901` は引数なし形を使う。→ **bridge では誰も選ばず、地形パイプライン生成が全て失敗**。Celeritas は「solid - 46 sections」と報告するが Celtium は 1つも描かない。
+
+**修正（根因側）**: `VulkanContext` が物理デバイスを得た時点で `VulkanDepthFormat.noteDevice(device)` を呼び、引数なし `chosen()` は**初回使用時に自分で選ぶ**。
+例外は「Vulkan デバイスが存在する前に depth format を聞いた」という本当の順序エラーのためだけに残し、メッセージもそう書き換えた。
+
+**検証**: `depthfix-bridge` = `nonBg 0.744563`・**PASSED**（修正前 0.153832 FAILED）。担当 A が独立に確認（`passes=138 skipped=0`・背景 0x571716＝地面）。
+
+**私の記録の訂正**: §0.130 の「depth format 変更は AMD では無影響と実測」は
+`scripts/vulkan_depth_format_probe.py`＝**能力プローブ**で、chooser が*どの形式を選ぶか*を測るだけで **bridge leg を一度も走らせていない**。
+形式については真、**構成については偽**だった。
+
+**「PASSED」だった bridge run は地形参照にならない**（担当 A の測定）: `n03-x`・`n03-ae`・`n03-ah/ai/aj` の画に地形は無く、
+`nonBg 0.81` は**空だけの画の上の chat block**（floor 0.40 は chat block で満たせる）。最後の正直な bridge 地形画像は 09:47 以前。
+
+## 0.159 **チーム編成（10タスク）と、ユーザー起動クラッシュの分析**
+
+### チーム
+
+10体を Agent Teams のメンバーとして起動し、共有タスク `task-1`〜`task-10` を割り当てた:
+投影チャネル（proj-channel）・fog（fog-path）・天球/星/地平面（sky-draws）・texture mirror（texture-mirror）・GUI/HUD（gui-stage）・
+**format/pipeline（pipelines・critical path）**・entity/TESR（entity-models）・**黒領域と全体暗化（frame-composite）**・天候/水/粒子（weather-water）・**独立受入（acceptance）**。
+
+統合時に tree は赤だった（`VulkanImmediateFormats` が未定義の `LAYOUT_*` を参照、fixture の renderer-less entity が `Entity` の抽象3メソッド未実装）。
+定数は**原典から**追加（`DefaultVertexFormats` の要素順、`VertexFormatElement` の display name。lightmap 要素は usage が UV なので `2,UV,Unsigned Short`）、
+抽象メソッドを実装し、`95d74bac6` としてコミット（**ビルドが通るからコミットした**、完成だからではない）。
+
+### ユーザー起動クラッシュ
+
+`java.lang.NullPointerException: Cannot read field "field_70165_t" because "entityIn" is null at World.getSkyColorBody(World.java:1608)`
+← `EntityRenderer.func_78466_h`（updateFogColor）が `mc.getRenderViewEntity()` に null を渡している。
+原典では `renderWorld` が `renderViewEntity == null` なら `player` を入れるが、**`player` も null なら NPE**（world 読み込み中・dimension 切替の窓）。
+
+**直接原因はインスタンスの mods にあった WIP jar**（`ac347ff1…`、13:04 にコピー。担当 P が退避）。
+HEAD `0fddd6ccf` から**クリーンな jar をビルドして設置**（`11c0a807…`）——これでユーザーは起動できる。
+
+### ハーネスの修正
+
+instance の mods に celtium jar があると `prism_validation.py` が「Test mod would overwrite a copied mod」で**全 run を起動前に落としていた**。
+**呼び出し側が `--mod` で指定した名前は instance からコピーしない**よう変更（`5c9bec7a1`）。ユーザーの起動用 jar と検証 run が共存できる。
+
 ## 0.157 **inventory/JEI の対照が成立——画が「何が欠けているか」を名指しした**
 
 fixture の2つの欠陥を直したことで、初めて対照が取れた:
