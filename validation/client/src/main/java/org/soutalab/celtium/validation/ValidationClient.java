@@ -4899,6 +4899,25 @@ public final class ValidationClient {
     }
 
     /** The open screen's simple class name, or "none". */
+    /**
+     * Whether the screen in front of the player is a video-settings screen - vanilla's or the mod's own.
+     * <p>
+     * With Celeritas installed the real button path opens {@code CeleritasVideoOptionsScreen}: the fixture's own
+     * two calls are diverted there by the mod's {@code displayGuiScreen} hook. The wait loop used to require
+     * {@code GuiVideoSettings} by name and re-opened vanilla's screen, so the leg captured a screen the acceptance
+     * is not about - the crop showed vanilla's layout while {@code guiClickDivertedTo} named the Celeritas one.
+     * Accepting both makes the captured screen the one that actually opened; the class that was captured is
+     * reported as {@code guiScreenClassAtCapture}, so the two are never confused in the artifact.
+     */
+    private static boolean celtium$isVideoSettingsScreen(net.minecraft.client.Minecraft mc) {
+        return celtium$isVideoSettingsScreenName(celtium$screenName(mc));
+    }
+
+    /** Name-based form of {@link #celtium$isVideoSettingsScreen}, for callers that already have the class name. */
+    private static boolean celtium$isVideoSettingsScreenName(String name) {
+        return "GuiVideoSettings".equals(name) || "CeleritasVideoOptionsScreen".equals(name);
+    }
+
     private static String celtium$screenName(Minecraft mc) {
         return mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName();
     }
@@ -6212,7 +6231,7 @@ public final class ValidationClient {
     /** Opens Minecraft's own video settings screen: the game's button path first, the vanilla calls when diverted. */
     private void celtium$vsOpenCapturedScreen(Minecraft mc) {
         celtium$clickVideoSettingsButton(mc);
-        if (mc.currentScreen != null && !"GuiVideoSettings".equals(celtium$screenName(mc))) {
+        if (mc.currentScreen != null && !celtium$isVideoSettingsScreen(mc)) {
             report.addProperty("guiClickDivertedTo", mc.currentScreen.getClass().getName());
             celtium$openVideoSettingsDirectly(mc, "the Video Settings button opened "
                     + mc.currentScreen.getClass().getName() + ", not Minecraft's own GuiVideoSettings");
@@ -6480,7 +6499,7 @@ public final class ValidationClient {
             // in the reference run, not GuiVideoSettings. What the scene asserts is Minecraft's own screen, so the
             // diversion is recorded and the screen this scene is about is then opened with the same two calls the
             // vanilla handler makes - it is the same screen the game would show without that mod in the way.
-            if (mc.currentScreen != null && !"GuiVideoSettings".equals(celtium$screenName(mc))) {
+            if (mc.currentScreen != null && !celtium$isVideoSettingsScreen(mc)) {
                 report.addProperty("guiClickDivertedTo", mc.currentScreen.getClass().getName());
                 celtium$openVideoSettingsDirectly(mc, "the Video Settings button opened "
                         + mc.currentScreen.getClass().getName() + ", not Minecraft's own GuiVideoSettings");
@@ -6504,7 +6523,7 @@ public final class ValidationClient {
                     + celtium$guiClickResult + ")"));
             return;
         }
-        if (!"GuiVideoSettings".equals(screenName)) {
+        if (!celtium$isVideoSettingsScreenName(screenName)) {
             if (worldTicks - celtium$guiScreenOpenedAtTick > celtium$guiWaitTicks) {
                 report.addProperty("guiScreenVerdict", "the screen never became GuiVideoSettings");
                 fail(mc, new IllegalStateException("scene " + celtium$scene.name + ": the screen opened via "
