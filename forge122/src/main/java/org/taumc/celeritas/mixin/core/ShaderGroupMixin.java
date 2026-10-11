@@ -61,6 +61,15 @@ public abstract class ShaderGroupMixin {
                 || !backend.celtium$postChainAvailable()) {
             return;
         }
+        if (!mainIsGame) {
+            // Every pass that names "main" resolves to the shared frame image in the executor: that is the game's own
+            // framebuffer, and only while the group's main framebuffer *is* the game's own does the name mean what the
+            // chain reads and writes. A group built around a different framebuffer (vanilla builds none - ShaderGroup
+            // is constructed with Minecraft.getFramebuffer() - but a mod can) would have its "main" passes sample and
+            // write the wrong image while reporting the chain as run, so that group keeps its GL chain instead. The
+            // audit's N04 rule: accept a chain only when its real input can be supplied natively.
+            return;
+        }
         // The framebuffer the chain reads first - its entry point. For every chain that starts from the game's main
         // image this is the game framebuffer itself; for the entity-outline group it is the outline target the game
         // filled with the silhouette, which the chain also writes last. That framebuffer is the game's own buffer for

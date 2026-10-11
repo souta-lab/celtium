@@ -71,6 +71,15 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet;
  * uniform block the mixin packs in declaration order goes in whole as push constants - every program's block fits in
  * 128 bytes except color_convolve (180) and spider (140), so a device whose {@code maxPushConstantsSize} is the
  * 128-byte minimum keeps those chains on GL.
+ * <p>
+ * <b>What a chain may read.</b> A chain is only accepted when every image it reads from <em>outside itself</em> can be
+ * supplied by this class: the group's main framebuffer (the frame image the caller acquired, which holds what the
+ * game drew), an image the caller adopted under the identity the pass carries (the entity-outline silhouette under
+ * the GL-less backend), or a target an earlier pass of the same chain wrote. An identity that is none of those is a
+ * framebuffer only GL has ever written - the bridge case, where the chain's input is a real GL framebuffer - and
+ * {@link #recordPasses} refuses the whole chain instead of allocating an empty target for it and reporting a run that
+ * sampled nothing. The caller turns that refusal into the GL chain it replaces; see
+ * {@link #unsuppliedInput(List)}.
  */
 public final class VulkanPostChain {
 
@@ -140,10 +149,27 @@ public final class VulkanPostChain {
      * Chain runs whose caller reported an image to adopt ({@link Pass#groupMainFbId}) and had not adopted one under
      * that identity: the passes then ran on an empty target this class allocated, which is the difference between
      * "the chain ran" and "the chain ran on the image the game drew into". Zero with a caller that adopts.
+     * <p>
+     * With the input contract enforced in {@link #recordPasses} this counter is a proof rather than a measurement: a
+     * chain that would have run on a stand-in is refused before anything is recorded, so it must stay zero. A nonzero
+     * value means a caller bypassed the gate.
      */
     private int runsOnAllocatedStandIn;
     /** One-shot: the same fact printed with the identity, texture and size the caller reported. */
     private boolean standInReported;
+    /** Chains refused because a real input could not be supplied natively; reported by {@link #status()}. */
+    private int refusedInputs;
+    /** Refusals of the specific case the old stand-in counter measured: a reported identity nothing was adopted for. */
+    private int standInRefusals;
+    /**
+     * How many times {@link #unsuppliedInput} was asked and answered "not suppliable". Counted there as well as in
+     * {@link #recordPasses} because a caller may consult it as a preflight and refuse before the executor ever
+     * records - the bridge's {@code celtium$postChainRun} does exactly that - and the run's report must still say
+     * that the chain was seen and refused rather than silently absent.
+     */
+    private int preflightRefusals;
+    /** One-shot: the refusal with the identity, size and program that asked for the unsuppliable image. */
+    private boolean refusalReported;
     /** How many adopted targets have been handed to this chain over its life; reported by {@link #status()}. */
     private int adoptions;
     /**
@@ -157,9 +183,17 @@ public final class VulkanPostChain {
      * that says so belongs to a submission that really happened.
      */
     private final Set<Target> pendingInit = new LinkedHashSet<>();
+    /**
+     * The recording {@link #pendingInit} belongs to - the token {@link #recordPasses} returned for it. A commit that
+     * names a different recording is not this recording's success and commits nothing; see
+     * {@link #commitPasses(int)}.
+     */
+    private int pendingRecording;
     /** Recordings that carried a first-use barrier, counted by {@link #initBarriers} and {@link #commits}. */
     private int initBarriers;
     private int commits;
+    /** Commits that named a recording which no longer owns the pending set, so they committed nothing. */
+    private int staleCommits;
     /** Recordings that carried a first-use barrier and were never reported as submitted before the next one began. */
     private int uncommittedRecordings;
     /** How many targets were recorded a barrier again after an earlier recording of theirs was not submitted. */
@@ -171,6 +205,18 @@ public final class VulkanPostChain {
     private boolean traceLimitReported;
     /** Recordings recorded so far; the trace numbers them so a barrier and the draw that follows can be paired. */
     private int recordings;
+
+    /**
+     * Test-only injection, guarded by the validation flag: fail this many recordings after they are fully recorded and
+     * before the caller's {@code vkQueueSubmit} - the exact point the audit's N05 asks to be exercised, where the
+     * commands exist but the queue never owns them. The caller sees an ordinary recording failure, abandons the
+     * frame, and the targets whose {@code UNDEFINED -> GENERAL} barrier went into the discarded buffer must get it
+     * again in the next recording; a submission of anything else must not commit them.
+     */
+    private static final int FAIL_FIRST_USE_RECORDINGS =
+            Integer.getInteger("celtium.vulkan.postChainFailFirstUse", 0).intValue();
+    private static final boolean INJECTION_ALLOWED = Boolean.getBoolean("celtium.vulkan.validation");
+    private int injectedFirstUseFailures;
 
     /** Persistent descriptor sets, handed out round-robin: one set per pass, never reused inside one command
      * buffer, so updating one is legal whenever the buffer that last bound it has completed. */
@@ -357,14 +403,38 @@ public final class VulkanPostChain {
      * framebuffer samples or writes the shared frame image, which the caller must already have acquired; every other
      * framebuffer resolves to a chain target - one allocated here, or the image the caller adopted for its identity.
      * <p>
+     * A chain that reads an image this class cannot supply is refused before anything is recorded: see
+     * {@link #unsuppliedInput(List)}. Refusing here rather than running on an allocated stand-in is what keeps a run
+     * that sampled nothing out of the counters and out of the picture - the caller falls back to the GL chain, which
+     * has the real image.
+     * <p>
      * Every target this recording uses for the first time gets its {@code UNDEFINED -> GENERAL} barrier recorded into
      * this same command buffer, immediately before the draw that samples it. The targets are also remembered in
-     * {@link #pendingInit} until {@link #commitPasses()} reports the submission that carried them reached the queue:
-     * a recording that is reset or abandoned therefore leaves them uninitialized, and the next recording carries
-     * their barriers again instead of sampling an image that is still {@code UNDEFINED}.
+     * {@link #pendingInit}, bound to the recording token this method returns, until {@link #commitPasses(int)} reports
+     * that <em>this</em> recording's submission reached the queue: a recording that is reset, abandoned or refused
+     * therefore leaves them uninitialized, and the next recording carries their barriers again instead of sampling an
+     * image that is still {@code UNDEFINED}.
+     *
+     * @return the recording's token, to be passed to {@link #commitPasses(int)} once - and only once - the submission
+     *     that carried it has been accepted by the queue
      */
-    public void recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
-        checkStandInTarget(passes);
+    public int recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
+        String unsupplied = unsuppliedInput(passes);
+        if (unsupplied != null) {
+            // Nothing has been recorded yet, so there is nothing to roll back: the caller still owns a frame it can
+            // hand back to GL, and the only thing this class did was refuse to stand in for an image it does not have.
+            this.refusedInputs++;
+            noteReportedButUnadoptedInput(passes);
+            if (!this.refusalReported) {
+                this.refusalReported = true;
+                Pass first = passes.get(0);
+                System.out.println("[Celtium] CELTIUM_POST_REFUSED_UNSUPPLIED_INPUT run=" + this.chainsRun
+                        + " reportedIdentity=" + first.groupMainFbId + " reportedTexture=" + first.groupMainTextureId
+                        + " " + first.groupMainW + "x" + first.groupMainH + " adopted=" + adoptedCount()
+                        + " reason=" + unsupplied + " - the chain is not run natively; the caller's GL chain keeps it");
+            }
+            throw new UnsuppliedInputException(unsupplied);
+        }
         if (!this.pendingInit.isEmpty()) {
             // Not a second recording inside one command buffer: a non-empty set means the recording that carried
             // these targets' first-use barrier ended without commitPasses(). Either its command buffer was reset or
@@ -376,14 +446,17 @@ public final class VulkanPostChain {
             if (this.uncommittedRecordings <= 4) {
                 for (Target target : this.pendingInit) {
                     trace("UNCOMMITTED identity=" + target.identity + " image=0x" + hex(target.image)
-                            + " recording=" + this.recordings + ": its UNDEFINED -> GENERAL barrier was recorded"
-                            + " but commitPasses() did not report that recording as submitted, so it is recorded"
-                            + " again here (the caller patch is one line: commitPasses() after the submit)");
+                            + " recording=" + this.recordings + " (committedRecording=" + this.pendingRecording
+                            + "): its UNDEFINED -> GENERAL barrier was recorded but commitPasses("
+                            + this.pendingRecording + ") did not report that recording as submitted, so it is"
+                            + " recorded again here (the caller patch: commitPasses(token) right after the submit)");
                 }
             }
         }
         this.pendingInit.clear();
         this.recordings++;
+        this.pendingRecording = this.recordings;
+
         List<String> details = new ArrayList<>();
         boolean interesting = false;
         for (Pass pass : passes) {
@@ -475,26 +548,67 @@ public final class VulkanPostChain {
                 trace(detail);
             }
         }
+        if (INJECTION_ALLOWED && this.injectedFirstUseFailures < FAIL_FIRST_USE_RECORDINGS) {
+            // The recording is complete - barriers and draws are in the command buffer - and the queue has not seen
+            // it. Raising here is the closest a class that does not own the submit can get to a refused
+            // vkQueueSubmit: the caller's own failure path runs (frame abandoned, false returned, GL chain kept), and
+            // every target whose first-use barrier went into this buffer must stay uninitialized.
+            this.injectedFirstUseFailures++;
+            trace("INJECTED_FAILURE recording=" + this.recordings + " pendingInit=" + this.pendingInit.size()
+                    + " - recorded, never submitted; the next recording must carry these barriers again"
+                    + " (injected=" + this.injectedFirstUseFailures + "/" + FAIL_FIRST_USE_RECORDINGS + ")");
+            throw new IllegalStateException("injected post chain submit failure before queue ownership: recording="
+                    + this.recordings + " pendingInit=" + this.pendingInit.size() + " injected="
+                    + this.injectedFirstUseFailures + "/" + FAIL_FIRST_USE_RECORDINGS);
+        }
+        // Counted only now: a recording that was refused (unsupplied input) or thrown away (injected failure) never
+        // reached the queue, and postChains is read as "chains this executor ran", not "chains it was asked to run".
         this.chainsRun++;
+        return this.pendingRecording;
     }
 
     /**
-     * Reports that the submission which carried the barriers {@link #recordPasses} recorded reached the queue, so
-     * every target that needed its {@code UNDEFINED -> GENERAL} move in that recording is now really in
-     * {@code GENERAL}.
+     * Reports that the submission which carried the barriers of the recording {@code recordingToken} reached the
+     * queue, so every target that needed its {@code UNDEFINED -> GENERAL} move in <em>that</em> recording is now
+     * really in {@code GENERAL}.
      * <p>
      * This is the caller's half of the chain's layout invariant and the reason the flag is not set while recording:
      * a command buffer that is reset or abandoned never runs its barriers, so a target whose barrier went into one is
      * not initialized, and the next recording carries the barrier again. Calling this for a recording that did not
      * reach the queue would make the chain believe an image is in {@code GENERAL} while it is still
      * {@code UNDEFINED} - which is exactly the state the flag exists to prevent.
+     * <p>
+     * The token is what makes that a check rather than a promise: only the recording that owns
+     * {@link #pendingInit} can commit it. A commit naming any other recording - a later buffer's success, a buffer
+     * whose recording was already replaced, reset or abandoned - is counted in {@link #staleCommits} and commits
+     * nothing, so no submission can make another submission's layouts fact.
      */
-    public void commitPasses() {
+    public void commitPasses(int recordingToken) {
+        if (recordingToken != this.pendingRecording) {
+            this.staleCommits++;
+            trace("STALE_COMMIT token=" + recordingToken + " pendingRecording=" + this.pendingRecording
+                    + " pendingInit=" + this.pendingInit.size() + ": the submission that succeeded did not carry this"
+                    + " recording's barriers, so none of them become fact here");
+            return;
+        }
         this.commits++;
         for (Target target : this.pendingInit) {
             target.initialized = true;
         }
         this.pendingInit.clear();
+    }
+
+    /**
+     * Commits the recording whose targets are pending, without naming it.
+     * <p>
+     * Equivalent to {@code commitPasses(pendingRecording)} and therefore only correct when the call site is the
+     * successful submission of the recording {@link #recordPasses} returned last. The token form
+     * ({@link #commitPasses(int)}) is the contract: it is the one that refuses a commit arriving from another buffer's
+     * success. Kept because a caller that reports submissions but does not thread the token still gets the
+     * re-record-on-abandon behaviour.
+     */
+    public void commitPasses() {
+        commitPasses(this.pendingRecording);
     }
 
     /**
@@ -546,13 +660,93 @@ public final class VulkanPostChain {
     }
 
     /**
-     * Counts - and prints once - the case where the caller reported a framebuffer whose image it means to be adopted
-     * and no image was adopted under that identity, so the passes are about to run on an empty target allocated here.
-     * That is a wiring gap rather than a rendering decision: the chain still runs, but it reads nothing and its output
-     * goes nowhere the game can see. The line carries the identity, the GL texture name and the size the caller
-     * reported, which is everything an adoption needs.
+     * {@return the reason this chain cannot be run natively, or null when every image it reads from outside itself
+     * can be supplied}.
+     * <p>
+     * "From outside itself" is the whole rule. An input resolves to one of exactly three real images:
+     * <ul>
+     *   <li>the group's main framebuffer ({@link Pass#inIsMain}, {@code auxFbIds[0] == 0}) - the shared frame image
+     *       the caller acquired, which holds what the game drew;</li>
+     *   <li>a target the caller adopted under the identity the pass carries ({@link #adoptTarget}) - the caller's own
+     *       image, already in {@code GENERAL} with its content live;</li>
+     *   <li>a target an <em>earlier pass of this same chain</em> wrote - a private intermediate, legitimately
+     *       allocated here.</li>
+     * </ul>
+     * Anything else is an identity only GL has ever written: under the GL bridge the chain's input is a real GL
+     * framebuffer whose pixels this renderer never copied, and no image was adopted for it. Allocating a target for it
+     * would make the chain sample an empty image and its first pass would produce the deterministic result of reading
+     * nothing - the failure the audit's N04 measured (19 chains, 19 stand-ins, black picture) while reporting the
+     * chain as run. Refusing instead sends the caller back to the GL chain, which has the image.
+     * <p>
+     * The check is deliberately structural rather than a counter: it walks the pass list in order, so a chain that
+     * reads its own intermediate targets is accepted even though those identities were unknown to this class a moment
+     * ago, and a chain whose first read is unknown is refused whether or not the caller reported an identity for it.
      */
-    private void checkStandInTarget(List<Pass> passes) {
+    public String unsuppliedInput(List<Pass> passes) {
+        if (passes == null || passes.isEmpty()) {
+            return "empty pass list";
+        }
+        Set<Integer> produced = new LinkedHashSet<>();
+        for (int index = 0; index < passes.size(); ++index) {
+            Pass pass = passes.get(index);
+            String refusal = unsuppliedInput(index, pass, produced, pass.inIsMain, pass.inFbId, pass.inW, pass.inH);
+            if (refusal != null) {
+                this.preflightRefusals++;
+                return refusal;
+            }
+            if (pass.auxFbIds.length > 0) {
+                boolean auxIsMain = pass.auxFbIds[0] == 0;
+                refusal = unsuppliedInput(index, pass, produced, auxIsMain, pass.auxFbIds[0], pass.auxW[0],
+                        pass.auxH[0]);
+                if (refusal != null) {
+                    this.preflightRefusals++;
+                    return refusal;
+                }
+            }
+            if (!pass.outIsMain) {
+                produced.add(Integer.valueOf(pass.outFbId));
+            }
+        }
+        return null;
+    }
+
+    /** {@return the refusal for one pass side, or null when this recording or an adoption supplies it}. */
+    private String unsuppliedInput(int index, Pass pass, Set<Integer> produced, boolean isMain, int identity,
+            int width, int height) {
+        if (isMain) {
+            // The group's main framebuffer is the frame image: the one image the executor is handed for free.
+            return null;
+        }
+        if (produced.contains(Integer.valueOf(identity))) {
+            return null;
+        }
+        Target target = this.targets.get(Integer.valueOf(identity));
+        if (target != null && !target.owned) {
+            return null;
+        }
+        return "pass " + index + " (" + pass.program + ") reads framebuffer identity=" + identity + " " + width + "x"
+                + height + ", which no earlier pass of this chain writes and no image was adopted under: the chain's"
+                + " real input is not available to this renderer";
+    }
+
+    /** {@return how many identities currently resolve to an image the caller adopted}. */
+    private int adoptedCount() {
+        int adopted = 0;
+        for (Target target : this.targets.values()) {
+            if (!target.owned) {
+                adopted++;
+            }
+        }
+        return adopted;
+    }
+
+    /**
+     * Notes - and prints once - the case that used to be a stand-in run: the caller reported an identity whose image
+     * it meant to be adopted and nothing was adopted under it. The chain is refused (never run), so this counts
+     * refusals, not runs, and the identity, the GL texture name and the size the caller reported are carried because
+     * they are everything an adoption needs.
+     */
+    private void noteReportedButUnadoptedInput(List<Pass> passes) {
         if (passes.isEmpty() || passes.get(0).groupMainFbId == 0) {
             return;
         }
@@ -560,13 +754,14 @@ public final class VulkanPostChain {
         if (adopted != null && !adopted.owned) {
             return;
         }
-        this.runsOnAllocatedStandIn++;
+        this.standInRefusals++;
         if (!this.standInReported) {
             this.standInReported = true;
             Pass first = passes.get(0);
-            System.out.println("[Celtium] CELTIUM_POST_ADOPT_REPORTED identity=" + first.groupMainFbId
+            System.out.println("[Celtium] CELTIUM_POST_ADOPT_REFUSED identity=" + first.groupMainFbId
                     + " texture=" + first.groupMainTextureId + " " + first.groupMainW + "x" + first.groupMainH
-                    + " adopted=false (no image under this identity: the chain allocates an empty stand-in)");
+                    + " adopted=false (no image under this identity: the chain is refused rather than run on an empty"
+                    + " stand-in target)");
         }
     }
 
@@ -589,10 +784,24 @@ public final class VulkanPostChain {
                 + ", postTargets=" + (this.targets.size() - adopted) + ", postAdopted=" + adopted
                 + ", postAdoptions=" + this.adoptions + ", postPipelines=" + this.programs.size()
                 + ", postRunsOnStandIn=" + this.runsOnAllocatedStandIn
+                + ", postRefusedUnsuppliedInput=" + this.refusedInputs
+                + ", postUnsuppliedInputPreflights=" + this.preflightRefusals
+                + ", postStandInRefusals=" + this.standInRefusals
                 + ", postRecordingInitBarriers=" + this.initBarriers + ", postRecordingCommits=" + this.commits
+                + ", postStaleCommits=" + this.staleCommits
                 + ", postUncommittedRecordings=" + this.uncommittedRecordings
                 + ", postRepeatInits=" + this.repeatInits
                 + ", postAdoptedIds=[" + adoptedIds + "]";
+    }
+
+    /**
+     * The refusal {@link #recordPasses} raises when a chain's real input cannot be supplied. Distinct from a broken
+     * pipeline: the caller's answer is to keep the GL chain, not to fix or disable anything.
+     */
+    public static final class UnsuppliedInputException extends IllegalStateException {
+        UnsuppliedInputException(String reason) {
+            super(reason);
+        }
     }
 
     private void initBarrier(VkCommandBuffer commandBuffer, long image) {
