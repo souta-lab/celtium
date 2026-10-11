@@ -6526,6 +6526,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " staleGroupRefusals=" + this.staleGroupRefusals
                 + " stalledTeardownSkips=" + this.stalledTeardownSkips
                 + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
+                // A timed-out fence wait is retried before the latch: a resize or a swapchain rebuild produces transient
+                // timeouts, and latching on the first one stopped the renderer for the session (measured on the
+                // world-resize leg). Both the retries and the timeouts are reported so the two are told apart.
+                + " idleWaitTimeouts=" + this.idleWaitTimeouts + " idleWaitRetries=" + this.idleWaitRetries
                 + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
                 + " worldPassBoundaryFlushes=" + this.worldPassBoundaryFlushes
                 // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
@@ -11224,8 +11228,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 System.out.println("[Celtium] CELTIUM_DEVICE_LOST injected");
             }
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
+                // A timed-out fence wait is not by itself a dead device: a swapchain rebuild, a resize or a driver that
+                // is busy with a long submission all produce one, and latching on the first timeout stops the renderer for
+                // the rest of the session - measured on the world-resize leg, where `stalledStops=1` after the resize
+                // left `presentedImageFramesAtCapture=0` and no picture. The wait is retried a bounded number of times
+                // (per wait, not per session) before the latch, and both are counted.
+                this.idleWaitTimeouts++;
+                int retries = 0;
+                while (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT && retries < IDLE_WAIT_RETRIES) {
+                    retries++;
+                    this.idleWaitRetries++;
+                    record("waitForIdle: the fence did not signal within "
+                            + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s; retry " + retries + " of "
+                            + IDLE_WAIT_RETRIES + " before treating the device as stalled (timeouts="
+                            + this.idleWaitTimeouts + ")");
+                    result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
+                }
+            }
+            if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 record("waitForIdle: the fence did not signal within " + (IDLE_TIMEOUT_NANOS / 1_000_000_000L)
-                        + "s, so the last submission is not completing; not draining the queue");
+                        + "s after " + IDLE_WAIT_RETRIES + " retries, so the last submission is not completing;"
+                        + " not draining the queue");
                 this.noteStalled();
                 this.frameTarget.abandonFrame("fence wait timed out");
                 return false;
@@ -11254,6 +11277,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** How long a wait for the GPU will be tolerated before the run ends rather than hanging. */
     private static final long IDLE_TIMEOUT_NANOS = 5_000_000_000L;
+    /**
+     * How many times a timed-out fence wait is retried before the renderer latches. A resize or a swapchain rebuild
+     * produces transient timeouts; a device that has genuinely stopped produces one on every attempt. Counted as
+     * {@code idleWaitTimeouts}/{@code idleWaitRetries} so the report says which of the two happened.
+     */
+    private static final int IDLE_WAIT_RETRIES = 3;
+    private int idleWaitTimeouts;
+    private int idleWaitRetries;
 
     // ------------------------------------------------------------------ shared resources
 

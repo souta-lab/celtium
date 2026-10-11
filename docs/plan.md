@@ -145,6 +145,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.213 **round 16: 一回の timeout で latch しない（resize 回帰）・font batching の機序と 0.35 µs/glyph・ロード画面の残件**
+
+- **resize 回帰の根因（frame-composite 実測・Lead 修正）**: `resizeworld-r` は resize 自体は成功（`resizeObservedAtTick=123`・
+  framebuffer 1920x1080）だが、その後 **present が1枚も出ない**（`presentedImageFramesAtCapture=0`）・
+  `stalledStops=1`・`stalled; no further drawing until the renderer is rebuilt` 20件。私の `framebufferReplacing` ゲートは
+  無関係（`postAcceptDroppedGroups=0`・frame 0 の `CELTIUM_REPLACE_DROP` なし）。**1回の fence wait timeout が
+  `gpuStalled` を latch してセッション全体を止めていた**。
+  修正: timeout を **1回の wait につき3回まで retry** してから latch（`idleWaitTimeouts`/`idleWaitRetries` を report に追加）。
+  `resizemenu-r` は clean（`presentedImagePixels=2073600`・non-bg 0.749・black 0.0）。
+- **font batching の文字化け機序（Lead 特定・修正・実測）**: `submitImmediateBatch` は **submission 時に** texture と行列を
+  捕捉する。run が intervening submission で flush されると（menu のボタン周り）**割り込み draw の texture/変換で描かれていた**。
+  flush 時に run の texture・alpha test・行列を適用し復元するよう修正。**menu の文字は batching ON で全て可読**、
+  `submitMillis=304`/879,402 quads＝**0.35 µs/glyph**（off は 59 µs）。**既定 ON**。
+- **ロード画面の残件（実測）**: 起動 phase は依然 **一様な白**（frames 64-73・1色）。`CELTIUM_EXTERNAL_IMAGE` は
+  `glTexture=6`/`22` を publish した直後に **drop**（`publishedFrameTexturesRepublished=0`＝私の再指しは発火していない）。
+  drop は「pair image が live でない（release 済み）」分岐から出ている＝**frame target/pair が再作成されるたびに
+  published name が消える**。次は「pair が release される原因（target 再作成の頻度・1281↔1280 のサイズ揺れ）」を計測する。
+- **GUI**: panel は描かれている（比 0.983-0.990）。残差は **104 vs 139 色**で、**候補の色は全て参照にも存在**（候補固有 0・
+  参照固有 35）＝**中間色の不足＝filtering**。次の測定は sampler の filter census（mirror の中身ではない）。chat 背景は
+  fixture に chat が無く未行使（hook が必要）。hotbar frame は画素一致。
+
 ## 0.212 **構造: `VulkanTerrainGpuBackend.java` 11,469行の分解計画（挙動を変えない抽出・1クラスタ=1 commit）**
 
 - **実測**: module は 47 file / 35,644 行。`VulkanTerrainGpuBackend.java` は **11,469 行**（全体の32%）・
