@@ -193,7 +193,7 @@ van-bridge2           12:59   0.153832  passes=0   skipped=1122
 **format/pipeline（pipelines・critical path）**・entity/TESR（entity-models）・**黒領域と全体暗化（frame-composite）**・天候/水/粒子（weather-water）・**独立受入（acceptance）**。
 
 統合時に tree は赤だった（`VulkanImmediateFormats` が未定義の `LAYOUT_*` を参照、fixture の renderer-less entity が `Entity` の抽象3メソッド未実装）。
-定数は**原典から**追加（`DefaultVertexFormats` の要素順、`VertexFormatElement` の display name。lightmap 要素は usage が UV なので `2,UV,Unsigned Short`）、
+定数は**原典から**追加（`DefaultVertexFormats` の要素順、`VertexFormatElement` の display name。lightmap 要素は usage が UV なので `2,UV,Short`——**私は当初 `Unsigned Short` と書いて誤った**。`TEX_2S` の型は `SHORT`（表示名 "Short"）であり、"Unsigned Short" は vanilla が使わない `USHORT`。その結果 **BLOCK(id3) と PARTICLE(id5) が表の作成以来ずっと拒否**されていた——「雨がどの census にも現れない」欠陥の正体。担当 pipelines が修正）、
 抽象メソッドを実装し、`95d74bac6` としてコミット（**ビルドが通るからコミットした**、完成だからではない）。
 
 ### ユーザー起動クラッシュ
