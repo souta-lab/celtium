@@ -89,6 +89,43 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.143 **重大な訂正: `renderEntities` 注入は発火する（§0.135〜§0.137 の結論を撤回）**
+
+「死んでいる」と私が判断した注入にカウンタを足して測った結果:
+
+```
+CELTIUM_RENDERENTITIES pass=... calls=3     （GL-less allBlocks・110秒）
+CELTIUM_BLOCKLAYER calls=1 calls=2          （もう一方の入口も生きている）
+```
+
+**発火している。** つまり:
+
+- `RenderGlobal.renderEntities` は**この runtime で呼ばれている** → Kirino の `MinecraftEntityRendering` は
+  **置き換えではなく追加**（injection か追加パス）で、少なくとも TESR 注入は生きている。
+- §0.136 の「死んだ注入4つ」は**誤り**（測定に反証された）。
+- §0.135 の「runtime は entity outline を描いていない」も**同じ読みに依存していた**ため撤回する。vanilla の entity ループが走るなら
+  **outline 経路も走る**。glow シーンの `postChains=0` は、あの scene が置かれていた状態（私が後に撤回した射影フックで
+  in-frustum の entity が居なかった）で説明でき、**runtime が outline を落としているわけではない**。
+
+**方法の教訓（これが本項の主題）**: デコンパイルを読んで「置き換えられている」と結論し、**計器で確かめなかった**。
+`renderBlockLayer` では計器を先に置いて正しく判定できたのに、この件では読みを信じた。
+**フックが生きているかは run が答える**——`CELTIUM_RENDERENTITIES` と `CELTIUM_BLOCKLAYER` のカウンタは残す。
+
+## 0.144 **N03（font）受入 — glyph ポインタ修正が全てだった**
+
+担当の受入（`318a24d0a`・記録 `2cf9e136b`）:
+
+- **magenta probe が「描かれているか」を分離**: 修正前は 7 run すべてで magenta 画素**ゼロ**、修正後は presented frame に
+  タイトル・トースト・chat の glyph が出る（crop 450,0,830,60 の前後比較）。**修正前の probe 結果は全て無効**として破棄。
+- 最終: `windows=53140 defaultWindows=53140 quads=52406 submitted=52406 accepted=52406 refused=0`。
+- **unicode 経路を初めて行使**: `lang:ja_jp` + `forceUnicodeFont:true` で `unicodeWindows=40548`・40000/40000/0。
+- **advance は構造的に不変**（HEAD/RETURN 注入・戻り値書き換えなし）。画像でも title/toast/Done/unicode toast/完了 が pixel 一致。
+- 4カテゴリ（ASCII+影・bold+italic・unicode・chat）の crop と sheet を保存。
+
+**未証明（担当が明記）**: inventory/JEI の bridge 対照が**fixture の制約で存在しない**（tick 30 で開き 190 で閉じ、capture は ≥200）、
+unicode 経路での §l/§o 未行使、GL-less の GUI に Tessellator 幾何（panel/button・chat 背景・hotbar）がまだ無い、
+font texture mirror 自身の census 未取得。
+
 ## 0.142 **A03 修正の実測確認と、現在ツリーの健全性（baseline run）**
 
 `baseline686`（GL-less allBlocks・A02〜A05＋所有権修正＋N10 を含むツリー）:

@@ -35,6 +35,9 @@ import java.util.*;
 @Mixin(RenderGlobal.class)
 public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<CeleritasWorldRenderer> {
 
+    /** How often the renderEntities injection ran; see the note in sodium$renderTileEntities. */
+    private int celtium$renderEntitiesInjections;
+
     /** How often the chunk-layer entry point ran; see the note on renderBlockLayer. */
     private int celtium$blockLayerCalls;
 
@@ -199,6 +202,15 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
 
     @Inject(method = "renderEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/RenderHelper;enableStandardItemLighting()V", shift = At.Shift.AFTER, ordinal = 1), cancellable = true)
     public void sodium$renderTileEntities(Entity entity, ICamera camera, float partialTicks, CallbackInfo ci, @Local(ordinal = 0) int pass) {
+        // Whether this injection runs at all is an open question in the runtime we target: Cleanroom's Kirino
+        // replaces EntityRenderer.renderWorld and calls its own renderEntities, and the only callers of
+        // RenderGlobal.renderEntities in the sources are inside the replaced method. One bounded line decides it,
+        // because removing a hook on the strength of "it cannot run" is how coverage quietly disappears.
+        celtium$renderEntitiesInjections++;
+        if (celtium$renderEntitiesInjections <= 3) {
+            System.out.println("[Celtium] CELTIUM_RENDERENTITIES pass=" + pass
+                    + " calls=" + celtium$renderEntitiesInjections);
+        }
         this.renderer.renderBlockEntities(new CeleritasWorldRenderer.TileEntityRenderContext(damagedBlocks, partialTicks));
 
         /*
