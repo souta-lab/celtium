@@ -95,6 +95,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.161 **GUI panel は pipeline の問題だった（texture mirror ではない）——測定で確定**
+
+担当 texture-mirror の測定: **format-6 パイプライン修正が入った jar では panel と slot 背景が GL-less の presented frame に在る**。
+mirror census は panel sheet（gl id 124・129、256x256）が**ゲーム自身の announcement から充填**され 24224・26502 の不透明 texel を持ち、**stale=false・patch 拒否 0**。
+
+→ **mirror は最初から画素を持っていた**。色なし variant が、その画素で描かれた頂点バッファを読めなかった。
+§0.157 に「提出・受理されているのに画素が出ない」と記録した欠陥は、**`VulkanImmediateTexturePipeline` の構築順バグ**（全 texture-family variant が POSITION_TEX_COLOR として振る舞う）であり、
+**私がそれが何を直しているか理解する前に修正されていた**。
+
+**教訓**: 「提出・受理されているのに画素が出ない」を3人（私を含む）が texture の問題と読んだが、答えは**誰も所有していないファイルの構築順1行**だった。
+
+**この修正で、私が fixture 側で追った JEI/inventory 対照（tick フック・較正キーの screen variant・tick 60 の presented dump）が初めて意味を持つ**——
+同一 screen・同一 tick で **GL-less vs upstream Celeritas** を比べられる。
+
 ## 0.160 **方針変更: bridge は使わない（GL-less のみ）／チーム運用の修正と新しい欠陥**
 
 ### ユーザー決定
