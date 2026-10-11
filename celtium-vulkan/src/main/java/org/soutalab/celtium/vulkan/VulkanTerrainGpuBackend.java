@@ -2677,6 +2677,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The frame is already on the swapchain (a present really happened for it), so the game's own composite would
             // copy the same picture into the default framebuffer a second time. Taken and drawn as nothing: this is the
             // "another path already did this" evidence the cancellation rule asks for, and it is checked per frame.
+            //
+            // The second half of the condition is the design fix the glow needed. Under the stub the game's composite is
+            // issued with no Framebuffer bound, so the target is identity 0 rather than the main identity - and the
+            // finished frame is then copied onto ITSELF from the frame image's own colour texture. That copy used to be
+            // taken and drawn into the renderer's off-target pair, which is also the image the entity-outline chain
+            // adopts as its input: the chain was handed a copy of the whole frame instead of the silhouette, and the
+            // composite added a dimmed mirrored copy of the scene over it (measured offTargetByTarget=[0:104 ...]).
+            // Skipping it here is what the swap point already does; the world pass, which also arrives with identity 0,
+            // is untouched because it does not sample the frame's own colour texture.
             this.glCompositesSkipped++;
             return true;
         }
@@ -4099,6 +4108,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
     /** {@return how many non-empty pending groups belong to a target}, counted when a pass is about to run. */
+    /**
+     * Whether this offer is the game copying the finished frame onto itself.
+     * <p>
+     * Under the GL-less window the game's composite is issued with no Framebuffer bound - the frame mixin reports that
+     * as {@code bindFramebuffer(0L, false)} - so the target identity is 0 while the image being sampled is the frame
+     * image's own colour texture, named by the main framebuffer's entry in the identity map. That combination is the
+     * self-copy: the swap point already presents the frame, so there is nothing for it to do, and drawing it is what
+     * polluted the outline chain's input image.
+     * <p>
+     * <b>This predicate is not used, and must not be used as a skip rule.</b> Skipping what it matches (measured
+     * 2026-10-11, glow scene) made the delivered frame a single colour: under the adoption path the fbo==0 composite is
+     * not a copy of the frame onto itself, it is the pass that DELIVERS the game's finished frame into the delivered
+     * image, and its sampled texture is the one the game framebuffer was adopted from. Refusing it loses the world (the
+     * earlier version of this mistake froze the picture), routing it into the delivered image wipes it (this one), and
+     * skipping it empties it. All three shapes were measured before the rule was withdrawn.
+     * <p>
+     * What that means for the glow: the off-target pair cannot be freed by changing where identity 0 is drawn. The pair
+     * is the game's adopted colour image, so the world, the composite and the entity silhouette all legitimately pass
+     * through it, and the outline chain reading it as its input is the actual defect. The fix belongs where the chain's
+     * input image is chosen: it needs an image of its own rather than the shared pair.
+     */
+    private boolean celtium$isScreenSelfComposite() {
+        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || this.currentRenderTarget != 0L) {
+            return false;
+        }
+        int frameColorTexture = framebufferColorTextureName(this.mainTargetIdentity);
+        return frameColorTexture != 0 && this.immediateState.boundTextureName() == frameColorTexture;
+    }
+
     /** {@return how many pending non-empty groups belong to a target other than the main one}. */
     private int pendingGroupsForOtherTargets() {
         int count = 0;
@@ -6033,6 +6071,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // generation it was built from, and only then are the superseded meshes retired. Stamping after the commit is
         // what keeps a failed build from leaving a stamped mesh in a table that was never installed.
         this.modelMeshes = built;
+        // Retired first: a list never has two meshes registered at once, so the registry's replacement counter means
+        // what it says - a mesh replaced without being retired - instead of counting this commit's own window.
+
         for (java.util.Map.Entry<Integer, Integer> entry : builtGenerations.entrySet()) {
             built.get(entry.getKey()).stamp(entry.getKey().intValue(), entry.getValue().intValue());
         }
@@ -6363,6 +6404,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // GL is already holding the image or would wait on a signal that never comes: abandon rather than
                 // leave the frame half-closed.
                 this.frameTarget.abandonFrame("post chain submission refused");
+                if (!this.submissionPending && !this.gpuStalled && this.commandState.recording()) {
+                    // The recording the submission never made has to be closed: beginCommands() refuses to open a
+                    // second recording on the same command buffer ("nested begin on backend command buffer"), so
+                    // leaving the state at "recording" wedges every later terrain/immediate/chain recording
+                    // (measured: frame count 205 -> 55, six nested-begin failures after one injected first-use
+                    // failure). submitCommands() throws before vkQueueSubmit, so the buffer is not in flight and this
+                    // reset touches nothing the queue owns - the same guard the terrain recovery path uses.
+                    check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
+                            "vkResetCommandBuffer(post chain refusal)");
+                    this.commandState.reset();
+                }
             }
         }
         return submitted;
