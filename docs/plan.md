@@ -89,6 +89,37 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.132 **P1 修正: glyph の頂点アドレスが「書いた最後の1バイトの先」を指していた**
+
+監査（`CELTIUM_AUDIT_20261011_1058_URGENT_GLYPH_POINTER_CX`）の指摘を実測で確認し、`aa041c2d4` で修正した。
+
+**バグ**: `CeltiumFontGlyphCapture.submit()` は `VERTEX` に 4×24 バイト書き込んだ後、`flip()` せずに
+`MemoryUtil.memAddress(VERTEX)` を取っていた。**`memAddress(ByteBuffer)` は base + position を返す**ため、
+position が capacity に達した状態では**書いたバイトの1つ先**を指し、backend は続く 4×24 バイト（別のデータ）を読んでいた。
+隔離バッファ（4×16=64）も同一の欠陥。
+
+**GPU 不要で実測**（`scripts/cpu-contract/GlyphAddressCheck.java` を追加）:
+
+```
+position=96 capacity=96
+memAddress(buf) - memAddress(buf,0) = 96      ← position が加算される
+after flip: position=0 limit=96 delta=0
+first vertex x=1.0 expected 1.0               ← flip 後は先頭頂点が読める
+```
+
+**修正**: 両分岐で `flip()` してからアドレスを取り、**書いた範囲を検査**（合わなければ `address-extent` として拒否）。
+これで将来の退行が「静かに間違ったポインタを submit する」ことはできない。
+
+**なぜ文字が出なかったか**: Vulkan から見て範囲外ではない（拒否も VUID も出ない）ので**エラーにならず、単に違うバイトだった**。
+したがって担当が行った mode/quads・テクスチャ隔離・画面充填の実験は**すべて同じ壊れたアドレスを共有**しており、
+**有効なバイトで再実行するまで何も棄却できない**（次のフォント run）。
+
+**同族バグの掃引（全数）**: 即時描画の主経路 `WorldVertexBufferUploaderMixin:144` は
+**原典で安全と確認**——vanilla の `BufferBuilder.finishDrawing()`（`BufferBuilder.java:551-561`）が
+`byteBuffer.position(0)` と `limit(getBufferSize()*4)` を設定してから upload するため、`memAddress` は base を返す。
+したがって**「shard の原因も同じ」とは言えない**（監査の留保どおり）。他の `memAddress(buffer)` 使用箇所は
+テクスチャ側（`VulkanGlTexture:2496` に同じ罠のコメントあり）と stub の内部バッファで、いずれも position を明示管理している。
+
 ## 0.131 **フック撤回後の実測**: terrain が戻り、glow シーンは黒率で落ちる
 
 フック撤回（`f82bf4612`）後の現ツリーで測定:
