@@ -235,7 +235,13 @@ public class SodiumGameOptionPages {
                         .setTooltip(TextComponent.literal(
                                 "Chunk fade-in is not carried by the Vulkan renderer yet (it has no per-section chunk"
                                         + " age at the draw site), so the value is fixed at 0."))
-                        .setControl(o -> new SliderControl(o, 0, 0, 1, ControlValueFormatter.translateVariable("celeritas.options.chunk_fade_in_duration.value")))
+                        // A pinned value is not a slider: SliderControl asserts max > min, so min == max threw
+                        // "The maximum value must be greater than the minimum value" while the page was being built -
+                        // which surfaced as an InvocationTargetException on the settings button's actionPerformed and
+                        // dropped the whole Celeritas video-options screen back to vanilla's. A single-value cycling
+                        // control says the same thing (the value is fixed at 0) without an illegal range.
+                        .setControl(o -> new CyclingControl<>(o, new Integer[] { 0 },
+                                new TextComponent[] { TextComponent.literal("0") }))
                         .setImpact(OptionImpact.LOW)
                         .setBinding((opts, value) -> opts.quality.chunkFadeInDuration = 0, opts -> 0)
                         .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
