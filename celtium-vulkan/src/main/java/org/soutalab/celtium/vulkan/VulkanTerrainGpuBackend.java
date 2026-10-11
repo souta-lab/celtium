@@ -11896,6 +11896,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             + " batches=" + batches + " pending=" + this.immediateGroups.size()
                             + " windows=" + this.immediateWindows + " windowsThisFrame=" + this.immediateWindowsThisFrame
                             + " terrainRanThisFrame=" + (this.lastTerrainPassFrame == this.frameId)
+                            // The image this pass attached, so the draw site and the copy can be put against each
+                            // other in one frame: the copy line already carries frame= and readImage=, and the
+                            // ordering question (does the copy run before the faces' pass, or is the pair cleared
+                            // between them) is only answerable when both lines name the same handle space.
+                            + " passImage=0x" + Long.toHexString(this.passAttachedColorImage)
                             + " groupFrame=" + (group.stamp == null ? -1L : group.stamp.frameId)
                             + " groupGeneration=" + (group.stamp == null ? -1 : group.stamp.targetGeneration)
                             + " borrowed=" + (group.stamp != null && group.stamp.meshBorrowed));
