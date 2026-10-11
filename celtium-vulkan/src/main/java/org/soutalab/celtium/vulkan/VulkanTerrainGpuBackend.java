@@ -8884,7 +8884,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    /** Reads one owned image out and writes it, with its mean and opaque fraction on the line that names it. */
+    /**
+     * Reads one owned image out and writes it, with its mean and opaque fraction on the line that names it.
+     * <p>
+     * Orientation, measured by proj-channel against the presented dump of the same frame: this readback's rows are
+     * bottom-up relative to the presented-image dump, so comparing the two PNGs directly reports a ~98 % difference
+     * that is pure orientation - {@code flipud} of one side differs on 0 of 921,600 pixels. Anyone comparing a
+     * chain-time dump with a presented dump has to flip one of them first.
+     */
     private void celtium$dumpOwnedImage(String stage, long image, String base, String identity) {
         if (image == 0L || this.targetWidth <= 0 || this.targetHeight <= 0) {
             return;

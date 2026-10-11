@@ -1195,7 +1195,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                         celtium$paramSite());
                 return 0L;
             case SEM_MULT_MATRIX:
-                celtium$multiplyMatrix(fn, c[0]);
+                celtium$noteMatrixMultiplyArrival(fn);
                 return 0L;
             case SEM_MATRIX_MODE:
                 this.matrixMode = (int) c[0];
@@ -1535,69 +1535,25 @@ public final class CeltiumGlStub implements FunctionProvider {
      * backend refuses, is counted rather than silently dropped - an unapplied transform is a wrong picture, which is
      * what the census is for.
      */
-    private void celtium$multiplyMatrix(Fn fn, long address) {
+    /**
+     * Census only, and deliberately so: {@code glMultMatrixf} is the GL-API-wide call Forge's item transform uses
+     * ({@code ForgeHooksClient.multiplyCurrentGlMatrix}) <b>and</b> the call {@code org.lwjglx.util.glu.Project}
+     * reaches at the end of {@code gluPerspective}, whose frustum {@code GluProjectionMixin} has already mirrored
+     * into the projection stack. Applying the raw call here would reflect that same operation twice, so the owner of
+     * each operation is the entry that knows what it means - the Forge entry for item camera transforms (see
+     * {@code ForgeHooksClientMixin}) and {@code GluProjectionMixin} for the frustum - and this counter is what says a
+     * raw call arrived without one. Do not turn this back into an application without removing the other owner.
+     */
+    private void celtium$noteMatrixMultiplyArrival(Fn fn) {
         MATRIX_MULTIPLY_ARRIVALS.incrementAndGet();
-        if (address == 0L) {
-            MATRIX_MULTIPLY_REFUSED.incrementAndGet();
-            return;
-        }
-        java.nio.FloatBuffer matrix;
-        try {
-            if (fn.name.endsWith("d")) {
-                float[] scratch = celtium$matrixScratch();
-                for (int i = 0; i < 16; i++) {
-                    scratch[i] = (float) MemoryUtil.memGetDouble(address + (long) i * 8L);
-                }
-                matrix = java.nio.FloatBuffer.wrap(scratch);
-            } else {
-                matrix = MemoryUtil.memFloatBuffer(address, 16);
-            }
-        } catch (RuntimeException | LinkageError error) {
-            MATRIX_MULTIPLY_REFUSED.incrementAndGet();
-            return;
-        }
-        TerrainGpuBackend backend;
-        try {
-            backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        } catch (RuntimeException | LinkageError error) {
-            backend = null;
-        }
-        if (backend == null) {
-            MATRIX_MULTIPLY_NO_BACKEND.incrementAndGet();
-            return;
-        }
-        if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
-            // The interface's multiplyMatrix default is empty, so a backend that does not override it would take the
-            // call and drop it; counting that as applied would make the arrivals/applications pair lie.
-            MATRIX_MULTIPLY_NO_MIRROR.incrementAndGet();
-            return;
-        }
-        try {
-            backend.multiplyMatrix(matrix);
-            MATRIX_MULTIPLY_APPLIED.incrementAndGet();
-        } catch (RuntimeException | LinkageError error) {
-            MATRIX_MULTIPLY_REFUSED.incrementAndGet();
-            return;
-        }
-        if (MATRIX_MULTIPLY_SHAPES.size() < 8) {
-            String shape = fn.name + "/" + matrixMode + "/" + Float.floatToRawIntBits(matrix.get(0))
-                    + "/" + Float.floatToRawIntBits(matrix.get(5));
-            if (MATRIX_MULTIPLY_SHAPES.add(shape)) {
-                System.out.println("[Celtium] CELTIUM_MULT_MATRIX " + fn.name
-                        + " mode=" + matrixModeName(this.matrixMode)
-                        + " m0=" + matrix.get(0) + " m5=" + matrix.get(5) + " m15=" + matrix.get(15)
-                        + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
-                        + " site=[" + celtium$callSite(8) + "]");
-            }
+        if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L) {
+            System.out.println("[Celtium] CELTIUM_MULT_MATRIX arrival-only fn=" + fn.name
+                    + " mode=" + matrixModeName(this.matrixMode)
+                    + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
+                    + " site=[" + celtium$callSite(8) + "]");
         }
     }
 
-    /** The thread-local conversion buffer for the double form; {@code glMultMatrixd} is rare, so it is reused. */
-    private static final ThreadLocal<float[]> MATRIX_SCRATCH = ThreadLocal.withInitial(() -> new float[16]);
-
-    private static float[] celtium$matrixScratch() {
-        return MATRIX_SCRATCH.get();
-    }
 
     private long generate(Fn fn, long[] c) {
         if (fn.ret == R_INT && fn.args.length <= 1 && lastPointerArg(fn) < 0) {

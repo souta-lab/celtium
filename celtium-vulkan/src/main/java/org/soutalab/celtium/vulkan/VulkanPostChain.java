@@ -867,6 +867,11 @@ public final class VulkanPostChain {
 
         List<String> details = new ArrayList<>();
         boolean interesting = false;
+        // The recording's outputs, in pass order, for the caller's chain-time image dump: cleared here so a recording
+        // that throws leaves no stale half-list, and readable before commitPasses (the dump runs right after the
+        // submit, and an output image that is only correct after the commit is a measurement one step too late).
+        this.lastRecordedOutputs.clear();
+        int passIndex = 0;
         for (Pass pass : passes) {
             Program program = programFor(pass);
             String refusal = program == null ? "no pipeline this device can carry its block on"
@@ -902,6 +907,16 @@ public final class VulkanPostChain {
             long outFramebuffer = pass.outIsMain
                     ? mainFramebuffer(pass.outW, pass.outH)
                     : outTarget.framebuffer(this.context, this.renderPass);
+            // Where this pass's result can be read back, for the chain-time dump. Main is reported as image 0: the
+            // caller already holds the frame image and its view, and handing out a second handle to the same image
+            // would let a reader believe it is a different one. The label is the reading aid; the pass index is what
+            // makes a line attributable ("pass 0 wrote nothing" and "the last pass wrote nothing" are different
+            // findings).
+            this.lastRecordedOutputs.add(new RecordedOutput(passIndex, pass.program,
+                    pass.outIsMain ? "main" : (outTarget.owned ? "owned" : "adopted"),
+                    pass.outIsMain ? 0L : outTarget.image,
+                    pass.outIsMain ? 0L : outTarget.view,
+                    pass.outW, pass.outH));
 
             // A target that was just created is still UNDEFINED: bring it to GENERAL exactly once, before any use.
             // An adopted target is never in that state - its caller declares it live and already in GENERAL - so it
@@ -961,6 +976,7 @@ public final class VulkanPostChain {
                 vkCmdEndRenderPass(commandBuffer);
             }
             this.passesRecorded++;
+            passIndex++;
         }
         // The header and the per-pass lines go out together, and the per-pass detail only for a run that touched a
         // target's first use: a run that reuses targets already in GENERAL has nothing to say about layouts, and
@@ -1190,6 +1206,59 @@ public final class VulkanPostChain {
                     + " stand-in target)");
         }
     }
+
+    /**
+     * One pass's output image from the recording {@link #recordPasses} made last, in pass order.
+     * <p>
+     * This exists for the chain-time image dump: the question "did pass 0 produce anything" cannot be answered from
+     * the frame image (the last pass is the one that writes there), so the caller needs each pass's output, with the
+     * pass index that makes a line attributable and the label that says whether the image is one this chain
+     * allocated, one the caller adopted, or the shared frame image.
+     */
+    public static final class RecordedOutput {
+        /** Index of the pass in the recorded chain, from 0. */
+        public final int passIndex;
+        /** The pass's program id, as the collector named it. */
+        public final String program;
+        /** {@code "main"}, {@code "owned"} or {@code "adopted"}: which kind of image this output is. */
+        public final String label;
+        /** The output image, or 0 for {@code main} - the caller already holds the frame image and its view. */
+        public final long image;
+        /** The output view, or 0 for {@code main}. */
+        public final long view;
+        public final int width;
+        public final int height;
+
+        RecordedOutput(int passIndex, String program, String label, long image, long view, int width, int height) {
+            this.passIndex = passIndex;
+            this.program = program;
+            this.label = label;
+            this.image = image;
+            this.view = view;
+            this.width = width;
+            this.height = height;
+        }
+
+        @Override
+        public String toString() {
+            return "pass " + this.passIndex + " " + this.program + " out=" + this.label + " image=0x"
+                    + Long.toHexString(this.image) + " " + this.width + "x" + this.height;
+        }
+    }
+
+    /**
+     * The output images of the recording {@link #recordPasses} made last, in pass order.
+     * <p>
+     * Readable as soon as {@code recordPasses} returns and before {@link #commitPasses(int)}: the caller's dump runs
+     * right after the submission, and an output that is only correct after the commit would be a measurement taken a
+     * step too late. The list is replaced by each recording and is empty when no recording has been made.
+     */
+    public List<RecordedOutput> lastRecordedOutputs() {
+        return java.util.Collections.unmodifiableList(this.lastRecordedOutputs);
+    }
+
+    /** Outputs of the last {@link #recordPasses}; see {@link #lastRecordedOutputs()}. */
+    private final List<RecordedOutput> lastRecordedOutputs = new ArrayList<>();
 
     /** {@return a one-line status for the verification line}; adopted targets count separately from allocated ones. */
     public String status() {
