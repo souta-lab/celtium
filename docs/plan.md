@@ -170,8 +170,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   `VulkanFrameArena` は frame ごとに 1 slot、reset は `!awaitingCompletion && (epoch<0 || epoch<=completedEpoch) && pendingGroups==0`
   のみ、`completed()` は backend の確認済み fence wait から `VulkanContext.noteCompletionConfirmed` で供給、slice の解放は
   `mesh.delete()` → `Region.release()`（OPT-04 の「完了だけが解放の根拠」）。5 pipeline は `mesh.bindAndDraw` に集約
-  （同じ3呼び出し・mesh 自身の offset・state/layout/stride 不変）。**OPT-05 の受入数値（groups に比例した allocation が無いこと・
-  `frameArenaFallbackGroups=0`・p50/p95/p99 の before/after）は未取得**＝P0 で leg が crash したため。
+  （同じ3呼び出し・mesh 自身の offset・state/layout/stride 不変）。
+- **OPT-05 の受入（取得済み・`perf-arena` leg）**: `chain-t45c.sh`・jar `a23a6b0b874c393c`（revert 後・arena 有効）・
+  fixture `0407469a82ef64ee`・terrain・glless・layer 無し・sections+700 capture で **warm 窓に到達**
+  （`worldTicksAtEnd=770`・`worldFrames=700`）: **`frameArena regionsOpened=8316 blockedOpenings=0 reclaimedSlots=700
+  promotions=0`・`frameArenaFallbackGroups=0`・`peakVertexBytes=748272`・`peakIndexBytes=195560`・
+  `hostBuffersCreated=6`（うち `hostBuffersFromFrameArena=2`）** ＝ **group 8316 に対して host buffer 確保は 6 件**
+  （旧経路は group ごとに vertex/index の2確保＝約 16,632 件の算術）。slot1 は capacity 0（一度も確保せず）＝
+  1 slot 分（1 MiB vertex + 256 KiB index）で足りている。report 時点で `slot0=[... awaiting=true groups=1]`＝
+  最後の frame の group が保持され reuse が正しく gate されている。
+  `frameIntervalSampleCount=81` cold p50 **47.1** / p95 **69.4** / p99 **173.2 ms**、
+  **warm 166 sample p50 57.6 / p95 97.8 / p99 123.8 ms**。status は既知の画像ゲート `FAILED_PRESENTED_IMAGE`。
+  **注意**: この jar には fog-path の BH-14 drain revert（現在は `e30a23cd6` で commit 済み）も入るため、
+  frame 時間は OPT-05 単独に帰属しない（allocation/fallback の各 counter は drain に依存しない）。
+  before 側（jar `a47c1bd1` の `perf-user2-warm`）は cold 68 sample p50 53.4 / p95 80.1 / p99 193.3 ms・
+  warm 0 sample＝**現行 jar の warm before は存在しない**。
 - **OPT-07 再挑戦の契約（この失敗から）**: destination が copy pending 中に破棄・差し替え・segment 再利用されないこと。
   (a) `VulkanBuffer.delete/ensureCapacity` と arena segment 再利用を batch の完了 epoch で gate する、または
   (b) flush 時に handle を解決する（記録時ではなく）＋ arena segment 再利用の gate。どちらかが無い限り per-copy settle を維持する。
