@@ -304,6 +304,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.312 **round 118: `resizeAtTick` guard が発火していないことを artifact field で確定（受入は未取得）・外部知見の追補**
+
+- **確定（コード＋artifact）**: `celtium$requestResize` は `:5264-5265` で **`resizeRequestedAtTick` を report に書く**。
+  Lead の `r109-resize`（`resizeAtTick=200`・`resizeTo=1024x640`・150 s・VUID 0）の report に **その field が無い**
+  ＝**`celtium$requestResize` が一度も呼ばれていない**＝**guard（`:3001` の `resizeAtTick > 0 && !resizeRequested && worldTicks >= resizeAtTick`）が発火していない**。
+  ＝**resize 受入は依然として未取得**（緑を以て受入としない）。
+- **次の確認（1点）**: 同 leg の **`worldTicksAtEnd`** を読み、`resizeAtTick=200` に到達しているかを確認する。
+  到達していれば guard の**外側の条件**（どのコードパスに居るか）が問題、到達していなければ **tick を下げる**（例 120）だけで経路に入るはず。
+  どちらでも**新しい計器は不要**（`resizeRequestedAtTick` が既に答えを出す）。
+- **外部知見の追補（web 調査）**: VVL の 00067 は **SDK 1.4.313 以降、present wait semaphore の安全でない再利用を報告する**ようになったもので
+  （[Swapchain Semaphore Reuse](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html)）、
+  **Diligent Engine も同じ VUID を報告**している（[DiligentCore #682](https://github.com/DiligentGraphics/DiligentCore/issues/682)）。
+  そのメッセージ自身が示す解決策は **(a) image ごとに semaphore を分けて acquired index で引く**・**(b) `VK_EXT_swapchain_maintenance1` の present fence**。
+  ＝**Celtium が採ったのは (a)**で、**Khronos の推奨そのもの**。加えて VVL #10364 は **resize 後の同 VUID が false positive になりうる**として
+  **PR #10396 で修正済み・次の SDK には未搭載**としている。**両方を知った上で resize leg を読む**必要がある。
+- **ユニットの状態（不変）**: per-image は**実装済・通常経路は4 leg 緑**。未取得は **image 数の変化** と **frame-close の pairing**（fixture で到達不能・counter 可視化済み）。
+
 ## 0.311 **round 117: resize leg を `resizeAtTick` 付きで再取得 — 緑だが resize の痕跡は無し（受入は未取得のまま）・VVL の既知 false positive を記録**
 
 - **測定（Lead の `r109-resize`・jar `2b5859ab0`・層あり・`pinSections=60`・`resizeAtTick=200`・`resizeTo=1024x640`・150 s）**:
