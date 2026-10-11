@@ -1503,6 +1503,29 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     // ---- state queries ---------------------------------------------------------------
 
+    /**
+     * {@return the native renderer string for {@code GL_RENDERER}, or this stub's own name when there is no device}.
+     * <p>
+     * Resolved through {@code TerrainGpuBackends.current()} rather than cached: the window renderer is created at the
+     * first tick and adopted by the world renderer later, so the name appears as soon as a device exists and never
+     * goes stale across a world change.
+     */
+    private static String celtium$nativeRendererName() {
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                String name = vulkan.celtium$nativeDeviceName();
+                if (name != null && !name.isEmpty()) {
+                    return name + " via Celtium Vulkan";
+                }
+            }
+        } catch (RuntimeException | LinkageError error) {
+            // No renderer, or one that cannot answer: the stub's own name is the honest fallback.
+        }
+        return "Celtium stub GL";
+    }
+
     private long stringFor(int pname) {
         String value;
         switch (pname) {
@@ -1510,7 +1533,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 value = "Celtium";
                 break;
             case 0x1F01: // GL_RENDERER
-                value = "Celtium stub GL";
+                // The device the frames are actually drawn on, not this stub's own name: F3 shows this string, and the
+                // fixture records it as glRenderer. Before the renderer exists there is no device to name yet, and a
+                // configuration without Vulkan has none at all - both keep the stub string. GL_VENDOR stays "Celtium"
+                // so a GL-less leg remains identifiable in a report.
+                value = celtium$nativeRendererName();
                 break;
             case 0x1F02: // GL_VERSION
                 value = "4.6.0 Celtium";

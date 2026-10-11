@@ -367,6 +367,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /**
+     * {@return the name of the Vulkan device this renderer draws with}, or {@code null} when there is none.
+     * <p>
+     * The stub answers {@code GL_RENDERER} - which F3 shows and the fixture records as {@code glRenderer} - from this,
+     * because under the GL-less window the GL renderer string is the stub's own name and tells a user nothing about
+     * which GPU is rendering: the user's own report of "stub gl" in F3 is exactly that doubt. {@code GL_VENDOR} stays
+     * "Celtium" so a GL-less leg is still identifiable in a report, and a configuration with no native device keeps
+     * the stub string as well.
+     */
+    public String celtium$nativeDeviceName() {
+        try {
+            return this.context == null ? null : this.context.deviceName();
+        } catch (RuntimeException | LinkageError error) {
+            return null;
+        }
+    }
+
+    /**
      * Hands the world renderer's objects to the instance that already exists, instead of a second backend being created
      * beside it. The alternative - a menu renderer running alongside the world one - would give the swapchain and the
      * frame target two owners, which is the duplication this project has paid for before.
@@ -8662,6 +8679,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Copy requests served from an owned image, and those refused, with the reason of the last refusal. */
     private int textureCopiesServed;
     private int textureCopiesRefused;
+    /** How many served copies have printed their rectangle's statistics (bounded, for the picture question). */
+    private int textureCopySamples;
     private String lastTextureCopyRefusal = "none";
 
     /**
@@ -8719,6 +8738,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         int[][] levels = new int[1][];
         levels[0] = pixels;
+        if (this.textureCopySamples < 3) {
+            // What the copy actually served, bounded to three lines: the mean and the opaque fraction of the rectangle
+            // are what tell "the source image holds the accumulated panorama" from "it holds a cleared surface", which
+            // the destination mirror's own census cannot (it reports the mirror's state at creation, not per copy).
+            this.textureCopySamples++;
+            long red = 0L;
+            long green = 0L;
+            long blue = 0L;
+            int opaque = 0;
+            for (int pixel : pixels) {
+                red += (pixel >> 16) & 0xFF;
+                green += (pixel >> 8) & 0xFF;
+                blue += pixel & 0xFF;
+                if (((pixel >>> 24) & 0xFF) >= 0x80) {
+                    opaque++;
+                }
+            }
+            int count = Math.max(1, pixels.length);
+            System.out.println("[Celtium] CELTIUM_TEX_COPY_SERVED dest=" + destName + " level=" + level
+                    + " destOffset=" + xoffset + "," + yoffset + " source=" + x + "," + y + " " + width + "x" + height
+                    + " readFbo=" + readFbo + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
+                    + " opaque=" + opaque + "/" + pixels.length + " served=" + (this.textureCopiesServed + 1));
+        }
         boolean applied = this.textureRegistry.announceFullPixels(destName, levels, width, height, xoffset, yoffset);
         if (!applied) {
             return celtium$refuseTextureCopy("the destination mirror refused the pixels: "

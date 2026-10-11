@@ -133,6 +133,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.185 **ユーザーの実起動が成功（地形・entity・空・雲が正常）——残る不満3点の帰属**
+
+ユーザーが自分の instance から起動し、**地形・entity・空・雲が正常に描画**されることを確認（log: https://mclo.gs/gB2Vtjb）。
+`-Dceltium.vulkan.glless=true`・instance のライブラリに `lwjgl-vulkan-3.4.1.jar`（私の追加）・window 854x480・約2分で
+`CELTIUM_ACCEPTED total=467500`。**残る不満と帰属**:
+
+1. **非常にラグい**。log に timing 行が無い（handoff summary は report 経由のみ）ため、ユーザー構成
+   （glless・`--window-size 854x480`・`handoffTimings=true`）で frame interval と handoff を測る leg を queue した。
+   疑い: immediate window の per-group submit/fence（`IMMEDIATE_FLUSH_INDICES=512` なので per-group ではない）、
+   menu の panorama 経路の**1フレーム7回の同期 copy readback**、entity-models の per-batch model flush（p95 1946ms の測定あり）。
+2. **F3 が driver ではなく "stub gl" と表示**。debug overlay が `GL_RENDERER` を読むため stub の文字列が出る。
+   `CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400 (RADV NAVI24)"` を overlay に出す（weather-water へ）。
+3. **video settings の色が少し違う／機能しているか分からない／設定画面の背景がバグっている**。
+   色は B05 の GUI/sky gradient（task-29）。**背景のバグは原因を特定**:
+   - `GuiOptions.drawBackground` と Cleanroom patch の `GuiSlot.drawContainerBackground`
+     （`.celtium-work/cleanroom-patches/.../GuiSlot.java.patch`）は **UV が width/32 ≈ 26 まで**行く＝**GL_REPEAT が必須**。
+   - stub は `glTexParameteri/f/iv/fv` を **no-op list** に持ち（`CeltiumGlStub.java:357`）、wrap の query には
+     **hardcoded `0x812F` = CLAMP_TO_EDGE** を返す（`:3192`）。
+   - mirror はそれを読んで `addressModeU/V = CLAMP_TO_EDGE`（`VulkanGlTexture.java:2108-2111`）。
+   → **REPEAT の texture が全部 CLAMP でサンプルされ、tile 背景が1枚伸びた絵になる**。
+   **修正**: stub が `glTexParameter*` を texture ごとに記録し query を記録から答える（weather-water）＋
+   mirror がその記録から wrap を取る（texture-mirror・task-39 の第4項）。**F3 と合わせてユーザー可視の欠陥**。
+
 ## 0.184 **panorama の真因＝毎フレームの colour clear が feedback loop を壊していた（frame-composite）**
 
 - 暗い「OK」画面は dialog でも stale image でもなく **loading screen**（menu dump が menu frame を逃した）。fixture の identity 行が
