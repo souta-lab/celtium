@@ -140,6 +140,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.203 **画面背後 27.7% の帰属確定（共有 overlay ではなく inventory panel 自身）・VSync toggle は「行が無い」という計測**
+
+- **gui-stage の判別 pair（事前登録した分岐が的中）**: 参照 `wbs-vs-ref2`（upstream Celeritas＋fog-path fixture）と候補を**両方コピー・hash してから**
+  比較（`vs-ref2-full.png 27758cb74a69e25d…`・`vs-cand-gui-full.png 91ef7f2fbdfb58db…`）。
+
+  | 領域 | 候補/参照 比 | >8 |
+  |---|---|---|
+  | sky band | **1.000,0.993,0.982** | 24.59% |
+  | terrain centre | 0.976,0.981,0.985 | 5.54% |
+  | panel | 0.983,0.987,0.990 | 4.56% |
+  | **Done button** | **1.000,1.000,1.000** | **8/30,000（0.03%）** |
+  | whole frame | 0.959,0.966,0.972 | 12.44% |
+
+  **video settings 画面の背後では両 renderer が sky band を 0.22 倍に暗くし、候補は参照に 1.000,0.993,0.982 で一致**。
+  同じ build 状態の **inventory 画面背後では terrain centre 27.74%** 差。overlay は両画面で共有されているので、
+  **原因は共有 `GuiScreen.drawWorldBackground` ではなく inventory panel 自身の alpha/blend か被覆幾何**＝gui-stage の stage。
+  **事前に書いた読み（video settings の背後で差が小さい→inventory panel）が的中**した形で記録。
+- **VSync toggle（sky-draws）は negative を計測として返した**: flag は build に逐語で入っているが、
+  **その画面の list に `VSYNC` という名前の行が無い**ため finder が既定行へ落ち、`videoSettingsOptionName=GRAPHICS`・
+  `changes=0`・`CELTIUM_PRESENT_MODE_REQUEST` 無し（＝option page の setter が走っていない）。
+  `guiScreenOpenedVia` が「option list の1ページ目・Video Settings ボタン無し」を示す＝Sodium の VSync は別ページの可能性。
+  → **次は token を測る**: list が実際に持つ行名を `videoSettingsRowNames`（64 件上限）として記録する diff を sky-draws が送付・私が配置。
+  **`setVSyncRequested` を fixture から呼ぶ shortcut は受入にしない**（プレイヤーの経路ではない）。
+  副次結果: この leg は layer off で `validationMessageCount=0`＝先の VUID は present-mode 変更の副作用ではないと確認。
+
 ## 0.202 **VUID の修正着地・task-47 完了（床の全数再導出）・item blur の根因を原典/自コードから特定**
 
 - **VUID 修正（frame-composite・`celtium-t36d fa9487e0cd17ee7c`）**: published map が `VulkanGlTexture` wrapper を持ち、

@@ -107,6 +107,44 @@ reference alone is enough), and compare immediately - before the next run comple
 the frame. The candidate's frame is preserved as a 50 % copy at
 `.celtium-work/sky-ratio/wbs-crops/wbs-vs-cand-gui-small.png`.
 
+## The discriminator pair, computed — and it names the inventory panel, not the shared overlay
+
+The reference leg was re-run (`wbs-vs-ref2`, upstream Celeritas `d12425eaaf184e79` + `fog-path-fixture4.jar`
+`30d0ded469c529b2`, `scene=videoSettings`, capture condition), and **both frames were copied out and hashed before
+anything else touched the slot**, which is the process the retention policy now requires:
+
+| frame | surviving copy | sha256 prefix |
+|---|---|---|
+| reference (GL screenshot) | `.celtium-work/sky-ratio/wbs-crops/vs-ref2-full.png` | `27758cb74a69e25d8cd1` |
+| candidate (GL-less presented gui dump) | `.celtium-work/sky-ratio/wbs-crops/vs-cand-gui-full.png` | `91ef7f2fbdfb58db0416` |
+
+| region | candidate | reference | ratio | pixels >8 |
+|---|---|---|---|---|
+| **sky band (0,0,1280,120)** | 35.4,27.4,21.5 | 35.4,27.6,21.9 | **1.000,0.993,0.982** | 37,776 of 153,600 (24.59 %) |
+| horizon (0,120,1280,300) | 60.5,59.2,57.9 | 62.3,60.6,58.9 | 0.971,0.977,0.983 | 13,458 (5.84 %) |
+| terrain centre (320,300,960,640) | 68.7,67.8,66.9 | 70.4,69.1,67.9 | 0.976,0.981,0.985 | 12,057 (5.54 %) |
+| chat block (0,320,660,620) | 55.3,53.8,52.3 | 56.9,55.0,53.2 | 0.972,0.978,0.983 | 12,168 (6.15 %) |
+| hotbar strip (490,660,790,720) | 73.4,71.0,69.2 | 77.5,74.1,71.7 | 0.947,0.957,0.965 | 2,904 (16.13 %) |
+| panel (180,80,1100,624) | 70.2,69.3,68.5 | 71.4,70.2,69.2 | 0.983,0.987,0.990 | 22,842 (4.56 %) |
+| **Done button (340,640,940,690)** | 110.1,110.1,110.1 | 110.1,110.1,110.1 | **1.000,1.000,1.000** | **8 of 30,000 (0.03 %)** |
+| title (0,20,1280,60) | 41.8,31.9,24.8 | 39.4,30.2,23.8 | 1.063,1.055,1.044 | 9,297 (18.16 %) |
+| whole frame | 52.9,49.9,47.5 | 55.1,51.7,48.9 | 0.959,0.966,0.972 | 114,666 (12.44 %) |
+
+**The reading, and it is the discriminating one:**
+
+- **The dim overlay is present and correct behind this screen.** Both legs put the sky band at 35.4/27.4-27.6/21.5-21.9 -
+  a factor of **0.22** of the undimmed 158.1,192.9,255.0 - and the candidate/reference ratio is **1.000,0.993,0.982**.
+  So the candidate dims the world behind the video-settings screen by exactly the amount the real GL renderer does.
+- **Behind the inventory screen at the same build state the same comparison is 27.74 % on the terrain centre**
+  (fog-path's `t41` pair). The overlay is shared between the two screens; the difference appears **only** with the
+  inventory open.
+- **Therefore the cause is not the shared `GuiScreen.drawWorldBackground` overlay.** It is the **inventory panel's own
+  alpha/blend or its covering geometry** - the one thing that differs between the two screens while the overlay does not.
+
+This supersedes the earlier candidate-side observation in this file, which pointed the other way; that observation was
+one side of a pair and this is the pair, so the pair wins. The `title` band (18.16 %) and the hotbar strip (16.13 %) are
+the font path and the immediate HUD respectively, and the Done button is pixel-identical.
+
 ## Status when this was written
 
 All four legs were **queued behind the single-game slot** (the machine was at 10/15 GB with several harness scripts
