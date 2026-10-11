@@ -435,6 +435,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             installed = new CeltiumGlStub();
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
+            // The census has to be readable after the run: the harness reads logs, and the renderer's own report
+            // only carries the strings it knows to ask for. One line at exit, bounded.
+            Runtime.getRuntime().addShutdownHook(new Thread(() ->
+                    System.out.println("[Celtium] CELTIUM_NOOP_CENSUS " + noopCensusSummary()),
+                    "celtium-noop-census"));
         }
         return installed;
     }
@@ -1039,6 +1044,14 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // the silent fallback this class cannot afford, because without a context nothing else applies the
                 // transform either. Counted per name so a run can say which one got through.
                 celtium$noteMirrorMiss(fn.name);
+                // And counted for every no-op, not only the transforms. This is the census that answers "which
+                // vanilla drawing still goes nowhere under the stub" - a question that was answered by reading the
+                // decompiled sources one call site at a time, and answered incompletely: RenderGlobal.renderSky
+                // draws the sky dome, the stars and the horizon plane through VertexBuffer.drawArrays ->
+                // GlStateManager.glDrawArrays, which is a no-op here, so all three were missing from every GL-less
+                // picture while no counter mentioned them. A per-name count of every no-op finds that class of gap
+                // by itself, including the ones nobody has thought to look for.
+                celtium$noteNoop(fn.name);
                 return 0L;
         }
     }
@@ -1059,6 +1072,53 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> MIRROR_MISSES =
             new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    /** Every no-op entry point that was actually called, by name. Bounded by the table's size. */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> NOOP_CALLS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    private static void celtium$noteNoop(String name) {
+        java.util.concurrent.atomic.AtomicLong counter = NOOP_CALLS.get(name);
+        if (counter == null) {
+            counter = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong existing = NOOP_CALLS.putIfAbsent(name, counter);
+            if (existing != null) {
+                counter = existing;
+            }
+        }
+        counter.incrementAndGet();
+    }
+
+    /**
+     * {@return the no-op entry points that were called, most frequent first}.
+     * <p>
+     * The question this answers is not "which calls did the stub swallow" - it swallows everything by design - but
+     * "which of them would have drawn something". A name here that belongs to a drawing entry point (glDrawArrays,
+     * glDrawElements, glCallList, the immediate-mode calls) is a vanilla path whose geometry reaches no image at all
+     * under this provider, and that is a hole in the picture rather than a state detail. Read it before concluding
+     * that a scene is complete.
+     */
+    public static java.util.List<String> noopCensus(int limit) {
+        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
+                new java.util.ArrayList<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>>(
+                        NOOP_CALLS.entrySet());
+        entries.sort((left, right) -> Long.compare(right.getValue().get(), left.getValue().get()));
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        for (int i = 0; i < entries.size() && i < limit; ++i) {
+            out.add(entries.get(i).getKey() + "=" + entries.get(i).getValue().get());
+        }
+        return out;
+    }
+
+    /** {@return the number of distinct no-op entry points called, and the total number of calls}. */
+    public static String noopCensusSummary() {
+        long total = 0L;
+        for (java.util.concurrent.atomic.AtomicLong counter : NOOP_CALLS.values()) {
+            total += counter.get();
+        }
+        return "noopEntryPoints=" + NOOP_CALLS.size() + " noopCalls=" + total
+                + " top=[" + String.join(" ", noopCensus(15)) + "]";
+    }
 
     private static void celtium$noteMirrorMiss(String name) {
         if (!MIRROR_REQUIRED.contains(name)) {
