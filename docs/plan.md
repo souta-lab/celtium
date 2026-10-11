@@ -22,6 +22,8 @@
 
 | 項目 | 状態 | 最新の実測（GPU・条件つき） |
 | **参照の変更（2026-10-11 14:xx）** | **bridge を廃止し upstream Celeritas 989ebf2e を参照に** | ユーザー決定「bridgeとかいらない。gllessのみでいこう」「glless vs celeritasのほうが楽だし、bridgeの保守もいらなくなる」。参照 leg は同一 fixture・同一 scene/pose/tick で `--mod .celtium-work/upstream-baseline/.../celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar`＋celtium jar なし＋glless フラグなし。**検証済み**: `ref-celeritas2` = `nonBg 0.761173`・**PASSED**・2476色・tick 150 の screenshot 取得成功（§0.163） |
+| **Intel UHD 630（GL-less の第2 vendor）** | **受入済み（task-11 完了）** | Intel で **GL-less と参照の両 leg が PASSED**（`intel-glless` / `intel-ref`・AMD と同じ fixture/pose/tick・`validationClean=true`・VUID 0・`fixtureStatus=PASSED`）。**rows 0-200 の 256,000 画素で 8 を超える差は 0**（mean 0.453・max 4）、AMD の GL-less と Intel の GL-less は **0 画素差**（rows 0-200）・terrain 帯で 4 画素。`depthFormat=D32_SFLOAT`（両社とも候補1/6＝**fallback 候補は未行使**）。**device を決めるのは `VK_ICD_FILENAMES`**（pin で `vulkanDeviceCount=1`・無 pin は 3、`matchedOpenGl=false`）。**Intel 未検証**: 星/地平線 plane（fixture 制約）・depth fallback 候補・GUI/item/entity 段・resize/device loss・性能。`docs/history/2026-10-11-intel-uhd630-leg.md` |
+| **参照 leg の取り直し（task-22 準備）** | **完了** | upstream Celeritas `d12425eaaf184e79`＋凍結 fixture `acfb62b16ed70ac3`・AMD・pose 0.5/12/0.5 yaw180 pitch20・tick 200: terrain `nonBg 0.761173` PASSED／entity `0.774399` UNCALIBRATED（variant 差＝正しい）／inventory `0.888320` UNCALIBRATED。**harness は instance.cfg の JvmArgs を読まない**（`patches/*.json` の `+jvmArgs` と `--jvm-arg` のみ）＝instance.cfg はユーザーの手動起動専用（16:0x に空へ変更されていたのを `-Dceltium.vulkan.glless=true` へ復元） |
 | **空（dome+星+地平線）** | **受入済み（task-3 完了）** | GL-less vs upstream Celeritas で **rows 0-199 の 256,000 画素のうち 8 を超える差は 0**（max 4）。行平均が参照と 0.1 カウントまで一致、63色が両側で同一。gate は両分岐とも削除。**地平線 plane と星はこの fixture では行使不可**（flat world の `getHorizon()`=0／worldTime 固定で星輝度 0）と明記 |
 | **entity/TESR モデル** | **受入済み（task-7/12 完了）** | モデル経路は正常（228/228 quad・拒否0・family 名を捕捉）。**真因は固定機能ライティング**（`EntityRenderer:1397-1402` が `enableStandardItemLighting` を renderEntities 直前に呼ぶ）。修正後 per-family 比 **0.98〜1.07**（以前 1.2〜1.6）。残差: spider の赤目 layer・hurt flash の combine・lightmap 未適用（この scene では 0.988 で不可視） |
 | **雨/粒子（id5）** | **受入済み** | format 定数の誤り（`Short` を `Unsigned Short`）を修正 → `id5=142/142`・**id0 消滅**。参照との sky band 差 77.6% → **21.3%**。粒子の**画**は fixture 制約（炎が chest/enchanting table の層の中に spawn）で行使不可と明記 |
@@ -116,6 +118,60 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **ミキシン間で直接メソッドを呼ばない**（メソッドは対象クラスへマージされるため起動時 `NoClassDefFoundError`。§0.121 の経緯）。
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
+
+## 0.175 **このラウンドの割当（10人・task-11〜22）と、GL-less のクリティカルパス**
+
+ユーザー指示「quota復活。チーム10人。はやく GL-less で完璧に動作するその日を」で開始したラウンド。
+**10メンバーは全員既存（spawn 済み・上限10）なので、新規 spawn ではなく task の割当で起こした。**
+
+| task | 担当 | 内容 |
+|---|---|---|
+| 11 | sky-draws | Intel UHD 630 leg（継続） |
+| 13 | weather-water | Forge の雲＝stub の 24バイト decode（task-15 の後） |
+| 14 | pipelines | format 2/6/7 同居時の group-drop（継続） |
+| 15 | weather-water | **クリティカルパス** — client-memory は decode 済み。残りは「world 前に renderer が無い」＝window 生成時に install |
+| 16 | fog-path | 地平線直下の terrain 帯（継続） |
+| 17 | texture-mirror | block 破壊 overlay＝BLOCK(id3) の初行使（継続） |
+| 18 | proj-channel | **GL-less の post chain と entity outline**（seeded path は GL readback 依存・`postChains=0`・可視 glow 未受入） |
+| 19 | frame-composite | **wedge の残存**（細い筋。format-8 帰属は撤回済みで原因未命名） |
+| 20 | gui-stage | **完成条件 (e)** — コードが要求する capability と docs/配布物の一致（Java・最低VK・mod範囲・license・性能・未検証GPU/OS） |
+| 21 | entity-models | モデルの残3件（spider の赤目 layer・hurt flash・lightmap） |
+| 22 | acceptance | **GL-less のユーザー構成そのものでの独立受入**（task-15 完了後に assign・blocked_by task-15） |
+
+### task-15 の設計（私の決定・レビュー結果）
+
+**決定**: renderer を world 生成時ではなく **window 生成時**に install し、world renderer が**その同一インスタンスを adopt**する
+（`VulkanTerrainGpuBackend.createForWindow` + `celtium$adoptTerrainState`）。menu 専用の第2 renderer は swapchain の二重所有なので採らない。
+
+**レビューで見つけた2つの欠陥（weather-water へ送付済み・実装待ち）**:
+1. **world 破棄が window の device を消す**: `RenderSectionManager.destroy()`（`RenderSectionManager.java:923`）が
+   `terrainBackend.delete()` を呼び、`SimpleWorldRenderer.unloadWorld()`（`:67`）と `initRenderer()`（`:247`）がそれを呼ぶ。
+   adopt 済みインスタンスだと title へ戻った時点で device/frame target/swapchain が消え、`TerrainGpuBackends.install(null)` が走る。
+   **`windowOwned` を別フラグにし、`delete()` は world 資源の解放と detach だけを行う**（device は残す）。
+2. **再武装**: 最初の試行が失敗すると latch 済みのフラグでセッション中ずっと menu が空白になる。成功時のみ latch する。
+
+**計測の規律**: 赤いツリーは誰の build も止める。`VulkanTerrainGpuBackend.java` は同時に複数担当が触るため、
+**最小の編集＋書く前の再読**を維持する（このラウンドでも `final` 4フィールドの compile エラーで全員が止まった）。
+
+### このラウンドの測定で確定した事実
+
+- **task-15 の第1段は動いた**: window 生成時に renderer が作られ（`CELTIUM_WINDOW_RENDERER created=true attempt=1 ticks=0`）、
+  swapchain は提示している。**しかし窓はまだ空白**——stub の `glDrawArrays` は **1,048,576 件すべて decode された**うえで
+  **全件拒否**: 理由は `target: the viewport is 256x256, the target is 1280x720`。site は `SplashProgress.drawVanillaScreen`。
+  一方 **uploader 経路は受理している**（`CELTIUM_ACCEPTED total=1365000`・format 2 が 1,301,507・`CELTIUM_FONT_GLYPH_SUMMARY windows=1293746`）。
+  **2経路が食い違っており、絵だけが決められる**。次の問い: (i) 90秒時点で loading screen から出ているか、
+  (ii) **viewport が target と違う batch を拒否するのが正しいか**——GL の viewport は drawable の部分矩形なので、
+  window target に対しては**拒否ではなく適用**（Vulkan viewport/scissor）が GL 意味論に合う。拒否は「誰も描かない」。
+- **task-15 の user-launch にはまだ絵が無い**: `scripts/compositor_capture.py --output` は **grim の output 名**であり
+  JSON path ではない（`--output` に JSON path を渡すと全 capture が `unknown output` で失敗＝PNG 0枚）。**screenshot の無い run は証拠ではない**。
+- **spider の赤目 layer の原因は model ではなく blend state**: `VulkanTerrainGpuBackend.blendFunc(int,int)`（~:3021）が
+  **mirror を書かない**ため 2引数 `blendFunc(ONE,ONE)` が無視され、4引数の最後の値 `(6,7)` が使われる。
+  実測 `blend=1(6,7)`・目の g/b が参照の 0.64〜0.66（r は 0.99）。→ task-27（gui-stage）。
+- **配布物の欠陥（task-24）**: 同梱 jar の `META-INF/LICENSE` は **JOML の MIT**（JOML class は 0 個・本体は LGPL-3）、
+  `xyz/wagyourtail/jvmdg` 13 class は license 無し、`mcmod.info` の説明と `Celtium-Stage: backend-boundary` は古い、
+  `verify_forge_jar.py` は license を見ないのに `verified: true`。
+- **GL-less の性能は測定済み**（`docs/performance-2026-10-11.md` §4.1: p50 3.94 ms / 253.8 fps・§7 で 2.83〜3.94 ms を再現）。
+  「未測定」と書かない（gui-stage の訂正を採用）。
 
 ## 0.174 **video settings の機能受入（ユーザー要件の半分が閉じた）**
 

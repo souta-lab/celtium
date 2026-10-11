@@ -35,6 +35,25 @@ val modEmbedDependencies = configurations.create("modEmbedDependencies") {
     attributes { attribute(ModUtils.DEOBFUSCATOR_TRANSFORMED, true) }
 }
 
+/**
+ * Resolves the JVM Downgrader artifact only so its licence text can be copied into the shipped jar next to the
+ * `xyz.wagyourtail.jvmdg` runtime stubs that common's `shadeDowngradedApi` shades in. Nothing from this
+ * configuration is compiled against or bundled except the two licence files named in the `jar` task.
+ * <p>
+ * (Do not write a glob such as `jvmdg` + a double star in a Kotlin block comment: Kotlin nests block comments,
+ * and the star-star-slash inside it opens a nested comment that a later string literal can close.)
+ */
+val jvmDowngraderLicense = configurations.create("jvmDowngraderLicense") {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    isTransitive = false
+}
+dependencies {
+    // Pinned to the plugin version at common/build.gradle:6; scripts/verify_forge_jar.py fails the jar if the
+    // licence entries stop matching that pin.
+    add(jvmDowngraderLicense.name, "xyz.wagyourtail.jvmdowngrader:jvmdowngrader:2.0.1")
+}
+
 val celeritasLwjglVersion = "3.3.3"
 
 minecraft {
@@ -42,6 +61,9 @@ minecraft {
 }
 
 repositories {
+    // For the JVM Downgrader licence artifact (jvmDowngraderLicense); the runtime stubs it covers are shaded
+    // in by common, which resolves it from this same repository.
+    mavenCentral()
     exclusiveContent {
         forRepository { maven("https://maven.cleanroommc.com") }
         filter {
@@ -177,12 +199,35 @@ tasks.named<Jar>("jar") {
         into("licenses")
         rename { "bitraster-LICENSE" }
     }
+    // The JVM Downgrader runtime stubs (xyz/wagyourtail/jvmdg/**, shaded in by common's shadeDowngradedApi)
+    // are LGPL-2.1, read from the dependency's own metadata rather than from memory:
+    //   - jvmdowngrader-2.0.1.pom declares <licenses><license><name>LGPL-2.1</name>
+    //   - its LICENSE.md offers LGPL-2.1 or a commercial licence and states explicitly that shading its api
+    //     classes into a Combined Work is permitted provided the unshaded jar or the source is available,
+    //     which this repository is (LGPL-3.0, sources included).
+    // The version below is the plugin pin at common/build.gradle:6; scripts/verify_forge_jar.py fails the jar
+    // if the two drift apart, because a licence notice for the wrong version is worse than none.
+    from(configurations.named("jvmDowngraderLicense").map { zipTree(it.singleFile) }) {
+        include("LICENSE.md")
+        into("licenses")
+        rename { "jvmdowngrader-LICENSE.md" }
+    }
+    from(configurations.named("jvmDowngraderLicense").map { zipTree(it.singleFile) }) {
+        include("license/LGPLv2.1.md")
+        // eachFile, not rename: the include keeps the `license/` directory in the path and rename only changes
+        // the file name, which shipped the text as licenses/license/jvmdowngrader-LGPLv2.1.md.
+        eachFile { path = "licenses/jvmdowngrader-LGPLv2.1.md" }
+        includeEmptyDirs = false
+    }
     manifest {
         attributes["FMLAT"] = "celeritas_at.cfg"
         attributes["FMLCorePlugin"] = "org.taumc.celeritas.core.CeleritasLoadingPlugin"
         attributes["FMLCorePluginContainsFMLMod"] = "true"
         attributes["ForceLoadAsMod"] = "true"
-        attributes["Celtium-Stage"] = "backend-boundary"
+        // Replaces the stale `Celtium-Stage: backend-boundary` (a 2026-10-09 label). These two are true today
+        // and each is enforced by code named in docs/scope-and-limits.md section 0.
+        attributes["Celtium-License"] = "LGPL-3.0"
+        attributes["Celtium-Vulkan-Minimum"] = "1.2"
         attributes["Celtium-Upstream-Commit"] = "989ebf2e52ceed052ec112a569e0c1d172095756"
     }
 }

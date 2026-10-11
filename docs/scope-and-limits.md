@@ -5,10 +5,69 @@ This file is the single place where the project states its boundary. Everything 
 It is written because the objective requires the supported and unsupported scope to be explicit, and because the honest answer
 to "is it Vulkan yet" is a list rather than a word.
 
+> **Sections 0 and 8 are the current verdict (2026-10-11).** Section 0 is the requirement table completion condition (e)
+> asks for: each requirement with the file and line that enforces it, each claim with the measurement behind it, and the
+> named list of what is unverified. Sections 1-7 are the earlier English text and are corrected in place where a later
+> measurement contradicts them; the Japanese addendum at the end is a **dated stage record (2026-10-09/10)** kept for
+> provenance and is **not** the current state - several of its "未達成" rows were closed afterwards, and §0 says which.
+
+## 0. What the code requires, where it is enforced, and what measured it
+
+Every row names the file and line that enforces the requirement today. "Fail-closed" means the renderer refuses rather
+than degrading silently. A row whose measurement column says "not measured" is exactly that - it is not a claim.
+
+### 0.1 Runtime and device requirements
+
+| Requirement | Enforced at | Behaviour when unmet | Measurement |
+|---|---|---|---|
+| Vulkan **1.2 or newer** loader | `celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java:86-87` (`REQUIRED_API_MAJOR`/`MINOR` = 1/2), `:154` (`isAvailable()` requires `VK.getInstanceVersionSupported() >= VK_API_VERSION_1_2`) | `isAvailable()` returns `false` and never throws; a missing binding class, a missing native loader and a too-old loader all report `false` | Vulkan loader 1.4.363, `vulkanDeviceCount 3`, in every run's `logs/celtium-capabilities.json`; device selected as AMD RX 6400 (`nativeDeviceName`, `nativeDeviceUuid 00000000030000000000000000000000`) |
+| Physical device `apiVersion >= 1.2` | `VulkanContext.java:759-763` | the device is **skipped**; if no device is left, `IllegalStateException` at `:775-780` | both verified GPUs enumerate 1.4.x (AMD RADV NAVI24 1.4.354; Intel UHD 630 accepted in the same fixture) |
+| The device is not a CPU device | `VulkanContext.java:756-758` (`VK_PHYSICAL_DEVICE_TYPE_CPU` skipped) | skipped, so llvmpipe cannot be selected | the capability census lists AMD (type 2), Intel UHD 630 (type 1) and llvmpipe (type 4); the llvmpipe entry is never chosen - `docs/performance-2026-10-11.md:229` |
+| Same-GPU identity with the GL device (bridge path) | `VulkanContext.java:753-755` | the device is skipped and a **software Vulkan device is not used instead** (`:775-780`) | `CELTIUM_NATIVE_DEVICE ... matchedOpenGl=true` in bridge runs, `matchedOpenGl=false` under GL-less (no GL identity exists) - `docs/performance-2026-10-11.md:217-218` |
+| `VK_KHR_external_memory_fd` **and** `VK_KHR_external_semaphore_fd` | required at `VulkanContext.java:795-803`, enabled at `:838-839` | `IllegalStateException` naming the missing extensions | the interop experiment verified FD export/import on both GPUs - `docs/interop-validation.md` |
+| One queue family with **GRAPHICS and TRANSFER** | `VulkanContext.java:806-831` | `IllegalStateException` ("no queue family that supports both graphics and transfer") | every accepted run records `passes`/`skipped`; a device without such a family has never been available to test, so this row is enforced but **not measured against a failing device** |
+| `VK_KHR_swapchain`, enabled only when advertised | `VulkanContext.java:845-856` | not enabled; the present path needs it and reports the refusal | present traces: `presentedFromVulkan=287` = `glSwapsSkipped=287` (`docs/plan.md` §0.114) |
+| A depth format the device accepts, from a candidate list | `celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDepthFormat.java:27-61` (`D32_SFLOAT` → `D24_UNORM_S8` → … → `D16_UNORM`), `:82` (`chosen()`) | per-candidate refusal with the reason; the terrain pipeline refuses rather than guessing | AMD has no sampled 24-bit depth, so the chooser picks from the list; the bridge regression of 09:47 was this contract having no caller (`docs/plan.md` N10, fixed at `0fddd6ccf`) |
+
+### 0.2 The GL-less path
+
+| Requirement | Enforced at | Behaviour when unmet | Measurement |
+|---|---|---|---|
+| The window is created with **no GL context** (`GLFW_CLIENT_API = GLFW_NO_API`) only when the flag is set | `forge122/src/main/java/org/taumc/celeritas/mixin/core/LwjglxDisplayMixin.java:31` (reads `celtium.vulkan.glless`), hint written at `:55-57` | with the flag absent the ordinary GL window is created and the GL bridge is used - the flag is **off by default** | `CELTIUM_GLLESS window hinted GLFW_NO_API`; `-Dceltium.vulkan.glless=true` is on every GL-less run cited in this file |
+| The splash/progress path does not make a GL context current under the flag | `forge122/src/main/java/org/taumc/celeritas/mixin/core/SplashProgressMixin.java:19` | without the flag the ordinary path runs | same runs |
+| The frame target is created by Vulkan, not imported from GL | `VulkanTerrainGpuBackend.java:8286` (`GllessFrameTarget.create`), `GllessFrameTarget.java:163-173` | the imported-GL-target path is used | colour+depth images created, depth format chosen from the device (`GllessFrameTarget.java:206-216`) |
+
+### 0.3 Java
+
+| Requirement | Enforced at | Behaviour when unmet | Measurement |
+|---|---|---|---|
+| Celtium's own modules compile at **`--release 21`** (class major 65) and use no Java 22+ API | `celtium-vulkan/build.gradle:13`, `celtium-interop/build.gradle:11` | the compile fails | measured on the shipped jar: **90 classes at major 65**, none later. (The earlier count of 49/86 in older docs was a different jar.) |
+| Forge-facing code compiles at **`--release 8`** (class major 52) with a **JDK 21** compiler toolchain | `forge122/build.gradle.kts:138-139` (`sourceCompatibility = "21"`, `options.release = 8`), `:249-250` | the compile fails | measured on the shipped jar: **618 classes at major 52** |
+| The jar contains no class from a release later than 21 | `scripts/verify_forge_jar.py:136-145` (`major > 65` is an error) | the jar is rejected by the verifier | measured class-major histogram of the shipped jar: `{46: 111, 51: 1, 52: 618, 65: 90}` - the 46/51 classes are the vendored upstream code, i.e. **older**, and 65 is the newest |
+| Gradle itself runs on **JDK 25** | `README.md` "Minecraft 1.12.2 build"; `buildSrc/src/main/kotlin/celeritas.platform-conventions.gradle.kts:20-26` (toolchain 25 for 26.1+, 21 otherwise) | toolchain resolution fails | every run in `docs/performance-2026-10-11.md` records Java 25 (`§6.7`); the validated launch uses `/usr/lib/jvm/java-25-openjdk-amd64` |
+| The **game** is verified on **Java 25**; it is **not** claimed that Cleanroom runs on Java 21 | this file §5 | - | Cleanroom's own launcher classes are major 69; only Celtium's classes target 21 |
+
+### 0.4 Verified and unverified, named
+
+| Axis | Verified | Unverified (explicitly) |
+|---|---|---|
+| GPU | AMD Radeon RX 6400 (RADV NAVI24, Mesa 26.2.4-1) and Intel UHD 630 | **NVIDIA, every other AMD/Intel part, every other driver, and llvmpipe** (skipped by type, never accepted) |
+| OS | Linux, headless Sway/Xwayland compositor, 1280x720 | **Windows, macOS, and every other compositor or display server** |
+| Runtime | Cleanroom 0.6.13-alpha, LWJGL 3.4.1, Java 25 | every other Cleanroom, LWJGL or Java version |
+| Vulkan | loader 1.4.363, devices exposing 1.4.x, `VK_KHR_external_memory_fd`/`external_semaphore_fd`, a graphics+transfer queue family | a device that fails any row in §0.1 has **never been available to test**, so the refusal paths are enforced but unmeasured |
+| Mods | see `docs/mod-compatibility.md` | all mods other than the ones named there |
+| Performance | AMD RX 6400, one flat scene, render distance 12, 900 frames per configuration: GL-less 3.94 ms p50 / 253.8 fps, bridge 4.89 ms p50, reference 16.10 ms p50 (a 60 Hz floor, not a render cost); CPU per frame 3.33 / 3.94 / 3.09 ms (`docs/performance-2026-10-11.md` §4.1, §4.4) | **Intel GL-less performance, GPU time on either side, every other scene, and the validation fixture's own p50 numbers** (AMD 16.02 ms bridge vs reference 16.18 ms, Intel 28.54 ms bridge vs reference 16.17 ms) which come from a different harness and are **not merged** with the benchmark dataset |
+| Scanout | the compositor output was captured and bound pixel-exactly to the presented frame (`docs/compositor-output-capture-2026-10-11.md`) | **scanout itself** (needs DRM master) |
+
 ## 1. What is drawn by native Vulkan, measured
 
 Each entry below is a measured acceptance count from the per-format counters (`CELTIUM_ACCEPTED`, printed incrementally to
 stdout) and the end-of-run report, on AMD RX 6400 and Intel UHD 630.
+
+> **On the name "JEI" in the run names and older rows below (measured 2026-10-11):** the fixture flag
+> `-Dceltium.validation.jeiScreen=true` opens `net.minecraft.client.gui.inventory.GuiInventory`, the **vanilla
+> inventory** (`ValidationClient.java:3032`), and **no JEI jar is loaded** in those runs - the run's `mods/` directory and
+> its `latest.log` contain no JEI entry. "JEI" here names the *screen variant*, not a mod that was tested.
 
 | Content | Layout | Evidence |
 |---|---|---|
@@ -29,22 +88,58 @@ Appearance: with these layouts left to OpenGL versus drawn by Vulkan, the frame 
 measured **scene noise floor of about 1.0** - equal to the GL path on a local comparison, which is not a claim of
 pixel-identity.
 
+### 1.1 The validation fixture's own numbers (a different harness - do not merge with §0.4's)
+
+These are the numbers completion condition (e) has been quoted with. They come from the **validation fixture's** runs, not
+from the benchmark harness in `docs/performance-2026-10-11.md`, and they are a **past stage record**
+(`docs/history/plan-round-log-until-2026-10-10.md`), so they are restated with their provenance rather than merged into the
+benchmark table:
+
+| What | Measured | Source |
+|---|---|---|
+| Celtium bridge, AMD RX 6400, default configuration | p50 **16.02 ms**, `exit 0`, `PASSED` | `docs/history/plan-round-log-until-2026-10-10.md:1204` |
+| The pinned Celeritas reference, same fixture | p50 **16.18 ms** (AMD) | same file, `:1213` |
+| Celtium bridge, Intel UHD 630 | p50 **28.54 ms**, `PASSED` (from 42.66 ms earlier in the same session) | same file, `:1205`, `:1213` |
+| The pinned Celeritas reference, **Intel** | p50 **16.17 ms** | same file, `:1031-1033` |
+| **The reference is GPU-independent**: 16.18 ms on AMD against 16.17 ms on Intel | the reference's frame time is a wait, not a GPU cost | same file, `:1033` |
+| Picture distance from the reference | **meanAbsDiff 7.78/255**, HF ratio 0.81 | same file, `:210`; quoted in `docs/plan.md:4256` |
+| Controls for that distance | reference-vs-reference 0.22, candidate-vs-candidate 0.13 (`:210`); the plan row quotes 0.064 / HF 1.002 for its own pair | same |
+
+**What these numbers are not:** they are not from the same harness as §0.4's benchmark dataset (different scene, fixture,
+control set and measurement window), the two sets are **not merged**, and neither set measures GPU time. The benchmark
+dataset is the one with the load gate, the 900-frame window and the paired controls.
+
 ## 2. What is still OpenGL, stated plainly
 
-- **The GL context itself exists**, and the GL/VK bridge is built on it (a shared image and semaphore pair). This is the
-  hybrid stage: the renderer does not yet start or draw without a GL context, and that is completion condition (3).
-- **The bridge's synchronisation and the window's buffer swap** remain GL's.
+**Corrected 2026-10-11.** The three bullets below were written while the GL context was still required. They are kept
+with the correction because "the GL context exists" and "the game can start without one" are both true of the current
+build, of different configurations:
+
+- **The GL context exists in the default (bridge) configuration**, and the GL/VK bridge is built on it (a shared image
+  and semaphore pair). **Under `-Dceltium.vulkan.glless=true` there is no GL context at all**: the window is created
+  with `GLFW_NO_API` (`LwjglxDisplayMixin.java:31`, `:55-57`), the game's own framebuffer is adopted into Vulkan-owned
+  colour and depth images, and the finished frame is presented from the Vulkan swapchain with the GL swap skipped
+  (`presentedFromVulkan=287` = `glSwapsSkipped=287`). Completion condition (3)/(b) is closed for the real scene, model/
+  TESR and Nether, with the remaining items named in §0.4 and `docs/plan.md`.
+- **The bridge's synchronisation and the window's buffer swap** remain GL's *in the bridge configuration*; under GL-less
+  the swap is Vulkan's and the GL swap is skipped one-for-one.
 - **Terrain mesh building and the mod's own chunk bookkeeping** are not drawing and were never in scope for replacement.
 - **Nothing observed is left unmapped on the immediate path.** In the runs recorded here, not one upload was refused for being
   unrecognised; the legacy path is a fallback that currently has no traffic, and it is kept for the content this project has
-  not seen.
+  not seen. (One exception is named rather than hidden: `id0=57/0` in a 2026-10-11 GL-less run - 57 offers mapped to no id
+  at all and refused. Not GUI content, and not yet attributed to a format.)
 
 ## 3. Environment limits on verification
 
-- **The physical screen cannot be observed here.** The X display reports a `0x0` screen (`ffmpeg -f x11grab -i :0.0` ->
-  `Invalid size 0x0`) and no capture tooling is installed, so "does the presented image reach the monitor" cannot be closed on
-  this machine. What *is* established: the present runs and repeats, and its output is provably **not** in the framebuffer GL
-  reads (a solid magenta present leaves GL's back buffer showing the ordinary scene).
+**Corrected 2026-10-11.** The first bullet below was **retracted by measurement**, not softened:
+
+- **The compositor output *was* observed.** `-Dceltium.vulkan.presentMarker=true` made the private headless wlroots/Sway
+  output (`HEADLESS-1`, 1280x720) a uniform magenta for 14 captures, and compositor capture `0035` is **0 of 921600
+  pixels different** from the renderer's own numbered presented dump `frame-20.png`; capture `0066` matches `frame-100.png`
+  the same way. The earlier claim that "the X display reports a `0x0` screen and no capture tooling is installed" was
+  wrong: sway 935 runs on `wayland-1` with a real `HDMI-A-4` output and Xwayland `:0`, and `grim` captures it.
+  **What is still unmeasured is scanout itself** - `kmsgrab` needs DRM master and non-root cannot have it. Evidence:
+  `docs/compositor-output-capture-2026-10-11.md`, `docs/plan.md` §0.123.
 - **Intel plus JEI is borderline against the harness's duration cap.** The same jar completed at 720 seconds and timed out at
   720 seconds on consecutive attempts. Partial runs still yield evidence because the arrival and acceptance counters print
   incrementally.
@@ -64,17 +159,40 @@ pixel-identity.
 ## 5. Java versions
 
 - **Celtium compiles to `--release 21`** (class major 65) and its code uses no Java 22+ API, language feature or preview.
+  Enforced at `celtium-vulkan/build.gradle:13` and `celtium-interop/build.gradle:11`.
+- **The Forge-facing code compiles to `--release 8`** (class major 52) with a JDK 21 compiler toolchain
+  (`forge122/build.gradle.kts:138-139`, `:249-250`).
+- **Measured on the shipped jar** (2026-10-11): class-major histogram `{46: 111, 51: 1, 52: 618, 65: 90}` for the whole
+  jar. The newest major is 65, i.e. **no class is newer than release 21**; the 46 and 51 entries are vendored upstream
+  code and are *older*. The counts 49/86 that older notes quote are from a different jar and are superseded.
 - **The game runs and is verified on Java 25.** The class files of Cleanroom's own launcher are major 69 and that is not a
   blocker.
 - **It is not claimed that the whole game, Cleanroom included, runs on Java 21.** Only the Celtium classes are compiled for 21.
+- **The Vulkan bindings are not bundled**: they must be on the game's classpath and match the validated Cleanroom
+  installation's LWJGL version (3.4.1). `celtium-vulkan/build.gradle:18-19` documents this; the measured jar contains
+  **no** `org/lwjgl` class.
 
 ## 6. Licensing and lineage
 
 - The pinned upstream base is Celeritas at `989ebf2e`, whose lineage runs through Embeddium and Sodium 0.5.11 or earlier -
-  FOSS code. Celtium is LGPL-3.
+  FOSS code. Celtium is LGPL-3 (`COPYING`, `COPYING.LESSER` in the repository root).
 - **No code from Sodium 0.6 or later (PolyForm Shield 1.0.0) has been copied, translated, renamed or cherry-picked.** Where an
   idea comes from published descriptions, its source is recorded in `docs/plan.md` rather than presented as original.
 - Rewriting is not treated as a way to make a licensing question disappear.
+- **What the shipped jar actually contains, measured 2026-10-11** (`unzip -l` over
+  `celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar`): `org/embeddedt` 485 classes, `org/taumc` 207,
+  `org/soutalab` 102, `grondag/bitraster` 13, `common/xyz/wagyourtail/jvmdg` 13. No `org/lwjgl`, no `org/joml`.
+  - `licenses/bitraster-LICENSE` is present and is the **Apache License 2.0**, matching the 13 bundled
+    `grondag/bitraster` classes.
+  - **The `common/xyz/wagyourtail/jvmdg/**` entries are the JVM Downgrader runtime stubs** pulled in with the downgraded
+    `:common` configuration (`forge122/build.gradle.kts:117-121`) and they carry **no license file in the jar**. Reported
+    as a distribution defect; the license is not stated here because it has not been read.
+  - **`META-INF/LICENSE` in the jar is the JOML MIT license while the jar contains no JOML class.** It is the wrong
+    top-level license for this artifact - the project's own is LGPL-3 - and it is reported as a distribution defect
+    rather than documented as if intended.
+- **The decompiled Minecraft and Forge sources** that `scripts/mc-sources.sh` produces are reference material extracted
+  on demand from the jar the build already uses. They are **not redistributed in the jar** (measured: no
+  `net/minecraft` entry) and are Mojang/Forge-licensed material kept out of the distribution.
 
 ## 7. How the claims above are measured
 
@@ -92,6 +210,11 @@ pixel-identity.
 ---
 
 # 第3回監査後の現状（実測に限定した再掲）
+
+> **これは 2026-10-09/10 時点の段階記録であり、現在の判定ではない。** 冒頭の §0 と §0.4 が現在の受入状況である。
+> 以下の表のうち「完了条件(b) GL contextなしの起動・描画: **未達成**」「完了条件(c): **未確認**」「FBOのVulkan完了: 未達」
+> は**その後閉じた**（GL-less の起動・提示・実 scene・Nether 到達は `docs/plan.md` §0.114〜§0.127、
+> compositor 出力の画素一致は `docs/compositor-output-capture-2026-10-11.md`）。この節は来歴として残し、削除しない。
 
 本書の対応範囲は**ソースと実測**に限定する。数値は第3回監査（`docs/audit-2026-10-09-third.md`）と監査後の実測に対応する。
 現在の完了判定は `docs/plan.md` の現状表を唯一の根拠とする。以下は**上書き**であり、古い記述より優先する。

@@ -6,6 +6,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 import sys
 import zipfile
@@ -49,6 +50,108 @@ def rebrand_errors(jar):
     return {"errors": errors, "languageFiles": checked}
 
 
+def jvmdowngrader_pin(repository):
+    """The JVM Downgrader version the common project's plugin pin names, read from the build file.
+
+    The stubs this covers are shaded in by `common/build.gradle`'s `shadeDowngradedApi`, so that file is the
+    pin. `forge122/build.gradle.kts` resolves the licence artifact at the same version; a licence notice for a
+    different version than the code it covers is worse than no notice, so the two are compared here rather
+    than trusted to stay in step.
+    """
+    text = (repository / "common" / "build.gradle").read_text(encoding="utf-8")
+    match = re.search(r"id\s+['\"]xyz\.wagyourtail\.jvmdowngrader['\"]\s+version\s+['\"]([^'\"]+)['\"]", text)
+    return match.group(1) if match else None
+
+
+def cached_jvmdowngrader(version):
+    """The dependency's own jar and POM in the Gradle cache, or (None, None) when they are not there."""
+    cache = Path.home() / ".gradle" / "caches" / "modules-2" / "files-2.1" / "xyz.wagyourtail.jvmdowngrader" / "jvmdowngrader" / version
+    if not cache.is_dir():
+        return None, None
+    jars = sorted(cache.glob("*/*.jar"))
+    poms = sorted(cache.glob("*/*.pom"))
+    return (jars[0] if jars else None), (poms[0] if poms else None)
+
+
+def license_errors(jar, names, repository):
+    """Check the licence content the jar ships against the components it actually bundles.
+
+    A `verified: true` from this script is quoted as evidence about the distributable, so the licence half of
+    that claim has to be measured too. Before this, the script required `META-INF/LICENSE` to exist and never
+    read it, which is how a notice for the wrong component could pass.
+    """
+    errors = []
+    notes = {}
+
+    # (1) The project's own licence, and that it is the repository's own text.
+    for entry in ("COPYING", "COPYING.LESSER"):
+        if entry not in names:
+            errors.append(f"Missing entry: {entry} (the project's own licence text)")
+
+    # (2) META-INF/LICENSE must be the JOML notice, because 113 relocated JOML classes are bundled under
+    # org/embeddedt/embeddium/impl/shadow/joml/. The relocation is why `grep org/joml` finds nothing: a check
+    # that looked for the unrelocated package would have reported the jar clean and the licence wrong.
+    joml_classes = [n for n in names
+                    if n.startswith("org/embeddedt/embeddium/impl/shadow/joml/") and not n.endswith("/")]
+    notes["relocatedJomlClasses"] = len(joml_classes)
+    if joml_classes:
+        if "META-INF/LICENSE" not in names:
+            errors.append("JOML is bundled (relocated) but META-INF/LICENSE is absent")
+        else:
+            text = jar.read("META-INF/LICENSE").decode("utf-8", "replace")
+            if "JOML" not in text or "MIT License" not in text:
+                errors.append("META-INF/LICENSE is not the JOML MIT notice although JOML is bundled")
+        pom = "META-INF/maven/org.joml/joml/pom.properties"
+        if pom in names:
+            notes["jomlVersion"] = jar.read(pom).decode("utf-8", "replace").strip().replace("\n", " ")
+        else:
+            errors.append("JOML classes are bundled but no META-INF/maven/org.joml/joml/pom.properties records the version")
+
+    # (3) Every bundled third-party top-level package must have a named licence entry. The census is recorded
+    # either way, so a new dependency shows up as an uncovered package instead of as a silent addition.
+    coverage = {
+        "grondag/bitraster/": "licenses/bitraster-LICENSE",
+        # The prefix is `common/`-rooted: the stubs come from the common project's multi-source-set layout.
+        "common/xyz/wagyourtail/jvmdg/": "licenses/jvmdowngrader-LICENSE.md",
+        "org/embeddedt/embeddium/impl/shadow/joml/": "META-INF/LICENSE",
+    }
+    census = {}
+    for prefix, notice in coverage.items():
+        count = sum(1 for n in names if n.startswith(prefix) and not n.endswith("/"))
+        census[prefix] = {"classes": count, "notice": notice}
+        if count and notice not in names:
+            errors.append(f"{prefix} is bundled ({count} classes) but its notice {notice} is absent")
+    notes["licenseCensus"] = census
+
+    # (4) The JVM Downgrader notice must come from the version the build pins, compared against the
+    # dependency's own jar rather than against a remembered string.
+    version = jvmdowngrader_pin(repository)
+    notes["jvmDowngraderPin"] = version
+    if version is None:
+        errors.append("Could not read the jvmdowngrader plugin pin from common/build.gradle")
+    else:
+        dep_jar, dep_pom = cached_jvmdowngrader(version)
+        if dep_jar is None:
+            notes["jvmDowngraderNoticeCheck"] = f"SKIPPED: jvmdowngrader-{version}.jar is not in the Gradle cache"
+        else:
+            with zipfile.ZipFile(dep_jar) as dependency:
+                for entry, shipped in (("LICENSE.md", "licenses/jvmdowngrader-LICENSE.md"),
+                                       ("license/LGPLv2.1.md", "licenses/jvmdowngrader-LGPLv2.1.md")):
+                    if shipped not in names:
+                        errors.append(f"Missing entry: {shipped} ({entry} of jvmdowngrader-{version})")
+                    elif dependency.read(entry) != jar.read(shipped):
+                        errors.append(f"{shipped} differs from {entry} in jvmdowngrader-{version}.jar")
+            notes["jvmDowngraderNoticeCheck"] = f"compared against jvmdowngrader-{version}.jar"
+        if dep_pom is None:
+            notes["jvmDowngraderDeclaredLicense"] = "unknown: POM not in the Gradle cache"
+        else:
+            pom_text = dep_pom.read_text(encoding="utf-8")
+            declared = re.search(r"<licenses>.*?<name>([^<]+)</name>", pom_text, re.S)
+            notes["jvmDowngraderDeclaredLicense"] = declared.group(1) if declared else "no <licenses> block in the POM"
+
+    return errors, notes
+
+
 def verify(path):
     repository = Path(__file__).resolve().parent.parent
     errors = []
@@ -68,6 +171,8 @@ def verify(path):
             "META-INF/celeritas_at.cfg", "mixins.celeritas.json",
             "COPYING", "COPYING.LESSER", "README.md", "docs/upstream-README.md",
             "licenses/bitraster-LICENSE",
+            "licenses/jvmdowngrader-LICENSE.md",
+            "licenses/jvmdowngrader-LGPLv2.1.md",
             "org/taumc/celeritas/CeleritasVintage.class",
             "org/taumc/celeritas/core/CeleritasLoadingPlugin.class",
             "org/soutalab/celtium/forge/CeltiumCommand.class",
@@ -87,12 +192,16 @@ def verify(path):
             "FMLCorePlugin": "org.taumc.celeritas.core.CeleritasLoadingPlugin",
             "FMLCorePluginContainsFMLMod": "true",
             "ForceLoadAsMod": "true",
-            "Celtium-Stage": "backend-boundary",
+            "Celtium-License": "LGPL-3.0",
+            "Celtium-Vulkan-Minimum": "1.2",
             "Celtium-Upstream-Commit": "989ebf2e52ceed052ec112a569e0c1d172095756",
         }
         for key, expected in expected_manifest.items():
             if manifest.get(key) != expected:
                 errors.append(f"Manifest {key}: expected {expected!r}, got {manifest.get(key)!r}")
+        if "Celtium-Stage" in manifest:
+            errors.append("Manifest Celtium-Stage is a stale 2026-10-09 label; replaced by Celtium-License and "
+                          "Celtium-Vulkan-Minimum")
 
         metadata = json.loads(jar.read("mcmod.info"))
         if len(metadata) != 1 or metadata[0].get("modid") != "celeritas":
@@ -120,6 +229,9 @@ def verify(path):
         for entry, original in notices.items():
             if entry in names and jar.read(entry) != (repository / original).read_bytes():
                 errors.append(f"Notice differs from the repository: {entry}")
+
+        license_problems, license_notes = license_errors(jar, names, repository)
+        errors.extend(license_problems)
 
         for name in entries:
             if name.startswith(("org/lwjgl/", "org/joml/", "com/google/gson/")):
@@ -150,9 +262,11 @@ def verify(path):
         "classVersions": dict(sorted(class_versions.items())),
         "modMetadata": metadata,
         "manifest": manifest,
+        "licenses": license_notes,
         "errors": errors,
         "verified": not errors,
-        "scope": "packaging-only; no Minecraft startup or GL/Vulkan interoperability claim",
+        "scope": "packaging and licence content only; no Minecraft startup, GL/Vulkan interoperability or "
+                 "correctness claim",
     }
 
 

@@ -24,6 +24,81 @@ public class MinecraftMixin {
         celeritas$renderAheadManager.endFrame();
     }
 
+    /**
+     * Creates the renderer at window creation under the GL-less window, so the menu and the loading screens have
+     * someone to draw and present them.
+     * <p>
+     * Measured on the user's own launch: the menu draws are client-memory {@code glDrawArrays} calls, the stub decodes
+     * them (524,288 in 90 s, layouts 24/16/20 bytes), and every one was refused with "no terrain backend is installed"
+     * because {@code TerrainGpuBackends} stays empty until a world renderer exists - so the window had nothing in it,
+     * and the present at the swap point (which requires a backend) never ran either. The first {@code runTick} is the
+     * anchor: the window exists by then (the stub is installed where the display is created), the game loop has not
+     * drawn a frame yet, and nothing menu-specific is needed - the backend's own no-terrain-pass UI render pass is what
+     * these frames draw with.
+     * <p>
+     * Only under the stub: a bridge frame draws its menu with OpenGL, so the world-time creation stays the only one
+     * there and this hook does nothing. The world renderer adopts this instance rather than building a second one, so
+     * the swapchain and the frame target keep one owner.
+     */
+    @Unique
+    private static boolean celtium$windowRendererCreated;
+    @Unique
+    private static int celtium$windowRendererAttempts;
+    /** Attempts are spaced this far apart, so a transient failure does not cost the session. */
+    @Unique
+    private static int celtium$windowRendererNextTick;
+    @Unique
+    private static final int celtium$WINDOW_RENDERER_ATTEMPTS = 8;
+    @Unique
+    private static final int celtium$WINDOW_RENDERER_RETRY_TICKS = 40;
+
+    @Inject(method = "runTick", at = @At("HEAD"), require = 0)
+    private void celtium$ensureWindowRenderer(CallbackInfo ci) {
+        // Latched on success, not on the attempt: latching the attempt would leave the menu blank for the whole session
+        // after one transient device-creation failure. The retries are bounded and spaced so a configuration that
+        // cannot have a window renderer prints its reason a handful of times instead of every tick.
+        if (celtium$windowRendererCreated || celtium$windowRendererAttempts >= celtium$WINDOW_RENDERER_ATTEMPTS) {
+            return;
+        }
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        if (mc != null && mc.world != null) {
+            // Past the menu already; the world-time creation is the right path there.
+            return;
+        }
+        long ticks = mc == null || mc.world == null ? 0L : mc.world.getTotalWorldTime();
+        int now = (int) (System.nanoTime() / 1000000L);
+        if (celtium$windowRendererAttempts > 0 && now < celtium$windowRendererNextTick) {
+            return;
+        }
+        try {
+            if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                // A bridge frame draws its menu with OpenGL, so the world-time creation stays the only one.
+                celtium$windowRendererAttempts = celtium$WINDOW_RENDERER_ATTEMPTS;
+                return;
+            }
+            if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() != null) {
+                celtium$windowRendererCreated = true;
+                return;
+            }
+            celtium$windowRendererAttempts++;
+            celtium$windowRendererNextTick = now + celtium$WINDOW_RENDERER_RETRY_TICKS * 50;
+            java.util.List<String> reasons = new java.util.ArrayList<String>();
+            Class<?> factory = Class.forName("org.soutalab.celtium.vulkan.VulkanTerrainFactory");
+            Object backend = factory.getMethod("createForWindow", java.util.List.class).invoke(null, reasons);
+            celtium$windowRendererCreated = backend != null;
+            System.out.println("[Celtium] CELTIUM_WINDOW_RENDERER created=" + (backend != null)
+                    + " attempt=" + celtium$windowRendererAttempts + " ticks=" + ticks + " reasons=" + reasons);
+        } catch (ClassNotFoundException | NoSuchMethodException absent) {
+            celtium$windowRendererAttempts = celtium$WINDOW_RENDERER_ATTEMPTS;
+            System.out.println("[Celtium] CELTIUM_WINDOW_RENDERER unavailable: " + absent);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+            // Fail-closed: without a renderer the menu is blank, which is the state this replaces, and the reason is on
+            // the line rather than in a stack trace nobody reads. The next attempt is a few dozen ticks away.
+            System.out.println("[Celtium] CELTIUM_WINDOW_RENDERER failed: attempt=" + celtium$windowRendererAttempts
+                    + " error=" + error);
+        }
+    }
+
 
 
 

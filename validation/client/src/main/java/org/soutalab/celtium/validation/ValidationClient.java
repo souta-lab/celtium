@@ -1126,6 +1126,17 @@ public final class ValidationClient {
     private boolean celtium$resized;
     private boolean celtium$weatherShown;
     private boolean celtium$particlesSpawned;
+    /**
+     * The block-breaking subject: the position the progress was registered on, how it was chosen, and how many times
+     * the game's own registration method was called. Reported so "the overlay is not in the frame" can be told from
+     * "the fixture never registered it" and from "the block the crosshair hit is one the block path does not draw".
+     */
+    private net.minecraft.util.math.BlockPos celtium$breakSubjectPos;
+    private String celtium$breakSubjectSource = "none";
+    private boolean celtium$breakSubjectDrawable;
+    /** Whether the fixture had to place the subject block, because the crosshair reached no block. */
+    private boolean celtium$breakSubjectPlaced;
+    private int celtium$breakProgressCalls;
     private boolean celtium$interopChecked;
     private boolean celtium$jeiScreen;
     /** Set once the property-driven screenshot at a specific tick has been taken. */
@@ -2927,6 +2938,112 @@ public final class ValidationClient {
         return result;
     }
 
+    /**
+     * The block the break overlay is registered on, chosen so that {@code drawBlockDamageTexture} will draw it.
+     * <p>
+     * The mouse-over block is used when the block path accepts it. Otherwise the nearest neighbour is tried, nearest
+     * first, so the overlay lands on a block that is visible and inside the 32-block range the draw enforces
+     * ({@code RenderGlobal.drawBlockDamageTexture} removes an entry further away than that). Nothing here fakes a
+     * progress value in the renderer: the subject is chosen and the game's own
+     * {@code RenderGlobal.sendBlockBreakProgress} registers it, which is the method the client calls when the server
+     * reports break progress.
+     *
+     * @return the position to register progress on, or {@code null} when the world offers none
+     */
+    private net.minecraft.util.math.BlockPos celtium$breakTarget(Minecraft mc) {
+        net.minecraft.util.math.BlockPos hit = mc.objectMouseOver != null
+                && mc.objectMouseOver.typeOfHit == net.minecraft.util.math.RayTraceResult.Type.BLOCK
+                ? mc.objectMouseOver.getBlockPos() : null;
+        if (hit != null && celtium$damageDrawableByBlockPath(mc, hit)) {
+            celtium$breakSubjectSource = "mouse-over";
+            celtium$breakSubjectDrawable = true;
+            return hit;
+        }
+        // The crosshair reaches no block (typeOfHit MISS, whose RayTraceResult still carries the ray's END position -
+        // which is why the old breakTarget read like a block position while nothing was ever registered), or the block
+        // it hits is one the block path skips. The subject is then materialised at the ray's end: a stone block in the
+        // centre of the view, inside the 32-block range the draw enforces. Placed once, by the same
+        // World.setBlockState the fixture's block sweep uses, and identically in both legs, so the comparison stays a
+        // comparison.
+        net.minecraft.util.math.BlockPos rayEnd = mc.objectMouseOver == null ? null : mc.objectMouseOver.getBlockPos();
+        if (rayEnd != null && celtium$damageDrawableByBlockPath(mc, rayEnd)) {
+            celtium$breakSubjectSource = "crosshair ray end (typeOfHit=" + mc.objectMouseOver.typeOfHit
+                    + ", already a drawable block)";
+            celtium$breakSubjectDrawable = true;
+            return rayEnd;
+        }
+        if (rayEnd != null && mc.world.isAirBlock(rayEnd)) {
+            if (!celtium$breakSubjectPlaced) {
+                mc.world.setBlockState(rayEnd, net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
+                celtium$breakSubjectPlaced = true;
+                celtium$breakSubjectSource = "placed at the crosshair's ray end " + rayEnd
+                        + " (typeOfHit=" + mc.objectMouseOver.typeOfHit + ", no block within reach)";
+            }
+            if (celtium$damageDrawableByBlockPath(mc, rayEnd)) {
+                celtium$breakSubjectDrawable = true;
+                return rayEnd;
+            }
+        }
+        if (hit != null) {
+            for (int radius = 1; radius <= 3; radius++) {
+                for (int dx = -radius; dx <= radius; dx++) {
+                    for (int dy = -radius; dy <= radius; dy++) {
+                        for (int dz = -radius; dz <= radius; dz++) {
+                            if (Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz))) != radius) {
+                                continue;
+                            }
+                            net.minecraft.util.math.BlockPos candidate = hit.add(dx, dy, dz);
+                            if (!celtium$damageDrawableByBlockPath(mc, candidate)) {
+                                continue;
+                            }
+                            double ddx = (double) candidate.getX() + 0.5D - mc.player.posX;
+                            double ddy = (double) candidate.getY() + 0.5D - mc.player.posY;
+                            double ddz = (double) candidate.getZ() + 0.5D - mc.player.posZ;
+                            if (ddx * ddx + ddy * ddy + ddz * ddz > 1024.0D) {
+                                continue;
+                            }
+                            celtium$breakSubjectSource = "neighbour " + dx + "," + dy + "," + dz
+                                    + " of the mouse-over block " + hit;
+                            celtium$breakSubjectDrawable = true;
+                            return candidate;
+                        }
+                    }
+                }
+            }
+        }
+        celtium$breakSubjectSource = hit == null
+                ? "no block under the crosshair (typeOfHit=" + (mc.objectMouseOver == null ? "no hit"
+                        : mc.objectMouseOver.typeOfHit) + ")"
+                : "no drawable block within 3 of " + hit;
+        celtium$breakSubjectDrawable = false;
+        return null;
+    }
+
+    /**
+     * Whether {@code RenderGlobal.drawBlockDamageTexture}'s block path emits geometry for this position.
+     * <p>
+     * Read from the sources, not assumed: the draw skips a chest, an ender chest, a sign or a skull, and any tile
+     * entity whose {@code canRenderBreaking()} answers yes, because those are rendered by the tile-entity damage loop
+     * instead; and {@code BlockRendererDispatcher.renderBlockDamage} only emits for a block whose render type is
+     * {@code MODEL}.
+     */
+    private static boolean celtium$damageDrawableByBlockPath(Minecraft mc, net.minecraft.util.math.BlockPos pos) {
+        net.minecraft.block.state.IBlockState state = mc.world.getBlockState(pos);
+        if (state.getMaterial() == net.minecraft.block.material.Material.AIR) {
+            return false;
+        }
+        if (state.getRenderType() != net.minecraft.util.EnumBlockRenderType.MODEL) {
+            return false;
+        }
+        net.minecraft.block.Block block = state.getBlock();
+        if (block instanceof net.minecraft.block.BlockChest || block instanceof net.minecraft.block.BlockEnderChest
+                || block instanceof net.minecraft.block.BlockSign || block instanceof net.minecraft.block.BlockSkull) {
+            return false;
+        }
+        net.minecraft.tileentity.TileEntity tile = mc.world.getTileEntity(pos);
+        return tile == null || !tile.canRenderBreaking();
+    }
+
     @SubscribeEvent
     public void frame(TickEvent.RenderTickEvent event) {
         if (!enabled || finished) return;
@@ -3208,15 +3325,32 @@ public final class ValidationClient {
         // Block-breaking coverage: the crack overlay (drawBlockDamageTexture's stage texture on the block faces) is
         // registered directly, so it exists whatever the game mode - creative onPlayerDamageBlock breaks instantly and
         // never shows it. Stage 5 is plain mid-progress damage, refreshed every tick from 150 so it is alive at 200.
-        if (Boolean.getBoolean("celtium.validation.breakBlock") && mc.renderGlobal != null
-                && mc.objectMouseOver != null
-                && mc.objectMouseOver.typeOfHit == net.minecraft.util.math.RayTraceResult.Type.BLOCK
-                && worldTicks >= 150 && worldTicks <= 200) {
-            mc.renderGlobal.sendBlockBreakProgress(1, mc.objectMouseOver.getBlockPos(), 5);
+        //
+        // The subject, not the flag, is what has to be chosen: RenderGlobal.drawBlockDamageTexture skips a chest, an
+        // ender chest, a sign or a skull - and any tile entity whose canRenderBreaking() answers yes - because those
+        // carry their own damage renderer, and renderBlockDamage only emits for a block whose render type is MODEL and
+        // whose material is not air. Measured with the mouse-over block alone: the target was registered every frame
+        // from tick 150 and no run's histogram ever showed format 3, so the overlay was never emitted at all. The
+        // helper below names the mouse-over block's state in the report and, when the block path would not draw it,
+        // registers the nearest drawable neighbour instead - through RenderGlobal's own method, the same call
+        // NetHandlerPlayClient makes when the server reports break progress.
+        if (Boolean.getBoolean("celtium.validation.breakBlock") && mc.renderGlobal != null && worldTicks >= 150
+                && worldTicks <= 200) {
+            net.minecraft.util.math.BlockPos target = celtium$breakTarget(mc);
+            if (target != null) {
+                mc.renderGlobal.sendBlockBreakProgress(1, target, 5);
+                celtium$breakProgressCalls++;
+                celtium$breakSubjectPos = target;
+            }
         }
         if (worldTicks >= 199 && Boolean.getBoolean("celtium.validation.breakBlock")) {
             report.addProperty("breakTarget", String.valueOf(
                     mc.objectMouseOver == null ? "no target" : mc.objectMouseOver.getBlockPos()));
+            report.addProperty("breakSubject", celtium$breakSubjectPos == null ? "none"
+                    : celtium$breakSubjectPos + " " + mc.world.getBlockState(celtium$breakSubjectPos));
+            report.addProperty("breakSubjectSource", celtium$breakSubjectSource);
+            report.addProperty("breakSubjectDrawable", Boolean.valueOf(celtium$breakSubjectDrawable));
+            report.addProperty("breakProgressCalls", Integer.valueOf(celtium$breakProgressCalls));
         }
         if (worldTicks >= 199 && Boolean.getBoolean("celtium.validation.weather")) {
             // Read at capture time, not when the rain was requested: the client's rain strength ramps in over ticks, so

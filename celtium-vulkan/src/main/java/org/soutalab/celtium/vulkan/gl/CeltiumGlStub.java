@@ -2394,8 +2394,41 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
             }
         }
+        celtium$noteDrawArrayRefusalContext(reason);
         celtium$noteDrawArrayRefusal(reason);
         celtium$reportDrawArrays();
+    }
+
+    /**
+     * One line per distinct refusal *context*, bounded, so a refused draw can be attributed to a drawable.
+     * <p>
+     * The reason alone does not say which surface the draw was meant for, and the two cases need different fixes: a
+     * batch drawn into a 256x256 framebuffer of its own (Forge's splash screen binds one) belongs to nobody here and
+     * must stay refused, while a batch drawn into the window with a 256x256 viewport is a legal GL draw whose viewport
+     * this renderer should apply instead of rejecting. The bound draw framebuffer is the stub's own record of
+     * glBindFramebuffer, and the viewport is its record of glViewport, so the line reports the state the call really
+     * saw rather than a guess from the size.
+     */
+    private static final java.util.Set<String> REFUSAL_CONTEXTS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private void celtium$noteDrawArrayRefusalContext(String reason) {
+        if (REFUSAL_CONTEXTS.size() >= 8) {
+            return;
+        }
+        String shortReason = reason == null ? "none"
+                : reason.substring(0, Math.min(48, reason.length()));
+        String key = this.drawFbo + "/" + this.viewportW + "x" + this.viewportH + "/" + shortReason;
+        if (!REFUSAL_CONTEXTS.add(key)) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_DRAWARRAY_REFUSAL_CONTEXT drawFbo=" + this.drawFbo
+                + " readFbo=" + this.readFbo
+                + " viewport=" + this.viewportW + "x" + this.viewportH
+                + " stride=" + this.vertexPointerStride
+                + " otherArrays=" + celtium$otherArrayNames()
+                + " reason=" + shortReason
+                + " site=[" + celtium$callSite(8) + "]");
     }
 
     /**

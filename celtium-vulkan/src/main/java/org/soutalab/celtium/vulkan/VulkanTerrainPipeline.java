@@ -232,6 +232,31 @@ public final class VulkanTerrainPipeline {
     /** The lightmap sampler binding; see {@link #BLOCK_ATLAS_BINDING} for why it is 1 and not 2. */
     private static final int LIGHTMAP_BINDING = 1;
 
+    /**
+     * The {@code maxLod} this pass's block-atlas sampler is created with: the game's own {@code GL_TEXTURE_MAX_LOD}
+     * for the atlas, not the texture mirror's global clamp.
+     * <p>
+     * Both sides, read from the sources. {@code TextureUtil.allocateTextureImpl} sets {@code GL_TEXTURE_MAX_LEVEL}
+     * and {@code GL_TEXTURE_MAX_LOD} to the texture's {@code mipmapLevels} ({@code TextureUtil.java:215} and
+     * {@code :217}), and the block atlas is allocated with the game's mipmap setting
+     * ({@code TextureMap.java:225}: four levels at the default setting, so {@code maxLod = 4}). The mirror's
+     * sampler is created with one global clamp of 1 ({@code VulkanGlTexture.java:290} {@code SAMPLER_MAX_LOD}), so
+     * at the grazing angles of the near-horizon band the terrain sampled a level-1 blur where OpenGL's own sampler
+     * reads up to level 4 - measured as that band being striped here and a flat, detail-free fill in the upstream
+     * Celeritas reference, while the sky, the terrain centre and the rest of the frame matched.
+     * <p>
+     * The mirror's global clamp is not wrong for the textures it was measured on: a mirror whose levels 2..4 were
+     * never written must not be read there, which is what {@code mirrorLevelSummary}'s {@code samplerReach} reports.
+     * This sampler is only for the block atlas, whose levels 0..4 the patch census shows written
+     * ({@code patchLevels[levels=[0:329 1:329 2:329 3:329 4:329]]}), so the levels it reaches hold the game's own
+     * data. If that census ever shows a level missing, this value must come down with it.
+     * <p>
+     * The lab switch {@code -Dceltium.vulkan.terrainAtlasMaxLod=1} keeps the mirror's sampler, so the band can be
+     * measured one flag apart on one jar.
+     */
+    private static final int ATLAS_MAX_LOD =
+            Integer.getInteger("celtium.vulkan.terrainAtlasMaxLod", 4).intValue();
+
     private final VulkanContext context;
     private final String passName;
     private final boolean blended;
@@ -246,6 +271,11 @@ public final class VulkanTerrainPipeline {
     private long descriptorPool;
     private long descriptorSet;
     private long pipeline;
+    /**
+     * The atlas sampler this pass binds when {@link #ATLAS_MAX_LOD} differs from the mirror's own clamp; zero when
+     * the mirror's sampler is used instead. Created on the first {@code bindTextures} and owned by this pipeline.
+     */
+    private long atlasSampler;
 
     private long uniformsSize;
     private int uniformsRange;
@@ -536,7 +566,7 @@ public final class VulkanTerrainPipeline {
             bufferInfo.get(0).buffer(uniformBuffer).offset(0L).range(uniformsRange);
 
             VkDescriptorImageInfo.Buffer atlasInfo = VkDescriptorImageInfo.calloc(1, stack);
-            atlasInfo.get(0).sampler(atlas.sampler()).imageView(atlas.view())
+            atlasInfo.get(0).sampler(atlasSamplerFor(atlas)).imageView(atlas.view())
                     .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             VkDescriptorImageInfo.Buffer lightmapInfo = VkDescriptorImageInfo.calloc(1, stack);
             lightmapInfo.get(0).sampler(lightmap.sampler()).imageView(lightmap.view())
@@ -760,6 +790,46 @@ public final class VulkanTerrainPipeline {
     }
 
     /**
+     * The sampler this pass binds the block atlas with.
+     * <p>
+     * {@link #ATLAS_MAX_LOD} at or below 1 means the mirror's own sampler is what the measurement wants, so it is
+     * returned unchanged and nothing is created. Above 1 this pipeline creates one sampler, once, with the mirror's
+     * parameters for the block atlas - {@code GL_NEAREST} magnification and minification with a linear mipmap mode,
+     * clamp-to-edge addressing, no bias, no anisotropy - and the game's own {@code maxLod}. Only the clamp differs
+     * from the mirror's sampler, which is the variable this exists to move.
+     */
+    private long atlasSamplerFor(VulkanGlTexture atlas) {
+        if (ATLAS_MAX_LOD <= 1) {
+            return atlas.sampler();
+        }
+        if (this.atlasSampler == 0L) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkSamplerCreateInfo create = VkSamplerCreateInfo.calloc(stack).sType$Default()
+                        .magFilter(VK_FILTER_NEAREST)
+                        .minFilter(VK_FILTER_NEAREST)
+                        .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)
+                        .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                        .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                        .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                        .mipLodBias(0.0f)
+                        .anisotropyEnable(false)
+                        .maxAnisotropy(1.0f)
+                        .compareEnable(false)
+                        .compareOp(VK_COMPARE_OP_NEVER)
+                        .minLod(0.0f)
+                        .maxLod((float) ATLAS_MAX_LOD)
+                        .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
+                        .unnormalizedCoordinates(false);
+                LongBuffer handle = stack.mallocLong(1);
+                check(vkCreateSampler(this.context.device(), create, null, handle),
+                        "vkCreateSampler(terrain block atlas, maxLod " + ATLAS_MAX_LOD + ")");
+                this.atlasSampler = handle.get(0);
+            }
+        }
+        return this.atlasSampler;
+    }
+
+    /**
      * Destroys every device object this pipeline owns: the pipeline, the descriptor pool (which frees the
      * descriptor set allocated from it), the descriptor set layout, the pipeline layout and the render pass.
      * <p>
@@ -797,6 +867,11 @@ public final class VulkanTerrainPipeline {
         if (renderPass != 0L) {
             vkDestroyRenderPass(device, renderPass, null);
             renderPass = 0L;
+        }
+        if (this.atlasSampler != 0L) {
+            // This pipeline's own atlas sampler; the mirror's sampler belongs to the texture and is not touched.
+            vkDestroySampler(device, this.atlasSampler, null);
+            this.atlasSampler = 0L;
         }
         uniformsSize = 0L;
         uniformsRange = 0;

@@ -60,6 +60,12 @@ Revision of 2026-10-11 ~14:35 JST.
    leg (153 Intel reports, **0** with `glless=true`; task-11). §3 rows 20-21.
 10. **The leftover-game-directory blocker is fixed** (`b0b1877a8`): a directory with no report and no
     screenshots is reclaimed, one holding evidence is still refused. §4.
+11. **Fresh Celeritas reference legs for the three scenes task-22 needs** - terrain `nonBg=0.761173`,
+    entity `0.774399`, inventory `0.888320`, all tick 200, all with their `effectiveConfig` JVM
+    arguments quoted so "no `glless` in the reference" is verified per leg rather than assumed. §1d.
+12. **The user's own launch is now an instrument, not an assumption**: Prism 11.1 `--launch` on a
+    private headless output, photographed with `grim` and measured by distinct-colour count, with the
+    instance's own log lines as the GL-less evidence. §6b. The verdict leg waits for task-15's jar.
 
 ## 1. References
 
@@ -177,6 +183,37 @@ Vulkan device on a reference leg. `ref-celeritas2` uses the same
 fixture build that I froze, so it pairs with `acc2-glless` exactly; §6 is that comparison. The
 stored bridge picture of the GL-less candidate's own jar gives `nonBg=0.744563` for the same scene,
 which is why the two reference kinds are reported separately.
+
+### 1d. Reference legs for the three scenes the completion condition needs (taken 15:2x)
+
+| leg | scene variant | pose | tick | distinct | nonBg | bg | black | verdict | JVM args that reached the JVM |
+|---|---|---|---|---|---|---|---|---|---|
+| `ref3-terrain` | default flat stack | `0.5/12/0.5 yaw 180 pitch 20` | 200 | 2510 | **0.761173** | `0x571716` | 0.0 | PASSED | profile `['-Dfile.encoding=UTF-8']`, runner `[minWorldFrames=5]` |
+| `ref3-entity` | keepEntities + captureEntities | same | 200 | 3189 | **0.774399** | `0x571716` | 0.001109 | UNCALIBRATED | runner `[minWorldFrames=5, keepEntities, captureEntities]` |
+| `ref3-inventory` | jeiScreen + keepInventoryScreen | same | 200 | 8210 | **0.888320** | `0x8B8B8B` | 0.014728 | UNCALIBRATED | runner `[minWorldFrames=5, jeiScreen, keepInventoryScreen, screenshotAtTick=60]` |
+
+All three: upstream Celeritas `d12425eaaf184e79`, frozen fixture `acfb62b16ed70ac3` (the current
+Celtium-free build), no celtium jar, AMD Radeon RX 6400, `--validate`, capture tick 200. The two
+`UNCALIBRATED` verdicts are correct, not failures: the entity and inventory variants are not the
+calibrated plain-terrain variant, so the key cannot match by construction. All three are usable
+references by the §2 test (`nonBg >= 0.4`). The terrain leg's `nonBg=0.761173` is the **third**
+independent Celeritas terrain leg to produce that exact number (`ref-celeritas2` and `sky-draws-ref`
+in §1c), which is what makes it usable as a reference at all.
+
+**Provenance, verified per leg rather than assumed.** `prism_validation.py` builds its command from
+the Prism *patches* (`patches/*.json` `+jvmArgs`, lines 77 and 258-260) plus `--jvm-arg`; the
+instance's `instance.cfg` `JvmArgs` reaches the JVM only in a Prism launch. Every leg's
+`effectiveConfig` is therefore quoted above: all three reference legs have
+`profileJvmArgs=['-Dfile.encoding=UTF-8']` and **no `glless` anywhere in the union**, while the
+GL-less candidates carry it in `runnerJvmArgs` (`acc2-glless`, `ww6-gl-base` and `sky-draws-final`
+each show `-Dceltium.vulkan.glless=true` in `effectiveConfig.runnerJvmArgs`). The reference legs were
+never GL-less; that is measured, not inferred from the absence of a flag.
+
+**Tick pairing, because it breaks comparisons silently.** `-Dceltium.validation.screenshotAtTick=60`
+writes an *extra* `celtium-at-tick-60.png`; the main `celtium-validation.png` is still taken at tick
+200 (`requestedAtTick=200` in its identity file). With `keepInventoryScreen=true` the screen is still
+open at 200, so a candidate whose world presented dump is taken at tick 200 pairs with it directly,
+and the tick-60 file is a second, earlier observation rather than the reference.
 
 ## 2. Why the gate did not catch the missing terrain
 
@@ -442,6 +479,50 @@ the particle batches are accepted and the difference that remains is content (ra
 between runs), not a missing format. The matching cloud and water legs have no usable pair
 (`ww6-gl-cloud` produced no report; `ww7-ref-water` is `NO_CAPTURE`).
 
+### 6b. The user's own launch (task-22), and the instrument that photographs it
+
+**What the user does.** Prism Launcher launches the real instance `cleanroom-0.6.13-alpha`; that
+instance's `instance.cfg` carries `JvmArgs=-Dceltium.vulkan.glless=true` with
+`OverrideJavaArgs=true`, so the GL-less property is part of the user's launch and of nothing else.
+It was cleared once during this session (the file read `JvmArgs=` at 15:16, which would have made a
+Prism launch a *bridge* launch and the whole task a measurement of the wrong path); the Lead restored
+it and it is now the configuration under test - nobody edits it again.
+
+**Why the harness cannot stand in.** `prism_validation.py` never reads `instance.cfg`'s `JvmArgs`
+(§1d) and always drives a fixture with `--mod` files. The user's launch has no fixture, no validation
+client, and its JVM arguments come from the instance. A harness leg with `--jvm-arg=…glless=true` is a
+useful candidate, but it is not this configuration, so the verdict leg is taken through Prism itself.
+
+**The instrument** is `.celtium-work/acceptance/user-prism.py`:
+
+- launches `~/Applications/PrismLauncher-11.1.0.AppImage --launch cleanroom-0.6.13-alpha --offline
+  CeltiumUser` on a private GPU-rendered Sway output (1280x720) owned by
+  `headless_wayland.HeadlessWayland`, so nothing appears on the user's desktop and the window can be
+  photographed;
+- removes `DBUS_SESSION_BUS_ADDRESS`/`DBUS_SESSION_BUS_PID` from the launch environment, because the
+  user's own Prism (9.4) is running on their session bus and a second launcher that tries to register
+  the same app id with the portal exits during startup;
+- photographs the output with `grim` every second and measures each PNG with
+  `compositor_capture_report.measure`, which reports **`distinctColours`** and `distinctRows` by
+  `numpy.unique` over the pixels - a count, not a "non-black" test: a flat clear colour scores 1, a
+  menu scores in the hundreds or thousands, and a uniform capture reports its single RGB;
+- records the compositor's window tree at each shutter, fullscreens the Cleanroom window when it
+  appears, and records the game's pids;
+- ends only processes whose command line carries this instance's game directory, so it can never kill
+  a teammate's harness run, and it takes the same `.celtium-work/game-slot` lock as the harness;
+- afterwards reads the instance's own `minecraft/logs/latest.log` and reports the lines that decide
+  the GL-less questions: `CELTIUM_GLLESS stub GL provider installed`,
+  `CELTIUM_GLLESS window hinted GLFW_NO_API`, `CELTIUM_GLLESS splash progress skipped (no shared GL
+  context)`, `CELTIUM_SWAPPOINT calls=N`, and the `CELTIUM_ACCEPTED`/`CELTIUM_DRAWARRAYS` censuses if
+  they appear.
+
+**Instrument checks already taken, so the verdict leg is not also an instrument debug:** Prism 11.1
+starts on the private display and stays alive (25 s, `live.check` written), its window is
+`app_id=org.prismlauncher.PrismLauncher` titled "Prism Launcher 11.1.0", and `grim` captures it
+(67347 bytes) - `.celtium-work/runtime/prism-smoke/`. The `--launch` path itself is being validated by
+`user-prism-launch-check` (a pre-task-15 jar, labelled as an instrument check, not a verdict); the
+verdict leg waits for task-15's jar hash as instructed.
+
 ## 7. Instruments and artifacts
 
 Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py`, `compare_jei_pair.py`, the
@@ -460,6 +541,10 @@ Added by me, all read-only or under `.celtium-work/acceptance/`:
 - `acc2-pair.sh` / `acc2-compare.sh` - the matched GL-less/bridge-era pair and its stage comparison;
   frozen jars in `frozen/`.
 - `acc3-celeritas-ref.sh` / `acc3-compare.sh` - the Celeritas reference leg and its comparison.
+- `ref3-legs.sh` - the three fresh reference legs of §1d, frozen fixture `ref-fixture-acfb62b1.jar`.
+- `user-prism.py` - the user's own Prism launch on a private headless output, photographed with grim
+  and measured by distinct-colour count (§6b); `user-leg.py` is the same idea built on the harness's
+  own launcher, kept for instrument comparison only.
 - `bridge-ab.sh` - the A/B in §1a (inherited).
 - Crops: `crops/acc2/`, `crops/terrain-recheck/`, `crops/hotbar-…png`, `crops/crosshair-…png`,
   `crops/chat-…png`, `crops/ww-base/`.

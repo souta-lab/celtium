@@ -71,10 +71,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int UNIFORM_BYTES = 80;
 
     private final VulkanContext context;
-    private final RenderPassConfiguration<?> configuration;
-    private final RenderRegionManager regionManager;
-    private final FogService fogService;
-    private final int commonVertexStride;
+    // Not final: the window-time instance adopts the world renderer's objects when the world arrives, and hands them
+    // back when it leaves, so the same device and swapchain serve both (task-15).
+    private RenderPassConfiguration<?> configuration;
+    private RenderRegionManager regionManager;
+    private FogService fogService;
+    private int commonVertexStride;
     private final int uniformAlignment;
 
     private final Reference2ReferenceMap<RenderRegion, RegionResources> regionResources = new Reference2ReferenceOpenHashMap<>();
@@ -299,13 +301,82 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.configuration = configuration;
         this.regionManager = regionManager;
         this.fogService = fogService;
-        this.commonVertexStride = configuration.getAllKnownRenderPasses()
-                .mapToInt(pass -> pass.vertexType().getVertexFormat().getStride())
-                .reduce(1, MathUtil::lcm);
+        // Null means the window-time instance, which is created before any world renderer exists (task-15). Nothing in
+        // this constructor needs the render pass configuration: the pipelines that do are created per terrain pass, on
+        // first use, from this.configuration, which the world renderer hands over through celtium$adoptTerrainState when
+        // it arrives. The stride is the one value computed here, and until a world exists there is no terrain vertex
+        // format to take it from.
+        this.commonVertexStride = configuration == null ? 1
+                : configuration.getAllKnownRenderPasses()
+                        .mapToInt(pass -> pass.vertexType().getVertexFormat().getStride())
+                        .reduce(1, MathUtil::lcm);
         this.uniformAlignment = Math.max(MIN_UNIFORM_ALIGNMENT,
                 Integer.highestOneBit(Math.max(MIN_UNIFORM_ALIGNMENT, this.alignmentFromDevice())));
         this.uniformStride = align(UNIFORM_BYTES, this.uniformAlignment);
         createCommandResources();
+    }
+
+    /**
+     * Creates the instance that exists from window creation, before any world renderer does.
+     * <p>
+     * This is the menu, the loading screens and every GUI-only frame: under the GL-less window the game draws them from
+     * client-memory vertex arrays, which the stub decodes and hands to {@code TerrainGpuBackends} - a holder that used
+     * to stay empty until a world was loaded, so those draws went to nobody and nothing presented. Measured on the
+     * user's own launch: 524,288 client-memory draws decoded and every one of them refused with "no terrain backend is
+     * installed". The same instance is later adopted by the world renderer
+     * ({@link #celtium$adoptTerrainState}), so one renderer serves the whole process instead of one per configuration.
+     */
+    public static VulkanTerrainGpuBackend createForWindow(VulkanContext context) {
+        VulkanTerrainGpuBackend backend = new VulkanTerrainGpuBackend(context, null, null, null);
+        backend.windowBackend = true;
+        backend.windowOwned = true;
+        return backend;
+    }
+
+    /** True while this instance exists only for the window and no world renderer has adopted it yet. */
+    private boolean windowBackend;
+    /**
+     * True for the instance the window created, for the life of the process.
+     * <p>
+     * It never clears, unlike {@code windowBackend}: the world renderer adopts this instance and the world's teardown
+     * must not destroy it. {@code RenderSectionManager.destroy()} calls {@code delete()} on every world unload
+     * (RenderSectionManager.java:923, reached from SimpleWorldRenderer.unloadWorld/unloadWorld), and if that released
+     * the device, the frame target and the swapchain, quitting to the title screen would blank the menu again with no
+     * second chance - the creation hook is latched. So a window-owned instance releases its terrain resources and
+     * detaches, and keeps everything a menu frame needs.
+     */
+    private boolean windowOwned;
+
+    /** {@return whether this instance was created at window creation and no world renderer has adopted it yet}. */
+    public boolean celtium$isWindowBackend() {
+        return this.windowBackend;
+    }
+
+    /**
+     * Hands the world renderer's objects to the instance that already exists, instead of a second backend being created
+     * beside it. The alternative - a menu renderer running alongside the world one - would give the swapchain and the
+     * frame target two owners, which is the duplication this project has paid for before.
+     * <p>
+     * What arrives is exactly what the world-time constructor used to be given: the render pass configuration (whose
+     * stride is recomputed), the region manager and the fog service. The device, the command resources, the frame
+     * target and the swapchain are the ones already in use, so the first world frame finds them warm.
+     */
+    public void celtium$adoptTerrainState(RenderPassConfiguration<?> configuration,
+                                          RenderRegionManager regionManager,
+                                          FogService fogService) {
+        this.configuration = configuration;
+        this.regionManager = regionManager;
+        this.fogService = fogService;
+        if (configuration != null) {
+            this.commonVertexStride = configuration.getAllKnownRenderPasses()
+                    .mapToInt(pass -> pass.vertexType().getVertexFormat().getStride())
+                    .reduce(1, MathUtil::lcm);
+        }
+        this.windowBackend = false;
+        install();
+        record("the world renderer adopted the window-time backend: configuration=" + (configuration != null)
+                + " regions=" + (regionManager != null) + " fog=" + (fogService != null)
+                + " terrainVertexStride=" + this.commonVertexStride);
     }
 
     /** Records the Vulkan backend in place of the OpenGL one for the batch assembly path. */
@@ -831,6 +902,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int boundHandleLogs;
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
     private int chainAdoptions;
+    /** Input images registered before the chain preflight, and preflight refusals printed, both bounded. */
+    private int chainAdoptionDeclarations;
+    private int preflightRefusalsReported;
 
     /**
      * Token of the device-wide wait in progress, and the token whose wait has returned. Per-call rather than one
@@ -1017,7 +1091,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private VulkanImmediateParticlePipeline descriptorProbe;
     private int particleDescriptorRefusals;
     private String particleDescriptorFailureReason;
-    private final int[] postAcceptDroppedByFormat = new int[8];
+    /**
+     * Batches that were accepted and then dropped, by format id.
+     * <p>
+     * Sized from {@link VulkanImmediateFormats#COUNT}, not from the eight ids that existed when it was written: the
+     * summary prints every id now, and an array that stops at 8 would have thrown on the first drop of a layout past
+     * it. It has no increment site today - the drops that happen are counted in
+     * {@code postAcceptDroppedGroups}, which is per-event rather than per-format - so this reads as an all-zero row
+     * and says that rather than looking like a measurement of "nothing was dropped by format".
+     */
+    private final int[] postAcceptDroppedByFormat = new int[VulkanImmediateFormats.COUNT];
     private int passBoundaryFlushes;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
@@ -1232,6 +1315,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
     private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", VulkanImmediateFormats.DEFAULT_ACCEPTED);
+
+    /**
+     * {@return one counter array as {@code [1:n,2:n,...]}, for every id the array covers}.
+     * <p>
+     * One reader for both per-format rows in the summary, and it walks the array's own length rather than a list
+     * written by hand: the hand-written list stopped at 9 while the arrays were sized from
+     * {@link VulkanImmediateFormats#COUNT}, so POSITION_NORMAL's arrivals and drops were counted and then not printed.
+     * That is the same shape as the counters that used to stop at 6, 7 and 8 and hide the ids above them.
+     */
+    private static String celtium$perFormat(int[] counts) {
+        StringBuilder text = new StringBuilder();
+        for (int id = 1; id < counts.length; id++) {
+            if (text.length() > 0) {
+                text.append(',');
+            }
+            text.append(id).append(':').append(counts[id]);
+        }
+        return text.toString();
+    }
 
     private static boolean celtium$formatAccepted(int formatId) {
         // Comma-separated ids, not digit-by-digit: the matcher walked the string's characters and compared each to the
@@ -4550,6 +4652,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long flushCpuStartedNanos = threadCpuNanos();
         try {
             if (this.commandState != null && this.commandState.inRenderPass()) {
+                // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
+                // accepted has to reach the image first, inside the pass that is already open.
+                this.immediateDrawSite = "order-flush-in-pass";
                 drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
             } else {
                 flushImmediateWindow();
@@ -5229,6 +5334,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.offTargetPassGroupsByTarget.merge(this.currentRenderTarget, countGroupsForTarget(this.currentRenderTarget),
                     Integer::sum);
         }
+        // A window of its own: its own render pass over the frame target, so the depth it tests against is whatever
+        // that pass loads or the game's last clear left there.
+        this.immediateDrawSite = "immediate-only-window";
         drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
@@ -5531,12 +5639,33 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
                 + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
                 + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
-                + " acceptedByFormat=1:" + this.acceptedByFormat[1] + ",2:" + this.acceptedByFormat[2]
-                + ",3:" + this.acceptedByFormat[3] + ",4:" + this.acceptedByFormat[4] + ",5:" + this.acceptedByFormat[5]
-                + ",6:" + this.acceptedByFormat[6] + ",7:" + this.acceptedByFormat[7] + ",8:" + this.acceptedByFormat[8] + ",9:" + this.acceptedByFormat[9]
-                + " droppedByFormat=1:" + this.postAcceptDroppedByFormat[1] + ",2:" + this.postAcceptDroppedByFormat[2]
-                + ",3:" + this.postAcceptDroppedByFormat[3] + ",4:" + this.postAcceptDroppedByFormat[4]
-                + ",5:" + this.postAcceptDroppedByFormat[5] + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
+                + " acceptedByFormat=[" + celtium$perFormat(this.acceptedByFormat) + "]"
+                + " droppedByFormat=[" + celtium$perFormat(this.postAcceptDroppedByFormat) + "]"
+                + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
+                // Per-format arrival and acceptance over every id the layouts class declares, built from COUNT rather
+                // than from a hand-written list: the list stopped at 9 and hid POSITION_NORMAL's own entry, which is
+                // the same shape as the counters that hid ids 6..10 before. droppedByFormat stays for whichever sites
+                // increment it; it is empty today, and printing every id is what says so rather than a list that
+                // stops at 5.
+                // The group lifecycle at the end of the run: what the queue did with what it accepted.
+                // immediateFlushes is incremented beside immediateGroupsDrawn, so both count groups drawn - closed
+                // minus drawn is the number that reached no pipeline, and the pending/recorded/retired sizes are what
+                // is still held. immediateGroupsKeptForOtherTargets, immediateDeferredNextFrame and
+                // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
+                // reading them here is what makes a zero that cannot move (no increment site) visible as such.
+                + " immediateGroupsDrawn=" + this.immediateGroupsDrawn
+                + " immediateGroupsDiscarded=" + this.immediateGroupsDiscarded
+                + " immediateGroupsKeptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
+                + " immediateDeferredNextFrame=" + this.immediateDeferredNextFrame
+                + " immediateRefusedWindowBudget=" + this.immediateRefusedWindowBudget
+                + " groupsStaleTargetGeneration=" + this.groupsStaleTargetGeneration
+                + " immediateWindows=" + this.immediateWindows
+                + " immediateWindowsThisFrame=" + this.immediateWindowsThisFrame
+                + " pendingImmediateIndices=" + this.pendingImmediateIndices
+                + " immediateGroupsPending=" + this.immediateGroups.size()
+                + " recordedGroupsHeld=" + this.recordedImmediateGroups.size()
+                + " retiredGroupsHeld=" + this.retiredImmediateGroups.size()
+                + " lastTerrainPassFrame=" + this.lastTerrainPassFrame + " frameId=" + this.frameId
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
                 + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
@@ -5751,7 +5880,48 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return withDetail + " | " + this.depthSharingSummary + " | " + verificationSummary();
     }
 
-    @Override
+    /**
+     * Releases the resources that belong to the world renderer and leaves the device alive.
+     * <p>
+     * Every resource here is created from the world's render pass configuration or from its regions - the region
+     * buffers, the per-pass pipelines, the model meshes, the shared index buffers and the terrain uniform buffer. The
+     * ones the window keeps are the device and its command resources, the standalone UI render pass, the frame target
+     * and the swapchain, the texture registry and its mirrors, and the readback image: those are what a menu frame
+     * draws into and presents from. The uniforms and the pipelines are rebuilt on demand by the terrain path, so the
+     * next world recreates them from the configuration the adoption hands over.
+     */
+    private void celtium$releaseWorldResources() {
+        if (this.modelMeshes != null) {
+            for (VulkanDynamicMesh mesh : this.modelMeshes.values()) {
+                mesh.releaseAfterIdle();
+            }
+            this.modelMeshes.clear();
+        }
+        int drained = VulkanRetireQueue.flush();
+        if (drained > 0) {
+            record("world teardown destroyed " + drained + " retired resources; the window device stays");
+        }
+        releaseRetiredImmediateGroups();
+        for (RegionResources resources : this.regionResources.values()) {
+            resources.delete();
+        }
+        this.regionResources.clear();
+        for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
+            pipeline.delete();
+        }
+        this.pipelines.clear();
+        for (VulkanBuffer buffer : this.sharedIndexBuffers.values()) {
+            buffer.delete();
+        }
+        this.sharedIndexBuffers.clear();
+        this.sharedIndexPrimitives.clear();
+        if (this.uniforms != null) {
+            this.uniforms.delete();
+            this.uniforms = null;
+        }
+        record("world teardown: terrain resources released, the window device and swapchain are kept");
+    }
+
     public void delete() {
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
@@ -5766,6 +5936,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // pulling it out from under the GPU.
         if (!settleGpu("backend delete")) {
             // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
+            return;
+        }
+        if (this.windowOwned) {
+            // The world renderer is leaving, not the window. Release what the world owns, detach the world's objects and
+            // keep the device, the frame target and the swapchain: the menu and the loading screens draw through them,
+            // and the next world adopts the same instance again (VulkanTerrainFactory.create checks
+            // celtium$isWindowBackend()). Without this branch a quit to the title screen deletes the device and the menu
+            // has nothing to draw with, which is the state task-15 exists to remove.
+            celtium$releaseWorldResources();
+            this.configuration = null;
+            this.regionManager = null;
+            this.fogService = null;
+            this.windowBackend = true;
             return;
         }
         // The model meshes belong to this backend and hold buffers this device owns. settleGpu succeeded just above, so
@@ -7316,6 +7499,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** One-shot: the matrices a model group is stored with. */
     /** How many model enqueues have printed their matrices. */
     private int modelMatrixLoggedCount;
+    /** Display lists seen replayed under a texture other than their compile texture, so a layer prints once. */
+    private final java.util.Set<String> modelLayerLogged = new java.util.HashSet<String>();
+    private int modelLayerLogs;
+    /** The bound on {@link #modelLayerLogs}: the entity scene has one layer (the spider's eyes) per texture. */
+    private static final int MODEL_LAYER_LOG_LIMIT = 16;
     /** One-shot: the matrices an immediate group is stored with. */
     /** {@return whether the texture of the group being closed reports a complete mirror}. */
     private boolean groupTextureFull() {
@@ -7389,6 +7577,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             int[] state = celtium$captureState();
             long key = celtium$stateKey(VulkanImmediateFormats.ITEM, state);
+            // The layer passes: a display list replayed under a texture other than the one it was compiled with. The
+            // spider's red eyes are one (LayerSpiderEyes rebinds the eyes texture and draws the same lists again with
+            // additive blending and full-brightness light-map coordinates), and it is the one model family whose
+            // measured ratio did not come to 1.0 after the lighting fix (0.99 r but 0.64-0.66 g/b). The body and the
+            // layer draw the same geometry, so the difference between them can only be the state printed here: the
+            // blend factors, the alpha test, the lighting flag and the resulting pipeline key.
+            if (boundTextureId != 0
+                    && boundTextureId != org.soutalab.celtium.vulkan.VulkanModelQuadCapture.textureForList(listId)
+                    && this.modelLayerLogged.add(listId + "|" + boundTextureId)
+                    && this.modelLayerLogs < MODEL_LAYER_LOG_LIMIT) {
+                this.modelLayerLogs++;
+                System.out.println("[Celtium] CELTIUM_MODEL_LAYER list=" + listId
+                        + " compileTexture=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.textureForList(listId)
+                        + " replayTexture=" + boundTextureId
+                        + " blend=" + state[0] + "(" + state[1] + "," + state[2] + ")"
+                        + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + state[5]
+                        + " alphaRef=" + round3(Float.intBitsToFloat(state[6]))
+                        + " depthFunc=" + state[7] + " lighting=" + state[8] + " key=" + key);
+            }
             if (!this.modelStateLogged) {
                 // What the model path is told about the state it draws under, once: the one-quad image showed the quads
                 // over the terrain and the sky alike, and depth is the first thing that can do that.
@@ -7516,12 +7723,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record(reason.toString());
             return false;
         }
+        // The chain's own input has to be registered *before* the preflight that judges whether that input can be
+        // supplied. The preflight walks the pass list and accepts only the shared frame image, an image an earlier
+        // pass of this chain writes, or one already adopted under that identity - and the adoption used to happen
+        // only after it, inside the frame. The entity-outline chain is exactly the case where that ordering is
+        // wrong: its first pass reads "final", the silhouette target the game filled itself, so nothing in the list
+        // supplies it, and the adoption that would have was unreachable. Every frame refused before recording, with
+        // the programs routed and no chain: measured under GL-less as ROUTE/PACKED for entity_outline, blur and blit
+        // followed by postChains=0 postPasses=0 postTargets=0 postAdopted=0. Registering the target here is the same
+        // call the frame-time path makes; it is idempotent for a matching image, and this method only declares the
+        // identity when every check the frame-time path performs has already passed, so a preflight that passes here
+        // is one the frame can really supply.
+        boolean inputDeclared = declareChainInputAdoption(passes);
         String unsupplied = this.postChain.unsuppliedInput(passes);
         if (unsupplied != null) {
             // N04: the chain reads an image this renderer cannot supply - under the GL bridge that is a real GL
             // framebuffer no Vulkan image stands for. Refused before the frame opens: nothing is acquired, no
             // semaphore is signalled, nothing is recorded, so the caller's GL chain runs on an untouched frame.
             record("post chain refused before the frame opened: " + unsupplied);
+            reportPreflightRefusal(unsupplied, inputDeclared);
             return false;
         }
         boolean submitted = false;
@@ -7580,6 +7800,65 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         return submitted;
+    }
+
+    /**
+     * Registers the chain's reported input image with the executor <em>before</em> the preflight that judges it.
+     * <p>
+     * The entity-outline chain's first pass reads {@code "final"} - the silhouette target the game filled itself -
+     * so the preflight's own resolution (shared frame image, an image an earlier pass writes, or one already adopted
+     * under that identity) can only accept it once that identity resolves to an image. The adoption that does that
+     * used to run after the preflight, inside the frame, so it was unreachable: every glow frame was refused before
+     * recording and the counter set was {@code postChains=0 postPasses=0 postTargets=0 postAdopted=0} with the
+     * programs routed. This declares exactly what the frame-time path would adopt, and only after every check that
+     * path performs has passed, so a preflight that accepts here is one the frame can really supply.
+     *
+     * @return whether the identity now resolves to the chain image (or already did)
+     */
+    private boolean declareChainInputAdoption(java.util.List<VulkanPostChain.Pass> passes) {
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null || this.postChain == null || passes.isEmpty()) {
+            return false;
+        }
+        VulkanPostChain.Pass first = passes.get(0);
+        int identity = first.groupMainFbId;
+        if (identity == 0 || first.groupMainW <= 0 || first.groupMainH <= 0
+                || identity == (int) this.mainTargetIdentity) {
+            return false;
+        }
+        if (framebufferColorTexture(identity) == null) {
+            // Nothing was reported under this identity, so there is no GL name for the game's composite to bind
+            // either; leaving it undeclared lets the preflight refuse with its own reason.
+            return false;
+        }
+        if (!glless.chainPairMatches(first.groupMainW, first.groupMainH)) {
+            // The frame-time path reports this refusal together with the size it asked for. Declaring it here would
+            // let the preflight accept an input the frame cannot supply, which is the N04 stand-in failure.
+            return false;
+        }
+        try {
+            this.postChain.adoptTarget(identity, glless.chainPairColorImage(), glless.chainPairColorView(),
+                    first.groupMainW, first.groupMainH);
+            this.chainAdoptionDeclarations++;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            record("post chain input adoption could not be declared: " + describe(error));
+            return false;
+        }
+    }
+
+    /**
+     * One bounded line per run when the preflight refuses the chain.
+     * <p>
+     * The refusal was recorded but never printed, so a run whose chain stopped there had no line naming it - the
+     * counters said a chain was seen ({@code postChains=0} with the programs routed) and nothing said why.
+     */
+    private void reportPreflightRefusal(String reason, boolean inputDeclared) {
+        if (this.preflightRefusalsReported++ >= 2) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_POSTCHAIN PREFLIGHT_REFUSED inputDeclarationSucceeded=" + inputDeclared
+                + " declarations=" + this.chainAdoptionDeclarations + " reason=" + reason);
     }
 
     /**

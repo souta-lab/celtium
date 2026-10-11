@@ -1,11 +1,17 @@
 # Celeritas fork：Cleanroom 1.12.2 ネイティブVulkan地形バックエンド開発計画
 
 > **Stage record, superseded.** This document records what was done during a stage and is kept for evidence.
-> The single current plan is [`docs/plan.md`](../plan.md); where this file contradicts it, the plan wins.
+> The single current plan is [`docs/plan.md`](plan.md); where this file contradicts it, the plan wins. (The link was `../plan.md`, which resolves to a non-existent file at the repository root; corrected 2026-10-11.)
 
 改訂：2026-10-08。既存のCleanroom＋Celeritas環境で大多数のModが安定して動くことを開発の前提にする。実装を開始したが、以下の全工程が完了しているわけではない。性能改善と対応範囲は実測で確定する。
 
 ## 0. 現在の状態
+
+> **この節は 2026-10-08 時点の記述であり、現在の状態ではない。** 現在の受入状況は
+> `docs/scope-and-limits.md` §0（要件とその強制箇所の表・実測の対応・未検証の明示）と `docs/plan.md` の現状表が唯一の根拠である。
+> 以下の「現段階の地形バックエンドはOpenGL」「Vulkan地形描画は未実装」は**その後閉じた**: 地形・即時系・GUI/HUD は
+> native Vulkan で描画され、`-Dceltium.vulkan.glless=true` では GL context なしで起動・提示まで到達する。
+> 節全体は設計時の判断の来歴として残す。
 
 2026-10-08、Celtiumとして実装を開始。Celeritasの履歴を継承し、Linux向けのGL/Vulkan能力診断、独立CLI、1.12.2の診断コマンドを最初の開発対象にする。
 
@@ -189,6 +195,7 @@ Vulkan用のregion arena、転送batch、buffer拡張、index部分更新、使�
 最初はindexed drawで正しさを確認し、次に既存のregion／batch方針を利用したmulti-draw indirect、uploadのまとめ処理、pipeline cacheを追加する。GL版にあるバッチ化を無視した単純な1セクション1drawを最終版として性能比較しない。
 
 Vulkan 1.2系を設計上の基準とし、実際に必要なfeatureと外部共有能力を問い合わせる。dynamic renderingやsynchronization2等は対応範囲と実装負担に応じて追加する。初期版でmesh shaderや新しいGPU cullingを必須にしない。
+**実装での強制箇所（2026-10-11 実測）**: loader 1.2以上は `celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java:86-87,154`、device の `apiVersion >= 1.2` は `:759-763`、CPU device の除外は `:756-758`、必須 device extension は `:795-803`（有効化 `:838-839`）、graphics+transfer queue は `:806-831`。要件・挙動・実測の対応表は `docs/scope-and-limits.md` §0。
 
 ### atlasとlightmap
 
