@@ -143,8 +143,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the vanilla loading screen's framebuffer is the measured one - so that a pair recreated at a new size can be
      * unpublished from every name it stood for instead of only from the outline's.
      */
-    private final java.util.Map<Integer, Long> publishedFrameTextures = new java.util.HashMap<Integer, Long>();
+    private final java.util.Map<Integer, VulkanGlTexture> publishedFrameTextures =
+            new java.util.HashMap<Integer, VulkanGlTexture>();
+    /** The image each published frame texture name stands for, so a recreated pair can be told from the same one. */
+    private final java.util.Map<Integer, Long> publishedFrameImages = new java.util.HashMap<Integer, Long>();
     private int publishedFrameTexturesCreated;
+    private int publishedFrameTexturesUnpublished;
     /**
      * The frame in which each pair's images have been cleared, so the clear happens once per frame and not per
      * window. One per pair: two pairs are two images, and a frame that cleared one of them says nothing about the
@@ -5728,6 +5732,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // draws the sampling batch - recorded outside the pass, before the draw, which is what this site is.
             this.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
         }
+        // Every other name published over the pair's image gets the same transition at the same site. A name published
+        // for a game framebuffer whose draws land in the pair (the vanilla loading screen's, measured) is sampled from a
+        // pass whose descriptor declares SHADER_READ_ONLY while the pair's own layout is GENERAL: leaving it there is
+        // exactly the VUID-vkCmdDraw-None-09600 the vsync leg reported on three distinct images at vkQueueSubmit. The
+        // transition is recorded outside the pass, before the draw, like the outline's.
+        celtium$transitionPublishedFrameTextures(false);
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.currentRenderTarget;
         this.commandState.beginPass(this.activeImmediateTarget);
@@ -6950,6 +6960,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // draws the sampling batch - recorded outside the pass, before the draw, which is what this site is.
             this.publishedChainOutput.ensureSampledLayout(this.commandBuffer);
         }
+        // Every other name published over the pair's image gets the same transition at the same site. A name published
+        // for a game framebuffer whose draws land in the pair (the vanilla loading screen's, measured) is sampled from a
+        // pass whose descriptor declares SHADER_READ_ONLY while the pair's own layout is GENERAL: leaving it there is
+        // exactly the VUID-vkCmdDraw-None-09600 the vsync leg reported on three distinct images at vkQueueSubmit. The
+        // transition is recorded outside the pass, before the draw, like the outline's.
+        celtium$transitionPublishedFrameTextures(false);
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.currentRenderTarget;
         this.commandState.beginPass(this.activeImmediateTarget);
@@ -8318,6 +8334,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // this frame (the game can render the chain from an image an earlier frame left behind).
                 this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
             }
+            // The same hand-back for every other published name: the chain is about to attach the pair image, which
+            // declares GENERAL, and the sampling side left it in SHADER_READ_ONLY.
+            celtium$transitionPublishedFrameTextures(true);
             int chainRecording = this.postChain.recordPasses(this.commandBuffer, passes);
             if (this.publishedChainOutput != null) {
                 // The chain has written the image and the game's composite samples it next, through a descriptor the
@@ -8612,19 +8631,64 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (glTextureName == 0 || image == 0L || width <= 0 || height <= 0) {
             return;
         }
-        Long current = this.publishedFrameTextures.get(Integer.valueOf(glTextureName));
-        if (current != null && current.longValue() == image) {
+        VulkanGlTexture current = this.publishedFrameTextures.get(Integer.valueOf(glTextureName));
+        if (current != null && this.publishedFrameImages.get(Integer.valueOf(glTextureName)) != null
+                && this.publishedFrameImages.get(Integer.valueOf(glTextureName)).longValue() == image) {
             return;
         }
         if (current != null) {
             celtium$registry().unpublishExternalImage(glTextureName);
         }
-        celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
-        this.publishedFrameTextures.put(Integer.valueOf(glTextureName), Long.valueOf(image));
+        VulkanGlTexture published = celtium$registry().publishExternalImage(glTextureName, image, view, width, height);
+        if (published == null) {
+            return;
+        }
+        this.publishedFrameTextures.put(Integer.valueOf(glTextureName), published);
+        this.publishedFrameImages.put(Integer.valueOf(glTextureName), Long.valueOf(image));
         this.publishedFrameTexturesCreated++;
     }
 
+    /**
+     * Moves every published frame texture to the layout its next use needs.
+     * <p>
+     * Two uses alternate on the same image: the pass that draws the game's framebuffer into the pair attaches it, which
+     * declares GENERAL, and the pass that samples it through the published name has a descriptor declaring
+     * SHADER_READ_ONLY_OPTIMAL. {@code general} picks which one is next; the sampling side is the transition that was
+     * missing, and its absence is the VUID-vkCmdDraw-None-09600 the vsync leg reported at vkQueueSubmit.
+     */
+    private void celtium$transitionPublishedFrameTextures(boolean general) {
+        if (this.publishedFrameTextures.isEmpty() || this.commandBuffer == null) {
+            return;
+        }
+        for (VulkanGlTexture published : this.publishedFrameTextures.values()) {
+            if (general) {
+                published.ensureGeneralLayout(this.commandBuffer);
+            } else {
+                published.ensureSampledLayout(this.commandBuffer);
+            }
+        }
+    }
+
     private void celtium$syncPublishedChainOutput(long chainPairColorImage) {
+        // A pair recreated at a new size destroys the image every published name stands for: those wrappers name freed
+        // memory, so they are unpublished and dropped here - the same rule the outline's own name follows below. This
+        // runs before the early return that only looks at the outline's wrapper, because the other names are published
+        // even when the outline never adopted anything (the vanilla loading screen's framebuffer is the measured case).
+        if (!this.publishedFrameTextures.isEmpty()) {
+            java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =
+                    this.publishedFrameTextures.entrySet().iterator();
+            while (iterator.hasNext()) {
+                java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
+                Long image = this.publishedFrameImages.get(entry.getKey());
+                if (image != null && image.longValue() == chainPairColorImage) {
+                    continue;
+                }
+                celtium$registry().unpublishExternalImage(entry.getKey().intValue());
+                this.publishedFrameImages.remove(entry.getKey());
+                this.publishedFrameTexturesUnpublished++;
+                iterator.remove();
+            }
+        }
         if (this.publishedChainOutput == null) {
             return;
         }

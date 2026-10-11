@@ -89,10 +89,30 @@ pair's difference is not the texture sample at all but what else the overlay wri
 under its `ONE, ONE_MINUS_SRC_ALPHA` alpha blend - on a presented image whose alpha the readback shows. It is
 stated as a contradiction, not resolved.
 
-The experiment that settles it in one pair: `-Dceltium.vulkan.mirrorPoisonFlat=15=FF00FF` (poison the *lightmap*)
-with the overlay and its control. If the overlay's contribution turns magenta it samples the lightmap, which is the
-descriptor path for the block pipeline's binding 1; if it does not, the encode arithmetic's premise (the doubled
-multiply) is what is wrong and the blend state needs its own check.
+### The lightmap-poison pair: taken, NOT decisive as designed - and it rules out a texture-sampled RGB contribution
+
+`t39-lmpoison` / `t39-lmpoison-control` (jar `d0781f5da1cd082d974305ee`,
+`-Dceltium.vulkan.mirrorPoisonFlat=15=FF00FF`, same control shape as the atlas-poison pair). Result: the two legs are
+**bit-identical** - whole frame mean 0.000, 0 px differ, block region (560,300)-(720,450) mean 0.000. The world went
+black, because the lightmap is a *multiplier*: block region (0,0,0), surroundings (21.8,25.3,31.1). Crops kept as
+`evidence/texture-mirror-20261011/block-lmpoison-{overlay,control}-crop.png` (identical files, hash
+`fba6e35823bd5b74`), which is itself the measurement.
+
+So the overlay's contribution did **not** turn magenta - but the pair cannot separate the explanations, because
+against a black destination both predict zero: an atlas sample (the crack texture) multiplied by black is black, and
+a lightmap sample (magenta x magenta) multiplied by black is black too.
+
+**What the two poison pairs together do establish**: the atlas poison produced a 24,000-of-24,000 px difference, and
+*neither* candidate texture-sample story predicts a difference there either - magenta x magenta under the doubled
+multiply is magenta, and a bright lightmap x magenta is magenta. A difference that no texture-sample hypothesis
+predicts, and that vanishes when the destination is black, is not a texture-sampled RGB contribution at all: it is
+something else the overlay writes - depth, or the alpha channel under its `ONE, ONE_MINUS_SRC_ALPHA` alpha blend, on a
+presented image whose alpha the readback shows.
+
+**Conclusion, stated plainly**: the encode arithmetic's premise (the doubled multiply under `DST_COLOR, SRC_COLOR`)
+is what needs its own check, and the next measurement must not be another flat poison: read the presented image's
+alpha channel in the two atlas-poison legs, or disable the block pipeline's alpha blend for one leg, so a
+non-texture contribution can be seen directly.
 
 ## 4. The wrap record, consumed
 

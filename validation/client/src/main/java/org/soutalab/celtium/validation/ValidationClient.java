@@ -5850,7 +5850,14 @@ public final class ValidationClient {
     }
 
     private static Object[] celtium$vsFindOptionButton(Object list, String wantedOption) {
-        String[] preferred = {"RENDER_CLOUDS", "GRAPHICS", "AMBIENT_OCCLUSION", "PARTICLES"};
+        // `-Dceltium.validation.videoSettingsOption=VSYNC` picks the row the chain presses. VSync is the one whose
+        // effect is not in the picture but in the present policy (task-56): pressing it must rebuild the swapchain
+        // with the mode the option asks for, which is the player's path and not a property that flips the policy at
+        // startup. Empty keeps the old preferred list, so every existing run is unchanged.
+        String requested = System.getProperty("celtium.validation.videoSettingsOption", "");
+        String[] preferred = requested.isEmpty()
+                ? new String[] {"RENDER_CLOUDS", "GRAPHICS", "AMBIENT_OCCLUSION", "PARTICLES"}
+                : new String[] {requested};
         Object[] fallback = null;
         for (int pass = 0; pass < preferred.length + 1; pass++) {
             String want = pass < preferred.length ? preferred[pass] : null;
