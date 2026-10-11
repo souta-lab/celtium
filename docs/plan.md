@@ -257,6 +257,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.278 **round 84: `flushPendingBeforeGlDraw` の早期 return 条件が容疑者（`immediateWindowBusy` / `immediateGroups` 空）**
+
+- **実装確認（Lead）**: `flushPendingBeforeGlDraw`（`:6326`）は
+  1. `if (this.immediateWindowBusy) return;` — **window 実行中なら何もしない**
+  2. `closeCurrentImmediateGroup();`
+  3. `if (this.immediateGroups.isEmpty()) return;` — **pending が無ければ何もしない**
+  4. `framebufferReplacing` なら drop（計数つき）
+  の順で、**早期 return が2つ**ある。
+- **前ラウンドで serve 前に呼んでも描かれなかった理由の候補**: (a) `immediateWindowBusy` が真（既に window 実行中）、
+  (b) `immediateGroups` が空（cube の batch がまだ **offer されていない**）、(c) batch が `recordedImmediateGroups` 側にある。
+- **次の測定（1点・bounded）**: serve 入口で **`immediateWindowBusy`・`immediateGroups.size()`・`recordedImmediateGroups.size()`・
+  `currentGroupBatches`** を印字し、flush が何を見て早期 return したかを確定する。その上で
+  (b) なら「offer が copy より後」＝**Tessellator 経由の offer 順**の問題、(a) なら window 完了待ちの追加が必要。
+- **パノラマの確定事実は変わらない**（mirror 正・bind 正・捕捉正・clear は draw 前・copy は panorama 自身・白は「pending が描かれないまま読まれる」）。
+
 ## 0.277 **round 83: caller 連鎖が確定 — copy は panorama のもの（`GuiMainMenu.drawPanorama` → `renderSkybox` → `glCopyTexSubImage2D`）**
 
 - **測定（Lead の `r82-caller3`・window 16）**:
