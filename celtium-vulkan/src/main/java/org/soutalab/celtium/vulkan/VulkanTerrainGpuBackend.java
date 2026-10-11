@@ -295,6 +295,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * boundary fires, and it can only be non-zero on a scene that moves the clip inside a group.
      */
     private long scissorBoundarySplits;
+    /** Groups closed because a light's direction or colour changed without the lighting enable moving. */
+    private long lightParamBoundarySplits;
+    /** The lighting generation the open group was created under; see {@code VulkanGlState.lightGeneration()}. */
+    private long currentGroupLightGeneration;
     /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
     private long scissorCapturedGroups;
     private PreparedImmediate currentPreparedImmediate;
@@ -4870,6 +4874,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (scissorMoved) {
                 this.scissorBoundarySplits++;
             }
+            // BH-05's remaining half: a light that moved without its enable bit moving. O(1) - the generation is a
+            // counter, not a comparison of the twenty-float payload, which is why this can run on every batch.
+            boolean lightParamsMoved = this.currentImmediateMesh != null
+                    && this.immediateState.lightGeneration() != this.currentGroupLightGeneration;
+            if (lightParamsMoved) {
+                this.lightParamBoundarySplits++;
+            }
             if (this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
                     || this.currentGroupStateKey != stateKey || !samePass
@@ -4891,7 +4902,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // under a different fog bracket are the two shapes this closes. Both comparisons are null-safe:
                     // null means "identity affine" and "fog off" respectively, and those are states to compare too.
                     || this.celtium$textureAffineMoved()
-                    || this.celtium$fogMoved()) {
+                    || this.celtium$fogMoved()
+                    || lightParamsMoved) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
                 long groupCreateStart = System.nanoTime();
@@ -4950,6 +4962,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // two lines above while that state is still the live one. Reading it at close time instead let a later
                 // light change shade vertices that had already been accepted.
                 this.currentGroupLightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
+                // The lighting generation captured with the payload: the enable bit is already in the state key, but a
+                // light whose direction or colour changed without a toggle must close the group as well, or the batches
+                // after the change are drawn with the payload of the batch before it (BH-05's remaining half).
+                this.currentGroupLightGeneration = this.immediateState.lightGeneration();
                 // The light-map coordinate belongs to the batch as well, and it is decided here rather than at close
                 // for the same reason and one more: this is the only moment at which `worldPassActive` still describes
                 // the pass the batch was offered in (see currentGroupLightmapCoords).
@@ -7138,6 +7154,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " colorMaskHistogram=" + colorMaskHistogramText()
                 + " nonAddBlendEquationGroups=" + this.nonAddBlendEquationGroups
                 + " scissorBoundarySplits=" + this.scissorBoundarySplits
+                + " lightParamBoundarySplits=" + this.lightParamBoundarySplits
                 + " scissorCapturedGroups=" + this.scissorCapturedGroups
                 + " alphaFuncGroups=" + this.alphaFuncGroups
                 + " nonGreaterAlphaFuncGroups=" + this.nonGreaterAlphaFuncGroups

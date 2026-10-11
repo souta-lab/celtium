@@ -610,6 +610,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private float polygonOffsetFactor;
     private float polygonOffsetUnits;
     private volatile boolean polygonOffsetCalled;
+    /** How many glPolygonOffset calls this process made; 0 means the call never reached the stub. */
+    private long polygonOffsetCalls;
 
     /** {@return GL's polygon offset factor}, 0 when glPolygonOffset has not been called. */
     public static float polygonOffsetFactor() {
@@ -621,6 +623,12 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static float polygonOffsetUnits() {
         CeltiumGlStub stub = installed;
         return stub == null ? 0.0F : stub.polygonOffsetUnits;
+    }
+
+    /** {@return how many glPolygonOffset calls reached this stub}. */
+    public static long polygonOffsetCallCount() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0L : stub.polygonOffsetCalls;
     }
 
     /** {@return whether glPolygonOffset has been called at all}: (0,0) is a legal offset, so the call is the fact. */
@@ -1458,6 +1466,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.polygonOffsetFactor = Float.intBitsToFloat((int) c[0]);
                 this.polygonOffsetUnits = Float.intBitsToFloat((int) c[1]);
                 this.polygonOffsetCalled = true;
+                this.polygonOffsetCalls++;
                 return 0L;
             case SEM_SCISSOR:
                 // GL's rectangle is in the window's own coordinates, bottom-left origin. The Vulkan scissor needs the

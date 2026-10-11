@@ -59,6 +59,8 @@ public final class VulkanGlState {
     private final float[] lightAmbient = new float[3];
     /** Bit i set when light i is enabled; vanilla item lighting enables exactly lights 0 and 1. */
     private int lightsEnabledMask;
+    /** Bumped by every lighting setter; see {@link #lightGeneration()}. */
+    private long lightGeneration;
     private boolean texture2dEnabled = true;
     /** The GL name of the bound texture; 0 means none, which is what the immediate path refuses to draw with. */
     private int boundTextureName;
@@ -454,6 +456,21 @@ public final class VulkanGlState {
 
     public void lightingEnabled(boolean enabled) {
         this.lightingEnabled = enabled;
+        this.lightGeneration++;
+    }
+
+    /**
+     * {@return a counter that changes whenever any value of the fixed-function lighting payload changes}.
+     * <p>
+     * The payload is five vec4 of light directions, ambient and diffuse, captured once when an immediate group opens
+     * (BH-05). The enable bit rides the state key, so toggling lighting closes a group - but a caller that changes a
+     * light's direction or colour <em>without</em> toggling the enable used to leave the group open, and every batch
+     * appended after the change was drawn with the earlier payload. Comparing a counter is the cheap form of the same
+     * "state must reach the group" rule the blend factors, the write mask and the clip rectangle now follow: no
+     * twenty-float array is built per batch just to notice that nothing moved.
+     */
+    public long lightGeneration() {
+        return this.lightGeneration;
     }
 
     public void lightEnabled(int index, boolean enabled) {
@@ -465,6 +482,7 @@ public final class VulkanGlState {
         } else {
             this.lightsEnabledMask &= ~(1 << index);
         }
+        this.lightGeneration++;
     }
 
     public boolean lightEnabled(int index) {
@@ -485,6 +503,7 @@ public final class VulkanGlState {
         this.lightDirections[base] = m[0] * x + m[4] * y + m[8] * z;
         this.lightDirections[base + 1] = m[1] * x + m[5] * y + m[9] * z;
         this.lightDirections[base + 2] = m[2] * x + m[6] * y + m[10] * z;
+        this.lightGeneration++;
     }
 
     public void setLightDiffuse(int index, float r, float g, float b) {
@@ -495,12 +514,14 @@ public final class VulkanGlState {
         this.lightDiffuse[base] = r;
         this.lightDiffuse[base + 1] = g;
         this.lightDiffuse[base + 2] = b;
+        this.lightGeneration++;
     }
 
     public void setLightAmbient(float r, float g, float b) {
         this.lightAmbient[0] = r;
         this.lightAmbient[1] = g;
         this.lightAmbient[2] = b;
+        this.lightGeneration++;
     }
 
     /** {@return the eye-space direction of light index}, three floats starting at index*3. */
