@@ -89,6 +89,40 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.136 **金脈続き: Kirino は `EntityRenderer.renderWorld` ごと置き換えており、私たちの `renderEntities` 注入2つは死んでいる**
+
+`KirinoClientCore` をデコンパイルして判明した決定的な事実。
+
+### 1. world render 全体が置き換えられている
+
+`KirinoClientCore.EntityRenderer$renderWorld(long finishTimeNano)` が **`EntityRenderer.renderWorld` を置き換える**。中で Kirino は:
+
+- `MethodHolder1.updateLightmap / setupCameraTransform / setupFog / getFOVModifier` を **delegate 経由で呼ぶ**（＝これらは実行される）
+- 空を `MINECRAFT.g.a(partialTicks, 2)`（= `RenderGlobal.renderSky`）で描く。その直前に **`bus.F()`（loadIdentity）＋`Project.gluPerspective(...)` を2回**呼ぶ
+- `cullingPatch.collectEntitiesInView(...)` で可視 entity を集める
+- `entityRenderingPatch.renderEntities(...)` と `tesrRenderingPatch.renderTESRs(...)` を呼ぶ（**自前の実装**）
+
+### 2. 私たちの注入は発火しない
+
+`RenderGlobal.renderEntities` の呼び出し元は原典では **`EntityRenderer.renderWorld` の 1400 行と 1466 行だけ**。その `renderWorld` を Kirino が置き換えているため、
+**`RenderGlobalMixin` の2つの注入（`sodium$renderTileEntities`＝Celeritas の TESR 描画、`renderEntities`＝Celeritas の entity ループ再実装）はこの runtime では一度も走らない。**
+
+描画が成立しているのは、Kirino が **vanilla の下位 API（`RenderManager`・`TileEntityRendererDispatcher`）を直接呼ぶ**ためで、その描画は私たちの即時パス（BufferBuilder upload）が捕捉している。
+
+### 3. これで説明がつくこと
+
+- **TESR が「capture されない」**わけではない。Kirino が `TileEntityRendererDispatcher` を直接叩き、その draw は即時パスに乗る。Celeritas 側の TESR 経路は死んでいるだけ。
+- **entity outline が発火しない**のも二重に確定: vanilla のループが走らない（Kirino が置き換え）＋ Kirino 自身は `outlineEntities` を捨てる（§0.135）。
+- **空の描画は生きている**（Kirino が `RenderGlobal.renderSky` を呼ぶ）ので、`VertexBuffer.drawArrays` の no-op ギャップ（天球 gradient・星・地平面）は**実行経路の事実**として確定。
+- **射影チャネル**: Kirino が `loadIdentity` ＋ `gluPerspective` を2回呼ぶ。mirror は loadIdentity を見て、gluPerspective を見ない。私の撤回したフックはこの2回も拾っていた。
+
+### 4. 次の作業（この発見から出る具体項目）
+
+1. **死んだ注入の扱いを決める**: Cleanroom 専用なので、`renderEntities` を狙う2注入は re-target するか根拠つきで外す。**「動いているつもりで一度も走らないフック」は最も危険な種類**。
+2. **他の注入も同じ検査をする**: Kirino が置き換えたメソッド（`renderWorld` 本体と、そこから呼ばれていた経路）を狙っていないか全数確認する。
+3. **outline は自前で native 実装**（§0.135 の結論を再確認）。`MinecraftCulling.entitiesInView` が対象集合を public で持つ。
+4. **空/星/地平面**（`glDrawArrays`）の native 化。
+
 ## 0.135 **金脈: 実行時パッチ（Kirino）をデコンパイルして判明 — この runtime は entity outline を描いていない**
 
 CFR（`/tmp/cfr.jar`、Maven Central から取得）で `cleanroom-0.6.13-alpha.jar` 内の Kirino クラスを Java に戻して読んだ。
