@@ -95,6 +95,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.153 **翼の第一候補は「記録された stride が誤っている」——担当の probe が捕捉**
+
+stub 担当の `CELTIUM_DRAWARRAY_LAYOUT` が同じ呼び出し形の2つの buffer で**異なる stride** を出した:
+
+```
+buffer=17 pointerSize=3 pointerType=0x1406 pointerStride=1
+buffer=18 pointerSize=3 pointerType=0x1406 pointerStride=12
+```
+
+ゲームの呼び出しは原典で `glVertexPointer(3, GL_FLOAT, 12, 0)`（`RenderGlobal.java:1344`・`:1441`・`:1470`）なので、**stride 1 はゲームが要求した値ではない**。
+**12バイト stride で書かれた配列を stride 1 で読むと、翼が見せる崩れた平面幾何そのもの**になる。size と type は両方正しいので、**stride フィールドだけ**が誤り
+＝`glVertexPointer` の**引数マッピングか記録**の問題で、デコードの問題ではない。
+
+**拒否パターンとも矛盾しない**: `glDrawArraysCalls=64 drawn=7 refused=57`・`calls=128 drawn=29 refused=99`。
+片方の buffer の記録状態が誤っていれば**拒否が正しく**、描かれているのは状態が正しい方。**census は仕事をしており、バグはその上流**。
+
+→ **翼の第一候補は「記録バグ」**で、§0.152 の射影ギャップは**第二候補**に下がる。順序は保つ価値がある:
+**誤った stride と identity 射影はどちらも崩れた平面を作る**が、stride は**既にある layout 行で測定できる**。
+
+**fixture property の動作確認**: font 担当の run が `screenshotAtTick=60` を報告しファイルも存在（`screenshotAtTickScreen=none`＝その構成では tick 60 に画面が開いていない。
+GUI capture には `keepInventoryScreen` も必要）。**「none」を「capture 失敗」と読まない**ための記録。
+
 ## 0.152 **検証: 射影チャネルの mirror は存在するが呼び出し元が無い**
 
 stub 担当の読みを tree で確認した:
