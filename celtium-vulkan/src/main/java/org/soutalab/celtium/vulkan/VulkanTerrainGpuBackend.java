@@ -105,6 +105,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int targetWidth;
     private int targetHeight;
     private long framebuffer;
+    /** Times a framebuffer recreation found the GPU unsettled and kept the old framebuffer instead. */
+    private int framebufferSettleFailures;
     private long framebufferRenderPass;
     /**
      * The framebuffer over the owned off-target images, and the render pass it was built for.
@@ -297,6 +299,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long scissorBoundarySplits;
     /** Groups closed because a light's direction or colour changed without the lighting enable moving. */
     private long lightParamBoundarySplits;
+    /** Of those, the ones whose group was lit - the case where the payload actually reaches the shader. */
+    private long lightParamLitBoundarySplits;
     /** The lighting generation the open group was created under; see {@code VulkanGlState.lightGeneration()}. */
     private long currentGroupLightGeneration;
     /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
@@ -1669,6 +1673,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private VulkanFrameArena frameArena;
     /** Groups whose arena slice could not be handed out, so they allocated their own buffers: the bounded fallback. */
     private long frameArenaFallbackGroups;
+    /** CPU time spent in the frame's own fence wait: the serialisation OPT-08's second step (two frames in flight) targets. */
+    private long frameFenceWaitMillis;
+    private long frameFenceWaitWorstMillis;
+    private long frameFenceWaitCount;
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
     private boolean currentGroupUsed;
@@ -5149,6 +5157,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     && this.immediateState.lightGeneration() != this.currentGroupLightGeneration;
             if (lightParamsMoved) {
                 this.lightParamBoundarySplits++;
+                // Whether the group being closed was a *lit* one: only a lit group's payload reaches the shader, so
+                // the split that matters is the one where the batch that opened the group carried lighting. A scene
+                // where every light move is already bracketed by an enable/disable toggle (vanilla's own item path is)
+                // splits on the state key anyway, and this counter is what says whether the generation adds anything
+                // there rather than being a cost with no correctness behind it.
+                if (this.currentGroupState.length > 8 && this.currentGroupState[8] != 0) {
+                    this.lightParamLitBoundarySplits++;
+                }
             }
             if (this.currentImmediateMesh == null
                     || this.currentGroupFormatId != formatId || this.currentGroupTexture != boundTexture
@@ -7191,6 +7207,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
     }
 
+    /** Adds one frame fence wait's duration to the totals, so the frame's own serialisation is a number. */
+    private void celtium$recordFrameWait(long startedNanos) {
+        long millis = (System.nanoTime() - startedNanos) / 1_000_000L;
+        this.frameFenceWaitMillis += millis;
+        this.frameFenceWaitCount++;
+        if (millis > this.frameFenceWaitWorstMillis) {
+            this.frameFenceWaitWorstMillis = millis;
+        }
+    }
+
     /**
      * {@return the mesh a new immediate group writes into}: an arena slice when one can be handed out, an owning mesh
      * when the arena's slots are all held by submissions that have not completed.
@@ -7406,6 +7432,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " " + this.context.uploadBatchSummary()
                 + " " + (this.frameArena == null ? "frameArena=not-created" : this.frameArena.describe())
                 + " frameArenaFallbackGroups=" + this.frameArenaFallbackGroups
+                + " frameFenceWaitMillis=" + this.frameFenceWaitMillis
+                + " frameFenceWaitCount=" + this.frameFenceWaitCount
+                + " frameFenceWaitWorstMillis=" + this.frameFenceWaitWorstMillis
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
@@ -7462,6 +7491,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " nonAddBlendEquationGroups=" + this.nonAddBlendEquationGroups
                 + " scissorBoundarySplits=" + this.scissorBoundarySplits
                 + " lightParamBoundarySplits=" + this.lightParamBoundarySplits
+                + " lightParamLitBoundarySplits=" + this.lightParamLitBoundarySplits
                 + " scissorCapturedGroups=" + this.scissorCapturedGroups
                 + " alphaFuncGroups=" + this.alphaFuncGroups
                 + " nonGreaterAlphaFuncGroups=" + this.nonGreaterAlphaFuncGroups
@@ -9085,6 +9115,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private long ensureFramebuffer(long renderPass, long colorView, long depthView) {
         if (this.framebuffer != 0 && this.framebufferRenderPass == renderPass) {
+            return this.framebuffer;
+        }
+        // The old framebuffer is destroyed here when the render pass handle changes, and the release basis must be
+        // GPU completion - not "the render pass changed". The sibling site at the frame-target recreation path
+        // already guards the same call with settleGpu, and the validation layer named the rule there:
+        // vkDestroyFramebuffer() cannot be called on a framebuffer currently in use by a command buffer. This path
+        // had no guard, so a pass recreation could destroy one still in flight.
+        if (this.framebuffer != 0 && !settleGpu("framebuffer recreation")) {
+            this.framebufferSettleFailures++;
+            // Fail closed: without a settled GPU the old framebuffer cannot be released, and building a new one over
+            // it would leak the old handle rather than fix the ordering.
             return this.framebuffer;
         }
         destroyFramebuffer();
@@ -12644,14 +12685,30 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.commandState.end();
             check(vkResetFences(this.context.device(), this.fence), "vkResetFences");
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
+            // OPT-08 step 1: the upload batch is a submission of its own that this one must wait for. The wait is what
+            // makes the copies visible to this command buffer's reads - the batch's barrier only makes them available -
+            // and it is taken here instead of the CPU blocking for the batch at flush time. A batch that has been
+            // reaped without its semaphore being consumed leaves nothing to wait on, so the wait is conditional.
+            long uploadWait = this.context.takeUploadWaitSemaphore();
+            int waitCount = (withFrameSemaphores ? 1 : 0) + (uploadWait != 0L ? 1 : 0);
             LongBuffer waitSemaphores = null;
             IntBuffer waitStages = null;
             LongBuffer signalSemaphores = null;
+            if (waitCount > 0) {
+                waitSemaphores = stack.mallocLong(waitCount);
+                waitStages = stack.mallocInt(waitCount);
+                int at = 0;
+                if (withFrameSemaphores) {
+                    waitSemaphores.put(at, this.frameTarget.waitSemaphore());
+                    waitStages.put(at, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+                    at++;
+                }
+                if (uploadWait != 0L) {
+                    waitSemaphores.put(at, uploadWait);
+                    waitStages.put(at, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+                }
+            }
             if (withFrameSemaphores) {
-                waitSemaphores = stack.mallocLong(1);
-                waitSemaphores.put(0, this.frameTarget.waitSemaphore());
-                waitStages = stack.mallocInt(1);
-                waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
                 signalSemaphores = stack.mallocLong(1);
                 signalSemaphores.put(0, this.frameTarget.doneSemaphore());
             }
@@ -12661,10 +12718,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // waitSemaphoreCount must be set explicitly: LWJGL's pWaitSemaphores(LongBuffer) writes only the
             // pointer, unlike pSignalSemaphores which also sets its count. Leaving it to calloc's zero meant this
             // submission waited on nothing at all - which is what the validation layer was reporting all along.
-            if (withFrameSemaphores) {
-                submit.waitSemaphoreCount(waitSemaphores.remaining());
-                submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
-                        .pSignalSemaphores(signalSemaphores);
+            if (waitCount > 0) {
+                submit.waitSemaphoreCount(waitCount);
+                submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages);
+            }
+            if (signalSemaphores != null) {
+                submit.pSignalSemaphores(signalSemaphores);
             }
             submit.pCommandBuffers(commandBuffers);
             if (this.immediateWindowBusy && !this.recordedImmediateGroups.isEmpty() && failImmediateSubmits > 0) {
@@ -12686,6 +12745,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
                         check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
+            // The queue owns the batch's semaphore wait now, so it is no longer outstanding and the next batch may
+            // signal it again. Recorded only after a successful submit: a submission the driver refused never consumed
+            // the wait, and pretending otherwise would let the next flush signal a semaphore that is still signalled.
+            if (uploadWait != 0L) {
+                this.context.noteUploadSemaphoreConsumed();
+            }
             // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
             // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
             // that never reaches the queue must not hold a slot, and an abandon after a successful submit must.
@@ -12831,7 +12896,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
             fences.put(0, this.fence);
+            // OPT-08's second step is measured here: this wait is the CPU blocking for the frame's own GPU work, and
+            // it is what two frames in flight would remove. Counted in milliseconds per frame, because "the CPU and
+            // the GPU can overlap" is a claim about this number and not about a frame interval.
+            long frameWaitStarted = System.nanoTime();
             int result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
+            this.celtium$recordFrameWait(frameWaitStarted);
             if (FENCE_WAIT_FAULT) {
                 // A wait that times out after the submission was accepted: the command buffer may still be in flight, so
                 // nothing it recorded may be reset, re-recorded or destroyed. This is the second half of the rule the
