@@ -274,6 +274,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.289 **round 95: OPT-09 step(3) を within-leg で受入（`match=true`・checksum 一致）・submit 経路に semaphore VUID 10件・`pinSections` 実装**
+
+- **OPT-09 step(3) の等価性を測定（proj-channel・`5cbeafcfa`・`-Dceltium.vulkan.indirectCompare=true`）**:
+  ```
+  terrainIndirect=[offers=753 calls=753 draws=8665 clamps=0 fallbacks=0 lastFallback=none]
+  terrainIndirectStream=[indirectDraws=8665 indirectChecksum=fb6ba6ff7e1b6f0e
+                         directDraws=8665 directChecksum=fb6ba6ff7e1b6f0e match=true]
+  ```
+  ＝**753 indirect call が 8665 draw を運び、indirect 経路が submit する command stream は direct loop が同じ batch に対して submit するものと
+  command 単位で一致**（count・`(indexCount, firstIndex, vertexOffset)`・順序・checksum）。**同一 world 内**での測定なので cross-boot の caveat が無く、
+  絵より強い（描画結果ではなく**提出そのもの**を比較）。sorted pass は BH-02 の index-source 規則の下で両列挙が batch 順に歩くので構成上覆われる。
+  **比率 11.5 draws/call**（entity scene は 16.3）が OPT-09 の CPU-record 議論の数値。受入は**等価性**であって比率ではない。
+- **ただし leg は赤**: `validationMessageCount=10`・全て **`VUID-vkQueueSubmit-pSignalSemaphores-00067`**（binary semaphore が
+  **間に wait を挟まず2回 signal** された）。signal 箇所は `VulkanContext.submitWithSemaphores`（`:543-553`・渡された非null handle を全て signal）と
+  present 経路の submit（`:1968`）。＝**「同じ binary semaphore を2つの submission が wait 無しで signal している」**。
+  proj-channel に追跡を依頼（frame の done-semaphore と present のそれが自然な候補）。
+- **`pinSections` を実装（Lead・`3a74fb510`）**: `-Dceltium.validation.pinSections=<n>` で **listed-section 数が
+  `pinSectionsStableFrames`（既定20）連続 frame 同一かつ n 以下**になるまで capture を保留し、**settled 値と保持 frame 数を報告**。
+  既存の `captureCondition`/`captureSections` の意味は不変（既存 leg に影響しない）。
+  根拠はこのセッションで3回測った cross-leg の非決定性（sky pair 54 対 412 world frame・entity scene の 23.5% 床・proj-channel の 35.5%）。
+- **BH-03 の override hook 着地（weather-water）**: `-Dceltium.glstub.alphaFuncOverride=<GL enum>`（0=game 自身）。
+  push selector は `celtium$alphaFuncSelector(state)` 経由で override を優先し、**並行変更（selector が `state[14]` へ移動）を保持**。
+  A/B leg（`ww50-alpha-greater`・`ww51-alpha-always`・`ww52-alpha-lequal`）を同一 jar で queued。
+
 ## 0.288 **round 94: 白の owner は id 8 の mirror（3つの独立読みで確定）・announcement の順序計装が着地・外部参考**
 
 - **パノラマの owner 確定（fog-path の測定＋Lead の比較）**: `passImage == readImage` が3 leg で一致し、readback は正しい。
