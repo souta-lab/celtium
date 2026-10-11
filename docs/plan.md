@@ -305,6 +305,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.317 **round 123: bind 到達回数を測定 — **248 回 / 1,280,000 glyph**＝bind 経路は実質到達していない。3.17 µs/glyph は vanilla の per-character 仕事**
+
+- **測定（Lead・既存 leg `f3split` の `CELTIUM_UNIT_BIND` を数える・新しい leg 不要）**:
+  **`CELTIUM_UNIT_BIND` 248 行**に対し、同 leg の **glyph window は 1,280,000**（glyph-fix の報告）。
+  ＝**bind 経路の到達率は 0.02 %**。**`TextureManager.bindTexture` → `GlStateManager` → 我々の hook の連鎖は glyph ごとには走っていない**。
+- **帰結（問いの答え）**: 3.17 µs/glyph の実体は **vanilla 自身の per-character 仕事** —
+  `renderStringAtPos` の **約200文字テーブルへの `charmap.indexOf`（1文字ごと）**と `renderChar`/`renderDefaultChar` の本体であり、
+  **我々の hook でも bind でもない**。
+  ＝**§0.315 の「bind short-circuit」unit が不要だったことが二重に確定**（(1) vanilla が既に short-circuit 済み、(2) bind 到達は 248 回）。
+  ＝**我々が触れないコードが F3 のコストの大半**であることも確定（overlay の 139 ms のうち text 経路 ~22 ms・その大半が vanilla 側）。
+- **次の判断（記録）**: F3 の残ラグに対して Celtium 側でできるのは
+  (a) `renderStringAtPos`/`renderDefaultChar` への **Celtium 側 fast path**（vanilla の per-character 仕事を置き換える＝**大きい変更・互換リスク**）、
+  (b) **per-frame の overlay 構築**（`GuiOverlayDebug.call()` の約20文字列・`getDebugInfoRenders()`）の削減、
+  (c) **何もしない**（vanilla 側のコストは F3 を使う限り避けられない）。
+  **現時点の証拠は (b) を支持しない**（per-frame 構築の計測はまだ無い）ので、**(a) は互換リスクに見合うかを見極めてから**着手する。
+  ＝**「測ってから直す」を守り、F3 を未説明のまま残さない**ための記録。
+- **未了**: frame-close pairing（到達不能）・BH-14・goal (e) 3段階・`scissorCapturedGroups=0`・F3 の (a)/(b) 判断・主要mod対応。
+
 ## 0.316 **round 122: 配布の前提を訂正 — vanilla の `bindTexture` は既に short-circuit している（原典で確認）**
 
 - **原典の確認（web 調査・1.12.2 の `GlStateManager.func_179144_i`）**:
