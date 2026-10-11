@@ -257,6 +257,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.254 **round 60: menu hold で copy が走るようになり、panorama PNG の mirror は実内容になった（白は残る）**
+
+- **fixture knob 着地（gui-stage・`81d29010a`）**: `-Dceltium.validation.menuHoldTicks=N` が **world 生成前に `GuiMainMenu` を N client tick 保持**
+  （既存の menu-phase resize の `return` 地点を再利用・`menuHeldTicks`/`menuHoldTicksApplied` を報告・既定 0 で既存 leg と calibration key は不変）。
+- **Lead の受入 leg（`r59-panohold`・`menuHoldTicks=40`・`dumpPresentedMenuTick=20`）**:
+  - **`CELTIUM_MIRROR_SOURCE id=45 source=announcement size=256x256 content=opaque=65536/65536 firstOpaque=0xff8fa3ff`**、
+    `id=46 … firstOpaque=0xff90a4ff` ＝**panorama PNG が実内容で mirror された**（以前は 256×256 の一様白）。
+    ＝**早期 announcement の replay（`a86273436`）が効いている**。
+  - **`CELTIUM_TEX_COPY_SERVED dest=20 … mean=255,255,255`** ＝copy は**走るようになった**が、まだ白。
+- **残る1点**: face の group が sample する id。以前の leg では **`texture=8`（splash の白）**で、panorama PNG は 45-49 に実内容で存在する。
+  ＝**「テクスチャ名 → GL id」解決**（`TextureManager.bindTexture` → `getGlTextureId` を即時 group に取り込む箇所）が最後の容疑者。
+  確認測定は texture-mirror が用意した name→id 計器（bind が 45-49 を返すのに group が 8 なら捕捉が stale、bind 自体が 8 なら registry のマッピング）。
+- **受入は不変**: copy の `mean=` が 255 から動き crop にパノラマ。
+
 ## 0.253 **round 59: 早期 announcement の replay は配達を確認（実内容の mirror が出現）・受入 leg には menu hold が要る**
 
 - **replay の効果を確認（Lead の leg `r58-pano` と texture-mirror の `pano-accept`）**: 早期ロード窓で捨てられていた announcement が
