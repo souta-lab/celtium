@@ -165,6 +165,8 @@ def main():
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--validate", action="store_true", help="Enable and require the separately installed validation fixture")
     parser.add_argument("--duration", type=int, default=60, help="Maximum runtime in seconds; a timeout is not success")
+    parser.add_argument("--slot-wait", type=int, default=900,
+                        help="Seconds to wait for the single-game slot; the slot is a lock file in .celtium-work/game-slot")
     parser.add_argument("--headless", action="store_true", help="Use an isolated GPU-rendered Sway/Xwayland display")
     parser.add_argument("--render-node", type=Path, help="Explicit DRM render node for the headless compositor")
     parser.add_argument("--require-gpu", help="Require this substring in the fixture's actual GL renderer")
@@ -255,6 +257,51 @@ def main():
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if not args.run:
         return 0
+    # ---- one game instance at a time, arbitrated rather than hoped for -------------------------------
+    # Every worker was told to check for a running client before launching, and four of them passed that check in the
+    # same second: the check-then-launch window is the problem, not anyone's discipline. The slot is a directory created
+    # atomically, holding the pid of the process that owns it; a stale slot (owner gone) is reclaimed, and a live one is
+    # waited for. Two runs on one GPU are not evidence, and the runs they cost are the expensive part.
+    slot = Path(__file__).resolve().parent.parent / ".celtium-work" / "game-slot"
+    slot.mkdir(parents=True, exist_ok=True)
+    lock = slot / "owner.pid"
+    deadline = time.monotonic() + args.slot_wait
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                holder = int(lock.read_text(encoding="ascii").strip() or "0")
+            except (OSError, ValueError):
+                holder = 0
+            alive = False
+            if holder > 0:
+                try:
+                    os.kill(holder, 0)
+                    alive = True
+                except ProcessLookupError:
+                    alive = False
+                except PermissionError:
+                    alive = True
+            if not alive:
+                print(f"Reclaiming the game slot from pid {holder}, which is gone")
+                lock.unlink(missing_ok=True)
+                continue
+            if time.monotonic() >= deadline:
+                parser.error(f"the game slot is held by pid {holder} and --slot-wait ({args.slot_wait}s) expired; "
+                             "one instance at a time is a measurement requirement, not a courtesy")
+            print(f"Waiting for the game slot (held by pid {holder}) ...")
+            time.sleep(5)
+    try:
+        return run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, asset_index, parser):
     player = "CeltiumValidation"
     player_uuid = uuid.UUID(bytes=hashlib.md5(("OfflinePlayer:" + player).encode("utf-8")).digest(), version=3).hex
     validation_args = ["-Dceltium.validation=true"] if args.validate else []
