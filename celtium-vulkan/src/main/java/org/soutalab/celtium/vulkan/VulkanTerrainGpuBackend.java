@@ -2643,9 +2643,41 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 || this.currentGroupColor[3] != this.immediateState.colorAlpha();
     }
 
+    /**
+     * {@return whether the live texture affine differs from the one captured with {@code currentGroupTexMatrix}}.
+     * <p>
+     * BH-04's texture-matrix half: the affine is per-draw state (the item glint scrolls it, and the renderer's own
+     * effects set it), and it is captured once when a group opens. A batch offered after it changed used to join the
+     * open group and be drawn with the earlier transform. {@code null} means the identity, so a move to or from the
+     * identity is a change like any other.
+     */
+    private boolean celtium$textureAffineMoved() {
+        float[] now = celtium$textureAffine();
+        float[] captured = this.currentGroupTexMatrix;
+        if (now == null || captured == null) {
+            return (now == null) != (captured == null);
+        }
+        return !java.util.Arrays.equals(now, captured);
+    }
+
+    /**
+     * {@return whether the live fog differs from the one captured with {@code currentGroupFog}}.
+     * <p>
+     * BH-04's fog half, and the reason the fog was captured per group in the first place: {@code renderSky} brackets
+     * the sky dome with fog enabled and the sun and moon with it disabled inside one pass, so a group that spanned
+     * such a bracket drew both halves under one of the two. {@code null} is fog off, which is a state to compare.
+     */
+    private boolean celtium$fogMoved() {
+        float[] now = celtium$fogSnapshot();
+        float[] captured = this.currentGroupFog;
+        if (now == null || captured == null) {
+            return (now == null) != (captured == null);
+        }
+        return !java.util.Arrays.equals(now, captured);
+    }
+
     private float[] celtium$textureAffine() {
-        try {
-            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
+        try {            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
             // and reading the shared stack would return whichever unit was last active.
             float[] matrix = this.immediateState.textureMatrix(0);
             if (matrix == null) {
@@ -4542,7 +4574,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // take the colour from the mirror and only when the mirror has a value, which is exactly when the
                     // capture below reads it.
                     || ((formatId == 7 || formatId == 6 || formatId == 9) && this.colorMirrorHasValue
-                            && this.celtium$colourDiffers())) {
+                            && this.celtium$colourDiffers())
+                    // BH-04, the other two halves: the texture affine and the fog are per-draw state as well, and both
+                    // are captured once when the group opens. A batch offered after either changed used to be appended
+                    // to the open group and drawn with the earlier value - the glint's scrolling affine and a quad drawn
+                    // under a different fog bracket are the two shapes this closes. Both comparisons are null-safe:
+                    // null means "identity affine" and "fog off" respectively, and those are states to compare too.
+                    || this.celtium$textureAffineMoved()
+                    || this.celtium$fogMoved()) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
                 long groupCreateStart = System.nanoTime();
