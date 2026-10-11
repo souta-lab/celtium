@@ -304,6 +304,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.314 **round 120: resize 受入を取得（`glfwWindowSizeAtEnd=1024x640`・VUID 0）— per-image の最重要項目が閉じた**
+
+- **測定（Lead の `r111-resize`・jar `d744673cc` 系・層あり・`pinSections=60`・`resizeAtTick=200`・`resizeTo=1024x640`・
+  **`resizeViaCompositor=true`**・150 s）**:
+  ```
+  resizeReason          = world
+  resizeWindowFrom      = 1280x720
+  resizeWindowTo        = 1024x640
+  glfwWindowSizeAtEnd   = 1024x640     ← window が実際に resize された
+  resizeRequestedAtTick = 200
+  VUID                  = 0
+  CELTIUM_RESIZE_COMPOSITOR tick=200 why=world mode=1024x640@60Hz exit=0 out=[ { "success": true }
+  CELTIUM_RESIZE_REQUEST    tick=200 why=world from=1280x720 to=1024x640
+  CELTIUM_RESIZE_OBSERVED   tick=201 from=1280x720 to=1024x640
+  ```
+  ＝**window が 1280x720 → 1024x640 に実際に変わり**（`CELTIUM_RESIZE_OBSERVED` が 1 tick 後に観測）、
+  **swapchain image 数が変わる状況で VUID 0・hang なし**。
+- **これが per-image present-wait semaphore の最重要受入項目**: 成長のみの配列が **image 数の変化を安全に跨いだ**
+  （Khronos の規則「present wait semaphore は swapchain image 数で大きさを決め acquired index で引く」の検証）。
+- **前ラウンドまで経路に入れなかった原因（2段）**: (1) `resizeTo` だけでは guard が動かない（`resizeAtTick` が必要）、
+  (2) `resizeViaCompositor` は既定 **false**（`Boolean.getBoolean`）で、**tiling compositor は GLFW の要求だけでは window を変えない**。
+  ＝**2つの flag を両方立てて初めて経路に入り、`glfwWindowSizeAtEnd` が要求値に一致した**。
+- **ユニットの残り**: **frame-close の pairing**（`submitSignalOnly`・この fixture では到達不能・`signalOnlySubmissions` は可視化済み）。
+  ＝**per-image は「実装済・通常経路4 leg 緑・resize 受入済み・frame-close のみ未取得（到達不能）」**。
+
 ## 0.313 **round 119: 前ラウンドの結論を訂正 — `resizeAtTick` guard は発火していた（`resizeRequestedAtTick=200`）・止めているのは compositor**
 
 - **訂正（重要・自分の誤り）**: §0.312 で「guard が発火していない」と書いたが、**それは誤り**だった。原因は**私が harness の lock JSON
