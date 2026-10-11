@@ -257,6 +257,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.281 **round 87: read の routing 修正を実装（identity 0 → default pair）— ルール整合だが白は動かず**
+
+- **実装（Lead）**: `celtium$ownedReadImage` の最後の分岐が `lastDrawnOffTargetIdentity` に対して**無条件に chain pair** を返していたのを、
+  **`routeLabelForBinding(lastDrawnOffTargetIdentity, false)`** に従うよう修正（identity 0 → default pair、その他非main → chain pair）。
+  ＝draws と同じ規則。ルール不整合は解消。
+- **測定（`r85-route`・hold 60）**: **変わらず** `mean=255,255,255`・`firstPixels=[ffffffff×4]`・`nonWhite=0`。
+  ＝**この修正は規則整合だが白の原因ではない**（正直に記録）。
+- **次の一手**: **offer 時に faces が属した identity の image** と、**read 時に解決される image** の対応を直接比較する。
+  `lastDrawnOffTargetIdentity` と `group.target`（offer 時の identity）を並べて印字し、**両者が同じ image に写像されるか**を確認する。
+  写像が食い違っていれば registry/routing の対応表の問題、同じなら readback 自体（layout/format/extent）の問題。
+- **白の全確定事実は不変**: mirror 正・bind 正・捕捉正・clear は draw 前・copy は panorama 自身・pending 39 あり・readback は全画素白。
+
 ## 0.280 **round 86: read 解決の実データ — `readFbo=0`・`mainColorName=3`・`currentTarget=0`・`currentIsMain=false`、しかし readImage は chainPair に落ちている**
 
 - **測定（Lead・`r83-state` の `CELTIUM_READ_RESOLVE`）**:
