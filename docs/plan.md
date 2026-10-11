@@ -145,6 +145,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.221 **round 27-28: エンティティ修正を picture で受入・font sampler reach 着地（leg は F3 で取る）**
+
+- **エンティティ受入（picture レベル・Lead 実測）**: `presentReadback=true` 付き leg で
+  `presentedImageVerdict=UNCALIBRATED_PRESENTED_IMAGE`・`presentedDistinctColours=16690`・
+  `presentedNonBackgroundFraction=0.952359`・`nonPlayerEntitiesAtCapture=9`・`worldTicksAtEnd=207`。
+  保存 frame `celtium-presented-early-…-kept.png`（sha256 `1696f7fb…`）に**一人称の腕**・crosshair・hotbar・terrain・雲・particle。
+  counter は `drawnByFormat` id4=17940・id9=228・`windowFlushFailures=0`・`windowFlushDroppedBatches=0`。
+  ＝**「受理されたが描かれない」は解消**。残る受入は上流参照との entity band / hand の一致（acceptance が較正 pair を取得中）。
+  なお以前の `FAILED_PRESENTED_IMAGE` は **`-Dceltium.vulkan.presentReadback=true` を渡していなかった測定側の欠落**
+  （`presentedImageMeanAtCapture=-1.0`・`WatchdogReason="the requested picture did not arrive"`）で、絵の不在ではなかった。
+- **font mirror の sampler reach（texture-mirror 着地）**: `glTexParameteri` の記録が全 pname を保持していることを利用し、
+  `confirmSamplerStateFromRecord` が **`GL_TEXTURE_MAX_LEVEL` を読んで sampler reach を下げられる**ように。
+  font sheet（`allocateTexture` → MAX_LEVEL 0）は `maxLod=0`＝mirror が生成していた level 1（GL に無いぼかし）を
+  sample しない。block atlas は MAX_LEVEL 4 で terrain は不変。`CELTIUM_SAMPLER_FILTER` が before/after を1行で出す。
+- **font leg の教訓（texture-mirror 実測）**: `keepGui=true` でも capture tick に chat が空だと
+  `CELTIUM_FONT_GLYPH_SUMMARY` が出ない＝**計器の不在は描画の不在ではない**。text を実際に描く leg が要るので、
+  **`-Dceltium.validation.showDebugInfo=true`（F3 overlay・数十万 glyph）**で取り直す（第二候補は menu scene）。
+  その leg 自体は `PASSED`・`validationClean=true`・`validationMessageCount=0`＝**VUID 系が消えた最初の clean leg**。
+- **BH-06（texture unit ごとの binding/enable）** も同 leg の tree に着地済み（reproducer leg は次）。
+
 ## 0.220 **round 27: FAILED ゲートの正体は「picture が届かなかった」（readback 未指定）・font overhaul の実現可能性（bitmap sheet で TTF 無し）**
 
 - **`FAILED_PRESENTED_IMAGE` の内訳（実測・`r26-entity`）**: `presentedImageMeanAtCapture=-1.0`・
