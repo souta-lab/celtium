@@ -41,3 +41,37 @@ consumer of it (the composite, the copy) reads uniform white.
   had it fired). A bounded print at the offer->draw transition for one identity (`-Dceltium.vulkan.drawSiteLines`
   already gates it) with `enqFormat=-1` would say whether *any* group draws through that loop in a menu leg -
   which separates "the loop is never entered" from "these groups are filtered out of it".
+
+## CORRECTION (same day, ~02:40): the faces DO draw - my "zero lines" was a grep bug
+
+The claim above that `CELTIUM_DRAW_SITE` printed zero lines is **wrong**, and so is the conclusion drawn from
+it ("no fmt=2 group reached the draw loop, the faces included"). The pattern I searched with was
+
+```
+CELTIUM_DRAW_SITE #[0-9]+ frame=[0-9]+ fmt=2 site=[a-zA-Z]+ ...
+```
+
+and the site name is `immediate-only-window` - `[a-zA-Z]+` cannot match the hyphens, so the search failed on
+every line that existed. The menu leg's log has **24** of them, and the first is:
+
+```
+CELTIUM_DRAW_SITE #1 frame=0 fmt=2 site=immediate-only-window target=1941007851 onMain=false passOpen=true
+    vertices=8 indices=12 batches=2 ...
+```
+
+`target=1941007851` is the panorama's identity, `batches=2` is the two accepted face batches, `passOpen=true`,
+and the site is the immediate-only window. **The faces are drawn.** The terrain leg carries 32 such lines
+(targets `0`, `1067713558`, `628151617`, all `onMain=false`), so the instrument and the draw path both work.
+
+## What is still true, and what is now open
+
+Still true: the published name (`glTexture=6 image=0x7f9a7cc7a4a0`) is the **chain pair** image, the faces are
+routed to the chain pair, and the copy resolves `readFbo=0` to the chain pair and reads `mean=255,255,255`.
+`flushEntries` in the terrain leg shows the one-shot identity visited with groups present
+(`2570d541: entries=15, groupsAtEntry=28`) and `offTargetPerTarget` shows `drawnPasses=15` for it.
+
+Now open: the image is drawn into and still reads white, so the remaining candidates are **ordering** ones -
+the copy happening before the faces' pass in the frame, or the pair being cleared after the draw and before the
+copy - or the copy reading an image other than the one the draw site used. The next measurement has to put a
+frame number and the image handle on both the draw site and the copy in the same frame, which neither line
+carries today.
