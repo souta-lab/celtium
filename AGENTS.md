@@ -25,6 +25,20 @@ The same rule applies to this project's own instruments: if a counter, dump or r
 already exists, read it instead of adding another one, and if you add one, name it in
 the report you write.
 
+## A failing gate is evidence
+
+The picture gate reported `presentedImageVerdict=FAILED_PRESENTED_IMAGE` with
+`sceneGateFloorsEnforced=true` and a matching calibration key for every GL-less run
+after 09:33 on 2026-10-11. It was right: the terrain had stopped contributing pixels.
+It stayed hidden for hours because the verdict was re-described as "the pinned scene's
+normal state" and readers were told to look at the counters instead.
+
+Do not do that. A failing gate is evidence until a measurement says it is wrong. If
+you believe a gate is misfiring, take an experiment that separates the competing
+explanations - the same fixture, the same camera and two jars, or the same jar and two
+cameras - before you override it, and write down which explanation the experiment
+ruled out.
+
 ## What "verified" means here
 
 - A GPU run is evidence only with its jar hash, GPU, scene, camera and flags recorded.
