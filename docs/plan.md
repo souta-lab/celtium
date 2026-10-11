@@ -117,6 +117,32 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.174 **video settings の機能受入（ユーザー要件の半分が閉じた）**
+
+fixture の機能検証が**成立**:
+
+```
+videoSettingsFunctionScreen    = org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen
+videoSettingsFunctionControls  = 8
+videoSettingsFunctionControl   = TickBoxControlElement
+videoSettingsFunctionBefore    = false
+videoSettingsFunctionAfter     = true
+videoSettingsFunctionChanged   = true
+videoSettingsFunction          = the screen's own control changed a setting after 4 press(es)
+```
+
+**ゲーム自身のクリック経路で画面が開き、その画面自身のコントロールが自身のハンドラで押され、所属する option が変化する。**
+4回押したのは、最初に到達したコントロールがトグルではなかったため——**「値が動くまで押す」形にした理由**。
+
+**途中で分かった3点（記録に値する）**:
+1. この runtime が表示する画面は **mod のもの**（`CeleritasVideoOptionsScreen`）で、比較対象の vanilla `GuiVideoSettings` は **"Done" 1つだけ**。
+   vanilla 画面に向けた機能テストは**押すものが無い**。
+2. ウィジェットは **`buttonList` ではなく controller の frame** にある——button list は探す場所として誤り。
+3. 押下は **widget 自身に直接**問い合わせる必要がある。画面は `func_146274_d` で**グローバルなマウス状態**を読むため、
+   `mouseClicked` に渡す座標は届かない。証拠は **controller の pending フラグではなく option の値**（フラグは render 時に更新される）。
+
+**これで video settings 要件の機能側が閉じた。** 画側は既に panel rect で参照と mean 1.406。
+
 ## 0.173 **client-memory decode 成功／メニューは次の段で失敗（backend が無い）**
 
 担当 weather-water がユーザーの構成（fixture なし・validation client なし・GL-less）で測定:
