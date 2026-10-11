@@ -304,6 +304,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.303 **round 109: per-image 化の地図に欠けていた1点 — `submitSignalOnly()` は image index を持たない第2の producer**
+
+- **コード確認（Lead・実装前の読解）**: `GllessFrameTarget.doneSemaphore`（`:114`）の **producer は2つ**ある。
+  1. **present 経路**（`VulkanSwapchain:850-851` が signal・`VulkanTerrainGpuBackend:4903/4907` が渡す）＝**acquired image index を持つ**。
+  2. **`submitSignalOnly()`**（`VulkanTerrainGpuBackend:12720`）＝**present しなかった frame を終わらせる**ために
+     `waitSemaphore` を wait し **`doneSemaphore` を signal** する。**この経路には image index が無い**。
+- **これが地図の欠落だった**: §0.299 の地図は「`doneSemaphore` を image 数配列にし、present 経路で acquired index を使う」で正しいが、
+  **`submitSignalOnly` が何を signal するかを決めていない**。単純に「index 0 を使う」と**規則違反が戻る**（image 0 が present 中に再 signal しうる）。
+  取り得る形は3つ:
+  (a) **`submitSignalOnly` を廃止**し、frame を終える経路を present か `endFrame` に一本化する、
+  (b) **最後に acquire した index を frame target が覚え**、`submitSignalOnly` はそれを使う、
+  (c) **`submitSignalOnly` の signal を per-frame の別 semaphore に分離**し、present の wait は per-image にする
+  （＝**「present が wait する semaphore」と「frame を閉じる semaphore」を別物にする**のが最も規則に忠実）。
+- **推奨（次に着手する担当へ）**: **(c)**。理由は Khronos の規則が「**present が wait する側**は image index で引く」と言っているのであり、
+  「frame を閉じる側」は frame の都合で決めてよいため。**(b)** は acquire と present の順序に依存する暗黙の状態を増やす。
+- **受入（変わらず）**: 較正済み terrain leg で `validationMessageCount=0` ＋ **resize leg**、両 leg `pinSections`。
+  加えて **(c) を選ぶ場合は `submitSignalOnly` が実際に発火する leg**（present しない frame を作る）でその semaphore の 1:1 を確認する。
+- **現状は緑**（VUID 0件・OPT-09 step(3) 閉止・層あり leg も緑）。**未検証の編集は入れない**方針は維持。
+
 ## 0.302 **round 108（round 100 到達）: 同世代プロジェクトとの設計境界を整理 — Celtium は唯一「完全 native・GL 非依存」を主張できる位置にいる**
 
 - **外部調査で確定した構図（goal C/D の材料）**:
