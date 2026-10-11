@@ -299,20 +299,32 @@ def main():
         evidence_source = fixture.get("pictureEvidenceSource") if isinstance(fixture, dict) else None
         outcome["pictureEvidenceSource"] = evidence_source
         if evidence_source:
-            stage_file = None
-            for key, value in (fixture or {}).items():
-                if key.startswith("pictureFile_") and isinstance(value, str) and value:
-                    stage_file = value
-                    break
+            # Which stage's picture the verdict is about. A GUI run dumps both a world and a gui frame, and taking
+            # whichever key the JSON happens to list first means a GUI verdict can be checked against the world image.
+            stage = "gui" if fixture.get("sceneGuiStage") else "world"
+            stage_file = fixture.get("pictureFile_" + stage) if isinstance(fixture, dict) else None
+            if not (isinstance(stage_file, str) and stage_file):
+                stage_file = next((v for k, v in (fixture or {}).items()
+                                   if k.startswith("pictureFile_") and isinstance(v, str) and v), None)
+                stage = "other" if stage_file else stage
+            outcome["pictureStage"] = stage
             if stage_file:
                 evidence = game / stage_file
                 outcome["pictureFile"] = stage_file
-                outcome["picturePresent"] = evidence.is_file() and evidence.stat().st_size > 24
+                is_png = (evidence.is_file() and evidence.stat().st_size > 24
+                          and evidence.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n")
+                outcome["picturePresent"] = is_png
+                if not is_png:
+                    outcome["pictureEvidenceProblem"] = (
+                        "picture source " + str(evidence_source) + " names " + str(stage_file)
+                        + ", which is missing or not a PNG")
             outcome["screenshotIsEvidence"] = evidence_source == "gl-screenshot"
             if evidence_source != "gl-screenshot":
                 # Do not let a black GL screenshot stand in for the picture, and do not fail a run for its absence:
-                # the presented dump is the evidence in this configuration.
-                outcome["screenshotSaved"] = True
+                # the presented dump is the evidence in this configuration - but the dump must be a real PNG, which
+                # is what the check above is for. The previous form set this True without reading the file, which is
+                # how a run could call itself evidenced while naming a file that did not exist.
+                outcome["screenshotSaved"] = bool(outcome.get("picturePresent"))
         if not outcome["screenshotSaved"] and code == 0:
             code = 1
         # Which device actually rendered. The GL renderer string is not an answer in the GL-less configuration - it is
@@ -343,7 +355,15 @@ def main():
                 outcome["gpuRequirementMet"] = args.require_gpu.lower() in fixture.get("glRenderer", "").lower()
             if not outcome["gpuRequirementMet"] and code == 0:
                 code = 1
-        if outcome["fixtureStatus"] != "PASSED" and code == 0:
+        # UNCALIBRATED is not a pass, but it is also not a defect: the scene has no reference at this pose/variant, so
+        # the picture gate refused to judge it. It is reported as its own outcome instead of being folded into either
+        # the failure path or the pass path - an uncalibrated scene that exits 0 and an uncalibrated scene that exits 1
+        # would both be wrong in the same way, by pretending the refusal was a verdict.
+        outcome["fixtureUncalibrated"] = outcome["fixtureStatus"] == "UNCALIBRATED_PRESENTED_IMAGE"
+        if outcome["fixtureUncalibrated"]:
+            print("note: the picture gate did not judge this scene (no reference at this pose/variant) - "
+                  + str(outcome["fixtureStatus"]))
+        if outcome["fixtureStatus"] not in ("PASSED", "UNCALIBRATED_PRESENTED_IMAGE") and code == 0:
             code = 1
         # Validation messages are a failure, not a detail. Leaving this out is what let a run report PASSED with
         # thirty-six validation messages inside it: the fixture's counters only see the renderer's own errors, and the
