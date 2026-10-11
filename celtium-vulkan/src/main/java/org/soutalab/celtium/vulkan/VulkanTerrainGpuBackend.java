@@ -10975,9 +10975,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 .width((float) width).height((float) height)
                 .minDepth(0.0f).maxDepth(1.0f);
         vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+        // BH-09: the game's own clip rectangle. Celeritas' UI calls GL11.glScissor directly (VintageDrawContext),
+        // which the stub now records instead of dropping, and this is the one place a group's rectangle becomes the
+        // Vulkan scissor - so the clip is applied here as the intersection of the target rectangle and the game's box,
+        // with GL's bottom-left origin flipped to Vulkan's top-left. An empty intersection becomes a zero extent,
+        // which is what clips everything. The scissor is command state, not pipeline state: it belongs in this
+        // rectangle and deliberately not in the group key.
+        int scissorX = x0;
+        int scissorY = y;
+        int scissorWidth = width;
+        int scissorHeight = height;
+        int[] clip = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox();
+        if (clip != null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()) {
+            int clipX0 = clip[0];
+            int clipY0 = this.targetHeight - (clip[1] + clip[3]);
+            int clipX1 = clipX0 + clip[2];
+            int clipY1 = clipY0 + clip[3];
+            int intersectX0 = Math.max(scissorX, clipX0);
+            int intersectY0 = Math.max(scissorY, clipY0);
+            int intersectX1 = Math.min(scissorX + scissorWidth, clipX1);
+            int intersectY1 = Math.min(scissorY + scissorHeight, clipY1);
+            scissorX = intersectX0;
+            scissorY = intersectY0;
+            scissorWidth = Math.max(0, intersectX1 - intersectX0);
+            scissorHeight = Math.max(0, intersectY1 - intersectY0);
+            this.immediateScissoredGroups++;
+        }
         org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-        scissor.get(0).offset().set(x0, y);
-        scissor.get(0).extent().set(width, height);
+        scissor.get(0).offset().set(scissorX, scissorY);
+        scissor.get(0).extent().set(scissorWidth, scissorHeight);
         vkCmdSetScissor(this.commandBuffer, 0, scissor);
         this.groupViewportNarrowed = true;
         this.immediateNarrowViewports++;
@@ -10990,6 +11016,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Groups drawn with a viewport narrower than the target: the counter that says the sub-rect path is live. */
     private long immediateNarrowViewports;
+    /** Groups whose Vulkan scissor was the intersection of the target with the game's own glScissor box (BH-09). */
+    private long immediateScissoredGroups;
     /** Groups whose clipped viewport is empty: an off-drawable rectangle, which GL would also draw nothing for. */
     private long immediateOffTargetViewports;
 
