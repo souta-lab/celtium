@@ -1139,8 +1139,61 @@ public final class VulkanSwapchain {
             int[] extent = effectiveExtent(capabilities, requestedWidth, requestedHeight);
             this.width = extent[0];
             this.height = extent[1];
-            int imageCount = Math.max(capabilities.minImageCount() + 1,
-                    Math.min(capabilities.maxImageCount() == 0 ? 3 : capabilities.maxImageCount(), 3));
+            // BH-18: the request is clamped into the surface's own limits on both sides. The old expression asked for
+            // minImageCount+1 - one more than the minimum - and only clamped downwards, so a surface that pins
+            // minImageCount == maxImageCount (2, on some WSIs) was asked for 3 and vkCreateSwapchainKHR failed for a
+            // reason the GPU has nothing to do with. Triple buffering is a preference, not a requirement: ask for 3,
+            // then honour min and max exactly.
+            int desiredImages = 3;
+            int imageCount = Math.max(capabilities.minImageCount(), desiredImages);
+            int surfaceMaxImages = capabilities.maxImageCount();
+            boolean imageCountClamped = false;
+            if (surfaceMaxImages != 0 && imageCount > surfaceMaxImages) {
+                imageCount = surfaceMaxImages;
+                imageCountClamped = true;
+            }
+
+            // BH-18: usage comes from what the surface advertises. COLOR_ATTACHMENT is required - the native path
+            // attaches the swapchain image as the frame target's colour - and is a named refusal when absent rather
+            // than a request the driver is expected to reject. TRANSFER_DST/SRC are added only when advertised, and
+            // which optional ones were dropped is recorded: silently asking for an unsupported bit is the failure the
+            // audit names, and silently *dropping* one the present path needs would be the same defect mirrored.
+            int supportedUsage = capabilities.supportedUsageFlags();
+            int requiredUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            if ((supportedUsage & requiredUsage) == 0) {
+                reasons.add("the surface does not support colour-attachment usage (supported=0x"
+                        + Integer.toHexString(supportedUsage) + "), which the native present path attaches the frame"
+                        + " to; there is no fallback present method in this renderer");
+                return false;
+            }
+            int swapchainUsage = requiredUsage
+                    | (supportedUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                    | (supportedUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+            String droppedUsage = ((supportedUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0
+                            ? "TRANSFER_DST " : "")
+                    + ((supportedUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0 ? "TRANSFER_SRC" : "");
+
+            // BH-18: the composite alpha is chosen from the surface's own set. OPAQUE is what the present path wants;
+            // when the surface does not offer it the next supported mode is taken and named, and a surface offering
+            // none at all is a refusal rather than a request for OPAQUE.
+            int supportedAlpha = capabilities.supportedCompositeAlpha();
+            int compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+            String alphaNote = "OPAQUE";
+            if (supportedAlpha != 0 && (supportedAlpha & compositeAlpha) == 0) {
+                if ((supportedAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) != 0) {
+                    compositeAlpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+                    alphaNote = "PRE_MULTIPLIED (OPAQUE not offered)";
+                } else if ((supportedAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) != 0) {
+                    compositeAlpha = VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
+                    alphaNote = "POST_MULTIPLIED (OPAQUE not offered)";
+                } else {
+                    compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+                    alphaNote = "INHERIT (OPAQUE not offered)";
+                }
+            } else if (supportedAlpha == 0) {
+                reasons.add("the surface advertises no composite-alpha mode at all");
+                return false;
+            }
 
             VkSwapchainCreateInfoKHR create = VkSwapchainCreateInfoKHR.calloc(stack).sType$Default()
                     .surface(this.surface)
@@ -1149,15 +1202,14 @@ public final class VulkanSwapchain {
                     .imageColorSpace(this.colorSpace)
                     .imageExtent(e -> e.set(this.width, this.height))
                     .imageArrayLayers(1)
-                    .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                            | (capabilities.supportedUsageFlags() & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+                    .imageUsage(swapchainUsage)
                     // Exclusive sharing: there is only one queue family here, and the spec requires CONCURRENT to
                     // list at least two distinct families (VUID-VkSwapchainCreateInfoKHR-imageSharingMode-01278).
                     .imageSharingMode(VK_SHARING_MODE_EXCLUSIVE)
                     .queueFamilyIndexCount(0)
                     .pQueueFamilyIndices(stack.mallocInt(1))
                     .preTransform(capabilities.currentTransform())
-                    .compositeAlpha(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
+                    .compositeAlpha(compositeAlpha)
                     .presentMode(this.presentMode)
                     .clipped(true)
                     .oldSwapchain(VK_NULL_HANDLE);
@@ -1166,6 +1218,8 @@ public final class VulkanSwapchain {
             // NullPointerException when a buffer it considers required is null, and a bare frame list does not say
             // which one. Everything LWJGL could dereference is logged with its value here.
             this.argumentSummary = "create-info: surface=" + this.surface + " minImages=" + create.minImageCount()
+                    + " imageCountClamped=" + imageCountClamped + " droppedOptionalUsage=["
+                    + droppedUsage.trim() + "] surfaceAlphaNote=" + alphaNote
                     + " format=" + create.imageFormat() + " colourSpace=" + create.imageColorSpace()
                     + " extent=" + create.imageExtent().width() + "x" + create.imageExtent().height()
                     + " layers=" + create.imageArrayLayers() + " usage=" + create.imageUsage()

@@ -1156,7 +1156,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 celtium$setTexEnvInt((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
             case SEM_TEX_ENV_F:
-                celtium$setTexEnvInt((int) c[0], (int) c[1], (int) c[2]);
+                // BH-34: an A_FLOAT slot carries the raw IEEE-754 bits, and glTexEnvf names the same enum as glTexEnvi -
+                // 8448.0f arrives as 0x45040000, so casting the slot stored 1157955584 as the combine mode. Decode it
+                // the way glTexParameterf next door already does, so the int and float forms record the same value.
+                celtium$setTexEnvInt((int) c[0], (int) c[1], Math.round(Float.intBitsToFloat((int) c[2])));
                 return 0L;
             case SEM_TEX_ENV_FV:
                 celtium$setTexEnvFloats((int) c[0], (int) c[1], c[2]);
@@ -2448,6 +2451,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             for (int i = 0; i < 4; i++) {
                 this.texEnvColor[unit][i] = MemoryUtil.memGetFloat(values + (long) i * 4L);
             }
+            return;
+        }
+        // BH-34's other half: glTexEnvfv carries the same values as glTexEnvi for the enum-valued pnames, as floats.
+        // Reading the first element and rounding it is what GL does when it converts the float parameter to the enum
+        // the state stores, so the array form and the scalar form now agree instead of the array form being dropped.
+        if (pname == GL_TEXTURE_ENV_MODE || pname == GL_COMBINE_RGB || pname == GL_COMBINE_ALPHA) {
+            celtium$setTexEnvInt(target, pname, Math.round(MemoryUtil.memGetFloat(values)));
         }
     }
 

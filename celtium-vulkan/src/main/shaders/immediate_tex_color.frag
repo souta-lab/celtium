@@ -4,6 +4,7 @@ layout(set = 0, binding = 0) uniform sampler2D u_Texture;
 
 layout(location = 0) in vec2 v_TexCoord;
 layout(location = 1) in vec4 v_Color;
+layout(location = 2) in float v_FogDistance;
 layout(location = 0) out vec4 fragColor;
 
 // The alpha test, at offset 128 of the push-constant block: Minecraft runs it through glAlphaFunc and cutout content
@@ -21,7 +22,34 @@ layout(push_constant) uniform PushConstants {
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;
     layout(offset = 124) float u_ColorB;
+
+    // BH-30: the fog block, declared exactly as the vertex stage declares it. The backend writes it for every group
+    // without a lighting payload; mode 0 means "no fog for this batch" and leaves the colour untouched.
+    layout(offset = 128) vec4 u_FogColor;
+    layout(offset = 144) vec4 u_FogParams;
+    layout(offset = 160) vec4 u_FogRow0;
+    layout(offset = 176) vec4 u_FogRow1;
+    layout(offset = 192) vec4 u_FogRow2;
 } celtium;
+
+/** How much fog this fragment gets: 0 for none, 1 for the fog colour entirely. Mode 0 is "fog off for this batch". */
+float celtiumFogAmount(float distance) {
+    int mode = int(celtium.u_FogParams.w + 0.5) & 7;
+    if (mode == 0) {
+        return 0.0;
+    }
+    float weight;
+    if (mode == 1) {        // GL_EXP2: exp(-(density * d)^2), base e - the terrain block's sodium fog uses base 2 here
+        float scaled = distance * celtium.u_FogParams.x;
+        weight = clamp(exp(-(scaled * scaled)), 0.0, 1.0);
+    } else if (mode == 2) { // GL_EXP: exp(-density * d)
+        weight = clamp(exp(-(distance * celtium.u_FogParams.x)), 0.0, 1.0);
+    } else {                // GL_LINEAR
+        float span = max(celtium.u_FogParams.z - celtium.u_FogParams.y, 0.000001);
+        weight = clamp((celtium.u_FogParams.z - distance) / span, 0.0, 1.0);
+    }
+    return (1.0 - weight) * celtium.u_FogColor.a;
+}
 
 void main() {
     vec4 colour = texture(u_Texture, v_TexCoord) * v_Color;
@@ -38,5 +66,6 @@ void main() {
     } else if (celtium.u_AlphaRef > 0.0 && colour.a < celtium.u_AlphaRef) {
         discard;
     }
+    colour.rgb = mix(colour.rgb, celtium.u_FogColor.rgb, celtiumFogAmount(v_FogDistance));
     fragColor = colour;
 }

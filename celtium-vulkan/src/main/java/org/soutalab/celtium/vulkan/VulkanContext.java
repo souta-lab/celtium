@@ -32,6 +32,7 @@ import org.lwjgl.vulkan.VkPhysicalDeviceProperties;
 import org.lwjgl.vulkan.VkPhysicalDeviceProperties2;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
+import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import org.lwjgl.vulkan.VK;
 import org.lwjgl.vulkan.VK12;
@@ -142,6 +143,8 @@ public final class VulkanContext {
      * whether the unbounded path is a hazard in practice or only in principle.
      */
     public static long bootstrapQueueWaitMillis;
+    /** Per-submission fence waits on the bootstrap path: the bounded replacement for the queue-wide idle (BH-27). */
+    public static int bootstrapSubmitWaits;
     public static long bootstrapQueueWaitWorstMillis;
     /** Submissions whose fence did not signal within the bound: a stall, counted so it can be read after the fact. */
     public static int submitTimeouts;
@@ -330,14 +333,11 @@ public final class VulkanContext {
         // queue is drained before a new one is allocated. Validation flags the alternative as a pending-state
         // reuse, and a half-rewritten command stream is exactly the kind of fault that makes a shader read the
         // wrong data. This is deliberately bootstrap quality; a real frame uses a small pool of buffers and fences.
-        bootstrapQueueWaits++;
-        // Unbounded by the API: vkQueueWaitIdle takes no timeout. Counted rather than described, so the claim that
-        // the frame path is bounded and only this bootstrap path is not can be read off a run instead of argued from
-        // the call sites (audit N14). The frame path waits on its own fence with a bound, and reports a stall by name.
-        // Timed as well as counted (task-60): the distribution is what says whether this path is a hazard in practice.
-        long waitStarted = System.nanoTime();
-        check(vkQueueWaitIdle(this.queue), "vkQueueWaitIdle(beginCommands)");
-        celtium$recordBootstrapWait(waitStarted);
+        // BH-27: this used to drain the whole queue before allocating a command buffer, because a previous
+        // submission might still be reading one. That is no longer needed: every buffer on this path is freed only
+        // after its own submission's fence has signalled (endCommands), and the pool is never reset, so a new
+        // allocation cannot disturb a buffer in flight. The queue-wide wait is gone; bootstrapQueueWaits now counts
+        // only the waits that remain (shutdown and rebuild paths).
         VkCommandBuffer commandBuffer;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandBufferAllocateInfo allocate = VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
@@ -573,31 +573,46 @@ public final class VulkanContext {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                         .pCommandBuffers(stack.pointers(commandBuffer));
-                check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), "vkQueueSubmit");
-                bootstrapQueueWaits++;
-                long waitStarted = System.nanoTime();
-                // Audit B04, the bootstrap half. Once the submit succeeded the queue owns the command buffer, and the
-                // only thing that makes freeing it correct is a queue wait that confirms the queue is idle. A wait
-                // that returns VK_ERROR_DEVICE_LOST does confirm that (the device is gone; the spec treats it as
-                // SUCCESS-equivalent for pending/in-use purposes); anything else does not, and the buffer is then
-                // quarantined instead of freed.
-                int idle = vkQueueWaitIdle(this.queue);
-                celtium$recordBootstrapWait(waitStarted);
-                if (idle == VK_SUCCESS || idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-                    if (idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                // BH-27: the submit gets its own fence and this path waits on that fence, not on the whole queue.
+                // The queue-wide idle it used to do (twice per copy, once in beginCommands and once here) drained
+                // every other submission in flight, so every upload and every present serialised the renderer against
+                // the GPU. The fence is what makes freeing this command buffer correct: only this submission has to
+                // complete, and the queue keeps running while it does.
+                LongBuffer fenceHandle = stack.mallocLong(1);
+                check(vkCreateFence(this.device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, fenceHandle),
+                        "vkCreateFence(bootstrap submit)");
+                long fence = fenceHandle.get(0);
+                try {
+                    check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit");
+                    long waitStarted = System.nanoTime();
+                    int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
+                    celtium$recordBootstrapWait(waitStarted);
+                    if (waited == VK_SUCCESS) {
+                        bootstrapSubmitWaits++;
+                    } else if (waited == VK_TIMEOUT) {
+                        // A submission that does not complete within the bound is the stall the frame path already
+                        // reports by name; here it means the command buffer must not be freed.
+                        submitTimeouts++;
+                        this.usable = false;
+                        releasedToQueue = false;
+                        quarantine(commandBuffer, fence);
+                        throw new IllegalStateException("vkWaitForFences(bootstrap submit) did not signal within "
+                                + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L) + "s; the command buffer is quarantined"
+                                + " rather than freed (submitTimeouts=" + submitTimeouts + ")");
+                    } else if (waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                         submitDeviceLost++;
                         this.usable = false;
+                    } else {
+                        queueWaitFailures++;
+                        this.usable = false;
+                        releasedToQueue = false;
+                        quarantine(commandBuffer, fence);
+                        throw new IllegalStateException("vkWaitForFences(bootstrap submit) returned " + waited
+                                + "; the command buffer is quarantined rather than freed (queueWaitFailures="
+                                + queueWaitFailures + ")");
                     }
-                } else {
-                    queueWaitFailures++;
-                    this.usable = false;
-                    releasedToQueue = false;
-                    quarantine(commandBuffer, VK_NULL_HANDLE);
-                    throw new IllegalStateException("vkQueueWaitIdle did not confirm the queue was idle: result="
-                            + idle + ". The command buffer submitted just before it may still be owned by the queue,"
-                            + " so it is quarantined rather than freed (this is not a lost device: only"
-                            + " VK_ERROR_DEVICE_LOST is completion-equivalent for pending/in-use purposes)"
-                            + " (queueWaitFailures=" + queueWaitFailures + ")");
+                } finally {
+                    vkDestroyFence(this.device, fence, null);
                 }
             }
         } finally {

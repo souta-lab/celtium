@@ -1854,11 +1854,17 @@ public final class VulkanGlTexture {
      * keyed on {@link #key()} cannot keep naming the destroyed sampler.
      */
     public void confirmSamplerStateFromRecord(int glTextureId) {
-        if (this.wrapConfirmed || glTextureId <= 0
-                || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+        if (glTextureId <= 0 || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             return;
         }
-        this.wrapConfirmed = true;
+        // BH-23: this used to be a one-shot (`wrapConfirmed`), so a texture whose filter or wrap changed *after* its
+        // first draw kept the old sampler for the rest of its life, and the full minification meaning never reached it.
+        // It now re-consults on every lookup and rebuilds only when something actually differs, which is what makes
+        // "the game changed the parameter" a thing the mirror can see. The cost is four record lookups and compares on
+        // a path that already does several map lookups.
+        if (!this.wrapConfirmed) {
+            this.wrapConfirmed = true;
+        }
         boolean repeatU = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
                 org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S) == org.lwjgl.opengl.GL11.GL_REPEAT;
         boolean repeatV = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,

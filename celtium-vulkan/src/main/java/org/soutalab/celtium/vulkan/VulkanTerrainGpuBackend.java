@@ -1485,6 +1485,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private float[] currentGroupFog;
     /** The colour GL had current when a position-only batch was offered; null for every other format. */
     private float[] currentGroupColor;
+    /**
+     * The fixed-function lighting payload of the batch that opened this group, captured at acceptance (BH-05).
+     * <p>
+     * It used to be computed in {@code closeCurrentImmediateGroup}, which reads the light directions, diffuse, ambient
+     * and the enabled-light mask from the <em>live</em> immediate state: a draw accepted before a light change was
+     * therefore shaded with the light that arrived later, and only the flush timing decided which. The group's own
+     * model-view was already saved at acceptance, so the payload is now built from that pair here - the same design the
+     * model-mesh path already used.
+     */
+    private float[] currentGroupLightParams;
     /** {@code -Dceltium.vulkan.alphaTest=false} turns the immediate path's alpha test off, for measurements. */
     private static final boolean ALPHA_TEST_ENABLED = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.alphaTest", "true"));
@@ -2569,6 +2579,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * way and the renderer uses the same channel for its own overlays. Only the UV transform matters, so the result
      * is {@code [a,b,c,d,tx,ty]} in column-major terms ({@code u'=a*u+c*v+tx, v'=b*u+d*v+ty}).
      */
+    /**
+     * {@return whether the colour the game has current differs from the one captured with {@code currentGroupColor}}.
+     * <p>
+     * BH-04: the group key compared the format, texture, state key, pass and matrices, but not the current colour, so
+     * two colourless draws in one group were both drawn with the first one's tint. A {@code null} captured colour means
+     * the group's format does not take a colour at all, and then there is nothing to compare.
+     */
+    private boolean celtium$colourDiffers() {
+        if (this.currentGroupColor == null) {
+            return true;
+        }
+        return this.currentGroupColor[0] != this.immediateState.colorRed()
+                || this.currentGroupColor[1] != this.immediateState.colorGreen()
+                || this.currentGroupColor[2] != this.immediateState.colorBlue()
+                || this.currentGroupColor[3] != this.immediateState.colorAlpha();
+    }
+
     private float[] celtium$textureAffine() {
         try {
             // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
@@ -4451,7 +4478,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     || this.currentPreparedImmediate == null || this.currentPreparedImmediate.pipeline != prepared.pipeline
                     || this.currentPreparedImmediate.descriptor != prepared.descriptor
                     || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
-                    || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)) {
+                    || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)
+                    // BH-04: the colour is part of the group's state, so a draw that arrives with a different current
+                    // colour cannot join it - the colourless layouts carry it as the tint, and a batch appended after
+                    // a glColor change used to be drawn with the previous colour. Compared only for the formats that
+                    // take the colour from the mirror and only when the mirror has a value, which is exactly when the
+                    // capture below reads it.
+                    || ((formatId == 7 || formatId == 6 || formatId == 9) && this.colorMirrorHasValue
+                            && this.celtium$colourDiffers())) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
                 long groupCreateStart = System.nanoTime();
@@ -4496,6 +4530,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // moment the live fog state is the batch's own, and by the time the group closes the game may have
                 // bracketed the batch with enable/disable (the sky dome is exactly that case).
                 this.currentGroupFog = celtium$fogSnapshot();
+                // BH-05: the lighting belongs to the batch that opened the group, so it is read from the state saved
+                // two lines above while that state is still the live one. Reading it at close time instead let a later
+                // light change shade vertices that had already been accepted.
+                this.currentGroupLightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
                 // Translucency is a state rather than a layout, so the per-format counters cannot see it. This pair can, and it
                 // has to be counted here rather than where the flag is read for pipeline selection: at flush time the state
                 // belongs to the group being flushed and blending is on for the whole family, which made the first version of
@@ -6271,7 +6309,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.batches = this.currentGroupBatches;
             group.viewportValues = this.currentGroupViewportValues;
             group.texMatrix = this.currentGroupTexMatrix;
-            group.lightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
+            // BH-05: the payload captured when this group was opened, not one rebuilt from the live light state now.
+            group.lightParams = this.currentGroupLightParams;
             group.lightmapCoords = lightmapCoordKnown() ? lightmapCoords() : null;
             // The state captured when the group was opened, not the live state: see currentGroupFog.
             group.fog = this.currentGroupFog;
