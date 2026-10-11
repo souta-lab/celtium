@@ -145,6 +145,41 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.208 **Lead が2つの根因を修正: 00900 VUID（published name と attach の不一致）とロード画面（frame 0 の drop）**
+
+### (1) `VUID-vkCmdBeginRenderPass-initialLayout-00900`（20件/run・受入ブロッカー）
+
+- 根因: `recordImmediateOnlyPass` の pass begin（`vkCmdBeginRenderPass`）は attachment 0 の initialLayout が
+  `GENERAL`（`COLOR_ATTACHMENT_LAYOUT = VulkanFrameTarget.COLOR_RENDER_LAYOUT`）。その直前に呼ばれる
+  `celtium$transitionPublishedFrameTextures(false)` が **published name 全部**を `SHADER_READ_ONLY_OPTIMAL` へ動かしていた。
+  ところが `celtium$syncPublishedChainOutput` は「attach する chain pair image を指す名前」だけを残すので、
+  **その transition はこれから attach する image 自身を動かしていた** ＝ 直前の layout が SHADER_READ_ONLY のまま
+  GENERAL を宣言する pass が始まる。
+- 修正: pass が attach する colour image を `passAttachedColorImage` として framebuffer 選択時に記録し、
+  sampling 側の transition は **その image を指す published name を飛ばす**（attach 側の hand-back が GENERAL のまま保つ）。
+  `publishedFrameTexturesSkippedForAttach` で数え、最初の1件は理由つきで記録する（黙って遷移をやめる規則は観測できないため）。
+- 受入: 現行 jar の terrain leg で `validationMessageCount=0`（leg `r12-vuid-fix` を queue）。
+
+### (2) ロード画面が出ない＝frame 0 で splash の composite batch が drop されていた
+
+- ユーザーのセッション（20:37:47・起動直後）の実測:
+  `CELTIUM_IMMEDIATE_ENQ frame=0 group=1 … fmt=2 texture=8 … target=15042289`（splash の logo group・Mojang logo texture 8）→
+  `CELTIUM_EXTERNAL_IMAGE published glTexture=6 image=0x7f438c8641d0 size=854x480`（splash FBO の colour texture 名を pair image に publish）→
+  `CELTIUM_IMMEDIATE_ENQ frame=0 group=2 … fmt=2 texture=6 batches=1 target=0`（**publish 名を sample して frame に書く composite**）→
+  `CELTIUM_REPLACE_DROP batches=1 target=854x480 frameId=0` ＝ **その composite が捨てられた**。
+  session 全体でこの drop は **1回だけ**（frame 0）。
+- 根因: `FramebufferMixin.celtium$noteRenderTarget` が **全 framebuffer の bind** で
+  `celtium$noteBindSize(w,h)` を呼び、frame target とサイズが違えば `framebufferReplacing=true` を立てていた。
+  起動時は splash 自身の FBO（`CELTIUM_ADOPT_PROBE afterBind size=468x1018`）が window の 854x480 と違うので
+  フラグが立ち、次の ordering flush が **pending group を全部 drop** する（`flushPendingBeforeGlDraw` の
+  「replacement 中の flush は device を待たせる」規則）。この規則の目的は**本物の resize**（frame target の置換）であって、
+  ゲームが意図的に持つ別サイズの FBO ではない。
+- 修正: フラグは **main framebuffer（`mc.getFramebuffer() == self`）のときだけ**立てる
+  （`celtium$noteBindSize(w,h,mainFramebuffer)`）。mixin が `mc.getFramebuffer() == self` を渡す。
+  **resize 経路は main の bind なので不変**（task-28 の resize leg で再確認する）。
+- 受入: compositor 連番 capture（`scripts/compositor_capture.py`・0.5s 間隔）で起動〜world load の frame に
+  loading/splash の内容が出ること＋`CELTIUM_REPLACE_DROP` が 0 件であること。
+
 ## 0.207 **round 11 の進行: クラッシュは再現せず（jar 健全性3計測）・lightmap 座標は stub で捨てられていた・VSync 行は在った**
 
 - **task-58 完了（sky-draws・`guiscale-leg`）＝クラッシュは再現せず、ただし「修正済み」ではない**:

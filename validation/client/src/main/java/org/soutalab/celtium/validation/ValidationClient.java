@@ -3105,6 +3105,16 @@ public final class ValidationClient {
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
                 flickerPinned = pinLightmapFlicker(mc);
                 mc.world.setWorldTime(PINNED_WORLD_TIME);
+                // The cloud setting, for the same reason the time is pinned: the user's complaint names clouds, and no
+                // run of this fixture could contain a cloud pixel because nothing set the game's own cloud option. The
+                // default is -1 = "leave the game's value alone", so every existing leg and calibration key is
+                // bit-for-bit unchanged; the value the run used is reported either way.
+                int cloudOption = Integer.getInteger("celtium.validation.renderClouds", -1).intValue();
+                if (cloudOption >= 0 && cloudOption <= 2) {
+                    // 1.12.2's field is `clouds` (int 0/1/2); `renderClouds` is only the options.txt key and the
+                    // translation key, which is what the first version of this edit mistook it for.
+                    mc.gameSettings.clouds = cloudOption;
+                }
                 // Rebuilding every chunk mesh once, after the world time is pinned, answers a question the frame alone
                 // cannot: if the terrain brightens, the light level was baked into the per-vertex colour when the mesh was
                 // built and is never refreshed while that mesh lives, rather than the light map texture being wrong.
@@ -4273,6 +4283,8 @@ public final class ValidationClient {
                 report.addProperty("lightmapFlickerPinned", flickerPinned);
                 report.addProperty("pinnedWorldTime", PINNED_WORLD_TIME);
                 report.addProperty("worldTimeAtCapture", mc.world.getWorldTime());
+                report.addProperty("renderCloudsRequested", Integer.getInteger("celtium.validation.renderClouds", -1));
+                report.addProperty("renderCloudsAtCapture", mc.gameSettings.clouds);
                 // The presented image's mean, taken at the capture so it belongs to the same frame as the screenshot. The
                 // earlier comparison against the screenshot's mean was invalid because the two were sampled at different
                 // moments; for the same reason it is not used as evidence unless the readback is on.
@@ -5727,6 +5739,19 @@ public final class ValidationClient {
         celtium$vsBefore = String.valueOf(celtium$fieldValue(button, new String[] {"displayString", "field_146126_j"}));
         celtium$vsFileBefore = celtium$vsOptionsFile(mc);
         report.addProperty("videoSettingsOptionName", celtium$vsOption);
+        // A requested token that matched nothing used to press the first row and read as a successful press of the row
+        // that was asked for - which is how "VSYNC has no row" was recorded while the dump below listed ENABLE_VSYNC.
+        // The fallback is still pressed (the chain needs a press) but it says so, and the requested token is quoted
+        // beside it so the next reader can tell a missing row from a missing match.
+        String celtium$vsRequested = System.getProperty("celtium.validation.videoSettingsOption", "");
+        boolean celtium$vsFellBack = !celtium$vsRequested.isEmpty() && !celtium$vsRequested.equals(celtium$vsOption);
+        report.addProperty("videoSettingsOptionRequested", celtium$vsRequested.isEmpty() ? "[none]" : celtium$vsRequested);
+        report.addProperty("videoSettingsOptionFallback", celtium$vsFellBack);
+        if (celtium$vsFellBack) {
+            report.addProperty("videoSettingsOptionFallbackNote",
+                    "the requested token matched no row; the first pressable row was pressed instead. Rows on the page: "
+                            + celtium$vsRowNames(list));
+        }
         report.addProperty("videoSettingsOptionBefore", celtium$vsBefore);
         report.addProperty("videoSettingsOptionButton", button.getClass().getName());
         if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
