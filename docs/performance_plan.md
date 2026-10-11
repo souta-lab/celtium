@@ -262,6 +262,17 @@ Angelica の `TesrMeshProvider` / `TesrMeshCache` / `ModelPartBatch` は、entit
 
 **受入**: steady animation / chunk upload で copy ごとの host fence wait が消える。wait count / time、submit 数、upload bytes、GPU gap、visible chunk completion、p95 / p99 を比較する。queue idle を fence に置き換えただけの同期化を成功にしない [R37 / R39]。
 
+> **2026-10-12 の失敗と、先に書くべきだった契約（実測）**: `VulkanContext.uploadToBuffer` を「staging ring に記録して
+> `flushUploads()` まで pending にする」形で実装したところ、**全 leg で device lost** した（`VUID-vkCmdCopyBuffer-dstBuffer-parameter`、
+> `vkDeviceWaitIdle returned -4`、`vkQueueSubmit -4` out of `flushUploads`/`reserveUploadSlot`、SIGSEGV in `libvulkan_radeon.so`）。
+> 理由は同期ではなく**destination の寿命**で、この節の 3 番目の項目そのもの: pending な copy は `dstBuffer` の **handle を記録時点で
+> 固定**するのに、呼び出し側は「upload から戻った時点で copy は片付いている」前提で destination を差し替える
+> （`VulkanArena.write` の直後の arena growth = `VulkanBuffer.ensureCapacity` が旧 VkBuffer を破棄、world teardown は arena ごと破棄）。
+> よって **batch 化の前提条件は次のいずれか**であり、これが無い限り per-copy settle（1 copy = 1 submit + fence wait）を維持する:
+> (a) destination 側の last-use を batch の完了 epoch で gate する（`VulkanBuffer.delete/ensureCapacity` と arena の segment 再利用を含む）、
+> または (b) copy の destination handle を **flush 時に解決**する（記録時に固定しない）＋ arena の segment 再利用 gate。
+> 実装は commit `14ed4615f` で revert 済み（ring と `flushUploads()` は未配線で残置）。詳細と検証 leg は `docs/plan.md` §0.224。
+
 ### OPT-08: 2 frames in flight と非同期 present
 
 - 各 frame slot に command pool / command buffer、uniform / instance / geometry slice、query range、必要な descriptor と attachment を所有させる。
