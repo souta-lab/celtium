@@ -3809,12 +3809,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         boolean sharedComposite = false;
         if (fbo == 0 && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
-            // No GL framebuffers exist under the stub, so every default-framebuffer draw - menus, the composite,
-            // overlays - lands in the owned image. The shared-composite path below is the same decision with a GL
-            // adoptable framebuffer; under glless there is simply nothing to adopt.
+            // Under the stub there is no GL framebuffer to adopt, so this used to hand every unbound-framebuffer draw
+            // to the renderer's single off-target pair. That pair is also the image the entity-outline chain adopts as
+            // its input, and the game issues the finished-frame composite with no Framebuffer bound - so the chain was
+            // handed a per-frame copy of the whole frame instead of the silhouette, blurred it, and the composite added
+            // a dimmed mirrored copy of the scene back over it. Measured: offTargetByTarget=[0:104 368534084:24] with
+            // offTargetClears=105 on a 105-frame run, corr(post,pre)=-0.43 against corr(post,flipud(pre))=+0.46, and
+            // the mob silhouettes reappearing mirrored. Nothing is lost by refusing: in the run that passed with the
+            // glow off, these same batches already went into the off-target pair, i.e. they never reached the presented
+            // frame. The frame's own content reaches the screen at the swap point, so the composite has no work here.
             this.defaultFramebufferCompositesTaken++;
-            sharedComposite = true;
-            this.immediateLastRefusal = "taken: the glless default-framebuffer draw goes into the owned image";
+            this.immediateLastRefusal = "refused: the glless unbound-framebuffer composite is the present path's job";
+            return false;
         } else if (fbo == 0) {
             // The default framebuffer is what Minecraft's own composite draws into: it blends an overlay over the frame on
             // the way to the screen. With the game rendering into the shared images that framebuffer is not where the
