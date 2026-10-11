@@ -257,6 +257,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.262 **round 68: pass-end hand-back を試して測定 → VUID が 2→4 に増加＝仮説は棄却・revert（`eb147a5cc`）**
+
+- **実装した仮説（`51cf1ac14`）**: 2つの `vkCmdEndRenderPass` の直後で `passAttachedColorImage` を 0 にしてから
+  `celtium$transitionPublishedFrameTextures(false)` を呼び、published name を pass 終了時に SHADER_READ_ONLY へ戻す。
+- **測定（`r66-layout`・layers ON・menu hold 60）**: **`VUID-vkCmdDraw-None-09600` が 4件**（修正前は 2件）・copy は依然 `mean=255,255,255`。
+  ＝**仮説は棄却**。pass 終了時に read-only へ戻すのは、この VUID の原因ではない（むしろ増やした）。
+- **revert（`eb147a5cc`）**: 悪化させた変更を残さない。build 緑。
+- **この測定が示すこと**: VUID は「pass の外で sample する draw」ではなく、**pass の内側**で起きている可能性が高い
+  （`passAttachedColorImage` を消して遷移を足したことで、attach 側の skip が効かなくなり増えた＝**pass 内の draw が pair を sample している**）。
+  次の仮説は「**同一 pass 内で attach した image を同じ pass の draw が sample する**フィードバック経路」で、
+  修正は descriptor の `imageLayout` を **GENERAL** にする（`VK_IMAGE_LAYOUT_GENERAL` は sampled にも attachment にも合法）こと。
+- **未確定**: どの draw がどの descriptor で sample しているか。次は VUID の発生箇所に
+  `passAttachedColorImage` と `commandState.inRenderPass()` を並べて印字する。
+
 ## 0.261 **round 67: hand-back は「次の pass の直前」にしか無い＝pass 終了後〜次の pass の間に sample する draw が GENERAL を見る**
 
 - **コード確認（Lead）**: `vkCmdBeginRenderPass` は **2箇所だけ**（`:7167`・`:8639`）で、どちらも直前に
