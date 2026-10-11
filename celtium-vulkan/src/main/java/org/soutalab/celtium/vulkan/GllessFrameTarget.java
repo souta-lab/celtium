@@ -632,6 +632,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /** The last such clear's framebuffer name, so the drop is attributable. */
     private int lastDroppedClearOwner;
 
+    /** {@return clears dropped because they named one of the game's own framebuffers, not the delivered frame}. */
+    public int gameClearsDroppedForeignTargetCount() {
+        return this.gameClearsDroppedForeignTarget;
+    }
+
+    /** {@return the framebuffer name of the last dropped clear}, or -1 when none was dropped. */
+    public int lastDroppedClearOwnerName() {
+        return this.lastDroppedClearOwner;
+    }
+
     private void applyGameClears(VkCommandBuffer command) {
         boolean first = this.neverCleared;
         boolean latched = this.gameClearLatched;

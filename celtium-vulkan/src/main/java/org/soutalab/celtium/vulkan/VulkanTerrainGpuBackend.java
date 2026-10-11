@@ -7203,6 +7203,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCallCount()
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
+                // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
+                // to the shared chain pair, so the counter is what says the fix fired and the owner is what makes it
+                // attributable - the panorama's faces were wiped by exactly such a clear before this existed.
+                + " gameClearsDroppedForeignTarget=" + (offTargetTarget() == null ? -1
+                        : offTargetTarget().gameClearsDroppedForeignTargetCount())
+                + " lastDroppedClearOwner=" + (offTargetTarget() == null ? -1
+                        : offTargetTarget().lastDroppedClearOwnerName())
                 + " lineBatchesNarrowed=" + this.lineBatchesNarrowed
                 // BH-07/BH-10/BH-03's counters, at the same place as BH-08's: captured per batch, so a leg says how
                 // many batches carried an alpha pair the old pipelines could not express, how many carried a write
@@ -11980,6 +11987,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         int scissorY = y;
         int scissorWidth = width;
         int scissorHeight = height;
+        // Kept for the bounded CELTIUM_GROUP_SCISSOR line below: the intersection overwrites the four variables, and a
+        // reader has to see the group's own rectangle beside the box it was intersected with.
+        int scissorX0 = scissorX;
+        int scissorY0 = scissorY;
+        int scissorWidth0 = scissorWidth;
+        int scissorHeight0 = scissorHeight;
         // The group's own captured clip, not the live record: reading it live applied whatever rectangle the game
         // had set last to every batch in the group, so a group spanning a scissor change was clipped by the wrong box
         // (OPT-10's "state must reach the group", the same rule the fog and the light params follow).
@@ -12008,6 +12021,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             scissorWidth = Math.max(0, intersectX1 - intersectX0);
             scissorHeight = Math.max(0, intersectY1 - intersectY0);
             this.immediateScissoredGroups++;
+            if (this.immediateScissoredGroups <= 4) {
+                // The four numbers on both sides of the conversion, because the first version of the controlled clip
+                // probe produced groups whose clip was applied and whose quads were invisible: the box, the group's
+                // rectangle and the intersection have to be readable together to tell a wrong conversion from a wrong
+                // rectangle. Bounded to four lines like CELTIUM_GROUP_VIEWPORT next door.
+                System.out.println("[Celtium] CELTIUM_GROUP_SCISSOR glBox=" + clip[0] + "," + clip[1] + " "
+                        + clip[2] + "x" + clip[3] + " groupRect=" + scissorX0 + "," + scissorY0 + " "
+                        + scissorWidth0 + "x" + scissorHeight0 + " applied=" + scissorX + "," + scissorY + " "
+                        + scissorWidth + "x" + scissorHeight + " target=" + this.targetWidth + "x"
+                        + this.targetHeight);
+            }
         }
         org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
         scissor.get(0).offset().set(scissorX, scissorY);
