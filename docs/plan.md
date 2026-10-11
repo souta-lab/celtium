@@ -95,6 +95,51 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.160 **方針変更: bridge は使わない（GL-less のみ）／チーム運用の修正と新しい欠陥**
+
+### ユーザー決定
+
+**「bridgeとかいらない。gllessのみでいこう」**。GL interop の bridge leg は完成条件に不要。以降の受入は
+**保存済みの参照**（bridge 時代の画像と較正済み床＝vanilla が何を描いたかの証拠としては有効）か、
+**同一 jar・1フラグ差の自己比較**。GL-less 同士を別 jar で比べたものは比較にならない。全10体へ通達済み。
+
+### 「全体が半分暗い」は私の誤り（撤回）
+
+`jei-gl60`（GL-less・tick 61）と `jei-br`（bridge・tick 60）を比べて「全段階で約半分の明度」と記録したが、担当 frame-composite が**内容の artefact** と示した:
+12:41 の bridge は**地形を描いておらず**、その最頻色 `0x8B8B8B` は **JEI の画面パネル**、GL-less 側の最頻色 `0x1D1111` は**地面**。つまり「パネル対世界」を比べていた。
+
+**正しい分離測定**（既存データ・GL-less `van-glless` vs 保存参照 `scene-floors/terrain-a`）:
+
+| stage | >8 で異なる画素 |
+|---|---|
+| terrain centre (320,300,960,640) | **1 / 204800** |
+| bottom-left / bottom-right | 1 / **0** |
+| hud / hotbar / tooltip / chat | **0** |
+| horizon band | 460 (0.2%) |
+| sky band | 87.8%（既知の dome 欠陥。flat 179,207,255 vs bridge の勾配 158,193,255） |
+
+**swapchain は `VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR`/`B8G8R8A8_UNORM`、present は 1:1 の nearest blit**——premultiplied alpha も transfer function も経路上に無い（原典で確認）。
+**地形と HUD は既にほぼ一致**しており、**残るは sky band**（dome 担当の領域）。black fraction は terrain scene で 0.0〜0.0023（0.19〜0.99 は glow/GUI 段階）。
+
+### スロット調停（`67cf6f806`）
+
+4体が同じ秒に busy チェックを通り、**3クライアントが1つの GPU で走った**。check-then-launch の窓が問題で、規律の問題ではない。
+ハーネスが `.celtium-work/game-slot` に**pid 入りのロックファイルを原子的に作成**し、生存中は待機（`--slot-wait`、既定900秒）、死んでいれば回収、全終了経路で解放。
+**1 GPU 2 run は証拠にならない**——今日5件目の競合で、再発しない形になった。
+
+### ハーネスのもう1つの穴（`8ae2e64f8`）
+
+`--mod` と同名の instance 側 jar だけを除外していたため、**別名で凍結した担当は instance の jar もコピーされ duplicate mod で起動失敗**（fog-path・entity-models が各1 leg を失った）。
+→ **instance 内の `celtium-forge-*`/`celtium-validation-client-*` は常にコピーしない**。ユーザーの起動用 jar は残せる。
+
+### 新しい欠陥（チームが発見）
+
+- **`GlStateManagerMixin:355-363` のフック名が誤り**（担当 gui-stage が `--srg` で確認）: `func_179141_d`/`func_179118_c` は **enableAlpha/disableAlpha** なのに `setLightingEnabled` として扱っている。
+  本来の lighting は `func_179145_e`/`func_179140_f` で**未フック**。→ **mirror の alpha test は常に off、lighting フラグは alpha 呼び出しで駆動**。proj-channel の担当ファイルなので routing 済み。
+- **雲（format 8）**: GL-less で **frame 1 のみ受理され以降提出されない**（27 group すべて frame=1）。保存参照の同一 pose には fancy cloud が写っている。
+- **雨（format 5）**: どのヒストグラムにも `acceptedByFormat` にも現れない（`5:0`）＝**offer されていない**。
+- **flat generator 文字列の先頭は version**（`1;` は `"x"` 区切り）——担当が自分で発見し再取得。
+
 ## 0.158 **bridge は 09:47 から地形を描いていなかった——depth format が GL-less でしか選ばれていなかった**
 
 担当 A が**レポートを読んで**（verdict ではなく）発見した、その日で最も重要な欠陥。
