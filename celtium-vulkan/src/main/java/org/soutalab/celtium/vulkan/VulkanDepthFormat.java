@@ -81,14 +81,36 @@ public final class VulkanDepthFormat {
      */
     public static int chosen() {
         int existing = CHOSEN.get();
-        if (existing == VK_FORMAT_UNDEFINED) {
-            VkPhysicalDevice device = chosenDevice;
-            if (device == null) {
-                throw new IllegalStateException("the depth format was asked for before anything chose one");
-            }
-            return chosen(device);
+        if (existing != VK_FORMAT_UNDEFINED) {
+            return existing;
         }
-        return existing;
+        VkPhysicalDevice device = chosenDevice;
+        if (device == null) {
+            // The device is registered by the context as soon as it has one (noteDevice), so this only happens if a
+            // depth format is asked for before any Vulkan device exists at all - which is a real ordering error and not
+            // the case this class was failing on. The message says which, because the previous message named a
+            // condition ("before anything chose one") that was reachable in normal use.
+            throw new IllegalStateException("the depth format was asked for before a Vulkan device was registered");
+        }
+        // Choosing on first use is the point of this overload: the render-pass builder and the terrain pipeline are
+        // static callers that run whether or not a frame target exists, and the bridge configuration has no
+        // GllessFrameTarget to choose for them. Before this, a bridge run threw here for every terrain pipeline and
+        // drew no terrain at all (worker A's finding: passes=0 skipped=N skipReason=translucent:_no_pipeline from
+        // 09:47, while the runs that "passed" scored their floor on the chat block over a sky-only frame).
+        return chosen(device);
+    }
+
+    /**
+     * Registers the device this renderer runs on, so the no-argument {@link #chosen()} can choose on first use.
+     * <p>
+     * Called by the context the moment it has a physical device, which is before any pipeline or render pass is built
+     * and in both configurations. Without it the chooser existed but only the GL-less frame target ever invoked it, so
+     * the contract "the format is chosen from the device" held in one configuration and threw in the other.
+     */
+    public static void noteDevice(VkPhysicalDevice device) {
+        if (device != null && chosenDevice == null) {
+            chosenDevice = device;
+        }
     }
 
     /** {@return the chosen format's name}, for a report line. */

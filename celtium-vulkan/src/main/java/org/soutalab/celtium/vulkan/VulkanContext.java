@@ -763,6 +763,10 @@ public final class VulkanContext {
                     continue;
                 }
                 this.physicalDevice = candidate;
+                // Register it with the depth-format contract here, where a device first exists: the terrain pipeline and
+                // the render-pass builder are static callers that need a depth format whether or not a frame target
+                // exists, and only the GL-less frame target used to choose one.
+                org.soutalab.celtium.vulkan.VulkanDepthFormat.noteDevice(candidate);
                 this.deviceName = properties.properties().deviceNameString();
                 this.deviceUuid = uuid;
                 break;
