@@ -1131,24 +1131,42 @@ def controls_audit(runs, args):
     checks = []
     for name, label, must_match in fields:
         values = {}
+        measured = 0
+        total = 0
         for key, records in per_config.items():
             seen = sorted({json.dumps(record.get(name)) for record in records})
             values[key] = seen
+            for record in records:
+                total += 1
+                if record.get(name) is not None:
+                    measured += 1
         distinct = {value for seen in values.values() for value in seen}
+        # A control that was never measured is not a control that agrees. `json.dumps(None)` is the string "null", so
+        # a field missing from every run produced the single distinct value {"null"} and was reported as consistent -
+        # which is how this audit could say "all required controls are equal" while every required control was absent.
+        # Reproduced by scripts/cpu-contract/bench_controls_check.py before this change.
+        missing = must_match and measured == 0
         checks.append({
             "field": name,
             "label": label,
             "mustMatch": must_match,
             "valuesPerConfig": values,
             "distinctValues": sorted(distinct),
-            "consistent": (len(distinct) <= 1) if must_match else None,
+            "measuredRuns": measured,
+            "totalRuns": total,
+            "missing": missing,
+            "consistent": (False if missing else (len(distinct) <= 1)) if must_match else None,
         })
     mismatch = [check["field"] for check in checks if check["mustMatch"] and not check["consistent"]]
+    missing_fields = [check["field"] for check in checks if check["missing"]]
     return {
         "controls": checks,
         "consistent": not mismatch,
         "mismatchedFields": mismatch,
-        "note": ("every control that must be equal is equal across all runs"
+        "missingFields": missing_fields,
+        "note": ("these required controls were never measured, so nothing is known about them: "
+                 + ", ".join(missing_fields)) if missing_fields else
+                ("every control that must be equal is equal across all runs"
                  if not mismatch else
                  "these controls differ across runs: " + ", ".join(mismatch)),
         "camera": {key: sorted({"%s,%s,%s,%s,%s" % (record.get("cameraX"), record.get("cameraY"),
@@ -1258,7 +1276,10 @@ def render_markdown(results, args):
         for key in results["method"]["configurations"]:
             seen = check["valuesPerConfig"].get(key) or []
             cells.append(", ".join(seen) if seen else "n/a")
-        verdict = ("yes" if check["consistent"] else "**NO**") if check["mustMatch"] else "n/a"
+        if check.get("missing"):
+            verdict = "**not measured**"
+        else:
+            verdict = ("yes" if check["consistent"] else "**NO**") if check["mustMatch"] else "n/a"
         add("| %s | %s | %s |" % (check["label"], " | ".join(cells), verdict))
     add("")
     add("Camera per configuration: " + "; ".join(
@@ -1268,8 +1289,11 @@ def render_markdown(results, args):
     add("Measured frame counts per configuration: " + "; ".join(
         "`%s` = %s" % (key, values) for key, values in audit["frameCounts"].items()))
     add("")
-    add("**Verdict: %s.** %s" % ("all required controls are equal" if audit["consistent"]
-                                 else "CONTROLS DIFFER", audit["note"]))
+    missing = audit.get("missingFields") or []
+    add("**Verdict: %s.** %s" % (
+        "ALL REQUIRED CONTROLS ARE EQUAL" if audit["consistent"] and not missing
+        else ("REQUIRED CONTROLS WERE NOT MEASURED" if missing else "CONTROLS DIFFER"),
+        audit["note"]))
     skipped = [run for run in results["runs"] if run.get("skipped")]
     if skipped:
         add("")
