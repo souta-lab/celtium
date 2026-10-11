@@ -257,6 +257,19 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.235 **round 41: BH-16 の計器を検証サマリへ（drop 数と owner）・font セパレータの leg 待ち**
+
+- **`gameClearsDroppedForeignTarget=` と `lastDroppedClearOwner=` を検証サマリに追加（Lead・`f02ae2cce`）**:
+  BH-16 の修正（他 framebuffer の clear を共有 pair に適用しない）が**発火したことを leg が言える**ように。
+  これが無いと「修正が効いた」を推測でしか言えなかった。`polygonOffsetCalls`/`FillEnabled`/`Called` と同じ場所に並ぶ。
+- **font セパレータ（`51003a602`）の検証待ち**: 期待は `modes={5=…}` のまま（run は strip）＋ **`fontStripSeparators` 非ゼロ**、
+  texel 一致 449/449・104/104、**1px バー列（glyph 行の 105/165・±6..12 輝度・一部 +55）が 0 近くへ**、
+  `refused=0`・0.56 µs/glyph 維持。受入は**ユーザーの 1x スケール crop**（8x 拡大ではない）。
+- **パノラマの検証待ち（fog-path）**: `gameClearsDroppedForeignTarget > 0`・owner が `CELTIUM_CLEAR_LATCH route=pair` の
+  identity を指す・`CELTIUM_TEX_COPY_SERVED … mean=` が 255 から動く・menu crop にパノラマ。
+  同時に `passImage=`（draw site）と `readImage=`（copy）を同一 frame で比較し、まだ白なら**順序**が次の候補。
+- **OPT-07(b) 受入済み**（前 round）・**BH-01/BH-19/BH-25/BH-13/BH-11(counter 待ち)/BH-12 受入済み**。
+
 ## 0.234 **round 40: パノラマの機序確定（他 framebuffer の clear が共有 pair を消していた）→ BH-16 修正・OPT-07(b) 受入**
 
 - **機序（fog-path・`702cc725b`・1 frame 1 log）**:
