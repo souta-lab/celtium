@@ -6073,6 +6073,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.modelMeshes = built;
         // Retired first: a list never has two meshes registered at once, so the registry's replacement counter means
         // what it says - a mesh replaced without being retired - instead of counting this commit's own window.
+        for (VulkanDynamicMesh mesh : superseded) {
+            mesh.retire();
+        }
 
         for (java.util.Map.Entry<Integer, Integer> entry : builtGenerations.entrySet()) {
             built.get(entry.getKey()).stamp(entry.getKey().intValue(), entry.getValue().intValue());
@@ -6082,9 +6085,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             quads += mesh.indexCount() / 6;
         }
         this.modelMeshQuads = quads;
-        for (VulkanDynamicMesh mesh : superseded) {
-            mesh.retire();
-        }
         // Printed as well as reported: the report's debug strings are assembled per configuration, and the bridge's
         // report has never carried the model counters (checked across p530-tp, ref-gl, glow-bridge3 and bridge-model,
         // all absent while the GL-less reports carry them). Without a line both configurations emit, "the models did
