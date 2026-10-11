@@ -113,11 +113,44 @@ public final class ValidationClient {
      */
     private final List<Double> warmFrameIntervals = new ArrayList<Double>();
     /**
-     * Frames over {@code -Dceltium.validation.slowFrameMs} (default 50) with the renderer's handoff split captured at
-     * that frame: {@code worldTick=<n> <ms>ms <handoff line>}. Bounded to {@link #SLOW_FRAME_MAX} entries.
+     * The {@link #SLOW_FRAME_MAX} slowest frames of the whole run, with the renderer's own report of what the frame
+     * did: {@code worldTick=<n> <ms>ms <phase evidence> upload[thisFrameMs=... submitWaitMillis=... submitWaits=...
+     * queueWaitMillis=...]}.
+     * <p>
+     * Retention used to be first-come-first-served, and on the user-shaped leg (2026-10-12, jar
+     * {@code celtium-t44d a47c1bd1453d6957}) that meant all twelve entries were startup frames at worldTicks 0..54
+     * while the window the acceptance reads - the cold window at worldTicks 120..200 - had no phase line at all. The
+     * question "is the worst frame's phase the upload path" could not be answered for the window it was asked about,
+     * so the list now keeps the slowest and a later frame replaces the fastest retained one.
      */
     private final List<String> celtium$slowFrames = new ArrayList<String>();
+    /** The interval of each retained entry, index-aligned with {@link #celtium$slowFrames}: the replacement key. */
+    private final List<Double> celtium$slowFrameMillis = new ArrayList<Double>();
     private static final int SLOW_FRAME_MAX = 12;
+    /** Cap on the phase evidence one slow-frame entry carries, so twelve of them cannot bloat the report. */
+    private static final int SLOW_FRAME_PHASE_MAX_CHARS = 700;
+    /**
+     * The upload path's own wait counters, sampled once per frame so the cold and warm windows carry what the upload
+     * path charged them, in the same windows as the frame intervals.
+     * <p>
+     * BH-27's first half replaced the whole-queue idle with a per-submission fence wait and left
+     * {@code VulkanContext.bootstrapSubmitWaits}/{@code ...WaitMillis} as the statement of what that cost. Those
+     * counters were only ever visible inside a slow frame's diagnostic dump, so "does the remaining per-copy
+     * serialisation cost the window anything" had no answer that was not read off the source. The run totals are the
+     * counters themselves; the window numbers are per-frame differences, and the frame counts say how many frames
+     * they cover. -1 means the class or field was absent (a run without the Vulkan path), never "it was free".
+     */
+    private long celtium$uploadWaitSampledMillis = -1L;
+    private long celtium$uploadWaitSampledWaits = -1L;
+    private long celtium$uploadWaitSampledQueueMillis = -1L;
+    private long celtium$uploadColdSubmitWaitMillis;
+    private long celtium$uploadColdSubmitWaitWorstFrameMillis;
+    private long celtium$uploadColdSubmitWaits;
+    private int celtium$uploadColdFrames;
+    private long celtium$uploadWarmSubmitWaitMillis;
+    private long celtium$uploadWarmSubmitWaitWorstFrameMillis;
+    private long celtium$uploadWarmSubmitWaits;
+    private int celtium$uploadWarmFrames;
     private boolean enabled;
     private boolean launched;
     private boolean celtium$leftWorld;
@@ -3582,6 +3615,123 @@ public final class ValidationClient {
         }
     }
 
+    /**
+     * Reads one public static counter of a Celtium class by name, or -1 when the class or field is absent.
+     * <p>
+     * Reflective for the same reason {@link #celtium$rendererDebugLines()} is: the fixture is a separate jar that must
+     * also run against the reference leg, where no Celtium class exists, and a compile-time reference would make the
+     * reference leg uncompilable rather than merely uninformative.
+     */
+    private static long celtium$staticCounter(String className, String field) {
+        try {
+            return Class.forName(className).getField(field).getLong(null);
+        } catch (Throwable absent) {
+            return -1L;
+        }
+    }
+
+    /**
+     * Differences the upload path's own wait counters over one frame and adds them to the window the frame is in.
+     *
+     * @return the frame's own upload submit wait in milliseconds, or -1 when the counters are absent or this is the
+     *         frame that established the baseline
+     */
+    private long celtium$sampleUploadWait() {
+        String context = "org.soutalab.celtium.vulkan.VulkanContext";
+        long millis = celtium$staticCounter(context, "bootstrapSubmitWaitMillis");
+        long waits = celtium$staticCounter(context, "bootstrapSubmitWaits");
+        long queueMillis = celtium$staticCounter(context, "bootstrapQueueWaitMillis");
+        long frameMillis = -1L;
+        if (millis >= 0 && waits >= 0 && celtium$uploadWaitSampledMillis >= 0) {
+            frameMillis = millis - celtium$uploadWaitSampledMillis;
+            long frameWaits = waits - celtium$uploadWaitSampledWaits;
+            if (worldTicks >= 120 && worldTicks < 200) {
+                celtium$uploadColdSubmitWaitMillis += frameMillis;
+                celtium$uploadColdSubmitWaits += frameWaits;
+                celtium$uploadColdFrames++;
+                if (frameMillis > celtium$uploadColdSubmitWaitWorstFrameMillis) {
+                    celtium$uploadColdSubmitWaitWorstFrameMillis = frameMillis;
+                }
+            }
+            if (worldTicks >= Integer.getInteger("celtium.validation.warmFromTick", 400).intValue()
+                    && worldTicks < Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
+                celtium$uploadWarmSubmitWaitMillis += frameMillis;
+                celtium$uploadWarmSubmitWaits += frameWaits;
+                celtium$uploadWarmFrames++;
+                if (frameMillis > celtium$uploadWarmSubmitWaitWorstFrameMillis) {
+                    celtium$uploadWarmSubmitWaitWorstFrameMillis = frameMillis;
+                }
+            }
+        }
+        celtium$uploadWaitSampledMillis = millis;
+        celtium$uploadWaitSampledWaits = waits;
+        celtium$uploadWaitSampledQueueMillis = queueMillis;
+        return frameMillis;
+    }
+
+    /**
+     * Retains one slow frame as the report's phase evidence, keeping the {@link #SLOW_FRAME_MAX} slowest of the run.
+     * <p>
+     * The counters are absolute (what the process has charged so far) and {@code thisFrameMs} is this frame's own
+     * share, so an entry answers both "which phase" and "how much of it was the upload path".
+     */
+    private void celtium$recordSlowFrame(double intervalMs, long uploadThisFrameMillis) {
+        String entry = "worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms "
+                + celtium$phaseEvidence(celtium$rendererDebugLines())
+                + " upload[thisFrameMs=" + uploadThisFrameMillis
+                + " submitWaitMillis=" + celtium$uploadWaitSampledMillis
+                + " submitWaits=" + celtium$uploadWaitSampledWaits
+                + " queueWaitMillis=" + celtium$uploadWaitSampledQueueMillis + "]";
+        if (celtium$slowFrames.size() < SLOW_FRAME_MAX) {
+            celtium$slowFrames.add(entry);
+            celtium$slowFrameMillis.add(Double.valueOf(intervalMs));
+            return;
+        }
+        int fastest = 0;
+        for (int i = 1; i < celtium$slowFrameMillis.size(); i++) {
+            if (celtium$slowFrameMillis.get(i).doubleValue() < celtium$slowFrameMillis.get(fastest).doubleValue()) {
+                fastest = i;
+            }
+        }
+        if (intervalMs > celtium$slowFrameMillis.get(fastest).doubleValue()) {
+            celtium$slowFrames.set(fastest, entry);
+            celtium$slowFrameMillis.set(fastest, Double.valueOf(intervalMs));
+        }
+    }
+
+    /**
+     * {@return the frame's phase evidence}: the renderer's timing summary when it has one, otherwise a bounded head of
+     * its diagnostic strings.
+     * <p>
+     * This used to take the first line containing "handoff", and in a GL-less run that line is the frame target's
+     * "glless target: no handoff, ..." - it contains the word and carries no timing, so every slow-frame entry of the
+     * user-shaped leg named a phase that does not exist and none of the numbers. The timing lines are matched by their
+     * own prefixes; when there is none (GL-less has no handoff), the head of the diagnostics is kept instead, so the
+     * frame still says which phases it passed through.
+     */
+    private static String celtium$phaseEvidence(java.util.List<String> debug) {
+        if (debug == null) {
+            return "no renderer debug";
+        }
+        for (String line : debug) {
+            if (line.startsWith("handoff: avg") || line.startsWith("handoff detail")) {
+                return line;
+            }
+        }
+        StringBuilder head = new StringBuilder();
+        for (String line : debug) {
+            if (head.length() >= SLOW_FRAME_PHASE_MAX_CHARS) {
+                break;
+            }
+            if (head.length() > 0) {
+                head.append(" | ");
+            }
+            int room = SLOW_FRAME_PHASE_MAX_CHARS - head.length();
+            head.append(line.length() <= room ? line : line.substring(0, Math.max(0, room)));
+        }
+        return head.length() == 0 ? "no phase line in the renderer's debug strings" : head.toString();
+    }
+
     /** The largest per-pass section count in the renderer's debug strings, or -1 when no such line is present. */
     private static int celtium$listedSections(java.util.List<String> lines) {
         if (lines == null) {
@@ -3755,25 +3905,16 @@ public final class ValidationClient {
         if (worldTicks >= warmFrom && worldTicks < warmTo && previousFrame != 0) {
             warmFrameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
-        // A slow frame's handoff split, captured at the frame it happened in. The acceptance for the user's lag is the
+        // A slow frame's phase evidence, captured at the frame it happened in. The acceptance for the user's lag is the
         // p95/p99 pair rather than the median, and a distribution cannot say which phase produced a spike: this records
-        // the renderer's own per-phase summary beside the interval, so a slow frame comes back with a named phase
-        // instead of a number. Bounded, and it costs nothing until a frame crosses the threshold.
+        // the renderer's own report beside the interval, so a slow frame comes back with named phases and with what the
+        // upload path cost that frame, instead of a bare number. Bounded, and it costs nothing until a frame crosses
+        // the threshold.
+        long uploadThisFrameMillis = celtium$sampleUploadWait();
         if (previousFrame != 0) {
             double intervalMs = (now - previousFrame) / 1_000_000.0;
-            if (intervalMs >= Integer.getInteger("celtium.validation.slowFrameMs", 50).intValue()
-                    && celtium$slowFrames.size() < SLOW_FRAME_MAX) {
-                java.util.List<String> debug = celtium$rendererDebugLines();
-                String handoff = "no renderer debug";
-                if (debug != null) {
-                    for (String line : debug) {
-                        if (line.contains("handoff") || line.contains("Handoff")) {
-                            handoff = line;
-                            break;
-                        }
-                    }
-                }
-                celtium$slowFrames.add("worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms " + handoff);
+            if (intervalMs >= Integer.getInteger("celtium.validation.slowFrameMs", 50).intValue()) {
+                celtium$recordSlowFrame(intervalMs, uploadThisFrameMillis);
             }
         }
         previousFrame = now;
@@ -4538,7 +4679,44 @@ public final class ValidationClient {
         // defect as one that is never built, and the p95/p99 pair is what the user's complaint is measured against.
         report.addProperty("slowFrameThresholdMs", Integer.getInteger("celtium.validation.slowFrameMs", 50));
         report.addProperty("slowFrameCount", celtium$slowFrames.size());
+        report.addProperty("slowFrameRetention",
+                "the " + SLOW_FRAME_MAX + " slowest frames of the run, not the first " + SLOW_FRAME_MAX
+                        + " over the threshold; entries carry the renderer's phase evidence and the upload path's own"
+                        + " counters at that frame");
         report.addProperty("slowFrames", celtium$slowFrames.isEmpty() ? "[none]" : String.join(" | ", celtium$slowFrames));
+        celtium$reportUploadWaitWindows();
+    }
+
+    /**
+     * Writes the upload path's wait cost per window into the report.
+     * <p>
+     * BH-27's second half is decided by this number, not by the shape of the code: batching a frame's copies into one
+     * submission can only remove the per-submission fence wait, and the counters that measure it were reachable only
+     * from inside a slow frame's diagnostic dump, where a leg that never crossed the threshold said nothing at all.
+     * The windows are the interval windows, so the cost sits beside the p50/p95/p99 it is meant to explain, and the
+     * frame counts are reported because a sum without its sample count is not a rate.
+     */
+    private void celtium$reportUploadWaitWindows() {
+        report.addProperty("uploadWaitSource",
+                "org.soutalab.celtium.vulkan.VulkanContext bootstrapSubmitWaits/bootstrapSubmitWaitMillis/"
+                        + "bootstrapQueueWaitMillis, differenced once per render tick; -1 means the class or field was"
+                        + " absent, which is not the same as zero");
+        report.addProperty("uploadWaitWindows",
+                "cold=worldTicks 120..200, warm=worldTicks "
+                        + Integer.getInteger("celtium.validation.warmFromTick", 400) + ".."
+                        + Integer.getInteger("celtium.validation.warmToTick", 600)
+                        + "; ...Frames is how many render ticks the window's differences were summed over");
+        report.addProperty("uploadSubmitWaitMillisColdWindow", celtium$uploadColdSubmitWaitMillis);
+        report.addProperty("uploadSubmitWaitsColdWindow", celtium$uploadColdSubmitWaits);
+        report.addProperty("uploadSubmitWaitFramesColdWindow", celtium$uploadColdFrames);
+        report.addProperty("uploadSubmitWaitWorstFrameMillisColdWindow", celtium$uploadColdSubmitWaitWorstFrameMillis);
+        report.addProperty("uploadSubmitWaitMillisWarmWindow", celtium$uploadWarmSubmitWaitMillis);
+        report.addProperty("uploadSubmitWaitsWarmWindow", celtium$uploadWarmSubmitWaits);
+        report.addProperty("uploadSubmitWaitFramesWarmWindow", celtium$uploadWarmFrames);
+        report.addProperty("uploadSubmitWaitWorstFrameMillisWarmWindow", celtium$uploadWarmSubmitWaitWorstFrameMillis);
+        report.addProperty("uploadSubmitWaitsAtEnd", celtium$uploadWaitSampledWaits);
+        report.addProperty("uploadSubmitWaitMillisAtEnd", celtium$uploadWaitSampledMillis);
+        report.addProperty("uploadQueueWaitMillisAtEnd", celtium$uploadWaitSampledQueueMillis);
     }
 
     /**

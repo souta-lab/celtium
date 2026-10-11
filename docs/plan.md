@@ -24,8 +24,8 @@
 | **ログ flood（ユーザー報告 18:2x）** | **修正済（Lead・jar `2a3c59fe21ae831b6a3d` を instance へ投入）** | ユーザー構成は `-Dceltium.vulkan.glless=true` **だけ**なのに `CELTIUM_MODEL_MATRIX` が **model list ごと・フレームごと**に出て、**ログが 100,000 行を超え Prism が表示停止**（screenshot が証拠）。`VulkanDiagnostics` で `MODEL_MATRIX`（上限200）・`ACCEPTED`（500 batch ごと）・arena census（既定 true だった）を gate。一回だけの構成識別行は残す。§0.187 |
 | **F3 / driver 表示** | **完了（task-46・両 vendor 実測）** | `glRendererPreflight` が実 device の `VkPhysicalDeviceDriverProperties` を end-to-end で返す: AMD `driverName="radv" driverID=3(MESA_RADV) driverInfo="Mesa 26.2.4-1" driverVersion=109060100(26.2.4)` / Intel `Intel open-source Mesa driver`・両方 `apiVersion=1.4.354`。`CELTIUM_DRIVER_INFO` が「今描いているのは何か」の権威行。§0.194/§0.202 |
 | **ロード画面** | **未表示（ユーザー第11報で再報告）／task-61** | `CELTIUM_WINDOW_RENDERER … stage=createDisplay`・`no terrain backend is installed` 0件・最初の immediate group が splash 自身（`mvT z=-2000`・logo texture 8・splash 自身の FBO）。`celtium$publishFrameTexture` が game framebuffer の colour texture 名を chain pair の image に publish し、**全 published name に layout 遷移**（sampling 側 `ensureSampledLayout`・write 側 `ensureGeneralLayout`・unpublish で外す）＝`VUID-vkCmdDraw-None-09600` の修正。**round 11 のユーザー報告は「未だに表示されてない」**＝「renderer に届いた」は「ユーザーが見た」ではない。受入は presented frame に loading 内容が出ること＋`validationMessageCount=0`。§0.201/§0.202/§0.206 |
-| **性能（実測・ユーザー構成）** | **cold は依然として悪い／steady は約24fps・audio はその症状** | ユーザー構成（854x480・validation 無し）の leg: cold window（world tick 120-200＝chunk build）p50 **254ms**・p95 619ms、run 全体は world tick 4006 まで進み presents 4800/約200s＝**約24fps**。audio のとぎれは**独立欠陥ではなく lag の症状**（sound manager は client thread の tick=frame で供給される）。最有力は upload 経路の per-segment `vkQueueWaitIdle`（`bootstrapQueueWaits` を summary へ配線済み・task-51）。§0.198 |
-| **性能（warm 実測・受入は p95/p99）** | **中央値は合格水準・spike がユーザーの lag** | `lead-warm3`（ユーザー構成・854x480・layer 無し・`worldTicksAtEnd=4041`）: cold 40 sample p50 44.1 / p95 250.2 / p99 575.9 ms、**warm 275 sample p50 24.0 / p95 105.6 / p99 207.4 ms**。**中央値を 24→20 にしても p95 105 が残る限り苦情は直らない**。spike 帰属の計器は `slowFrameThresholdMs`/`slowFrameCount`/`slowFrames`（commit `05935fdd5`・§0.206）。§0.198/§0.199 |
+| **性能（実測・ユーザー構成）** | **cold は依然として悪い／steady は約24fps・audio はその症状／upload 経路は測定により棄却** | ユーザー構成（854x480・validation 無し）の leg: cold window（world tick 120-200＝chunk build）p50 **254ms**・p95 619ms、run 全体は world tick 4006 まで進み presents 4800/約200s＝**約24fps**。audio のとぎれは**独立欠陥ではなく lag の症状**（sound manager は client thread の tick=frame で供給される）。**「最有力は upload 経路の per-segment `vkQueueWaitIdle`」は撤回**: その待ちは BH-27 前半で消え（`bootstrapQueueWaits=0`）、残った per-submission fence 待ちは最悪 frame で **12 ms**・after leg 全体で **48 ms**（233 wait・worst 4 ms）＝ 消せる上限が cold p50 の ~1%。BH-27 後半（staging ring）は**作らない**。cold 窓の帰属は未測定だった（計器の穴を §0.223 で修復）。§0.198/§0.223 |
+| **性能（warm 実測・受入は p95/p99）** | **中央値は合格水準・spike がユーザーの lag／現行 jar の user leg は起動ゲートで落ちる** | `lead-warm3`（ユーザー構成・854x480・layer 無し・`worldTicksAtEnd=4041`）: cold 40 sample p50 44.1 / p95 250.2 / p99 575.9 ms、**warm 275 sample p50 24.0 / p95 105.6 / p99 207.4 ms**。**中央値を 24→20 にしても p95 105 が残る限り苦情は直らない**。spike 帰属の計器は `slowFrameThresholdMs`/`slowFrameCount`/`slowFrames`（commit `05935fdd5`・§0.206）だが、**保持が先着 12 件で startup しか写らず、GL-less では phase 行が `glless target: no handoff` に一致していた**（§0.223 で worst-N＋窓別 upload 待ちへ修復）。現行 jar `a47c1bd1453d6957` の user leg は warm 0 sample で `worldFrames=55 < 100` により tick 201 で FAILED（cold 22 sample p50 151.4）。§0.198/§0.199/§0.223 |
 | **GUI scale 変更でクラッシュ（ユーザー第11報）** | **未再現／原文解析済み（task-58）** | 唯一の crash report（19:20）は `NoClassDefFoundError: CeltiumGlStub$ReadableRange` で、原因は **Forge の transformer に長さ0の class file が渡った**こと（`ClassReader.readShort` が空配列の offset 6 を読む）。instance の jar は `md5 ff85a8f5…` で `build/libs` と完全一致・長さ0の `.class` entry は無し・20:05 のセッションは同じメソッドを24万回通って落ちていない＝**古い/部分コピー jar の産物という仮説**。**「再現しなかった」を「修正済み」と書かない**。§0.206 |
 | **F3 がとても重い（ユーザー第11報）** | **原因の数値あり・task-59** | ユーザーのログ: `CELTIUM_FONT_GLYPH_SUMMARY windows=1012751 … refused=138929 submitMillis=47246`＝**1 glyph window 46.6 µs**・28分で101万 window・13.7% は誰も描いていない。F3 overlay は最も文字が密。受入は F3 on/off の p50/p95 同一 leg 比較。§0.206 |
 | **GPU stall latch（ユーザー第11報の lag 側）** | **未帰属・task-60** | ユーザーのログの拒否ヒストグラムで `the GPU stalled; no further drawing until the renderer is rebuilt` が**約50,200 batch**（format 7=21,366 ほか）。`gpuStalled` は latch（`:1102`/`:1126`・wait timeout `:10534`・拒否 `:3629`/`:3665`・geometry 破棄 `:5084`）で、`:10516` のコメント自身が false stall の高コストを警告。§0.206 |
@@ -144,6 +144,47 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **ミキシン間で直接メソッドを呼ばない**（メソッドは対象クラスへマージされるため起動時 `NoClassDefFoundError`。§0.121 の経緯）。
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
+
+## 0.223 **BH-27 後半（copy の batch 化＋staging ring）は測定により棄却・帰属計器の2つの穴を修復（worst-N slow frame・窓別 upload 待ち）**
+
+- **判定条件は「最悪 frame の phase 行が upload 経路か」。答えは**いいえ**（その leg 自体が FAILED）。** 親が指した
+  `chain-t44d`（`perf-user`・mod jar `celtium-t44d a47c1bd1453d6957`・fixture `2b05481a76668fb4`・AMD RX 6400・glless・
+  validation layer 無し・`handoffTimings=true`）は **warm 窓のサンプルが 0**で、`--duration` も想定 400 ではなく `t44-run.sh` の既定 **120**。
+  world は実時間 ~22 s で **55 frame**（≈2.5 fps）しか出せず、fixture 自身の起動ゲートが
+  `Too few world rendering frames for startup validation: worldFrames=55 (threshold 100), worldTicks=201` で **run を落とした**
+  （`status=FAILED`・`validationMessageCount=0`）。cold 窓（tick 120..200）は **22 sample で p50 151.4 / p95 349.8 / p99 459.0 ms**。
+- **最悪 frame（`worldTick=1` 1350 ms）の phase は startup**: swapchain 作成・chain pair self-test・framebuffer bind/unbind・
+  `standalone UI render pass`。**upload 経路の行は無い。** 同じ 12 frame の counters は全 frame で
+  `bootstrapQueueWaits=0 bootstrapQueueWaitMillis=0`、`bootstrapSubmitWaits` は **34→49**・`bootstrapSubmitWaitMillis` は
+  **12→25 ms**・worst **5 ms**（tick 54 までの累積）＝ 1350 ms の frame が boot から背負った submit fence 待ちは **12 ms**。
+- **BH-27 前半の before/after（同一 scene/pose・同一 tick 帯・同一 GPU・layer 無し・presentReadback 有り）**: `bh27-verify`
+  cold p50 **216.9**/p95 **817.8**/p99 817.8（16 sample・`worldTicksAtEnd=207`）→ `bh27b-verify`
+  cold p50 **70.6**/p95 **145.8**/p99 **503.4**（44 sample・`worldTicksAtEnd=206`）＝ whole-queue idle の除去で **p50 −67%・p95 −82%**。
+  after leg の slow frame  snapshot では `bootstrapQueueWaits=0` のまま per-submission fence 待ちが **233 wait / 48 ms 累積 / worst 4 ms**。
+  **この 48 ms が後半で消せる上限**（cold p50 70.6 ms/frame に対して ~1 ms/frame 相当）。
+- **計器の穴（本 round で修復・`ValidationClient.java`）**: (1) `SLOW_FRAME_MAX=12` が**先着順**だったため user leg の 12 entry は
+  全て tick 0..54 の startup frame で、受入が読む cold 窓には phase 行が **1つも無かった** → **遅い順 12 件**の保持へ
+  （`slowFrameRetention` が意味を明示）。(2) phase 行の探索が `"handoff"` を含む最初の行を取るため、GL-less では
+  `GllessFrameTarget` の **`glless target: no handoff …`** に一致し、**時間を含まない行**が「phase」として入っていた
+  （この leg に `handoff: avg` 行は **0 件**＝GL-less に handoff は無い）。timing 行は `handoff: avg`/`handoff detail` の
+  接頭辞でのみ採用し、無ければ診断列の先頭 **700 字**（`SLOW_FRAME_PHASE_MAX_CHARS`）を残す。各 entry には
+  `upload[thisFrameMs=… submitWaitMillis=… submitWaits=… queueWaitMillis=…]` を付ける。
+- **窓別 upload 待ち（新 counter・次の leg で before を取る）**: 毎 render tick に `VulkanContext` の
+  `bootstrapSubmitWaitMillis`/`bootstrapSubmitWaits`/`bootstrapQueueWaitMillis` を反射で差分し、
+  `uploadSubmitWaitMillisColdWindow`/`uploadSubmitWaitsColdWindow`/`uploadSubmitWaitFramesColdWindow`/
+  `uploadSubmitWaitWorstFrameMillisColdWindow`（同 `…WarmWindow`）＋ `uploadSubmitWaitsAtEnd`/`uploadSubmitWaitMillisAtEnd`/
+  `uploadQueueWaitMillisAtEnd` を report へ。出所は `uploadWaitSource`、窓は `uploadWaitWindows`、**-1 は「クラス/フィールド欠如」で
+  0 ではない**。frame 数（`…Frames`）を併記するのは、sample 数の無い合計は率にならないため。
+- **判定: ring は作らない。** 測った範囲では最悪 frame の phase は upload 経路でなく、消せる上限は cold p50 の ~1%。
+  **未確立**: cold 窓の帰属。穴 (1) のため tick 120..200 の submit 待ちは**一度も測られていない**（`VulkanArena.write` は
+  1 write = 1 submit+fence（`VulkanBuffer.write`→`VulkanContext.uploadToBuffer`）で、arena census の `totalWrites` は
+  leg 内で最大 **537**、その大半は tick 54 以降に起きている）。次の leg の `uploadSubmitWaitMillisColdWindow` が
+  数十 ms/窓なら BH-27 後半を閉じ、秒単位なら ring ではなく「frame 内 1 submit」へ進む。**leg は未実施**（game slot を他担当が保持・
+  `VulkanTerrainGpuBackend.java` を同時編集中）。leg の作り方は `chain-t44e.sh`（mod 半分は t44d と同一 hash・fixture のみ新・
+  `-Dceltium.validation.minWorldFrames=5` で起動ゲートに殺されないようにする・`T44_DURATION=400`）。
+- **未確立（その2）**: `lead-warm3`（jar `c6e7a8058c3fd511`・19:53・同 shape）は **warm 275 sample で p50 24.0 / p95 105.6 / p99 207.4 ms**、
+  cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
+  `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
 ## 0.222 **round 28: 聖典 item 2/3 を独立測定で受入・BH-09 完成（backend の scissor intersection）**
 
