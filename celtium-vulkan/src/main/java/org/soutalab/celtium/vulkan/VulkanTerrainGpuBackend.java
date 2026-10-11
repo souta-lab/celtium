@@ -8644,8 +8644,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             glless.ensureOffTarget(this.targetWidth, this.targetHeight);
             return glless.offTargetColorImage();
         }
-        if (readFbo != 0 && this.frameTarget != null && readFbo == (int) this.mainTargetIdentity) {
-            // The game's own main framebuffer: isMain draws go to the frame image the present path blits from.
+        if (readFbo != 0 && this.frameTarget != null && this.mainTargetIdentity != Long.MIN_VALUE
+                && (long) readFbo == this.mainTargetIdentity) {
+            // The game's own main framebuffer: isMain draws go to the frame image the present path blits from. The
+            // identity is compared as a long against the unset sentinel as well: it is Long.MIN_VALUE before any main
+            // bind, and a narrowing comparison would make that sentinel equal to the GL name 0.
             return this.frameTarget.colorImage();
         }
         return 0L;

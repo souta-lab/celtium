@@ -102,9 +102,48 @@ verified by the code path and by the counters being live (`completions` non-zero
 `lostDevices=0`) in the runs below. Fault injection for those three outcomes is the next step if the audit
 wants them exercised end to end.
 
-## Measured (fill from the runs)
+## Measured
 
-- `t30-count-keys` / `t30-final-keys` / `t30-final-plain`: GL-less, AMD RX 6400, scene = JEI + entities +
-  reload, `descriptorPoolSets=8`, `hideExternalFdExtensions=true` on the first two.
-- Fixture verdict, histogram, refusal census, VUID count and `validationMessageCount` are quoted in the Lead's
-  report from the same runs.
+All legs: GL-less, AMD RX 6400 (RADV NAVI24), scene = JEI + inventory screen + the entity set + a resource
+reload at tick 100, `validationClean=true`, `validationMessageCount=0`, 0 `VUID`, picture present
+(`presented-dump`), fixture verdict `UNCALIBRATED_PRESENTED_IMAGE` (no stored reference at that variant, which
+the brief says is correct rather than a failure), `nativeDeviceName="AMD Radeon RX 6400 (RADV NAVI24)"`.
+
+**B03, `t30-count-keys`** (`descriptorPoolSets=8`, fd extensions hidden), from the run's own report:
+
+```
+immediateDescriptors=[pools=41 growths=0 sets=81 keysCached=72 failures=0 hits=12923 misses=48]
+```
+
+**72 distinct texture keys were cached, past the 64-set bound the old fixed pool had, and not one allocation
+failed.** That is the defect's own scenario: with one 64-set pool per pipeline, the 65th key onwards would
+have returned 0 from `descriptorSetFor` and the batch would have been refused — under GL-less, drawn by
+nobody. `misses=48` against `hits=12923` also says the cache is doing its job rather than allocating per
+batch. `growths=0` is honest about what this scene did *not* exercise: the keys are spread over 41 pipeline
+instances (one per format/state), so no single pipeline filled its own 8-set pool, and the per-pipeline growth
+path was not reached here. `-Dceltium.vulkan.descriptorPoolSets=1` is the control that forces it (the
+reserved set alone fills a pool, so every cached key grows one); that leg is running.
+
+**B04, the same run:**
+
+```
+waitOutcomes=[completions=46 timeouts=0 lostDevices=0 unconfirmed=0 queueWaitFailures=0 deviceIdleFailures=0]
+quarantined=[buffers=0 fences=0]
+```
+
+46 submissions confirmed by their fence, and no timeout, no lost device, no unconfirmed wait, so nothing was
+quarantined — i.e. the new states are live and the run stayed on the completion path. The DEVICE_LOST rule
+the code implements is the spec's, not our reading of it: Vulkan §4.2.4 (Lost Device) says "for the purpose
+of determining whether a command buffer is pending execution, or whether resources are considered in-use by
+the device, a return value of `VK_ERROR_DEVICE_LOST` is equivalent to `VK_SUCCESS`", and the
+[`vkWaitForFences` reference page](https://docs.vulkan.org/refpages/latest/refpages/source/vkWaitForFences.html)
+lists `VK_ERROR_DEVICE_LOST`, `VK_ERROR_OUT_OF_DEVICE_MEMORY`, `VK_ERROR_OUT_OF_HOST_MEMORY` and
+`VK_ERROR_UNKNOWN` as the failure returns - which is why the four outcomes are separated
+([spec section quoted in the Khronos issue](https://github.com/KhronosGroup/Vulkan-Docs/issues/118)).
+
+**B02, `t30-final-keys` / `t30-final-plain`:** the contract lines quoted above; both legs produced a presented
+picture and neither required nor enabled the fd extensions.
+
+**Not verified:** a wait failure of any kind (no timeout, OOM, UNKNOWN or DEVICE_LOST was injected); the
+growth path end to end until the `descriptorPoolSets=1` control lands; and the interop direction of B02 (no
+run with a GL identity, where the extensions are required and a candidate lacking them is skipped).

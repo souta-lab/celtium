@@ -133,6 +133,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.180 **inventory 場面の sky 17% 暗は B05（fog/lighting payload の同居）と確定（task-38）**
+
+gui-stage が既存の pair（`cand3-*` GL-less vs `ref3-*` upstream Celeritas・同一 fixture/pose/tick 200）で
+**1 run も足さずに**確定させた:
+
+| 領域 | A: screen なし（比 / >8） | B: inventory 開（比 / >8） |
+|---|---|---|
+| **sky band (0,0,1280,120)** | **1.000,1.000,1.000 / 153,600 中 0** | **0.857,0.842,0.825 / 128,052（83.4%）** |
+| horizon | 1.008,0.979,1.012 / 34.9% | 0.991,0.968,0.961 / 53.0% |
+| terrain centre | 0.994,0.993,0.993 / 2.7% | 1.023,1.014,0.985 / 35.9% |
+| hotbar strip | 1.000,1.000,1.000 / 0.0% | 0.975,0.996,0.993 / 0.0% |
+
+同一 run の `acceptedByFormat`: **format 4（ITEM＝lit item batch）が A で 0・B で 2744**——
+**lit batch が 0 のとき sky は画素一致、2744 になると 17% 暗くなる**。これは B05
+（lit group の payload が同一 flush 内の後続 group の fog byte を上書きする）の記述そのもの。
+**除外できた代替**: 射影/ortho（位置と extent は正しく明度だけ違う）・画面の dim overlay
+（**同じ B frame で chat block は 1.026,1.053,1.037 と明るい**——1つの overlay が片方を 15% 暗く他方を 3% 明るくはできない）・
+単純な alpha 乗算（channel 比が違い blue が最も悪い）。
+**fixture の限界も明記**: この cohort では `jeiScreen` は `GuiInventory` を開くだけで JEI jar を積んでいないため
+「JEI 画面」と「vanilla inventory」は同一 scene。JEI 固有の分離には JEI 入りの candidate と reference の両 leg が要る
+（`mod3-*` は別 fixture/jar 期・参照 leg 無し・FAILED）。**B05 の受入は inventory 場面の sky が ~1.0 に戻り、
+terrain 場面の 0/153,600 が維持されること**。
+
 ## 0.179 **地平線帯は「build 状態を揃える」ことで閉じた（task-33）／fixture jar の空コピーという罠**
 
 - **task-33（fog-path）の受入**: `captureCondition=sections captureSections=41 captureMinWorldFrames=295` で
@@ -147,6 +170,8 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   build が出力ファイルを作った直後に `cp` したためで、FML は正しく "non-mod file" として拒否していた
   （Cleanroom の discovery は `Discovered mod ids: scalar, celeritas, fugue` の3つだけ）。
   **build 中に jar をコピーしない**（`scripts/build.sh` の完了を待つ）。以後は凍結済み fixture を使う。
+  修正後、**instance のライブラリだけで（`--library` なし）world まで走って PASSED**・`pictureFrameDelta_world=0`
+  ——ユーザー構成（instance の mods にある celtium jar＋instance のライブラリ）が world まで成立することを実測。
 - **Cleanroom 固有の罠（weather-water 実測）**: `GluProjectionMixin` の target `org.lwjgl.util.glu.Project` は
   **この runtime に存在しない**（`org/lwjglx/util/glu/Project.class` が `lwjglxx-1.1.22.jar` にある）。
   ログは毎回 `@Mixin target ... was not found` を出しており、**この mixin は一度も適用されていない**。

@@ -172,6 +172,17 @@ build, of different configurations:
 - **The Vulkan bindings are not bundled**: they must be on the game's classpath and match the validated Cleanroom
   installation's LWJGL version (3.4.1). `celtium-vulkan/build.gradle:18-19` documents this; the measured jar contains
   **no** `org/lwjgl` class.
+- **How to put them there, measured on the operator's own instance (2026-10-11)**: the Cleanroom `org.lwjgl3` component
+  in a Prism instance lists `lwjgl`, `lwjgl-glfw`, `lwjgl-opengl`, `lwjgl-stb`, `lwjgl-tinyfd`, `lwjgl-jemalloc`,
+  `lwjgl-openal` - **not `lwjgl-vulkan`** - so a stock instance has **no `org.lwjgl.vulkan` classes at all** and the
+  renderer cannot be created (`NoClassDefFoundError: org/lwjgl/vulkan/VkDebugUtilsMessengerCallbackEXTI`, which the
+  window-renderer hook now prints as a cause chain). Add the binding to the instance's
+  `patches/org.lwjgl3.json` library list as `org.lwjgl:lwjgl-vulkan:3.4.1` with the artifact's **real** SHA-1 and size
+  in its `downloads.artifact` block (a placeholder SHA-1 makes the harness refuse every run with
+  `Library does not match the profile SHA-1`; the measured file is 8,356,700 bytes, sha1
+  `d0601fdc38890755e5638048c14cc0f7b990964b`). With that entry the instance's own libraries alone carry the renderer to a
+  loaded world: `lead-instworld` (no `--library` test-library injection, GL-less, fixture) is **PASSED** with
+  `pictureFrameDelta_world=0`.
 
 ## 6. Licensing and lineage
 
