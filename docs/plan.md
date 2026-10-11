@@ -304,6 +304,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.309 **round 115: 2 leg は緑だが経路を踏んでいない（proj-channel の検証）・`submitSignalOnly` は fixture で到達不能と判明・counter 追加（`a3c10ac81`）**
+
+- **proj-channel の2 leg（per-image build `cf6c968cd`・較正済み terrain・`pinSections=60`・`indirectCompare` 有効）**:
+  | leg | knob | 結果 | 経路を踏んだか |
+  |---|---|---|---|
+  | `owed-resize` | `resizeTo=1024x640` | PASSED・`validationMessageCount=0` | **いいえ** — `glfwWindowSizeAtEnd=1280x720`＝**window が resized のままにならず image 数が変わっていない** |
+  | `owed-signalonly` | `forceAcquireOutOfDate=true` | PASSED・`validationMessageCount=0` | **未証明** — console に signal-only/out-of-date/forced の痕跡が0行・counter も無し |
+  ＝**緑の leg でも経路を踏んでいなければ「もう一方の経路についての leg」**。proj-channel は受入として記録することを拒否（正しい判断）。
+- **Lead の追加測定（`r107-signalonly`・`-Dceltium.vulkan.failSubmitSite=signal-only`・層あり）**: **VUID 0** だが
+  **`CELTIUM_SUBMIT_FAULT` 0行**＝**fault site 自体が到達されていない**。＝**`submitSignalOnly` はこの fixture では到達不能**であり、
+  「痕跡が無い」より強い主張。**第2受入項目は「未検証」ではなく「現 fixture で到達不能」**として記録する。
+- **counter 追加（`a3c10ac81`）**: `submitSignalOnly` が **`signalOnlySubmissions`** を数える。以後の leg は verdict ではなく
+  **「その経路が動いたか」**を言える。0 のままならそれが finding。
+- **resize leg の knob は間違いと確定**: `celtium.validation.resizeTo` は **menu-resize flow**（`resizeMenuHeldTicks`/`resizeOutput`）用で、
+  素の world leg では到達しない。**必要なもの**: world leg で**指定 tick に一度だけ GLFW window を resize** する hook
+  （`resizeWorldAtTick`）。**gui-stage に配布済み**（受入条件: artifact が window size の実際の変化と image 数の差を示すこと）。
+- **確立したこと**: 2 leg は per-image build で **通常経路を回帰させていない**（`validationMessageCount=0`・`validationClean=true`・PASSED・
+  VUID-00067 0行・hang なし・stream equality 不変）。**未確立**: image 数の変化・frame-close の pairing。
+  ＝**per-image ユニットは「実装済・3受入項目のうち1つ」**のまま。
+
 ## 0.308 **round 114: per-image の残り2 leg を proj-channel へ配布・成長のみ配列の選択を外部根拠で裏づけ**
 
 - **配布（Lead→proj-channel）**: 未了の2 leg を依頼した。**(1) resize leg**（image 数が変わる場合＝この規則が守る対象）、
