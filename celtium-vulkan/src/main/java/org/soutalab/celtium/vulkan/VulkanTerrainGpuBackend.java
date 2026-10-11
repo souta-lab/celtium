@@ -5664,6 +5664,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // its wrapper names a destroyed image, and a barrier on that is a validation error rather than a
                     // missing glow.
                     this.celtium$syncPublishedChainOutput(offTarget.chainPairColorImage());
+                    // Every other published name gets the same hand-back here, before the clear and the attach: the
+                    // sampling transition leaves the pair image in SHADER_READ_ONLY_OPTIMAL, and this pass begins with
+                    // initialLayout GENERAL - which is VUID-vkCmdBeginRenderPass-initialLayout-00900 unless the image is
+                    // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
+                    celtium$transitionPublishedFrameTextures(true);
                     if (!offTarget.chainPairAcquired() || this.chainPairClearedFrame != this.frameId) {
                         // Outside the pass, which is where the clear and its first-use barrier belong, and once per
                         // frame: the game clears a framebuffer when it binds it, and clearing per window would erase

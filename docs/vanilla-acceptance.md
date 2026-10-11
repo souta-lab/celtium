@@ -757,6 +757,58 @@ Rows whose evidence is now numbers-only (the crop survives, the run's own report
 them is to be read as newly verified: the status letters stand on the measurements recorded here, and re-taking any of
 them needs a fresh run.
 
+## 6f. The normal-play row: what was measured, and what the instruments cost
+
+**The route, driven.** A human-free route needs a driver, so `play48` ran the user's renderer configuration (the
+instance's mods, the current jar, `-Dceltium.vulkan.glless=true`) with the fixture as the driver and the timer. The
+fixture adds no rendering path; it presses the keys and writes the report. What the run did, from its own report:
+world load, `leftWorldAtTick=100` (the three calls "Save and Quit to Title" makes), `rejoinedAtTick=100` (a second
+world), the pause menu opened at tick 204 (`GuiOptions`), the video settings screen at the capture
+(`GuiVideoSettings`), `worldTicksAtEnd=296`, verdict `PASSED` with 0 assertion failures.
+
+**The interval numbers, and their window.** The fixture reports two windows and names them:
+`frameIntervalWindows cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are
+this one) warm=worldTicks 400..600 (after the world is built)`. `play48` reached tick 296, so its cold window holds
+**10 samples: P50 438.3 ms, P95 722.3 ms, P99 722.3 ms**, and its warm window is **empty**. That is not a playability
+number - it is the chunk-build window of a fixture that loads a world and switches worlds inside four minutes - and
+the row says so rather than quoting it as "the frame rate". `play48b` repeats the route with the steady-state window
+declared at the ticks the run actually reaches (`warmFromTick=250 warmToTick=420`) and with `handoffTimings` on; its
+numbers go in the row when it lands.
+
+**The time split, from the run's own counters.** `celtium/vulkan-check` at the end of `play48`:
+`batchCallMillis=1705` (worst 301, CPU 494), `actualFlushMillis=294` (worst 77, CPU 81),
+`threadCpuTotalMillis=23566`, `passes=1129 skipped=0`, `immediateState=18833 immediateOffered=1879`,
+`refusedBeforeAppend=0`. Two of the counters the task names are **not measurable here**:
+`threadWaitedMillis=-1` and `threadBlockedMillis=-1` (the JVM reports thread CPU unsupported), and the
+`handoff` counter is absent because **GL-less has no GL-to-Vulkan handoff** - the run's own line says
+`glless target: no handoff, abandoned=0`. Synchronous readbacks in this leg are the instruments, not the product:
+`presentReadback` and `dumpPresentedImage` were on, and the compositor capture photographed the output throughout;
+the user's shape (`plain48`) had none of them.
+
+**The diagnostics, and what still repeats.** The gate (`VulkanDiagnostics.enabled()`, on for a validation run or
+`-Dceltium.vulkan.diagnostics=true`) covers `CELTIUM_MODEL_MATRIX` (bounded), `CELTIUM_ACCEPTED` (every 500),
+the arena census, the colour-batch census, the model build/off-target lines and the stub's texture-parameter
+shapes. Measured in `plain48` (no fixture, no validation, 120 s): **1389 log lines, 916 of them CELTIUM lines** -
+against the >100,000 lines the operator's session produced before the gate. Two repeating censuses are **still
+ungated**: `CELTIUM_ARRIVALS` x467 (printed every 500 arrivals) and `CELTIUM_REFUSALS_BY_FORMAT` x233 with
+`celtium offer decisions` x233 (every 1000 offers), all three in
+`forge122/.../WorldVertexBufferUploaderMixin.java` (lines 170-178 and 245-256) and none of them behind
+`VulkanDiagnostics.enabled()`. They are the largest remaining source of log volume in a plain launch, and they are
+reported to the owner rather than edited here (renderer source).
+
+**Display honesty.** `CELTIUM_NATIVE_DEVICE` names the real device in both legs, and the run's `glVendor=Celtium`
+confirms the stub path. The **F3 overlay itself was not captured**: nothing in these legs presses F3, and
+`CeleritasVintage.onF3Text` (line 55) returns immediately unless `gameSettings.showDebugInfo` is set. The F3 line's
+source is `Celtium Renderer (VERSION)` plus `Terrain backend: ` + `TerrainBackendStatus.describe()`, which is the
+live renderer's description or, before a world exists, `TerrainBackendSelection.pending(...)` - so a menu-time F3
+would report the pending selection, not the live device. That is a claim about the code, not a measurement of the
+overlay, and the row says so.
+
+**What could not be exercised.** A literal window drag, minimise/restore, mouse look, the F3 overlay (no input in
+these legs), and the inventory screen: the route used the pause menu to video settings, and the fixture's inventory
+path needs its JEI flag. The loading screen is skipped under GL-less by design
+(`CELTIUM_GLLESS splash progress skipped (no shared GL context)`).
+
 ## 7. Instruments and artifacts
 
 Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py`, `compare_jei_pair.py`, the

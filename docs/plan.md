@@ -141,6 +141,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.205 **task-52 の filter 修正着地（atlas が LINEAR で作られていた実測）・新しい VUID クラス・spike 帰属の計器を承認**
+
+- **task-52 の根因が実測で確定（texture-mirror・jar `c6e7a8058c3fd511c068c2f8`）**:
+  `CELTIUM_SAMPLER_FILTER glTexture=12 repeatU=true repeatV=true mag=NEAREST min=NEAREST mipmapMode=LINEAR maxLod=1
+  (mag=record min=record; the sampler was built before the game set it) **wasMag=LINEAR wasMin=LINEAR**`——
+  **block atlas（GUI item の texture・name 12）は write-shape 推論で LINEAR mag/min で作られていた**（mirror が params 到着前に問い合わせたため）。
+  修正: `confirmWrapFromRecord` → **`confirmSamplerStateFromRecord`**（MAG/MIN も record から読み、magnification と minification を分離・
+  record が無い texture は従来通り・4つの差のいずれかで sampler を作り直し generation bump・どちらの source が勝ったかを log）。
+  **global mipmap 変更はしない**ので terrain band の 6.207/5.86% は不変。**注意2点を明記**: (1) この scene の `maxLod=1`（per-level content path が reach を上げていない）
+  (2) **この leg は clean でない**（`validationMessageCount=20`・全て `VUID-vkCmdBeginRenderPass-initialLayout-00900`＝attachment 0 の initial layout が GENERAL 期待に対し
+  SHADER_READ_ONLY）→ sampler の証拠は有効だが、**画の受入（sharpness/edge）は clean な leg で取り直す**。
+- **新しい VUID クラスは frame-composite の遷移と同じ image lifecycle 領域**として差し戻し: published name を `SHADER_READ_ONLY` にしたまま後続 pass が attachment として使うと
+  initial layout が食い違う——sampling 側遷移と write 側遷移の順序を両方向で確認し、**両 VUID で `validationMessageCount=0`** を同じ leg（`splash-vuid`）で受入。
+- **spike 帰属の計器を承認（frame-composite）**: `-Dceltium.validation.slowFrameMs`（既定50）で閾値超えの frame の handoff summary を bounded list に記録し、
+  **p95/p99 に phase（immediate/terrain/present/upload/wait）を付ける**。まず既存計器（`bootstrapQueueWaits` vs spike frame・`immediateWindows`/`worldPassBoundaryFlushes` per frame）で確認。
+  panorama/splash copy は world-only leg では `textureCopyReadbacks=0`（call graph からの除外・次 leg で再確認）。
+
 ## 0.204 **task-50 の GUI case を現行 tree で受入（スロット充填率が参照と一致）・glyph particle の fixture hook 投入**
 
 - **GUI item の受入（weather-water・`ww27-cand` jar `fa9487e0cd17ee7c` vs upstream `d12425eaaf184e79`・同一 fixture/scene/pose/tick）**:
