@@ -257,6 +257,17 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.282 **round 88: flush＋routing の併用も白（`nonWhite=0`）— faces の内容はどちらの pair にも無い**
+
+- **測定（Lead の `r86-both`・hold 60）**: 39 groups queued・window なし・serve 前に flush 実行・read は routing 規則に従う — それでも
+  `mean=255,255,255`・`firstPixels=[ffffffff×4]`・**`nonWhite=0`**。
+- **flush は revert**（per-copy の同期コストに見合う効果なし）。**routing 修正は残置**（draws と同じ規則・コスト無し）。
+- **この leg が示すこと（狭いが重要）**: **faces の内容は copy の時点でどちらの pair にも無い**。
+  次の問いは「**faces の pass が frame image に書いたのか、そもそも実行されていないのか**」で、
+  `CELTIUM_DRAW_SITE` の `target` と `passImage` を同じ leg で読めば答えが出る（前 leg では `passImage` は chain pair だったが、
+  `target` は非main identity であり、**その identity がどの image に写像されるか**を offer 時に印字する必要がある）。
+- **パノラマの確定事実（不変）**: mirror 正・bind 正・捕捉正・clear は draw 前・copy は panorama 自身・pending 39・readback 全白。
+
 ## 0.281 **round 87: read の routing 修正を実装（identity 0 → default pair）— ルール整合だが白は動かず**
 
 - **実装（Lead）**: `celtium$ownedReadImage` の最後の分岐が `lastDrawnOffTargetIdentity` に対して**無条件に chain pair** を返していたのを、
