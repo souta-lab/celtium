@@ -230,6 +230,33 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.227 **round 34: P0 は2つの独立した原因だった（OPT-07 の batched copy ＋ BH-14 の drain）・両方 revert・安定確認・OPT-05 受入**
+
+- **P0 の原因は2つ**（それぞれ独立に device lost を起こす）:
+  1. **OPT-07 の batched copy**（`VulkanContext.uploadToBuffer`）: pending の copy が名指しする `dstBuffer` を呼び元が同一 frame で置換
+     （`VulkanArena` の grow → `VulkanBuffer.ensureCapacity` が旧 `VkBuffer` 破棄・world teardown は arena ごと破棄）＝
+     `VUID-vkCmdCopyBuffer-dstBuffer-parameter`、その後の submit が `-4`。revert `14ed4615f` / `99095d85e`。
+  2. **BH-14 の target-driven drain**（`e87aa0ec1`）: `currentRenderTarget` を差し替えて per-target body を再利用したため、
+     **command buffer を開いた identity ではない identity** の acquire/release barrier と pass を記録してしまい `VK_ERROR_DEVICE_LOST`。
+     `finally` の復元では既に記録済みの内容を戻せない。revert `e30a23cd6`（counter と instrument は保持）。
+- **切り分け実験（fog-path）**: drain ありの HEAD は 3/3 失敗、revert 後は **2/2 成功**（`gpuStalled=false`・`stallOrigin=none`・
+  `submitTimeouts=0`・device-lost 文字列 0・crash report 0）。acceptance の対照は regression window を `9bc475cb`（01:50 緑）→
+  `513421d0` に固定。
+- **Lead の安定確認（両 revert 後・layers ON・terrain + keepGui + captureEntities）**: `DEVICE_LOST`/`-4` **0件**、
+  `CELTIUM_GROUPS submitted=631 completed=631`、crash report 0。
+- **OPT-05 の受入（perf-ring・`1c6c99320`）**: `frameArena regionsOpened=8316 blockedOpenings=0 reclaimedSlots=700
+  promotions=0`・`frameArenaFallbackGroups=0`・`peakVertexBytes=748272`・`peakIndexBytes=195560`・slot1 未確保（1 slot pair で足りる）、
+  **`hostBuffersCreated=6` for 8316 groups**（旧: 1 group あたり2 buffer＝約16,632）。warm 166 sample **p50 57.6 / p95 97.8 / p99 123.8 ms**。
+  未確立: 完全非同期 upload（OPT-08）・Intel の opening cost・warm p50 の他 jar 比較（scene flag が違い method error）。
+- **再挑戦の正しい形**:
+  - **OPT-07**: destination が copy pending 中に破棄・置換・segment 再利用されないこと。destination 側 last-use を batch の epoch で gate、
+    または flush 時に handle を解決＋arena segment 再利用の gate。
+  - **BH-14/15/16**: **target ごとに pass を開く**（その target の framebuffer を bind・state を再発行（OPT-10）・自前の barrier 対を記録）。
+    per-target body の使い回しでは device lost になる。
+- **ホットバー暗転の規則（glyph-fix・`0af5060ae`）**: pass ベースの full-bright は**絵を変えない**（apple は3者で画素同一・vanilla は元から明るい）。
+  真の該当は **TESR item（chest/shulker/banner）が model 経路（lit＋world 座標）を通る**こと。規則は
+  **capture 時の light-map unit enable 状態**にキーする（world pass 外では unit が無効＝full-bright、有効時は捕捉座標）。
+
 ## 0.226 **round 33-34: P0（device lost）は OPT-07 の batch copy と確定・revert で解消・検証済み**
 
 - **症状**: HEAD `f9150335` の jar で terrain scene が 3/3 leg で device を失う（`vkDeviceWaitIdle returned -4`・
