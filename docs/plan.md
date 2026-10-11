@@ -257,6 +257,37 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.239 **round 45: font バー受入（ユーザーの 1x crop で 26/36→0）・readback 暗転の回帰を routing 判定で解消・パノラマは「記録と実行のギャップ」へ**
+
+- **font セパレータ受入（glyph-fix・`8fcaf5802`）**: `modes={5=1223657}`（run は strip のまま）・
+  **`fontStripSeparators=1138913` が `fontQuadsAppended − fontRunsStarted` = 1,141,398 − 2,485 に厳密一致**
+  ＝**glyph 境界ごとに1つ**（各2退化頂点）。texel 検査は不変（**449/449・104/104**・空 texel 0）。
+  **バーは 26/36 → 0**（detector-safe な gap 列・3 leg 一致）。`refused=0`（1,223,657 quad）・
+  **0.23 µs/glyph**（基準 0.56）。受入 crop は**ユーザーの 1x スケール** `font-f3-1x-before-after.png`。
+  訂正2件: 以前の「105/165」は detector の ±2px footprint で膨らんでいた（正直な指標は 26/36→0）、
+  `fontStripSeparators` は**印字 site が無く**、font summary は shutdown hook のため早期終了 leg では失われる → 検証 census に移動。
+- **readback 暗転の回帰を解消（Lead・`d96232125` + fog-path の再取得）**: `51003a602`（PASSED・meanAtCapture 30.72）→
+  `f02ae2cce`（FAILED・3.82）の暗転は **BH-16 の drop 規則が frame 自身の clear を落としていた**ため
+  （`owner=1` は game の main render target でありうる）。分類を **backend の routing 判定**に変更した結果:
+  `chain-terrain` leg で **`presentedImageVerdict=PASSED`・`presentedNonBackgroundFraction=0.952174`（修正前 0.952229 と同画像）・
+  `gameClearsDroppedForeignTarget=0`・`gpuStalled=false`** ＝**回帰は解消**。
+- **パノラマの残りは「記録と実行のギャップ」へ（fog-path・`276416698`）**: 新計器 `CELTIUM_CHAIN_CLEAR` により
+  log 順は `CLEAR_LATCH 233` → **`CHAIN_CLEAR 236`（site=first-non-main-pass・pair image・target=1938698341）** →
+  `DRAW_SITE #1 239`（face が描く）→ `TEX_COPY_SERVED 802`。＝**pair 自身の clear は face の draw より前**で、
+  **foreign clear も pair 自身の clear も順序では説明できない**。残るのは**記録と実行のギャップ**:
+  copy の read が face の pass より先に submit/execute されれば、copy は clear 後の image を見る。
+  分離測定は **copy 時点の完了事実**（fence/timestamp）を `readImage=`/`frame=` の隣に印字すること。
+- **OPT-10 の訂正（blend-state）**: **fog は key gap ではなかった**（`celtium$fogMoved()` が BH-04 の fog 半分以来 group-open テストにあり、
+  fog 変化は group を閉じる）。真の gap は light params と scissor の2つで**両方閉じた**
+  （light generation boundary・scissor 捕捉＋boundary＋no-flip）。OPT-10 に残るのは **command-state cache の半分のみ**。
+- **clip 受入（blend-state・`61d06ef39`/`adca47755`）**: 同一 jar・1 flag 差で
+  green quad が control では x 318..959（未 clip）→ 修正側 x 318..638、yellow は 639..959。
+  `CELTIUM_GROUP_SCISSOR glBox=0,276 639x84 applied=0,276 639x84`（以前は 0,360）。
+  `scissorBoundarySplits=473`・`scissorCapturedGroups=368`（videoSettings leg は 0）。
+- **新規の欠陥候補（blend-state が命名・未着手）**: videoSettings scene は **scissor caller に到達しない** —
+  fixture の `GuiOptions.actionPerformed` への click が **`InvocationTargetException`** を投げ、vanilla `GuiVideoSettings` に
+  fallback する（`guiScreenOpenedVia` に記録）。Celeritas の video-options 画面が開くべきなら**別欠陥**（goal (e) の受入に直結）。
+
 ## 0.238 **round 44: BH-11 受入（counter＋絵）・BH-10 を pixel で証明・clip の y 反転バグを修正・BH-32 実装**
 
 - **BH-11 受入（acceptance・`r38-break`/`r38-control`）**: jar `9186d898`・HEAD `ae32bdbe7`・fixture `fe349299`。
