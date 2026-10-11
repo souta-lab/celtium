@@ -1141,6 +1141,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int READ_RESOLVE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.readResolveLog", 6).intValue();
     private int readResolveLogs;
+    /** Reads that resolved through the frame's last non-main draw target rather than the bound target (panorama). */
+    private int readResolvedFromLastDrawnTarget;
+
+    /**
+     * The last non-main, non-zero identity a batch was accepted for in this frame (panorama read resolution).
+     * <p>
+     * A copy can read GL name 0 while the frame's content was drawn into a framebuffer whose identity is not the one
+     * bound at the copy: measured on the menu, the panorama's cube faces are offered for identity 572879803 (routed to
+     * the chain pair) and the copy into texture 20 then reads with {@code readFbo=0} and the default pair bound, which
+     * resolved to an image the faces never wrote and returned uniform white. The read has to follow the image the
+     * draws actually wrote, and this is that fact.
+     */
+    private long lastDrawnOffTargetIdentity;
+    private long lastDrawnOffTargetFrame = -1L;
 
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
@@ -1153,6 +1167,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long windowFlushDroppedBatches;
     /** Viewports issued per group; BH-13's counter, so "the rectangle was restored" is readable, not assumed. */
     private long groupViewportSets;
+    /**
+     * Immediate groups whose capture saw {@code GL_CULL_FACE} enabled, and the ones that saw it disabled.
+     * <p>
+     * BH-08's per-batch proof: before the fix every group fell into the disabled column, because nothing ever wrote
+     * the mirror's cull flag. A leg that shows both columns non-empty (the HUD and the world differ) is the evidence
+     * that the capability and the face now reach the pipeline key, which is stronger than "the state flows" read off
+     * the source. Counted at capture, where the group's own state is taken.
+     */
+    private long cullEnabledGroups;
+    private long cullDisabledGroups;
     /**
      * Batches a failed window flush puts back on the queue instead of throwing away.
      * <p>
@@ -2875,6 +2899,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + "/" + this.lightmapReestablished
                     + (this.textureRegistry == null ? ""
                             : " invalidationsKeptNoGl=" + this.textureInvalidationsKeptGlless
+                            + " " + VulkanGlState.perUnitBindCensus()
                             + " mirrorSources=[" + this.textureRegistry.mirrorSourceSummary() + "]"
                             + " " + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureCaptureSummary()
                             + " cost=[" + this.textureRegistry.patchCostSummary() + "]"));
@@ -4749,6 +4774,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Offered for another framebuffer and accepted: the number that says whether these batches are taken at all,
                 // since the queue never sees a non-main group afterwards (audit A10).
                 this.acceptedForOtherTargets++;
+                if (this.currentRenderTarget != 0L) {
+                    this.lastDrawnOffTargetIdentity = this.currentRenderTarget;
+                    this.lastDrawnOffTargetFrame = this.frameId;
+                }
             }
 
             this.offerStage = 11;
@@ -5098,6 +5127,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             this.immediateState.cullEnabled(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullEnabled());
             this.immediateState.cullFace(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.cullFace());
+        }
+        // BH-08's per-batch proof, counted here where the group's own state is taken rather than at draw time, where
+        // it would be the flush's state.
+        if (this.immediateState.cullEnabled()) {
+            this.cullEnabledGroups++;
+        } else {
+            this.cullDisabledGroups++;
         }
         return new int[] {
                 blend ? 1 : 0,
@@ -6459,6 +6495,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
+                + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
                 + " gpuStalled=" + this.gpuStalled
                 + " deviceWaitToken=" + this.deviceWaitToken
@@ -6469,6 +6506,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
                 + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
                 + " groupViewportSets=" + this.groupViewportSets
+                + " cullEnabledGroups=" + this.cullEnabledGroups
+                + " cullDisabledGroups=" + this.cullDisabledGroups
                 + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
                 + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
                         : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
@@ -9911,6 +9950,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 glless.ensureOffTarget(this.targetWidth, this.targetHeight);
                 return glless.chainPairColorImage();
             }
+            if (this.lastDrawnOffTargetIdentity != 0L && this.lastDrawnOffTargetFrame == this.frameId) {
+                // The copy reads name 0 and the default pair is bound, but this frame's non-main content was drawn
+                // into this identity's pair: that image is what the copy is of. Measured on the menu, where the
+                // panorama's faces go to the chain pair and the read otherwise found uniform white.
+                this.readResolvedFromLastDrawnTarget++;
+                glless.ensureOffTarget(this.targetWidth, this.targetHeight);
+                return glless.chainPairColorImage();
+            }
             glless.ensureOffTarget(this.targetWidth, this.targetHeight);
             return glless.offTargetColorImage();
         }
@@ -10901,6 +10948,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // 96 yet - the two colourless vertex shaders have to be changed to use it - but the value has to
                     // be there for that to be a one-line change on their side.
                     push.putFloat(96, color == null || color.length < 4 ? 1.0f : color[3]);
+                    // BH-03: the alpha comparison function, in the spare slot at offset 100 (the texture family's
+                    // u_TexPad.y; the position family only reads 96 of that vec4 and the lit family's block has the same
+                    // free slot). The raw GL enum travels, and 0 means "the test is disabled" - no GL enum is 0, so a
+                    // reference of 0 is no longer indistinguishable from a disabled test, which the shader's old
+                    // "alphaRef > 0.0" guard conflated (it implemented GL_GREATER only).
+                    push.putFloat(100, this.immediateState.alphaTestEnabled() ? this.immediateState.alphaFunc() : 0);
                 }
                 // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every
                 // group that carries them rather than guarded per pipeline - only the lit layout reads past 128, and
@@ -10940,18 +10993,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // across unchanged (smaller is nearer in both). Block entities and the break overlay are the callers:
                 // with the offset dropped, the TESR and the block face it sits on z-fight. Issued only when the game
                 // has actually called glPolygonOffset, so a scene that never uses it pays one branch.
-                if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()) {
-                    boolean offsetEnabled =
-                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled();
-                    float constantFactor = offsetEnabled
-                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetUnits() : 0.0F;
-                    float slopeFactor = offsetEnabled
-                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFactor() : 0.0F;
-                    org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
-                    if (offsetEnabled) {
-                        this.immediateDepthBiasedGroups++;
-                    }
+                boolean offsetEnabled = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled();
+                float constantFactor = offsetEnabled
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetUnits() : 0.0F;
+                float slopeFactor = offsetEnabled
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFactor() : 0.0F;
+                // Issued for every group, not only when the game has called glPolygonOffset: the pipelines declare
+                // depthBiasEnable statically, so a draw whose command buffer never saw vkCmdSetDepthBias is a
+                // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
+                // whatever the last draw left. Zeros are the state GL has when the offset is off.
+                org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
+                if (offsetEnabled) {
+                    this.immediateDepthBiasedGroups++;
                 }
                 Object pipeline = prepared.pipeline;
                 if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);

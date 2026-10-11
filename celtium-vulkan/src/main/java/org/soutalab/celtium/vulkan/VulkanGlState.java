@@ -483,8 +483,24 @@ public final class VulkanGlState {
         return unit >= 0 && unit < this.boundTextureByUnit.length ? unit : 0;
     }
 
+    /** Binds seen on a unit other than 0, and binds seen on unit 0 - the BH-06 observable in a leg. */
+    private static long bindsOnOtherUnits;
+    private static long bindsOnUnitZero;
+
+    /** {@return how many binds arrived on a unit other than 0, against how many on unit 0}. */
+    public static String perUnitBindCensus() {
+        return "bindsOnUnit0=" + bindsOnUnitZero + " bindsOnOtherUnits=" + bindsOnOtherUnits
+                + " (before BH-06 the second kind overwrote the name unit 0 reads; the entity brightness path is the"
+                + " caller that binds the light map unit and returns to unit 0 without re-binding)";
+    }
+
     /** Records the GL name of the bound texture on the <em>active</em> unit, as {@code GlStateManager.func_179144_i} does. */
     public void bindTexture(int glTextureId) {
+        if (this.activeTextureUnit == 0) {
+            bindsOnUnitZero++;
+        } else {
+            bindsOnOtherUnits++;
+        }
         this.boundTextureByUnit[unitIndex(this.activeTextureUnit)] = glTextureId;
         // Kept in step for the single-value readers that predate the per-unit model (the field is otherwise unused).
         if (this.activeTextureUnit == 0) {

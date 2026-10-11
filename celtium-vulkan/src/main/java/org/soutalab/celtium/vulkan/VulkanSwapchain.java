@@ -73,6 +73,10 @@ public final class VulkanSwapchain {
     private int presentTraces;
     /** Partly built semaphore pools that were rolled back instead of abandoned (BH-20), for the report. */
     private int semaphorePoolRollbacks;
+    /** Present-support refusals, synthetic or real (BH-19): the count that says the branch is reachable. */
+    private static final java.util.concurrent.atomic.AtomicLong PRESENT_SUPPORT_REFUSALS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static long presentSupportRefusals;
 
     // ---- the present-mode contract (task-56) ---------------------------------------------------------------------
     //
@@ -456,15 +460,44 @@ public final class VulkanSwapchain {
             }
         }
 
-        // The presentation queue must be the queue this backend submits on; if the family cannot present, the
-        // surface is unusable for this design and the caller is told rather than silently picking another queue.
+        // BH-19: the present-support contract, and the ownership/sharing decision behind it.
+        //
+        // The decision, written down because the audit asks for a decision rather than an omission: **one queue is
+        // used for both submission and presentation, and a configuration where the chosen family cannot present is
+        // refused, not worked around.** The reasons, in the order they matter:
+        //   1. `VulkanTerrainGpuBackend` submits through `context.queue()` and presents through the same `VkQueue`
+        //      from `VulkanSwapchain`. A second, present-only family would mean either a separate present queue whose
+        //      submissions must be externally synchronised against the submit queue (semaphores on both sides, and the
+        //      frame's render-finished signal re-pointed), or `VK_SHARING_MODE_CONCURRENT` images with two queue
+        //      family indices - and the current design deliberately declares `EXCLUSIVE` with one index because the
+        //      spec requires CONCURRENT to list at least two *distinct* families.
+        //   2. The failure this refusal prevents is silent: a swapchain created against a family that cannot present
+        //      fails at `vkQueuePresentKHR` (or returns OUT_OF_DATE forever), which under GL-less is a black window
+        //      with every counter reporting a complete frame - the shape the audit's whole travel is about.
+        //   3. What it costs: a device whose *only* present-capable family is not the graphics+transfer family is
+        //      refused. Measured on this workspace, no such device exists among the three enumerated (AMD RADV family
+        //      0 presents, Intel ANV family 0 presents, and the third device is refused earlier), so the cost is
+        //      currently zero here and is named rather than assumed elsewhere.
+        // The device/queue *selection* half - folding this check into candidate choice so another device or family can
+        // be considered - is what the contract test below exercises synthetically; on this machine the branch is
+        // otherwise unreachable, because the chosen family presents on every enumerated device.
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer supported = stack.mallocInt(1);
-            int result = vkGetPhysicalDeviceSurfaceSupportKHR(context.physicalDevice(), context.queueFamilyIndex(),
-                    surface, supported);
+            boolean forcedUnsupported = Boolean.getBoolean("celtium.vulkan.assumeNoPresentSupport");
+            int result = forcedUnsupported ? VK_SUCCESS : vkGetPhysicalDeviceSurfaceSupportKHR(context.physicalDevice(),
+                    context.queueFamilyIndex(), surface, supported);
+            if (forcedUnsupported) {
+                supported.put(0, VK_FALSE);
+                presentSupportRefusals++;
+            }
             if (result != VK_SUCCESS || supported.get(0) != VK_TRUE) {
+                if (forcedUnsupported) {
+                    PRESENT_SUPPORT_REFUSALS.incrementAndGet();
+                }
                 reasons.add("queue family " + context.queueFamilyIndex() + " cannot present to the surface"
-                        + " (VkResult " + result + ", supported=" + (result == VK_SUCCESS ? supported.get(0) : -1) + ")");
+                        + " (VkResult " + result + ", supported=" + (result == VK_SUCCESS ? supported.get(0) : -1)
+                        + (forcedUnsupported ? ", forced by -Dceltium.vulkan.assumeNoPresentSupport=true (BH-19 contract"
+                                + " test; not a device result)" : "") + ")");
                 // BH-20: this is the one refusal that happens *after* the surface exists and *before* a swapchain
                 // object owns it. Returning null here left the surface - and with it the platform connection - alive
                 // for a caller that has nothing to delete it with, on exactly the configuration the audit names

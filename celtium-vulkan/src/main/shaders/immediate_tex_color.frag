@@ -18,6 +18,10 @@ layout(push_constant) uniform PushConstants {
     vec4 u_MvColumn0;
     vec4 u_MvColumn1;
     vec4 u_MvColumn2;
+    // The texture affine's padding slot, declared here exactly as the vertex stage declares it: BH-03's
+    // alpha-test comparison selector rides u_TexPad.y (the vertex stage reads .z for the affine enable), so
+    // the fragment must declare the same field or the two stages disagree and the shader does not compile.
+    layout(offset = 96) vec4 u_TexPad;
     layout(offset = 112) float u_AlphaRef;
     layout(offset = 116) float u_ColorR;
     layout(offset = 120) float u_ColorG;
@@ -51,6 +55,22 @@ float celtiumFogAmount(float distance) {
     return (1.0 - weight) * celtium.u_FogColor.a;
 }
 
+/**
+ * BH-03: the GL alpha comparison, so the fragment stops implementing GREATER alone. The selector arrives in the spare
+ * {@code u_TexPad.y} at offset 100 as the raw GL enum, with 0 meaning "the test is disabled" - no GL enum is 0, so a
+ * reference of 0 stays distinguishable from a disabled test, which the old {@code alphaRef > 0.0} guard conflated.
+ */
+bool celtiumAlphaPass(int func, float alpha, float reference) {
+    if (func == 0x0200) return false;              // GL_NEVER
+    if (func == 0x0201) return alpha < reference;   // GL_LESS
+    if (func == 0x0202) return alpha == reference;  // GL_EQUAL
+    if (func == 0x0203) return alpha <= reference;  // GL_LEQUAL
+    if (func == 0x0204) return alpha > reference;   // GL_GREATER
+    if (func == 0x0205) return alpha != reference;  // GL_NOTEQUAL
+    if (func == 0x0206) return alpha >= reference;  // GL_GEQUAL
+    return true;                                    // GL_ALWAYS
+}
+
 void main() {
     vec4 colour = texture(u_Texture, v_TexCoord) * v_Color;
     if (celtium.u_AlphaRef < 0.0) {
@@ -63,8 +83,11 @@ void main() {
         // zombie head (78.9,123.7,87.7) -> (117.3,105.0,79.4) and the creeper (74.1,140.8,87.4) -> (118.1,113.2,76.0)
         // while ours moved by at most 1.8 pixels.
         colour.rgb = mix(colour.rgb, vec3(celtium.u_ColorR, celtium.u_ColorG, celtium.u_ColorB), -celtium.u_AlphaRef);
-    } else if (celtium.u_AlphaRef > 0.0 && colour.a < celtium.u_AlphaRef) {
-        discard;
+    } else {
+        int alphaFunc = int(celtium.u_TexPad.y + 0.5);
+        if (alphaFunc != 0 && !celtiumAlphaPass(alphaFunc, colour.a, celtium.u_AlphaRef)) {
+            discard;
+        }
     }
     colour.rgb = mix(colour.rgb, celtium.u_FogColor.rgb, celtiumFogAmount(v_FogDistance));
     fragColor = colour;
