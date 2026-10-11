@@ -510,6 +510,10 @@ public final class VulkanImmediateItemPipeline {
                 VkPipelineRasterizationStateCreateInfo raster =
                         VkPipelineRasterizationStateCreateInfo.calloc(stack).sType$Default()
                                 .polygonMode(VK_POLYGON_MODE_FILL)
+                                // BH-11: the depth bias is command state (vkCmdSetDepthBias) so one pipeline serves every
+                                // polygon offset the game sets; the enable bit is what has to be declared here, and it is a
+                                // rasterization field - the multisample state next door has no such member.
+                                .depthBiasEnable(true)
                                 .cullMode(this.cull ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE)
                                 .frontFace(VK_FRONT_FACE_CLOCKWISE)
                                 .lineWidth(1.0f);
@@ -542,7 +546,7 @@ public final class VulkanImmediateItemPipeline {
                         .sType$Default().logicOpEnable(false).pAttachments(blendAttachment);
                 VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)
                         .sType$Default()
-                        .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR));
+                        .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS));
 
                 VkGraphicsPipelineCreateInfo.Buffer create = VkGraphicsPipelineCreateInfo.calloc(1, stack);
                 create.get(0).sType$Default()

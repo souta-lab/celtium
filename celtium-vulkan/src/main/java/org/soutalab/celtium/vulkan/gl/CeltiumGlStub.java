@@ -128,6 +128,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
     private static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
     private static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
+    private static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
+    private static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
+    private static final int SEM_POLYGON_OFFSET = 62;  // (factor, units) as float bits -> the depth bias GL wants
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -192,6 +195,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glGetDoublev", R_VOID, SEM_GET_FLOATV, A_INT, A_PTR);   // doubles read as floats is a known GL quirk - 4B each
         fn("glGetBooleanv", R_VOID, SEM_GET_BOOLEANV, A_INT, A_PTR);
         fn("glEnable", R_VOID, SEM_ENABLE, A_INT);
+        // BH-08: the immediate path's cull state never reached the renderer because the face calls were no-ops and
+        // nothing read the capability. Both are recorded here instead: the enable already lands in the enables map
+        // with every other capability, and the face and winding get their own semantic case.
+        fn("glCullFace", R_VOID, SEM_CULL_FACE, A_INT);
+        fn("glFrontFace", R_VOID, SEM_FRONT_FACE, A_INT);
+        fn("glPolygonOffset", R_VOID, SEM_POLYGON_OFFSET, A_FLOAT, A_FLOAT);
         fn("glDisable", R_VOID, SEM_DISABLE, A_INT);
         // BH-09: Celeritas' own UI clips with GL11.glScissor directly (VintageDrawContext.enableScissor), so the
         // rectangle must be recorded rather than dropped - it was in the NOOP table, which is why a scroll list could
@@ -387,9 +396,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glBlendColor", "glColorMask", "glColorMaski", "glDepthMask", "glDepthFunc", "glDepthRange",
                 "glClearBufferfv", "glClearBufferiv",
                 "glClearBufferuiv", "glStencilFunc", "glStencilFuncSeparate", "glStencilOp", "glStencilOpSeparate",
-                "glStencilMask", "glStencilMaskSeparate", "glCullFace", "glFrontFace", "glPolygonMode",
-                "glPolygonOffset", "glPointSize", "glPrimitiveRestartIndex", "glProvokingVertex",
-                "glSampleCoverage", "glSampleMaski", "glLogicOp", "glHint",
+                "glStencilMask", "glStencilMaskSeparate", "glPolygonMode",
+                "glPointSize", "glPrimitiveRestartIndex", "glProvokingVertex",                "glSampleCoverage", "glSampleMaski", "glLogicOp", "glHint",
                 "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers", "glClampColor",
                 "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glLightf", "glLightfv",
                 "glLighti", "glLightiv", "glLightModelf", "glLightModelfv", "glLightModeli", "glLightModeliv",
@@ -566,11 +574,85 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
     private static final int GL_SCISSOR_TEST = 0x0C11;
 
+    /** GL_POLYGON_OFFSET_FILL: the enable bit that says whether the recorded offset applies to filled polygons. */
+    private static final int GL_POLYGON_OFFSET_FILL = 0x8037;
+
+    /** glPolygonOffset's two arguments, in GL's own convention (factor first, then units). */
+    private float polygonOffsetFactor;
+    private float polygonOffsetUnits;
+    private volatile boolean polygonOffsetCalled;
+
+    /** {@return GL's polygon offset factor}, 0 when glPolygonOffset has not been called. */
+    public static float polygonOffsetFactor() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0.0F : stub.polygonOffsetFactor;
+    }
+
+    /** {@return GL's polygon offset units}, 0 when glPolygonOffset has not been called. */
+    public static float polygonOffsetUnits() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? 0.0F : stub.polygonOffsetUnits;
+    }
+
+    /** {@return whether glPolygonOffset has been called at all}: (0,0) is a legal offset, so the call is the fact. */
+    public static boolean polygonOffsetCalled() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.polygonOffsetCalled;
+    }
+
+    /**
+     * {@return whether GL_POLYGON_OFFSET_FILL is enabled}, read from the same {@code enables} map glEnable/glDisable
+     * write so there is one state rather than a mirror that can drift from it.
+     */
+    public static boolean polygonOffsetFillEnabled() {
+        CeltiumGlStub stub = installed;
+        return stub != null
+                && stub.enables.getOrDefault(Integer.valueOf(GL_POLYGON_OFFSET_FILL), Boolean.FALSE).booleanValue();
+    }
+    // BH-08: the cull capability and the two face constants, spelled here the way this class spells GL_SCISSOR_TEST -
+    // it deliberately carries no org.lwjgl.opengl import, so the numbers are named where they are used.
+    private static final int GL_CULL_FACE = 0x0B44;
+    private static final int GL_BACK = 0x0405;
+    private static final int GL_FRONT = 0x0404;
+    private static final int GL_CCW = 0x0901;
+    private static final int GL_CW = 0x0900;
+
     /** The game's clip rectangle as glScissor last set it, in GL's bottom-left coordinates. */
     private final int[] scissorBox = new int[4];
 
     /** Whether glScissor has been called at all: a box of zeros is a legal clip, so the call is what is recorded. */
     private volatile boolean scissorCalled;
+
+    /** The game's cull face and front winding, recorded by their semantic cases (BH-08). */
+    private int cullFaceValue = GL_BACK;
+    private int frontFaceValue = GL_CCW;
+    private volatile boolean cullFaceCalled;
+    private volatile boolean frontFaceCalled;
+
+    /**
+     * {@return whether GL_CULL_FACE is enabled}, read from the same {@code enables} map glEnable/glDisable write.
+     * <p>
+     * BH-08: the immediate state mirror has a cull flag and a cull face, and nothing on the game path ever set
+     * either - the capability was recorded but never read, and {@code glCullFace} was a no-op - so every immediate
+     * batch was built with culling off and the back faces of items, entities and mirror-scaled models stayed visible.
+     */
+    public static boolean cullEnabled() {
+        CeltiumGlStub stub = installed;
+        return stub != null
+                && stub.enables.getOrDefault(Integer.valueOf(GL_CULL_FACE), Boolean.FALSE).booleanValue();
+    }
+
+    /** {@return the last {@code glCullFace} argument}, or {@code GL_BACK} when it has not been called. */
+    public static int cullFace() {
+        CeltiumGlStub stub = installed;
+        return stub == null || !stub.cullFaceCalled ? GL_BACK : stub.cullFaceValue;
+    }
+
+    /** {@return the last {@code glFrontFace} argument}, or {@code GL_CCW} when it has not been called. */
+    public static int frontFace() {
+        CeltiumGlStub stub = installed;
+        return stub == null || !stub.frontFaceCalled ? GL_CCW : stub.frontFaceValue;
+    }
 
     /** {@return the game's clip rectangle}, or {@code null} when glScissor has not been called in this process. */
     public static int[] scissorBox() {
@@ -1135,6 +1217,23 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_DISABLE:
                 this.enables.put(Integer.valueOf((int) a0), Boolean.FALSE);
+                return 0L;
+            case SEM_CULL_FACE:
+                this.cullFaceValue = (int) a0;
+                this.cullFaceCalled = true;
+                return 0L;
+            case SEM_FRONT_FACE:
+                this.frontFaceValue = (int) a0;
+                this.frontFaceCalled = true;
+                return 0L;
+            case SEM_POLYGON_OFFSET:
+                // BH-11: glPolygonOffset(factor, units) - the two are A_FLOAT slots, so the raw IEEE-754 bits arrive
+                // here and are decoded the way glTexParameterf next door already decodes its float slot. Vanilla's
+                // block-entity and overlay draws call this with (-1, -1) or (-3, -3) to pull coplanar geometry in
+                // front of the face it sits on; with the offset dropped the TESR and the block face z-fight.
+                this.polygonOffsetFactor = Float.intBitsToFloat((int) c[0]);
+                this.polygonOffsetUnits = Float.intBitsToFloat((int) c[1]);
+                this.polygonOffsetCalled = true;
                 return 0L;
             case SEM_SCISSOR:
                 // GL's rectangle is in the window's own coordinates, bottom-left origin. The Vulkan scissor needs the

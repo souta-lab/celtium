@@ -1137,6 +1137,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The same refusals grouped by program alone. */
     private final java.util.LinkedHashMap<Integer, Integer> shaderProgramRefusedPrograms = new java.util.LinkedHashMap<>();
     private int postAcceptDroppedGroups;
+    /** Bounded lines for the copy's read resolution (see celtium$ownedReadImage). */
+    private static final int READ_RESOLVE_LOG_LIMIT =
+            Integer.getInteger("celtium.vulkan.readResolveLog", 6).intValue();
+    private int readResolveLogs;
+
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
     /**
@@ -9863,6 +9868,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** {@return the image a copy's read framebuffer names, or 0 when this renderer does not own it}. */
     private long celtium$ownedReadImage(int readFbo) {
         GllessFrameTarget glless = offTargetTarget();
+        // The routing decision, printed bounded: which facts the read resolved from and which image it chose. The
+        // panorama copy reads GL name 0 while the cube faces were offered for a non-zero identity, and uniform white
+        // is what a read of the wrong image looks like, so the inputs have to be in the log rather than inferred.
+        if (this.readResolveLogs < READ_RESOLVE_LOG_LIMIT) {
+            this.readResolveLogs++;
+            System.out.println("[Celtium] CELTIUM_READ_RESOLVE readFbo=" + readFbo
+                    + " mainIdentity=" + this.mainTargetIdentity
+                    + " mainColorName=" + framebufferColorTextureName(this.mainTargetIdentity)
+                    + " currentTarget=" + this.currentRenderTarget
+                    + " currentIsMain=" + this.currentRenderTargetIsMain
+                    + " frameImage=" + (this.frameTarget == null ? 0L : this.frameTarget.colorImage())
+                    + " defaultPair=" + (glless == null ? 0L : glless.offTargetColorImage())
+                    + " chainPair=" + (glless == null ? 0L : glless.chainPairColorImage()));
+        }
         // The read framebuffer's GL name against the main framebuffer's own recorded GL name - not against the object
         // identity, which is a different number space and made this branch unreachable. Measured: Minecraft's main
         // framebuffer is the default one in this configuration (its bind reports GL name 0), its draws are routed to the
@@ -9880,8 +9899,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return this.frameTarget.colorImage();
         }
         if (readFbo == 0 && glless != null) {
-            // GL name 0 with a non-main target bound: the game's own finished-frame composite stream, whose draws are
-            // routed to the default pair.
+            // GL name 0 with a target bound that is not the main framebuffer: the name is not the fact that decides
+            // where the draws went - the routing is. The game's own framebuffer carries a non-zero identity and a GL
+            // name the stub records as 0, and the panorama's cube faces are offered for exactly that identity, so a
+            // read that resolved "name 0 and not main" to the default pair read an image the faces never wrote and
+            // returned uniform white. routeLabelForBinding is the one place the routing rule lives (main -> frame
+            // image, identity 0 -> default pair, every other non-main identity -> chain pair), so the read follows
+            // the same rule the draws did.
+            String route = GllessFrameTarget.routeLabelForBinding(this.currentRenderTarget, this.currentRenderTargetIsMain);
+            if ("chain-pair".equals(route)) {
+                glless.ensureOffTarget(this.targetWidth, this.targetHeight);
+                return glless.chainPairColorImage();
+            }
             glless.ensureOffTarget(this.targetWidth, this.targetHeight);
             return glless.offTargetColorImage();
         }
@@ -10904,6 +10933,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // pipeline's baked-in viewport (set once per pass by setViewportAndScissor) would draw a 256x256 GUI
                 // batch across the whole target - wrong pixels, which is why the batch used to be refused instead.
                 celtium$setGroupViewport(stack, group);
+                // BH-11: GL's polygon offset, applied as this group's depth bias. It is command state - one
+                // pipeline serves every offset the game sets, which is why the pipelines declare
+                // VK_DYNAMIC_STATE_DEPTH_BIAS and depthBiasEnable. The two names are swapped between the APIs: GL's
+                // units is Vulkan's constant factor and GL's factor is Vulkan's slope factor, with the sign carrying
+                // across unchanged (smaller is nearer in both). Block entities and the break overlay are the callers:
+                // with the offset dropped, the TESR and the block face it sits on z-fight. Issued only when the game
+                // has actually called glPolygonOffset, so a scene that never uses it pays one branch.
+                if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()) {
+                    boolean offsetEnabled =
+                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled();
+                    float constantFactor = offsetEnabled
+                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetUnits() : 0.0F;
+                    float slopeFactor = offsetEnabled
+                            ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFactor() : 0.0F;
+                    org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
+                    if (offsetEnabled) {
+                        this.immediateDepthBiasedGroups++;
+                    }
+                }
                 Object pipeline = prepared.pipeline;
                 if (pipeline instanceof VulkanImmediateTexturePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else if (pipeline instanceof VulkanImmediateItemPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
@@ -11045,6 +11094,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long immediateNarrowViewports;
     /** Groups whose Vulkan scissor was the intersection of the target with the game's own glScissor box (BH-09). */
     private long immediateScissoredGroups;
+    /** Groups drawn with GL's polygon offset applied as a Vulkan depth bias (BH-11). */
+    private long immediateDepthBiasedGroups;
     /** Groups whose clipped viewport is empty: an off-drawable rectangle, which GL would also draw nothing for. */
     private long immediateOffTargetViewports;
 
