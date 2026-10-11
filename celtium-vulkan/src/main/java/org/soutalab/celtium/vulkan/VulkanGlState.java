@@ -477,12 +477,15 @@ public final class VulkanGlState {
         if (index < 0 || index >= 2) {
             return;
         }
+        int previous = this.lightsEnabledMask;
         if (enabled) {
             this.lightsEnabledMask |= 1 << index;
         } else {
             this.lightsEnabledMask &= ~(1 << index);
         }
-        this.lightGeneration++;
+        if (this.lightsEnabledMask != previous) {
+            this.lightGeneration++;
+        }
     }
 
     public boolean lightEnabled(int index) {
@@ -500,10 +503,19 @@ public final class VulkanGlState {
         }
         float[] m = matrix(MATRIX_MODE_MODELVIEW);
         int base = index * 3;
-        this.lightDirections[base] = m[0] * x + m[4] * y + m[8] * z;
-        this.lightDirections[base + 1] = m[1] * x + m[5] * y + m[9] * z;
-        this.lightDirections[base + 2] = m[2] * x + m[6] * y + m[10] * z;
-        this.lightGeneration++;
+        float nx = m[0] * x + m[4] * y + m[8] * z;
+        float ny = m[1] * x + m[5] * y + m[9] * z;
+        float nz = m[2] * x + m[6] * y + m[10] * z;
+        // Bumped only when the stored value really moves: the generation closes an immediate group, and vanilla
+        // re-sets the same two lights every time enableStandardItemLighting runs, so a bump per call would split
+        // groups that are identical - a cost with no correctness behind it.
+        if (nx != this.lightDirections[base] || ny != this.lightDirections[base + 1]
+                || nz != this.lightDirections[base + 2]) {
+            this.lightDirections[base] = nx;
+            this.lightDirections[base + 1] = ny;
+            this.lightDirections[base + 2] = nz;
+            this.lightGeneration++;
+        }
     }
 
     public void setLightDiffuse(int index, float r, float g, float b) {
@@ -511,17 +523,21 @@ public final class VulkanGlState {
             return;
         }
         int base = index * 3;
-        this.lightDiffuse[base] = r;
-        this.lightDiffuse[base + 1] = g;
-        this.lightDiffuse[base + 2] = b;
-        this.lightGeneration++;
+        if (r != this.lightDiffuse[base] || g != this.lightDiffuse[base + 1] || b != this.lightDiffuse[base + 2]) {
+            this.lightDiffuse[base] = r;
+            this.lightDiffuse[base + 1] = g;
+            this.lightDiffuse[base + 2] = b;
+            this.lightGeneration++;
+        }
     }
 
     public void setLightAmbient(float r, float g, float b) {
-        this.lightAmbient[0] = r;
-        this.lightAmbient[1] = g;
-        this.lightAmbient[2] = b;
-        this.lightGeneration++;
+        if (r != this.lightAmbient[0] || g != this.lightAmbient[1] || b != this.lightAmbient[2]) {
+            this.lightAmbient[0] = r;
+            this.lightAmbient[1] = g;
+            this.lightAmbient[2] = b;
+            this.lightGeneration++;
+        }
     }
 
     /** {@return the eye-space direction of light index}, three floats starting at index*3. */
