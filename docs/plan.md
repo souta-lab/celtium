@@ -282,6 +282,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.298 **round 104: per-image present semaphore の修正手順を外部根拠で確定（resize で image 数が変わる場合は再作成が必須）**
+
+- **外部根拠（web 調査）**: [Swapchain Semaphore Reuse](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html) の規則に加え、
+  [Swapchain Recreation の sample](https://docs.vulkan.org/samples/latest/samples/api/swapchain_recreation/README.html) が
+  **「swapchain を再作成すると image は解放され、**異なる数**で作られうる」**と明記し、
+  **image index で引く semaphore は swapchain 再作成のたびに作り直す必要がある**（image 数が変わりうるため）としている。
+  ＝**私が `renderFinishedSemaphores` に入れた「pool の長さが `images.length` と違えば作り直す」規則は、この要件そのもの**（`VulkanSwapchain:974-978`）。
+- **`doneSemaphore`（bridge）に適用する手順（確定・proj-channel が実行）**:
+  1. `GllessFrameTarget` が **acquired image index** を受け取る（`VulkanSwapchain.acquireNextImage` の結果）。
+  2. `doneSemaphore` を **`images.length` ぶんの配列**にし、**image index で引く**（present の `pWaitSemaphores` に渡す側）。
+  3. **`waitSemaphore` は frame 単位のまま**（frame 内で 1:1 が閉じる）。
+  4. **swapchain 再作成で image 数が変わったら配列を作り直す**（上の外部根拠の要件）。
+  5. **per-image の signal counter** を report に残す（どの image の signal かが leg で言える）。
+- **受入**: 較正済み terrain scene の leg で `validationMessageCount=0`＋**resize leg**（image 数が変わる場合を実際に踏む）。
+  両 leg に `pinSections` を付けて同じ world を保つ。
+- **現状**: 緑の leg（`opt09f-close`）で VUID は 0 件であり、**この修正は latent な misuse を構成上消すもの**（flag 規律への依存をやめる）。
+  ツリーは緑（HEAD `e5670c4d1`）・dirty は glyph-fix の mixin のみ。
+
 ## 0.297 **round 103: 緑の leg で semaphore VUID が消え、OPT-09 step(3) が閉じた（`validationMessageCount=0`）**
 
 - **測定（proj-channel の `opt09f-close`・現行 tree・jar `07004475`・較正済み terrain scene・`--validate`・`indirectCompare` 有効）**:
