@@ -195,6 +195,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   **harness の `--validate` が無いと fixture は world を開始しない**（私の leg が menu のままだった理由）。
 - **次**: `dumpPresentedImage` 付きの world leg で「entity が見えるか」を画で確認（ユーザーの「エンティティが不可視」）と、
   ロード画面の content 確認（publish 再指しの効果）。
+- **font batching の文字化け根因（Lead が修正・実測）**: `submitImmediateBatch` は **submission 時に**
+  bound texture と行列を捕捉する。run が「intervening submission」で flush されると（menu のボタン周りで起きる）、
+  **その割り込み draw の texture と変換で描かれていた**（境界 flush の footer だけが正しい＝症状と一致）。
+  `celtium$flushPendingFontBatch` が run の texture・alpha test・行列を適用して submit し、終了後に復元するよう修正。
+  **実測（jar `64923c0a`・compositor capture）**: batching ON でボタンラベル・splash・copyright・footer すべて可読。
+  **既定を ON に戻した**。
+  さらに world leg（jar `de835882`・validation on・F3 on・`--validate`）:
+  **`validationMessageCount=0`・`validationClean=true`・`worldTicksAtEnd=248`**、
+  `CELTIUM_FONT_GLYPH_SUMMARY … quads=879402 submitted=879402 accepted=879402 refused=0 submitMillis=304
+  fontRunsStarted=1095 fontQuadsAppended=878742 flushedIntervening=931 flushedBoundary=6 flushedStateChange=158`
+  ＝**1 glyph 0.35 µs**（batching off は 59 µs、ユーザー実測の on は 3.7 µs）。**F3 のコストは submit 側ではほぼ消えた**。
+  ユーザーの instance には `de83588232c21900634b45c62ad880d0` を投入済み。
 - **font batching（weather-water）**: 文字化けの機序は **行列が submit 時に捕捉される**こと（run が行列変更を跨ぐと
   最後の変換で描かれる）。10 の行列入口で run を flush（`celtium$fontMatrixBoundary`）、colour witness も量子化バイトに修正。
   既定は on に戻したが、**device-lost 中の3 leg では batching が一度も発動していない**（`fontRunsStarted=0`）ため
