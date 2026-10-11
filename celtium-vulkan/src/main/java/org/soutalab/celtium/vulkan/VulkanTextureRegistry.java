@@ -102,12 +102,13 @@ public final class VulkanTextureRegistry {
     /** The distinct reasons a patch was refused, each printed once. */
     private final java.util.Set<String> patchRejections = new java.util.HashSet<String>();
     /**
-     * Whether a region patch applies every mip level Minecraft supplied (the default) or only level 0.
+     * Whether a region patch applies the producer's whole mip chain (the default) or only level 0.
      * <p>
      * The second setting is the pre-N07 behaviour and exists as a measurement control, not as a way to run the
      * renderer: the per-level census in {@link VulkanGlTexture#mirrorLevelSummary()} and the mirror dump's
      * {@code writes=}/{@code behind=} fields are what make the difference between "the producer's levels were applied"
      * and "the levels above 0 kept whatever the last whole upload put there" a pair of numbers from the same binary.
+     * With the control set, {@code reachUnwritten} in the census must rise; with it unset it must stay at zero.
      */
     private static final boolean PATCH_MIP_LEVELS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.patchMipLevels", "true"));
@@ -282,14 +283,23 @@ public final class VulkanTextureRegistry {
     }
 
     /**
-     * {@return one line describing the published images}, so a run's report says whether the owner's publish arrived
-     * and whether the layout handshake ran.
+     * {@return the per-registry image counts plus the two process-wide texture facts}, so a run's report says whether
+     * the owner's publish arrived, whether the shared layout handshake is bound to its submissions, and which mip
+     * levels the animated patches reached.
+     * <p>
+     * Instance rather than static on purpose: {@code VulkanTerrainGpuBackend.verificationSummary()} calls this through
+     * a registry reference, and the fixture's report is the one place the layout ledger ({@code unbound=0} with a
+     * non-zero {@code abandons}, the N05 acceptance) and the per-level patch census ({@code reachUnwritten=0}, the
+     * N07 acceptance) can be read. The two facts it adds live in {@link VulkanGlTexture} and are process-wide, but
+     * changing this signature to expose them would break the caller for no gain.
      */
     public String externalSummary() {
         return "published=" + this.externalPublished + " republished=" + this.externalRepublishes
                 + " unpublished=" + this.externalUnpublished + " supersededMirrors=" + this.externalSupersededMirrors
                 + " invalidatesIgnored=" + this.externalInvalidatesIgnored
-                + " live=" + this.externalImages.size() + " layout[" + VulkanGlTexture.foreignLayoutSummary() + "]";
+                + " live=" + this.externalImages.size()
+                + " layout[" + VulkanGlTexture.foreignLayoutSummary() + "]"
+                + " patchLevels[" + VulkanGlTexture.mirrorLevelSummary() + "]";
     }
 
     /**
@@ -839,15 +849,18 @@ public final class VulkanTextureRegistry {
         }
         // How many mip levels this announcement carries, using Minecraft's own rule: uploadTextureMipmap walks
         // data[level] and breaks as soon as a scaled extent reaches zero. A null entry stops the walk for the same
-        // reason it would stop the GL upload - there is no data for that level and none for any level above it.
-        int suppliedLevels = 0;
+        // reason it would stop the GL upload - there is no data for that level and none for any level above it. The
+        // walk's result is the producer's chain depth: Minecraft's TextureAtlasSprite generates a chain per animated
+        // frame (TextureUtil.generateMipmapData) and uploadTextureMipmap hands every level of it over, so an animated
+        // sprite normally announces five levels for a 16x16 sprite - not one.
+        int producerDepth = 0;
         for (int level = 0; level < data.length; level++) {
             if ((width >> level) <= 0 || (height >> level) <= 0 || data[level] == null) {
                 break;
             }
-            suppliedLevels++;
+            producerDepth++;
         }
-        if (suppliedLevels == 0) {
+        if (producerDepth == 0) {
             this.failureCount++;
             this.lastFailure = "announced pixels for GL texture " + glTextureId + " carry no level-0 data";
             this.rejectPatch("announced " + width + "x" + height + " at " + x + "," + y + " for GL texture "
@@ -859,7 +872,7 @@ public final class VulkanTextureRegistry {
         // chain instead - level 0 is copied and the levels above it are regenerated from it, which is the
         // configuration this project measured as the closest to the GL reference, and leaves no level stale. The
         // patchMipLevels property turns the per-level application off for measurement only; see PATCH_MIP_LEVELS.
-        int appliedLevels = wholeTexture || !PATCH_MIP_LEVELS ? 1 : suppliedLevels;
+        int appliedLevels = wholeTexture || !PATCH_MIP_LEVELS ? 1 : producerDepth;
         java.nio.ByteBuffer[] levelBytes = new java.nio.ByteBuffer[appliedLevels];
         try {
             for (int level = 0; level < appliedLevels; level++) {
@@ -876,9 +889,11 @@ public final class VulkanTextureRegistry {
                 buffer.flip();
             }
             long applicationStart = System.nanoTime();
-            boolean applied = wholeTexture
-                    ? entry.texture.uploadFromImage(width, height, levelBytes[0])
-                    : entry.texture.uploadPatchedLevels(width, height, x, y, levelBytes, appliedLevels, glTextureId);
+            if (wholeTexture) {
+                entry.texture.uploadFromImage(width, height, levelBytes[0]);
+            } else {
+                entry.texture.uploadPatchedLevels(width, height, x, y, levelBytes, appliedLevels, glTextureId);
+            }
             long applicationNanos = System.nanoTime() - applicationStart;
             if (wholeTexture) {
                 this.fullImageCount++;
@@ -888,8 +903,8 @@ public final class VulkanTextureRegistry {
                 this.patchCount++;
                 this.patchBytes += (long) width * height * 4L;
                 this.patchNanos += applicationNanos;
-                logPatchLevelContract(glTextureId, width, height, x, y, appliedLevels, suppliedLevels,
-                        entry.texture, applied);
+                logPatchLevelContract(glTextureId, width, height, x, y, appliedLevels, producerDepth,
+                        entry.texture.mipLevels());
             }
             this.imageUploads++;
             this.staleIds.remove(Integer.valueOf(glTextureId));
@@ -917,14 +932,16 @@ public final class VulkanTextureRegistry {
      * Names the mip-level contract of one animated patch, once per GL texture (audit N07).
      * <p>
      * The question this answers in a run's log is the one the audit raised: which levels did the announcement update,
-     * and what does a sampler above level 0 therefore read? {@code appliedLevels} is what went into the image;
-     * {@code suppliedLevels} is what the producer sent; any mirror level between them - and any level above the
-     * producer's chain - keeps the content the last whole upload or patch put there, which is exactly what the GL
-     * texture holds for the same level after the same {@code glTexSubImage2D} call. The sampler's {@code maxLod} is
-     * 1.0, so level 1 is the highest level it can reach.
+     * and what does the sampler therefore read? {@code appliedLevels} is what went into the image,
+     * {@code producerDepth} is how deep the producer's own chain went, and {@code mirrorLevels} is how many levels
+     * this image has. A level between {@code appliedLevels} and {@code producerDepth} - the case the
+     * {@code patchMipLevels=false} control produces - keeps the content the last whole upload or patch put there,
+     * which is exactly what the GL texture holds for the same level after the same {@code glTexSubImage2D} call. A
+     * level above {@code producerDepth} is outside the sprite's own chain and is not a staleness claim; the census
+     * counts it separately and names the sampler's reach.
      */
     private void logPatchLevelContract(int glTextureId, int width, int height, int x, int y, int appliedLevels,
-            int suppliedLevels, VulkanGlTexture texture, boolean applied) {
+            int producerDepth, int mirrorLevels) {
         Integer id = Integer.valueOf(glTextureId);
         Integer seen = this.patchLevelLogged.get(id);
         int count = seen == null ? 0 : seen.intValue();
@@ -935,10 +952,10 @@ public final class VulkanTextureRegistry {
         }
         this.patchLevelLogged.put(id, Integer.valueOf(count + 1));
         System.out.println("[Celtium] CELTIUM_MIRROR_PATCH glTexture=" + glTextureId + " region=" + width + "x" + height
-                + " at " + x + "," + y + " suppliedLevels=" + suppliedLevels + " appliedLevels=" + appliedLevels
-                + " mirrorLevels=" + texture.mipLevels() + " applied=" + applied + " patch#" + (count + 1)
-                + " (each applied level is written at x>>level,width>>level; a level the producer did not supply keeps"
-                + " the content GL also keeps for it; the sampler's maxLod 1.0 reaches level 1)"
+                + " at " + x + "," + y + " producerDepth=" + producerDepth + " appliedLevels=" + appliedLevels
+                + " mirrorLevels=" + mirrorLevels + " patch#" + (count + 1)
+                + " (each applied level is written at x>>level,width>>level; a level above the producer's chain is"
+                + " outside this sprite and is not what the sampler reads at this LOD clamp)"
                 + " census[" + VulkanGlTexture.mirrorLevelSummary() + "]");
     }
 

@@ -45,8 +45,9 @@ import static org.lwjgl.vulkan.VK11.*;
  *       {@code TextureUtil.uploadTextureMipmap} uses for OpenGL. A level the producer did not supply keeps the
  *       content it already had, which is exactly what the GL texture holds for the same level after the same call:
  *       OpenGL's {@code glTexSubImage2D} does not regenerate the chain either. That is a contract, not an accident,
- *       and {@link #patchLevelsBehind()} plus the {@code CELTIUM_MIRROR_PATCH} line report every level left untouched
- *       so a stale level is never silent.</li>
+ *       and {@link #mirrorLevelSummary()} plus the {@code CELTIUM_MIRROR_PATCH} line report, per patch and in the
+ *       run's census, how many levels were written, how deep the producer's own chain went, and whether any level
+ *       the sampler can reach was left unwritten - so a reachable level is never stale silently.</li>
  * </ul>
  * A patch therefore does <em>not</em> regenerate the whole chain: the cheap correct path is the producer's own
  * per-level data, which is what Minecraft hands over for animated sprites.
@@ -270,10 +271,23 @@ public final class VulkanGlTexture {
     private long levelZeroWriteSerial;
     private long writeSerial;
 
-    /** Levels a patch left untouched because the producer supplied no data for them; the run's census of staleness. */
-    private static long patchLevelsBehind;
+    /**
+     * Levels a patch left unwritten because the producer supplied no data for them, counted only where the producer's
+     * own chain ended - see {@link #mirrorLevelSummary()}.
+     */
+    private static long patchLevelsBeyondProducerChain;
     private static long patchLevelsWritten;
     private static final long[] PATCH_LEVEL_HISTOGRAM = new long[12];
+
+    /**
+     * The highest mip level this class's samplers can read, which is the {@code maxLod} they are created with.
+     * <p>
+     * One number, named once: {@link #createSampler} passes it to {@code vkCreateSampler} and
+     * {@link #mirrorLevelSummary()} uses it to say whether a patch left a level the sampler can actually reach
+     * unwritten. If the clamp is ever raised or removed, both move together and the census cannot keep claiming a
+     * reach of one level while the sampler reads four.
+     */
+    private static final int SAMPLER_MAX_LOD = 1;
 
     private static final int BYTES_PER_PIXEL = 4;
 
@@ -1453,7 +1467,7 @@ public final class VulkanGlTexture {
         for (int level = 0; level < depth; level++) {
             setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
-        recordPatchWrite(depth, mirrorLevels, Math.max(0, producerDepth - mirrorLevels));
+        recordPatchWrite(depth, producerDepth, mirrorLevels, Math.max(0, producerDepth - mirrorLevels));
         boolean wholeImage = x == 0 && y == 0 && pixelWidth >= width && pixelHeight >= height;
         if (wholeImage) {
             // A "patch" that covers level 0 of the image is a full initialization for the level-0 content: the light
@@ -1475,11 +1489,15 @@ public final class VulkanGlTexture {
     /**
      * Counts one patch's level coverage and writes it onto this object's per-level provenance.
      * <p>
-     * The two numbers the audit's N07 asks for: which levels this write put pixels into, and how many levels of the
-     * mirror it left holding older content. The second is not automatically a fault - the producer may not have sent
-     * those levels, exactly as OpenGL's own patch would not have - but it must be visible.
+     * The two numbers audit N07 asks for: which levels this write put pixels into, and how many of the levels it did
+     * <em>not</em> write are inside the chain the producer was describing. Only the second is a claim about staleness,
+     * and it is counted against the producer's own chain depth - the level at which a scaled extent reached zero, the
+     * same rule {@code TextureUtil.uploadTextureMipmap} breaks on. Counting against the mirror's level count instead
+     * would call the atlas's seven deeper levels "untouched" for a sixteen-by-sixteen sprite whose chain is five
+     * levels long: levels the sampler cannot reach and that belong to other sprites' regions. A level above the
+     * producer's chain is not stale, it is outside the sprite.
      */
-    private void recordPatchWrite(int depth, int mirrorLevels, int beyondMirror) {
+    private void recordPatchWrite(int depth, int producerDepth, int mirrorLevels, int beyondMirror) {
         this.writeSerial++;
         long serial = this.writeSerial;
         if (this.levelWrites.length < mirrorLevels) {
@@ -1500,7 +1518,14 @@ public final class VulkanGlTexture {
                 }
             }
             patchLevelsWritten += depth;
-            patchLevelsBehind += Math.max(0, mirrorLevels - depth) + beyondMirror;
+            // Levels inside the producer's chain that this write did not reach, plus levels the producer supplied
+            // that this image has no room for. Both are levels the producer believes it patched and the image did not.
+            patchLevelsBeyondProducerChain += Math.max(0, producerDepth - depth) + beyondMirror;
+            if (depth <= SAMPLER_MAX_LOD) {
+                // The sampler can read a level this patch did not write. For a producer that supplies its own chain
+                // this cannot happen; it is the case N07 names, and it is counted rather than inferred.
+                patchReachUnwritten++;
+            }
             if (beyondMirror > 0 && patchBeyondMirrorLogs < 4) {
                 patchBeyondMirrorLogs++;
                 System.out.println("[Celtium] CELTIUM_MIRROR_PATCH_BEYOND_MIRROR image=0x"
@@ -1544,11 +1569,19 @@ public final class VulkanGlTexture {
 
     /**
      * {@return one line with the per-level patch census}, so a run says which mip levels the animated writes reached
-     * and how many mirror levels they left holding older content (audit N07).
+     * and whether any level the sampler can read was left behind (audit N07).
      * <p>
-     * {@code levels=[0:12 1:12 2:12]} is a producer that supplies the chain; {@code levels=[0:12]} with
-     * {@code leftUntouched} rising is a producer that supplies level 0 only, whose higher levels therefore hold what
-     * the last whole upload or patch put there - the same content OpenGL holds for that texture.
+     * {@code levels=[0:12 1:12 2:12 3:12 4:12]} is a producer that supplies its whole chain - Minecraft's
+     * {@code TextureAtlasSprite} generates one per animated frame, and {@code TextureUtil.uploadTextureMipmap} hands
+     * every level of it over. {@code levels=[0:12]} alone, with {@code beyondProducerChain} rising, is a producer that
+     * supplies level 0 only; its higher levels then hold what the last whole upload or patch put there, which is the
+     * same content OpenGL holds for that texture after the same {@code glTexSubImage2D}.
+     * <p>
+     * {@code samplerReach} is the highest level this class's samplers can read ({@link #SAMPLER_MAX_LOD}) and
+     * {@code reachUnwritten} counts the patches that left a level inside that reach unwritten. That number being zero
+     * is the guarantee audit N07 asks for: the levels the sampler can reach are the levels the producer patched. The
+     * levels above the reach are counted separately and are not a staleness claim - the sampler never reads them, and
+     * for a sprite inside the atlas they are other sprites' regions.
      */
     public static String mirrorLevelSummary() {
         synchronized (VulkanGlTexture.class) {
@@ -1559,9 +1592,21 @@ public final class VulkanGlTexture {
                 }
             }
             return text.append("] written=").append(patchLevelsWritten)
-                    .append(" leftUntouched=").append(patchLevelsBehind).toString();
+                    .append(" beyondProducerChain=").append(patchLevelsBeyondProducerChain)
+                    .append(" samplerReach=").append(SAMPLER_MAX_LOD)
+                    .append(" reachUnwritten=").append(patchReachUnwritten)
+                    .append(" refusals=").append(patchRefusals).toString();
         }
     }
+
+    /**
+     * Patches that left a level inside the sampler's reach unwritten.
+     * <p>
+     * Zero is the N07 guarantee: the sampler blends level 0 with level 1, so a producer that patched level 0 and not
+     * level 1 would leave the frame reading last frame's blur. Counted per patch rather than derived, so it cannot be
+     * hidden by another patch of the same texture having supplied more levels.
+     */
+    private static long patchReachUnwritten;
 
     /** Counts a patch refused before any copy, and prints the reason once so a run says why the mirror did not move. */
     private static void refusePatch(String reason) {
@@ -1963,7 +2008,10 @@ public final class VulkanGlTexture {
                     // reference's blur and the ones the game itself holds do not. The difference is therefore in what the
                     // sampler reads at level 1 and above, and the next instrument is to dump one level from each side and
                     // compare the numbers rather than the frame (audit S23).
-                    .maxLod(1.0f)
+                    // The same number the patch census reports as the sampler's reach (SAMPLER_MAX_LOD): the clamp and
+                    // the claim about which levels must not be stale move together or neither is a statement about
+                    // this sampler.
+                    .maxLod((float) SAMPLER_MAX_LOD)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false);
             LongBuffer handle = stack.mallocLong(1);

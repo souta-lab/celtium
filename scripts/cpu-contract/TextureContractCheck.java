@@ -118,6 +118,44 @@ public final class TextureContractCheck {
         } catch (IllegalArgumentException expected) {
             // The reason names the shortfall; nothing was read.
         }
+        checkLegacyHashWindowWouldMissTheTail(first, changedTail);
+    }
+
+    /**
+     * N08, the counterfactual: the pre-fix window really did miss the byte the fix reads.
+     *
+     * <p>Asserting that the new hash changes is only half the claim. The other half is that the old expression was
+     * wrong in the way the audit says - a check that would have passed under the old code proves nothing about the
+     * fix. The old window was {@code min(remaining / height, width * 4) * height} bytes from absolute index 0; this
+     * computes both hashes over the same two buffers and requires that the old one does <em>not</em> see the changed
+     * tail while the new one does. If a future edit reinstates the absolute-index window, this check fails first.
+     */
+    private static void checkLegacyHashWindowWouldMissTheTail(ByteBuffer first, ByteBuffer changedTail) {
+        // The audit's own numbers for this case: a 4x4 upload from a buffer positioned at 4. The old window is
+        // min(remaining/4, 4*4)*4 = 16 bytes from index 0, i.e. the four prefix bytes plus the first twelve payload
+        // bytes - the last payload byte, the one that changed, is outside it.
+        int height = 4;
+        int width = 4;
+        int remaining = first.remaining();
+        int legacyWindow = Math.min(remaining / Math.max(1, height), width * 4) * height;
+        expect("N08 the legacy window is the 16 bytes the audit describes", 16, legacyWindow);
+        long legacyFirst = legacyHash(first, legacyWindow);
+        long legacyChanged = legacyHash(changedTail, legacyWindow);
+        expect("N08 the legacy window could not see the changed tail byte (the bug the fix removes)", true,
+                legacyFirst == legacyChanged);
+        // ... and the slice hash this renderer now uses does see it, over the same two buffers.
+        expect("N08 the slice hash sees the byte the legacy window missed", true,
+                org.soutalab.celtium.vulkan.VulkanGlTexture.hashUploadSlice(first, 16)
+                        != org.soutalab.celtium.vulkan.VulkanGlTexture.hashUploadSlice(changedTail, 16));
+    }
+
+    /** The pre-fix hash, kept here as the counterfactual rather than as production code. */
+    private static long legacyHash(ByteBuffer buffer, int bytes) {
+        long hash = 1469598103934665603L;
+        for (int i = 0; i < bytes; i++) {
+            hash = (hash ^ (buffer.get(i) & 0xFF)) * 1099511628211L;
+        }
+        return hash;
     }
 
     /** A direct buffer holding {@code prefix} bytes then {@code payload}, positioned at the payload. */
