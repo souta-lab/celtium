@@ -257,6 +257,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.252 **round 58: パノラマの白は「backend 生成前に来た announcement が捨てられていた」＝早期ロード窓・修正を実装（`a86273436`）**
+
+- **分岐の決定（texture-mirror・`pano-life`・jar `e26be087a`・`validationClean=true`）**:
+  ```
+  forgetTexture id=8  hadEntry=false announcedUnconsumed=false
+  forgetTexture id=20 hadEntry=false announcedUnconsumed=false
+  forgetTexture id=8  hadEntry=true  announcedUnconsumed=false
+  CELTIUM_LIFECYCLE lines: 3        announceImage lines: 0
+  ```
+  ＝**`announceImage` は id 8/20 で一度も発火していない**（分岐 (b)）。delete 経路は正常（`forgetTexture(8)` が2回・うち1回は `hadEntry=true`）で、
+  mirror が落ちた後に**同じ名前が splash logo の白い `int[]` upload で埋められた**。
+- **原因**: menu の panorama PNG は**terrain backend が存在する前にロード**され、hook の
+  `TerrainGpuBackends.current() != null` ガードが announcement を**黙って捨てていた**（後で再生する仕組みも無し）。
+- **修正（Lead・`a86273436`）**: `TerrainGpuBackends` が**早期 announcement の bounded pending list**（64件・dropped counter・
+  `pendingTextureUploadSummary()`）を持ち、`install()` が backend 設置時に**全件を replay**する。hook は backend が無いとき
+  **捨てずに保持**し、backend があるときは従来どおり直接渡す。
+- **受入（texture-mirror へ依頼）**: `pendingTextureUploads` が非ゼロ（早期 announcement が保持された証拠）・
+  panorama の id の `CELTIUM_MIRROR_SOURCE` が `source=announcement` で**実内容**・`CELTIUM_TEX_COPY_SERVED … mean=` が 255 から動き
+  crop にパノラマ。名前→id がまだ食い違うなら texture-mirror の name→id 計器が次の step。
+
 ## 0.251 **round 57: パノラマ PNG の mirror は正しい（id 45-49）・face が sample する id 8 は splash の残骸＝「名前→id 解決」が真の容疑者**
 
 - **原典と計器の突き合わせ（Lead）**:
