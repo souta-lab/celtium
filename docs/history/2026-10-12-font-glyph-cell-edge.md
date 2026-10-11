@@ -164,3 +164,44 @@ next suspect is the rect's own submit; if they vanish, the run's buffer is.
   inside the cell — `FontRenderer.java:288-300`) were **not** measured in a frame.
 * The GL reference for the same text: the F3-off control is a different leg, not a two-configuration pair on one
   fixture/pose/tick. That pair is what would promote §4 from "lead" to "attributed".
+
+## The F3 overlay's frame cost: the draw path is cheap, and the rest is not in any timer we keep
+
+Same jar `135f0d47e52b8da64b14550661e354e7`, same scene/flags, one property different
+(`-Dceltium.validation.showDebugInfo`), AMD RX 6400, GL-less, cold window = server ticks 120..200:
+
+| | F3 ON | F3 OFF |
+|---|---|---|
+| cold-window samples | 20 | **72** |
+| cold p50 | **187.3 ms** | **47.8 ms** |
+| cold p95 | 220.5 ms | 85.6 ms |
+| cold p99 | 502.9 ms | 419.5 ms |
+| world frames in the same wall clock | 45 | **154** |
+| glyph windows (running total at the last progress line) | **1,020,000** | **60,000** |
+| `submitMillis` / `windowMillis` / `hookMillis` | 263 / 55 / 175 | 193 / 3 / 11 |
+
+The overlay adds ~960,000 glyph windows, i.e. ~4,600 per frame, and the whole capture path costs
+**0.48 µs per glyph** (submit 0.26, window 0.05, hooks 0.17) - so the text runs are **~2.2 ms/frame**.
+The extra immediate batches the overlay adds (`immediateRecordedBatches` +2,676, `immediateGroupsDrawn`
++2,812 in the earlier pair) were measured at **~1 ms/frame** (`batchCallMillis` +167 ms over the run,
+`appendMillis` +47 ms), and the upload waits do not move (`bootstrapSubmitWaitMillis` per frame 1.24 vs
+1.08 ms). **So ~3-4 ms of the 139 ms/frame difference is in the parts we time.**
+
+That leaves **~96 % of the overlay's frame cost outside every timer the renderer keeps**, and naming it
+is the next instrument's job rather than a guess:
+
+* the **vanilla-side per-glyph work around our hooks** - `FontRenderer.renderString`'s per-character loop
+  (the 200-character ASCII table `indexOf` per character, `getStringWidth` per line), `bindTexture` for
+  every glyph through `TextureManager`, and the `GlStateManager`/stub wrapper calls themselves. Our
+  `hookNanos` covers only the capture's own three hooks; the stub calls in between are untimed.
+  Instrument: a timer in the stub's immediate hooks (or a `Profiler` section read from the fixture).
+* the **per-frame overlay construction** - `GuiOverlayDebug.call()` builds ~20 strings per frame and
+  `getDebugInfoRenders()` iterates the visible render infos (cheap at this fixture's ~40 sections,
+  expensive at a real render distance). Instrument: the same profiler read.
+* the fixture is **not** the cost: its debug-list reads are one-shot (`celtium$captureDue()` returns
+  before reading them under the default `captureCondition=tick`, and `:4516` is inside
+  `if (!celtium$captureStarted)`).
+
+New instrument this measurement added (committed with it): `windowMillis`/`hookMillis` in the glyph
+summary and in the periodic progress lines, and the progress stride raised from 2,000 to 20,000 so a
+dense leg's running totals are readable to the end of the run instead of only from the shutdown hook.

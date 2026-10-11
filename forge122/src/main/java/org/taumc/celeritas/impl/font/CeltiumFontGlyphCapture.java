@@ -189,6 +189,19 @@ public final class CeltiumFontGlyphCapture {
     private static long submitted;
     /** Wall time spent inside the backend's batch call, so the per-glyph cost is measured rather than assumed. */
     private static long submitNanos;
+    /**
+     * The capture's own per-glyph cost, split from the backend's: {@code windowNanos} is the time in
+     * {@code openWindow}/{@code closeWindow} - which decide {@code armed} by asking the stub and the backend registry on
+     * every glyph - and {@code hookNanos} the time in the three immediate-call hooks that fill the vertex arrays.
+     * <p>
+     * They exist because the F3 overlay's frame cost was in no timer the renderer kept: with F3 on the cold-window p50
+     * is 162 ms against 83 ms with it off (same jar, one flag), while {@code submitMillis} accounts for ~2 ms/frame and
+     * the immediate path's own timers for ~1 ms/frame. The per-glyph Java-side work is the part no counter covered, and
+     * a glyph is one window plus four texcoord calls, four vertex calls and one end - so it is the shape that can hide
+     * tens of milliseconds per frame at ~5,900 glyphs per frame.
+     */
+    private static long windowNanos;
+    private static long hookNanos;
     private static long accepted;
     private static long refused;
     private static boolean firstQuadReported;
@@ -198,9 +211,13 @@ public final class CeltiumFontGlyphCapture {
      * <p>
      * The cap is 64 lines, not 24: a GUI scene offers more than 48000 glyph quads (measured 52406 in the video
      * settings scene and 75790 in its unicode variant), so a cap of 24 stopped the counter lines before the run did
-     * and left the totals readable only by adding them up. 64 lines covers 128000 outcomes and still bounds the log.
+     * and left the totals readable only by adding them up. The stride is 20000 rather than 2000 for the same reason
+     * one order of magnitude up: an F3 overlay leg offers 1.22M windows, so a stride of 2000 stopped the lines at
+     * 128000 and the run's real totals were readable only from the shutdown-hook summary - which a leg whose fixture
+     * exits early never prints (measured: two of the strip-separator legs have no CELTIUM_FONT_GLYPH_SUMMARY at all).
+     * 64 lines of 20000 covers 1.28M outcomes, which is this leg's size, and the log stays bounded.
      */
-    private static final int PROGRESS_STRIDE = 2000;
+    private static final int PROGRESS_STRIDE = 20000;
     private static final int PROGRESS_LINES = 64;
     private static int progressLines;
 
@@ -229,6 +246,15 @@ public final class CeltiumFontGlyphCapture {
      *                which of them it exercised.
      */
     public static void openWindow(boolean unicode) {
+        long started = System.nanoTime();
+        try {
+            openWindowBody(unicode);
+        } finally {
+            windowNanos += System.nanoTime() - started;
+        }
+    }
+
+    private static void openWindowBody(boolean unicode) {
         windows++;
         if (unicode) {
             unicodeWindows++;
@@ -261,9 +287,14 @@ public final class CeltiumFontGlyphCapture {
 
     /** Closes the window. Called on the glyph method's normal return, and after the glyph's own {@code glEnd}. */
     public static void closeWindow() {
-        window = false;
-        armed = false;
-        reset();
+        long started = System.nanoTime();
+        try {
+            window = false;
+            armed = false;
+            reset();
+        } finally {
+            windowNanos += System.nanoTime() - started;
+        }
     }
 
     private static void reset() {
@@ -275,6 +306,15 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@code GlStateManager.glBegin}: the mode the sequence will be drawn with. */
     public static void immediateBegin(int glMode) {
+        long started = System.nanoTime();
+        try {
+            immediateBeginBody(glMode);
+        } finally {
+            hookNanos += System.nanoTime() - started;
+        }
+    }
+
+    private static void immediateBeginBody(int glMode) {
         if (!armed) {
             return;
         }
@@ -289,6 +329,15 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@code GlStateManager.glTexCoord2f}. */
     public static void immediateTexCoord(float s, float t) {
+        long started = System.nanoTime();
+        try {
+            immediateTexCoordBody(s, t);
+        } finally {
+            hookNanos += System.nanoTime() - started;
+        }
+    }
+
+    private static void immediateTexCoordBody(float s, float t) {
         if (!armed) {
             return;
         }
@@ -303,6 +352,15 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@code GlStateManager.glVertex3f}. */
     public static void immediateVertex(float x, float y, float z) {
+        long started = System.nanoTime();
+        try {
+            immediateVertexBody(x, y, z);
+        } finally {
+            hookNanos += System.nanoTime() - started;
+        }
+    }
+
+    private static void immediateVertexBody(float x, float y, float z) {
         if (!armed) {
             return;
         }
@@ -613,6 +671,8 @@ public final class CeltiumFontGlyphCapture {
                 + " refused=" + refused + " windows=" + windows + " defaultWindows=" + defaultWindows
                 + " unicodeWindows=" + unicodeWindows + " bridgeWindows=" + bridgeWindows
                 + " submitMillis=" + (submitNanos / 1000000L)
+                + " windowMillis=" + (windowNanos / 1000000L)
+                + " hookMillis=" + (hookNanos / 1000000L)
                 + " meanSubmitMicros=" + (submitted == 0 ? 0 : submitNanos / submitted / 1000L)
                 + " reasons=" + REFUSALS);
     }
@@ -622,6 +682,7 @@ public final class CeltiumFontGlyphCapture {
         return "windows=" + windows + " defaultWindows=" + defaultWindows + " unicodeWindows=" + unicodeWindows
                 + " bridgeWindows=" + bridgeWindows + " quads=" + quads + " submitted=" + submitted
                 + " accepted=" + accepted + " refused=" + refused + " submitMillis=" + (submitNanos / 1000000L)
+                + " windowMillis=" + (windowNanos / 1000000L) + " hookMillis=" + (hookNanos / 1000000L)
                 + " reasons=" + REFUSALS + " modes=" + MODE_CENSUS + " " + batchSummary();
     }
 
