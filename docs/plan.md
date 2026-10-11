@@ -118,7 +118,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 counter だけを読む運用をしない。ゲートを上書きする判断をする場合は、**同じ fixture・同じカメラで 2 つの jar を比べる**
 ような、カメラ差と renderer 差を分離する実験を先に取る。
 
-### 次の実験（担当が実行中）
+### 判定（A/B 実測・確定）
+
+同じ fixture・同じカメラ・同じフラグで **jar だけ**を変えた:
+
+| | A: 退行前の固定 jar `d2073e9456da7bcc` | B: 現行 jar | C: 現行 jar・**フック撤回後** |
+|---|---|---|---|
+| `presentedNonBackgroundFraction` | **0.733183** | 0.364906 | **0.838628** |
+| `presentedImageMeanAtCapture` | 213.6667 | 213.6667 | 44.0 |
+| `presentedImageVerdict` | **PASSED** | FAILED | **PASSED** |
+| `presentedDistinctColours` | - | - | 22706 |
+| `lastDraw/lastSections` | 22/25 | 8/8 | - |
+
+mean がビット一致＝**カメラは同一**。したがって **renderer の退行**で、原因は `30a30a375`（私の `Project.gluPerspective` フック）。
+フックは culling が読む射影スタックに掛かるため、意図した「空の batch の射影」を直す代わりに **world を cull で消していた**（25→8 セクション）。
+`f82bf4612` でフックを撤回し、床が戻った（C）。
+
+**代償**: フックが対象にしていたギャップ（mirror が `Project.gluPerspective` を見ない＝空 fan・太陽/月・雲がカメラでない射影で描かれる）は戻る。
+これは 09:16 の状態で、world が消えるより厳密に良い。**次にこのチャネルへ手を入れる時は、餌である culling を測る**——
+`lastDraw/lastSections` を画像 counter と並べて report に載せ、試行ごとに A/B を取る。一行のフックで済ませない。
+
+### 元の実験計画（記録）
 
 同じ fixture（現在の固定カメラ）× 2 jar（09:16 の正常 jar `d2073e9456da7bcc` と現行）で nonBg と frame を比較する。
 - A（正常 jar）で床が出て B（現行）で出ない → renderer の退行で、窓は上記3コミット。
