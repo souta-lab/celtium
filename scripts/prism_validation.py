@@ -351,6 +351,20 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         # from a run they cannot even see. A run that genuinely wants audio back sets CELTIUM_ALLOW_AUDIO=1.
         if not os.environ.get("CELTIUM_ALLOW_AUDIO"):
             environment["ALSOFT_DRIVERS"] = "null"
+        # Every caller used to export VK_LAYER_PATH by hand, and the ones that forgot produced a device-creation
+        # failure whose downstream shape is a World.getSkyColorBody NPE (EntityRenderer.func_78466_h) - read for hours
+        # as a renderer crash. sky-draws measured that chain on 2026-10-11 and found the same shape in four older runs.
+        # The harness now supplies the repo's extracted layers when they exist, so a leg cannot fail for a missing
+        # export; an explicit export in the environment still wins.
+        repo_root = Path(__file__).resolve().parent.parent
+        layer_dir = repo_root / ".celtium-work/gpu-tools/extracted/usr/share/vulkan/explicit_layer.d"
+        if layer_dir.is_dir():
+            environment.setdefault("VK_LAYER_PATH", str(layer_dir))
+            lib_dir = repo_root / ".celtium-work/gpu-tools/extracted/usr/lib/x86_64-linux-gnu"
+            if lib_dir.is_dir():
+                existing = environment.get("LD_LIBRARY_PATH", "")
+                if str(lib_dir) not in existing.split(":"):
+                    environment["LD_LIBRARY_PATH"] = f"{lib_dir}:{existing}" if existing else str(lib_dir)
         process = subprocess.Popen(command, cwd=game, env=environment, stdout=log, stderr=subprocess.STDOUT)
         ended_by = "process-exit"
         try:

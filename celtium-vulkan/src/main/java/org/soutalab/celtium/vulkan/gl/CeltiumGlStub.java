@@ -1194,6 +1194,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 celtium$setTextureParameter((int) c[0], (int) c[1], celtium$firstParamValue(fn, c[2]),
                         celtium$paramSite());
                 return 0L;
+            case SEM_MULT_MATRIX:
+                celtium$multiplyMatrix(fn, c[0]);
+                return 0L;
+            case SEM_MATRIX_MODE:
+                this.matrixMode = (int) c[0];
+                return 0L;
             case SEM_BIND_FRAMEBUFFER:
                 bindFramebuffer((int) a0, (int) a1);
                 return 0L;
@@ -1299,6 +1305,27 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> MIRROR_MISSES =
             new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    /**
+     * The arrival/application pair for {@code glMultMatrixf/d} (task-50). Arrivals are counted here and applications
+     * where the backend's mirror took the matrix, so a regression is the two numbers drifting apart - not a missing
+     * line. {@code glMultMatrix*} used to be a no-op and was counted by {@link #MIRROR_MISSES}; it left that census
+     * when it became a real handler, and this pair is what replaces it.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_ARRIVALS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_APPLIED =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_NO_BACKEND =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** A backend exists but does not implement the matrix mirror (the interface default is empty). */
+    private static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_NO_MIRROR =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong MATRIX_MULTIPLY_REFUSED =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** The first few multiplies, in one line each: which stack, which values, and who made the call. */
+    private static final java.util.Set<String> MATRIX_MULTIPLY_SHAPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** Every no-op entry point that was actually called, by name. Bounded by the table's size. */
     private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> NOOP_CALLS =
@@ -1454,12 +1481,22 @@ public final class CeltiumGlStub implements FunctionProvider {
      * {@return a one-line census of the transform calls that reached the stub}. Arrivals are expected: the mirror
      * hooks do not cancel the GL body. Compare it against the mirror's own application counts - an arrival that the
      * mirror never applied is the gap.
+     * <p>
+     * {@code glMultMatrixf/d} is reported as an arrivals/applied pair rather than as a miss, because it now has a real
+     * handler: arrivals without applications mean the backend or the device was missing, not that the call was
+     * swallowed by the no-op list.
      */
     public static String stubTransformSummary() {
-        if (MIRROR_MISSES.isEmpty()) {
-            return "none";
-        }
         StringBuilder line = new StringBuilder();
+        long arrivals = MATRIX_MULTIPLY_ARRIVALS.get();
+        if (arrivals > 0L || MATRIX_MULTIPLY_APPLIED.get() > 0L || MATRIX_MULTIPLY_REFUSED.get() > 0L
+                || MATRIX_MULTIPLY_NO_BACKEND.get() > 0L || MATRIX_MULTIPLY_NO_MIRROR.get() > 0L) {
+            line.append("glMultMatrix arrivals=").append(arrivals)
+                    .append(" applied=").append(MATRIX_MULTIPLY_APPLIED.get())
+                    .append(" noBackend=").append(MATRIX_MULTIPLY_NO_BACKEND.get())
+                    .append(" noMirror=").append(MATRIX_MULTIPLY_NO_MIRROR.get())
+                    .append(" refused=").append(MATRIX_MULTIPLY_REFUSED.get());
+        }
         for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
                 : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(MIRROR_MISSES).entrySet()) {
             if (line.length() > 0) {
@@ -1467,7 +1504,99 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             line.append(entry.getKey()).append('=').append(entry.getValue().get());
         }
-        return line.toString();
+        return line.length() == 0 ? "none" : line.toString();
+    }
+
+    /** GL_MODELVIEW / GL_PROJECTION / GL_TEXTURE, the stacks {@code glMultMatrix*} can multiply. */
+    private static final int GL_MODELVIEW = 0x1700;
+    private static final int GL_PROJECTION = 0x1701;
+    private static final int GL_TEXTURE_MATRIX_MODE = 0x1702;
+    /** The stack the stub last saw selected; GL starts in MODELVIEW. */
+    private volatile int matrixMode = GL_MODELVIEW;
+
+    private static String matrixModeName(int mode) {
+        switch (mode) {
+            case GL_MODELVIEW: return "MODELVIEW";
+            case GL_PROJECTION: return "PROJECTION";
+            case GL_TEXTURE_MATRIX_MODE: return "TEXTURE";
+            default: return "0x" + Integer.toHexString(mode);
+        }
+    }
+
+    /**
+     * The one matrix multiply the stub owns: {@code glMultMatrixf/d} multiplies whatever stack {@code glMatrixMode}
+     * selected, and the mirror is what receives it. The backend's entry point is the existing
+     * {@code TerrainGpuBackend.multiplyMatrix(FloatBuffer)} - the same method {@code GlStateManager}'s own
+     * {@code func_179110_a(FloatBuffer)} hook uses - so there is no second matrix path beside the mirrored one.
+     * <p>
+     * The game's buffer is read, never kept: the float form is wrapped in a view over the caller's memory and the
+     * mirror copies the sixteen floats before returning (it uses absolute gets, so the game's buffer position is not
+     * touched); the double form is converted through a thread-local scratch array. A call with no backend, or one the
+     * backend refuses, is counted rather than silently dropped - an unapplied transform is a wrong picture, which is
+     * what the census is for.
+     */
+    private void celtium$multiplyMatrix(Fn fn, long address) {
+        MATRIX_MULTIPLY_ARRIVALS.incrementAndGet();
+        if (address == 0L) {
+            MATRIX_MULTIPLY_REFUSED.incrementAndGet();
+            return;
+        }
+        java.nio.FloatBuffer matrix;
+        try {
+            if (fn.name.endsWith("d")) {
+                float[] scratch = celtium$matrixScratch();
+                for (int i = 0; i < 16; i++) {
+                    scratch[i] = (float) MemoryUtil.memGetDouble(address + (long) i * 8L);
+                }
+                matrix = java.nio.FloatBuffer.wrap(scratch);
+            } else {
+                matrix = MemoryUtil.memFloatBuffer(address, 16);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            MATRIX_MULTIPLY_REFUSED.incrementAndGet();
+            return;
+        }
+        TerrainGpuBackend backend;
+        try {
+            backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        } catch (RuntimeException | LinkageError error) {
+            backend = null;
+        }
+        if (backend == null) {
+            MATRIX_MULTIPLY_NO_BACKEND.incrementAndGet();
+            return;
+        }
+        if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
+            // The interface's multiplyMatrix default is empty, so a backend that does not override it would take the
+            // call and drop it; counting that as applied would make the arrivals/applications pair lie.
+            MATRIX_MULTIPLY_NO_MIRROR.incrementAndGet();
+            return;
+        }
+        try {
+            backend.multiplyMatrix(matrix);
+            MATRIX_MULTIPLY_APPLIED.incrementAndGet();
+        } catch (RuntimeException | LinkageError error) {
+            MATRIX_MULTIPLY_REFUSED.incrementAndGet();
+            return;
+        }
+        if (MATRIX_MULTIPLY_SHAPES.size() < 8) {
+            String shape = fn.name + "/" + matrixMode + "/" + Float.floatToRawIntBits(matrix.get(0))
+                    + "/" + Float.floatToRawIntBits(matrix.get(5));
+            if (MATRIX_MULTIPLY_SHAPES.add(shape)) {
+                System.out.println("[Celtium] CELTIUM_MULT_MATRIX " + fn.name
+                        + " mode=" + matrixModeName(this.matrixMode)
+                        + " m0=" + matrix.get(0) + " m5=" + matrix.get(5) + " m15=" + matrix.get(15)
+                        + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
+                        + " site=[" + celtium$callSite(8) + "]");
+            }
+        }
+    }
+
+    /** The thread-local conversion buffer for the double form; {@code glMultMatrixd} is rare, so it is reused. */
+    private static final ThreadLocal<float[]> MATRIX_SCRATCH = ThreadLocal.withInitial(() -> new float[16]);
+
+    private static float[] celtium$matrixScratch() {
+        return MATRIX_SCRATCH.get();
     }
 
     private long generate(Fn fn, long[] c) {
@@ -1570,26 +1699,33 @@ public final class CeltiumGlStub implements FunctionProvider {
     // ---- state queries ---------------------------------------------------------------
 
     /**
-     * {@return the native renderer string for {@code GL_RENDERER}, or this stub's own name when there is no device}.
+     * {@return the live Vulkan driver identity for {@code GL_RENDERER}}, or {@code "unavailable"} when no device
+     * exists.
      * <p>
-     * Resolved through {@code TerrainGpuBackends.current()} rather than cached: the window renderer is created at the
-     * first tick and adopted by the world renderer later, so the name appears as soon as a device exists and never
-     * goes stale across a world change.
+     * Resolved through {@code TerrainGpuBackends.current()} rather than cached: the window renderer is created at
+     * display creation and adopted by the world renderer later, so the answer appears as soon as a device exists and
+     * never goes stale across a world change. The string is the one the driver itself reports
+     * ({@code VulkanContext.driverSummary()}: driverName/driverID/driverInfo/driverVersion and the device), because
+     * the user's F3 request was for the Vulkan driver, not for this stub's name.
+     * <p>
+     * The fallback is {@code "unavailable"} and deliberately not a stub string: presenting "Celtium stub GL" where a
+     * driver name is expected is how the overlay came to claim a driver that was not rendering. A configuration with
+     * no device has no driver to name, and says so.
      */
     private static String celtium$nativeRendererName() {
         try {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                String name = vulkan.celtium$nativeDeviceName();
-                if (name != null && !name.isEmpty()) {
-                    return name + " via Celtium Vulkan";
+            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                String driver = org.soutalab.celtium.vulkan.VulkanContext.driverSummary();
+                if (driver != null && !driver.isEmpty() && !"unavailable".equals(driver)) {
+                    return driver + " via Celtium Vulkan";
                 }
             }
         } catch (RuntimeException | LinkageError error) {
-            // No renderer, or one that cannot answer: the stub's own name is the honest fallback.
+            // No renderer, or one that cannot answer: the caller gets "unavailable" rather than a stub name.
         }
-        return "Celtium stub GL";
+        return "unavailable";
     }
 
     private long stringFor(int pname) {
@@ -1599,10 +1735,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 value = "Celtium";
                 break;
             case 0x1F01: // GL_RENDERER
-                // The device the frames are actually drawn on, not this stub's own name: F3 shows this string, and the
-                // fixture records it as glRenderer. Before the renderer exists there is no device to name yet, and a
-                // configuration without Vulkan has none at all - both keep the stub string. GL_VENDOR stays "Celtium"
-                // so a GL-less leg remains identifiable in a report.
+                // The live Vulkan driver the frames are actually drawn on, not this stub's own name: F3 shows this
+                // string, and the fixture records it as glRenderer. Before the renderer exists there is no device to
+                // name yet, and a configuration without Vulkan has none at all - both answer "unavailable" rather
+                // than a stub name standing in for a driver. GL_VENDOR stays "Celtium" so a GL-less leg remains
+                // identifiable in a report.
                 value = celtium$nativeRendererName();
                 break;
             case 0x1F02: // GL_VERSION
@@ -2534,8 +2671,25 @@ public final class CeltiumGlStub implements FunctionProvider {
      * <p>
      * The default is the honest stub answer rather than a safe one: a texture the game never parameterised really does
      * wrap by repeating in GL, which is why the options background tiles without anyone setting a wrap on it.
+     * <p>
+     * {@code -Dceltium.stub.texWrapClampControl=true} is the one-flag control for the settings-background defect: it
+     * answers exactly what this class hardcoded before the record existed (wrap CLAMP_TO_EDGE, filters LINEAR), so the
+     * same jar, scene and pose can be run one flag apart and the tiling compared. A control run says so in its own
+     * census line.
      */
+    private static final boolean TEX_WRAP_CLAMP_CONTROL =
+            Boolean.getBoolean("celtium.stub.texWrapClampControl");
+
     private static int textureParameterValue(int textureName, int pname) {
+        if (TEX_WRAP_CLAMP_CONTROL) {
+            if (pname == GL_TEXTURE_WRAP_S || pname == GL_TEXTURE_WRAP_T) {
+                return GL_CLAMP_TO_EDGE;
+            }
+            if (pname == GL_TEXTURE_MAG_FILTER || pname == GL_TEXTURE_MIN_FILTER) {
+                return GL_LINEAR;
+            }
+            return 0;
+        }
         CeltiumGlStub stub = installed;
         if (stub != null && textureName > 0) {
             Integer recorded = stub.texParams.get(Long.valueOf(texParamKey(textureName, pname)));
@@ -2610,7 +2764,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         return "texture params: recorded=" + stub.texParams.size() + " textures=" + textures.size()
                 + " wrapRepeat=" + repeat + " wrapClamp=" + clamp
                 + " calls=" + stub.texParamCalls.get() + " unbound=" + stub.texParamUnbound.get()
-                + " overflow=" + stub.texParamOverflow.get() + " queries=" + stub.texParamQueries.get();
+                + " overflow=" + stub.texParamOverflow.get() + " queries=" + stub.texParamQueries.get()
+                + " wrapClampControl=" + TEX_WRAP_CLAMP_CONTROL;
     }
 
     /** One query answer, named once per distinct shape so a run's log says what the mirror actually asked for. */

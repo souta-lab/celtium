@@ -8847,7 +8847,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * {@code -Dceltium.vulkan.chainFrameDumpPath} (default {@code /tmp/celtium-chain-frame.png}) and the count from
      * {@code -Dceltium.vulkan.chainFrameDumps} (default 1).
      */
-    private void celtium$dumpImagesAtChainTime() {
+    private void celtium$dumpImagesAtChainTime(java.util.List<VulkanPostChain.Pass> passes) {
         if (!Boolean.getBoolean("celtium.vulkan.chainFrameDump")) {
             return;
         }
@@ -8855,28 +8855,43 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         this.chainFrameDumps++;
+        // Which chain this is: a run holds several, and the frame image is only expected to carry the output of the one
+        // whose output target is `main`. The identity is the first pass's program, how many passes there are, whether
+        // that first pass reads and the last one writes the frame image, and the framebuffer ids involved.
+        String identity = "chain=" + this.chainFrameDumps + " passes=" + passes.size()
+                + " first=" + passes.get(0).program + " last=" + passes.get(passes.size() - 1).program
+                + " inIsMain=" + passes.get(0).inIsMain + " outIsMain=" + passes.get(passes.size() - 1).outIsMain
+                + " outFbId=" + passes.get(passes.size() - 1).outFbId
+                + " frameId=" + this.frameId;
         if (!waitForIdle()) {
             record("chain frame dump skipped: the GPU did not confirm the chain submission");
             return;
         }
         String base = System.getProperty("celtium.vulkan.chainFrameDumpPath", "/tmp/celtium-chain-frame.png");
         if (this.frameTarget != null) {
-            celtium$dumpOwnedImage("frame", this.frameTarget.colorImage(), base);
+            celtium$dumpOwnedImage("frame", this.frameTarget.colorImage(), base, identity);
         }
         GllessFrameTarget glless = offTargetTarget();
-        if (glless != null && glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
-            celtium$dumpOwnedImage("chain-pair", glless.chainPairColorImage(), base);
+        if (glless != null && glless.chainPairColorImage() != 0L
+                && glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
+            // Dumped at the frame's size: the pair is created at the size the game's framebuffer asks for, and the
+            // readback's extent has to be inside the image it reads. A pair of another size is named rather than read.
+            celtium$dumpOwnedImage("chain-pair", glless.chainPairColorImage(), base,
+                    identity + " pairSize=" + this.targetWidth + "x" + this.targetHeight);
+        } else if (glless != null && glless.chainPairColorImage() != 0L) {
+            System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=chain-pair skipped=size"
+                    + " frameSize=" + this.targetWidth + "x" + this.targetHeight + " " + identity);
         }
     }
 
     /** Reads one owned image out and writes it, with its mean and opaque fraction on the line that names it. */
-    private void celtium$dumpOwnedImage(String stage, long image, String base) {
+    private void celtium$dumpOwnedImage(String stage, long image, String base, String identity) {
         if (image == 0L || this.targetWidth <= 0 || this.targetHeight <= 0) {
             return;
         }
         int[] pixels = celtium$readImageRectangle(image, 0, 0, this.targetWidth, this.targetHeight);
         if (pixels == null) {
-            System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " readback=failed");
+            System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " readback=failed " + identity);
             return;
         }
         long red = 0L;
@@ -8909,7 +8924,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " path=" + path
                 + " written=" + written + " " + this.targetWidth + "x" + this.targetHeight
                 + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
-                + " opaque=" + opaque + "/" + pixels.length + " frame=" + this.frameId);
+                + " opaque=" + opaque + "/" + pixels.length + " " + identity);
     }
 
     /** {@return the image a copy's read framebuffer names, or 0 when this renderer does not own it}. */

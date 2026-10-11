@@ -140,6 +140,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.195 **task-50 の実装が tree に入った（glMultMatrix が mirror に届く）・chain の blit は frame image に痕跡ゼロ**
+
+- **task-50 実装済み・緑**（jar `5649052b3b8416c1165d` を instance へ投入）:
+  - stub（weather-water）: `fn("glMultMatrixf", R_VOID, SEM_MULT_MATRIX, A_PTR)`＋`celtium$multiplyMatrix(fn, address)`。
+    `glMultMatrixd` は float へ変換して同じ経路。**到着/適用/拒否の census**（`MATRIX_MULTIPLY_ARRIVALS/APPLIED/REFUSED`）を持ち、
+    「到着したのに適用されない」が miss として見える形を保つ。
+  - backend（pipelines が確認）: `VulkanTerrainGpuBackend:3073` に
+    `multiplyMatrix(FloatBuffer)`（`matricesDirty=true`・`immediateState.multiplyMatrixBuffer`・`immediateStateCalls++`）が**既にあり**、
+    共通 interface 宣言（`:115`）経由で stub の呼び出しが解決する。**追加実装は不要だった**。
+  - **受入は未取得**（GUI slot/hotbar の等角アイコン・剣の向き・ドロップ item サイズ・等価 build 状態で参照比較）。
+    pipelines の `t45-hurt-on/off` pair と同一 leg で取る予定。fog-path の **before 数値**（item 領域 71.31%・whole frame 0.68%）が基準。
+  - `GluProjectionMixin` も同じ生 `glMultMatrixf` を使うので、`MATRIX_MULTIPLY_APPLIED` が射影スタックに正しい時点で乗ったかを見る。
+- **chain の最終 blit は frame image に痕跡ゼロ（proj-channel・実測）**: dump が捕まえたのは**まさに `main` を out とする chain**
+  （pass trace: `0..3 blur`・`4..8 spider`・**`9 program=blit … out=main`**）。dump 画像は **flipud で presented frame と
+  0/921,600 差＝byte-identical**（identity 向きでは 98.11% 差＝readback は presented に対し上下反転、記録すべき事実）。
+  つまり `waitForIdle()` 後でも **blit の書き込みが frame image に無い**。参照は detail 0.179→0.097（半減）、我々は不変。
+  → 次の計器は **pass 0 の出力 target**（pass 0 は `main` を読んで `owned#2072331124` へ書く）: owned が空なら**executor 内**の
+  pipeline/descriptor/viewport、blur 済みなら **`outIsMain` 経路**。frame-composite が dump 行に
+  `chain=/passes=/first=/last=/inIsMain=/outIsMain=/outFbId=` を追加し `chainFrameDumps=8` の再取得を queue 済み。
+- **四分円の fill は per-boot**: proj-channel の boot は黒（`black=0.2500`）、私の boot は白——幾何は同一で chain とは独立
+  （chain の書き込みを挟んでも frame image は presented と byte-identical）。task-8 の latch/clear 機構の候補のまま。
+
 ## 0.194 **Intel 1920x1080 menu 受入・driver 情報の実値（両 vendor）・world-crash の一部は script 欠落の可能性**
 
 - **task-40 完了（sky-draws・Intel）**: 1920x1080 menu が窓を満たす（`resizeWindowFrom 1280x720 → 1920x1080`・
