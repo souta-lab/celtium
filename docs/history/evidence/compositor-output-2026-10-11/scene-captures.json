@@ -1,0 +1,2313 @@
+{
+  "summary": {
+    "launcherExitCode": 0,
+    "captures": 69,
+    "output": "HEADLESS-1",
+    "waylandDisplay": "wayland-1",
+    "swaySocket": "/tmp/celtium-hl-8j1dspn4/sway-ipc.1000.1719745.sock",
+    "xDisplay": ":2",
+    "captureDir": "/home/s0u7a/projects/celtium/.celtium-work/compositor-capture/scene",
+    "gameDir": "/home/s0u7a/projects/celtium/.celtium-work/runtime/compcap-scene",
+    "finishedWall": "2026-10-11T09:00:47+0900"
+  },
+  "records": [
+    {
+      "capture": 0,
+      "image": "compositor-0000.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676813219354698,
+      "shutterMonoNs": 350499463904873,
+      "shutterWall": "09:00:13.219354698",
+      "grimDurationMs": 107.372,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 1,
+      "image": "compositor-0001.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676813719452987,
+      "shutterMonoNs": 350499963997310,
+      "shutterWall": "09:00:13.719452987",
+      "grimDurationMs": 78.599,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 2,
+      "image": "compositor-0002.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676814219515549,
+      "shutterMonoNs": 350500464059663,
+      "shutterWall": "09:00:14.219515549",
+      "grimDurationMs": 107.309,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 3,
+      "image": "compositor-0003.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676814720947148,
+      "shutterMonoNs": 350500965491431,
+      "shutterWall": "09:00:14.720947148",
+      "grimDurationMs": 62.333,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 4,
+      "image": "compositor-0004.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676815221026950,
+      "shutterMonoNs": 350501465571067,
+      "shutterWall": "09:00:15.221026950",
+      "grimDurationMs": 90.67,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 5,
+      "image": "compositor-0005.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676815721102016,
+      "shutterMonoNs": 350501965646084,
+      "shutterWall": "09:00:15.721102016",
+      "grimDurationMs": 51.052,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 6,
+      "image": "compositor-0006.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676816221184542,
+      "shutterMonoNs": 350502465729456,
+      "shutterWall": "09:00:16.221184542",
+      "grimDurationMs": 40.588,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 7,
+      "image": "compositor-0007.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676816721267859,
+      "shutterMonoNs": 350502965812227,
+      "shutterWall": "09:00:16.721267859",
+      "grimDurationMs": 78.104,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 8,
+      "image": "compositor-0008.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676817221348043,
+      "shutterMonoNs": 350503465892540,
+      "shutterWall": "09:00:17.221348043",
+      "grimDurationMs": 79.056,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 9,
+      "image": "compositor-0009.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676817721420677,
+      "shutterMonoNs": 350503965965254,
+      "shutterWall": "09:00:17.721420677",
+      "grimDurationMs": 41.33,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 10,
+      "image": "compositor-0010.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676818221497571,
+      "shutterMonoNs": 350504466041789,
+      "shutterWall": "09:00:18.221497571",
+      "grimDurationMs": 66.115,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 11,
+      "image": "compositor-0011.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676818722441335,
+      "shutterMonoNs": 350504966985642,
+      "shutterWall": "09:00:18.722441335",
+      "grimDurationMs": 54.373,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 12,
+      "image": "compositor-0012.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676819222757308,
+      "shutterMonoNs": 350505467301561,
+      "shutterWall": "09:00:19.222757308",
+      "grimDurationMs": 79.465,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 13,
+      "image": "compositor-0013.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676819722870292,
+      "shutterMonoNs": 350505967414421,
+      "shutterWall": "09:00:19.722870292",
+      "grimDurationMs": 63.803,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 14,
+      "image": "compositor-0014.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676820224798215,
+      "shutterMonoNs": 350506469342364,
+      "shutterWall": "09:00:20.224798215",
+      "grimDurationMs": 79.299,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 15,
+      "image": "compositor-0015.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676820724878356,
+      "shutterMonoNs": 350506969422575,
+      "shutterWall": "09:00:20.724878356",
+      "grimDurationMs": 50.399,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 16,
+      "image": "compositor-0016.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676821224953317,
+      "shutterMonoNs": 350507469497553,
+      "shutterWall": "09:00:21.224953317",
+      "grimDurationMs": 78.642,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 17,
+      "image": "compositor-0017.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676821725025041,
+      "shutterMonoNs": 350507969569179,
+      "shutterWall": "09:00:21.725025041",
+      "grimDurationMs": 45.311,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 18,
+      "image": "compositor-0018.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676822225104294,
+      "shutterMonoNs": 350508469648461,
+      "shutterWall": "09:00:22.225104294",
+      "grimDurationMs": 63.487,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 19,
+      "image": "compositor-0019.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676822725188699,
+      "shutterMonoNs": 350508969732965,
+      "shutterWall": "09:00:22.725188699",
+      "grimDurationMs": 84.258,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 20,
+      "image": "compositor-0020.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676823225263590,
+      "shutterMonoNs": 350509469807783,
+      "shutterWall": "09:00:23.225263590",
+      "grimDurationMs": 56.491,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 21,
+      "image": "compositor-0021.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676823725340933,
+      "shutterMonoNs": 350509969885080,
+      "shutterWall": "09:00:23.725340933",
+      "grimDurationMs": 64.975,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 22,
+      "image": "compositor-0022.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676824225440527,
+      "shutterMonoNs": 350510469984638,
+      "shutterWall": "09:00:24.225440527",
+      "grimDurationMs": 38.996,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 23,
+      "image": "compositor-0023.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676824725545946,
+      "shutterMonoNs": 350510970090084,
+      "shutterWall": "09:00:24.725545946",
+      "grimDurationMs": 51.02,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 24,
+      "image": "compositor-0024.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676825225618850,
+      "shutterMonoNs": 350511470163080,
+      "shutterWall": "09:00:25.225618850",
+      "grimDurationMs": 68.054,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 25,
+      "image": "compositor-0025.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676825725890720,
+      "shutterMonoNs": 350511970434864,
+      "shutterWall": "09:00:25.725890720",
+      "grimDurationMs": 53.991,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 26,
+      "image": "compositor-0026.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676826225969101,
+      "shutterMonoNs": 350512470513832,
+      "shutterWall": "09:00:26.225969101",
+      "grimDurationMs": 42.709,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 27,
+      "image": "compositor-0027.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676826726074337,
+      "shutterMonoNs": 350512970618504,
+      "shutterWall": "09:00:26.726074337",
+      "grimDurationMs": 53.693,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 28,
+      "image": "compositor-0028.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676827226146868,
+      "shutterMonoNs": 350513470691006,
+      "shutterWall": "09:00:27.226146868",
+      "grimDurationMs": 43.242,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 29,
+      "image": "compositor-0029.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676827726225277,
+      "shutterMonoNs": 350513970769777,
+      "shutterWall": "09:00:27.726225277",
+      "grimDurationMs": 38.608,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 30,
+      "image": "compositor-0030.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676828226450724,
+      "shutterMonoNs": 350514470994864,
+      "shutterWall": "09:00:28.226450724",
+      "grimDurationMs": 65.26,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 31,
+      "image": "compositor-0031.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676828726563055,
+      "shutterMonoNs": 350514971108129,
+      "shutterWall": "09:00:28.726563055",
+      "grimDurationMs": 40.41,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 32,
+      "image": "compositor-0032.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676829226665274,
+      "shutterMonoNs": 350515471209336,
+      "shutterWall": "09:00:29.226665274",
+      "grimDurationMs": 38.454,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 33,
+      "image": "compositor-0033.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676829726744204,
+      "shutterMonoNs": 350515971288257,
+      "shutterWall": "09:00:29.726744204",
+      "grimDurationMs": 41.725,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 34,
+      "image": "compositor-0034.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676830226821449,
+      "shutterMonoNs": 350516471365582,
+      "shutterWall": "09:00:30.226821449",
+      "grimDurationMs": 49.743,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 35,
+      "image": "compositor-0035.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676830726898535,
+      "shutterMonoNs": 350516971442646,
+      "shutterWall": "09:00:30.726898535",
+      "grimDurationMs": 38.983,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 36,
+      "image": "compositor-0036.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676831227002121,
+      "shutterMonoNs": 350517471546266,
+      "shutterWall": "09:00:31.227002121",
+      "grimDurationMs": 37.524,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 37,
+      "image": "compositor-0037.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676831727131650,
+      "shutterMonoNs": 350517971675920,
+      "shutterWall": "09:00:31.727131650",
+      "grimDurationMs": 36.691,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 38,
+      "image": "compositor-0038.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676832227203709,
+      "shutterMonoNs": 350518471748246,
+      "shutterWall": "09:00:32.227203709",
+      "grimDurationMs": 37.462,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 39,
+      "image": "compositor-0039.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676832727276353,
+      "shutterMonoNs": 350518971820476,
+      "shutterWall": "09:00:32.727276353",
+      "grimDurationMs": 36.769,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 40,
+      "image": "compositor-0040.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676833227351445,
+      "shutterMonoNs": 350519471895503,
+      "shutterWall": "09:00:33.227351445",
+      "grimDurationMs": 37.817,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 41,
+      "image": "compositor-0041.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676833727453201,
+      "shutterMonoNs": 350519971997372,
+      "shutterWall": "09:00:33.727453201",
+      "grimDurationMs": 36.699,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 42,
+      "image": "compositor-0042.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676834227519306,
+      "shutterMonoNs": 350520472063533,
+      "shutterWall": "09:00:34.227519306",
+      "grimDurationMs": 42.64,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 43,
+      "image": "compositor-0043.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676834728276414,
+      "shutterMonoNs": 350520972820791,
+      "shutterWall": "09:00:34.728276414",
+      "grimDurationMs": 65.039,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 44,
+      "image": "compositor-0044.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676835228351111,
+      "shutterMonoNs": 350521472895281,
+      "shutterWall": "09:00:35.228351111",
+      "grimDurationMs": 47.635,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": []
+    },
+    {
+      "capture": 45,
+      "image": "compositor-0045.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676835729098809,
+      "shutterMonoNs": 350521973642868,
+      "shutterWall": "09:00:35.729098809",
+      "grimDurationMs": 58.897,
+      "pngBytes": 2759,
+      "pngSha256": "7efdbbfeb59ec43fc9584c5027bfb5a906d7980f68ffa20f617083617c6cf574",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 46,
+      "image": "compositor-0046.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676836229201772,
+      "shutterMonoNs": 350522473745757,
+      "shutterWall": "09:00:36.229201772",
+      "grimDurationMs": 58.042,
+      "pngBytes": 109310,
+      "pngSha256": "b37a85890b0d0fa1243494dc97d84ece7626a8fa3a940a0bf996d4c680d46c8f",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 47,
+      "image": "compositor-0047.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676836729272979,
+      "shutterMonoNs": 350522973817152,
+      "shutterWall": "09:00:36.729272979",
+      "grimDurationMs": 63.01,
+      "pngBytes": 109310,
+      "pngSha256": "b37a85890b0d0fa1243494dc97d84ece7626a8fa3a940a0bf996d4c680d46c8f",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 48,
+      "image": "compositor-0048.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676837229352498,
+      "shutterMonoNs": 350523473896616,
+      "shutterWall": "09:00:37.229352498",
+      "grimDurationMs": 61.336,
+      "pngBytes": 88798,
+      "pngSha256": "a92a2cc60c6e35e6cda7d24e96268681989051bbc00375709f04ae44b653126c",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 49,
+      "image": "compositor-0049.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676837729434220,
+      "shutterMonoNs": 350523973978662,
+      "shutterWall": "09:00:37.729434220",
+      "grimDurationMs": 51.253,
+      "pngBytes": 76656,
+      "pngSha256": "c6302ef89e31b9ebd2a2636bbfa2824325c8540d934c0bdeeb666ac43e7d5b8c",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 50,
+      "image": "compositor-0050.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676838229964749,
+      "shutterMonoNs": 350524474508900,
+      "shutterWall": "09:00:38.229964749",
+      "grimDurationMs": 71.335,
+      "pngBytes": 176977,
+      "pngSha256": "8a9d417fbc6b5e1bf3cc547d8b26a8ce64068091edc495788bddf54a4df31433",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 51,
+      "image": "compositor-0051.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676838730046871,
+      "shutterMonoNs": 350524974590996,
+      "shutterWall": "09:00:38.730046871",
+      "grimDurationMs": 126.562,
+      "pngBytes": 177370,
+      "pngSha256": "ee108ca1873a6e77c9667ecadc6edb5f12eb4de3d18e316123218dd23392e2ff",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 52,
+      "image": "compositor-0052.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676839230146601,
+      "shutterMonoNs": 350525474690941,
+      "shutterWall": "09:00:39.230146601",
+      "grimDurationMs": 98.359,
+      "pngBytes": 288894,
+      "pngSha256": "eecf999b2816177d9507fb8a4690fca306561a65d2b864135d6bf9c092902df2",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 53,
+      "image": "compositor-0053.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676839730527137,
+      "shutterMonoNs": 350525975071199,
+      "shutterWall": "09:00:39.730527137",
+      "grimDurationMs": 133.138,
+      "pngBytes": 319740,
+      "pngSha256": "0d8280ec32ef4c1ebdd23bd57c6200efc83fde9160a28a9ad7927d8842ec5417",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 54,
+      "image": "compositor-0054.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676840230631667,
+      "shutterMonoNs": 350526475175755,
+      "shutterWall": "09:00:40.230631667",
+      "grimDurationMs": 103.786,
+      "pngBytes": 323895,
+      "pngSha256": "8a0ae6bcc42fcc493f718849bb41be2083b2f0c4cd68b49254c2edd70d88bb35",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 55,
+      "image": "compositor-0055.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676840731337735,
+      "shutterMonoNs": 350526975881789,
+      "shutterWall": "09:00:40.731337735",
+      "grimDurationMs": 102.73,
+      "pngBytes": 324619,
+      "pngSha256": "a4527cd2fa295cb24a3e2819d6936acc02d1773642eb9bfc45ca7ddce7c26332",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 56,
+      "image": "compositor-0056.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676841231416578,
+      "shutterMonoNs": 350527475960687,
+      "shutterWall": "09:00:41.231416578",
+      "grimDurationMs": 88.335,
+      "pngBytes": 324619,
+      "pngSha256": "a4527cd2fa295cb24a3e2819d6936acc02d1773642eb9bfc45ca7ddce7c26332",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 57,
+      "image": "compositor-0057.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676841731516825,
+      "shutterMonoNs": 350527976061074,
+      "shutterWall": "09:00:41.731516825",
+      "grimDurationMs": 99.723,
+      "pngBytes": 324509,
+      "pngSha256": "f84c59bae9d4b10ae5085850093ce8c6dda7032afcacee1f6a927009f22b4188",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 58,
+      "image": "compositor-0058.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676842231590112,
+      "shutterMonoNs": 350528476134311,
+      "shutterWall": "09:00:42.231590112",
+      "grimDurationMs": 88.371,
+      "pngBytes": 333612,
+      "pngSha256": "baaf9e9ed616d662557006ae09f39c4e1ce4397092addf991bdbecd16b33abbc",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 59,
+      "image": "compositor-0059.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676842731696560,
+      "shutterMonoNs": 350528976240601,
+      "shutterWall": "09:00:42.731696560",
+      "grimDurationMs": 91.757,
+      "pngBytes": 333709,
+      "pngSha256": "5bd2afd0e458ec746f7a7e2a8a84b0cec19c285497814183edd720fbb2a51e85",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 60,
+      "image": "compositor-0060.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676843231775309,
+      "shutterMonoNs": 350529476319567,
+      "shutterWall": "09:00:43.231775309",
+      "grimDurationMs": 111.841,
+      "pngBytes": 333786,
+      "pngSha256": "391cdea5bd0f0a9c05065e40dd2872675aeae26a4f94242dda8ff12b52189e48",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 61,
+      "image": "compositor-0061.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676843731886067,
+      "shutterMonoNs": 350529976430148,
+      "shutterWall": "09:00:43.731886067",
+      "grimDurationMs": 84.83,
+      "pngBytes": 333570,
+      "pngSha256": "202a352b924d6160d21ca65412bd7d34bb1c0f166b77530736069d7e0c10ec2a",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 62,
+      "image": "compositor-0062.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676844232210181,
+      "shutterMonoNs": 350530476754602,
+      "shutterWall": "09:00:44.232210181",
+      "grimDurationMs": 105.487,
+      "pngBytes": 333813,
+      "pngSha256": "fc6b360d3007673f9b3bdaa73a48b3cbba5ae7ffab6be39b55648815038f5f28",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 63,
+      "image": "compositor-0063.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676844732281233,
+      "shutterMonoNs": 350530976825322,
+      "shutterWall": "09:00:44.732281233",
+      "grimDurationMs": 85.072,
+      "pngBytes": 333813,
+      "pngSha256": "fc6b360d3007673f9b3bdaa73a48b3cbba5ae7ffab6be39b55648815038f5f28",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 64,
+      "image": "compositor-0064.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676845232514128,
+      "shutterMonoNs": 350531477058279,
+      "shutterWall": "09:00:45.232514128",
+      "grimDurationMs": 91.074,
+      "pngBytes": 334028,
+      "pngSha256": "4dc4aaf8c487a89ad324968ce9bcbcccc320955a6c5ce314757d88ec74ebefd3",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 65,
+      "image": "compositor-0065.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676845732483323,
+      "shutterMonoNs": 350531977028127,
+      "shutterWall": "09:00:45.732483323",
+      "grimDurationMs": 54.396,
+      "pngBytes": 172701,
+      "pngSha256": "238213746d39ed37634ec71c82ba4cc56dc8a5f88a2b575f120be2f969f52564",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 66,
+      "image": "compositor-0066.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676846232580038,
+      "shutterMonoNs": 350532477124190,
+      "shutterWall": "09:00:46.232580038",
+      "grimDurationMs": 51.175,
+      "pngBytes": 172778,
+      "pngSha256": "2cba55b1d71837816ae11b5a77e7730a35cb3f1f459b24f9292c80076b0599bf",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 67,
+      "image": "compositor-0067.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676846732692471,
+      "shutterMonoNs": 350532977236849,
+      "shutterWall": "09:00:46.732692471",
+      "grimDurationMs": 53.781,
+      "pngBytes": 172571,
+      "pngSha256": "31d06cd1ae892b9f15a0c7556c2795d4ed5238ec7a72efb63645683e79affc8e",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    },
+    {
+      "capture": 68,
+      "image": "compositor-0068.png",
+      "grimExit": 0,
+      "grimStderr": null,
+      "shutterWallNs": 1791676847232795554,
+      "shutterMonoNs": 350533477340102,
+      "shutterWall": "09:00:47.232795554",
+      "grimDurationMs": 55.836,
+      "pngBytes": 172571,
+      "pngSha256": "31d06cd1ae892b9f15a0c7556c2795d4ed5238ec7a72efb63645683e79affc8e",
+      "gamePid": 1719775,
+      "output": "HEADLESS-1",
+      "outputModes": [
+        {
+          "name": "HEADLESS-1",
+          "current_mode": {
+            "width": 1280,
+            "height": 720,
+            "refresh": 60000
+          },
+          "scale": 1.0
+        }
+      ],
+      "windows": [
+        {
+          "id": 5,
+          "type": "con",
+          "name": "Cleanroom",
+          "app_id": null,
+          "class": "Cleanroom",
+          "instance": "Cleanroom",
+          "title": "Cleanroom",
+          "pid": 1719775,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720
+          },
+          "visible": true,
+          "focused": true,
+          "fullscreen_mode": 0,
+          "shell": "xwayland"
+        }
+      ]
+    }
+  ]
+}

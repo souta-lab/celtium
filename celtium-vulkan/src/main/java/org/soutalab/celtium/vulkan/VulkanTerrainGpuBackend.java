@@ -2405,11 +2405,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         try {
             if (this.descriptorProbe == null) {
+                // The render pass has to be the one this batch will be recorded into, chosen exactly as
+                // prepareImmediate chooses it: the last pass that ran when there is one, and the standalone
+                // frame-compatible pass when there is not. lastUiPass is null until the first pass of the backend
+                // instance runs and pipelineFor(null) returns null, so requiring a terrain pipeline here refused
+                // every particle batch offered before that first pass - 35 of them in regr4-glless, all before the
+                // first terrain pass, and all of them silently: this branch recorded no reason, so the tally read
+                // "unrecorded (format=5 ...) stage=10" and could not be told from the conditions that do name
+                // themselves. The draw path already substitutes the standalone pass for exactly this case
+                // (prepareImmediate and the flush path both use the terrain pass only when there is one), so this is
+                // the draw path's own rule rather than a relaxation of the gate; the bridge leg keeps refusing
+                // because prepareImmediate refuses there too.
                 VulkanTerrainPipeline ui = pipelineFor(this.lastUiPass);
-                if (ui == null) {
+                long renderPass;
+                if (ui != null) {
+                    renderPass = ui.renderPass();
+                } else if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
+                    renderPass = uiRenderPass();
+                } else {
+                    this.immediateLastRefusal = "the particle descriptor probe needs a pass and none has run yet"
+                            + " (lastUiPass=" + nameOf(this.lastUiPass) + ")";
                     return false;
                 }
-                this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, ui.renderPass(),
+                this.descriptorProbe = VulkanImmediateParticlePipeline.create(this.context, renderPass,
                         false, 0, 0, false, false, false,
                         org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL);
             }
@@ -2418,6 +2436,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.particleDescriptorFailureReason = this.descriptorProbe.lastFailure();
             return ok;
         } catch (Throwable error) {
+            // A refusal has to name itself: the gate's caller only fills in its generic sentence when nothing was
+            // recorded, so a silent false here reads as "unrecorded (format=5 ...) stage=10".
+            this.immediateLastRefusal = "the particle descriptor probe could not be built: " + describe(error);
             return false;
         }
     }

@@ -39,15 +39,55 @@
 | 条件 (b) の残り | **GL context の生成と、起動直後の本質的な拒否のみ** | **既定フレームバッファへ描く合成も native 化**（902件/run・受理 13202・GL 本体 2825・画像差なし・§0.60）。残る GL は起動直後10フレームと少数の pass 選択で、native の描画先がまだ無い瞬間のもの。**GL-less flag 経路（`-Dceltium.vulkan.glless=true`）は §0.114 で起動・提示まで実測したが、窓の絵が未解決なので既定は bridge のまま** |
 | **resize（項目7）** | **両GPU受入** | 恒久 stall を期間契約で解消（§0.102）し、提示の配置契約を GL composite に揃えた（§0.103）：提示は正立・1:1・左下アンカー・window clip、extent は surface 追随。resize run で描画領域 vs screenshot = AMD 0.001 %・Intel 0.000 %、stall 0 |
 | **GPU 検証（条件 (d)）** | **AMD/Intel 両方で受入・ゲート修正済** | 描画側が選択確定時に `CELTIUM_NATIVE_DEVICE name="..." uuid=... matchedOpenGl=...` を出し、harness はこれで `--require-gpu` を判定する（device 未選択時のみ GL 文字列へ fallback、判定元を記録）。GL-less は `--render-node` では GPU を pin できず`VK_ICD_FILENAMES` が必要（pin で `vulkanDeviceCount 1`、無 pin は 3）。AMD RX 6400 と Intel UHD 630 の両方で bridge/GL-less とも PASSED・clean・VUID 0、ゲートが実デバイスを指名（Intel 実測: `gpuRequirementSource=nativeDeviceName`）。光量修正の効果も Intel で可視（GL-less band が (35.6,36.2,37.6) の黒から (102.5,63.9,58.7) へ、AMD と ±0.1・相関 0.9926）。**未検証 vendor/OS は Intel/AMD の Linux 以外すべて**。§0.118 |
-| 実 window / compositor 出力（条件 (c)） | **未確認（ただし前提を訂正・捕獲手段は実在を実測）** | **旧記載の「`DISPLAY=:0` の root が 0×0 で合成器なし」は誤り**。実測: sway(pid 935) が `wayland-1` で稼働し、HDMI-A-4 1920×1080@60 の実モニタ出力を持ち、`ffmpeg -f x11grab -i :0.0` は 1920x1080 の実 X 画面を読める。harness の `--headless` も実 GPU の wlroots/Sway（`WLR_BACKENDS=headless`, output HEADLESS-1 1280x720）を所有し、**`grim -o HEADLESS-1` が別 run の実際のゲーム窓を 1280x720 PNG として捕獲できた**（exit 0・6781色の地形フレーム）。renderer 側には描画を magenta 全面に置き換える `-Dceltium.vulkan.presentMarker=true` があり、番号付き presented dump と組み合わせて「その frame が compositor に出た」ことを束縛できる。scanout/光子レベルの捕獲（kmsgrab 等）は DRM master 権限が無く不可。担当が marker run と通常 run を実行中。§0.121 |
+| 実 window / compositor 出力（条件 (c)） | **充足（実測）／未測定は scanout のみ** | **実測**: `--headless` の私用 wlroots/Sway 出力（HEADLESS-1 1280×720）に対し `grim -o HEADLESS-1` で連番 capture。
+`-Dceltium.vulkan.presentMarker=true` の間だけ **1280×720 全面が一様 magenta (255,0,255)**（14 capture）で、window 未 map の間は一様な黒（32 capture）＝出力の唯一の client は `Cleanroom`（xwayland・ゲームの pid・1280x720）。
+**compositor capture 0035 は renderer の番号付き presented dump `frame-20.png` と 0/921600 画素差・最大チャネル差 0**。通常 run でも **capture 0066 = `frame-100.png`（0/921600 差）**で実 scene（fixture PASSED・presentedImageVerdict PASSED）。fixture 自身の presented 読み戻し（`presentedImageMeanAtCapture=170.0`・単一色）とも一致。
+対照: GL screenshot は黒（presented と 99.925 % 差）＝ GL framebuffer は証拠経路ではない。旧記載の「`DISPLAY=:0` の root 0×0・合成器なし」は誤り（実測: sway 935 が `wayland-1`・HDMI-A-4 1920×1080@60 の実モニタ・Xwayland `:0`、`ffmpeg -f x11grab` は 1920x1080 を読める）。
+**未測定は scanout のみ**（`kmsgrab` は DRM master 無し・非 root で不可）。§0.123・`docs/compositor-output-capture-2026-10-11.md` |
 | **model 経路（表示リスト）の native 描画** | **既定 ON（§0.108）／TESR の list は未 capture** | 射影の出所を `glGetFloatv` から**行列ミラー**へ直して **18.49 % → 6.35 %**、モデルビューを **`V_now × C_compile⁻¹`** にして **2.19 %**（entity 場面・7通りで最良）。既定は ON（§0.108）。**未完**: 実測 `modelMeshLists=2 / modelQuads=12`＝腕と手持ちのみ。TESR の model（エンチャント台の本）は list 自体が capture されておらず、GL fallback に落ちて GL-less では何も描かれない。`celtium$drawModelList` は mesh の無い list を `modelMissingMeshes` として名指しで数えるようにした。§0.108 |
 | **entity 場面の残差（既定構成）** | **確定: fixture のキャプチャ仕様（描画欠陥ではない）** | format 5 = 実粒子（提出元 `ParticleManager`）。残差は**提示フレームの生存粒子**が写る画素そのもの（GL 側は除去済みで粒子画素 0）。除外方向で 0.32 % = ノイズ床。同フレームの静止 FLAME 比較で format 5 の色・位置は正しく、残差は経年差のみ（§0.104） |
 | **通常場面（実体なし）の一致** | **両GPU受入** | 提示画像 vs GL の絵: **AMD 0.011 / 0.01 %**、**Intel 0.000〜0.016 / 0.00 %**（§0.77・§0.92 の撤去後も維持） |
 | 全 entity / TESR・全 block state・全 mod | **未確認** | registry 254 種掃引（AMD）と部分掃引（Intel）は実績として保持 |
 
 **未検証のまま残っているもの**: entity/TESR/item/model 全体の native 描画と見た目、FBO/postprocess の native 化、
-実 window 出力、全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
+scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充足。走査出力は DRM master 権限が無く測れない）、
+全 mod 互換、性能実測（Celeritas 同条件）、リブランド/配布。
 **古い数値を最新版全体の一致率として使わない**（68.81 %・local 0.267/255 は当時の部分測定）。
+
+## 0.123 **受入**: 条件 (c) 充足 —— 提示 frame が実際の window/compositor 出力に到達（marker 帰属 + 番号付き presented dump との画素完全一致）
+
+- 文書: **`docs/compositor-output-capture-2026-10-11.md`**。これは `scripts/compositor_capture.py` の docstring が引用していた文書で、
+  同スクリプトは本計測で**初めて実走**した（それまで capture 成果物も当該文書も存在しなかった）。
+- **手法（renderer は無改変・すべて既存スイッチ）**: `-Dceltium.vulkan.presentMarker=true`（present を magenta (1,0,1,1) の全面 clear に置換、
+  `VulkanSwapchain.java:85,704-720`）＋ `-Dceltium.vulkan.presentReadback=true` と
+  `-Dceltium.vulkan.frameDumpDir/Every/Count`（**presented frame 番号を名前にした** `frame-<N>.png`）。
+  compositor 側は `scripts/compositor_capture.py` の `grim -o HEADLESS-1`（連番 PNG ＋ シャッター時刻・window tree・output mode）。
+  束縛の規則は「ある `frame-N.png` の書出し時刻を capture が跨ぐ」**かつ**「画素が完全一致」の両方。
+- **marker run**（`.celtium-work/compositor-capture/marker2`、46 capture、画像 hash は黒と magenta の **2 種のみ**）:
+  window 未 map の 32 capture は一様な黒 (0,0,0)・`windows=0`、window が map されている **14 capture（0031–0044）は 1280×720 全面が一様 (255,0,255)**
+  （`firstMappedCaptureWall == firstMagentaCaptureWall == 08:58:21.866`）。この出力の唯一の client は
+  `{"name":"Cleanroom","shell":"xwayland","pid":1716095,"visible":true,"rect":1280x720}`＝ゲームの X11 窓、output は HEADLESS-1 1280x720@60 scale 1。
+  **capture 0035 は renderer の `frame-20.png` と 0/921600 画素差・最大チャネル差 0**（`frame-40` とも一致）。
+  frame-20 の書出し 08:58:25.631 は capture 0034(08:58:24.867) と 0035(08:58:25.867) に挟まれる。
+  renderer 側計器は `presentSucceeded=true presentAttempts=81 presentFailures=0 presentedFromVulkan=81 glSwapsSkipped=81`。
+- **fixture の独立計測と一致**: marker run の fixture 自身が presented 画像を `presentedImageMeanAtCapture=170.0`・
+  「921600 画素が単一色」と計測（`status=FAILED_PRESENTED_IMAGE` は marker を入れた**当然の結果**で欠陥ではない）。
+  RGB 平均 170.0 = grim 側の一様 (255,0,255) と同値。**以前この行に書いた 191.25 は RGBA 4 チャネル平均**で、
+  同じ magenta の別の平均の取り方（矛盾ではない）。
+- **通常 run**（`.celtium-work/compositor-capture/scene`、69 capture、fixture **PASSED**・clean・msgs 0・`presentedImageVerdict=PASSED`）:
+  **capture 0066 は `frame-100.png` と 0/921600 画素差で完全一致**（実 scene・10104 色。frame-100 の書出し 09:00:45.923 は capture 0065/0066 に挟まれる）。
+  中間 frame（frame-20/40/60/80）との比較では 0.059–2.31 % の差が出る＝「どれも同じ絵」ではない。
+  fixture の presented 画像（presentedFrame=102、`frameBinding="observed present: ...counter advanced by exactly one"`）とも
+  957/921600 = **0.104 %** 差（frame 100→102 の粒子・アニメ分）。
+- **対照**: GL screenshot は黒（presented と 99.925 % 差）＝ **GL framebuffer は証拠経路ではない**。
+  window が一度も map しなかった run（検証 layer を `VK_LAYER_PATH` で渡さず renderer が
+  `... layer VK_LAYER_KHRONOS_validation is not installed` でデバイス生成を拒否し world 読み込み中に crash）は
+  91 capture すべて黒・`windows=0`。`grim -o HDMI-A-4` は**実 KMS 出力**（実セッション 1920×1080・9675 色）も読める
+  ＝ headless backend 固有の成功ではない。
+- **残る未測定は scanout そのものだけ**: `ffmpeg -f kmsgrab` は `Failed to open DRM device`（DRM master 無し・非 root）。
+  grim は headless でも実 KMS でも「compositor が合成した出力バッファ」を読むので、実出力でゲームを走らせても scanout の gap は閉じない
+  （実セッションを止めて `WLR_BACKENDS=drm` にするか、root/CAP_SYS_ADMIN が要る）。よって条件 (c) は**充足**、
+  未測定は「その先の走査出力」のみで、これは方法の選択ではなく環境の権限・構成の限界。
 
 ## 0.122 **受入済み**: layout/publish バッチは Intel の両 leg でも成立
 
@@ -2869,7 +2909,7 @@ frame target が作り直された後（resize / teardown）に古い group が�
   0.000 %・PASSED —— post chain は GL 実行だが出力は shared FBO 経由で提示へ届く）。残る厳密な未了は
   **post-process 自体の native 化**（shader chain は GL のまま —— 出力は正しいが native Vulkan ではない）。 |
 | (b) GL contextを生成せず、GL call/readback/bridge/copyback/GL swap/GL fallbackを必要としない実行 | **部分達成（GL-less 起動は実測・窓の絵が未解決なので未受入）** | **実測（`-Dceltium.vulkan.glless=true`、AMD）**: GL context なしで world まで起動し、Vulkan が毎フレーム提示して GL swap を1対1で飛ばす（`p548-glless`: `presentedFromVulkan=287`＝`glSwapsSkipped=287`・`presentFailures=0`・`validationMessageCount=0`）。GL 実体は stub（`glRenderer="Celtium stub GL"`・`deviceUuids=[]`）で、bridge も shared image もフレームに無い（`gameFramebufferIsShared=false`・`glless target: no handoff`）。**未受入の理由**: 提示画像がまだ絵ではない（`p559-glless`: `presentedDistinctColours=2`・`presentedNonBackgroundFraction=0.0`・`presentedVerticalBands=15`・fixture `FAILED_PRESENTED_IMAGE`）。GL-less run の harness verdict は `validationExitCode=1`・`gpuRequirementMet=false` で、PASSED ではない。**既定経路の bridge 側計器は従来どおり**: `regStaleCalls=0`・`inPlaceRefreshes=0`・announce 経由 16.2/フレーム（**ただしこれは通常fixtureの範囲の話であり「全sceneで readback が無い」意味ではない**）、構造修復1（`297ce5caa`）で atlas/lightmap の**無効化ごとの全面 readback を廃止**し `readbacksSkipped=473` 対 `directMirrorRefreshes=472` を実測（=ほぼ全ての更新が CPU 供給で閉じる）、**残る依存はブリッジ本体**（`VulkanFrameTarget`: FBO付け替え・色/深度blit・semaphore待ち・状態クエリ48箇所）で CPUコスト **0.58 ms/フレーム（AMD）/ 0.83（Intel）**、GL context は依然として生成する。§0.114 に全測定 |
-| (c) native swapchain frameが実window/compositor出力へ到達 | **前半は確認済み・後半は環境制約** | **確認済み**: `presentMarker` のマゼンタ (1,0,1,1) を提示画像から読み戻すと **mean 191.25** で、期待値 `(255+0+255+255)/4=191.25` と**完全一致**（＝提示された swapchain 画像にこの renderer の合成フレームが入っている）。**未確認**: 実画面への到達。この環境には capture 可能な表示出力が無い（X は screen 0×0、Wayland は `no wl_output`、`grim` は導入済みだが出力が無い）。不足条件は §7.6 に明記。 |
+| (c) native swapchain frameが実window/compositor出力へ到達 | **充足（実測・2026-10-11）／未測定は scanout のみ** | **実測**: grim（wlroots screencopy）で compositor 出力そのものを取得。marker run で compositor 出力 1280×720 全面が一様 magenta (255,0,255)（14 capture・window map 中のみ。未 map は黒）、**capture 0035 は renderer の番号付き presented dump `frame-20.png` と 0/921600 画素差・最大チャネル差 0**。通常 run でも **capture 0066 = `frame-100.png`（0/921600 差・実 scene 10104 色、fixture PASSED）**。fixture の presented 読み戻しは `presentedImageMeanAtCapture=170.0`・「921600 画素が単一色」で grim 側と一致（**以前ここに書いた 191.25 は RGBA 4ch 平均、170.0 は RGB 3ch 平均**で同じ magenta の別の取り方）。GL screenshot は黒（presented と 99.925 % 差）＝ GL framebuffer は証拠経路ではない。**未測定**: 走査出力そのもの（`ffmpeg -f kmsgrab` は `Failed to open DRM device`＝DRM master 無し・非 root。grim は headless でも実 KMS でも合成済み出力バッファを読むため、実出力で走らせてもこの段は閉じない）。§0.123・`docs/compositor-output-capture-2026-10-11.md` |
 | (d) AMD/Intelで必要場面と失敗復旧、監査P0/P1を明示受入で閉じる | **部分（受入は緑、監査項目の一部が未了）** | **既定の世界は溶岩/火入り**（`worldLayers` で差し替え可）で、**AMD p50 25.49 ms（修復1後）/ Intel 軽い世界 28.47 ms・溶岩世界 64.52 ms**、
   いずれも exit 0 / clean / PASSED。**dimension は End が AMD/Intel とも capture 時 dimension 1 で PASSED、
   Nether は NO_CAPTURE**（§0）。postprocess / weather / spectator spider / command-buffer target / JEI も PASSED。

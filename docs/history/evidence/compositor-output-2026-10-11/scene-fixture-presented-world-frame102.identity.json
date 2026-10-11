@@ -1,0 +1,21 @@
+{
+  "runId": "run-13ec9c98ca724-66d3c617",
+  "scene": "terrain",
+  "stage": "world",
+  "source": "presented-dump",
+  "image": "screenshots/celtium-presented-world-run-13ec9c98ca724-66d3c617.png",
+  "worldTick": 204,
+  "worldFrames": 102,
+  "presentedFrame": 102,
+  "width": 1280,
+  "height": 720,
+  "imageHash": -2054013068,
+  "requestedAtTick": 204,
+  "requestedWorldFrames": 102,
+  "requestedPresentedFrame": 101,
+  "completedAtTick": 210,
+  "frameBinding": "observed present: the renderer\u0027s presented-frame counter advanced by exactly one from the request",
+  "identitySource": "fixture-observed-completion",
+  "completionError": "none",
+  "writtenAtMillis": 1791676846469
+}

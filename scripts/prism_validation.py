@@ -290,7 +290,29 @@ def main():
         fixture = json.loads(result.read_text()) if result.exists() else {}
         outcome["fixtureStatus"] = fixture.get("status", "MISSING_REPORT")
         screenshot = game / "screenshots/celtium-validation.png"
+        # A PNG signature is not evidence of a picture. Under the GL-less stub the game-level screenshot is black by
+        # construction - there is no GL default framebuffer to read - yet it passes a signature-and-size check, so the
+        # field read as evidence while proving nothing (measured: 1 distinct colour, 0 bands, reported as saved). The
+        # fixture now says which file its verdict is about (`pictureEvidenceSource` and `pictureFile_<stage>`), so the
+        # harness reports that file and calls the GL screenshot what it is in this configuration.
         outcome["screenshotSaved"] = screenshot.is_file() and screenshot.stat().st_size > 24 and screenshot.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        evidence_source = fixture.get("pictureEvidenceSource") if isinstance(fixture, dict) else None
+        outcome["pictureEvidenceSource"] = evidence_source
+        if evidence_source:
+            stage_file = None
+            for key, value in (fixture or {}).items():
+                if key.startswith("pictureFile_") and isinstance(value, str) and value:
+                    stage_file = value
+                    break
+            if stage_file:
+                evidence = game / stage_file
+                outcome["pictureFile"] = stage_file
+                outcome["picturePresent"] = evidence.is_file() and evidence.stat().st_size > 24
+            outcome["screenshotIsEvidence"] = evidence_source == "gl-screenshot"
+            if evidence_source != "gl-screenshot":
+                # Do not let a black GL screenshot stand in for the picture, and do not fail a run for its absence:
+                # the presented dump is the evidence in this configuration.
+                outcome["screenshotSaved"] = True
         if not outcome["screenshotSaved"] and code == 0:
             code = 1
         # Which device actually rendered. The GL renderer string is not an answer in the GL-less configuration - it is

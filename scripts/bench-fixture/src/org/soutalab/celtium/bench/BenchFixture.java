@@ -89,10 +89,30 @@ public final class BenchFixture {
     private final int chunkBlocks = Integer.getInteger("celtium.bench.chunkBlocks", 64).intValue();
     private final int chunkPerTick = Integer.getInteger("celtium.bench.chunkPerTick", 2).intValue();
     private final int chunkEveryTicks = Integer.getInteger("celtium.bench.chunkEveryTicks", 2).intValue();
-    private final int chunkDrainMaxFrames = Integer.getInteger("celtium.bench.chunkDrainMaxFrames", 600).intValue();
-    private final int chunkDrainMaxSeconds = Integer.getInteger("celtium.bench.chunkDrainMaxSeconds", 60).intValue();
+    private final int chunkDrainMaxFrames = Integer.getInteger("celtium.bench.chunkDrainMaxFrames", 900).intValue();
+    private final int chunkDrainMaxSeconds = Integer.getInteger("celtium.bench.chunkDrainMaxSeconds", 90).intValue();
+    /**
+     * How many frames after the last placement every configuration is measured for, whether or not its chunk
+     * queue empties earlier. It is a frame count and not a queue condition so that the reference and the fork
+     * produce the same number of post-placement samples; the queue-empty frame is recorded beside it when the
+     * renderer publishes queue counters at all.
+     */
+    private final int chunkDrainWindowFrames = Integer.getInteger("celtium.bench.chunkDrainWindowFrames", 120).intValue();
     private final int timeoutSeconds = Integer.getInteger("celtium.bench.timeoutSeconds", 420).intValue();
     private final String label = System.getProperty("celtium.bench.label", "");
+    /**
+     * The fixed camera pose, applied on the client every tick and set on the server once through the game's own
+     * teleport. The defaults are the pose the validation fixture's terrain scene uses, so the scene a benchmark run
+     * measures is one the project has already described. Vanilla fuzzes the player's spawn position by a few blocks
+     * (``nextFloat() * 2 - 1`` per axis), which is why leaving the camera to the spawn made two runs of the same jar
+     * differ in where they stood; that is the camera drift this pins.
+     */
+    private final double poseX = Double.parseDouble(System.getProperty("celtium.bench.cameraX", "0.5"));
+    private final double poseY = Double.parseDouble(System.getProperty("celtium.bench.cameraY", "12.0"));
+    private final double poseZ = Double.parseDouble(System.getProperty("celtium.bench.cameraZ", "0.5"));
+    private final float poseYaw = Float.parseFloat(System.getProperty("celtium.bench.cameraYaw", "180.0"));
+    private final float posePitch = Float.parseFloat(System.getProperty("celtium.bench.cameraPitch", "20.0"));
+    private final int poseTick = Integer.getInteger("celtium.bench.cameraSetTick", 25).intValue();
 
     private Phase phase = Phase.LAUNCH;
     private boolean finished;
@@ -101,6 +121,8 @@ public final class BenchFixture {
     private int worldFrames;
     private int settleFrames;
     private int measuredFrames;
+    /** Set when the first eligible steady-state frame opens the window; the window must open exactly once. */
+    private boolean windowOpen;
     private long previousFrameNanos;
     private long lastFrameNanos;
     private long windowStartNanos;
@@ -139,6 +161,9 @@ public final class BenchFixture {
     private long worldSeed = -1L;
     private boolean flickerPinned;
     private boolean flickerResolved;
+    private boolean poseRequested;
+    private int poseAppliedTicks;
+    private volatile String poseResult = "not attempted";
     private Field flickerX;
     private Field flickerDX;
     private Field vsyncField;
@@ -158,6 +183,11 @@ public final class BenchFixture {
     private long chunkDrainStartNanos;
     private int chunkQueueAtDrainStart = -1;
     private boolean chunkDrained;
+    /** Frame index (after the last placement) at which the renderer's queue counters first read zero, or -1. */
+    private int chunkQueueEmptyFrame = -1;
+    private boolean chunkQueueCountersReadable;
+    private int chunkQueueAtPhaseEnd = -1;
+    private String chunkDrainCriterion = "not reached";
     private int limitFramerateAtStart = -1;
     private int limitFramerateAtEnd = -1;
     private boolean enableVsyncAtStart;
@@ -246,8 +276,11 @@ public final class BenchFixture {
             }
             if (phase == Phase.STEADY) {
                 // The first eligible frame only opens the window: its interval spans the last warm-up frame, so it is
-                // not one of the measured samples.
-                if (measuredFrames == 0) {
+                // not one of the measured samples. `windowOpen` and not `measuredFrames == 0` is the latch: the
+                // measured-frame counter is still zero at this point, so testing it would re-open the window every
+                // frame and never sample anything.
+                if (!windowOpen) {
+                    windowOpen = true;
                     beginWindow(mc, now);
                     previousFrameNanos = now;
                     return;
@@ -271,26 +304,44 @@ public final class BenchFixture {
                 }
                 chunkPhaseFrames++;
                 int queue = sampleQueues(mc);
+                if (queue >= 0) {
+                    chunkQueueCountersReadable = true;
+                }
                 if (chunkPlacedAll) {
                     chunkFramesAfterPlacement++;
-                }
-                if (chunkDrained) {
-                    previousFrameNanos = now;
-                    return;
                 }
                 if (chunkDrainFrames == 0 && chunkPlacedAll) {
                     chunkDrainFrames = chunkFramesAfterPlacement;
                     chunkQueueAtDrainStart = queue;
                     chunkDrainStartNanos = now;
                 }
+                if (chunkPlacedAll && queue == 0 && chunkFramesAfterPlacement >= 5 && chunkQueueEmptyFrame < 0) {
+                    chunkQueueEmptyFrame = chunkFramesAfterPlacement;
+                }
+                boolean windowElapsed = chunkFramesAfterPlacement >= chunkDrainWindowFrames;
                 long chunkElapsed = chunkPhaseStartNanos == 0L ? 0L : now - chunkPhaseStartNanos;
-                if (chunkPlacedAll && queue == 0 && chunkFramesAfterPlacement >= 5) {
+                if (chunkPlacedAll && windowElapsed) {
+                    // The window is a fixed number of post-placement frames: the same sample count for every
+                    // configuration, whether its queue drains at once or never. Whether the queue reached zero,
+                    // and at which frame, is reported beside the samples instead of gating them, because a scene
+                    // whose blocks keep updating (lava, fire) has a queue that never rests and that is a fact
+                    // about the scene, not a failure of the measurement.
                     chunkDrained = true;
-                    recordPartial("chunk queue drained");
+                    chunkQueueAtPhaseEnd = queue;
+                    chunkDrainCriterion = chunkQueueCountersReadable
+                            ? ("fixed " + chunkDrainWindowFrames + "-frame window; queue "
+                               + (chunkQueueEmptyFrame > 0
+                                  ? "empty at frame " + chunkQueueEmptyFrame
+                                  : "still " + queue + " at frame " + chunkFramesAfterPlacement))
+                            : ("no queue counters published, fixed " + chunkDrainWindowFrames + "-frame window");
+                    finish("chunk phase complete: " + chunkFramesAfterPlacement + " frames after the last placement ("
+                            + chunkDrainCriterion + ")", false);
                 } else if (chunkFramesAfterPlacement >= chunkDrainMaxFrames
                         || chunkElapsed > chunkDrainMaxSeconds * 1000000000L) {
-                    recordPartial("chunk queue did not become empty within " + chunkDrainMaxFrames
-                            + " frames / " + chunkDrainMaxSeconds + " s after the last placement (queue=" + queue + ")");
+                    recordPartial("chunk phase exceeded " + chunkDrainMaxFrames + " frames / "
+                            + chunkDrainMaxSeconds + " s without reaching the "
+                            + chunkDrainWindowFrames + "-frame post-placement window (placed=" + chunkPlaced
+                            + ", queue=" + queue + ")");
                 }
                 previousFrameNanos = now;
                 return;
@@ -367,6 +418,7 @@ public final class BenchFixture {
 
     private void pinScene(Minecraft mc) {
         mc.world.setWorldTime(PINNED_WORLD_TIME);
+        holdPose(mc);
         if (!flickerResolved) {
             flickerResolved = true;
             flickerX = findField(mc.entityRenderer.getClass(), FLICKER_X_NAMES);
@@ -416,6 +468,80 @@ public final class BenchFixture {
             capabilitiesProbe = "unavailable: " + error.getClass().getSimpleName();
         }
         System.out.println("[CeltiumBench] capability probe: " + capabilitiesProbe);
+    }
+
+    /**
+     * Holds the client's player at the fixed pose, and once - at {@code celtium.bench.cameraSetTick} - asks the
+     * server to teleport its own player there too. Both halves are needed: the client-side hold alone leaves the
+     * server's "moved too quickly" correction free to put the camera back where it was, which is exactly the drift
+     * that made two runs of one jar stand in different places.
+     */
+    private void holdPose(Minecraft mc) {
+        try {
+            mc.player.capabilities.allowFlying = true;
+            mc.player.capabilities.isFlying = true;
+            mc.player.motionX = 0.0D;
+            mc.player.motionY = 0.0D;
+            mc.player.motionZ = 0.0D;
+            mc.player.fallDistance = 0.0F;
+            mc.player.setPositionAndRotation(poseX, poseY, poseZ, poseYaw, posePitch);
+            mc.player.rotationYawHead = poseYaw;
+            mc.player.prevRotationYawHead = poseYaw;
+            mc.player.renderYawOffset = poseYaw;
+            mc.player.prevRenderYawOffset = poseYaw;
+            poseAppliedTicks++;
+        } catch (Throwable error) {
+            poseResult = "client pose failed: " + error;
+        }
+        if (!poseRequested && worldTicks >= poseTick) {
+            poseRequested = true;
+            poseResult = teleportPoseOnServer(mc);
+        }
+    }
+
+    private String teleportPoseOnServer(Minecraft mc) {
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        if (server == null || mc.player == null) {
+            return "no integrated server";
+        }
+        final java.util.UUID playerId = mc.player.getUniqueID();
+        final int tick = worldTicks;
+        try {
+            server.addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        net.minecraft.entity.player.EntityPlayerMP player =
+                                server.getPlayerList().getPlayerByUUID(playerId);
+                        if (player == null) {
+                            poseResult = "no server player for " + playerId;
+                            return;
+                        }
+                        player.capabilities.allowFlying = true;
+                        player.capabilities.isFlying = true;
+                        player.sendPlayerAbilities();
+                        player.rotationYaw = poseYaw;
+                        player.rotationPitch = posePitch;
+                        player.prevRotationYaw = poseYaw;
+                        player.prevRotationPitch = posePitch;
+                        // setPositionAndUpdate is EntityPlayerMP's own teleport: it sends the position-look packet
+                        // the client applies, so both sides end up at the pose with no correction in flight.
+                        player.setPositionAndUpdate(poseX, poseY, poseZ);
+                        player.motionX = 0.0D;
+                        player.motionY = 0.0D;
+                        player.motionZ = 0.0D;
+                        player.fallDistance = 0.0F;
+                        poseResult = "server-side teleport at tick " + tick + " to "
+                                + poseX + "," + poseY + "," + poseZ + " yaw=" + poseYaw + " pitch=" + posePitch;
+                    } catch (Throwable error) {
+                        poseResult = "server-side teleport failed: " + error;
+                    }
+                }
+            });
+        } catch (Throwable error) {
+            return "could not schedule the server-side teleport: " + error;
+        }
+        return "scheduled at tick " + tick;
     }
 
     private static Field findField(Class<?> owner, String[] names) {
@@ -649,12 +775,21 @@ public final class BenchFixture {
     }
 
     private void recordPartial(String reason) {
+        finish(reason, true);
+    }
+
+    /**
+     * Ends the run and writes the report. {@code partial=false} marks the fixture's own normal end (the
+     * steady-state window plus a completed chunk phase); {@code partial=true} marks a run that ended early and
+     * whose samples therefore cover less than the plan.
+     */
+    private void finish(String reason, boolean partial) {
         if (finished) {
             return;
         }
         finished = true;
         phase = Phase.DONE;
-        writeReport(reason, true);
+        writeReport(reason, partial);
         try {
             Minecraft.getMinecraft().shutdown();
         } catch (Throwable ignored) {
@@ -728,6 +863,14 @@ public final class BenchFixture {
         field(json, "worldTimeAtStart", worldTimeAtStart, true);
         field(json, "worldTimeAtEnd", worldTimeAtEnd, true);
         field(json, "lightmapFlickerPinned", flickerPinned, true);
+        field(json, "cameraPoseX", poseX, true);
+        field(json, "cameraPoseY", poseY, true);
+        field(json, "cameraPoseZ", poseZ, true);
+        field(json, "cameraPoseYaw", poseYaw, true);
+        field(json, "cameraPosePitch", posePitch, true);
+        field(json, "cameraSetTick", poseTick, true);
+        field(json, "cameraPoseAppliedTicks", poseAppliedTicks, true);
+        field(json, "cameraPoseResult", poseResult, true);
         field(json, "cameraX", cameraX, true);
         field(json, "cameraY", cameraY, true);
         field(json, "cameraZ", cameraZ, true);
@@ -742,6 +885,11 @@ public final class BenchFixture {
         field(json, "chunkFramesAfterPlacement", chunkFramesAfterPlacement, true);
         field(json, "chunkFramesFromFirstDrainSample", chunkDrainFrames, true);
         field(json, "chunkDrained", chunkDrained, true);
+        field(json, "chunkQueueCountersReadable", chunkQueueCountersReadable, true);
+        field(json, "chunkQueueEmptyAtFrame", chunkQueueEmptyFrame, true);
+        field(json, "chunkQueueAtPhaseEnd", chunkQueueAtPhaseEnd, true);
+        field(json, "chunkDrainWindowFrames", chunkDrainWindowFrames, true);
+        field(json, "chunkDrainCriterion", chunkDrainCriterion, true);
         field(json, "chunkQueueAtDrainStart", chunkQueueAtDrainStart, true);
         field(json, "chunkDrainMaxFrames", chunkDrainMaxFrames, true);
         field(json, "chunkDrainMaxSeconds", chunkDrainMaxSeconds, true);
