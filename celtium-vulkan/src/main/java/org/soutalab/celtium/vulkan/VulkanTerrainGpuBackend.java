@@ -1273,6 +1273,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long terrainIndirectDraws;
     private long terrainIndirectGrowths;
     private long terrainIndirectClampEvents;
+    /**
+     * The within-leg equivalence check the plan's acceptance needs, and the reason it is a check rather than a picture.
+     * <p>
+     * Two legs of the same scene are not the same world - measured on this fixture, the section set differed 40 against
+     * 53 and the presented frames by 35.5 %, which is bigger than the difference any submission change could produce.
+     * So the indirect path, when {@code -Dceltium.vulkan.indirectCompare=true} is set, *also* enumerates the command
+     * stream the direct loop would submit for the same batches - same count, same {@code (indexCount, firstIndex,
+     * vertexOffset)} per command, same order - and both streams are folded into one checksum each. Equal counts and
+     * equal checksums in a single leg is "identical submitted geometry and order" without a cross-boot caveat.
+     */
+    private static final boolean TERRAIN_INDIRECT_COMPARE =
+            Boolean.getBoolean("celtium.vulkan.indirectCompare");
+    private long terrainIndirectCommandDraws;
+    private long terrainIndirectCommandChecksum;
+    private long terrainDirectEquivalentDraws;
+    private long terrainDirectEquivalentChecksum;
+
+    /** Folds one command's identity into a stream checksum, so order and content are both covered. */
+    private static long celtium$commandHash(long checksum, int indexCount, long firstIndex, int vertexOffset) {
+        checksum = checksum * 1099511628211L + indexCount;
+        checksum = checksum * 1099511628211L + firstIndex;
+        checksum = checksum * 1099511628211L + vertexOffset;
+        return checksum;
+    }
+
     /** Batches that fell back to direct draws, and the last reason (a missing capability or a mixed index source). */
     private long terrainIndirectFallbacks;
     private String lastTerrainIndirectFallback = "none";
@@ -2695,6 +2720,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // firstInstance stays 0: drawIndirectFirstInstance is enabled only when the device reported it, and this
             // path never needs anything but 0.
             packets.putInt(i * INDIRECT_COMMAND_BYTES + 16, 0);
+        }
+        if (TERRAIN_INDIRECT_COMPARE) {
+            // The same enumeration the direct loop would perform, folded into its own counters rather than issued.
+            for (int i = 0; i < size; i++) {
+                long byteOffset = batch.indexByteOffset(i);
+                long directFirstIndex = regionIndex ? (byteOffset / 4) : 0L;
+                this.terrainDirectEquivalentDraws++;
+                this.terrainDirectEquivalentChecksum = celtium$commandHash(this.terrainDirectEquivalentChecksum,
+                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
+                this.terrainIndirectCommandDraws++;
+                this.terrainIndirectCommandChecksum = celtium$commandHash(this.terrainIndirectCommandChecksum,
+                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
+            }
         }
         long address = MemoryUtil.memAddress(packets);
         int first = 0;
@@ -7529,6 +7567,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " growths=" + this.terrainIndirectGrowths
                 + " fallbacks=" + this.terrainIndirectFallbacks
                 + " lastFallback=" + this.lastTerrainIndirectFallback.replace(' ', '_') + "]"
+                + " terrainIndirectStream=[indirectDraws=" + this.terrainIndirectCommandDraws
+                + " indirectChecksum=" + Long.toHexString(this.terrainIndirectCommandChecksum)
+                + " directDraws=" + this.terrainDirectEquivalentDraws
+                + " directChecksum=" + Long.toHexString(this.terrainDirectEquivalentChecksum)
+                + " match=" + (this.terrainIndirectCommandDraws == this.terrainDirectEquivalentDraws
+                        && this.terrainIndirectCommandChecksum == this.terrainDirectEquivalentChecksum)
+                + "]"
                 + " " + org.soutalab.celtium.vulkan.VulkanArena.alignmentSummary()
                 + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
                 + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
@@ -9183,6 +9228,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Writes one dynamic uniform block and returns its byte offset. */
+
+    /**
+     * BH-03's selector for the fragment's alpha comparison: the game's own function (captured into the state array), or
+     * the override {@code -Dceltium.glstub.alphaFuncOverride=<GL enum>} when one is set. The override exists so the
+     * comparison switch can be verified as a one-jar A/B (GL_LEQUAL/GL_ALWAYS against GL_GREATER on the same cutout
+     * geometry) without the fixture growing a knob for every piece of GL state; 0 means "use the game's own".
+     */
+    private static int celtium$alphaFuncSelector(int[] state) {
+        int override = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.alphaFuncOverride();
+        if (override != 0) {
+            return override;
+        }
+        return state.length > 14 ? state[14] : 0;
+    }
+
     private long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {
         long offset = this.uniformWriteCursor;
         this.uniformWriteCursor += this.uniformStride;
@@ -12200,7 +12260,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Written outside the combine branch as well, because the buffer is shared: a group that follows a
                 // combine group must not inherit the combine's compare value even though the combine's own branch
                 // never reads it (a negative alpha reference selects the mix path before the comparison).
-                push.putFloat(100, state.length > 14 ? state[14] : 0);
+                push.putFloat(100, celtium$alphaFuncSelector(state));
                 // The lit extension: model-space directions, ambient and the per-light diffuses. Written for every
                 // group that carries them rather than guarded per pipeline - only the lit layout reads past 128, and
                 // a lit group always arrives with its params attached.
