@@ -526,6 +526,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The colour and depth glClear will use, and the buffers it was asked to clear and nobody consumed yet. */
     private volatile float clearRed, clearGreen, clearBlue = 0.0f, clearAlpha = 1.0f;
     private volatile double clearDepth = 1.0;
+    /** The GL framebuffer name bound when the pending clear was issued; 0 is the default framebuffer. */
+    private volatile int pendingClearDrawFbo;
+
     private final java.util.concurrent.atomic.AtomicInteger pendingClears =
             new java.util.concurrent.atomic.AtomicInteger();
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
@@ -892,6 +895,18 @@ public final class CeltiumGlStub implements FunctionProvider {
      * still holds undefined values rejects every depth-tested draw, which is a whole frame of nothing rather than a
      * wrong pixel.
      */
+    /**
+     * {@return the framebuffer the pending clear was issued against}, or -1 when no clear is pending. A non-zero
+     * value means the clear names one of the game's own framebuffers rather than the delivered frame.
+     */
+    public static int pendingClearDrawFbo() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return -1;
+        }
+        return stub.pendingClears.get() == 0 ? -1 : stub.pendingClearDrawFbo;
+    }
+
     public static int consumePendingClears() {
         CeltiumGlStub stub = installed;
         return stub == null ? 0 : stub.pendingClears.getAndSet(0);
@@ -1583,6 +1598,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_CLEAR:
                 this.pendingClears.getAndUpdate(mask -> mask | (int) a0);
+                // Which framebuffer this clear belongs to. A clear issued while one of the game's own framebuffers is
+                // bound names that image, not the delivered frame - and under GL-less every non-main identity shares
+                // the chain pair, so applying such a clear to the pair wipes whatever another identity had just drawn
+                // there (measured: the panorama's faces are cleared to white before the copy reads them).
+                this.pendingClearDrawFbo = this.drawFbo;
                 return 0L;
             case SEM_CLEAR_COLOR:
                 this.clearRed = Float.intBitsToFloat((int) c[0]);

@@ -627,6 +627,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * The image is in {@link #COLOR_RENDER_LAYOUT} here, which is {@code VK_IMAGE_LAYOUT_GENERAL}, one of the two
      * layouts {@code vkCmdClear*Image} accepts, so no extra transition is needed.
      */
+    /** Clears dropped because they named one of the game's own framebuffers rather than the delivered frame. */
+    private int gameClearsDroppedForeignTarget;
+    /** The last such clear's framebuffer name, so the drop is attributable. */
+    private int lastDroppedClearOwner;
+
     private void applyGameClears(VkCommandBuffer command) {
         boolean first = this.neverCleared;
         boolean latched = this.gameClearLatched;
@@ -645,6 +650,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
             latchedDepth = this.gameClearLatchedDepth;
             this.gameClearLatched = false;
         } else {
+            int owner = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearDrawFbo();
+            if (owner > 0) {
+                // The clear names one of the game's own framebuffers. Every non-main identity shares the chain pair,
+                // so applying it here wipes whatever another identity drew into that image - measured as the
+                // panorama's faces being cleared to white between their draw and the copy that reads them. The clear
+                // belongs to an image this path does not own, so it is dropped and counted rather than applied.
+                clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+                this.gameClearsDroppedForeignTarget++;
+                this.lastDroppedClearOwner = owner;
+                if (clears == 0) {
+                    return;
+                }
+                return;
+            }
             clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
         }
         if (clears == 0 && !first) {

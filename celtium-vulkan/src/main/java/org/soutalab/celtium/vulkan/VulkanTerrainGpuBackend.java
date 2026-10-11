@@ -4350,6 +4350,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     public String celtium$fontBatchSummary() {
         return "fontRunsStarted=" + this.fontBatchesStarted
                 + " fontQuadsAppended=" + this.fontQuadsAppended
+                // The strip separators, counted where the run is built and reported here: the counter existed and was
+                // incremented at :4211 with no reporting site, so a run could not say whether the degenerate-vertex
+                // insertion had happened at all - the same "instrument that cannot be read" shape the plan records.
+                + " fontStripSeparators=" + this.fontStripSeparators
                 + " flushedIntervening=" + this.fontBatchesFlushedIntervening
                 + " flushedBoundary=" + this.fontBatchesFlushedBoundary
                 + " flushedStateChange=" + this.fontBatchesFlushedStateChange
