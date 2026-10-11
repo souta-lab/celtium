@@ -145,6 +145,37 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.224 **P0: OPT-07 の copy batch 化は destination の所有権を壊し device lost を起こした → revert（OPT-05 は無関係と確認）**
+
+- **症状**: HEAD `f9150335` の jar で terrain scene が **device lost**。lead の layered leg は
+  `VUID-vkCmdCopyBuffer-dstBuffer-parameter`（×2）＋同 command の threading VUID、`libvulkan_radeon.so` の SIGSEGV。
+  jar `513421d0` の私の leg は `settleGpu(region eviction): vkDeviceWaitIdle returned -4`（最初の `updateRegions`）、
+  bs6/bs7 は同じ `-4`、bs8 は `vkQueueSubmit returned VkResult -4`（`VulkanContext.endCommands` ← `flushUploads` ← `reserveUploadSlot`）。
+- **原因（OPT-07 の batch 化・私の変更）**: `uploadToBuffer` が copy を **pending** のまま保持したため、batch が
+  **古い `dstBuffer` handle** を記録した。呼び出し側は「戻った時点で copy は片付いている」前提で、`VulkanArena.write` の後の
+  arena growth（`VulkanBuffer.ensureCapacity` が旧 VkBuffer を破棄）や world teardown が destination を差し替える。
+  後から submit された batch は存在しない handle を指した。threading は原因ではない（全経路 render thread。threading VUID は
+  同じ無効 handle を layer が報告したもの）。
+- **対処**: commit `14ed4615f` で `uploadToBuffer`（両形）を**従来の settled one-copy 経路**（`ensureStagingCapacity` → memcpy →
+  `recordStagingCopy`＝1 copy ごとに submit+fence wait）へ戻した。ring・`flushUploads()`・`uploadBatchSummary()` は
+  **未配線のまま**残し、revert した呼び出し地点に契約を書いた。`submitCommands`/`VulkanBuffer.readInto` の `flushUploads()` は
+  pending が無い限り no-op。
+- **検証 leg**（`chain-t45b.sh`・jar **a23a6b0b874c393c**・fixture `0407469a82ef64ee`・terrain＋`keepGui`＋`captureEntities`・
+  glless・**layer ON**・`minWorldFrames=5`）: **`-4` 0件・VUID 0行・`validationMessageCount=0`・`validationClean=true`・exit 0**、
+  capture と verdict まで到達。非緑は既知の画像ゲートのみ（`status=FAILED_PRESENTED_IMAGE`・`worldTicksAtEnd=241`・
+  cold 71 sample p50 53.4 / p95 74.3 / p99 151.6 ms）。**注意: この jar には fog-path の未 commit な BH-14 drain revert も入っている**
+  （backend 02:04:21 変更・jar 02:04:46 作成）ので、この leg は2つの revert を分離しない。分離するのは copy 経路の VUID と
+  `flushUploads` の stack（drain からは到達しない）。
+- **OPT-05（frame arena）は無関係**: 故障は copy-buffer 呼び出しで、arena はそれを出さない。上記 leg も arena 有効で完走。
+  `VulkanFrameArena` は frame ごとに 1 slot、reset は `!awaitingCompletion && (epoch<0 || epoch<=completedEpoch) && pendingGroups==0`
+  のみ、`completed()` は backend の確認済み fence wait から `VulkanContext.noteCompletionConfirmed` で供給、slice の解放は
+  `mesh.delete()` → `Region.release()`（OPT-04 の「完了だけが解放の根拠」）。5 pipeline は `mesh.bindAndDraw` に集約
+  （同じ3呼び出し・mesh 自身の offset・state/layout/stride 不変）。**OPT-05 の受入数値（groups に比例した allocation が無いこと・
+  `frameArenaFallbackGroups=0`・p50/p95/p99 の before/after）は未取得**＝P0 で leg が crash したため。
+- **OPT-07 再挑戦の契約（この失敗から）**: destination が copy pending 中に破棄・差し替え・segment 再利用されないこと。
+  (a) `VulkanBuffer.delete/ensureCapacity` と arena segment 再利用を batch の完了 epoch で gate する、または
+  (b) flush 時に handle を解決する（記録時ではなく）＋ arena segment 再利用の gate。どちらかが無い限り per-copy settle を維持する。
+
 ## 0.223 **BH-27 後半（copy の batch 化＋staging ring）は測定により棄却・帰属計器の2つの穴を修復（worst-N slow frame・窓別 upload 待ち）**
 
 - **判定条件は「最悪 frame の phase 行が upload 経路か」。答えは**いいえ**（その leg 自体が FAILED）。** 親が指した
@@ -185,6 +216,34 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **未確立（その2）**: `lead-warm3`（jar `c6e7a8058c3fd511`・19:53・同 shape）は **warm 275 sample で p50 24.0 / p95 105.6 / p99 207.4 ms**、
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
+
+## 0.226 **round 33-34: P0（device lost）は OPT-07 の batch copy と確定・revert で解消・検証済み**
+
+- **症状**: HEAD `f9150335` の jar で terrain scene が 3/3 leg で device を失う（`vkDeviceWaitIdle returned -4`・
+  `vkQueueSubmit returned VkResult -4` from `flushUploads`/`reserveUploadSlot`・exit 255）。Lead の layered leg が
+  **最初の fault** を捕捉: `VUID-vkCmdCopyBuffer-dstBuffer-parameter` ×2 ＋ 同じコマンドへの threading VUID →
+  `libvulkan_radeon.so` で SIGSEGV（exit -6・23秒）。
+- **根因（perf-ring）**: OPT-07 の batched copy が copy を **pending のまま**残すため、batch が名指しする `dstBuffer` を
+  呼び元が同一 frame で置換していた——`VulkanArena.write` → `VulkanBuffer.write` → `uploadToBuffer` の後で arena が grow し、
+  `VulkanBuffer.ensureCapacity` が古い `VkBuffer` を破棄（world teardown は arena ごと破棄）。結果、後から submit される
+  `vkCmdCopyBuffer` が**存在しない handle** を指す。threading は原因ではなく、同じ無効 handle への layer 報告。
+- **対処**: `VulkanContext.uploadToBuffer`（両形式）を **settled な one-copy path** に revert（`14ed4615f`）。
+  ring / `flushUploads()` / `uploadBatchSummary()` は**未配線のまま** file に残し、revert 地点に契約を明記。
+- **検証（perf-ring・jar `a23a6b0b`・layers ON）**: **`-4` なし・VUID 0行・`validationMessageCount=0`・`validationClean=true`・exit 0**、
+  capture と verdict に到達。cold 71 sample p50 **53.4** / p95 **74.3** / p99 **151.6 ms**。
+  唯一の非緑は既知の picture gate（`FAILED_PRESENTED_IMAGE`・`worldTicksAtEnd=241`）。
+  **注意**: その jar には fog-path の BH-14 drain revert も含まれるため、2つの revert を分離していない（copy-path VUID と
+  `flushUploads` の stack は drain からは到達不能なので、機序としては分離できている）。
+- **OPT-05 は無関係**（`52e45948a`・検証 leg でも active）。`VulkanFrameArena` の slot は
+  `!awaitingCompletion && (epoch < 0 || epoch <= completedEpoch) && pendingGroups == 0` のときだけ reset され、
+  `completed()` は backend の確認済み fence wait（`noteCompletionConfirmed`）から供給される。
+  OPT-05 自体の性能受入は、after-leg が crash したため**未取得**。
+- **OPT-07 の正しい契約（再挑戦用）**: destination が copy pending 中に破棄・置換・segment 再利用されないこと。
+  (a) `VulkanBuffer.delete/ensureCapacity` と arena segment 再利用を batch の完了 epoch で gate する、または
+  (b) flush 時に destination handle を解決する＋arena segment 再利用の gate。どちらか無しでは per-copy settling が正しい。
+- **運用上の教訓（blend-state）**: jar は leg 実行中に再ビルドされるため、leg 間の比較は**各 lock JSON の `mods[].sha256`** を読む。
+- **計器の罠（Lead 修正・`cbed9a5cd`）**: `offTargetDrawn` は宣言・印字のみで**一度も加算されない** counter だった
+  （`offTargetOffered=738 / Accepted=738 / Drawn=0` が「何も描かれていない」と読めてしまう）。描画時に加算するよう修正。
 
 ## 0.225 **round 32-33: OPT-01/05・shader contract check・BH-06 SRG フック・BH-29 の half-texel 補正・BH-11/12 の counter 出力**
 
