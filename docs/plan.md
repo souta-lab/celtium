@@ -257,6 +257,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.261 **round 67: hand-back は「次の pass の直前」にしか無い＝pass 終了後〜次の pass の間に sample する draw が GENERAL を見る**
+
+- **コード確認（Lead）**: `vkCmdBeginRenderPass` は **2箇所だけ**（`:7167`・`:8639`）で、どちらも直前に
+  `celtium$transitionPublishedFrameTextures(false)`（`:7166`・`:8638`）が呼ばれている＝**pass 入口側は覆われている**。
+  しかし観測された VUID は `vkCmdDraw-None-09600` で、**draw が sample する時点**の layout が問題。
+- **結論**: published name（pair の image）は **pass が attach した後 GENERAL のまま**残り、
+  **次の pass が始まる直前まで戻されない**。その間に **draw が descriptor（SHADER_READ_ONLY 宣言）で sample すると VUID**。
+  つまり hand-back の場所が「次の pass の直前」しか無いことが穴。
+- **修正（次に着手する担当へ）**: **pass の終了直後（`vkCmdEndRenderPass` の後）にも published name を
+  SHADER_READ_ONLY へ戻す**（`celtium$transitionPublishedFrameTextures(false)` を pass end に追加）。
+  これで「pass の外で sample する draw」が常に read-only を見る。off-target pair も同形。
+  受入は menu-hold leg で **`validationMessageCount=0`** かつ copy の `mean=` が 255 から動くこと（handle `0x360000000036`）。
+- **注意**: barrier は記録位置が命なので、変更は leg で検証する（未検証の遷移が今回の VUID を生んだ）。
+
 ## 0.260 **round 66: layout VUID の形を特定（`vkCmdDraw` 側＝pass が pair を GENERAL のまま残し、後続の draw が SHADER_READ_ONLY descriptor で sample する）**
 
 - **コード追跡（Lead）**: pair の hand-back は既に存在する — `celtium$transitionPublishedFrameTextures(boolean general)`（定義 `:10364`）が
