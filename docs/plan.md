@@ -89,6 +89,42 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.130 **重大な誤りの訂正**: GL-less の terrain 欠落は 09:33 からの退行で、ゲートは正しく FAIL と言っていた
+
+### 観測（wedge 担当の測定・時系列は artifact から再構成）
+
+- GL-less の allBlocks 画は **09:16 までは床があった**（`p1-intel` nonBg=0.7346・`w3-base` 0.8226・`p1-model-fix` 0.7356）。
+- **09:33 の `font` run 以降、すべての GL-less allBlocks run が nonBg=0.364906・背景 0xB3CFFF**（byte 単位で再現）。
+- `-Dceltium.vulkan.immediate=false` で frame は**単色**、既定 run でも右下象限が**100% clear 色**＝**terrain が1ピクセルも描かれていない**。
+- terrain backend 自体は動いている: `passes=1109 skipped=0 errors=0` だが **`lastDraw=8 lastSections=8`**（正常時 09:16 は `lastDraw=20 lastSections=23`）＝**可視セクションが 23→8 に減った**。
+- bridge leg も同じ run で床を失っている（`wedge2-bridge` 右下 98.4% clear）＝GL-less 固有ではない。
+
+### 原因候補（09:17〜09:30 の3コミットに限定）
+
+| commit | 時刻 | 判定 |
+|---|---|---|
+| `b7b634179` unbound-framebuffer 拒否 | 09:17 | **除外**: `4642c145e` で revert 済み、その後も退行継続 |
+| `30a30a375` 射影フック（`Project.gluPerspective`） | 09:27 | **有力**: 両 leg に効く。可視セクション数が変わったのは射影（frustum culling）が変わったことと整合 |
+| `9655ff681` depth format | 09:30 | **AMD では無影響と実測**: `scripts/vulkan_depth_format_probe.py` で AMD は `D32_SFLOAT` を公開し、chooser の第一候補＝旧定数と同一 |
+
+### **私の誤り（これが本項の主題）**
+
+画像ゲートは 09:33 以降ずっと `sceneGateFloorsEnforced=true` / `sceneCalibrationKeyMatches=true` / **`presentedImageVerdict=FAILED_PRESENTED_IMAGE`** を出していた。
+**ゲートは正しかった。** 私が「mean 213 の FAILED は固定 scene の正常状態だから counter を読め」と担当（texture 担当）に伝え、
+自分の run でもその verdict を「較正/カメラの問題」として扱った。**失敗しているゲートを自分の解釈で上書きした**のが誤りで、
+その結果 terrain 欠落を数時間見落とした。
+
+**規律に追加**: 失敗しているゲートは、測定が誤りだと示すまで**証拠**である。verdict を「既知の正常」と言い換えて
+counter だけを読む運用をしない。ゲートを上書きする判断をする場合は、**同じ fixture・同じカメラで 2 つの jar を比べる**
+ような、カメラ差と renderer 差を分離する実験を先に取る。
+
+### 次の実験（担当が実行中）
+
+同じ fixture（現在の固定カメラ）× 2 jar（09:16 の正常 jar `d2073e9456da7bcc` と現行）で nonBg と frame を比較する。
+- A（正常 jar）で床が出て B（現行）で出ない → renderer の退行で、窓は上記3コミット。
+- A でも空だけ → renderer は退行しておらず、**fixture のカメラが変わった**ことになる（その場合、私は正常な空の画を
+  何時間も「壊れた画」として扱っていたことになる）。
+
 ## 0.129 **原典から確定したこと（デコンパイル済みソース）** — 推測で潰していた問いの決着
 
 `.celtium-work/mc-sources/` の原典を引いた結果、**推測で何度も往復していた問いに直接の答えが出た**。以下はすべてソースの行番号つきで、
