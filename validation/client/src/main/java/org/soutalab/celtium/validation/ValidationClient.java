@@ -198,6 +198,21 @@ public final class ValidationClient {
     /** Consecutive frames the listed-section count must hold still before {@code built} captures. */
     private static final int CAPTURE_STABLE_FRAMES =
             Integer.getInteger("celtium.validation.captureStableFrames", 30).intValue();
+    /**
+     * {@code -Dceltium.validation.pinSections=<n>}: hold the capture until the listed-section count has been the same
+     * for {@link #PIN_SECTIONS_STABLE_FRAMES} consecutive frames and is at or below {@code n}. 0 disables it.
+     */
+    private static final int PIN_SECTIONS =
+            Integer.getInteger("celtium.validation.pinSections", 0).intValue();
+    /** How many consecutive frames the section count must hold before a pinned capture fires. */
+    private static final int PIN_SECTIONS_STABLE_FRAMES =
+            Integer.getInteger("celtium.validation.pinSectionsStableFrames", 20).intValue();
+    /** The count seen on the previous frame, and how many frames it has now held. */
+    private int celtium$pinnedSectionsSeen = -1;
+    private int celtium$pinnedSectionsStableFrames;
+    /** The count the capture settled at, reported so a leg says which world it compared. */
+    private int celtium$pinnedSectionsValue;
+
     /** The listed-section count {@code sections} waits for; 0 disables that condition. */
     private static final int CAPTURE_SECTIONS =
             Integer.getInteger("celtium.validation.captureSections", 0).intValue();
@@ -3888,6 +3903,27 @@ public final class ValidationClient {
     private boolean celtium$captureDue() {
         if (worldTicks < 200 || worldFrames < CAPTURE_MIN_WORLD_FRAMES) {
             return false;
+        }
+        // A cross-leg comparison needs both legs to hold the same world, and measured they do not: two legs of the
+        // same jar and scene differed by 35.5% of pixels with 40 against 53 sections, and the entity scene's own
+        // boot-to-boot floor is 23.5%. This waits for the listed-section count to stop moving - the same count for
+        // PIN_SECTIONS_STABLE_FRAMES consecutive frames, at or below PIN_SECTIONS - and reports the value it settled
+        // at, so a comparison that quotes two legs can say what world each of them held.
+        if (PIN_SECTIONS > 0) {
+            int listed = celtium$listedSections(celtium$rendererDebugLines());
+            if (listed != this.celtium$pinnedSectionsSeen) {
+                this.celtium$pinnedSectionsSeen = listed;
+                this.celtium$pinnedSectionsStableFrames = 0;
+            } else if (listed > 0 && listed <= PIN_SECTIONS) {
+                this.celtium$pinnedSectionsStableFrames++;
+            }
+            this.celtium$pinnedSectionsValue = listed;
+            if (listed <= 0 || listed > PIN_SECTIONS
+                    || this.celtium$pinnedSectionsStableFrames < PIN_SECTIONS_STABLE_FRAMES) {
+                return false;
+            }
+            celtium$captureConditionFired = "pinned-sections (listed " + listed + " stable for "
+                    + this.celtium$pinnedSectionsStableFrames + " frames)";
         }
         if ("sections".equals(CAPTURE_CONDITION)) {
             java.util.List<String> sectionLines = celtium$rendererDebugLines();
