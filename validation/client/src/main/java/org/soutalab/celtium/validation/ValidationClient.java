@@ -1094,6 +1094,22 @@ public final class ValidationClient {
     private boolean celtium$jeiScreen;
     /** Set once the property-driven screenshot at a specific tick has been taken. */
     private boolean celtium$tickScreenshotTaken;
+    /**
+     * Once-flags for the tick-scheduled scene steps.
+     * <p>
+     * Every one of these hooks used to be an exact {@code worldTicks == N} comparison. That is fragile in the same way
+     * the capture guard was before it was changed to "at or after": {@code worldTicks} advances in the client-tick
+     * handler while the hooks run in the render handler, so a tick can be stepped over entirely and the step then never
+     * happens for the rest of the run. It was measured - the inventory open at tick 30 did not fire in five
+     * consecutive runs while the tick-60 screenshot in the same runs did, which is why the inventory/JEI pair had no
+     * picture. "At or after" plus the flag that already existed for most of them is the shape the capture uses.
+     */
+    private boolean celtium$flyingSet;
+    private boolean celtium$entitiesSpawned;
+    private boolean celtium$wallBuilt;
+    private boolean celtium$heldItemSet;
+    private boolean celtium$jeiClosed;
+    private boolean celtium$hudHidden;
     private boolean celtium$jeiRecipe;
     private boolean celtium$compositeBlit;
     private boolean celtium$screenReadback;
@@ -2367,7 +2383,7 @@ public final class ValidationClient {
                     mc.player.setPositionAndUpdate(celtium$safeX, celtium$safeY, celtium$safeZ);
                 }
             }
-            if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks == 100 && !celtium$leftWorld) {
+            if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks >= 100 && !celtium$leftWorld) {
                 celtium$leftWorld = true;
                 report.addProperty("leftWorldAtTick", worldTicks);
                 // The same three calls GuiIngame's "Save and Quit to Title" makes, in the same order. The previous
@@ -2440,7 +2456,8 @@ public final class ValidationClient {
                 celtium$guiOpenPending = false;
                 celtium$openGuiScene(mc);
             }
-            if (worldTicks == 20) {
+            if (worldTicks >= 20 && !celtium$flyingSet) {
+                celtium$flyingSet = true;
                 mc.player.capabilities.isFlying = true;
                 // Early, so a run that never reaches its capture still says which scene, which run id and which pose
                 // it was: the report is the only thing a failed run leaves behind. The gate's provenance is recorded
@@ -2482,7 +2499,8 @@ public final class ValidationClient {
                     report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
                 }
             }
-            if (worldTicks == 60 && Boolean.getBoolean("celtium.validation.keepEntities")) {
+            if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
+                celtium$entitiesSpawned = true;
                 // An entity scene, for the coverage that the terrain-only comparison deliberately leaves out. The mobs are
                 // named explicitly rather than left to natural spawning so the scene is the same set every run: one of each
                 // family that draws through its own path (monster model, spider legs, enderman's TESR-ish layering).
@@ -2525,7 +2543,8 @@ public final class ValidationClient {
                 System.out.println("[Celtium] CELTIUM_ENTITIES_SPAWNED tick=" + worldTicks
                         + " nonPlayer=" + countNonPlayerEntities(mc));
             }
-            if (worldTicks == 60 && Boolean.getBoolean("celtium.validation.allBlocks")) {
+            if (worldTicks >= 60 && !celtium$wallBuilt && Boolean.getBoolean("celtium.validation.allBlocks")) {
+                celtium$wallBuilt = true;
                 // The registry sweep: one of every registered block, laid out as a wall the camera sees whole, so
                 // the comparison exercises every block model the terrain passes can draw rather than the handful a
                 // flat world happens to contain. Blocks that need a tile entity to show anything (the chest, the
@@ -2859,7 +2878,7 @@ public final class ValidationClient {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
         previousFrame = now;
-        if (worldTicks == 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
+        if (worldTicks >= 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
             celtium$reloaded = true;
             // Resource reload, the way F3+T does it: every chunk renderer is rebuilt and every texture is re-stitched.
             // The plan lists reload as unported until it has been seen to work, and the texture half is what exercises
@@ -2868,7 +2887,7 @@ public final class ValidationClient {
             mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
             report.addProperty("reloadedAtTick", worldTicks);
         }
-        if (worldTicks == 26 && !celtium$postprocess && Boolean.getBoolean("celtium.validation.postprocess")) {
+        if (worldTicks >= 26 && !celtium$postprocess && Boolean.getBoolean("celtium.validation.postprocess")) {
             // The postprocess inventory: in 1.12.2 that is the shader group behind the "super secret settings", reached through
             // this method on the entity renderer. Called reflectively, and by name list, because it is private and because the
             // check is whether the shader path draws cleanly through the Vulkan path - not whether the name is what I think.
@@ -2889,7 +2908,8 @@ public final class ValidationClient {
             System.out.println("[Celtium] CELTIUM_POSTPROCESS tick=" + worldTicks + " result=" + result);
         }
         String held = System.getProperty("celtium.validation.heldItem");
-        if (worldTicks == 30 && held != null && !held.isEmpty() && !"none".equals(held)) {
+        if (worldTicks >= 30 && !celtium$heldItemSet && held != null && !held.isEmpty() && !"none".equals(held)) {
+            celtium$heldItemSet = true;
             // A held item is the lit ITEM-format path at its largest: the first-person renderer draws it through
             // the same enableStandardItemLighting the dropped item uses, at a size the comparison can see. Set this
             // early so the ~10-tick equip animation has finished and the hand sits still at the capture. Enchanted
@@ -2902,7 +2922,7 @@ public final class ValidationClient {
             mc.player.setHeldItem(net.minecraft.util.EnumHand.MAIN_HAND, inHand);
             report.addProperty("heldItem", held);
         }
-        if (worldTicks == 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
+        if (worldTicks >= 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
             // plan named as unestablished: JEI loading proves the mod, opening a screen proves that its own rendering goes
             // through the renderer under test. Closed again before the capture so the saved frame stays the normal scene.
@@ -2910,7 +2930,7 @@ public final class ValidationClient {
             mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.player));
             report.addProperty("jeiScreenOpenedAtTick", worldTicks);
         }
-        if (worldTicks == 34 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
+        if (worldTicks >= 34 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
             // The mod's own heavier screen, opened through its public plugin API rather than by simulating input. Guarded
             // behind its own flag because it needs JEI present and compiled in.
             //
@@ -2940,15 +2960,16 @@ public final class ValidationClient {
         // it was never taken while the screen was open. The tick is a property because the window is the fixture's,
         // not the renderer's, and this is the one capture whose purpose is a comparison across the two legs.
         int screenshotAtTick = Integer.getInteger("celtium.validation.screenshotAtTick", -1).intValue();
-        if (screenshotAtTick > 0 && worldTicks == screenshotAtTick && !celtium$tickScreenshotTaken) {
+        if (screenshotAtTick > 0 && worldTicks >= screenshotAtTick && !celtium$tickScreenshotTaken) {
             celtium$tickScreenshotTaken = true;
             celtium$captureGlScreenshot(mc, "celtium-at-tick-" + screenshotAtTick + ".png", "tick" + screenshotAtTick);
             report.addProperty("screenshotAtTick", Integer.valueOf(screenshotAtTick));
             report.addProperty("screenshotAtTickScreen",
                     mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
         }
-        if (worldTicks == 190 && celtium$jeiScreen && mc.currentScreen != null
+        if (worldTicks >= 190 && celtium$jeiScreen && !celtium$jeiClosed && mc.currentScreen != null
                 && !Boolean.getBoolean("celtium.validation.keepInventoryScreen")) {
+            celtium$jeiClosed = true;
             // Closed before the capture by default, so the saved frame stays the normal scene. The screen is a fixture
             // window - open at 30, closed at 190 - and every capture happens at 200 or later, which is why the font work
             // had no inventory/JEI pair to compare: its bridge leg never had the screen open. Keeping it open through
@@ -2956,7 +2977,7 @@ public final class ValidationClient {
             // other scenes are calibrated without the screen.
             mc.displayGuiScreen(null);
         }
-        if (worldTicks == 100 && !celtium$resized && Boolean.getBoolean("celtium.validation.resize")) {
+        if (worldTicks >= 100 && !celtium$resized && Boolean.getBoolean("celtium.validation.resize")) {
             celtium$resized = true;
             // Resize the window mid-run: the renderer has to survive the framebuffer changing size, which the plan lists
             // as unported until it has been seen to work. The saved screenshot's own dimensions are the evidence that
@@ -3091,18 +3112,18 @@ public final class ValidationClient {
                 && worldTicks >= 150 && worldTicks <= 200) {
             mc.renderGlobal.sendBlockBreakProgress(1, mc.objectMouseOver.getBlockPos(), 5);
         }
-        if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.breakBlock")) {
+        if (worldTicks >= 199 && Boolean.getBoolean("celtium.validation.breakBlock")) {
             report.addProperty("breakTarget", String.valueOf(
                     mc.objectMouseOver == null ? "no target" : mc.objectMouseOver.getBlockPos()));
         }
-        if (worldTicks == 199 && Boolean.getBoolean("celtium.validation.weather")) {
+        if (worldTicks >= 199 && Boolean.getBoolean("celtium.validation.weather")) {
             // Read at capture time, not when the rain was requested: the client's rain strength ramps in over ticks, so
             // the value recorded at tick 150 was still 0.000 and said nothing about whether rain was on screen.
             report.addProperty("weatherAtCapture", "raining=" + mc.world.getWorldInfo().isRaining()
                     + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f)))
                     + " rainingStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.rainingStrength)));
         }
-        if (worldTicks == 197 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
+        if (worldTicks >= 197 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
             celtium$particlesSpawned = true;
             // Particles with no motion, one tick before the capture. A still particle has prev == current, so the
             // partial-tick interpolation that made the hand and the player model unusable as comparison subjects gives
@@ -3119,8 +3140,9 @@ public final class ValidationClient {
             }
             report.addProperty("particlesSpawned", 24);
         }
-        if (worldTicks == 190 && !Boolean.getBoolean("celtium.validation.interop")
+        if (worldTicks >= 190 && !celtium$hudHidden && !Boolean.getBoolean("celtium.validation.interop")
                 && !Boolean.getBoolean("celtium.validation.drawTest")) {
+            celtium$hudHidden = true;
             // Hide the HUD a few ticks before the capture so the saved PNG is the rendered scene only. A stock
             // Celeritas run and a Celtium run of the same seed can then be compared pixel by pixel, without
             // chat lines, the hotbar or overlay text contributing differences that are not renderer differences.
