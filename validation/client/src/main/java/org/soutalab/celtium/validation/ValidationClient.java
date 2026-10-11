@@ -103,6 +103,12 @@ public final class ValidationClient {
      * and stops at {@code warmToTick} (default 600).
      */
     private final List<Double> warmFrameIntervals = new ArrayList<Double>();
+    /**
+     * Frames over {@code -Dceltium.validation.slowFrameMs} (default 50) with the renderer's handoff split captured at
+     * that frame: {@code worldTick=<n> <ms>ms <handoff line>}. Bounded to {@link #SLOW_FRAME_MAX} entries.
+     */
+    private final List<String> celtium$slowFrames = new ArrayList<String>();
+    private static final int SLOW_FRAME_MAX = 12;
     private boolean enabled;
     private boolean launched;
     private boolean celtium$leftWorld;
@@ -3722,6 +3728,27 @@ public final class ValidationClient {
         if (worldTicks >= warmFrom && worldTicks < warmTo && previousFrame != 0) {
             warmFrameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
+        // A slow frame's handoff split, captured at the frame it happened in. The acceptance for the user's lag is the
+        // p95/p99 pair rather than the median, and a distribution cannot say which phase produced a spike: this records
+        // the renderer's own per-phase summary beside the interval, so a slow frame comes back with a named phase
+        // instead of a number. Bounded, and it costs nothing until a frame crosses the threshold.
+        if (previousFrame != 0) {
+            double intervalMs = (now - previousFrame) / 1_000_000.0;
+            if (intervalMs >= Integer.getInteger("celtium.validation.slowFrameMs", 50).intValue()
+                    && celtium$slowFrames.size() < SLOW_FRAME_MAX) {
+                java.util.List<String> debug = celtium$rendererDebugLines();
+                String handoff = "no renderer debug";
+                if (debug != null) {
+                    for (String line : debug) {
+                        if (line.contains("handoff") || line.contains("Handoff")) {
+                            handoff = line;
+                            break;
+                        }
+                    }
+                }
+                celtium$slowFrames.add("worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms " + handoff);
+            }
+        }
         previousFrame = now;
         if (worldTicks >= 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
             celtium$reloaded = true;
@@ -4464,6 +4491,11 @@ public final class ValidationClient {
         report.addProperty("timingScope", "consecutive render tick ends with 120 FPS limit; startup fixture, not a"
                 + " performance benchmark; the cold window is the chunk-build window, the warm window is the steady"
                 + " state");
+        // The spike capture was collected but never written: a counter that is built and then not reported is the same
+        // defect as one that is never built, and the p95/p99 pair is what the user's complaint is measured against.
+        report.addProperty("slowFrameThresholdMs", Integer.getInteger("celtium.validation.slowFrameMs", 50));
+        report.addProperty("slowFrameCount", celtium$slowFrames.size());
+        report.addProperty("slowFrames", celtium$slowFrames.isEmpty() ? "[none]" : String.join(" | ", celtium$slowFrames));
     }
 
     /**
