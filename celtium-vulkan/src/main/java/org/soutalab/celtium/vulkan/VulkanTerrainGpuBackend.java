@@ -2553,23 +2553,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateGroupsClosed++;
         if (target != this.mainTargetIdentity) {
             // Off-target model batches are drawn in the pass that is open for their target, not carried in the queue.
-            // The immediate window draws the groups of `currentRenderTarget` only (`flushImmediateWindow`, "others
-            // remain owned in the queue"), and the window runs on the main target later in the frame, so a group stamped
-            // with another identity waits for a pass that belongs to it - which for the entity-outline framebuffer never
-            // comes, because that framebuffer is cleared and consumed by the outline chain within the same frame.
+            // The immediate window draws the groups of `currentRenderTarget` only (`flushImmediateWindow`: "others remain
+            // owned in the queue") and runs on the main target later in the frame, so a group stamped with another
+            // identity waits for a pass that belongs to it - which for the entity-outline framebuffer never comes,
+            // because that framebuffer is cleared and consumed by the outline chain inside the same frame. That is the
+            // offer path's own rule, written down as audit A10 ("the queue never sees a non-main group afterwards"), and
+            // the model path has to follow it.
             //
-            // That is the offer path's own rule, written down as audit A10 ("the queue never sees a non-main group
-            // afterwards"), and the model path has to follow it. Measured on the glow scene before this line: 931
-            // off-target model replays arrived from the outline pass (`CELTIUM_MODEL_OFFTARGET list=125 texture=124
-            // target=… main=… inTable=true verts=24`), all 931 were enqueued, and the outline target still held only the
-            // item's groups - because the silhouette the chain reads is read before the window that would have drawn
-            // them. Flushing here draws them while `currentRenderTarget` is still the outline framebuffer.
+            // Measured on the glow scene: 931 off-target model replays arrive from the outline pass
+            // (`CELTIUM_MODEL_OFFTARGET list=125 texture=124 target=… main=… inTable=true verts=24`) - the vanilla
+            // outline loop does replay the mobs' display lists - and with this flush each of them is recorded into the
+            // identity the chain adopts (`…_FLUSH batches+6 flushes+1 groupsLeft=0`, against
+            // `CELTIUM_OUTLINE_INPUT … identity=… texture=42`). Without it they sit in the queue: the visible frame
+            // gains the outline pass's geometry (creeper green 1.017/0.971/1.003 with the flush, against 1.28/1.27/1.21
+            // before it) and the outline image still holds only the item.
             long recordedBefore = this.immediateRecordedBatches;
             long flushesBefore = this.actualFlushes;
             this.flushPendingBeforeGlDraw();
             if (this.modelOffTargetFlushLogs < MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
                 this.modelOffTargetFlushLogs++;
-                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+" 
+                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+"
                         + (this.immediateRecordedBatches - recordedBefore)
                         + " flushes+" + (this.actualFlushes - flushesBefore)
                         + " windowBusy=" + this.immediateWindowBusy
@@ -7855,7 +7858,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The last off-target call count printed from the build, and how many such lines have printed. */
     private int modelOffTargetReported = -1;
     private int modelOffTargetReports;
-    /** How many flush-outcome lines have printed for off-target model batches. */
+    /** How many flush-outcome lines have printed for off-target model batches, and the bound on them. */
     private int modelOffTargetFlushLogs;
     private static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
     /** The bound on {@link #modelOffTargetLogs}: the entity scene has one list set per off-target pass. */

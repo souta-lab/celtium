@@ -119,10 +119,21 @@ immediateDescriptors=[pools=41 growths=0 sets=81 keysCached=72 failures=0 hits=1
 failed.** That is the defect's own scenario: with one 64-set pool per pipeline, the 65th key onwards would
 have returned 0 from `descriptorSetFor` and the batch would have been refused — under GL-less, drawn by
 nobody. `misses=48` against `hits=12923` also says the cache is doing its job rather than allocating per
-batch. `growths=0` is honest about what this scene did *not* exercise: the keys are spread over 41 pipeline
-instances (one per format/state), so no single pipeline filled its own 8-set pool, and the per-pipeline growth
-path was not reached here. `-Dceltium.vulkan.descriptorPoolSets=1` is the control that forces it (the
-reserved set alone fills a pool, so every cached key grows one); that leg is running.
+batch. `growths=0` is honest about what this leg did *not* exercise: the keys are spread over 41 pipeline
+instances (one per format/state), so no single pipeline filled its own 8-set pool.
+
+**B03 growth control, `t30-growth-keys`** (`descriptorPoolSets=1`, so the reserved set alone fills a pool and
+every cached key grows one - the same scene, the same jar):
+
+```
+immediateDescriptors=[pools=112 growths=72 sets=80 keysCached=72 failures=0 hits=11706 misses=48]
+CELTIUM_IMMEDIATE_DESCRIPTORS item pipeline grew to 7 pools: pools=112 growths=72 sets=80 keysCached=71
+                                              failures=0 hits=7915 misses=48
+```
+
+72 growths, 112 pools, **0 allocation failures**, no descriptor refusal, picture present, `validationClean`,
+0 VUID. The growth path is exercised, counted, and does not refuse a batch; with the old single 64-set pool
+the same scene would have refused from the 64th key on.
 
 **B04, the same run:**
 
@@ -144,6 +155,7 @@ lists `VK_ERROR_DEVICE_LOST`, `VK_ERROR_OUT_OF_DEVICE_MEMORY`, `VK_ERROR_OUT_OF_
 **B02, `t30-final-keys` / `t30-final-plain`:** the contract lines quoted above; both legs produced a presented
 picture and neither required nor enabled the fd extensions.
 
-**Not verified:** a wait failure of any kind (no timeout, OOM, UNKNOWN or DEVICE_LOST was injected); the
-growth path end to end until the `descriptorPoolSets=1` control lands; and the interop direction of B02 (no
-run with a GL identity, where the extensions are required and a candidate lacking them is skipped).
+**Not verified:** a wait failure of any kind (no timeout, OOM, UNKNOWN or DEVICE_LOST was injected on a real
+device, so the quarantine branches are verified by the code path, by the four states being separate, and by
+the counters being live with `unconfirmed=0`); and the interop direction of B02 (no run with a GL identity,
+where the fd extensions are required and a candidate lacking them is skipped rather than selected).

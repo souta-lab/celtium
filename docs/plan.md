@@ -133,6 +133,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.181 **task-30（B02/B03/B04）受入・task-33 完了と mip 内容主張の撤回**
+
+- **B02（sky-draws）**: GL-less 経路は **fd 拡張を要求も enable もしない**（`interopPath = openGl != null`）。
+  能力契約は `CELTIUM_DEVICE_CONTRACT … required=[api>=1.2, queue=graphics+transfer, VK_KHR_swapchain,
+  color=R8G8B8A8_UNORM depth=D32_SFLOAT samples=1] fdInterop=false enabledDeviceExtensions=[VK_KHR_swapchain]
+  limits=[maxPushConstantsSize=256 immediatePushBytes=208 …] advertised=[externalMemoryFd=false …]`。
+  拡張を隠すスイッチ（`-Dceltium.vulkan.hideExternalFdExtensions=true`）で「持たない device」プロファイルを実機で行使し、
+  **提示まで到達**。持つ device でも要求しない（`t30-final-plain`）。
+- **B03**: textured/ITEM 両 pipeline の pool が**満杯時に成長**し、`immediateDescriptors=[pools growths sets
+  keysCached failures hits misses]` を報告。`t30-count-keys`（JEI+inventory+entity+reload）で **72 key（旧 64 上限超）・
+  failures=0**、`t30-growth-keys`（`descriptorPoolSets=1`）で **growths=72・failures=0**＝成長経路を実機で行使。
+- **B04**: wait は **4状態**（completion-confirmed / TIMEOUT / DEVICE_LOST / unconfirmed）で、
+  **解放するのは SUCCESS と DEVICE_LOST のみ**（spec §4.2.4 の pending/in-use 等価）。bootstrap の `vkQueueWaitIdle` も確認、
+  `delete()` は `vkDeviceWaitIdle` を確認してから隔離物を解放。実測 `waitOutcomes=[completions=46 timeouts=0 lostDevices=0
+  unconfirmed=0 …]`。**未検証（明記）**: wait 失敗の注入は未実施・interop 方向は code path のみ。
+- **task-33 完了 + 主張の撤回（fog-path）**: 等価 build 状態で sampler の必要性が確定
+  （maxLod 4: band 0.484%・frame 0.087%／mirror clamp 1: band **1.193%**・frame **0.205%**）。
+  **「mip 内容が帯の残差原因」という以前の主張は撤回**——等価状態では rows 225-255 が3 leg で同一
+  （std 2.34 / 参照 2.40・mean (113.0,110.8,99.8)）。tick 200 の縞は**未 build の遠 ring が近い低 LOD terrain を置いていた**ため。
+  sampler の実効は terrain の edge（rows 216-224 が 174→43 px）。→ task-26 の mip 内容の半分は**根拠なし**として再定義。
+
 ## 0.180 **inventory 場面の sky 17% 暗は B05（fog/lighting payload の同居）と確定（task-38）**
 
 gui-stage が既存の pair（`cand3-*` GL-less vs `ref3-*` upstream Celeritas・同一 fixture/pose/tick 200）で
@@ -172,11 +193,16 @@ terrain 場面の 0/153,600 が維持されること**。
   **build 中に jar をコピーしない**（`scripts/build.sh` の完了を待つ）。以後は凍結済み fixture を使う。
   修正後、**instance のライブラリだけで（`--library` なし）world まで走って PASSED**・`pictureFrameDelta_world=0`
   ——ユーザー構成（instance の mods にある celtium jar＋instance のライブラリ）が world まで成立することを実測。
-- **Cleanroom 固有の罠（weather-water 実測）**: `GluProjectionMixin` の target `org.lwjgl.util.glu.Project` は
-  **この runtime に存在しない**（`org/lwjglx/util/glu/Project.class` が `lwjglxx-1.1.22.jar` にある）。
-  ログは毎回 `@Mixin target ... was not found` を出しており、**この mixin は一度も適用されていない**。
-  MCP の decompile は `org.lwjgl.util.glu` のままなので、stock Forge の前提がそのまま罠になる。
-  → proj-channel が `--notch`/`--cleanroom` で実名を確認して retarget か削除を判断する。
+- **Cleanroom 固有の罠（確定・訂正済み）**: `GluProjectionMixin` の target について、
+  weather-water の静的 scan（`org/lwjgl/util/glu/Project.class` はどの jar にも無い）は**誤りだった**。
+  proj-channel が runtime 証拠で確定: CleanMix のログは
+  `@Mixin target ... was not found`（1st pass）→ `Mixing core.GluProjectionMixin … into org.lwjgl.util.glu.Project`
+  → `[CleanMix/Audit]: APPLY … -> org.lwjgl.util.glu.Project` の3行が**正常なパターン**（`LwjglxDisplayMixin` も同じ）。
+  `-Dmixin.debug.export=true` の exported class に **mixin の field と注入 handler** が入っており、
+  `EntityRenderer.class` の bytecode は **6箇所で `org/lwjgl/util/glu/Project.gluPerspective` を呼ぶ**。
+  計器 `CELTIUM_GLUPERSPECTIVE` も実値（far=256.0/181.019）で発火し、task-1 の A/B は 727 行 vs 0 行。
+  **結論: retarget も削除もしない**。runtime 名は `org.lwjgl.util.glu.Project`（静的にはどの jar にも無い）。
+  **教訓**: 「ログの not found」だけで死んでいると結論しない——CleanMix の APPLY 行と exported class が判定材料。
 - **spec の裏づけ（web）**: viewport は framebuffer 外の fragment を生成しない（rasterization 章）ため
   1281x720 を 1280 target に適用して可視列を描くのが正しい。scissor は offset>=0 の VUID があるため
   両方を target との交差へ clip する実装が正しい（vkCmdSetScissor の VUID 00595-00597）。
