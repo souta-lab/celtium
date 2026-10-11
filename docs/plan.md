@@ -257,6 +257,35 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.247 **round 53: パノラマの機序が確定（mirror が白）・BH-36/OPT-09 step(2) 着地（1086 call で 17,651 draw）**
+
+- **パノラマの機序確定（fog-path・`7fb11c10b`）**: 描画側は**すべて測定で棄却**された。
+  (a) `colour0=0x0` は**赤いニシン** — 新設 `vertexColour0=` が group 自身の頂点メモリから最初の頂点の packed colour を読み、**`0xffffffff`（不透明白）**。
+  (b) alpha test の on/off で copy は同一（`alpha-on`/`alpha-off` とも `mean=255,255,255`）＝shader の読みどおり discard なし。
+  (c) 決め手: **texture 8 の mirror が一様な不透明白 256×256**:
+  ```
+  CELTIUM_MIRROR_SOURCE id=8 source=announced-int[] size=256x256
+    content=opaque=65536/65536 firstOpaque=0xffffffff announced=0 hasEntry=true full=true glLess=true
+  ```
+  ＝face は**白を sample して白を書く**。それが pair の clear 色と同一なので「何も描かれていない」ように見えていた。
+  routing・clip・viewport・clear・submission は全て棄却済み。**残る欠陥は mirror の内容**（`announced=0` かつ `full=true`）。
+  次の測定は **id 8 の announcement 経路**（announce された size/内容 vs mirror の内容）と、**パノラマの実ソースが mirror されていない別の GL 名**かどうか。texture-mirror へ配布。
+- **BH-36/OPT-09 step (2) 着地（proj-channel・`aa20d83af`）**: terrain の batch loop が `VkDrawIndexedIndirectCommand`
+  （`indexCount`・`instanceCount=1`・**`firstIndex` は index 単位**・**signed `vertexOffset`**・`firstInstance=0`）を記録し
+  `vkCmdDrawIndexedIndirect` で発行、`maxDrawIndirectCount` で clamp。既定 off（`-Dceltium.vulkan.indirectTerrain=true`）。
+  直接経路への fallback は**理由つき**: `multiDrawIndirect` なし・limit 未報告・**batch 内で index source が非一様**（BH-02 の規則）・
+  packet buffer 作成失敗。実測（`ind2-verify`・terrain+GUI+entities・`--validate`）:
+  ```
+  terrainIndirect=[offers=1086 calls=1086 draws=17651 clamps=0 growths=1 fallbacks=0 lastFallback=none]
+  device contract indirect=[multiDrawIndirect=true drawIndirectFirstInstance=true maxDrawIndirectCount=-1]
+  validationMessageCount=0
+  ```
+  ＝**1086 の indirect call が直接経路の 17,651 draw を運ぶ（16.3:1 削減）**・fallback 0・clamp 0。
+  **符号の罠**（最初の leg が `calls=0 fallbacks=1119 lastFallback=…unknown_(0)`）: RADV は `maxDrawIndirectCount=0xFFFFFFFF` を返し
+  それが `-1` と印字され、guard `maxDraws <= 0` が「小さな上限なし」を「不明」と誤読していた。**unsigned で読む**よう修正（真の 0 のみ fallback）。
+  **step (3)（同一 geometry と透明順の比較）は明示的に未了**で、commit も call 数の削減と fallback 契約のみを主張。
+- **Lead の magenta probe は削除**（`27fa1f0dc`）: その問いは安価な計器で答えが出たため、未使用の暫定経路を残さない。
+
 ## 0.246 **round 52: パノラマの discard 仮説を原典で棄却・「image に届いていない」vs「clear と同じ色を書いている」の分離実験へ**
 
 - **原典確認（Lead）**: `immediate_tex_color.frag` は
