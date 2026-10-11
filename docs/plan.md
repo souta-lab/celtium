@@ -95,6 +95,36 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.154 **翼を名指し（sky dome・format 7・fog 無し）／pose の跨ぎ問題**
+
+sky 担当の最終報告（測定・jar `216cd6284a3c22f7…`・AMD RX 6400・GL-less allBlocks）。
+
+### 局在の撤回（計器バグ）
+
+`reportGroupBounds` が group の頂点を `VERTEX_BYTES`(16) で読み、実際の stride は 20 だった（§0.150）。
+**mesh 自身の stride**（`VulkanTerrainGpuBackend:3462`）で読み直すと、**frames 4-24 で太陽・月とも不可視**＝vanilla が描く姿。
+group の modelview は `Rx(20°)·Ry(-90°)` に厳密一致、両回転が1回ずつ順序どおり、非ゼロ celestial の第2検査もゲームの 282.4° を復元。
+**backend/mirror に変更の正当性は無い**（私が依頼した修正は測定誤差を追っていた）。
+
+### artefact の正体（group 単位で測定）
+
+- **rows 0-270 の 113,120 の暗紺画素**を覆う唯一の group は **676頂点の format-7 group＝`RenderGlobal.renderSky` の sky dome（skyVBO）**。
+  modelview は**カメラ base のみ・回転なし**（正しい——dome は renderSky の push/rotate より前）。ndc は 390/676 が背後、残りが `x[-4.92..5.74] y[0.51..0.81]`＝**翼の帯**。
+- **新しい**: 11:48 の jar の同一 scene/pose には翼が無い（421 navy px＝壁自身の暗ブロック）。その間の描画に関わる唯一の変更が **`glDrawArrays` 経路**（skyVBO/starVBO を即時パスへ）。
+- **bridge 対照**: 実 GL が同じ dome を描き、**空の navy 画素は 0**。
+- **私たちの即時パスに fog が無い**——fog が vanilla の平らな dome を「空」に見せている。**修正は dome の所有者が fog で行う**（revert ではない）。
+
+### pose の跨ぎ（計測の整合性・fixture 側の問題）
+
+pose 上書きは `RenderTickEvent` END（描画後）、`celtium$applyPose` は次の render 前——**同じフィールドを別の時点で書き、描かれた pitch が client tick 間で補間される**。
+**GL-less の frames 4+ は +20、bridge の screenshot は約 -14** を捉えた。よって担当の crop は**領域レベルの比較**（pixel-for-pixel ではない）。
+実 GL の run は今 `"the camera at the capture is not the pose … measured pitch=-14"` で FAIL する＝**fixture が自身の上書きを検出**している。
+**2 leg を跨ぐ比較は先に pose を固定する必要があり、それは私が直すべき fixture の変更**。
+
+### 未解決（担当の明記）
+
+翼の pixel-exact な機序は未モデル化（group 帰属は測定済み）／即時パスに fog 無し（dome 担当の作業）／frame-1 の異常は記録のみ／非ゼロ celestial の検証は frame 2 のみ。
+
 ## 0.153 **翼の第一候補は「記録された stride が誤っている」——担当の probe が捕捉**
 
 stub 担当の `CELTIUM_DRAWARRAY_LAYOUT` が同じ呼び出し形の2つの buffer で**異なる stride** を出した:
