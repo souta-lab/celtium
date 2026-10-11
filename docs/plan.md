@@ -257,6 +257,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.253 **round 59: 早期 announcement の replay は配達を確認（実内容の mirror が出現）・受入 leg には menu hold が要る**
+
+- **replay の効果を確認（Lead の leg `r58-pano` と texture-mirror の `pano-accept`）**: 早期ロード窓で捨てられていた announcement が
+  **実内容つきの `source=announcement` mirror** として現れている — `id=44 firstOpaque=0x1ffffff`・`id=117 0xffd2d2d2`・
+  `id=118 0xff000000`（59105/65536 opaque）・Lead の leg では `id=45 0xffb9855c`。`PASSED`・`validationClean=true`・`validationMessageCount=0`。
+- **ただし受入 leg の形が受入を運ばない（texture-mirror が正直に報告）**: `CELTIUM_TEX_COPY` が**0行**（copy 経路が走っていない）・
+  `menuDumpClientTick` が無く `worldTicksAtEnd=206`（menu dump の条件 `worldTicks == 0 && clientTicks >= 20` を満たす前に world が始まる）・
+  `id=8` は依然 splash の白。＝**`GuiMainMenu.renderSkybox` の `glCopyTexSubImage2D` が走る長さだけ menu を保持する leg** が要る。
+- **fixture 依頼（gui-stage へ）**: menu-stage hold の knob（`dumpPresentedMenuTick` を上げる、または `menuHoldTicks` 的な property で
+  world 生成前に `GuiMainMenu` を N client tick 保持）。`ValidationClient.java` は gui-stage のファイル。
+- **受入（その leg で）**: `CELTIUM_TEX_COPY_SERVED … mean=` が 255 から動く・panorama id の `source=announcement` が実内容・crop にパノラマ。
+
 ## 0.252 **round 58: パノラマの白は「backend 生成前に来た announcement が捨てられていた」＝早期ロード窓・修正を実装（`a86273436`）**
 
 - **分岐の決定（texture-mirror・`pano-life`・jar `e26be087a`・`validationClean=true`）**:
