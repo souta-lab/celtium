@@ -117,6 +117,33 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.173 **client-memory decode 成功／メニューは次の段で失敗（backend が無い）**
+
+担当 weather-water がユーザーの構成（fixture なし・validation client なし・GL-less）で測定:
+
+```
+CELTIUM_DRAWARRAYS glDrawArraysCalls=524288 drawn=0 vertices=0 refused=524288
+  clientMemoryDecoded=524288 readableRanges=404 mappingFailure=none
+  refusedByReason=[no terrain backend is installed=524288]
+CELTIUM_CLIENT_ARRAY stride=24 format=2 otherArrays=GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY
+CELTIUM_CLIENT_ARRAY stride=16 format=1 otherArrays=GL_COLOR_ARRAY
+CELTIUM_CLIENT_ARRAY stride=20 format=6 otherArrays=GL_TEXTURE_COORD_ARRAY
+```
+
+**全 client-memory 描画が decode された**（524,288件・stride の全数どおり id2/1/6 に着地）、
+**安全ガードは 404 の readable mapping に対して全件受理・fault 0**。**しかし1つも描かれない**——
+**`TerrainGpuBackends.current()` がメニュー時点で null**。present 経路も同じ gate なので何も提示されない。
+**decoder 半分は修正済み。残る半分は「world が存在する前に renderer が無い」こと。**
+
+**決定（私）**: **renderer を world 生成時ではなく window 生成時に install** し、backend が既に持つ
+**no-terrain-pass UI render pass** にメニューを描かせる。**menu 専用の別 renderer は「新抽象と旧経路の併存」**であり、
+swapchain の所有者も二重になるため採らない。担当の scope を `MinecraftMixin` のライフサイクル／present gate と
+backend の構築・ライフサイクルへ拡張（**group queue は pipelines・terrain pipeline は fog-path の所有**）。
+
+**設計として残す価値のあるガード**: pointer は process address として読むが、**`pointer + count×stride` が
+`/proc/self/maps` の readable mapping 内にあるときだけ**。外れれば名前つき拒否、maps が読めなければ**読まずに拒否**。
+**起動時クラッシュは空白メニューより悪い**——その取引を明示している。
+
 ## 0.172 **残る欠陥の一覧（担当つき）と stride の全数**
 
 チームの task-1〜10 はほぼ完了。**残るものと担当**:
