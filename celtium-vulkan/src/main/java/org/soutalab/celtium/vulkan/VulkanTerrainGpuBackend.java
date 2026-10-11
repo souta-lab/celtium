@@ -5951,15 +5951,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     quads++;
                 }
                 // The contract, checked as arithmetic rather than assumed: four vertices and six indices per quad, and
-                // the indices must address vertices this mesh actually holds. A mesh that fails this is not drawn.
+                // the indices must address vertices this mesh actually holds. A mesh that fails is not drawn.
+                //
+                // The failure is scoped to THIS list, not to the build. Throwing out of the loop aborts every list -
+                // which is how one bad snapshot would remove every model in the scene at once, a far worse outcome
+                // than the single missing model it is meant to protect against. The mesh is released and the list is
+                // recorded as failed; the rest of the build continues, and the reason names the list so the snapshot
+                // can be fixed rather than the symptom hidden.
                 if (mesh.vertexCount() != quadLimit * 4 || mesh.indexCount() != quadLimit * 6) {
-                    throw new IllegalStateException("model mesh contract for list " + id + ": " + quadLimit
-                            + " quads produced " + mesh.vertexCount() + " vertices and " + mesh.indexCount()
-                            + " indices, expected " + (quadLimit * 4) + " and " + (quadLimit * 6));
+                    String failure = "list " + id + ": " + quadLimit + " quads produced " + mesh.vertexCount()
+                            + " vertices and " + mesh.indexCount() + " indices, expected " + (quadLimit * 4)
+                            + " and " + (quadLimit * 6);
+                    this.modelMeshContractFailures++;
+                    if (this.modelMeshFailure == null) {
+                        this.modelMeshFailure = failure;
+                    }
+                    mesh.delete();
+                    continue;
                 }
                 built.put(Integer.valueOf(id), mesh);
             }
         } catch (RuntimeException | LinkageError error) {
+            // A failure this far out is not attributable to one list, so the previous map stays in place and the
+            // reason is kept for the report rather than leaving the scene with no models at all.
             this.modelMeshFailure = String.valueOf(error);
             return;
         }
@@ -5987,6 +6001,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int modelDrawRefusals;
     /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
     private int modelMissingMeshes;
+    /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
+    private int modelMeshContractFailures;
     private int modelMissingMeshLog;
     private int modelLastMissingList = Integer.MIN_VALUE;
     private String modelLastRefusal = "none";
