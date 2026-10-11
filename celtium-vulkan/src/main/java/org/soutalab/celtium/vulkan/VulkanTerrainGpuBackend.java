@@ -5979,6 +5979,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.modelMeshes = built;
         this.modelMeshQuads = quads;
+        // Printed as well as reported: the report's debug strings are assembled per configuration, and the bridge's
+        // report has never carried the model counters (checked across p530-tp, ref-gl, glow-bridge3 and bridge-model,
+        // all absent while the GL-less reports carry them). Without a line both configurations emit, "the models did
+        // not draw" and "the counters were not collected" look identical - which is exactly the confusion this line
+        // exists to end. Bounded: the build happens when the list count grows, so a handful of lines per run.
+        if (this.modelBuildLogs < 6) {
+            this.modelBuildLogs++;
+            System.out.println("[Celtium] CELTIUM_MODEL_BUILD lists=" + built.size() + " quads=" + quads
+                    + " contractFailures=" + this.modelMeshContractFailures + " failure="
+                    + (this.modelMeshFailure == null ? "none" : this.modelMeshFailure));
+        }
     }
 
     /** Whether the model meshes are built from the captured display lists (lab switch: off leaves GL drawing them). */
@@ -6003,6 +6014,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int modelMissingMeshes;
     /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
     private int modelMeshContractFailures;
+    /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
+    private int modelBuildLogs;
     private int modelMissingMeshLog;
     private int modelLastMissingList = Integer.MIN_VALUE;
     private String modelLastRefusal = "none";
