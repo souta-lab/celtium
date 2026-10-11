@@ -58,6 +58,8 @@ public final class VulkanImmediateBlockPipeline {
     private final java.util.Map<Long, Long> setsByTextureView = new java.util.HashMap<Long, Long>();
     /** How many descriptor sets this pipeline has had to build; a rise means keys stopped matching. */
     public long setsCreated;
+    /** Batches refused because the texture or light map they would sample has no view or sampler any more. */
+    public long zeroViewRefusals;
 
     private final boolean blend;
     private final int srcFactor;
@@ -145,6 +147,16 @@ public final class VulkanImmediateBlockPipeline {
             return 0L;
         }
         if (this.descriptorPool == VK_NULL_HANDLE || texture == null) {
+            return 0L;
+        }
+        // A wrapper whose view or sampler has been released must not be written into a descriptor: the measured result is
+        // `u_Texture is using imageView VkImageView 0x0 that is invalid or has been destroyed`
+        // (VUID-vkCmdDrawIndexed-None-08114), and RADV answers the frame with VK_ERROR_DEVICE_LOST. The particle pipeline
+        // already refuses this case and this one did not - which is why the guard on the texture and item pipelines did
+        // not fire while 08114 still did.
+        if (texture.view() == VK_NULL_HANDLE || texture.sampler() == VK_NULL_HANDLE
+                || lightmap.view() == VK_NULL_HANDLE || lightmap.sampler() == VK_NULL_HANDLE) {
+            this.zeroViewRefusals++;
             return 0L;
         }
         // The light map is part of the key this time (audit S13). The mirror is refreshed every few frames, so its

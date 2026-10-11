@@ -145,6 +145,33 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.211 **round 14: 放棄された frame が wait semaphore を残す（device lost の根因）・zero-view ガードの穴・publish の再指し**
+
+- **device lost の根因（fog-path が `00067` から特定・Lead が修正）**: `GllessFrameTarget.beginFrame` が `waitSemaphore` を
+  signal-only submit で立て、frame の最初の submit がそれを wait し、`endFrame` が `doneSemaphore` を consume する。
+  ところが **frame を `abandonFrame` すると wait signal が未消費のまま残り**、次の `beginFrame` が同じ binary semaphore を
+  二度 signal → `VUID-vkQueueSubmit-pSignalSemaphores-00067` → RADV が `VK_ERROR_DEVICE_LOST` → 以後の submit が全部失敗し
+  `settleGpu` が latch（`windowFlushFailures=1 @frame 0`・`stallOrigin=…presentAtSwapPoint via settleGpu:10953`）。
+  修正: target が「signal 未消費」を保持し、backend が frame semaphore 付き submit（と `submitSignalOnly`）で
+  `noteWaitConsumed()` を呼び、`abandonFrame`（と open な frame を見つけた `beginFrame`）が
+  `consumeOutstandingWait()` で消費する。`abandonedWaitsConsumed`/`abandonedWaitFailures`・`CELTIUM_ABANDON_WAIT_CONSUMED` で観測。
+  **abandon 経路から例外を投げない**（dropped frame を crash に置き換えない）。
+- **zero-view ガードの穴（Lead 修正）**: `08114` は `u_Texture` の descriptor に null view が書かれる。texture/item パイプラインには
+  ガードを入れたが、**block パイプラインと UI パイプラインに無かった**（particle には元からある）。
+  `VulkanImmediateBlockPipeline.descriptorSetFor` と `VulkanUiPipeline.bindTexture` に同じ拒否を追加
+  （`zeroViewRefusals`）。**拒否は「descriptor を書く経路そのもの」に無いと意味がない**（fog-path の指摘）。
+- **published name の再指しを再生成点にも適用（Lead 修正）**: `celtium$syncPublishedChainOutput` は pair が作り直された時、
+  古い image を指す name を **drop していた**（1 leg で glTexture=22 が5回）。drop された name は registry で
+  announcement → **空 mirror** に落ち、loading phase が一様な白になる。live な pair image があれば **再 publish** して
+  name を新しい image に追随させる（`publishedFrameTexturesRepublished`）。
+- **semaphore 修正後の leg（`r14-world`・validation on・300s・AMD）**: 121 frame 時点で
+  `SIGSEGV 0・DEVICE_LOST 0・00067 0・08114 0・stall 0`、frame は 黒→白→**menu（3798色）**で安定。
+  world 到達は未確認（fixture の world 開始が遅い）。
+- **font batching（weather-water）**: 文字化けの機序は **行列が submit 時に捕捉される**こと（run が行列変更を跨ぐと
+  最後の変換で描かれる）。10 の行列入口で run を flush（`celtium$fontMatrixBoundary`）、colour witness も量子化バイトに修正。
+  既定は on に戻したが、**device-lost 中の3 leg では batching が一度も発動していない**（`fontRunsStarted=0`）ため
+  文字の受入は未取得。clean な tree で再測する。
+
 ## 0.210 **round 13: panel は描かれていた（床が別 scene の数字）・published name の drop が白画面と abort の共通根因・zero-view ガード**
 
 - **video settings の panel は描かれている（gui-stage・`1321cf111`・task-42 の既存 leg を再利用）**:

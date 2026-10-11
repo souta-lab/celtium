@@ -58,6 +58,8 @@ public final class VulkanUiPipeline {
     private long pipeline = VK_NULL_HANDLE;
     private long descriptorPool = VK_NULL_HANDLE;
     private long descriptorSet = VK_NULL_HANDLE;
+    /** Batches whose texture was refused because its view or sampler had been released. */
+    public long zeroViewRefusals;
 
     private VulkanUiPipeline(VulkanContext context, long renderPass) {
         this.context = context;
@@ -88,6 +90,13 @@ public final class VulkanUiPipeline {
 
     /** Binds the texture this UI batch samples; the texture must stay alive while the pipeline is used. */
     public void bindTexture(VulkanGlTexture texture) {
+        if (texture == null || texture.view() == VK_NULL_HANDLE || texture.sampler() == VK_NULL_HANDLE) {
+            // A released wrapper must not reach a descriptor: `u_Texture ... imageView VkImageView 0x0 that is invalid or
+            // has been destroyed` (VUID-vkCmdDrawIndexed-None-08114) is the measured result, and RADV ends the frame with
+            // VK_ERROR_DEVICE_LOST. The caller keeps its previous binding; the batch is refused rather than fatal.
+            this.zeroViewRefusals++;
+            return;
+        }
         if (this.descriptorSet == VK_NULL_HANDLE) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkDescriptorSetAllocateInfo allocate = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
