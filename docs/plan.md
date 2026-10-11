@@ -304,6 +304,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.310 **round 116: `resizeAtTick` は既存だった（fixture 変更は不要・flag の問題）・counter に print site 追加（`2dc4b5aaf`）**
+
+- **gui-stage の指摘（正しい）**: world leg の**一度きり resize は既に存在**する —
+  `-Dceltium.validation.resizeAtTick=<n>`（`ValidationClient:3001-3002` の world-tick guard・`:2664` の menu flow とは別 site）。
+  ＝**proj-channel の leg が経路を踏まなかったのは `resizeTo` を `resizeAtTick` 無しで設定したため**（既定 0 が `> 0` guard を満たさない）。
+  **必要なのは fixture 変更ではなく leg の flag**: `-Dceltium.validation.resizeAtTick=200 -Dceltium.validation.resizeTo=1024x640`（`pinSections` 併用）。
+  artifact には既に `resizeRequestedAtTick`・`glfwWindowSizeAtEnd`・swapchain image 数があるため、**受入は既存 reporting で足りる**。
+  ＝**AGENTS.md の「既存の計器を読む」に従い、重複した knob を追加しない**という判断。
+- **counter の print site を追加（Lead・`2dc4b5aaf`）**: proj-channel が「`signalOnlySubmissions` は field と increment の2参照のみで
+  **print site が無い**＝artifact/console/report に出ない」と指摘（`mirroredMultiplies` と同じ形）。＝**0 が「測定」ではなく「不在」になる**。
+  verification summary の `windowFlushFailures` の隣に出力するよう修正。＝**「0 のままならそれが finding」は数が見えて初めて成立**。
+- **Lead の resize leg はスロット待ちで走らず**: `r108-resize` は `Waiting for the game slot (held by pid 2912681)` のまま
+  `exitCode=0 / endedBy=process-exit / elapsed 31.5 s`＝**結果ではなくスロット待ちの終了**。**resize 受入は未取得**として記録（受入扱いしない）。
+- **ユニットの状態（3者一致）**: **実装済・通常経路は3 leg 緑**（`opt09f-close`・`owed-resize`・`so-baseline`・全て `validationMessageCount=0`・
+  stream equality 不変）。**未取得の2項目**: **image 数の変化**（`resizeAtTick` 付き leg が1本あれば取れる）と
+  **frame-close の pairing**（**この fixture では到達不能**・counter が可視化されたので以後は checkable）。
+
 ## 0.309 **round 115: 2 leg は緑だが経路を踏んでいない（proj-channel の検証）・`submitSignalOnly` は fixture で到達不能と判明・counter 追加（`a3c10ac81`）**
 
 - **proj-channel の2 leg（per-image build `cf6c968cd`・較正済み terrain・`pinSections=60`・`indirectCompare` 有効）**:
