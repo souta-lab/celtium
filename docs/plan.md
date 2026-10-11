@@ -305,6 +305,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.315 **round 121: F3 の次の unit を配布・主要mod対応（goal C）の互換入口を外部資料で整理**
+
+- **配布（Lead→glyph-fix）**: F3 の次の実験は**自分の数値が指す1点** — `renderDefaultChar` の**毎 glyph の `bindTexture` が我々の hook を通る**ので、
+  **変化しない bind の short-circuit**（最後の bind 名を保持し、同一なら stub 呼び出しを省く）＋ counter `bindShortCircuits` を verification summary に出力、
+  その上で **同一 jar・`pinSections` 付きの F3 on/off pair**。受入は **cold p50 と glyph 総数＋counter 可視**で、
+  **139 ms 全体についての主張はしない**（vanilla 本体 3.17 µs/glyph のうち我々が触れるのは bind の1つだけ）。
+- **主要mod対応（goal C）の互換入口（外部資料）**:
+  - **JEI の custom-rendered item**: JEI は **`IBakedModel#isBuiltInRenderer`** を見て TESR 扱いにするか単純描画にまとめるかを決める。
+    正しい入口は **model の親を `minecraft:builtin/entity` にする**か **`Item#setTileEntityItemStackRenderer`** で、
+    これを満たす mod（例: Incorporeal）は JEI で問題なく描画される（[JEI #1347](https://github.com/mezz/JustEnoughItems/issues/1347)）。
+    ＝**Celtium が TESR/`TileEntityItemStackRenderer` 経路を正しく通せば、JEI の item 一覧は自動的に正しくなる**（JEI 側に特例を足さない）。
+  - **Actinium の互換マトリクス**（Cleanroom 1.12.2・shader pack: MakeUp/BSL/Complementary/Bliss/iterationT を verified、
+    SEUS PTGI HRR は未対応と明記）＝**goal E の「対応境界と理由を明記」の先例**（[Actinium](https://github.com/DHJComical/Actinium)）。
+  - **Cleanroom の modpack ガイド**（Celeritas は Cleanroom 必須・Nothirium は Naughthirium 併用 等）
+    ＝**Celtium の「既存mod対応表」を書くときの比較対象**（[準備ガイド](https://cleanroommc.com/wiki/end-user-guide/preparing-your-modpack)）。
+- **現状**: per-image semaphore は**実装済・resize 受入済み**。未了は **frame-close pairing（到達不能）**・BH-14・goal (e) 3段階・
+  `scissorCapturedGroups=0`・**F3 の bind short-circuit（今 round 配布）**・主要mod対応（goal C）。
+
 ## 0.314 **round 120: resize 受入を取得（`glfwWindowSizeAtEnd=1024x640`・VUID 0）— per-image の最重要項目が閉じた**
 
 - **測定（Lead の `r111-resize`・jar `d744673cc` 系・層あり・`pinSections=60`・`resizeAtTick=200`・`resizeTo=1024x640`・
