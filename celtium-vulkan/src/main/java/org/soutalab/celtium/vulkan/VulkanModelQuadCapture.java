@@ -63,6 +63,17 @@ public final class VulkanModelQuadCapture {
     private static final class ListGeometry {
         int quads;
         int listId;
+        /**
+         * The compile this geometry was captured from, taken from the global {@link #generations} counter.
+         * <p>
+         * This is the identity the mesh lifetime is built on: a {@code glNewList} for this id takes the next number, so
+         * a mesh that records the generation it was built from can never be taken for the geometry of a later compile
+         * of the same id - which is what a recompile, a delete/re-use or a load that reallocates the name would
+         * otherwise inherit (audit N02).
+         */
+        int generation;
+        /** Whether the first quad of a compile is still to arrive, so its texture and matrix are read then. */
+        boolean fresh;
         /** The texture the list's first captured quad arrived under, or {@link #UNKNOWN}. */
         int texture = UNKNOWN;
         float[] modelView = new float[16];
@@ -88,7 +99,40 @@ public final class VulkanModelQuadCapture {
             uvs = java.util.Arrays.copyOf(uvs, uvs.length * 2);
             normals = java.util.Arrays.copyOf(normals, normals.length * 2);
         }
+
+        /**
+         * Starts a new compile of this list under the given generation.
+         * <p>
+         * {@code glNewList} replaces the list with that name; it does not extend it. The capture has to do the same or
+         * a recompile appends its quads to the previous compile's - measured as the defect itself: a list compiled
+         * twice held both compiles' geometry, so the mesh grew every time the game recompiled it. The arrays keep their
+         * capacity, so this is a reset and not an allocation.
+         */
+        void beginCompile(int generation) {
+            this.generation = generation;
+            this.fresh = true;
+            this.quads = 0;
+            this.vertices = 0;
+            this.texture = UNKNOWN;
+            this.source = "unknown";
+            this.quadsWithOtherMatrix = 0;
+            this.quadsWithOtherTexture = 0;
+        }
     }
+
+    /**
+     * One number per {@code glNewList}, never reused.
+     * <p>
+     * Deliberately global rather than per list: a list id that is deleted and handed out again - by the driver, by the
+     * game's own allocation, or by a probe that compiles the same id twice - must not be able to match a mesh built from
+     * an earlier compile of that id. A per-list counter would restart at one and do exactly that.
+     */
+    private static int generations;
+    private static long compileStarts;
+    private static long compileResets;
+    private static long listDeletes;
+    private static long deletedEntries;
+
 
     private static long quads;
     private static long vertices;
@@ -166,10 +210,21 @@ public final class VulkanModelQuadCapture {
         if (geometry == null) {
             geometry = new ListGeometry();
             geometry.listId = listId;
+            // A list whose compile never announced itself - no glNewList hook saw it - still gets an identity here: the
+            // next global generation, which no earlier mesh can carry. The generation is what the renderer keys the
+            // mesh's staleness on, so this is the difference between "geometry arrived" and "geometry arrived with an
+            // identity" (audit N02).
+            geometry.generation = ++generations;
+            geometry.fresh = true;
+            LISTS.put(Integer.valueOf(listId), geometry);
+        }
+        if (geometry.fresh) {
+            geometry.fresh = false;
             geometry.texture = texture;
             // The call site of *this* list's first quad, not the first quad the capture ever saw: with the global value
             // every list was attributed to whichever model happened to compile first, which is the one thing a per-list
-            // table must not do when the question is "who compiled the book".
+            // table must not do when the question is "who compiled the book". A recompile reads it again, because a new
+            // compile can be a different model part.
             geometry.source = celtium$callSite(6);
             try {
                 java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
@@ -178,7 +233,6 @@ public final class VulkanModelQuadCapture {
             } catch (RuntimeException | LinkageError ignored) {
                 // A missing matrix is not a wrong quad; matrixForList then reports the identity, exactly as before.
             }
-            LISTS.put(Integer.valueOf(listId), geometry);
         } else {
             if (texture != UNKNOWN && texture != geometry.texture) {
                 // One texture per list, the first quad's, the same approximation the matrix keeps. A model part binds
@@ -462,16 +516,125 @@ public final class VulkanModelQuadCapture {
     /** One list's geometry, copied out so the renderer can build a mesh without holding the capture's lock. */
     public static final class Snapshot {
         public final int listId;
+        /**
+         * The compile this geometry came from. The renderer stamps the mesh it builds with this, and rebuilds only when
+         * the list's generation has moved on (audit N02).
+         */
+        public final int generation;
         public final int quads;
         public final float[] positions;
         public final float[] uvs;
 
-        Snapshot(int listId, int quads, float[] positions, float[] uvs) {
+        Snapshot(int listId, int generation, int quads, float[] positions, float[] uvs) {
             this.listId = listId;
+            this.generation = generation;
             this.quads = quads;
             this.positions = positions;
             this.uvs = uvs;
         }
+    }
+
+    /**
+     * A display list's compile started, which is a {@code glNewList} for {@code listId}.
+     * <p>
+     * The list with that name is replaced, not extended: whatever the capture held for it belongs to a compile that no
+     * longer exists in GL. The geometry is therefore reset under a new global generation, so that
+     * <ul>
+     *   <li>a recompile cannot append its quads to the previous compile's (the audit's "再compileでは旧geometryへ追記され得る"),
+     *       and</li>
+     *   <li>the mesh the renderer built from the previous compile is recognisably stale - its recorded generation is no
+     *       longer this list's - so it is retired and rebuilt rather than reused.</li>
+     * </ul>
+     * A list that has never captured a quad is left alone: chunk render lists are compiled thousands of times a session
+     * and hold no model geometry, so creating an entry for each would grow this table without bound. The first captured
+     * quad of such a compile creates the entry with a generation of its own.
+     *
+     * @param listId the list {@code glNewList} opened, as {@code GL_LIST_INDEX} reports it
+     */
+    public static synchronized void listCompileStarted(int listId) {
+        if (listId <= 0) {
+            return;
+        }
+        compileStarts++;
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        if (geometry == null) {
+            return;
+        }
+        compileResets++;
+        geometry.beginCompile(++generations);
+        // The accounting of the compile that just ended is superseded with it, so the trace prints this compile's own
+        // open and close lines rather than merging two compiles of one id into one set of totals.
+        LIST_TOTALS.remove(Integer.valueOf(listId));
+    }
+
+    /**
+     * A {@code glDeleteLists} retired a range of display lists.
+     * <p>
+     * The geometry of those lists is dropped, because a name that is handed out again must not inherit it: the audit's
+     * delete/re-use acceptance is exactly this case, and with the entry gone the next compile of that id starts from
+     * nothing and takes a new generation. The renderer sees the same fact as a generation of 0, which is what retires
+     * the mesh built from the deleted list.
+     *
+     * @param first the first list name deleted
+     * @param count how many consecutive names were deleted, as GL takes them
+     */
+    public static synchronized void listsDeleted(int first, int count) {
+        if (first <= 0 || count <= 0) {
+            return;
+        }
+        listDeletes++;
+        long last = (long) first + (long) count;
+        // Iterated over the entries rather than over the range: a driver-level range can be large, while this table only
+        // ever holds the lists that actually captured geometry.
+        java.util.Iterator<java.util.Map.Entry<Integer, ListGeometry>> entries = LISTS.entrySet().iterator();
+        while (entries.hasNext()) {
+            int id = entries.next().getKey().intValue();
+            if (id >= first && id < last) {
+                entries.remove();
+                deletedEntries++;
+            }
+        }
+        java.util.Iterator<Integer> totals = LIST_TOTALS.keySet().iterator();
+        while (totals.hasNext()) {
+            int id = totals.next().intValue();
+            if (id >= first && id < last) {
+                totals.remove();
+            }
+        }
+    }
+
+    /** {@return the compile generation of this list's current geometry, or 0 when it has none}. */
+    public static synchronized int generationOf(int listId) {
+        ListGeometry geometry = LISTS.get(Integer.valueOf(listId));
+        return geometry == null ? 0 : geometry.generation;
+    }
+
+    /** {@return the display-list compile and delete counters, for the run summary}. */
+    public static synchronized String lifecycle() {
+        int withQuads = 0;
+        for (ListGeometry geometry : LISTS.values()) {
+            if (geometry.quads > 0) {
+                withQuads++;
+            }
+        }
+        return "compileStarts=" + compileStarts + " compileResets=" + compileResets + " generation=" + generations
+                + " deletes=" + listDeletes + " deletedEntries=" + deletedEntries
+                + " lists=" + LISTS.size() + " listsWithQuads=" + withQuads;
+    }
+
+    /** {@return how many display-list compiles have started, whether or not they captured anything}. */
+    public static synchronized long compileStarts() {
+        return compileStarts;
+    }
+
+    /** {@return how many compiles replaced a list the capture already held geometry for}. */
+    public static synchronized long compileResets() {
+        return compileResets;
+    }
+
+    /** {@return how many {@code glDeleteLists} ranges this capture has seen}. */
+    public static synchronized long listDeletes() {
+        return listDeletes;
     }
 
     /** {@return whether this list's geometry has been captured}. */
@@ -496,7 +659,7 @@ public final class VulkanModelQuadCapture {
         float[] uvs = new float[floats * 2];
         System.arraycopy(geometry.positions, 0, positions, 0, positions.length);
         System.arraycopy(geometry.uvs, 0, uvs, 0, uvs.length);
-        return new Snapshot(geometry.listId, geometry.quads, positions, uvs);
+        return new Snapshot(geometry.listId, geometry.generation, geometry.quads, positions, uvs);
     }
 
     /** {@return every captured list id, for the renderer to walk}. */

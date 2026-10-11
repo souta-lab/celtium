@@ -1,6 +1,7 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.renderer.GlStateManager;
+import org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
 import org.spongepowered.asm.mixin.Mixin;
@@ -121,6 +122,39 @@ public abstract class GlStateManagerMixin {
     private static int celtium$callListCancelled;
     private static int celtium$callListExecuted;
     private static int celtium$callListCancelFailures;
+
+    /**
+     * The display list's lifetime, mirrored into the model capture (audit N02).
+     * <p>
+     * A display list is not "geometry that arrived once": {@code glNewList} replaces the list with that name, and
+     * {@code glDeleteLists} ends it, with the name later handed out again. The capture has to see both, or a recompile
+     * appends its quads to the previous compile's geometry and a deleted list's mesh keeps drawing. These two hooks
+     * are the lifetime signal, and they are taken from the game's own API rather than from GL, so they hold in
+     * both the GL-less window and the bridge.
+     * <p>
+     * The names are SRG because these are vanilla {@code GlStateManager} methods, not Forge additions: measured with
+     * javap against the vanilla client jar, where only {@code bus.class} (GlStateManager) names {@code glNewList} and
+     * {@code glDeleteLists}, so both are renamed at runtime ({@code callList}, used above, is Forge-added and keeps its
+     * name). {@code require = 0} as everywhere else in this class: a build whose names differ must degrade to "not
+     * hooked", never to a client that will not start.
+     */
+    @Inject(method = "func_187423_f", at = @At("HEAD"), require = 0)
+    private static void celtium$newList(int list, int mode, CallbackInfo info) {
+        try {
+            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(list);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Never let the capture stop the game's own compile.
+        }
+    }
+
+    @Inject(method = "func_187449_e", at = @At("HEAD"), require = 0)
+    private static void celtium$deleteLists(int list, int range, CallbackInfo info) {
+        try {
+            org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listsDeleted(list, range);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Same rule: a lifetime signal that fails is a measurement lost, not a frame lost.
+        }
+    }
 
     // The counters are read from the bounded log line inside the cancelled path rather than through an accessor:
     // Mixin rejects a non-private method in a mixin class ("contains non-private static method"), and that rejection
