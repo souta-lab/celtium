@@ -2303,8 +2303,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Ids a delete has forgotten, so a stale upload cannot silently recreate their mirror. */
     private final java.util.Set<Integer> forgottenByDelete = new java.util.HashSet<Integer>();
-    /** Uploads refused because the splash re-announced a texture a delete had already forgotten. */
-    private int staleSplashUploadRefusals;
+    /** Ids whose mirror was filled by the splash's own upload path, dropped when the splash stops uploading. */
+    private final java.util.Set<Integer> splashCanvasIds = new java.util.HashSet<Integer>();
+    /** Whether the splash uploaded anything in the current frame; the first frame without one ends the splash. */
+    private boolean splashUploadsThisFrame;
+    /** Splash canvases whose mirrors were dropped at the end of the splash. */
+    private int splashCanvasInvalidations;
 
     /** {@return whether the announcing call came from the splash's own draw path}. */
     private static boolean celtium$callerIsSplash() {
@@ -2932,6 +2936,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * map's pixels were being aimed (at a 1x1 placeholder), leaving its mirror to be read back on every update.
      */
     public void announceDynamicTexture(int glTextureId, int[] pixels, int width, int height) {
+        announceDynamicTexture(glTextureId, pixels, width, height, false);
+    }
+
+    /**
+     * As the four-argument form, with the caller's own verdict on whether this upload came from the splash.
+     * <p>
+     * The stack is walked in the mixin, not here: the census line {@code CELTIUM_UPLOAD_CALLER} shows
+     * {@code SplashProgress.drawVanillaScreen} in the frames when it is built there, while the same walk inside this
+     * class did not see it (the flag never fired in two legs), so the fact is passed in rather than re-derived.
+     */
+    public void announceDynamicTexture(int glTextureId, int[] pixels, int width, int height, boolean fromSplash) {
         if (pixels == null || glTextureId == 0 || width <= 0 || height <= 0 || pixels.length < width * height) {
             return;
         }
@@ -2943,16 +2958,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // An upload from the splash path for an id a delete has already forgotten is that stale announcement: it is
         // refused and counted instead of re-filling the mirror. Any other upload clears the forgotten mark, so a
         // legitimate re-creation of the same id is unaffected.
-        if (this.forgottenByDelete.contains(Integer.valueOf(glTextureId))) {
-            if (celtium$callerIsSplash()) {
-                this.staleSplashUploadRefusals++;
-                if (this.staleSplashUploadRefusals <= 4) {
-                    record("refused a stale splash upload for GL texture " + glTextureId + " (" + width + "x" + height
-                            + "): a delete already forgot that id, so this announcement would recreate its mirror"
-                            + " (total " + this.staleSplashUploadRefusals + ")");
-                }
-                return;
-            }
+        // The splash's own uploads are remembered by id, so their mirrors can be dropped when the splash ends:
+        // the vanilla loading screen's white 256x256 canvas is what the menu's skybox faces were sampling
+        // (`CELTIUM_UPLOAD_CALLER id=8 first=0xffffffff`, `mirrorSource=announced-int[]@256x256`,
+        // `CELTIUM_TEX_COPY_SERVED … mean=255,255,255`). Dropping them is what stops a white canvas from standing in
+        // for the panorama's texture. A later legitimate upload of the same id is unaffected: it is not from the
+        // splash, so it clears the mark and fills the mirror again.
+        if (fromSplash) {
+            this.splashCanvasIds.add(Integer.valueOf(glTextureId));
+            this.splashUploadsThisFrame = true;
+        } else {
+            this.splashCanvasIds.remove(Integer.valueOf(glTextureId));
             this.forgottenByDelete.remove(Integer.valueOf(glTextureId));
         }
         if (this.textureRegistry == null) {
@@ -7886,7 +7902,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " splashSourcedGroups=" + this.splashSourcedGroups
-                + " staleSplashUploadRefusals=" + this.staleSplashUploadRefusals
+                + " splashCanvasInvalidations=" + this.splashCanvasInvalidations
                 + " immediateDrawSiteLogged=" + this.immediateDrawSiteLogged
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
                 + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
@@ -11091,7 +11107,32 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.publishedChainOutput.ensureGeneralLayout(this.commandBuffer);
     }
 
+    /**
+     * Drops the splash's canvas mirrors once the splash stops uploading.
+     * <p>
+     * Called from the present hook, which every frame reaches - the world-frame callback does not run in the menu,
+     * and that is exactly where the panorama's white lives. The rule is the same: the first frame with no splash
+     * upload after one that had them ends the splash, and its canvases must not stay as any texture's content.
+     */
+    private void celtium$dropSplashCanvasesAtSplashEnd() {
+        if (!this.splashCanvasIds.isEmpty() && !this.splashUploadsThisFrame) {
+            for (Integer id : this.splashCanvasIds) {
+                if (this.textureRegistry != null) {
+                    this.textureRegistry.forgetTexture(id.intValue());
+                }
+                this.splashCanvasInvalidations++;
+            }
+            if (this.splashCanvasInvalidations <= 8) {
+                record("splash ended: dropped " + this.splashCanvasIds.size() + " splash canvas mirror(s) "
+                        + this.splashCanvasIds + " (total " + this.splashCanvasInvalidations + ")");
+            }
+            this.splashCanvasIds.clear();
+        }
+        this.splashUploadsThisFrame = false;
+    }
+
     public boolean celtium$presentFrame() {
+        celtium$dropSplashCanvasesAtSplashEnd();
         // Fourth trigger for the counter summary, and the one a screen-open leg needs: frameId advances on the world
         // render path, which a GUI screen skips, so a leg that opens a screen never reached the frame-120 print and
         // read every counter as absent. Presents keep happening with a screen up, so counting them gives such a leg a

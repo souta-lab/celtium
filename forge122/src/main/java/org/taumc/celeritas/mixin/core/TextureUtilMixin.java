@@ -76,9 +76,19 @@ public class TextureUtilMixin {
             // BH-36/panorama: a bounded caller census for the int[] path, because "the game uploaded white" and "our
             // path filled white" are the same mirror line otherwise. id 8 and 20 both report
             // source=announced-int[] content=opaque=65536/65536 firstOpaque=0xffffffff with announced=0.
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            boolean fromSplash = false;
+            for (StackTraceElement frame : stack) {
+                String name = frame.getClassName();
+                if (name.contains("SplashProgress") || name.contains("drawSplashScreen")
+                        || "func_180510_a".equals(frame.getMethodName())) {
+                    fromSplash = true;
+                    break;
+                }
+            }
             if (celtium$uploadCallerLogs < 16) {
                 celtium$uploadCallerLogs++;
-                StackTraceElement[] frames = Thread.currentThread().getStackTrace();
+                StackTraceElement[] frames = stack;
                 StringBuilder caller = new StringBuilder();
                 for (int i = 2; i < Math.min(frames.length, 7); i++) {
                     caller.append(frames[i].getClassName().replaceAll(".*\\.", "")).append('.')
@@ -99,7 +109,7 @@ public class TextureUtilMixin {
                 vulkan.onGlTextureReallocated(glTextureId, width, height);
                 // The id rides along too: this method's own parameter names the texture it writes, and aiming the
                 // pixels at whatever is bound at hook time is how they were landing in the wrong texture.
-                vulkan.announceDynamicTexture(glTextureId, data, width, height);
+                vulkan.announceDynamicTexture(glTextureId, data, width, height, fromSplash);
             }
         } catch (RuntimeException | LinkageError ignored) {
             // A lifecycle notification must never break texture loading.
