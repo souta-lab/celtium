@@ -650,6 +650,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                        CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+        // "terrain" inside "world": the world pass holds the spike (fixture worst 368 ms of a 411 ms frame) and
+        // its named parts stop at the immediate flush - the terrain pass's own submit+record share needs a bracket
+        // of its own to be told from the game's renderWorldPass work around it.
+        FramePassTimings.begin("terrain");
+        try {
+            celtium$renderPass(matrices, renderLists, pass, occlusionCamera, camera, profile);
+        } finally {
+            FramePassTimings.end("terrain");
+        }
+    }
+
+    private void celtium$renderPass(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists,
+            TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
         if (Boolean.getBoolean("celtium.vulkan.refuseTerrainPass")) {
             // Isolation switch: with the terrain pass out of the frame, whatever is still wrong in the picture
             // belongs to the immediate path, and the other way round.
@@ -5700,7 +5713,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.frameAccepted++;
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
-                try { flushImmediateWindow(); }
+                try {
+                    FramePassTimings.begin("flush");
+                    try { flushImmediateWindow(); }
+                    finally { FramePassTimings.end("flush"); }
+                }
                 catch (RuntimeException | LinkageError error) {
                     // Bounded, not latched (task-60). This catch used to call noteStalled(), which stops the renderer
                     // for the rest of the session: measured on the loading screen's font path at frame 0, where the
@@ -6709,13 +6726,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long flushStartedNanos = System.nanoTime();
         long flushCpuStartedNanos = threadCpuNanos();
         try {
-            if (this.commandState != null && this.commandState.inRenderPass()) {
-                // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
-                // accepted has to reach the image first, inside the pass that is already open.
-                this.immediateDrawSite = "order-flush-in-pass";
-                drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
-            } else {
-                flushImmediateWindow();
+            FramePassTimings.begin("flush");
+            try {
+                if (this.commandState != null && this.commandState.inRenderPass()) {
+                    // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
+                    // accepted has to reach the image first, inside the pass that is already open.
+                    this.immediateDrawSite = "order-flush-in-pass";
+                    drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
+                } else {
+                    flushImmediateWindow();
+                }
+            } finally {
+                FramePassTimings.end("flush");
             }
             this.orderPreservingFlushes++;
             long tookNanos = System.nanoTime() - flushStartedNanos;

@@ -214,7 +214,14 @@ public abstract class EntityRendererMixin {
                     && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
                 // GL-less has one present site per frame and it is the swap point: this one would present the same
                 // frame a second time and overwrite the skip reason with its own refusal.
-                vulkan.celtium$presentFrame();
+                // "present" inside "world": the pass split's own bracket names the renderer's present/composite
+                // share of a spike inside renderWorldPass, which the frame brackets alone leave unnamed.
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("present");
+                try {
+                    vulkan.celtium$presentFrame();
+                } finally {
+                    org.soutalab.celtium.vulkan.FramePassTimings.end("present");
+                }
             }
         } catch (RuntimeException | LinkageError ignored) {
             // Presenting from Vulkan must never stop the game from rendering a frame.

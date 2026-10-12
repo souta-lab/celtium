@@ -14,7 +14,7 @@
 
 | OPT | 項目 | 状態 | 根拠・残件 |
 |---|---|---|---|
-| OPT-01 | 計器自身のコスト削減 | 未実装 | `threadCpuNanos()`(ManagementFactory ThreadMXBean) が全計測点で常時呼出。nanoTime 計で計測枠自体が残る。採用: 既定 off or サンプリング化 |
+| OPT-01 | 計器自身のコスト削減 | **実装済（main）** | `threadCpuNanos()` は `celtium.vulkan.cpuSplit=true`（既定 off）で -1 を返す — CPU-time read は既に gate 済。MXBean lookup は static init。残る nanoTime ペアは ~0.3-0.6µs/call で受入計器として残置 |
 | OPT-02 | 破損した GL 参照（参照実装比較経路）| 未実装→不採用方向 | GL-less が製品経路。原版比較は固定 vanilla jar で行う運用 |
 | OPT-03 | shader データ分離・128B push 統一 | 未実装 | terrain=128B 済・immediate=208B・item=216B。lightParams 等を UBO 側へ |
 | OPT-04 | completion epoch/代わりの全 drain | **実装済** | submitSequence/completedSubmitSequence watermark + per-slot confirm（`8b2bcd412`）|
@@ -50,10 +50,10 @@
 
 ## 次の優先順（実測根拠順）
 
-1. **OPT-18b pre-transform merge**（実装中・本ブランチ）— `gui` 定数税の仕組みを潰す。
-2. **`gameRenderer` 残差 246ms の帰属** — per-pass CPU instrument or JFR。帰属できれば最大の単一 spike 要因。
-3. **OPT-01** — 計器の常時コスト（常駐税。小さいが全 frame）。
-4. **warm window 到達 fixture** — 定常 tail latency が未計測。
+1. ~~OPT-18b pre-transform merge~~ — PR #2 (757ec0b4c)。
+2. **`gameRenderer` 残差 / world-pass 分解** — JFR leg (p-jfr1): GC pause 合計 332ms/28s・最大 72ms（worst window 140ms/s）→ GC は spike の一部だが単独説明不可。`readBackBlock` が world-phase main サンプルの ~45%（presentReadback 診断税・製品では無効）。fixture では `FramePassTimings` が `world` bracket に spike の ~90% を割当て（worst 368/411ms）、residual ≤31ms — **fixture の spike は world pass 内**。world 内訳を分ける `present`/`flush` INSIDE bracket を追加（本ブランチ・計器）。
+3. ~~OPT-01~~ — cpuSplit flag で既定 off（main）。
+4. ~~warm window 到達 fixture~~ — `-Dceltium.validation.holdUntilTick=600`（commit d0b85f804）。p-warm2: `worldTicksAtEnd=599`, warm n=280, **warm p50=17.0/p95=76.7/p99=385.3** — chunk-build を過ぎても 300-800ms spike が残存。slow-frame 証拠: `submitWaits=450-737 submitWaitMillis=31-99`（細かい bounded poll の連鎖≈100ms/frame）+ 残 ~300ms が unnamed — step-2 の bracket で分解。
 5. **OPT-09 multidraw** or **OPT-10 state merge**（stateKey 差分断の解消は GUI の残半分）。
 
 ## 計器の範囲メモ（今回確認した事実）
