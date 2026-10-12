@@ -2825,7 +2825,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.lastTerrainIndirectFallback = "the indirect packet buffer could not be created";
             return false;
         }
-        bindIndexBuffer(stack, regionIndex ? resources.indexArena.buffer()
+        this.terrain.bindIndexBuffer(this.commandBuffer, regionIndex ? resources.indexArena.buffer()
                 : this.sharedIndexBuffers.get(primitiveType));
         ByteBuffer packets = stack.calloc(needed);
         for (int i = 0; i < size; i++) {
@@ -9381,9 +9381,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
 
-            bindVertexBuffer(stack, resources);
+            this.terrain.bindVertexBuffer(this.commandBuffer, stack, resources);
             if (!indexBound) {
-                bindIndexBuffer(stack, this.sharedIndexBuffers.get(primitiveType));
+                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
                 indexBound = true;
             }
 
@@ -9443,12 +9443,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (resources.indexArena == null) {
                         continue;
                     }
-                    bindIndexBuffer(stack, resources.indexArena.buffer());
+                    this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
                     firstIndex = (int) (byteOffset / 4);
                 } else if (byteOffset == 0) {
                     firstIndex = 0;
                 } else if (resources.indexArena != null) {
-                    bindIndexBuffer(stack, resources.indexArena.buffer());
+                    this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
                     firstIndex = (int) (byteOffset / 4);
                 } else {
                     continue;
@@ -9472,7 +9472,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
             if (resources.indexArena != null) {
                 // The next region may use the shared index buffer again.
-                bindIndexBuffer(stack, this.sharedIndexBuffers.get(primitiveType));
+                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
             }
         }
 
@@ -9781,17 +9781,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    private void bindVertexBuffer(MemoryStack stack, TerrainRenderer.RegionResources resources) {
-        LongBuffer buffers = stack.mallocLong(1);
-        buffers.put(0, resources.vertexArena.buffer().buffer());
-        LongBuffer offsets = stack.mallocLong(1);
-        offsets.put(0, 0L);
-        vkCmdBindVertexBuffers(this.commandBuffer, 0, buffers, offsets);
-    }
 
-    private void bindIndexBuffer(MemoryStack stack, VulkanBuffer buffer) {
-        vkCmdBindIndexBuffer(this.commandBuffer, buffer.buffer(), 0L, VK_INDEX_TYPE_UINT32);
-    }
+
+
 
     private void setViewportAndScissor(MemoryStack stack) {
         org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);

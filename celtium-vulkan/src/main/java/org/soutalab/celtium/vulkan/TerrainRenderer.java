@@ -171,4 +171,24 @@ public final class TerrainRenderer {
         this.regionResources.clear();
         this.failedUploads.clear();
     }
+
+    /**
+     * Binds the region's vertex buffer. The command buffer is a parameter because it is the frame's, not this class's:
+     * the terrain pass records into it but does not own it (refactoring plan R4, second half).
+     */
+    void bindVertexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, org.lwjgl.system.MemoryStack stack,
+            RegionResources resources) {
+        java.nio.LongBuffer buffers = stack.mallocLong(1);
+        buffers.put(0, resources.vertexArena.buffer().buffer());
+        java.nio.LongBuffer offsets = stack.mallocLong(1);
+        offsets.put(0, 0L);
+        org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
+    }
+
+    /** Binds a 32-bit index buffer, for the same reason the vertex binding takes the command buffer. */
+    void bindIndexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, VulkanBuffer buffer) {
+        org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, buffer.buffer(), 0L,
+                org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+    }
+
 }
