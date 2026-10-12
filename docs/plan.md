@@ -395,6 +395,12 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.423 **round 221: ロード画面の白は「ロゴ texture の mirror が白」で説明できる（原典で確定）**
+
+- **原典（`.celtium-work/mc-sources/net/minecraft/client/Minecraft.java:1003-1027`）**: `drawSplashScreen` は自作 `Framebuffer(scaledWidth*i, scaledHeight*i, true)` を `bindFramebuffer(false)` し、`ortho(0,w,h,0,1000,3000)` ＋ `translate(0,0,-2000)` の下で **①全画面 quad（`POSITION_TEX_COLOR`・色 (255,255,255,255)・tex は4頂点とも (0,0)＝ロゴ texture の1テクセルを全面に伸ばす）** → **②`this.draw((w-256)/2,(h-256)/2, 0,0, 256,256, 255,255,255,255)`＝中央 256×256 のロゴ quad（同じ `POSITION_TEX_COLOR`）** を描き、`unbindFramebuffer()` → `framebufferRender(w,h)` で FBO の colour texture を window へ合成 ✓。
+- **含意**: 我々の loading dump が**一様な白 (255,255,255)・distinct=1** なのは、**①②のどちらもが白を描いた**（＝**ロゴ texture の mirror が白/空**で、①はその1テクセル、②は全面が白）場合と一致する ✓。②が幾何的に落ちていれば①の白だけでも同じ絵になるため、**「mirror が白」と「②が描かれない」を分離する**必要がある ✓。分離は **ロゴ texture の mirror を dump する**（既存の `-Dceltium.vulkan.mirrorDump` ＋ `mirrorDumpIds=<ロゴのGL名>`）ことで行う ✓ — `announceFullPixels` の拡張（§0.422）が入れば copy 経路も覆える ✓。
+- **注意**: ①②は同じ `POSITION_TEX_COLOR`（panorama の面と同じ経路で描けている ✓）なので、**format 拒否説は弱い** ✓（`CELTIUM_REFUSALS_BY_FORMAT {}` と整合）。
+
 ## 0.422 **round 220: 既存の mirror dump は copy 経路を覆っていない／R8 の重複 publication を削除**
 
 - **原典（`.celtium-work/mc-sources/.../DynamicTexture.java:25-31`）**: `DynamicTexture(int,int)` は `new int[w*h]`（**全ゼロ＝透明黒**）を確保し `TextureUtil.allocateTexture` で GL texture を確保するだけ（ピクセルは未定義）✓。⇒ **panorama texture の未書き込み部分が白いという説明は棄却** ✓（白なら「7回の copy が届いていない」、透明黒なら「サンプル時に SRC_ALPHA で寄与しない」）。presented の灰色 wash は**テクスチャの未書き込みではなく、テクスチャを書いた後の合成/勾配**側の話であることが確定 ✓。この事実は `docs/diagnosis-r213-user-visual-breakage.md` の viewport 説と独立に使える ✓。
