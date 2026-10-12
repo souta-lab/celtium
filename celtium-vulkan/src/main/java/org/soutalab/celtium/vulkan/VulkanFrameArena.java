@@ -133,32 +133,35 @@ public final class VulkanFrameArena {
      * Records that the current frame's slot has work in flight, so it may not be reset until a completion is
      * confirmed.
      * <p>
-     * Called after {@code vkQueueSubmit} accepted the frame's command buffer. The epoch that submission will finish at
-     * is deliberately not passed here: an epoch cannot be predicted at submit time (another submission may complete
-     * first), so it is recorded where the fact exists instead - {@link #completed(long)}, from the wait that confirmed
-     * it.
+     * Called after {@code vkQueueSubmit} accepted the frame's command buffer. The submission's own sequence is
+     * recorded with it: a confirmation now arrives per slot rather than as a queue-wide drain, so "this slot's work
+     * is done" has to be a statement about that sequence, not about whichever fence happened to be observed last.
      */
-    public void submitted(long frameId) {
+    public void submitted(long frameId, long submitSequence) {
         for (Slot slot : this.slots) {
             if (slot.inUse && slot.frameId == frameId) {
                 slot.awaitingCompletion = true;
+                slot.submitSequence = submitSequence;
             }
         }
     }
 
     /**
-     * Records a confirmed completion for every slot whose work was in flight.
+     * Records a confirmed completion for every slot whose work was in flight <em>and covered by the confirmed
+     * sequence</em>.
      * <p>
-     * The caller has waited on the fence of the most recent submission on this queue, and a Vulkan queue completes in
-     * submission order: when that fence signals, every earlier submission has completed too. So all in-flight slots
-     * take this epoch, which is what makes them reclaimable at the next {@link #beginFrame} - and only then.
+     * A Vulkan queue completes in submission order, so when the fence of sequence {@code confirmedSubmitSequence}
+     * signals, every earlier submission has completed too - but a later one has not, and marking its slot reclaimable
+     * anyway is the use-after-free the sequence gate exists to prevent. Slots still awaiting take this epoch only
+     * when their own submission is covered, which is what makes them reclaimable at the next {@link #beginFrame} -
+     * and only then.
      * <p>
      * A wait with nothing in flight passes through here as well; that is not an error, and the counter
      * {@code describe()} would show it as a slot that is still awaiting.
      */
-    public void completed(long epoch) {
+    public void completed(long epoch, long confirmedSubmitSequence) {
         for (Slot slot : this.slots) {
-            if (slot.inUse && slot.awaitingCompletion) {
+            if (slot.inUse && slot.awaitingCompletion && slot.submitSequence <= confirmedSubmitSequence) {
                 slot.epoch = epoch;
                 slot.awaitingCompletion = false;
                 this.completionsRecorded++;
@@ -383,6 +386,11 @@ public final class VulkanFrameArena {
         private long epoch = -1L;
         /** True between a successful submit of this slot's frame and the wait that confirms it completed. */
         private boolean awaitingCompletion;
+        /**
+         * The backend submission sequence this slot's frame was carried in, recorded at {@link #submitted}. A
+         * confirmation marks the slot complete only when the confirmed watermark covers this sequence.
+         */
+        private long submitSequence;
         private int pendingGroups;
 
         private Slot(VulkanContext context) {
@@ -403,6 +411,7 @@ public final class VulkanFrameArena {
             this.inUse = false;
             this.frameId = -1L;
             this.epoch = -1L;
+            this.submitSequence = 0L;
             this.awaitingCompletion = false;
         }
 

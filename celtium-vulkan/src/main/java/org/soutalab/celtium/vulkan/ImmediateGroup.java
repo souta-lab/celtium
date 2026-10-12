@@ -101,6 +101,12 @@ public final class ImmediateGroup {
     public boolean polygonOffsetEnabled;
     /** Frame and target-generation stamp: groups of a destroyed frame target must be retired, not drawn. */
     public GroupStamp stamp;
+    /**
+     * The submission sequence that must be confirmed before this group's mesh may be freed: tagged when the group is
+     * retired with the highest submission that could still name its arena bytes. 0 means nothing in flight reads
+     * them (the group never reached a submission) and the mesh may go immediately.
+     */
+    public long retireSequence;
 
     public ImmediateGroup(VulkanDynamicMesh mesh, float[] projection, float[] modelView, int formatId, int texture,
             long stateKey, int[] state, long target) {
