@@ -305,6 +305,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Set once the counter summary has been printed, so a second world teardown does not repeat it. */
     private boolean celtium$summaryPrinted;
 
+    /** Presents seen, so the summary has a trigger on a path that runs while a GUI screen is open. */
+    private int celtium$presentCount;
+
     private long scissorCapturedGroups;
     /**
      * Groups whose clip came from the live record because the group opened with the scissor disabled.
@@ -10843,6 +10846,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public boolean celtium$presentFrame() {
+        // Fourth trigger for the counter summary, and the one a screen-open leg needs: frameId advances on the world
+        // render path, which a GUI screen skips, so a leg that opens a screen never reached the frame-120 print and
+        // read every counter as absent. Presents keep happening with a screen up, so counting them gives such a leg a
+        // print too. Bounded like the others: once per process, at the 120th present.
+        this.celtium$presentCount++;
+        if (this.celtium$presentCount == 120) {
+            celtium$printVerificationSummary("present 120");
+        }
         // Counted before any condition: the entry counter is what says whether the per-frame call arrives at all, which the
         // attempt counter cannot (it is only reached after the early returns).
         this.presentHookCalls++;
