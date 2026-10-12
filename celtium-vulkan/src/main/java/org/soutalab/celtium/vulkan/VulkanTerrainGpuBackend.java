@@ -59,7 +59,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * <p>
  * Runs on the client/render thread with a current GL context, like the OpenGL backend it replaces.
  */
-public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend {
+public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Alignment required for dynamic uniform buffer offsets. Tightened at construction from the device limits. */
     private static final int MIN_UNIFORM_ALIGNMENT = 256;
 

@@ -70,7 +70,7 @@ public final class VulkanTerrainFactory {
         // world renderer's objects are handed to it rather than a second backend being built beside it. One owner for
         // the swapchain and the frame target, and the first world frame finds them warm.
         TerrainGpuBackend current = TerrainGpuBackends.current();
-        if (current instanceof VulkanTerrainGpuBackend existing && existing.celtium$isWindowBackend()) {
+        if (current instanceof VulkanRenderer existing && existing.celtium$isWindowBackend()) {
             existing.celtium$adoptTerrainState(configuration, regions, fogService);
             reasons.add("the world renderer adopted the window-time backend instead of creating a second one");
             return existing;
