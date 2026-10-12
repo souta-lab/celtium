@@ -7871,6 +7871,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
                 + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
                 + " groupViewportSets=" + this.groupViewportSets
+                + " stateSkipsViewport=" + this.stateSkipsViewport
+                + " stateSkipsScissor=" + this.stateSkipsScissor
+                + " stateSkipsDepthBias=" + this.stateSkipsDepthBias
                 + " cullEnabledGroups=" + this.cullEnabledGroups
                 + " cullDisabledGroups=" + this.cullDisabledGroups
                 // BH-11 and BH-12's counters, at the same place as BH-08's. acceptance found
@@ -9645,6 +9648,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         scissor.get(0).offset().set(0, 0);
         scissor.get(0).extent().set(this.targetWidth, this.targetHeight);
         vkCmdSetScissor(this.commandBuffer, 0, scissor);
+        this.passVpX = this.passVpY = 0;
+        this.passVpW = this.targetWidth;
+        this.passVpH = this.targetHeight;
+        this.passScX = this.passScY = 0;
+        this.passScW = this.targetWidth;
+        this.passScH = this.targetHeight;
     }
 
     /** Writes one dynamic uniform block and returns its byte offset. */
@@ -12491,6 +12500,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
         }
         this.uniformWriteCursor = 0;
+        // The reset above leaves every piece of dynamic state undefined, so the dedup trackers go to their never-
+        // matching sentinels: the first group in this buffer emits whatever it needs, whatever it is.
+        this.passVpX = this.passVpY = this.passVpW = this.passVpH = -1;
+        this.passScX = this.passScY = this.passScW = this.passScH = -1;
+        this.passBiasC = this.passBiasS = Float.NaN;
     }
 
     /**
@@ -12838,7 +12852,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // depthBiasEnable statically, so a draw whose command buffer never saw vkCmdSetDepthBias is a
                 // validation error (VUID-07834, measured) - and under GL-less an unwritten dynamic state is also
                 // whatever the last draw left. Zeros are the state GL has when the offset is off.
-                org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
+                if (constantFactor != this.passBiasC || slopeFactor != this.passBiasS) {
+                    org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(this.commandBuffer, constantFactor, 0.0F, slopeFactor);
+                    this.passBiasC = constantFactor;
+                    this.passBiasS = slopeFactor;
+                } else {
+                    // The common case - the game leaves the offset off - re-emits (0,0) for every group. The
+                    // skip is still VUID-07834-clean: the first group of the buffer always emits because the
+                    // tracker starts at NaN, and a later group's same-valued bias changes nothing the draw reads.
+                    this.stateSkipsDepthBias++;
+                }
                 if (offsetEnabled) {
                     this.immediateDepthBiasedGroups++;
                 }
@@ -12912,6 +12935,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** Set when a group in the current flush asked for a sub-rectangle, so the pass viewport is restored once. */
     private boolean groupViewportNarrowed;
+    /**
+     * OPT-10's record-side half: what the last dynamic-state commands in the current command buffer set. A group
+     * whose rectangle or bias is what is already set does not re-emit the command - the values are ints or floats,
+     * the comparison is exact, and the emitted state is identical either way. The -1/NaN sentinels are what makes
+     * the first group in a buffer always emit: no real extent is negative and NaN never equals a real bias, which is
+     * also what protects the pass paths that never run {@link #setViewportAndScissor} (the trackers then simply
+     * never match and every group emits, exactly as before). Reset in {@link #beginCommands}, where the reset
+     * command buffer's dynamic state is genuinely undefined.
+     */
+    private int passVpX, passVpY, passVpW, passVpH;
+    private int passScX, passScY, passScW, passScH;
+    private float passBiasC = Float.NaN, passBiasS = Float.NaN;
+    private int stateSkipsViewport, stateSkipsScissor, stateSkipsDepthBias;
 
     /**
      * Applies one group's GL viewport as a Vulkan viewport and scissor.
@@ -12952,12 +12988,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // off-target viewport is visible rather than silently empty.
             this.immediateOffTargetViewports++;
         }
-        org.lwjgl.vulkan.VkViewport.Buffer vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
-        vkViewport.get(0).x((float) x0).y((float) y)
-                .width((float) width).height((float) height)
-                .minDepth(0.0f).maxDepth(1.0f);
-        vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
-        this.groupViewportSets++;
+        if (x0 != this.passVpX || y != this.passVpY || width != this.passVpW || height != this.passVpH) {
+            org.lwjgl.vulkan.VkViewport.Buffer vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
+            vkViewport.get(0).x((float) x0).y((float) y)
+                    .width((float) width).height((float) height)
+                    .minDepth(0.0f).maxDepth(1.0f);
+            vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+            this.passVpX = x0;
+            this.passVpY = y;
+            this.passVpW = width;
+            this.passVpH = height;
+            this.groupViewportSets++;
+        } else {
+            // Identical to what is set: the command would be a no-op, so it is not recorded. This is the OPT-10
+            // dedup, not the BH-13 early-return bug - that bug kept a *different* rectangle; this skips only a
+            // *same* one.
+            this.stateSkipsViewport++;
+        }
         // BH-09: the game's own clip rectangle. Celeritas' UI calls GL11.glScissor directly (VintageDrawContext),
         // which the stub now records instead of dropping, and this is the one place a group's rectangle becomes the
         // Vulkan scissor - so the clip is applied here as the intersection of the target rectangle and the game's box,
@@ -13024,10 +13071,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " fmt=" + group.formatId + " batches=" + group.batches + " texture=" + group.texture);
             }
         }
-        org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-        scissor.get(0).offset().set(scissorX, scissorY);
-        scissor.get(0).extent().set(scissorWidth, scissorHeight);
-        vkCmdSetScissor(this.commandBuffer, 0, scissor);
+        if (scissorX != this.passScX || scissorY != this.passScY
+                || scissorWidth != this.passScW || scissorHeight != this.passScH) {
+            org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
+            scissor.get(0).offset().set(scissorX, scissorY);
+            scissor.get(0).extent().set(scissorWidth, scissorHeight);
+            vkCmdSetScissor(this.commandBuffer, 0, scissor);
+            this.passScX = scissorX;
+            this.passScY = scissorY;
+            this.passScW = scissorWidth;
+            this.passScH = scissorHeight;
+        } else {
+            this.stateSkipsScissor++;
+        }
         this.groupViewportNarrowed = true;
         this.immediateNarrowViewports++;
         if (this.immediateNarrowViewports <= 3) {
