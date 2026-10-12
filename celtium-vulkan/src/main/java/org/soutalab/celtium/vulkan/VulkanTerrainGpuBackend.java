@@ -13325,6 +13325,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // touched. That is the property this switch exists to check.
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
+                        this.context.celtium$flushBatchedSubmits();
                         VulkanContext.queueSubmitCalls++;
                         check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
             this.frameSubmitReachedQueue = true;
@@ -13408,6 +13409,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // touched. That is the property this switch exists to check.
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
+                        this.context.celtium$flushBatchedSubmits();
                         VulkanContext.queueSubmitCalls++;
                         check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
 

@@ -278,7 +278,38 @@ public final class VulkanContext {
         private VkCommandBuffer commandBuffer;
         private long fence;
         private long uploadSlotMask;
+        /** Wait/signal sets carried until the batch flush records them into its VkSubmitInfo array. */
+        private long[] waitSemaphores;
+        private int[] waitStages;
+        private long[] signalSemaphores;
+        /** The batch this submission's fence belongs to; null on the legacy per-submit path. */
+        private SharedBatch batch;
     }
+
+    /**
+     * One batched {@code vkQueueSubmit}: a single fence armed by the call and shared by every entry the batch
+     * carried. The fence stays out of the idle pool until the last entry reclaims - handing it out early would arm
+     * it for a new submission while earlier batch entries still complete against it. {@link #pending} counts
+     * unreclaimed entries, not pending submissions: it starts at the batch's entry count and the reclaim decrements.
+     */
+    private static final class SharedBatch {
+        private long fence;
+        private int pending;
+    }
+
+    /**
+     * Submissions queued for the next {@link #celtium$flushBatchedSubmits()} call, in logical submission order.
+     * Each entry is also already in {@link #deferredSubmits} so await/poll lookups find it by fence; its fence is the
+     * batch's shared one, armed only when the flush submits the whole array - which is why every wait and every poll
+     * flushes first: waiting on an unarmed fence would read as a stall that is really just "not submitted yet".
+     */
+    private final java.util.ArrayList<DeferredSubmit> pendingBatchedSubmits = new java.util.ArrayList<DeferredSubmit>();
+    private SharedBatch pendingBatch;
+    /** Batched deferred submits are the default; {@code -Dceltium.vulkan.batchedSubmits=false} restores per-call submits. */
+    private static final boolean BATCHED_SUBMITS =
+            !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
+    private int batchedFlushes;
+    private int batchedSubmissions;
 
     /**
      * The submissions currently owned by the queue, oldest first. Every bounded wait and every poll reclaims from the
@@ -760,6 +791,10 @@ public final class VulkanContext {
             throw new IllegalArgumentException("commandBuffer must not be null");
         }
         requireUsable();
+        // Batched deferred submits precede this bootstrap submission logically, so they go first physically. It
+        // matters more than ordering: this path waits on its own fence, and a pending batch submitted after it
+        // would still complete correctly - the flush simply keeps the queue's order the order callers saw.
+        celtium$flushBatchedSubmits();
         boolean releasedToQueue = true;
         try {
             check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
@@ -858,6 +893,21 @@ public final class VulkanContext {
         }
         requireUsable();
         check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer (deferred)");
+        if (BATCHED_SUBMITS) {
+            DeferredSubmit entry = new DeferredSubmit();
+            entry.commandBuffer = commandBuffer;
+            entry.uploadSlotMask = uploadSlotMask;
+            entry.batch = celtium$currentBatch();
+            entry.batch.pending++;
+            entry.fence = entry.batch.fence;
+            this.pendingBatchedSubmits.add(entry);
+            this.deferredSubmits.add(entry);
+            this.deferredSubmitsOutstanding++;
+            if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
+                this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
+            }
+            return entry.fence;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                     .pCommandBuffers(stack.pointers(commandBuffer));
@@ -939,6 +989,37 @@ public final class VulkanContext {
                 }
                 submit.pSignalSemaphores(stack.longs(signals));
             }
+            if (BATCHED_SUBMITS) {
+                DeferredSubmit entry = new DeferredSubmit();
+                entry.commandBuffer = commandBuffer;
+                entry.batch = celtium$currentBatch();
+                entry.batch.pending++;
+                entry.fence = entry.batch.fence;
+                if (!waitList.isEmpty()) {
+                    long[] waits = new long[waitList.size()];
+                    int[] stages = new int[waitList.size()];
+                    for (int i = 0; i < waits.length; i++) {
+                        waits[i] = waitList.get(i).longValue();
+                        stages[i] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                    }
+                    entry.waitSemaphores = waits;
+                    entry.waitStages = stages;
+                }
+                if (!signalList.isEmpty()) {
+                    long[] signals = new long[signalList.size()];
+                    for (int i = 0; i < signals.length; i++) {
+                        signals[i] = signalList.get(i).longValue();
+                    }
+                    entry.signalSemaphores = signals;
+                }
+                this.pendingBatchedSubmits.add(entry);
+                this.deferredSubmits.add(entry);
+                this.deferredSubmitsOutstanding++;
+                if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
+                    this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
+                }
+                return;
+            }
             long fence = celtium$borrowDeferredFence();
             try {
                 VulkanContext.queueSubmitCalls++;
@@ -968,18 +1049,32 @@ public final class VulkanContext {
     private void celtium$reclaimDeferred(DeferredSubmit entry, boolean lostDevice) {
         vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
         entry.commandBuffer = null;
+        if (entry.batch != null) {
+            // The fence is the batch's: armed once for every entry it carried, it returns to the pool only when the
+            // last entry reclaims - pooling it early would let a new submission arm a fence older entries still
+            // complete against.
+            entry.batch.pending--;
+            if (entry.batch.pending == 0) {
+                entry.fence = entry.batch.fence;
+                entry.batch = null;
+            } else {
+                entry.fence = VK_NULL_HANDLE;
+            }
+        }
         int reset = org.lwjgl.vulkan.VK10.VK_SUCCESS;
-        if (this.idleDeferredFences.size() < IDLE_DEFERRED_FENCE_CAP) {
+        if (entry.fence != VK_NULL_HANDLE && this.idleDeferredFences.size() < IDLE_DEFERRED_FENCE_CAP) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 LongBuffer handle = stack.mallocLong(1);
                 handle.put(0, entry.fence);
                 reset = vkResetFences(this.device, handle);
             }
         }
-        if (reset == org.lwjgl.vulkan.VK10.VK_SUCCESS && this.idleDeferredFences.size() < IDLE_DEFERRED_FENCE_CAP) {
-            this.idleDeferredFences.add(Long.valueOf(entry.fence));
-        } else {
-            vkDestroyFence(this.device, entry.fence, null);
+        if (entry.fence != VK_NULL_HANDLE) {
+            if (reset == org.lwjgl.vulkan.VK10.VK_SUCCESS && this.idleDeferredFences.size() < IDLE_DEFERRED_FENCE_CAP) {
+                this.idleDeferredFences.add(Long.valueOf(entry.fence));
+            } else {
+                vkDestroyFence(this.device, entry.fence, null);
+            }
         }
         long mask = entry.uploadSlotMask;
         for (int slot = 0; slot < UPLOAD_SLOT_COUNT; slot++) {
@@ -993,12 +1088,77 @@ public final class VulkanContext {
         noteCompletionConfirmed(lostDevice);
     }
 
+    /** {@return the batch the next deferred submit joins, borrowing a fence on first use}. */
+    private SharedBatch celtium$currentBatch() {
+        if (this.pendingBatch == null) {
+            this.pendingBatch = new SharedBatch();
+            this.pendingBatch.fence = celtium$borrowDeferredFence();
+        }
+        return this.pendingBatch;
+    }
+
+    /**
+     * Submits every queued deferred submission in one {@code vkQueueSubmit} call: one VkSubmitInfo per entry, each
+     * keeping its own command buffer and wait/signal semaphores, and the batch's single shared fence armed by the
+     * call. The render thread measured its deferred submits at roughly one driver call each - the queue saw about
+     * eight group closes per frame inside the offer path alone - so the entries are gathered and the fence's
+     * completion stands for all of them; per-submit order on one queue is preserved by array order.
+     * <p>
+     * Every path that could observe a submission completes or starts must flush first: a fence a caller was handed
+     * is only armed when this submits, so awaiting it before the flush is a stall of the caller's own making.
+     */
+    public void celtium$flushBatchedSubmits() {
+        if (this.pendingBatchedSubmits.isEmpty()) {
+            return;
+        }
+        SharedBatch batch = this.pendingBatch;
+        this.pendingBatch = null;
+        java.util.ArrayList<DeferredSubmit> entries =
+                new java.util.ArrayList<DeferredSubmit>(this.pendingBatchedSubmits);
+        this.pendingBatchedSubmits.clear();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkSubmitInfo.Buffer submits = VkSubmitInfo.calloc(entries.size(), stack);
+            for (int i = 0; i < entries.size(); i++) {
+                DeferredSubmit entry = entries.get(i);
+                VkSubmitInfo submit = submits.get(i).sType$Default();
+                submit.pCommandBuffers(stack.pointers(entry.commandBuffer));
+                if (entry.waitSemaphores != null) {
+                    submit.waitSemaphoreCount(entry.waitSemaphores.length);
+                    submit.pWaitSemaphores(stack.longs(entry.waitSemaphores));
+                    submit.pWaitDstStageMask(stack.ints(entry.waitStages));
+                }
+                if (entry.signalSemaphores != null) {
+                    submit.pSignalSemaphores(stack.longs(entry.signalSemaphores));
+                }
+            }
+            try {
+                VulkanContext.queueSubmitCalls++;
+                check(vkQueueSubmit(this.queue, submits, batch.fence), "vkQueueSubmit (batched deferred)");
+            } catch (RuntimeException | LinkageError submitError) {
+                // The queue never saw the batch: the entries leave the deferred queue and their resources free the
+                // same way the single-submit failure path frees them, and the shared fence goes with them.
+                for (DeferredSubmit entry : entries) {
+                    this.deferredSubmits.remove(entry);
+                    this.deferredSubmitsOutstanding--;
+                    vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
+                    entry.commandBuffer = null;
+                    entry.uploadSlotMask = 0L;
+                }
+                vkDestroyFence(this.device, batch.fence, null);
+                throw submitError;
+            }
+        }
+        this.batchedFlushes++;
+        this.batchedSubmissions += entries.size();
+    }
+
     /**
      * Reclaims every deferred submission whose fence has already signaled, in submission order, without waiting.
      * {@return how many were reclaimed}. A head whose fence has not signaled ends the walk: the queue executes
      * submissions in order, so nothing newer can have completed either.
      */
     public int celtium$pollDeferredSubmits() {
+        celtium$flushBatchedSubmits();
         int reclaimed = 0;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();
@@ -1026,6 +1186,7 @@ public final class VulkanContext {
      * timeout or another failure quarantines the resources the queue may still own and latches the context unusable.
      */
     private void celtium$awaitOldestDeferredSubmit(String reason) {
+        celtium$flushBatchedSubmits();
         DeferredSubmit head = this.deferredSubmits.peek();
         if (head == null) {
             return;
@@ -1043,6 +1204,7 @@ public final class VulkanContext {
         if (fence == VK_NULL_HANDLE) {
             return false;
         }
+        celtium$flushBatchedSubmits();
         for (DeferredSubmit entry : this.deferredSubmits) {
             if (entry.fence == fence) {
                 celtium$awaitDeferredEntry(entry, reason);
@@ -1118,7 +1280,9 @@ public final class VulkanContext {
                 + " waits=" + this.deferredWaits
                 + " waitMillis=" + this.deferredWaitMillis
                 + " waitWorstMillis=" + this.deferredWaitWorstMillis
-                + " heldAtTeardown=" + this.deferredHeldAtTeardown + "]";
+                + " heldAtTeardown=" + this.deferredHeldAtTeardown + "]"
+                + " batched=[flushes=" + this.batchedFlushes + " submissions=" + this.batchedSubmissions
+                + " pending=" + this.pendingBatchedSubmits.size() + " enabled=" + BATCHED_SUBMITS + "]";
     }
 
     /**
@@ -1350,6 +1514,13 @@ public final class VulkanContext {
             // confirmed idle, otherwise counted as held. The fence pool itself is destroyed either way - on a
             // non-confirming wait the objects are already unreachable, which is what makes destroying them safe.
             if (releaseQuarantined) {
+                try {
+                    // Whatever is still queued was logically submitted already: push it to the queue so the drain
+                    // below reclaims real completions rather than entries the GPU never saw.
+                    celtium$flushBatchedSubmits();
+                } catch (RuntimeException | LinkageError ignored) {
+                    // Teardown already knows the device state; a failed flush frees the entries itself.
+                }
                 while (!this.deferredSubmits.isEmpty()) {
                     celtium$reclaimDeferred(this.deferredSubmits.poll(), false);
                 }
