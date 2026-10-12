@@ -393,6 +393,15 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.414 **round 215: 初期化子喪失の静的検査を新設 → さらに6件検出・修正。leg で crash クラス完全閉止を確認**
+
+- **新設（`scripts/cpu-contract/field_initializer_check.py`）**: パッケージ内の全 field 宣言を **R0 基準（`5a22acb5b`）** と比較し、**基準で初期化子を持っていたのに今は持たない field** を FAIL として列挙する ✓。限界も明記 ✓（初期化子が必要だったことまでは証明できない ✓ — それは leg だけが示せる ✓）が、**喪失を見落とすことは不可能にする** ✓。
+- **検出→修正した6件（すべて sentinel で、比較が依存している ✓）**: `mirroredProjectionDelta = -1.0f` ✓／`lastAlphaPushReference = Float.NaN` ✓／`lastPartialColorMask = -1` ✓／`windowFlushFailureFrame = -1L` ✓／`lastTerrainPassFrame = -1L` ✓／`blendPairs = new HashMap<>()` ✓。これらは「まだフレームがない」「まだ push がない」「まだ mask がない」を表す値で、欠けると**起きたことのない値を最初のフレームが報告する** ✓ — 今回の2件の crash は同じ誤りの**大きい方** ✓。
+- **検査は PASS** ✓・**build 緑** ✓（`58b775907`）。
+- **leg 再実行（`r166-panorama-r2-fixed3`・AMD）**: **NPE 0** ✓✓・**`CELTIUM_VERIFY via=present 120` が印字** ✓・**`passes=1311`／`skipped=0`／`errors=0`／`immediateState=10086`／`immediateGroupsDrawn=1787`／`fontQuadsAppended=1666`／`offTargetDrawn=121`／`frameSlots=4`** ✓（UI が描かれている ✓）・device 行は AMD ✓・**587 fields**（検証行は無傷 ✓）。`exit=124` は harness の duration 上限 ✓。
+- **残る fixture 側の失敗**（`Too few world rendering frames`／`no picture`）は**ユーザーが vulkan-drain 由来と特定** ✓（そちらで修正・PR 予定 ✓）— こちらの範囲外 ✓。
+- **教訓の運用化**: 「field を移して初期化子を移さないと build も CPU 契約も通り、最初の render tick で落ちる」✓ → **この検査を今後の抽出ごとに回す** ✓。
+
 ## 0.413 **round 214: leg 許可 → 受入で refactor 由来の crash を2件検出・修正（画面が出ない原因）**
 
 - **leg の結果（`r166-panorama-r2-accept`・AMD・exit=1）**: `verificationSummary()` で **NPE** ✗ → render tick で crash → **画面が出ない** ✗（ユーザー報告と一致 ✓）。
