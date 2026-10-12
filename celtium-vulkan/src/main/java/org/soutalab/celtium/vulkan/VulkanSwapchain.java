@@ -863,7 +863,11 @@ public final class VulkanSwapchain {
                 // closes inside the frame.
                 long bridgeDone = this.bridgeTarget != null
                         ? this.bridgeTarget.presentDoneSemaphore(index.get(0)) : bridgeDoneSemaphore;
-                this.context.submitWithSemaphores(commands, new long[] {acquire, bridgeWaitSemaphore},
+                // The deferred form: the blit reaches the queue in the same place and with the same semaphore
+                // contract, but the render thread stops paying a fence wait for it on every present - the wait only
+                // existed to free this command buffer, which the deferred reclaim now does on confirmation instead.
+                this.context.celtium$submitDeferredWithSemaphores(commands,
+                        new long[] {acquire, bridgeWaitSemaphore},
                         new long[] {renderFinished, bridgeDone});
                 if (this.bridgeTarget != null && bridgeDone != 0L) {
                     this.bridgeTarget.noteDoneSignalled(bridgeDone);

@@ -772,6 +772,14 @@ public final class VulkanGlTexture {
     private long stagingAddress;
     private long stagingCapacity;
     private boolean stagingCoherent;
+    /**
+     * The fence of this texture's most recent deferred upload submission, or 0. Uploads now submit without a wait
+     * (the same deferred shape the upload ring uses), so the staging bytes a pending copy may still be reading are
+     * protected by awaiting this fence before anything writes, grows or frees the staging buffer. The wait is this
+     * texture's own last submission - never longer than the chain the synchronous submit already paid - and all the
+     * cross-texture serialization the per-submit wait used to cost is gone.
+     */
+    private long outstandingUploadFence = VK_NULL_HANDLE;
 
     private boolean deleted;
 
@@ -1516,8 +1524,10 @@ public final class VulkanGlTexture {
                         barrier);
             }
         } finally {
-            // Submitted and waited for by the helper, so the image holds the levels when this returns.
-            context.endCommands(commandBuffer);
+            // Deferred: submitted and tracked, not waited on the spot. The image holds the levels once the queue
+            // reaches this submission - ordered before every later submission the same queue takes - and the fence
+            // is what the next staging write awaits before reusing the buffer the copy reads from.
+            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
         }
         this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         for (int level = 0; level < depth; level++) {
@@ -2092,6 +2102,9 @@ public final class VulkanGlTexture {
             return;
         }
         deleted = true;
+        // Deferred uploads made the "caller ensures the device is idle" contract enforceable here: a pending copy
+        // still names both the image and the staging buffer, and its own fence is the bounded wait that confirms it.
+        awaitOutstandingUpload();
         destroyStaging();
         // An image this wrapper does not own is dropped, not destroyed: the renderer's off-target pair outlives this
         // wrapper (the next publish builds a new one for the same image), and destroying it here would take the
@@ -2391,7 +2404,11 @@ public final class VulkanGlTexture {
                 setLevelLayout(covered, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
         } finally {
-            context.endCommands(commandBuffer);
+            // Deferred: the transition executes ahead of every later submission on the same queue, which is the only
+            // ordering the recorded layout bookkeeping needs. The fence is still tracked for this texture even though
+            // nothing reads staging here: delete() may not destroy the image while this submission still names it,
+            // and the newest tracked fence is what the await uses - queue order makes it stand for the earlier ones.
+            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
         }
     }
 
@@ -2926,12 +2943,13 @@ public final class VulkanGlTexture {
                 }
         } finally {
             // Always close the one-shot command buffer, also when recording threw half way through, so the
-            // context's helper never keeps an open command buffer around.
-            context.endCommands(commandBuffer);
+            // context's helper never keeps an open command buffer around. Deferred: tracked, not waited - the fence
+            // is what the next staging write awaits, since this copy reads the staging buffer.
+            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
         }
-        // The copy and the blitted chain are submitted and waited for, so every level now holds content from this
-        // write: level 0 from the copy, the levels above it from the chain. Recorded after the wait, never before, so
-        // a failed upload cannot claim levels it did not write (audit N07).
+        // The copy and the blitted chain execute ahead of every later submission on the same queue, so every level
+        // now holds content from this write: level 0 from the copy, the levels above it from the chain. Recorded
+        // after the submission, so a refused one cannot claim levels it did not write (audit N07).
         recordWholeImageWrite();
     }
 
@@ -3022,6 +3040,10 @@ public final class VulkanGlTexture {
      * again and a failed one cannot be mistaken for a working staging area (audit N17).
      */
     private void ensureStaging(long required) {
+        // Before capacity is even compared: a deferred upload submitted earlier may still be reading these staging
+        // bytes on the queue, so nothing - a pixel write on the reuse path below, or the destroy on the growth path -
+        // may touch the buffer until that submission's fence confirms it.
+        awaitOutstandingUpload();
         if (stagingBuffer != 0L && stagingCapacity >= required) {
             return;
         }
@@ -3089,7 +3111,18 @@ public final class VulkanGlTexture {
     /** Images whose creation failed part-way and whose remains were retired; see {@link #createImageResources}. */
     private static long imageReleases;
 
+    /** Awaits this texture's own last deferred upload, when there is one still unconfirmed. */
+    private void awaitOutstandingUpload() {
+        if (this.outstandingUploadFence != VK_NULL_HANDLE) {
+            long fence = this.outstandingUploadFence;
+            this.outstandingUploadFence = VK_NULL_HANDLE;
+            context.celtium$awaitDeferredSubmit(fence, "texture staging reuse");
+        }
+    }
+
     private void destroyStaging() {
+        // The buffer this destroys may still be named by an in-flight copy: confirm that submission first.
+        awaitOutstandingUpload();
         VkDevice device = context.device();
         if (stagingAddress != 0L && stagingMemory != 0L) {
             vkUnmapMemory(device, stagingMemory);
