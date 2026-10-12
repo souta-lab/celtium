@@ -393,6 +393,15 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.413 **round 214: leg 許可 → 受入で refactor 由来の crash を2件検出・修正（画面が出ない原因）**
+
+- **leg の結果（`r166-panorama-r2-accept`・AMD・exit=1）**: `verificationSummary()` で **NPE** ✗ → render tick で crash → **画面が出ない** ✗（ユーザー報告と一致 ✓）。
+- **原因①（`ec0a2cab5`）**: `lastTerrainIndirectFallback` は元々 `= "none"` ✓ だったが、**R4 の移動で初期化子を落とした** ✗ → `null.replace(' ', '_')` ✗。同じ種類の取りこぼしを掃引し、leg が印字する String 全部に元の非 null 既定を戻した ✓（`lastSkipReason`・`lastPairClearRefusal`・`lastTwoArgBlendPair`・`lastUniformPreparationFailure`・`stallOrigin` ✓）。
+- **原因②（`aefb23f23`）**: 1件目の修正後も crash ✗ — `celtium$perFormat` で **配列が null** ✗。`acceptedByFormat`（`new int[8]` ✓）・`drawnByFormat`（`new int[VulkanImmediateFormats.COUNT]` ✓）・`postAcceptDroppedByFormat`（`new int[8]` ✓）が **R2 stage 7 の revert で素の宣言に戻っていた** ✗ → 元の宣言へ復元 ✓。
+- **検証（`r166-panorama-r2-fixed2`）**: **NPE なし・`CELTIUM_VERIFY via=fixture end` が印字** ✓✓（crash 解消 ✓）。残る失敗は **`IllegalStateException: Too few world rendering frames`**（fixture 側の frame 数ゲート ✓）と `CELTIUM_PRESENTED_IMAGE no picture` ✓ — **ユーザーにより vulkan-drain 由来と特定され、そちらで修正・PR 予定** ✓（こちらの範囲外 ✓）。
+- **教訓（重要・再発防止）**: **field を移して初期化子を移さないと、コンパイルも CPU 契約検査も通り、最初の render tick で落ちる** ✗ — **leg だけが見える** ✓。次の作業単位で **「元の初期化子を持つ field が初期化子なしで抽出されていないか」を静的に検査する CPU 契約**を追加する ✓。
+- **注記**: `currentGroup*` の配列群は元々初期化子なし ✓（group ごとに設定 ✓）なので対象外 ✓。
+
 ## 0.412 **round 213: R7 前半完了（`FrameCoordinator`）＋ 後半第1歩（`VulkanRenderer` root・concrete cast 除去）**
 
 - **`FrameCoordinator` 着地**（`064af64cf`）: `submitCommands`（no-arg overload 含む ✓）＋ `submitSignalOnly` ✓ を移動 ✓。slot/sequence/退役規則は **R6 の scheduler** が所有 ✓、coordinator が持つのは**その規則を問い合わせる順序と queue へ渡す唯一の場所** ✓。frame state は renderer が単一所有 ✓（**25メンバの Host** 経由 ✓・呼び戻しなし ✓）。
