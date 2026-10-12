@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.398 **round 199: R2 の配線マップ納品（69 run・行範囲・文字差異 0）— `docs/history/2026-10-12-r2-wiring-map.md` に永続化**
+
+- **納品（acceptance `36cef2c4d`）**: 7クラス＋**`verificationSummary()` の run→行範囲マップ（69 run）** ✓。機械照合で **各 run の出力テキストが現行文字列に逐語一致・mismatch 0・欠落 run 0** ✓（落としたのは inline comment のみ＝出力不変 ✓）＝**ベースラインは byte-exact** で、`verify_line_check.py` と leg の `CELTIUM_VERIFY` 行が判定子になる ✓。
+- **永続化**: `docs/history/2026-10-12-r2-wiring-map.md`（69行の表・**2クラスが共有する3行**（L8492/L8622/L8734）・**155/349 の他所有 counter**（`VulkanContext.*`/`CeltiumGlStub.*`/`TextureCopyService.*`/`VulkanTextureRegistry`/`VulkanModelQuadCapture.*`/`VulkanImmediateTexturePipeline.*`/`FramePassSplit`/backend helper 群）・所有裁定 ✓）。セッション圧縮で仕様が失われないようにするため ✓。
+- **所有裁定（Lead）**: 二度出る counter（`frameId`/`bootstrapQueueWaits`/`gpuStalled`/`offTargetRefusals`/`outsideWorldPassRefusals`）は**counter を動かさず両 run が読む** ✓／`publishedFrameTextures*`→**Texture**（state は R1b が所有 ✓）／`polygonOffset*`→**Immediate**（counter は stub ✓）／`framePassSplit`→**Submission**（`FramePassTimings` の計器 ✓）／`frameArena`/`slot*`→**Submission**（scheduler が slot と規則・arena が list と解放対象 ✓ の既裁定と整合 ✓）／`stalled*`・`idle*`→**Submission**、`uniformPreparationFailures`→**Immediate** ✓。
+- **注意**: helper（`offerStageSummary()` 等）と外部 object は**呼ぶクラスから到達可能**でなければならない → 引数で渡すか domain と一緒に移す ✓（配線時の判断 ✓）。
+
 ## 0.397 **round 198: R3b の裁定反映＋CPU 検査（30項目）／R5 配線は `frameTargetKnown` まで完了**
 
 - **R3b 反映（glyph-fix `31a618217`・3ファイルのみ）**: ①保持を**修正として既定 ON**（property は `celtium.font.retaining`、`nativeTextureCopy=false` と同じ位置づけ＝**正しさが lab flag に依存しない** ✓）。commit/doc に **「implemented and unexercised」**を明記（leg 未実行・カウンタ発火は CPU 検査のみ → **拒否が起きない leg で `retainedRuns=0` なのは期待値であって fix の証拠ではない** ✓）。`celtium$fontBatchSummary()` の文字列は不変 ✓（保持カウンタは `celtium$fontRetentionSummary()` 側 ✓）。②target witness は**独立の証拠**（silent な折り込みにしない ✓）: **`scripts/cpu-contract/FontBatchContractCheck.java`**（CPU のみ・Gradle build なし）で **retention ON = 30 checks / 0 failed**、**コントロール `-Dceltium.font.retaining=false` = 24 checks / 0 failed** ✓（旧挙動の再現と drop 計上 ✓）。保持の証拠は **pending buffer を別バイトで上書き後も checksum が元 glyph と一致**＝alias していないことの証明 ✓、summary のキー順不変も検査 ✓。
