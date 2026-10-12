@@ -914,6 +914,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long immediateSubmitTailNanos;
     /** Histogram-ish spread: under 5µs / 5-50 / 50-200 / tail, so the average can be read against the mass. */
     private int immediateSubmitUnder5, immediateSubmit5to50, immediateSubmit50to200;
+    /**
+     * What a tail call carried: a queue flush (immediateFlushes moved), a lazy texture mirror supply
+     * (lazyMirrorSupplies moved), both, or neither (GC pause, JIT deopt, shader compile - the residue).
+     */
+    private int tailCarriedFlush, tailCarriedSupply, tailCarriedBoth, tailCarriedNeither;
+    private int submitFlushesAtEntry, submitSuppliesAtEntry;
     /** Split of the per-batch cost: time inside prepareImmediate (pipeline and descriptor preparation). */
     private long prepareImmediateNanos;
     private int prepareImmediateCalls;
@@ -5152,6 +5158,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateOfferedByFormat[formatId]++;
         }
         long submitStart = System.nanoTime();
+        this.submitFlushesAtEntry = this.immediateFlushes;
+        this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
         try {
             boolean taken = submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress,
                     vertexCount, drawMode);
@@ -5168,6 +5176,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (submitNanos > 200_000) {
                 this.immediateSubmitTailCalls++;
                 this.immediateSubmitTailNanos += submitNanos;
+                boolean carriedFlush = this.immediateFlushes != this.submitFlushesAtEntry;
+                boolean carriedSupply = this.lazyMirrorSupplies != this.submitSuppliesAtEntry;
+                if (carriedFlush && carriedSupply) this.tailCarriedBoth++;
+                else if (carriedFlush) this.tailCarriedFlush++;
+                else if (carriedSupply) this.tailCarriedSupply++;
+                else this.tailCarriedNeither++;
             } else if (submitNanos > 50_000) {
                 this.immediateSubmit50to200++;
             } else if (submitNanos > 5_000) {
@@ -8655,6 +8669,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " submitBuckets=[<5us:" + this.immediateSubmitUnder5 + " 5-50:" + this.immediateSubmit5to50
                 + " 50-200:" + this.immediateSubmit50to200 + " >200us:" + this.immediateSubmitTailCalls
                 + " tailMillis=" + (this.immediateSubmitTailNanos / 1000000L) + "]"
+                + " tailCarried=[flush:" + this.tailCarriedFlush + " supply:" + this.tailCarriedSupply
+                + " both:" + this.tailCarriedBoth + " neither:" + this.tailCarriedNeither + "]"
                 // Audit B03/B04: what the descriptor pools did (pools, growths, sets, cached texture keys,
                 // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
                 // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
