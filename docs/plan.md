@@ -393,6 +393,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.384 **round 185: 最大監査（2026-10-12）の受入状況と担当割当 — 監査は「コード確定」であり GPU 受入ではない**
+
+- **監査**: `docs/audit-2026-10-12-maximum.md`（commit `5b41093f7`）＋ CPU witness 7本 `docs/audits/2026-10-12/`（`cpu-witnesses.json` / `source-witnesses.py`）。**証拠クラスは「CPU再現」「コード確定」で、GPU 受入ではない**（監査自身が明記）。したがって各項目は **validation-clean の leg で witness を取って初めて受入**になる。
+- **割当（同ファイル同時編集を避ける）**:
+  | ID | 内容 | 担当 | 状態 |
+  |---|---|---|---|
+  | B03/B04 | terrain UBO offset 0 を pending 中に再利用／単一 descriptor set を pending 中に書き換え | perf-ring | 割当済（`UniformBuffer`/`TerrainPipeline`、backend は blend-state と調整） |
+  | B05 | FrameArena growth が同一 frame の in-flight host buffer を即 destroy | perf-ring | 割当済 |
+  | B11/B12 | post 32-slot ring の completion ownership 欠如／acquire semaphore の cursor 再利用 | perf-ring | 割当済 |
+  | B06 | terrain segment の即時再利用＋transfer の prior-read 同期不足 | sky-draws | 割当済 |
+  | B07 | indirect packets が region ごとに同 offset 上書き（**既定無効**） | sky-draws | 割当済（B06 の後・無効であることを明記） |
+  | B10 | post executor が resize 後も旧 FrameImageTarget を保持 | frame-composite | 割当済（spectator effect ON で resize/fullscreen 受入・AMD/Intel） |
+  | B08/B09 | copy cache が 7段 blur を同一コピー扱い／key が矩形違いで衝突 | blend-state | **P0 の後**。ユーザー指示どおり**別仮説として分離**（私の実測: 正しい rollback leg も壊れた leg も `dest=21` の copy は1回＝**B08 は灰色 menu の判別子ではない**） |
+  | B01/B02/B14 | item cache（容量保存／lighting cleanup／無制限 side cache） | **SWE2（RenderItem owner・別 queue）** | 我々は RenderItem を触らない |
+  | B13/B15–B23 | P2（descriptor cache・arena promotion・font 集計・pass timing 二重計上・query attribution・entity tick cache・PostChain rollback・viewport/scissor query・compositor wrapper 終了コード・fast block dispatch） | 未割当 | P0/P1 の後 |
+  | B24 | goal/plan/perf 表に撤回済み原因と古い状態が残る | **Lead（私）** | 進行中（本節と以下で同期） |
+- **B24 の同期（この round）**: 監査の項目を上の表に取り込み、**解決済みの BH/監査項目は表から外して `docs/history/` の記録に委ねる**方針を明記（ユーザー指示）。撤回済みの原因（旧「Nether 受入」「hook 死亡」「月 quad 原因説」等）を現在の事実として残さない。
+- **並列化の制約**: ユーザー指示により **`pipeline` と `entity-models` は使わない**。B01/B02/B14 は SWE2 の RenderItem queue なので我々は同ファイルを編集しない。
+
 ## 0.383 **round 179 (P0): loading-fix シリーズが main menu のパノラマを壊した（ユーザー報告・再現済み・インスタンスは rollback 済み）**
 
 - **ユーザー報告（1920x1080 のスクリーンショット付き）**: 「ホーム画面がとてもバグってる、パノラマも変な場所いってるし、どこも押せない(クリック音はなるけど)」。
