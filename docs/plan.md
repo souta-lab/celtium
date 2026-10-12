@@ -339,6 +339,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.364 **round 171: レジストリの名前キー・キャッシュに穴 — `forgetTexture` が `mirrorSourceById` を消していない（Lead の発見・texture-mirror へ配布）**
+
+- **発見（コードを読んで）**: `VulkanTextureRegistry.forgetTexture`（`:1413`）は `entries.remove(id)` と `fullyInitialized.remove(id)` を行い wrapper も退役させるが、
+  **`mirrorSourceById`（`:157` の `Map<Integer,String>`・`:1268` で書込み・`:1340`/`:1350` で読む）を消していない**。
+- **なぜ効くか**: **OpenGL は削除された名前を再利用可能にする**（"After a texture is deleted, it has no contents or dimensionality,
+  and its name is free for reuse"）＝**次の `glGenTextures` が同じ名前を別内容に渡しうる**。ラベルが残ると、
+  **新しい texture のサンプルが古い source に帰属される**。
+- **パノラマへの直接の影響**: **`splashSourcedGroups`（修正の効果を読む計器）は `announced-int[]` ラベルを数える**ので、
+  ラベルが delete-and-reuse を跨いで生き残ると**計器が誤った texture を指す**。texture-mirror の測定
+  （`forgetTexture id=8 hadEntry=true` は発火・`announceImage` は来ない・mirror は `int[]` で再充填）と整合する。
+- **依頼（texture-mirror へ送信済み）**: `forgetTexture` で `mirrorSourceById` を消す＋**GL 名でキーされた他の map/cache が同じ経路で消えているか**を確認
+  （`entries` と `fullyInitialized` が消えているのでそれが手本）。**ラベルを消して `splashSourcedGroups` が変われば、それは計器についての知見**として記録。
+- **このラウンドの他**: ローカルと origin は同期（0/0）・他担当の landings はまだ無し（pipeline 3ファイルが dirty ＝ 作業中）。
+
 ## 0.363 **round 170: PR#1・PR#2 をマージし 0.0.2-alpha を公開。ユーザ指示でパノラマ・ロード画面・残BHを最優先化**
 
 - **PR#1 マージ（`c2595aa9f`）**: "perf: remove render-thread GPU drains"。**GPU待ち0** の成果＝
