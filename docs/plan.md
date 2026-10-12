@@ -306,6 +306,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.319 **round 125: bind short-circuit は glyph-fix が実装中（ツリーは一時的に赤・原因を名指しして依頼）**
+
+- **状態**: `VulkanGlState.java` に **`bindWouldChangeNothing`** が入り、`GlStateManagerMixin.java` はまだ新名を参照していない＝**mid-unit**。
+  Lead の build は **赤**で、原因は `VulkanTerrainGpuBackend.java:3553` の **Javadoc が `bindShortCircuits` を参照**しているのに**その field がまだ無い**こと
+  （`symbol: variable bindShortCircuits`）。
+- **対応**: **glyph-fix の作業中なので revert しない**（他担当の有効な変更を保持する規則）。原因行を名指しして依頼済み。
+  着地時に期待する要素を明示: mixin の `VulkanGlState.bindWouldChangeNothing(glTextureId)` による早期 return・`bindShortCircuits` の宣言と frame counter 隣への出力・
+  **safety 引数を commit message に**（per unit で mirror が既に値を持つ＝no-op・vanilla の cache は HEAD 注入の上流で我々を止められない）・
+  同一 jar の F3 on/off pair に `pinSections`・可能なら `bindTextureCalls`/`immediateStateCalls` の reporting line。
+- **記録**: 私の誤読（印刷行数 vs `bindsOnUnit0`）と unit 再開は §0.318（`97dddc900`）。**ツリーが赤いのは実装中の一時状態**であり、
+  **未検証のまま放置しない**ことを着地条件に含める。
+
 ## 0.318 **round 124: 自分の測定の誤りを訂正 — 到達数は「印刷行数」ではなく `bindsOnUnit0`（1,628,711 / 1,280,000 glyph）＝hook は glyph ごとに走る**
 
 - **glyph-fix の反証（正しい）**: 私が数えた **248 は bounded な `CELTIUM_UNIT_BIND` の「印刷行数」**であり、
