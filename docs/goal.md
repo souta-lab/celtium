@@ -24,6 +24,16 @@ goal revision 27 の objective は「完成目標 + 直近の必須修正3件 + 
    （修正前 `windowFlushFailures=64`・`windowFlushDroppedBatches=9680`・`drawnByFormat` id4=0/id9=0）。
    修正後: `windowFlushFailures=0`・`immediateGroupsDrawn=5297`・**`drawnByFormat` id4=17940・id9=228**、
    presented frame に**一人称の腕**が出る。**残り**: presented frame での entity band / hand の参照一致を閉じる。
+   **訂正（round 246）**: 上記「HUD は受入済み（参照一致 1.86）」は **bridge（GL 経路）の測定**であり、
+   `glless=true` 経路の証拠ではない。GL-less では **HUD の quad が面積 0 に collapse し、frame image に
+   1画素も書かれていない**ことを実測した（`CELTIUM_HUD_GROUP` は 23 group/frame が main identity・
+   `route=frame-image`・正しい GUI ortho と報告するのに、`CELTIUM_GROUP_BOUNDS` は全 group が
+   `ndc x[-0.00..0.00] y[-0.00..0.00]`・`clip=(0,0,0.5,2091)`＝`cw = 1 - z`）。根因は共有 `matrixScratch` で
+   `ortho` が perspective の `[11] = -1` を継承すること（GL の `glOrtho` の最終行は `0 0 0 1`）。
+   修正 `-Dceltium.vulkan.scratchZero=perspective,ortho` が HUD を frame image に届かせることは実測済みだが、
+   同時に**提示画像が一色黒**になる（collapse が捨てていた GUI stage の全画面 draw が届くため）ので既定は
+   緑のまま。次の単位はこの黒の特定（`CELTIUM_MIRROR_DRAW` の world frame 行）。詳細は `docs/plan.md` の
+   ヘッダ表 round 246 行。
 4. **font renderer の overhaul（Smooth Font 的実装・ユーザー提案）。** 原典確認の結果、1.12.2 の font は
    **bitmap sheet**（`Minecraft.java:523` が `textures/font/ascii.png`、`FontRenderer.java:160-187` が alpha から
    `charWidth` を算出、unicode は `font/glyph_sizes.bin`）で **TTF/OTF が assets に無い**。したがって
