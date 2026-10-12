@@ -1626,6 +1626,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private long dispatch(int functionId, long c0, long c1, long c2, long c3, long c4, long c5, long c6, long c7,
             long c8, long c9, long c10, long c11) {
+        // The no-op class owns the call volume - glColor/glTexCoord/glVertex and the state setters nobody reads -
+        // and nothing in its path touches the arguments: the two censuses it pays were per-call String lookups
+        // (a set contains + two concurrent-map gets, ~8% of the steady JFR) plus a twelve-slot scratch fill that
+        // nobody reads. An index into the id-keyed arrays answers both questions and skips the whole pack.
+        if (functionId >= 0 && TABLE.get(functionId).semantics == SEM_NOOP) {
+            celtium$noteNoopById(functionId);
+            return 0L;
+        }
         long[] c = dispatchArgsScratch();
         c[0] = c0;
         c[1] = c1;
@@ -2161,7 +2169,40 @@ public final class CeltiumGlStub implements FunctionProvider {
         return summary.toString();
     }
 
+    /**
+     * The per-call no-op accounting used to take a {@code String} all the way down: a {@code MIRROR_REQUIRED}
+     * contains, a concurrent-map get and an atomic increment, twice - all on the highest-volume class of calls. The
+     * fn id is the cheaper key the table already hands us: one array store per counter, and a bit-set lookup for
+     * "is this a transform name". The name-keyed maps stay as the read model - the census readers iterate the
+     * arrays and resolve names through the table, so nothing downstream changes shape.
+     */
+    private static final java.util.concurrent.atomic.AtomicLongArray NOOP_COUNTS_BY_ID =
+            new java.util.concurrent.atomic.AtomicLongArray(4096);
+    private static final java.util.concurrent.atomic.AtomicLongArray MIRROR_MISSES_BY_ID =
+            new java.util.concurrent.atomic.AtomicLongArray(4096);
+    private static final java.util.BitSet MIRROR_REQUIRED_BY_ID = new java.util.BitSet(4096);
+    static {
+        for (int i = 0; i < TABLE.size(); i++) {
+            if (MIRROR_REQUIRED.contains(TABLE.get(i).name)) {
+                MIRROR_REQUIRED_BY_ID.set(i);
+            }
+        }
+    }
+
+    private static void celtium$noteNoopById(int functionId) {
+        if (MIRROR_REQUIRED_BY_ID.get(functionId)) {
+            MIRROR_MISSES_BY_ID.incrementAndGet(functionId);
+        }
+        NOOP_COUNTS_BY_ID.incrementAndGet(functionId);
+    }
+
+    /** The name-keyed no-op path remains for callers that genuinely have a name: it folds into the id arrays. */
     private static void celtium$noteNoop(String name) {
+        Integer id = IDS.get(name);
+        if (id != null) {
+            celtium$noteNoopById(id.intValue());
+            return;
+        }
         java.util.concurrent.atomic.AtomicLong counter = NOOP_CALLS.get(name);
         if (counter == null) {
             counter = new java.util.concurrent.atomic.AtomicLong();
@@ -2183,13 +2224,23 @@ public final class CeltiumGlStub implements FunctionProvider {
      * that a scene is complete.
      */
     public static java.util.List<String> noopCensus(int limit) {
-        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
-                new java.util.ArrayList<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>>(
-                        NOOP_CALLS.entrySet());
-        entries.sort((left, right) -> Long.compare(right.getValue().get(), left.getValue().get()));
+        java.util.List<long[]> byId = new java.util.ArrayList<long[]>();
+        for (int i = 0; i < TABLE.size(); i++) {
+            long count = NOOP_COUNTS_BY_ID.get(i);
+            if (count > 0) {
+                byId.add(new long[] { i, count });
+            }
+        }
+        byId.sort((left, right) -> Long.compare(right[1], left[1]));
         java.util.List<String> out = new java.util.ArrayList<String>();
-        for (int i = 0; i < entries.size() && i < limit; ++i) {
-            out.add(entries.get(i).getKey() + "=" + entries.get(i).getValue().get());
+        for (int i = 0; i < byId.size() && i < limit; ++i) {
+            out.add(TABLE.get((int) byId.get(i)[0]).name + "=" + byId.get(i)[1]);
+        }
+        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry : NOOP_CALLS.entrySet()) {
+            if (out.size() >= limit) {
+                break;
+            }
+            out.add(entry.getKey() + "=" + entry.getValue().get());
         }
         return out;
     }
@@ -2200,7 +2251,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         for (java.util.concurrent.atomic.AtomicLong counter : NOOP_CALLS.values()) {
             total += counter.get();
         }
-        return "noopEntryPoints=" + NOOP_CALLS.size() + " noopCalls=" + total
+        long entryPoints = NOOP_CALLS.size();
+        for (int i = 0; i < TABLE.size(); i++) {
+            long count = NOOP_COUNTS_BY_ID.get(i);
+            if (count > 0) {
+                total += count;
+                entryPoints++;
+            }
+        }
+        return "noopEntryPoints=" + entryPoints + " noopCalls=" + total
                 + " top=[" + String.join(" ", noopCensus(15)) + "]";
     }
 
@@ -2342,6 +2401,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private static void celtium$noteMirrorMiss(String name) {
+        Integer id = IDS.get(name);
+        if (id != null) {
+            if (MIRROR_REQUIRED_BY_ID.get(id.intValue())) {
+                MIRROR_MISSES_BY_ID.incrementAndGet(id.intValue());
+            }
+            return;
+        }
         if (!MIRROR_REQUIRED.contains(name)) {
             return;
         }
@@ -2375,6 +2441,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                     .append(" noBackend=").append(MATRIX_MULTIPLY_NO_BACKEND.get())
                     .append(" noMirror=").append(MATRIX_MULTIPLY_NO_MIRROR.get())
                     .append(" refused=").append(MATRIX_MULTIPLY_REFUSED.get());
+        }
+        for (int i = 0; i < TABLE.size(); i++) {
+            long misses = MIRROR_MISSES_BY_ID.get(i);
+            if (misses > 0) {
+                if (line.length() > 0) {
+                    line.append(' ');
+                }
+                line.append(TABLE.get(i).name).append('=').append(misses);
+            }
         }
         for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
                 : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(MIRROR_MISSES).entrySet()) {
