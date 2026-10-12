@@ -930,6 +930,59 @@ id9 228 accepted / 0 drawn); `modelMeshBuilt=38`, `modelMeshQuads=228`, `modelDr
 3. BH-27's second half ("submit/wait count does not grow linearly with payload count") needs a leg that varies the
    chunk upload volume; my two legs differ in run length, not in payload policy.
 
+## 6j. The frame pass-split instrument (plan §0.227's missing instrument)
+
+The lag-spike decode left `gameRenderer`'s self time mostly unattributed: in the worst 5 % of frames it is 318.6 ms
+against 25.0 ms in median frames, the profiler's named children explain ~72 ms of it, and ~246 ms per spike frame
+belongs to no section. `frameFenceWaitMillis` is 0.14 ms per wait, orders of magnitude too small to be the mechanism.
+
+**What was landed.** `celtium-vulkan/.../FramePassTimings.java` - a per-frame wall-clock decomposition with its own
+brackets, plus mixin brackets at the pass entry points:
+
+- frame = `EntityRenderer.func_181560_a`; world = `func_78471_a`; hand = `func_78476_b`;
+- clouds = `RenderGlobal.func_180447_b`; entities = `RenderGlobal.renderEntities` (measured *inside* world);
+- particles = `ParticleManager.func_78874_a` (inside world); gui = **`GuiIngameForge.func_175180_a`**.
+
+`residual = frame - (world + hand + clouds + weather + gui)` is computed **per frame** and then summarised; the inside
+passes are reported but never subtracted, so nothing is double-counted. The summary reaches the report through the
+`celtium/vulkan-check` line as `framePassSplit=[...]` and prints every 200 frames as `CELTIUM_FRAME_PASS_SPLIT`. Off
+unless `VulkanDiagnostics.enabled()` or `-Dceltium.vulkan.passSplit=true`.
+
+**Two limits, stated rather than implied.** (1) This is not the profiler's decomposition and must never be added to
+it: the profiler's self-time sum is 4.01x the frame time because `frame`, `root` and `gameRenderer` each hold all of
+it, while this is a single non-overlapping bracket of the frame. (2) The user's capture carries no jar hash, so it is
+the user's build rather than a known one; it is used for ordering and ratios only, and acceptance is taken on our own
+legs.
+
+**First measurement** (`r42-split`, jar `1ad2ad6238a2a416`, fixture `d6aba83dfe8cf108`, plain terrain + keepGui,
+`PASSED`, 107 frames):
+
+| bracket | p50 | p95 | worst |
+|---|---|---|---|
+| frame | 31.9 | 83.7 | 465.2 |
+| world | 21.9 | 57.7 | 364.6 |
+| gui | 3.9 | 16.6 | 92.0 |
+| clouds | 1.8 | 8.5 | 17.6 |
+| hand | 0.5 | 2.4 | 41.0 |
+| weather | 0.0 | 0.0 | 0.0 |
+| **residual** | **0.0** | **2.1** | **34.3** |
+| particles (inside world) | 2.6 | 11.4 | - |
+| entities (inside world) | 0.0 | 0.0 | - |
+
+So **on our leg the top-level passes account for the frame** - the residual is 0.0 ms at p50 and 2.1 ms at p95, where
+the user's capture has ~246 ms of 318.6 ms `gameRenderer` unattributed. That is the instrument's first result and it is
+a negative one for the "our passes hold the residual" hypothesis: whatever holds the user's 246 ms is not a top-level
+pass of the kind bracketed here, and the user's build differs from ours. The `gui` reading also confirms the
+instrument's shape: vanilla's `GuiIngame` hook never fired (Forge's `GuiIngameForge.func_175180_a` overrides it
+without calling `super`), which is why the first leg read `gui=0.0` while the HUD was plainly in the frame; retargeting
+it to the Forge class is what made `gui` appear. `entities=0.0` is consistent with this leg having no entity flags (the
+scene has no mobs); an entity leg is what would confirm that bracket.
+
+The user's capture's other numbers, recorded so they are not re-derived: `gui` is a constant ~13.7 ms per frame (about
+half the median frame) and does not grow in spikes; `forgeHudText` totals 2.7 ms and `chat` 201.8 ms over the whole
+20 s - so in that capture **the text path is a constant tax, not a spike source**, which is a different conclusion from
+what the earlier screenshots suggested.
+
 ## 7. Instruments and artifacts
 
 Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py`, `compare_jei_pair.py`, the

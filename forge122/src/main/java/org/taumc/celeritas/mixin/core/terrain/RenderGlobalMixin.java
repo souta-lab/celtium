@@ -68,6 +68,34 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         return 0;
     }
 
+    /** Clouds, timed for the frame's pass split (plan §0.227). */
+    @Inject(method = "func_180447_b", at = @At("HEAD"), require = 0)
+    private void celtium$cloudsTimedBegin(float partialTicks, int pass, double x, double y, double z,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("clouds");
+    }
+
+    @Inject(method = "func_180447_b", at = @At("RETURN"), require = 0)
+    private void celtium$cloudsTimedEnd(float partialTicks, int pass, double x, double y, double z,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("clouds");
+    }
+
+    /** Entities, measured inside the world pass and reported but never subtracted from the frame's residual. */
+    @Inject(method = "renderEntities", at = @At("HEAD"), require = 0)
+    private void celtium$entitiesTimedBegin(net.minecraft.entity.Entity entityIn,
+            net.minecraft.client.renderer.culling.ICamera camera, float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("entities");
+    }
+
+    @Inject(method = "renderEntities", at = @At("RETURN"), require = 0)
+    private void celtium$entitiesTimedEnd(net.minecraft.entity.Entity entityIn,
+            net.minecraft.client.renderer.culling.ICamera camera, float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("entities");
+    }
+
     @Inject(method = "<init>", at = @At("RETURN"))
     private void init(Minecraft minecraft, CallbackInfo ci) {
         this.renderer = new CeleritasWorldRenderer();

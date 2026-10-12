@@ -26,6 +26,52 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class EntityRendererMixin {
 
     /**
+     * The frame's own bracket, and the top-level passes inside it.
+     * <p>
+     * This is the instrument the lag-spike decode asked for (plan §0.227): the profiler's {@code gameRenderer} self
+     * time is 318.6 ms in spike frames against 25.0 ms in median frames and its named children explain only about
+     * 72 ms of it, so roughly 246 ms belongs to no section. Bracketing the passes with our own wall clock gives that
+     * residual a name - {@code world}, {@code hand}, {@code clouds}, {@code weather}, {@code gui} - and reports what
+     * is left. It reads none of the profiler's numbers, so it cannot inherit their overlap: the profiler's self-time
+     * sum is 4.01x the frame time and must never be added to this.
+     */
+    @Inject(method = "func_181560_a", at = @At("HEAD"), require = 0)
+    private void celtium$frameBegin(float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.beginFrame();
+    }
+
+    @Inject(method = "func_181560_a", at = @At("RETURN"), require = 0)
+    private void celtium$frameEnd(float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.endFrame();
+    }
+
+    @Inject(method = "func_78471_a", at = @At("HEAD"), require = 0)
+    private void celtium$worldPassTimedBegin(float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("world");
+    }
+
+    @Inject(method = "func_78471_a", at = @At("RETURN"), require = 0)
+    private void celtium$worldPassTimedEnd(float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("world");
+    }
+
+    @Inject(method = "func_78476_b", at = @At("HEAD"), require = 0)
+    private void celtium$handPassTimedBegin(float partialTicks, int pass,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("hand");
+    }
+
+    @Inject(method = "func_78476_b", at = @At("RETURN"), require = 0)
+    private void celtium$handPassTimedEnd(float partialTicks, int pass,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("hand");
+    }
+
+    /**
      * Seeds the mirror once the camera transform is complete.
      * <p>
      * The hooks cannot have seen everything: `func_78479_a` applies `loadIdentity` and the camera transform, and any of it
