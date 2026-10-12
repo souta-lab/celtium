@@ -1737,9 +1737,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long frameFenceWaitCount;
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
+    /**
+     * True when this group's vertices are baked with each batch's own modelView on append and the recorded modelView
+     * is identity (OPT-18b). Only normal-free, unlit, unfogged formats under an axis-aligned matrix qualify: for them
+     * {@code x' = sx*x + tx} in single precision is the product the shader would compute anyway, so a batch that
+     * would have split on a different GUI matrix can still join this group.
+     */
+    private boolean currentGroupPreTransformed;
     private boolean currentGroupUsed;
     private int currentGroupFormatId;
     private int[] currentGroupState = new int[7];
+    /** Groups opened on the pre-transformed path, batches appended to them, and splits a matrix still caused. */
+    private int preTransformedGroups;
+    private int preTransformedBatches;
+    private long preTransformedVertices;
+    private int matrixSplits;
+    /** Batches that joined the open group with the whole preflight skipped (OPT-18b's other half). */
+    private int fastMergedBatches;
+    /**
+     * The registry records the open group was built against. A texture re-created under the same GL name is a
+     * different object - and a different descriptor - which is what the slow path's prepared-object comparison
+     * catches; the fast path compares the records themselves for the same effect. {@code currentGroupLightmapImage}
+     * is the same for the lightmap the lightmap-bearing formats' descriptors name.
+     */
+    private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupTextureImage;
+    private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
     /**
      * The fog state at the moment the group was opened, beside {@code currentGroupState} and
      * {@code currentGroupModelView} and for the same reason.
@@ -5236,6 +5258,102 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 stateKey |= 1L << 61;
             }
             this.stateKeyNanos += System.nanoTime() - keyStart;
+            // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
+            // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
+            // full-screen passes with real programs, each of which mirrored its source texture - measured at 898
+            // readbacks, about 15 per frame, which is what turned the spectator spider scene into ~2 s per frame and
+            // left the run unable to reach its capture tick on either GPU. Refused before anything is appended, so GL
+            // keeps drawing those passes with the program that is actually bound. The question is per-batch state the
+            // group key cannot see, so it is answered before the fast-merge decision - the fast path must not skip a
+            // check that would have refused.
+            long programQueryStart = System.nanoTime();
+            int boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
+            this.programQueryNanos += System.nanoTime() - programQueryStart;
+            this.programQueryCount++;
+            if (boundProgram != 0) {
+                // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
+                celtium$offerStage(9);
+        if (formatId == 8 && !this.entityProgramLogged) {
+                    // The entity layout is refused in every scene (acceptedByFormat 8:0). Which program is bound when it
+                    // is offered decides whether the custom-program shutter is what keeps entities on GL - and that is
+                    // what the depth write-back depends on.
+                    this.entityProgramLogged = true;
+                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED program=" + boundProgram
+                            + " texture=" + boundTexture);
+                    StackTraceElement[] entityStack = new Throwable().getStackTrace();
+                    StringBuilder entityFrames = new StringBuilder();
+                    for (int i = 1; i < Math.min(entityStack.length, 10); i++) {
+                        entityFrames.append(" <- ").append(entityStack[i].getClassName()).append('.')
+                                .append(entityStack[i].getMethodName()).append(':').append(entityStack[i].getLineNumber());
+                    }
+                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED_SITE" + entityFrames);
+                }
+                this.immediateLastRefusal = "a custom shader program is bound";
+                // Named once per program: the spider scene refuses 1470 batches here, and which program they belong to
+                // decides whether the entity path can be supported natively at all (which is what would let the depth
+                // write-back go). The id is the only handle GL offers; the count says how dominant it is.
+                // The vertex layout matters as much as the program: the vanilla outline group's mask pass draws entity
+                // models while the blur and composite passes are full-screen quads, so which format each refused program
+                // uses says which of them a native pass has to reproduce.
+                String programKey = boundProgram + "/fmt" + formatId;
+                Integer seenCount = this.shaderProgramRefusedIds.get(programKey);
+                this.shaderProgramRefusedIds.put(programKey,
+                        Integer.valueOf(seenCount == null ? 1 : seenCount.intValue() + 1));
+                Integer seenProgram = this.shaderProgramRefusedPrograms.get(Integer.valueOf(boundProgram));
+                this.shaderProgramRefusedPrograms.put(Integer.valueOf(boundProgram),
+                        Integer.valueOf(seenProgram == null ? 1 : seenProgram.intValue() + 1));
+                if (seenCount == null) {
+                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
+                            + " format=" + formatId
+                            + " (first batch refused with this program bound)");
+                    // The call site, once per program: the id and the format say a custom program drew coloured quads,
+                    // which is not enough to know what to support. The stack names it.
+                    StackTraceElement[] stack = new Throwable().getStackTrace();
+                    StringBuilder frames = new StringBuilder();
+                    for (int i = 1; i < Math.min(stack.length, 9); i++) {
+                        frames.append(" <- ").append(stack[i].getClassName()).append('.')
+                                .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+                    }
+                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED_SITE" + frames);
+                }
+                this.immediateLastRefusal = "no shader program could be prepared for this batch";
+                this.shaderProgramRefusals++;
+                this.refusedBeforeAppend++;
+                this.flushPendingBeforeGlDraw();
+                return false;
+            }
+            // Every preflight comes before the append (audit A08). It used to run after `copyVertices` had already put the
+            // vertices in the pending mesh, so a refused batch was drawn by GL **and** left sitting in the Vulkan queue,
+            // ready to be flushed as a second copy of the same geometry. Refusing before anything is appended needs no
+            // rollback and cannot double-draw.
+            if (this.textureRegistry == null) {
+                // The other place the acceptance needs it: this check runs while a batch is being offered, before any flush
+                // has created the registry. Fixing only the descriptor probe left this one throwing, which the instrument
+                // showed by reporting the identical reason after the first fix.
+                this.textureRegistry = celtium$registry();
+            }
+            // OPT-18b's other half: a batch whose whole material already matches the open group's is deterministic in
+            // everything the preflight computes - the pipeline and descriptor lookups are input-keyed - so the mirror
+            // check, the prepare and the group-open all skip, and the vertices go straight to the append. Every term
+            // the open predicate compares is compared here: the state terms by celtium$groupMaterialMatches, the
+            // descriptor-recreate term by the texture's registry record itself - a re-created image is a different
+            // object, which is exactly what `prepared.descriptor != currentPreparedImmediate.descriptor` catches -
+            // and the lightmap by its own record for the families that carry one.
+            org.soutalab.celtium.vulkan.VulkanGlTexture liveTextureImage =
+                    boundTexture == 0 ? null : celtium$registry().get(boundTexture);
+            boolean fastMerged = this.currentImmediateMesh != null
+                    && this.currentGroupFormatId == formatId
+                    && this.currentGroupTexture == boundTexture
+                    && this.currentGroupStateKey == stateKey
+                    && this.currentGroupTextureImage != null
+                    && liveTextureImage == this.currentGroupTextureImage
+                    && ((formatId != 1 && formatId != 3 && formatId != 5)
+                            || this.lightmapTexture == this.currentGroupLightmapImage)
+                    && celtium$groupMaterialMatches(formatId);
+            if (fastMerged) {
+                this.fastMergedBatches++;
+            }
+            if (!fastMerged) {
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
             long preflightStart = System.nanoTime();
@@ -5287,6 +5405,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (!samePass && this.currentImmediateMesh != null) {
                 this.passSplits++;
             }
+            // The matrix half of the group key, pulled out of the big predicate so a split can name the matrix as its
+            // cause. For a pre-transformed group the stored modelView is identity by construction - the batches it
+            // holds are baked on append - so the only thing asked of the live matrix is the shape the appender can
+            // still bake exactly: axis-aligned. A rotated batch opens its own ordinary group instead of joining.
+            boolean matrixMoved = !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
+                    || (this.currentGroupPreTransformed
+                            ? !celtium$axisAlignedModelView()
+                            : !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView));
+            if (matrixMoved && this.currentImmediateMesh != null) {
+                this.matrixSplits++;
+            }
             // BH-09's group rule, completed: the clip rectangle is command state, so it must not go into the
             // pipeline key - but it is per-draw state, so a batch offered under a different rectangle cannot join
             // this group either. The rectangle is compared against the one captured when the group opened, at the
@@ -5321,8 +5450,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     || scissorMoved
                     || this.currentPreparedImmediate == null || this.currentPreparedImmediate.pipeline != prepared.pipeline
                     || this.currentPreparedImmediate.descriptor != prepared.descriptor
-                    || !java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)
-                    || !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView)
+                    || matrixMoved
                     // BH-04: the colour is part of the group's state, so a draw that arrives with a different current
                     // colour cannot join it - the colourless layouts carry it as the tint, and a batch appended after
                     // a glColor change used to be drawn with the previous colour. Compared only for the formats that
@@ -5365,7 +5493,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupViewportValues = currentViewport();
                 this.currentPreparedImmediate = prepared;
                 System.arraycopy(this.glProjection, 0, this.currentGroupProjection, 0, 16);
-                System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
+                // OPT-18b: the GUI-class layouts (the ones without a normal) are pre-transformed on append whenever the
+                // batch's own matrix is a translate/scale/flip and the batch is unlit and unfogged - the exact
+                // single-precision shape the shader would have computed. The group's recorded modelView is then
+                // identity, so a batch drawn under a different GUI matrix can still join this group: the transform it
+                // would have had is baked into its vertices instead of being carried in the group's push constants.
+                // Everything else keeps the matrix as part of the key exactly as before.
+                this.currentGroupPreTransformed = celtium$preTransformable(formatId, state);
+                if (this.currentGroupPreTransformed) {
+                    this.preTransformedGroups++;
+                    java.util.Arrays.fill(this.currentGroupModelView, 0.0f);
+                    this.currentGroupModelView[0] = 1.0f;
+                    this.currentGroupModelView[5] = 1.0f;
+                    this.currentGroupModelView[10] = 1.0f;
+                    this.currentGroupModelView[15] = 1.0f;
+                } else {
+                    System.arraycopy(this.glModelView, 0, this.currentGroupModelView, 0, 16);
+                }
                 if (GROUP_BOUNDS_DIAGNOSTICS) {
                     // Captured with the matrices, not read at close time: the log belongs to the moment the group's
                     // matrices were taken, and a later group's rotations must not be attributed to this one.
@@ -5477,78 +5621,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.currentGroupTarget = this.currentRenderTarget;
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupTexMatrix = celtium$textureAffine();
-            }
-            // Every preflight comes before the append (audit A08). It used to run after `copyVertices` had already put the
-            // vertices in the pending mesh, so a refused batch was drawn by GL **and** left sitting in the Vulkan queue,
-            // ready to be flushed as a second copy of the same geometry. Refusing before anything is appended needs no
-            // rollback and cannot double-draw.
-            if (this.textureRegistry == null) {
-                // The other place the acceptance needs it: this check runs while a batch is being offered, before any flush
-                // has created the registry. Fixing only the descriptor probe left this one throwing, which the instrument
-                // showed by reporting the identical reason after the first fix.
-                this.textureRegistry = celtium$registry();
-            }
-            // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
-            // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
-            // full-screen passes with real programs, each of which mirrored its source texture - measured at 898
-            // readbacks, about 15 per frame, which is what turned the spectator spider scene into ~2 s per frame and
-            // left the run unable to reach its capture tick on either GPU. Refused before anything is appended, so GL
-            // keeps drawing those passes with the program that is actually bound.
-            long programQueryStart = System.nanoTime();
-            int boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
-            this.programQueryNanos += System.nanoTime() - programQueryStart;
-            this.programQueryCount++;
-            if (boundProgram != 0) {
-                // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
-                celtium$offerStage(9);
-        if (formatId == 8 && !this.entityProgramLogged) {
-                    // The entity layout is refused in every scene (acceptedByFormat 8:0). Which program is bound when it
-                    // is offered decides whether the custom-program shutter is what keeps entities on GL - and that is
-                    // what the depth write-back depends on.
-                    this.entityProgramLogged = true;
-                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED program=" + boundProgram
-                            + " texture=" + boundTexture);
-                    StackTraceElement[] entityStack = new Throwable().getStackTrace();
-                    StringBuilder entityFrames = new StringBuilder();
-                    for (int i = 1; i < Math.min(entityStack.length, 10); i++) {
-                        entityFrames.append(" <- ").append(entityStack[i].getClassName()).append('.')
-                                .append(entityStack[i].getMethodName()).append(':').append(entityStack[i].getLineNumber());
-                    }
-                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED_SITE" + entityFrames);
-                }
-                this.immediateLastRefusal = "a custom shader program is bound";
-                // Named once per program: the spider scene refuses 1470 batches here, and which program they belong to
-                // decides whether the entity path can be supported natively at all (which is what would let the depth
-                // write-back go). The id is the only handle GL offers; the count says how dominant it is.
-                // The vertex layout matters as much as the program: the vanilla outline group's mask pass draws entity
-                // models while the blur and composite passes are full-screen quads, so which format each refused program
-                // uses says which of them a native pass has to reproduce.
-                String programKey = boundProgram + "/fmt" + formatId;
-                Integer seenCount = this.shaderProgramRefusedIds.get(programKey);
-                this.shaderProgramRefusedIds.put(programKey,
-                        Integer.valueOf(seenCount == null ? 1 : seenCount.intValue() + 1));
-                Integer seenProgram = this.shaderProgramRefusedPrograms.get(Integer.valueOf(boundProgram));
-                this.shaderProgramRefusedPrograms.put(Integer.valueOf(boundProgram),
-                        Integer.valueOf(seenProgram == null ? 1 : seenProgram.intValue() + 1));
-                if (seenCount == null) {
-                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
-                            + " format=" + formatId
-                            + " (first batch refused with this program bound)");
-                    // The call site, once per program: the id and the format say a custom program drew coloured quads,
-                    // which is not enough to know what to support. The stack names it.
-                    StackTraceElement[] stack = new Throwable().getStackTrace();
-                    StringBuilder frames = new StringBuilder();
-                    for (int i = 1; i < Math.min(stack.length, 9); i++) {
-                        frames.append(" <- ").append(stack[i].getClassName()).append('.')
-                                .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
-                    }
-                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED_SITE" + frames);
-                }
-                this.immediateLastRefusal = "no shader program could be prepared for this batch";
-                this.shaderProgramRefusals++;
-                this.refusedBeforeAppend++;
-                this.flushPendingBeforeGlDraw();
-                return false;
+                // The registry records this group was built against: the fast path asks "is the offer's image
+                // still this object" instead of repeating the descriptor lookup the record decides. A re-created
+                // texture is a different object, which is the slow path's `descriptor != prepared.descriptor` term.
+                this.currentGroupTextureImage = celtium$registry().get(boundTexture);
+                this.currentGroupLightmapImage = this.lightmapTexture;
             }
             if (this.textureRegistry.get(boundTexture) == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
@@ -5558,8 +5635,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.flushPendingBeforeGlDraw();
                 return false;
             }
+            }
             celtium$offerStage(10);
-        if (formatId == 5 && !canBuildDescriptor(boundTexture)) {
+        if (formatId == 5 && !fastMerged && !canBuildDescriptor(boundTexture)) {
                 // The particle family is the one that dropped: every post-accept drop counted so far is format 5, which is
                 // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
                 // refusal - before acceptance, where GL still owns the draw. The descriptor depends on the textures rather
@@ -5578,7 +5656,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
             long appendStart = System.nanoTime();
             long appendCpuStart = threadCpuNanos();
-            boolean appended = this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices);
+            // A pre-transformed group bakes the live modelView into this batch's positions on append: the GUI matrices
+            // that would have split the group are applied exactly here instead of being carried in its key.
+            boolean appended = this.currentGroupPreTransformed
+                    ? this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
+                            indices, this.glModelView)
+                    : this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices);
             long appendCpuEnd = threadCpuNanos();
             this.appendNanos += System.nanoTime() - appendStart;
             if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
@@ -5588,6 +5671,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Order (S10): what is already accepted is drawn before this batch goes to GL.
                 this.flushPendingBeforeGlDraw();
                 return false;
+            }
+            if (this.currentGroupPreTransformed) {
+                this.preTransformedBatches++;
+                this.preTransformedVertices += vertexCount;
             }
             this.currentGroupUsed = true;
             this.currentGroupBatches++;
@@ -5973,6 +6060,92 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * ({@link #celtium$stateKey}), which is what makes a batch that differs only in its alpha factors, its write mask
      * or its alpha comparison a different pipeline <em>and</em> a different group.
      */
+    /**
+     * {@return whether the live modelView is a translate/scale/flip}, i.e. every off-axis element is exactly zero and
+     * the matrix is affine. That is the matrix shape GUI and 2-D draws build. For it the CPU's single-precision
+     * product {@code sx*x + tx} is bit-identical to the shader's full product, because the dropped terms are exact
+     * zeroes - which is the only shape {@link #copyVerticesTransformed} may bake. A rotated matrix is not refused
+     * anywhere: it simply stays on the matrix-keyed group rule.
+     */
+    private boolean celtium$axisAlignedModelView() {
+        float[] m = this.glModelView;
+        return m[1] == 0.0f && m[2] == 0.0f && m[3] == 0.0f
+                && m[4] == 0.0f && m[6] == 0.0f && m[7] == 0.0f
+                && m[8] == 0.0f && m[9] == 0.0f && m[11] == 0.0f
+                && m[15] == 1.0f;
+    }
+
+    /**
+     * {@return whether this batch may join or open a pre-transformed group} - the OPT-18b half of the matrix question.
+     * <p>
+     * Pre-transforming bakes each batch's modelView into its positions on append, which is legal exactly where the
+     * transform cannot change anything the draw depends on: the normal-bearing formats would also need the
+     * inverse-transpose (so ids 3, 4, 8, 9 and the composite layout stay out), lit batches compute view-space
+     * lighting from the stored matrix (state slot 8), and fogged batches compute view-space distances. Outside those
+     * cases the only requirement is the exact-product shape {@link #celtium$axisAlignedModelView} checks.
+     */
+    private boolean celtium$preTransformable(int formatId, int[] state) {
+        switch (formatId) {
+            case 1:  // POSITION_TEX_LMAP_COLOR - lightmap is a per-vertex coordinate, unaffected by the modelView
+            case 2:  // POSITION_TEX_COLOR
+            case 5:  // particle layout - fog on in-world, so the world case filters itself below
+            case 6:  // POSITION_TEX - the HUD's dominant layout
+            case 7:  // POSITION
+                break;
+            default:
+                return false;
+        }
+        if (state.length > 8 && state[8] != 0) {
+            return false;
+        }
+        if (this.fogEnabled) {
+            return false;
+        }
+        return celtium$axisAlignedModelView();
+    }
+
+    /**
+     * Whether the offered batch's state matches the open group term for term - the fast path's half of the group
+     * predicate in {@code submitImmediateBatch}. The pipeline- and descriptor-object comparisons are implied rather
+     * than repeated: the lookups those objects come from are input-keyed, so equal inputs return the same objects.
+     * Each condition mirrors the slow predicate verbatim and is annotated there.
+     */
+    private boolean celtium$groupMaterialMatches(int formatId) {
+        // The pass identity: a batch for another render target or viewport is not this group's (audit S10).
+        if (this.currentGroupTarget != this.currentRenderTarget
+                || this.currentGroupViewport != this.currentViewportKey) {
+            return false;
+        }
+        // BH-09: the clip rectangle is per-draw state, compared against the group's opening capture.
+        if (GROUP_SCISSOR && !celtium$sameScissor(
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
+                        && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled())) {
+            return false;
+        }
+        // BH-04: the current colour is group state for the colourless layouts (and for 9, the same rule as the slow path).
+        if (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9)
+                && this.colorMirrorHasValue && this.celtium$colourDiffers()) {
+            return false;
+        }
+        // BH-04's other halves: texture affine and fog, captured once at open.
+        if (this.celtium$textureAffineMoved() || this.celtium$fogMoved()) {
+            return false;
+        }
+        // BH-05: a moved light payload splits only a lit group - the enable is in the state key already.
+        if (this.currentGroupState.length > 8 && this.currentGroupState[8] != 0
+                && this.immediateState.lightGeneration() != this.currentGroupLightGeneration) {
+            return false;
+        }
+        if (!java.util.Arrays.equals(this.currentGroupProjection, this.glProjection)) {
+            return false;
+        }
+        // A pre-transformed group asks only that the live matrix stays exactly bakeable; an ordinary one asks for equality.
+        return this.currentGroupPreTransformed
+                ? celtium$axisAlignedModelView()
+                : java.util.Arrays.equals(this.currentGroupModelView, this.glModelView);
+    }
+
     private int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
@@ -7802,6 +7975,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " stateKeyMillis=" + (this.stateKeyNanos / 1000000L)
                 + " groupCloneCount=" + this.groupCloneCount
                 + " groupCloneMillis=" + (this.groupCloneNanos / 1000000L)
+                + " preTransformedGroups=" + this.preTransformedGroups
+                + " preTransformedBatches=" + this.preTransformedBatches
+                + " preTransformedVertices=" + this.preTransformedVertices
+                + " matrixSplits=" + this.matrixSplits
+                + " fastMergedBatches=" + this.fastMergedBatches
                 + " prepLookupMillis=" + (this.prepLookupNanos / 1000000L)
                 + " prepTerrainPipelineMillis=" + (this.prepTerrainPipelineNanos / 1000000L)
                 + " prepRegistryMillis=" + (this.prepRegistryNanos / 1000000L)
