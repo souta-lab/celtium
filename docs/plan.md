@@ -395,6 +395,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.419 **round 214: サブフレーム viewport の y 反転を除去（パノラマの切片が正しい位置へ）＋ copy の2経路を同じ規約に揃えた**
+
+- **真因（並行セッションの診断 `docs/diagnosis-r213-user-visual-breakage.md` を自分で照合して確定）**: 共有 frame image は **GL texture order（memory row 0 = 絵の下端）**で、`VulkanSwapchain` が present 時に**一度だけ** read-back-to-front blit で反転する。したがって GL の viewport `(x, y_bottom, w, h)` は image の行 `y_bottom..y_bottom+h` に**そのまま**対応する。`celtium$setGroupViewport` は `y = targetHeight - yBottom1` と反転しており、**全画面矩形では不変なので全frame legを素通りし、サブフレーム矩形だけで壊れていた**（同関数内の scissor 経路は既に「No y flip」へ修正済みで、反転した矩形と非反転の box を交差させていた）。
+- **修正（3箇所を同じ規約へ）**: ①`celtium$setGroupViewport` → `y = yBottom0`（stale な doc comment も訂正）②`VulkanGlTexture.blitRectangleFrom` の src offsets を反転なし（`(sx, sy)→(sx+w, sy+h)`）③`TextureCopyService` の host readback から `reverseRows` を削除（読みは既に GL order）。未使用になった `reverseRows` は削除 ✓。
+- **実測（`scene=terrain` の menu leg `r212-panenq-ori`・jar `5b4dad9948952367`・AMD）**: `CELTIUM_GROUP_VIEWPORT gl=0,0 256x256 clipped=**0,0** 256x256 target=1920x1080`（修正前は `clipped=0,824`）✓。menu dump では**パノラマの切片が左上から左下へ移動**（修正前 sha256 `15e1e3be…` → 修正後 `0c0e45d2…`）＝vanilla が 256×256 窓を描く位置 ✓。**ただし背景は依然 grey**（distinct=6914・mean=(169,168,169)／受入値 99902・(98,102,96)）＝**切片が正しい位置に来ただけで、最終合成 quad が panorama texture を全面に引き伸ばしていない**という次の欠陥が残る ✓。
+- **回帰なし**: 同じ修正で world leg `r212-world-orifix` は **`status=PASSED`・`presentedImageVerdict=PASSED`・`presentedImageAssertionFailures=0`・worldFrames 198・world dump distinct=2550・mean=(122,107,119)** ✓（地形＋entity が正立 ✓）。**ただし fixture の terrain scene は元から正立していたので、「ユーザーの flat world が上下反転する」という第2の欠陥はこの scene では再現しない**（診断書の defect 2 は未解決のまま・別の write-time mirror 候補）。
+
 ## 0.418 **round 213: パノラマの copy 経路を2アームで分離（blit 経路と順序を棄却）**
 
 - **対照実験（同一 fixture・同一 scene・同一 camera・同一 jar `ad2a834a12e87324`・AMD）**: 基準アーム `r212-panenq-enq`（native blit・`textureCopyBlits=288 textureCopyReadbacks=1`）と対照アーム `r212-panhost-host`（`-Dceltium.vulkan.nativeTextureCopy=false`・**`textureCopyBlits=0 textureCopyReadbacks=240`**）は、**menu dump がほぼ同一**（distinct=30301/30499・mean=(160,161,166) 両方）。⇒ **native blit 経路は原因ではない**（`blitRectangleFrom` の矩形・行順という説明を棄却）。host 経路は読みの前後に `waitForIdle()` を挟む**完全同期**なので、**「blit が blur quad より後に走る」という順序の説明も棄却**（同じ絵になるため）。

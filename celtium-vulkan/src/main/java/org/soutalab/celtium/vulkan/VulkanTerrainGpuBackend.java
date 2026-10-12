@@ -12393,13 +12393,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /**
      * Applies one group's GL viewport as a Vulkan viewport and scissor.
      * <p>
-     * GL's viewport origin is the bottom-left of the drawable and Vulkan's is the top-left, and this renderer keeps the
-     * Vulkan convention unchanged (positive height, see {@code vulkanProjection()}), so the y is flipped here: a GL
-     * rectangle (x, y_bottom, w, h) becomes the Vulkan rectangle (x, targetHeight - y_bottom - h, w, h).
+     * <b>No y flip, and the earlier comment here said the opposite.</b> GL's viewport origin is the bottom-left and
+     * Vulkan's is the top-left, so the conversion looks like a flip - but the shared image this renderer draws into is
+     * itself in GL texture order, row 0 being the picture's bottom, because {@code VulkanSwapchain} presents it with
+     * one read-back-to-front blit to leave the swapchain upright. With a positive viewport height, NDC -1 lands at
+     * {@code viewport.y}, the region's first image row, which for a bottom-up image is the GL rectangle's own bottom
+     * row. A GL rectangle (x, y_bottom, w, h) therefore maps to rows {@code y_bottom .. y_bottom+h} unchanged;
+     * {@code targetHeight - (y_bottom + h)} is the conversion a top-down image would need.
      * <p>
-     * A group whose rectangle is the whole target does nothing - the pass already set exactly that - and the flag is
-     * set only when a narrow rectangle is applied, so the common case costs nothing and the restore happens once per
-     * flush rather than per group.
+     * Full-target rectangles are invariant under the flip, which is why this survived every full-frame leg and only
+     * showed on sub-frame ones: the main menu's panorama renders its cube into {@code glViewport(0,0,256,256)}
+     * ({@code GuiMainMenu.renderSkybox}), and the flip put it at the picture's top-left instead of its bottom-left -
+     * measured as the sharp cube fragment in the top-left corner of an otherwise grey menu, with the copy path reading
+     * the same wrong band back so the whole blur loop looked like it worked. The sibling scissor block below had
+     * already been corrected to the unflipped form ("No y flip ... the flipped conversion clipped the wrong band"),
+     * which left it intersecting an unflipped box with a flipped rectangle.
      */
     private void celtium$setGroupViewport(MemoryStack stack, ImmediateGroup group) {
         int[] viewport = group.viewportValues;
@@ -12423,7 +12431,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         boolean empty = x1 <= x0 || yBottom1 <= yBottom0;
         int width = empty ? 0 : x1 - x0;
         int height = empty ? 0 : yBottom1 - yBottom0;
-        int y = empty ? 0 : this.targetHeight - yBottom1;
+        int y = empty ? 0 : yBottom0;
         if (empty) {
             // Nothing of the rectangle is on the drawable; GL would draw nothing either. Counted so an entirely
             // off-target viewport is visible rather than silently empty.

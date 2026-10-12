@@ -2504,12 +2504,13 @@ public final class VulkanGlTexture {
             VkImageBlit.Buffer region = VkImageBlit.calloc(1, stack);
             region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
                     .layerCount(1);
-            // Inverted in y: srcOffset0 is the region's *bottom* in image rows (GL's sy) and srcOffset1 its top, so the
-            // destination's row 0 gets the source's bottom row - the GL texture order this mirror's rows are in.
-            int sourceBottomRow = sourceHeight - sy;
-            int sourceTopRow = sourceBottomRow - height;
-            region.get(0).srcOffsets().get(0).set(sx, sourceBottomRow, 0);
-            region.get(0).srcOffsets().get(1).set(sx + width, sourceTopRow, 0);
+            // Straight through in y, and the earlier comment here said "inverted": the source image is in GL texture
+            // order (row 0 is the picture's bottom - VulkanSwapchain flips once at present), so GL's sy counted from
+            // the bottom is the image's row sy, and the destination mirror is in that same order. Inverting read the
+            // band mirrored about the image's centre and wrote it upside-down, which is the second half of the
+            // misplaced-panorama defect (the viewport carried the first).
+            region.get(0).srcOffsets().get(0).set(sx, sy, 0);
+            region.get(0).srcOffsets().get(1).set(sx + width, sy + height, 0);
             region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
                     .layerCount(1);
             region.get(0).dstOffsets().get(0).set(xoffset, yoffset, 0);

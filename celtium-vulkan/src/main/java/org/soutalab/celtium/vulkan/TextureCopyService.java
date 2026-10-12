@@ -419,10 +419,13 @@ public final class TextureCopyService {
         VulkanTextureRegistry registry = this.host.registry();
         int[][] levels = new int[1][];
         levels[0] = pixels;
-        if (this.textureCopySamples < 3) {
-            // What the copy actually served, bounded to three lines: the mean and the opaque fraction of the rectangle
-            // are what tell "the source image holds the accumulated panorama" from "it holds a cleared surface", which
-            // the destination mirror's own census cannot (it reports the mirror's state at creation, not per copy).
+        if (this.textureCopySamples < 3 || this.textureCopyReadbacks % 40 == 0) {
+            // What the copy actually served, bounded to three lines plus one every fortieth readback: the mean and the
+            // opaque fraction of the rectangle are what tell "the source image holds the accumulated panorama" from
+            // "it holds a cleared surface", which the destination mirror's own census cannot (it reports the mirror's
+            // state at creation, not per copy). The periodic line is the one that matters for a steady-state defect -
+            // the first three samples of a run are the loading screen, and a leg that read only those described the
+            // splash's rectangle as if it were the panorama's (round 213).
             this.textureCopySamples++;
             long red = 0L;
             long green = 0L;
@@ -606,18 +609,6 @@ public final class TextureCopyService {
         return "refused-" + reason;
     }
 
-    private static void reverseRows(int[] pixels, int width, int height) {
-        for (int top = 0, bottom = height - 1; top < bottom; top++, bottom--) {
-            int first = top * width;
-            int last = bottom * width;
-            for (int column = 0; column < width; column++) {
-                int swap = pixels[first + column];
-                pixels[first + column] = pixels[last + column];
-                pixels[last + column] = swap;
-            }
-        }
-    }
-
     private static int countNonWhite(int[] pixels) {
         int count = 0;
         for (int pixel : pixels) {
@@ -738,12 +729,12 @@ public final class TextureCopyService {
                 pixels[pixel] = (a << 24) | (r << 16) | (g << 8) | b;
             }
             org.lwjgl.vulkan.VK10.vkUnmapMemory(this.host.context().device(), memory);
-            // GL writes framebuffer row (counted from the bottom) `y + i` into destination row `yoffset + i`, and a
-            // mirror's row 0 is its texture's first row - the same order every `glTexImage2D` int[] upload arrives in.
-            // The mirror's rows are therefore the image's rows read *upwards* from `y`, which is the reverse of the
-            // buffer the copy above produced. Without this the destination gets the source upside down: the right rows
-            // in the wrong order, which a mean cannot see and a crop can.
-            reverseRows(pixels, width, height);
+            // No row reversal, and the earlier comment here argued for one. The owned image is in GL texture order -
+            // row 0 is the picture's bottom (VulkanSwapchain flips once at present) - and the copy above read memory
+            // rows y..y+h, which *are* the GL order rows for that rectangle. GL writes framebuffer row (y+i) into
+            // destination row (yoffset+i) and a mirror's row 0 is its texture's first row, so buffer row i already
+            // belongs at destination row i: reversing put the destination upside down, which a mean cannot see and a
+            // crop can.
             return pixels;
         } catch (RuntimeException | LinkageError error) {
             this.host.record("texture copy read failed: " + this.host.describe(error));
