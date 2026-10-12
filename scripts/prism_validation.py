@@ -340,7 +340,11 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         command.extend(["--tweakClass", tweaker])
     (game / "validation-command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
     started = time.monotonic()
-    display = HeadlessWayland(game / "headless", args.render_node) if args.headless else nullcontext()
+    # The compositor's output takes the requested window size, so `--window-size` is what the game is tiled to rather
+    # than only what it asks GLFW for. Without this the output stayed 1280x720 and every smaller request came back
+    # resized to it.
+    display = (HeadlessWayland(game / "headless", args.render_node, (window_width, window_height))
+               if args.headless else nullcontext())
     with display as headless, (game / "validation-console.log").open("wb") as log:
         environment = headless.environment if headless else os.environ.copy()
         if args.force_x11:

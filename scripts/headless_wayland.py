@@ -13,9 +13,16 @@ import time
 
 
 class HeadlessWayland:
-    def __init__(self, directory, render_node):
+    def __init__(self, directory, render_node, size=(1280, 720)):
         self.directory = Path(directory).resolve()
         self.render_node = Path(render_node).resolve(strict=True)
+        # The headless output's mode, and the reason it is a parameter rather than a constant: it used to be fixed at
+        # 1280x720 while `--window-size` asked the game for something else, so Sway tiled the game's window back up to
+        # the output and a leg that asked for 854x480 measured `glfwWindowSizeAtEnd=1280x720`. `--window-size` could
+        # therefore never produce a smaller window, which is the condition a list has to overflow under before any
+        # scissor can be issued - measured on a leg whose counters were read as "no scissor" when the window had simply
+        # never changed.
+        self.size = (int(size[0]), int(size[1]))
         self.process = None
         self.log = None
         self.environment = None
@@ -43,8 +50,8 @@ class HeadlessWayland:
         )
         config = self.directory / "sway.conf"
         config.write_text(
-            "xwayland force\noutput HEADLESS-1 mode 1280x720@60Hz scale 1\n"
-            "default_border none\nseat seat0 fallback true\n"
+            "xwayland force\noutput HEADLESS-1 mode %dx%d@60Hz scale 1\n" % self.size
+            + "default_border none\nseat seat0 fallback true\n"
             f"exec {shlex.quote(sys.executable)} {shlex.quote(str(capture))}\n",
             encoding="utf-8",
         )
@@ -76,6 +83,7 @@ class HeadlessWayland:
             outputs = subprocess.run(["swaymsg", "-s", display["SWAYSOCK"], "-t", "get_outputs", "-r"],
                                      env=env, capture_output=True, text=True, check=True, timeout=5)
             self.metadata = {"backend": "headless", "renderNode": str(self.render_node),
+                             "outputMode": "%dx%d" % self.size,
                              "display": display, "outputs": json.loads(outputs.stdout)}
             (self.directory / "session.json").write_text(json.dumps(self.metadata, indent=2) + "\n")
             return self
