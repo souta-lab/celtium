@@ -191,4 +191,83 @@ public final class TerrainRenderer {
                 org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
     }
 
+
+    /** The context the pipelines are built with; the backend owns it and hands it over. */
+    private VulkanContext context;
+    /** Where a message goes: the backend's diagnostics list, so the report still sees it. */
+    private java.util.function.Consumer<String> diagnostics = message -> { };
+
+    /** Gives the class the context its pipelines are built with. */
+    void setContext(VulkanContext context) {
+        this.context = context;
+    }
+
+    /** Gives the class the backend's diagnostic sink. */
+    void setDiagnostics(java.util.function.Consumer<String> diagnostics) {
+        this.diagnostics = diagnostics;
+    }
+
+    /** Records one diagnostic through the backend's sink. */
+    void record(String message) {
+        this.diagnostics.accept(message);
+    }
+
+    /** Names a render pass for a message, tolerating the absence of one. */
+    static String nameOf(TerrainRenderPass pass) {
+        return pass == null ? "<no render pass>" : pass.name();
+    }
+
+    /** Names a throwable for a message, keeping its type even when it has no message. */
+    static String describe(Throwable error) {
+        return error == null ? "null" : error.getClass().getSimpleName()
+                + (error.getMessage() == null ? "" : ": " + error.getMessage());
+    }
+
+    /** {@return the pipelines by render pass, for the paths that release them}. */
+    java.util.Map<TerrainRenderPass, VulkanTerrainPipeline> pipelines() {
+        return this.pipelines;
+    }
+
+    /** Releases every terrain pipeline and forgets them. */
+    void releasePipelines() {
+        for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
+            if (pipeline != null) {
+                pipeline.delete();
+            }
+        }
+        this.pipelines.clear();
+    }
+
+    // ---------------------------------------------------------------- terrain pipelines (R4, second half)
+
+    /** The pipelines built per terrain render pass: keyed by the pass, created on first use. */
+    private final java.util.Map<TerrainRenderPass, VulkanTerrainPipeline> pipelines =
+            new java.util.concurrent.ConcurrentHashMap<TerrainRenderPass, VulkanTerrainPipeline>();
+
+    VulkanTerrainPipeline pipelineFor(TerrainRenderPass pass) {
+        if (pass == null) {
+            // With no bridge there is no last pass to look up, and the map this reads rejects a null key with a
+            // NullPointerException - which is what the remaining three-per-run nulls were. The callers all handle a null
+            // pipeline already, so saying "no pipeline for no pass" is the whole fix.
+            return null;
+        }
+        VulkanTerrainPipeline pipeline = this.pipelines.get(pass);
+        if (pipeline != null) {
+            return pipeline;
+        }
+        try {
+            pipeline = VulkanTerrainPipeline.create(this.context, pass, !pass.isSorted());
+            this.pipelines.put(pass, pipeline);
+            record("pipeline for " + nameOf(pass) + " created [" + pipeline.vertexInputSummary() + "]");
+            if (pipeline.limitsWarning() != null) {
+                record(pipeline.limitsWarning());
+            }
+            return pipeline;
+        } catch (RuntimeException | LinkageError error) {
+            record("pipeline for " + pass.name() + " failed: " + describe(error));
+            this.pipelines.put(pass, null);
+            return null;
+        }
+    }
+
 }

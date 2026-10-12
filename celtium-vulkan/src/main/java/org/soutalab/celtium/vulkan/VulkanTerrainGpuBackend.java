@@ -81,7 +81,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** The terrain pass's region arenas and failed-upload ledger (refactoring plan R4, first half). */
     private final TerrainRenderer terrain = new TerrainRenderer();
-    private final Reference2ReferenceMap<TerrainRenderPass, VulkanTerrainPipeline> pipelines = new Reference2ReferenceOpenHashMap<>();
     private final List<String> diagnostics = new ArrayList<>();
 
     private final Reference2ReferenceMap<ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers = new Reference2ReferenceOpenHashMap<>();
@@ -715,7 +714,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.terrainStatistics.setLastSkipReason(pass.name() + ": no frame target");
             return;
         }
-        VulkanTerrainPipeline pipeline = pipelineFor(pass);
+        VulkanTerrainPipeline pipeline = this.terrain.pipelineFor(pass);
         if (pipeline == null) {
             this.terrainStatistics.notePassSkips();
             this.terrainStatistics.setLastSkipReason(pass.name() + ": no pipeline");
@@ -4635,7 +4634,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The render pass has to be the one this batch will be recorded into, chosen exactly as
                 // prepareImmediate chooses it: the last pass that ran when there is one, and the standalone
                 // frame-compatible pass when there is not. lastUiPass is null until the first pass of the backend
-                // instance runs and pipelineFor(null) returns null, so requiring a terrain pipeline here refused
+                // instance runs and this.terrain.pipelineFor(null) returns null, so requiring a terrain pipeline here refused
                 // every particle batch offered before that first pass - 35 of them in regr4-glless, all before the
                 // first terrain pass, and all of them silently: this branch recorded no reason, so the tally read
                 // "unrecorded (format=5 ...) stage=10" and could not be told from the conditions that do name
@@ -4643,7 +4642,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // (prepareImmediate and the flush path both use the terrain pass only when there is one), so this is
                 // the draw path's own rule rather than a relaxation of the gate; the bridge leg keeps refusing
                 // because prepareImmediate refuses there too.
-                VulkanTerrainPipeline ui = pipelineFor(this.lastUiPass);
+                VulkanTerrainPipeline ui = this.terrain.pipelineFor(this.lastUiPass);
                 long renderPass;
                 if (ui != null) {
                     renderPass = ui.renderPass();
@@ -6904,7 +6903,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         if (this.commandState.recording()) throw new IllegalStateException("nested immediate command recording");
         if (!supportedImmediateTarget()) throw new IllegalStateException("accepted target disappeared before flush");
-        VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
         if (terrain == null && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             throw new IllegalStateException("accepted geometry has no render pass");
         }
@@ -7204,7 +7203,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
         long prepLookupStart = System.nanoTime();
-        VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
         // A fallback to this.terrainPipelineForFrame was tried here and measured preparePassFallbacks=0: the frame's world
         // pipeline is null at the same moments, which is what says those offers belong to the composite path's own layout
         // rule (CELTIUM_COMPOSITE_LAYOUT_REFUSED) and are not entity models being turned away. The rule was removed
@@ -8756,10 +8755,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             resources.delete();
         }
         this.terrain.releaseAll();
-        for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
+        for (VulkanTerrainPipeline pipeline : this.terrain.pipelines().values()) {
             pipeline.delete();
         }
-        this.pipelines.clear();
+        this.terrain.releasePipelines();
         // The immediate caches are built against the terrain pass that was just destroyed, so they belong to this world
         // as much as the pipelines do: a state-keyed entry kept across a world change would name a dead render pass. The
         // queued groups that held references to them were retired above, so nothing here is still pointing at them.
@@ -8832,10 +8831,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             resources.delete();
         }
         this.terrain.releaseAll();
-        for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
+        for (VulkanTerrainPipeline pipeline : this.terrain.pipelines().values()) {
             pipeline.delete();
         }
-        this.pipelines.clear();
+        this.terrain.releasePipelines();
         if (this.uiRenderPass != 0) {
             org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.uiRenderPass, null);
             this.uiRenderPass = 0;
@@ -9921,31 +9920,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
 
 
-    private VulkanTerrainPipeline pipelineFor(TerrainRenderPass pass) {
-        if (pass == null) {
-            // With no bridge there is no last pass to look up, and the map this reads rejects a null key with a
-            // NullPointerException - which is what the remaining three-per-run nulls were. The callers all handle a null
-            // pipeline already, so saying "no pipeline for no pass" is the whole fix.
-            return null;
-        }
-        VulkanTerrainPipeline pipeline = this.pipelines.get(pass);
-        if (pipeline != null) {
-            return pipeline;
-        }
-        try {
-            pipeline = VulkanTerrainPipeline.create(this.context, pass, !pass.isSorted());
-            this.pipelines.put(pass, pipeline);
-            record("pipeline for " + nameOf(pass) + " created [" + pipeline.vertexInputSummary() + "]");
-            if (pipeline.limitsWarning() != null) {
-                record(pipeline.limitsWarning());
-            }
-            return pipeline;
-        } catch (RuntimeException | LinkageError error) {
-            record("pipeline for " + pass.name() + " failed: " + describe(error));
-            this.pipelines.put(pass, null);
-            return null;
-        }
-    }
 
     // ------------------------------------------------------------------ frame target
 
@@ -12434,7 +12408,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * UI quad.
      */
     private void drawImmediateIsolationQuad() {
-        VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+        VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
         if (terrain == null) {
             return;
         }
@@ -12985,7 +12959,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private void drawUiTestQuad(ChunkPrimitiveType primitiveType) {
         try {
-            VulkanTerrainPipeline terrain = pipelineFor(this.lastUiPass);
+            VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
             if (terrain == null) {
                 return;
             }
