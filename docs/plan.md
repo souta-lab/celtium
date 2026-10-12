@@ -395,6 +395,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.427 **round 228: copy の cache marker が blur の累積を潰していた（1 readback/frame → 7）。menu の背景が vanilla と同じ「7回ぼかし」になった**
+
+- **契約**: `GuiMainMenu.rotateAndBlurSkybox` は 1 回の呼び出しで「(1) `glCopyTexSubImage2D` で frame buffer の 256×256 を自分の背景 texture へ取り込み → (2) 3枚の quad を alpha 1/(i+1)・x オフセット (i-1.5)/256 で描く」を行い、`renderSkybox` が**それを7回**呼ぶ ✓（原典 `GuiMainMenu.renderSkybox`／`rotateAndBlurSkybox` ✓、外部の 1.12.2 ミラーでも同形 ✓）。つまり **各回の copy は「直前の回が描いた結果」を読む**ことが累積（＝vanilla のぼかし）の前提 ✓。
+- **欠陥**: copy cache の marker が `lastDrawnEpoch()*1000003 + lastDrawnFrame()` で、**blur の quad は immediate-window の draw なので epoch が動かない** ✓ ⇒ 7回の要求のうち **6回が cache で「1回目の画素」として返されていた** ✓。実測（`r212-panzeroglu-gluonly`）: `textureCopyReadbacks=216` / `textureCopiesServed=1512`（1 present=1 readback）✓ ＝ **ぼかしは1回だけ＝vanilla より sharp** ✓。
+- **修正**: marker に `immediateWindowsThisFrame()` を掛け合わせる ✓（window 数は「内容が変わり得る」の上位集合なので**古い画素を返すことはなく**、増えるのは copy だけ ✓）。実測（leg `r212-panblur-blurfix`・AMD・同一 jar）:
+  - `textureCopyReadbacks=525` = `textureCopiesServed=525`・`textureCopiesReusedInFrame=0` ✓ ＝ **毎回 fresh readback** ✓
+  - mirror dump 525枚の**同一フレーム内の連続 copy の差分: 96.5% → 96.5% → 69.8%** ✓ ＝ 各回が別の（ぼけた）画像を読んでいる ✓✓
+  - presented menu: mean (107.2,109.8,116.2)・distinct **79370**（1回ぼかしの 113116 から減る＝より強くぼける ✓ vanilla の背景は強くぼけている ✓）
+  - 他 scene 無傷: early mean (119.2,128.5,160.3) ✓・world mean (121.7,101.2,114.2) distinct 2563 ✓・verdict `UNCALIBRATED_PRESENTED_IMAGE`（未較正のまま ✓）
+- **コスト**: host 経路で **menu 1 frame あたり readback が 1→7**（command buffer + fence wait ✓）。本来これは native copy（`blitInto`）側で払うべきコストで、`-Dceltium.vulkan.nativeTextureCopy=false` の leg での測定 ✓。担当 task-73 が cache 契約・他経路の stale 可能性・コストを独立監査中 ✓（`docs/notes-copy-cache.md`）。
+- **次の一手**: (a) loading 画面の白（logo texture の mirror が name 8 で dump されない ⇒ 専用計器が要る ✓）、(b) 残り3つの scratch builder（`ortho`/6平面 `frustum`/`glu`）の消費者を名指し ✓、(c) 7 readback/frame を native copy へ移して host readback を消す ✓。
+
 ## 0.426c **round 227: 修復を契約化（4 builder のゼロ化・既定 on、bisect 用 property 付き）。glu 経路の leak は実測で消えた（`m33=1.0 → 0.0`）。全4箇所ゼロ化は依然 black なので bisect 中**
 
 - **実装**: `matrixScratch` を共有する 4 builder（`ortho` / `perspective`(glFrustum) / `frustum`(6平面) / `applyDerivedProjection`(gluPerspective)）が**書く前に scratch をゼロ化**する ✓。既定は4つとも on ✓（＝契約）。`-Dceltium.vulkan.scratchZero=ortho,perspective,frustum,glu` は**bisect 用の計器**（対応モードではない ✓）で、1 jar のまま集合を狭められる ✓。

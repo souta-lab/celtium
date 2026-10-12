@@ -370,7 +370,18 @@ public final class TextureCopyService {
         // (GuiMainMenu.rotateAndBlurSkybox), so each pass's source content differs from the last one's. A copy whose
         // source has changed since the cached one is never elided - the marker is the last draw's epoch, which moves
         // exactly when a draw has landed in the image since.
-        long copyMarker = this.host.lastDrawnEpoch() * 1000003L + this.host.lastDrawnFrame();
+        // The marker carries the *window* count as well as the draw epoch, and that is the difference between one
+        // copy per frame and vanilla's seven. `lastDrawnEpoch` moves when a draw lands in an image the terrain path
+        // owns; the panorama's blur quads are immediate-window draws, so between two iterations of
+        // `GuiMainMenu.rotateAndBlurSkybox` the epoch did not move and six of the seven requests were answered from
+        // the cache with the *first* iteration's pixels - measured on the main menu: `textureCopyReadbacks=216` over
+        // 216 presents with `textureCopiesServed=1512`, i.e. one readback per frame where vanilla re-copies after
+        // every blur pass and so accumulates seven. Vanilla's background is the accumulation; a single pass leaves it
+        // sharp. The window counter is a superset of "the content may have changed", so it can only cause extra
+        // copies, never a stale one - the cost is six more readbacks per menu frame on the host path, and the
+        // native-copy path is where that cost belongs.
+        long copyMarker = (this.host.lastDrawnEpoch() * 1000003L + this.host.lastDrawnFrame()) * 131071L
+                + this.host.immediateWindowsThisFrame();
         // The serial is the present's, not frameId's: a screen presents without advancing frameId, and keying on frameId
         // made this set never clear during the menu, so the panorama's per-frame copy was served from the first frame's
         // content (round 166 - the reason the main menu's panorama did not move).
