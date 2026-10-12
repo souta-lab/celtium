@@ -2,84 +2,94 @@
 
 # Celtium
 
-A Celeritas fork developing native Vulkan terrain rendering for Minecraft 1.12.2 on CleanroomMC, with existing mod compatibility as a primary goal.
+An experimental **native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC**, built from Celeritas.
 
-**Current stage: the game runs and presents from Vulkan without a GL context.** With `-Dceltium.vulkan.glless=true` the window is created with no OpenGL context at all (`GLFW_NO_API`), the game's own framebuffer is adopted into Vulkan-owned colour and depth images, and the finished frame is presented from the Vulkan swapchain; the GL swap is skipped. Measured on both verified GPUs (RX 6400 and UHD 630): the validation fixture passes with zero validation messages, and terrain, entities, items, particles and the GUI draw through native pipelines. The presented frame was bound to the compositor's output pixel-exactly (0 of 921600 pixels differing) by capturing the private headless Wayland output with `grim` - scanout itself is not measured, because that needs DRM master. The GL bridge (`-Dceltium.vulkan.glless=false`) remains available and is what mods that issue their own GL calls still go through.
+> **Vulkan-only rendering works, but Celtium is currently very slow.**
+> Current builds can have severe frame-time spikes, stuttering and temporary freezes. Rendering and mod compatibility are still incomplete. This is a development project, not a finished performance mod, and it currently makes **no claim of being faster than Celeritas**.
+>
+> **Vulkanだけで描画・表示できますが、現状は非常に重く、大きなカクつきや一時的な停止があります。描画とmod互換性も開発中で、通常プレイ向けの完成版ではありません。**
 
-**What is not done, so it is not claimed:** the entity-outline glow is incomplete under GL-less; the vanilla post-process chains run natively only where their real input image can be supplied, and are refused (falling back to GL) where it cannot; the bridge's own model draws are not separately instrumented; FBO/post-process ownership, all-block-state coverage, all entity/TESR quality and full existing-mod compatibility are open. Vanilla text was open earlier in the day and **is no longer**: the font glyph path is accepted (`quads=52406 submitted=52406 accepted=52406 refused=0`, unicode route exercised) and the inventory screen's label row now matches the stored GL reference **pixel-for-pixel (0 of 10000 pixels differ)**. See [the scope and limits](docs/scope-and-limits.md) section 0 for the requirement table, the measured claims and the named unverified list, [the plan](docs/plan.md) for the current status table and priorities, and `docs/history/` for the stage records.
+Status updated: **2026-10-12**.
 
-## Approach
+## Current status
 
-- Preserve Celeritas' meshing, compressed vertex formats, visibility work, translucency sorting and existing mod integrations.
-- Add a terrain-specific Vulkan backend after proving OpenGL/Vulkan color, depth and synchronization interoperability.
-- Keep GUI, entities, TESRs, particles and existing mod OpenGL calls on the current GL context.
-- Retain the OpenGL terrain backend and the `celeritas` mod ID. Celtium replaces Celeritas; install one of them.
-- Rebrand everything a user sees to Celtium: mod display name, commands, logs, thread names, option text and documentation. The mod ID, mixin config and resource domain stay `celeritas` because existing mods, integrations and resource overrides reference them; `scripts/verify_forge_jar.py` rejects a jar whose user-visible names still say Celeritas.
-- Select implementations by capabilities and the current GL GPU's UUID. Multiple GPU support is a core requirement; physical validation targets are RX 6400 and UHD 630. NVIDIA is unverified.
-- Use the existing GPU driver. Zink is optional and is not bundled or required.
+The mode documented here is the **Vulkan-only / GL-less mode**, enabled with:
 
-The current source base is the [GTNewHorizons Celeritas mirror](https://github.com/GTNewHorizons/Celeritas/tree/989ebf2e52ceed052ec112a569e0c1d172095756) at `989ebf2e52ceed052ec112a569e0c1d172095756`. Celeritas' upstream is [embeddedt/celeritas](https://git.taumc.org/embeddedt/celeritas). This reference is not a claim that a particular installed Cleanroom/modpack combination has been tested.
-
-## Capability probe
-
-The isolated Linux CLI queries:
-
-- GL device/driver UUIDs and `GL_EXT_memory_object` / `GL_EXT_semaphore` FD support.
-- Vulkan physical devices, same-GPU identity, external-memory and binary-semaphore capabilities.
-- Export/import support for specific color/depth formats, image usages, optimal tiling and single-sample images.
-
-It does not create a Vulkan logical device, share an image, replace a Minecraft FBO or enable Vulkan terrain. `CANDIDATE_FOR_INTEROP_TEST` means a small interoperability experiment can be attempted; it is not a compatibility or performance guarantee.
-
-Build with JDK 21 or newer:
-
-```sh
-./gradlew -p celtium-probe test installDist
+```text
+-Dceltium.vulkan.glless=true
 ```
 
-Run with the normal Mesa driver:
+It creates a window without an OpenGL context (`GLFW_NO_API`), renders into Vulkan-owned images, and presents the finished frame through a Vulkan swapchain. It does not depend on OpenGL drawing, GL readback, a GL/Vulkan bridge, GL swap or GL fallback.
 
-```sh
-celtium-probe/build/install/celtium-probe/bin/celtium-probe --output local/capabilities.json
-```
+Terrain, entities, items, particles, sky/clouds and GUI have native rendering paths. **Having a native path does not mean every scene or feature is correct.** Unsupported or incomplete paths can still produce missing or incorrect output.
 
-On a Linux hybrid-GPU system, `--egl-device 0` (or another enumerated index) selects an EGL device explicitly. An unavailable index fails instead of falling back to the default GPU. Always verify the reported renderer and matching UUID; indices can change and `DRI_PRIME` may be ignored by a surfaceless EGL implementation.
+Vulkan-only startup and presentation have been exercised on **AMD Radeon RX 6400 and Intel UHD 630 under Linux/Mesa**, with passing selected fixtures and zero validation messages. These are scoped test results, not proof that every GPU, mod or game scene works. Physical display scanout has not been measured.
 
-`--require-compatible` exits with code 2 if the query is unsupported or unavailable. Reports always distinguish unverified depth sharing and unimplemented native terrain.
+Current work includes:
 
-The CLI has its own LWJGL distribution. `-Pceltium_lwjgl_version=<version>` changes that isolated distribution. Its libraries are not copied into the mod or the user's Minecraft installation.
+- Fixing major frame-time spikes and high CPU rendering costs.
+- Completing and correcting menu panorama, loading-screen presentation, GUI text/state and other remaining rendering defects.
+- Finishing framebuffer/post-process ownership, resource lifetime and recovery.
+- Extending ordinary Forge mod compatibility and verifying real gameplay.
+- Benchmarking against the fixed Celeritas reference with matching workloads.
 
-## Minecraft 1.12.2 build
+See [the current status and priorities](docs/plan.md), [the performance plan](docs/performance_plan.md), and [mod compatibility](docs/mod-compatibility.md). Historical measurements in `docs/history/` are evidence for their specific builds, not current completion claims.
+
+## Scope and compatibility
+
+- **Minecraft 1.12.2 / CleanroomMC only.** Stock Forge with Java 8/LWJGL2 and other Forge + LWJGL3 replacement stacks are not supported.
+- Ordinary gameplay/content mods are a compatibility goal. Minecraft/Forge public entry points, model data and event semantics are preserved where possible; compatibility is **not yet complete**.
+- **Other rendering overhaul and rendering optimization mods are not supported alongside Celtium.** Celtium replaces the renderer; it does not aim to coexist with competing renderer replacements.
+- Celtium replaces Celeritas. **Install one, not both.** The internal mod ID and resource namespace remain `celeritas` for existing references.
+- Shader-pack and shadow-mod compatibility is planned **after** the shaderless renderer and major gameplay mods work. Vanilla ShaderGroup, spectator effects and entity outlines remain part of the base renderer's scope.
+- This is not a general OpenGL-to-Vulkan translator. Native passes follow Minecraft's terrain, model/item, entity/TESR, particle, UI, texture and framebuffer semantics.
+- Mesh shaders are **not required or planned**. Optimizations must preserve a usable baseline on weaker GPUs.
+
+The supported development direction is Vulkan-only. Old bridge/probe experiments and retained upstream OpenGL code are not a supported alternate renderer or a promise of custom OpenGL compatibility.
+
+## Requirements and tested environment
+
+| Component | Current requirement / verification |
+| --- | --- |
+| Minecraft | 1.12.2 |
+| Loader | CleanroomMC; verified with 0.6.13-alpha |
+| LWJGL | LWJGL3; verified with 3.4.1. Vulkan bindings/native libraries must match the Cleanroom installation |
+| Java for build and verified gameplay | JDK 25 |
+| Celtium's own module bytecode | `--release 21`, class major 65 or lower; no Java 22+ API or preview dependency |
+| Vulkan | 1.2+ loader and physical device, with the required graphics/presentation, format and resource capabilities |
+| Verified GPUs / OS | RX 6400 and UHD 630 on Linux/Mesa |
+| Other GPUs / OS | NVIDIA, other AMD/Intel models, Windows and macOS are unverified |
+
+The exact minimum feature/format contract is still being audited and reduced. **Vulkan 1.2 support alone is not a compatibility guarantee.** Features are selected by device capabilities, not GPU name. Java 21 bytecode targeting does not constitute verification that the whole game launches on Java 21.
+
+## Building and trying a development build
+
+Run Gradle with JDK 25. The build also uses the JDK 21 compilation toolchain and the JDK 8 Minecraft preparation toolchain.
 
 ```sh
 ./gradlew -p build-1122 :forge122:packageJar
 ```
 
-Use JDK 25 or newer to run Gradle (required by RetroFuturaGradle 2.0.4), with JDK 21 for mod compilation and JDK 8 for Minecraft preparation. This is a build requirement, not a request to change the game's Java version. The isolated 1.12.2 build reuses the upstream source directories and required build helpers without loading the modern-version Stonecutter plugin. The original multi-version build remains for upstream reference.
+The packaged jar is written under:
 
-The resulting mod is under `build-1122/build/libs/<version>/`. In-game:
+```text
+build-1122/build/libs/<version>/
+```
 
-**Build and startup status:** Forge packaging and the probe tests pass. Celtium's own modules compile at `--release 21` (class major 65 or lower) and depend on no Java 22+ API; JDK 25 is used to build and to run the game, as noted above. The distributable is checked for its mod ID, manifest, licenses, absence of bundled LWJGL/native libraries and for every class staying at or below the release-21 target (class major 65) - **measured on the shipped jar (2026-10-11), whole-jar class-major histogram `{46: 111, 51: 1, 52: 618, 65: 90}`**: 618 classes at major 52 for the Forge-facing code, 90 at major 65 for Celtium's own Vulkan modules, the 46/51 entries vendored upstream code (older, not newer), and none from a later release. Cleanroom 0.6.13-alpha with LWJGL 3.4.1 on JDK 25 is the verified combination on RX 6400 and UHD 630; **no other vendor, driver or operating system has been verified.** Vulkan bindings must be on the game's classpath and match that Cleanroom installation's LWJGL version. The runtime needs a **Vulkan 1.2 or newer loader**, a device reporting `apiVersion >= 1.2` that is not a CPU device, `VK_KHR_external_memory_fd` and `VK_KHR_external_semaphore_fd`, and one queue family with both graphics and transfer - each enforced fail-closed at the file and line named in [the scope and limits](docs/scope-and-limits.md) section 0. See [validation](docs/validation-2026-10-08.md), [runtime reproduction](docs/runtime-validation.md) and [the handoff](docs/HANDOFF.md).
+Use a separate Cleanroom test instance, install the packaged Celtium jar instead of Celeritas, and add `-Dceltium.vulkan.glless=true` to the instance's JVM arguments. Keep LWJGL/Vulkan bindings consistent with that instance. Expect serious performance and rendering problems.
 
-- `/celtium` displays the active terrain backend and why it was selected.
-- `/celtium probe` queries the existing GL context and writes `logs/celtium-capabilities.json` on the render thread.
-- `/celtium vulkan` creates a Vulkan logical device for the same GPU as the GL context, verifies the interop contract and writes `logs/celtium-vulkan-device.json`; it does not start Vulkan terrain rendering.
+For reproducible validation and development, see [runtime validation](docs/runtime-validation.md), [AGENTS.md](AGENTS.md), [the objective](docs/goal.md) and [the performance plan](docs/performance_plan.md). Shader work has its own [follow-up plan](docs/shader-plan.md).
 
-Vulkan bindings must be available on the game's classpath and match that Cleanroom installation's LWJGL version for an in-game Vulkan query. Missing bindings or an unsupported context produce diagnostics; ordinary startup does not initialize Vulkan. The mod embeds Celtium's own probe and Vulkan bootstrap classes, not another LWJGL runtime.
+## Performance
 
-## Development
+**The current renderer is very heavy and can feel much worse than a normal Celeritas setup.** Some local optimizations have landed, including font rendering, shared geometry buffers and upload/draw batching, but these do not establish a whole-game FPS advantage or resolve the remaining stalls.
 
-See [the design and effort estimate](docs/design.md) and [the plan's status table](docs/plan.md), which is the single place the current state, priorities and acceptance are kept. (`docs/roadmap.md` was linked here and **does not exist**; removed 2026-10-11 rather than left as a dead link.)
-
-### Performance
-
-Measured on RX 6400 in one flat scene with pinned controls (frame cap, vsync, render distance, camera pose and world seed read back inside the game at both window ends), 900 frames per configuration: GL-less 3.94 ms p50 (253.8 fps), GL bridge 4.89 ms p50, and the pinned Celeritas reference `989ebf2e` 16.10 ms p50. **That is not a claim that Celtium renders the scene four times faster.** The reference sat on the 60 Hz presentation interval - identical at 64 and 147 visible sections with its GPU 7.5% busy - so it never used its headroom, only Celtium publishes pass timings (there is no GPU-time comparison), and the measurement covers one scene. The numbers and the full list of what they do not show are in [docs/performance-2026-10-11.md](docs/performance-2026-10-11.md).
-
-The separate [interop experiment](docs/interop-validation.md) verifies color, D24/D32 depth conversion, bidirectional occlusion, binary semaphores, recreation and retirement on AMD and Intel, including the existing Cleanroom FBO. It does not enable Vulkan terrain. [The P2 record](docs/p2-backend-boundary.md) documents the extracted terrain GPU boundary, the fail-closed backend selection and the pixel-identical comparison against stock Celeritas on both GPUs. [The P3 bootstrap record](docs/p3-vulkan-device-bootstrap.md) documents creating a Vulkan logical device for the GL GPU's UUID on both targets, with the interop contract verified in-game. Upload, arena and SOLID rendering are next.
-
-The verified Minecraft target is RGBA8 with a D24 depth renderbuffer, no stencil and one sample. RX 6400's D24 external-image query remains unsupported; the tested route imports shared D32 and converts depth on the GPU while preserving the original target IDs. Other formats, stencil, MSAA and broader mod compatibility require separate validation. Interop costs are measured separately from game performance.
+Performance acceptance requires matched Celeritas/Celtium scenes, raw frame times including p95/p99, CPU/GPU work, memory usage, latency and correct images on both test GPUs. Lower draw-call counts or isolated fast fixtures are not enough. See [performance_plan.md](docs/performance_plan.md).
 
 ## License and attribution
 
-Celtium retains Celeritas' LGPL-3.0 licensing and upstream history. See [COPYING](COPYING), [COPYING.LESSER](COPYING.LESSER), and [the preserved upstream README and credits](docs/upstream-README.md). Existing third-party notices remain in the source tree.
+Celtium retains Celeritas' **LGPL-3.0** licensing and upstream history. See [COPYING](COPYING), [COPYING.LESSER](COPYING.LESSER), and [the preserved upstream README and credits](docs/upstream-README.md). Third-party notices remain in the source tree and distribution.
 
-**What the shipped jar carries, measured 2026-10-11 from the built jar:** bundled packages are `org/embeddedt` (485 classes), `org/taumc` (207), `org/soutalab` (102), `grondag/bitraster` (13, covered by `licenses/bitraster-LICENSE`, Apache-2.0), `common/xyz/wagyourtail/jvmdg` (13 JVM Downgrader runtime stubs, covered by `licenses/jvmdowngrader-LICENSE.md` and `licenses/jvmdowngrader-LGPLv2.1.md`, read from the dependency's own POM and LICENSE.md) and `org/embeddedt/embeddium/impl/shadow/joml` (111 relocated JOML classes, covered by `META-INF/LICENSE`, the JOML MIT notice). No LWJGL, unrelocated JOML or `net/minecraft` class is inside. The project's own LGPL-3.0 text is in the jar at the root as `COPYING` and `COPYING.LESSER`, and the manifest carries `Celtium-License: LGPL-3.0`. `scripts/verify_forge_jar.py` checks the licence *content* as well as its presence, prints a census of each bundled package against the notice covering it, and compares the downgrader notices byte-for-byte with the dependency at the version pinned in `common/build.gradle`.
+The fixed source reference is [GTNewHorizons/Celeritas at `989ebf2e52ceed052ec112a569e0c1d172095756`](https://github.com/GTNewHorizons/Celeritas/tree/989ebf2e52ceed052ec112a569e0c1d172095756); Celeritas' upstream is [embeddedt/celeritas](https://git.taumc.org/embeddedt/celeritas).
+
+Current Sodium source under its newer restrictive license is not imported by this project. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.
