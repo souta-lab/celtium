@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.399 **round 200: R2 配線 65/69 適用（backend 14,493→14,116行）。共有3行は run 分割を担当へ差し戻し**
+
+- **適用（`b4100886b`）**: 永続化したマップを読む**スクリプト**（`scripts/refactor/apply-r2-wiring.py`）で**行範囲を一括置換** ✓。**dry-run で先にレビュー**（69行解析・65適用・4スキップ ✓）。7つの statistics field を追加 ✓。**backend は 14,493 → 14,116 行（−377）** ✓＝bottleneck だったファイルで抽出が目に見える形に ✓。
+- **スキップした4行＝「2クラスが共有する3行」**（L8492/L8622/L8734 ✓）: 1行に2クラスの text が乗り、**片方の run が2行に跨る**（例: Texture run2 は L8491 `descriptorHits` ＋ L8492 の一部 `descriptorMisses` ✗）ため、行単位の置換では表現できない ✓。→ **run 境界の分割を acceptance に差し戻し** ✓（制約: field 名と順序は不変 ✓／**counter の owner が変わる分割はしない**（run 境界は安いが owner 変更は高い）✓）。修正後の4行の範囲を受け取ったらスクリプトを再実行するだけ ✓。
+- **`.celtium-work` は gitignore** だったため、コミット失敗を機にツールを **`scripts/refactor/`** へ移動 ✓（レビュー可能・再実行可能にする ✓）。
+- **検証は未実施**（モラトリウム ✓）＝「動く」とは主張しない ✓。判定は ①全配線後の1回の build ②`verify_line_check.py`（ベースライン byte-exact → 空白/カンマの誤りは**名前付きキー差分**として出る ✓）③leg の最後の `CELTIUM_VERIFY` 行の diff ✓。同型の前例: 構造分割のみで **emit surface を byte-identical に保つ snapshot 検査**（29/29）が業界でも使われている形 ✓。
+- **残る配線（順序）**: ①R2 の共有4行 ②R5 の残り4項目（identity/census・pair handle・clear 決定・`framebufferReplacing`）③R6 scheduler ④R3a `ModelGeometryCache` ⑤R3b `FontBatch`（`FontRunState`/`RunSink` 実装＋呼び出し置換）⑥R4 `TerrainRenderer`（sky-draws の一括執筆後）→ ⑦**1回の build ＋ CPU 契約3本 ＋ `verify_line_check.py` ＋ menu/world leg**。
+
 ## 0.398 **round 199: R2 の配線マップ納品（69 run・行範囲・文字差異 0）— `docs/history/2026-10-12-r2-wiring-map.md` に永続化**
 
 - **納品（acceptance `36cef2c4d`）**: 7クラス＋**`verificationSummary()` の run→行範囲マップ（69 run）** ✓。機械照合で **各 run の出力テキストが現行文字列に逐語一致・mismatch 0・欠落 run 0** ✓（落としたのは inline comment のみ＝出力不変 ✓）＝**ベースラインは byte-exact** で、`verify_line_check.py` と leg の `CELTIUM_VERIFY` 行が判定子になる ✓。
