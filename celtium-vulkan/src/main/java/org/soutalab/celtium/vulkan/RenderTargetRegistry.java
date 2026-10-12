@@ -126,6 +126,30 @@ public final class RenderTargetRegistry {
     }
 
     /** {@return the identity the game's main framebuffer has}, or {@link Long#MIN_VALUE} when none was bound yet. */
+    /**
+     * Whether a frame-target replacement is in progress: announced when the bind path sees the framebuffer changing,
+     * settled by the first ensure that finds the new target ready.
+     * <p>
+     * Moved here from the backend (R5). The two setters are named rather than being a bare flag because the field had
+     * three writers there - one announce and two clears - and the clears were proven equivalent before the move.
+     */
+    private boolean replacementInProgress;
+
+    /** Records that a frame-target replacement has been announced. */
+    public void noteReplacementAnnounced() {
+        this.replacementInProgress = true;
+    }
+
+    /** Records that the replacement has settled: the target is ready. */
+    public void noteReplacementSettled() {
+        this.replacementInProgress = false;
+    }
+
+    /** {@return whether a frame-target replacement is in progress}. */
+    public boolean replacementInProgress() {
+        return this.replacementInProgress;
+    }
+
     /** Records the identity adopted as the main frame target, which the bind path can also discover later. */
     public void noteMainIdentity(long identity) {
         this.mainIdentity = identity;

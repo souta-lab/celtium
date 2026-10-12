@@ -1558,7 +1558,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * duration without a resize), with the stall first at the bind and, once the bind was guarded, at the clear. The
      * window is what both have in common.
      */
-    private boolean framebufferReplacing;
     /** Ordering flushes skipped at a framebuffer replacement, and the batches the first of them had to drop. */
     private int replaceBoundaryDrops;
     private int replaceBoundaryDropBatches;
@@ -4389,7 +4388,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     public void celtium$noteBindSize(int width, int height, boolean mainFramebuffer) {
         if (mainFramebuffer && this.frameTarget != null && !this.frameTarget.matches(width, height)) {
-            this.framebufferReplacing = true;
+            this.targetRegistry.noteReplacementAnnounced();
         }
     }
 
@@ -4556,7 +4555,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // between binding it and binding the next one, so this is the only moment a glClear can be attributed to the
         // image it names. See celtium$latchGameClearAtTargetChange for what the two routes mean.
         celtium$latchGameClearAtTargetChange();
-        if (!this.immediateWindowBusy && targetIdentity != this.targetRegistry.currentIdentity() && !this.framebufferReplacing) {
+        if (!this.immediateWindowBusy && targetIdentity != this.targetRegistry.currentIdentity() && !this.targetRegistry.replacementInProgress()) {
             // Framebuffer.bind HEAD: the OLD framebuffer is still bound, so complete its accepted draws before switching.
             flushPendingBeforeGlDraw();
         }
@@ -7129,7 +7128,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.immediateWindowBusy) return;
         closeCurrentImmediateGroup();
         if (this.immediateGroups.isEmpty()) return;
-        if (this.framebufferReplacing) {
+        if (this.targetRegistry.replacementInProgress()) {
             // No ordering flush across a framebuffer replacement: the pending groups were offered for a framebuffer whose
             // size no longer exists, and drawing them now would need the very wait that stalls the device. They are counted
             // and dropped, which is the same rule the refusal sites follow - name the loss rather than claim a draw that
@@ -11997,7 +11996,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (ready) {
             // The shared images match the framebuffer that is bound now, so the replacement window is over and ordering
             // flushes are meaningful again.
-            this.framebufferReplacing = false;
+            this.targetRegistry.noteReplacementSettled();
         }
         return ready;
     }
@@ -12018,7 +12017,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             ready = ensureFrameTarget(widthHint, heightHint);
         }
         if (ready) {
-            this.framebufferReplacing = false;
+            this.targetRegistry.noteReplacementSettled();
         }
         return ready;
     }
