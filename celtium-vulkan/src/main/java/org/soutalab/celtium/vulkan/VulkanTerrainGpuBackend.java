@@ -8625,7 +8625,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.report.printSummary(trigger, this.verificationSummary(), snapshot);
     }
 
-    private void celtium$releaseWorldResources() {
+    @Override
+    public void celtium$releaseWorldResources() {
         // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
         // the Celeritas section of the overlay is drawn - a leg with F3 requested but no such line printed every counter
         // as absent, which reads exactly like a counter that never fired. World teardown happens at least once per leg

@@ -37,6 +37,17 @@ public interface VulkanRenderer extends TerrainGpuBackend {
     void celtium$adoptTerrainState(RenderPassConfiguration<?> configuration, RenderRegionManager regionManager,
             FogService fogService);
 
+    /**
+     * The world-lifetime counterpart of the adoption: frees what a loaded world built - the region arenas, the model
+     * meshes a captured group borrows, and the world's counters - while leaving the device, the swapchain and the frame
+     * target alone.
+     * <p>
+     * The split is the point of this pair. A world can be left and entered again while the window stays open, so
+     * everything a world owns has to be releasable without touching anything the window owns; the adoption and this
+     * release are the only two doors between the two lifetimes.
+     */
+    void celtium$releaseWorldResources();
+
     /** Publishes this renderer as the current backend. */
     void install();
 
