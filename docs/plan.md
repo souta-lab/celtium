@@ -307,6 +307,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.325 **round 131: goal (e) の leg を取得したが report に video-settings の field が出ていない（受入は未取得）**
+
+- **測定（Lead の `r123-e`・`scene=videoSettings`＋`videoSettingsOption=RENDER_CLOUDS`＋`pinSections=60`＋`dumpPresentedImage`・150 s）**:
+  `exitCode=143 / endedBy=time-limit`（harness の duration 上限＝正常終了）だが、**report の field が `screenAtExit=none` のみ**で、
+  `videoSettingsOption`・`videoSettingsChain`・`videoSettingsRestored`・`guiScreenClassAtCapture`・`partialColorMaskGroups` が**1つも出ていない**
+  （console にも `partialColorMaskGroups` が 0 行）。
+  ＝**scene の video-settings 経路が走っていない**（field 名の不一致か、scene の前提が欠けている）。**受入は未取得**として記録（緑を以て受入としない）。
+- **次の1点**: **`scene=videoSettings` の経路が何を必要とするか**を `ValidationClient` の該当分岐で確認する
+  （gui-stage のレシピは「chain が既に着地している」前提だったので、**leg 側の前提**（例: `videoSettingsOption` の名前・
+  scene の別名・`keepGui` の要否）を原典で確かめる）。**推測で flag を足さない**。
+- **記録の価値**: 「レシピは揃っているが leg が経路に入らない」という**同型の失敗**をこの session で既に3回踏んでいる
+  （resize の `resizeAtTick` 欠落・`resizeViaCompositor` 既定 false・今回の video-settings scene）。＝**leg を打つ前に
+  「その scene が何を必要とするか」を原典で確認する**のが次の規律として有効。
+- **未了は変わらず**: frame-close pairing・BH-14・**goal (e) 4 phase（レシピ記録済み・leg は経路未到達）**・`scissorCapturedGroups=0`・主要mod対応・Intel UHD630。
+
 ## 0.324 **round 130: goal (e) の leg レシピを記録（gui-stage が budget 切れで辞退・4 phase の flags と読み方）**
 
 - **base flags（全 phase で同一 scene/camera・両 half に `pinSections`）**:
