@@ -1429,6 +1429,13 @@ public final class VulkanTextureRegistry {
         }
         Entry entry = this.entries.remove(id);
         this.fullyInitialized.remove(id);
+        // The GL name is free for reuse the moment it is deleted ("its name is free for reuse"), so the label that
+        // says which source filled *this* name's mirror must go with the entry. It did not, and `splashSourcedGroups`
+        // - which counts groups sampling a mirror whose source is `announced-int[]`, i.e. exactly this label - could
+        // therefore attribute the next texture under the same name to the previous one's source. Measured on the
+        // panorama: `forgetTexture id=8 hadEntry=true` fires, no announcement follows for id 8, and the mirror is
+        // refilled by an int[] upload, so the stale label is precisely the case that matters here.
+        this.mirrorSourceById.remove(id);
         if (CeltiumGlStub.isInstalled() && announcementUnconsumed(id)) {
             // The GL-less case, and the reason this is not the plain removal below: the game's own upload utility
             // deletes the id inside the very call that announced its image
