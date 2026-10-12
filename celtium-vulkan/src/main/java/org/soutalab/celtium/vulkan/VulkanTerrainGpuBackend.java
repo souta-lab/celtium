@@ -235,7 +235,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final Matrix4f vulkanProjection = new Matrix4f();
 
     private int command0Logged;
-    private int verticesLogged;
     private long readbackBuffer;
     /** One slot per remembered draw; 32 covers a frame's visible sections at a typical render distance. */
     private static final int READBACK_SLOTS = 32;
@@ -367,7 +366,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
     private final Reference2ReferenceMap<TerrainRenderPass, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
-    private int beforeAfterLogged;
     private int readbackSlots;
     private long readbackOffset;
     private int timestampSlots;
@@ -375,7 +373,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private TerrainRenderer.RegionResources readbackRegion;
     private boolean readbackPending;
     private boolean readbackDone;
-    private long lastUploadedBytes;
 
     public VulkanTerrainGpuBackend(VulkanContext context,
                                    RenderPassConfiguration<?> configuration,
@@ -403,6 +400,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.terrain.setContext(this.context);
         this.terrain.setDiagnostics(this::record);
         this.terrain.setFogService(this.fogService);
+        this.terrain.setConfiguration(this.configuration);
+        this.terrain.setVertexStride(this.commonVertexStride);
 }
 
     /**
@@ -513,7 +512,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         builder.append(" regions=").append(this.terrain.regionCount());
         builder.append(" draws=").append(this.terrainStatistics.lastDrawCommands());
         builder.append(" sections=").append(this.terrainStatistics.lastSectionsDrawn());
-        builder.append(" uploaded=").append(this.lastUploadedBytes).append("B");
+        builder.append(" uploaded=").append(this.terrain.lastUploadedBytes()).append("B");
         builder.append(" index=").append(this.sharedIndexBuffers.size());
         if (this.frameTarget != null) {
             builder.append(" target=").append(this.targetWidth).append('x').append(this.targetHeight);
@@ -8347,7 +8346,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // Minecraft's chunk loop and end the run with "Game crashed!" and no report at all (exit 255, both GPUs).
             // The region keeps whatever it already had, the counter records the loss, and the next region is tried.
             try {
-                uploadRegion(entry.getKey(), entry.getValue(), graphUpdateTrigger);
+                this.terrain.uploadRegion(entry.getKey(), entry.getValue(), graphUpdateTrigger);
             } catch (RuntimeException error) {
                 this.regionUploadFailures++;
                 this.lastRegionUploadFailure = String.valueOf(error);
@@ -8785,191 +8784,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     // ------------------------------------------------------------------ upload path
 
-    private void uploadRegion(RenderRegion region, List<ChunkTaskOutput> outputs, Runnable graphUpdateTrigger) {
-        List<TerrainRenderer.PendingMesh> pending = new ArrayList<>();
-        boolean needIndexBuffer = false;
 
-        for (ChunkTaskOutput output : outputs) {
-            if (output instanceof ChunkBuildOutput) {
-                ChunkBuildOutput build = (ChunkBuildOutput) output;
-                region.removeMeshes(build.render.getSectionIndex());
-                for (Reference2ReferenceMap.Entry<TerrainRenderPass, BuiltSectionMeshParts> meshEntry
-                        : build.meshes.reference2ReferenceEntrySet()) {
-                    BuiltSectionMeshParts mesh = meshEntry.getValue();
-                    if (mesh == null) {
-                        continue;
-                    }
-                    needIndexBuffer |= mesh.indexBuffer() != null;
-                    pending.add(new TerrainRenderer.PendingMesh(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
-                    resourcesFor(region).sectionFirstColor));
-                }
-            } else if (output instanceof ChunkSortOutput) {
-                ChunkSortOutput sort = (ChunkSortOutput) output;
-                needIndexBuffer = true;
-                for (Reference2ReferenceMap.Entry<TerrainRenderPass, ChunkSortOutput.SortedMesh> meshEntry
-                        : sort.meshes.reference2ReferenceEntrySet()) {
-                    SectionRenderDataStorage storage = region.getStorage(meshEntry.getKey());
-                    if (storage != null) {
-                        storage.removeIndexBuffer(sort.render.getSectionIndex());
-                    }
-                    pending.add(new TerrainRenderer.PendingMesh(sort.render.getSectionIndex(), meshEntry.getKey(), null,
-                            meshEntry.getValue(), null));
-                }
-            } else {
-                throw new IllegalStateException("Unexpected result type: " + output.getClass().getName());
-            }
-        }
-
-        if (pending.isEmpty()) {
-            return;
-        }
-
-        TerrainRenderer.RegionResources resources = resourcesFor(region);
-        long uploaded = 0;
-
-        for (TerrainRenderer.PendingMesh mesh : pending) {
-            if (mesh.parts != null) {
-                ByteBuffer vertices = mesh.parts.vertexBuffer().getDirectBuffer();
-                int vertexBytes = mesh.parts.vertexBuffer().getLength();
-                if (mesh.sectionFirstColor != null) {
-                    mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
-                    TerrainRenderer.RegionResources owner = resourcesFor(region);
-                    byte[] head = new byte[32];
-                    java.nio.ByteOrder headOrder = vertices.order();
-                    try {
-                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        for (int b = 0; b < 32 && b < vertices.capacity(); b++) head[b] = vertices.get(b);
-                    } finally {
-                        vertices.order(headOrder);
-                    }
-                    owner.sectionFirstVertex[mesh.sectionIndex] = head;
-                }
-                if (TERRAIN_VERTEX_COLOUR_SAMPLES > 0 && colourSamples < TERRAIN_VERTEX_COLOUR_SAMPLES) {
-                    colourSamples++;
-                    // What the mesh builder packed, in the layout the pipeline declares (vanilla BLOCK: colour at byte 12).
-                    // The frame is darker than the reference by a per-pixel factor, so the question is whether the colour
-                    // arrives dark (alpha below 255 would do it: the fragment shader multiplies rgb by alpha) or arrives
-                    // correct and is lost later. Mean and extremes answer that without a second build.
-                    int stride = 32;
-                    int count = Math.max(1, vertexBytes / stride);
-                    long sumR = 0, sumG = 0, sumB = 0, sumA = 0;
-                    int minA = 255, maxA = 0;
-                    int step = Math.max(1, count / 64);
-                    int sampled = 0;
-                    java.nio.ByteOrder order = vertices.order();
-                    try {
-                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        for (int v = 0; v < count; v += step) {
-                            int at = v * stride;
-                            int r = vertices.get(at + 12) & 0xFF;
-                            int g = vertices.get(at + 13) & 0xFF;
-                            int b = vertices.get(at + 14) & 0xFF;
-                            int a = vertices.get(at + 15) & 0xFF;
-                            sumR += r; sumG += g; sumB += b; sumA += a; sampled++;
-                            if (a < minA) minA = a;
-                            if (a > maxA) maxA = a;
-                        }
-                    } finally {
-                        vertices.order(order);
-                    }
-                    // The light element is two unsigned shorts at byte 24 in the vanilla BLOCK layout. Their units decide
-                    // the light map divisor: byte-sized light values (0..15) belong with /16, values already shifted for a
-                    // 256-texel map (0..240) belong with /256, and the two cannot both be right.
-                    int light0 = 0, light1 = 0;
-                    java.nio.ByteOrder lightOrder = vertices.order();
-                    try {
-                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        light0 = vertices.getShort(24) & 0xFFFF;
-                        light1 = vertices.getShort(26) & 0xFFFF;
-                    } finally {
-                        vertices.order(lightOrder);
-                    }
-                    float u0 = 0.0f, v0 = 0.0f;
-                    java.nio.ByteOrder uvOrder = vertices.order();
-                    try {
-                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        u0 = vertices.getFloat(16);
-                        v0 = vertices.getFloat(20);
-                    } finally {
-                        vertices.order(uvOrder);
-                    }
-                    java.util.Map<Integer, Integer> histogram = new java.util.TreeMap<>();
-                    java.nio.ByteOrder histOrder = vertices.order();
-                    try {
-                        vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        for (int v = 0; v < count; v++) {
-                            int at = v * stride;
-                            int packedColour = (vertices.get(at + 12) & 0xFF) | ((vertices.get(at + 13) & 0xFF) << 8)
-                                    | ((vertices.get(at + 14) & 0xFF) << 16) | ((vertices.get(at + 15) & 0xFF) << 24);
-                            histogram.merge(Integer.valueOf(packedColour), Integer.valueOf(1), Integer::sum);
-                        }
-                    } finally {
-                        vertices.order(histOrder);
-                    }
-                    StringBuilder top = new StringBuilder();
-                    int shownColours = 0;
-                    for (var entry : histogram.entrySet()) {
-                        if (shownColours++ >= 4) break;
-                        top.append("0x").append(Integer.toHexString(entry.getKey().intValue()))
-                                .append('x').append(entry.getValue()).append(' ');
-                    }
-                    System.out.println("[Celtium] CELTIUM_VERTEX_COLOUR pass=" + mesh.pass + " section=" + mesh.sectionIndex
-                            + " first=0x" + Integer.toHexString(firstVertexColor(vertices))
-                            + " meanRGBA=" + (sumR / sampled) + "," + (sumG / sampled) + "," + (sumB / sampled)
-                            + "," + (sumA / sampled) + " alphaRange=" + minA + ".." + maxA
-                            + " lightShort0=" + light0 + " lightShort1=" + light1
-                            + " uv=" + u0 + "," + v0 + " vertices=" + count
-                            + " distinctColours=" + histogram.size() + " top=" + top);
-                }
-                int beforeColour = firstVertexColor(vertices);
-                long beforeAddress = MemoryUtil.memAddress(vertices);
-                VulkanArena.Segment vertexSegment = resources.vertexArena.allocate(vertexBytes);
-                resources.vertexArena.write(vertexSegment.byteOffset(), MemoryUtil.memAddress(vertices), vertexBytes);
-                if (beforeAfterLogged < 4) {
-                    beforeAfterLogged++;
-                    int mid = Math.max(0, (vertexBytes / 2 / 32) * 32);
-                    int midColour = firstVertexColor(vertices, mid);
-                    record("copy check: before=0x" + Integer.toHexString(beforeColour)
-                            + " after=0x" + Integer.toHexString(firstVertexColor(vertices))
-                            + " address=" + beforeAddress + " segmentOffset=" + vertexSegment.byteOffset()
-                            + " bytes=" + vertexBytes + " position=" + vertices.position()
-                            + " mid=0x" + Integer.toHexString(midColour));
-                }
-                uploaded += vertexBytes;
-
-                VulkanArena.Segment indexSegment = null;
-                if (mesh.parts.indexBuffer() != null) {
-                    ByteBuffer indices = mesh.parts.indexBuffer().getDirectBuffer();
-                    int indexBytes = mesh.parts.indexBuffer().getLength();
-                    indexSegment = indexArena(resources).allocate(indexBytes);
-                    indexArena(resources).write(indexSegment.byteOffset(), MemoryUtil.memAddress(indices), indexBytes);
-                    uploaded += indexBytes;
-                }
-
-                SectionRenderDataStorage storage = region.createStorage(mesh.pass, this.configuration);
-                storage.setMeshes(mesh.sectionIndex, vertexSegment, indexSegment, mesh.parts.ranges());
-            } else if (mesh.sorted != null) {
-                ByteBuffer indices = mesh.sorted.indexData().getDirectBuffer();
-                int indexBytes = mesh.sorted.indexData().getLength();
-                VulkanArena.Segment indexSegment = indexArena(resources).allocate(indexBytes);
-                indexArena(resources).write(indexSegment.byteOffset(), MemoryUtil.memAddress(indices), indexBytes);
-                uploaded += indexBytes;
-
-                SectionRenderDataStorage storage = region.createStorage(mesh.pass, this.configuration);
-                storage.replaceIndexBuffer(mesh.sectionIndex, indexSegment);
-            }
-        }
-
-        int previousCookie = region.getPassSetUpdateCount();
-        region.removeEmptyStorages();
-        if (region.getPassSetUpdateCount() != previousCookie) {
-            graphUpdateTrigger.run();
-        }
-
-        this.lastUploadedBytes = uploaded;
-        logFirstVertex(pending);
-
-    }
 
     /**
      * Decodes the first vertex of the first uploaded mesh and records it. The values the shader receives are the
@@ -8993,70 +8808,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * failure left them marked built, so this number was invisible: it was zero because nothing distinguished the two.
      */
     private int sectionsLeftUnbuilt;
-    private final java.util.HashMap<Integer, Integer> colourCounts = new java.util.HashMap<>();
-    private int colourBatches;
 
-    private void logFirstVertex(java.util.List<TerrainRenderer.PendingMesh> pending) {
-        for (TerrainRenderer.PendingMesh mesh : pending) {
-            if (mesh.parts != null && mesh.sectionFirstColor != null) {
-                int colour = mesh.sectionFirstColor[mesh.sectionIndex];
-                Integer previous = colourCounts.get(colour);
-                colourCounts.put(colour, previous == null ? 1 : previous + 1);
-            }
-        }
-        this.colourBatches++;
-        if ((this.colourBatches == 1 || this.colourBatches % 20 == 0) && VulkanDiagnostics.enabled()) {
-            java.util.List<java.util.Map.Entry<Integer, Integer>> entries =
-                    new java.util.ArrayList<>(colourCounts.entrySet());
-            java.util.Collections.sort(entries, (a, b) -> b.getValue() - a.getValue());
-            StringBuilder line = new StringBuilder("mesh colour census (batches=" + this.colourBatches + "):");
-            for (int i = 0; i < Math.min(5, entries.size()); i++) {
-                line.append(" 0x").append(Integer.toHexString(entries.get(i).getKey()))
-                        .append(" x").append(entries.get(i).getValue());
-            }
-            record(line.toString());
-        }
-        if (verticesLogged >= 8) {
-            return;
-        }
-        for (TerrainRenderer.PendingMesh mesh : pending) {
-            if (mesh.parts != null && mesh.sectionFirstColor != null) {
-                // Counted for every mesh, not just the first few, so a colour that only some sections carry shows up.
-            }
-        }
-        if (verticesLogged >= 8) {
-            return;
-        }
-        for (TerrainRenderer.PendingMesh mesh : pending) {
-            if (mesh.parts == null) {
-                continue;
-            }
-            int stride = mesh.pass.vertexType().getVertexFormat().getStride();
-            ByteBuffer vertices = mesh.parts.vertexBuffer().getDirectBuffer();
-            if (vertices.remaining() < stride) {
-                continue;
-            }
-            vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-            StringBuilder line = new StringBuilder("vertex0 stride=").append(stride);
-            if (stride == 32) {
-                line.append(" pos=(").append(vertices.getFloat(0)).append(',').append(vertices.getFloat(4))
-                        .append(',').append(vertices.getFloat(8)).append(')');
-                line.append(" colorARGB=0x").append(Integer.toHexString(vertices.getInt(12)));
-                line.append(" uv=(").append(vertices.getFloat(16)).append(',').append(vertices.getFloat(20)).append(')');
-                line.append(" light=0x").append(Integer.toHexString(vertices.getInt(24)));
-                int packed = vertices.getInt(24) >>> 16;
-                line.append(" block=").append(packed & 0xFF).append(" sky=").append((packed >> 8) & 0xFF);
-                line.append(" material=").append(packed & 0xFF).append(" section=").append((packed >> 8) & 0xFF);
-            } else {
-                line.append(" posId=0x").append(Integer.toHexString(vertices.getInt(0)));
-                line.append(" colorARGB=0x").append(Integer.toHexString(vertices.getInt(8)));
-                line.append(" light=0x").append(Integer.toHexString(vertices.getInt(16)));
-            }
-            verticesLogged++;
-            record("mesh" + verticesLogged + " pass=" + nameOf(mesh.pass) + " " + line);
-            return;
-        }
-    }
 
     /** Colour word of the first vertex of a mesh, in the little-endian byte order the GPU reads. */
     /** How many section uploads print their packed vertex colours; a property so a normal run stays quiet. */
@@ -9064,29 +8816,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean VERTEX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.vertexDiagnostics");
 
-    private static final int TERRAIN_VERTEX_COLOUR_SAMPLES =
-            Integer.getInteger("celtium.vulkan.vertexColourSamples", 0).intValue();
-    private int colourSamples;
 
-    private static int firstVertexColor(ByteBuffer vertices, int at) {
-        java.nio.ByteOrder order = vertices.order();
-        try {
-            vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-            return vertices.getInt(at + 12);
-        } finally {
-            vertices.order(order);
-        }
-    }
 
-    private static int firstVertexColor(ByteBuffer vertices) {
-        java.nio.ByteOrder order = vertices.order();
-        try {
-            vertices.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-            return vertices.getInt(12);
-        } finally {
-            vertices.order(order);
-        }
-    }
 
     /**
      * Debug aid: copies the arena bytes for the just-uploaded range back to host memory and decodes them. This is
