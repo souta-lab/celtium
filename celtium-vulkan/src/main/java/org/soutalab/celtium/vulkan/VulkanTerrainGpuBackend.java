@@ -9020,6 +9020,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
                 // reading them here is what makes a zero that cannot move (no increment site) visible as such.
                 + " immediateGroupsDrawn=" + this.immediateStatistics.immediateGroupsDrawn()
+                + " groupPool=[created=" + ImmediateGroup.poolCreated + " reused=" + ImmediateGroup.poolReused
+                + " recycled=" + ImmediateGroup.poolRecycled + "]"
                 // Every vkQueueSubmit the process issued, all paths together: the owned target's per-stage
                 // semaphore packets show up here as part of the same total the work submissions do, so "submissions
                 // per frame" is readable as queueSubmitCalls/worldFrames rather than assembled from call sites.
