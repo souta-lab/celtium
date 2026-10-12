@@ -199,20 +199,10 @@ public final class TargetStatistics {
         out.append(this.lastPairClearRefusal);
     }
 
-    /**
-     * Run 10, the tail of old L8622: outsideWorldPassRefusals.
-     * <p>
-     * Split from run 11 because the old L8622 carries Immediate's snapshotCaptures/snapshotServed before this
-     * field and this class's offTargetRefusals after it, so neither run could own the whole line. run 11 is
-     * called immediately after this one.
-     */
+    /** Run 10, reproducing backend L8622-L8623: outsideWorldPassRefusals offTargetRefusals. */
     public void appendRun10(StringBuilder out) {
         out.append(" outsideWorldPassRefusals=");
         out.append(this.outsideWorldPassRefusals);
-    }
-
-    /** Run 11, old L8623: offTargetRefusals, emitted immediately after run 10. */
-    public void appendRun11(StringBuilder out) {
         out.append(" offTargetRefusals=");
         out.append(this.offTargetRefusals);
     }
