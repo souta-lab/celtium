@@ -48,19 +48,31 @@ afterWindows=3  frameCentre=(219,219,219) corner=(73,95,36)   (the splash and it
 So the harness's loading capture is a first-present timing artifact of the game's own loop, and the
 `UNCALIBRATED_PRESENTED_IMAGE` verdict on this scene is honest: no reference judges it.
 
-## The loading screen's real defect, in the frame that does carry the splash
+## Correction (round 236): there were no two defects - the dump was upside down
 
-`stage-splash-p1` of `splash13` (mean 242.4/241.2/241.7, distinct 15199) is the loading screen as the user
-sees it, and it shows two defects:
+The frame image, like every image this renderer owns, is in GL texture order: **row 0 is the picture's bottom**,
+and the present flips once. The `stage-*.png` dumps write the rows in that order, so reading one directly shows
+the picture upside down. Flipped into picture order (`VulkanGlTexture.dumpStageImageAsPicture`, which now also
+writes `stage-splash-p<N>-picture-1920x1080.png`), the frame that carries the splash shows:
 
-1. **The Cleanroom logo is horizontally mirrored** - "CLEANROOM" reads right to left. The same mirror is in
-   the chain pair (`stage-splash-pair-p1`), so the flip is introduced where the game's own draws are
-   rendered, not by the composite that copies the pair into the frame image.
-2. **The panorama is a 256x256 tile in the top-left corner** instead of the full-screen background.
+* the **Mojang logo, upright and correct** - the "horizontally mirrored Cleanroom logo" of round 235 was an
+  upside-down logo, whose letters read like mirrored text;
+* the panorama in the **bottom-left** 256x256 box - exactly where `glViewport(0,0,256,256)` puts it, not a
+  "tile in the top-left corner".
 
-Both are transform defects, and the game's own source is not the cause: `Framebuffer.framebufferRenderExt`
-draws `pos(0,h) -> pos(w,0)` with `tex(0,0) -> tex(f2,f3)`, and `Minecraft.draw(...)` increases `u` with
-`x`. The next unit starts from the group's own projection and model view for those two draws.
+The mirroring question is also closed by three independent measurements on the same leg
+(`r212-splash-splashflip2`, `splashmir48`, AMD RX 6400, 1920x1080, `glless=true`):
+
+* the captured vertices are not mirrored: the logo quad's texture coordinates are (0,1), (1,1), (1,0), (0,0) at
+  x = 112, 368, 368, 112, which is `Minecraft.draw(...)`'s own order;
+* the group's projection diagonal is `(+0.004, -0.007)` and the texture matrix is `none`, so neither the
+  projection nor the tex matrix mirrors x;
+* texture 8's mirror holds `mojang.png` the right way round (`mirror-gl8-256x256-l0-*.png`).
+
+What remains for the loading screen is different from what round 235 said: (a) whether the full-screen blurred
+panorama composite the menu draws also runs on the loading screen (the 256x256 box is only its first half), and
+(b) which texture the Cleanroom splash's own logo comes from - our legs show the *vanilla* Mojang splash, so the
+user's session runs Cleanroom's splash code, whose textures have to be identified by name.
 
 ## Instruments this unit added (all off by default, all bounded)
 
@@ -69,5 +81,11 @@ draws `pos(0,h) -> pos(w,0)` with `tex(0,0) -> tex(f2,f3)`, and `Minecraft.draw(
 * `-Dceltium.vulkan.pairProbeClear=true` - magenta pair clear before the frame's own pass.
 * `-Dceltium.vulkan.presentPatch=true` - `CELTIUM_PRESENT_PATCH` at the first eight presents.
 * `-Dceltium.vulkan.rebuildDescriptors=true` - rebuild every textured group's descriptor at the draw.
-* `-Dceltium.vulkan.mirrorDrawLog=<n>` (existing) now carries the sampled view, the live pair's view and
-  image, `standsForLivePair`, the recorded layout, the vertex positions/UVs/colours and the group's fog.
+* `-Dceltium.vulkan.mirrorDrawLog=<n>` (existing) now carries the sampled view, the live pair's view and image,
+  `standsForLivePair`, the recorded layout, the vertex positions/UVs/colours (twelve vertices, so a two-quad group
+  shows its picture), the group's projection diagonal, its texture matrix and its fog.
+* `VulkanGlTexture.dumpStageImageAsPicture` - the stage dumps in picture order; the splash probe writes
+  `stage-splash-p<N>-picture-1920x1080.png` beside the image-order one. Unit: RGBA8, whole image, no cap beyond the
+  dump gate. Its whole purpose is that an image-order dump read as a picture is a false defect.
+* Announcement mirrors are dumped under the GL name they were announced with (`this.encodeLabel`), not as
+  `mirror-gl-1-...`: the sixty-four 256x256 canvases of a splash leg were previously indistinguishable by name.

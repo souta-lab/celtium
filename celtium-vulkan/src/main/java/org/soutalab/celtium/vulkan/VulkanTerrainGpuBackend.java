@@ -7037,6 +7037,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 }
                                 VulkanGlTexture.dumpStageImage("splash-p" + this.celtium$presentCount, rgba,
                                         this.targetWidth, this.targetHeight);
+                                // And the same frame the way a viewer shows it: the image is in GL texture order, so
+                                // row 0 is the picture's bottom and the plain dump reads upside down. See
+                                // dumpStageImageAsPicture for the two defects that misreading produced.
+                                VulkanGlTexture.dumpStageImageAsPicture(
+                                        "splash-p" + this.celtium$presentCount + "-picture", rgba,
+                                        this.targetWidth, this.targetHeight);
                                 // The pair as well, in the same dump: the splash draws into its own Framebuffer,
                                 // whose identity routes to the chain pair, and the composite only carries that image
                                 // into the frame image. Two images, two dumps, so "the logo never landed in the pair"
@@ -12734,6 +12740,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                             this.targetWidth, this.targetHeight))
                             + " layout=" + (bound == null ? -1 : bound.foreignLayout())
                             + " uvRange=" + celtium$meshVertexPreview(mesh)
+                            // The two places a horizontal flip can live downstream of the vertices: the group's own
+                            // projection diagonal (a negative m00 mirrors x) and the texture matrix the vertex shader
+                            // applies when u_TexB.z > 0.5 (a negative u_TexA.x mirrors the sample). Both are printed
+                            // beside the vertex coordinates, so "the geometry is right" and "the draw is right" stop
+                            // being the same statement.
+                            + " projDiag=" + round3(group.projection == null ? 0.0f : group.projection[0]) + ","
+                            + round3(group.projection == null ? 0.0f : group.projection[5])
+                            + " texMat=" + (group.texMatrix == null ? "none"
+                                    : (round3(group.texMatrix[0]) + "," + round3(group.texMatrix[1]) + ","
+                                            + round3(group.texMatrix[2]) + "," + round3(group.texMatrix[3]) + ","
+                                            + round3(group.texMatrix[4]) + "," + round3(group.texMatrix[5])))
                             + " fog=" + (group.fog == null ? "none"
                                     : ("mode=" + (int) group.fog[0] + ",colour=" + round3(group.fog[4]) + ","
                                             + round3(group.fog[5]) + "," + round3(group.fog[6]) + ",start="

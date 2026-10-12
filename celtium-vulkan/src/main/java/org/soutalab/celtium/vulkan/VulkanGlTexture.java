@@ -1837,8 +1837,11 @@ public final class VulkanGlTexture {
         // a failed transfer never delivered, and the next retry would then be skipped as a duplicate (audit A07).
         lastPixelHash = hash;
         // The announcement path: this is where the light map and the direct-held textures arrive whole, so a dump here
-        // says whether the image the descriptors sample got those pixels.
-        dumpMirrorPixels(-1);
+        // says whether the image the descriptors sample got those pixels. The name is the one the caller announced the
+        // image under, not a constant: every file used to be written as `mirror-gl-1-...`, so the sixty-four 256x256
+        // canvases of a splash leg were indistinguishable by name and the splash's own logo canvas - the image the
+        // mirrored logo has to be read from - could not be found among them.
+        dumpMirrorPixels(this.encodeLabel);
         return true;
     }
 
@@ -2578,6 +2581,37 @@ public final class VulkanGlTexture {
         }
         writePng(rgba, width, height, new java.io.File(MIRROR_DUMP_DIR,
                 "stage-" + label + "-" + width + "x" + height + ".png"));
+    }
+
+    /**
+     * The same pixels as {@link #dumpStageImage}, written in picture order instead of image order.
+     * <p>
+     * Every image this renderer owns is in GL texture order - row 0 is the picture's <em>bottom</em>, and the present
+     * flips once - so a dump of one is upside down in any viewer that puts row 0 at the top. Measured: an upside-down
+     * Mojang logo reads as mirrored text, and two rounds were spent on a "horizontally mirrored logo" and a "panorama
+     * tile in the top-left corner" that do not exist in the picture; flipped, the logo is upright and the tile is
+     * bottom-left, exactly where {@code glViewport(0,0,256,256)} puts it. This variant writes the rows in the order a
+     * viewer draws them, so the two readings cannot be confused again. Label the file so the orientation is in its
+     * name; only the callers that need a picture for a human should pay for the copy.
+     */
+    public static void dumpStageImageAsPicture(String label, java.nio.ByteBuffer rgba, int width, int height) {
+        if (!mirrorDumpConfigured() || rgba == null || width <= 0 || height <= 0) {
+            return;
+        }
+        java.nio.ByteBuffer flipped = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
+        try {
+            for (int row = 0; row < height; row++) {
+                long source = (long) row * width * 4L;
+                long target = (long) (height - 1 - row) * width * 4L;
+                for (int column = 0; column < width * 4; column++) {
+                    flipped.put((int) (target + column), rgba.get((int) (source + column)));
+                }
+            }
+            writePng(flipped, width, height, new java.io.File(MIRROR_DUMP_DIR,
+                    "stage-" + label + "-" + width + "x" + height + ".png"));
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(flipped);
+        }
     }
 
     /** {@return whether the bounded mirror dump was asked for at all}, so a caller can skip building the pixels. */
