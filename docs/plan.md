@@ -339,6 +339,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.358 **round 165: fixture knob は効いた（`namedScreenOpened=GuiLanguage` at tick 31）— ただし画面が開くと frame カウンタが止まり summary が出ない**
+
+- **測定（`r155-bh09`・`-Dceltium.validation.screen=language`）**: report に **`namedScreenOpened = net.minecraft.client.gui.GuiLanguage`・`namedScreenOpenedAtTick = 31`**
+  ＝**新しい knob は設計どおり動いた**（`GuiSlot` 派生＝vanilla 自身の scissor 使用者を開けた）。
+- **しかし `CELTIUM_VERIFY` は 0 行**（leg は 33.8 s・`endedBy=process-exit`）。frame 120 の trigger に到達していない。
+  ＝**画面が開くと `frameId` が進まない**（GUI 画面が上がると world render 経路が走らない）という説明が最も整合する。
+  ＝**「画面を開く leg」では frame trigger が使えない**という計器側の制約が判明。
+- **次の一手（小さく明確）**: summary の trigger を**画面が開いていても進む経路**に足す（例: present 経路・GUI 描画経路・client tick 経路のいずれか）。
+  ＝**その後 `-Dceltium.validation.screen=language` の leg で `lineBatchesNarrowed` を先に読む**（>0 なら経路を踏んだ証拠）→
+  `scissorCapturedGroups`/`scissorLateCapturedGroups` → 同一 jar の `-Dceltium.vulkan.groupScissor=false` 一旗対照。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地・計器3 trigger 着地・fixture knob 着地（`770620c0c`）・
+  受入は summary の trigger を「画面が開いた状態でも進む経路」に足すまで待ち**。**5 leg を費やした**が、
+  各 leg は「経路未 exercise」または「trigger 未到達」と計器側が自分で示している。
+
 ## 0.357 **round 164: 履歴からユーザの実画面スクリーンショットを削除（`git filter-repo`・force-push 済み）**
 
 - **ユーザの指示**: `docs/history/evidence/compositor-output-2026-10-11/desktop-real-output-HDMI-A-4.png`（**687,829 bytes**）を
