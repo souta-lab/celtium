@@ -125,4 +125,4 @@ The test instance runs the standard 1.12.2 performance stack — these are **coe
 
 The inventoried candidates per project are kept in [docs/performance_plan.md](docs/performance_plan.md). Porting a listed item means: check the file/module license first (FalseTweaks and ArchaicFix contain non-LGPL islands), re-implement — do not copy code —, then credit in commit, code comment and PR.
 
-Current Sodium source under its newer restrictive license is not imported by this project. Argentum and Smoothfont are all-rights-reserved and are never used as references. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.
+Current Sodium source under its newer restrictive license is not imported by this project. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.

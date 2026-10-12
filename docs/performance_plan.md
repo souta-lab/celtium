@@ -125,7 +125,6 @@ BH-27 の bootstrap `queueWaitIdle` 修正、BH-02 の sorted index 選択、BH-
 | --- | --- | --- | --- |
 | Sodium | stable `mc26.3-0.9.2`。`0.9.3-alpha.1` は別枠。PR #3735 の Vulkan backend、#2887 の culling / task scheduling を確認 | cached draw list、native multidraw と capability 別経路、visibility と frame の分離、age / distance / work size を含む job priority | **現行 source の取り込み・翻訳・cherry-pick 不可**。PolyForm Shield を LGPL 世代と同一扱いしない。Celeritas にある async / adaptive budget を二重実装しない [R01–R04] |
 | ImmediatelyFast | `1.17.1` / 26.3 branch。`1.16.0` で 26.2 Vulkan backend 対応を明示 | entity / TESR / particle / text / GUI の buffer batching、map atlas、sign text cache、FBO switch の削減 | 1.19.3 等の公表倍率を Celtium に転記しない。`canReorder=true` の一律化を 1.12.2 の透明・GUI に移植しない [R05–R06] |
-| EntityCulling | `1.11.3`、26.3 artifact を確認 | 非同期・保守的な visibility、bounds inflation、fast camera / mod opt-out / generation の扱い | 1.12.2 対応 mod として同梱しない。protective license のコードは取り込まない。tick skip は renderer の既定動作にしない [R07] |
 | MoreCulling | `1.9.0`、26.3 artifact を確認 | opaque face の証明、shape / opacity cache、item frame の不要 face、resource change の invalidation | 葉を hollow / aggressive にする画質変更は不採用。GPL 表示と埋込み許諾の README 条件を無視しない [R08] |
 | Enhanced Block Entities | 固定 HEAD の default branch は **1.21.4**。26.3 / Vulkan 対応はこの調査では未確認 | 静的 TESR geometry を baked / cached 化し、蓋などの動く部分だけ instance transform を更新 | 「Vulkan 世代で動作確認済み」とは書かない。全 TESR を chunk に焼き込まない [R09] |
 | BadOptimizations | 公開 README / release / MIT 表示を確認。26.3 での各機能成立は未確認 | dependency のある expensive CPU calculation の cache、lightmap / sky 更新の invalidation を考える手掛かり | sky cache の対応版に制限あり。1.12.2 lightmap の flicker / dirty flag / gamma 等を先に読む [R10] |
@@ -164,9 +163,8 @@ Sodium の #3735 は `VK_EXT_multi_draw` の経路と indirect fallback を区�
 | **ModernFix** (embeddedt, 1.16+) | LGPL-3.0 | **dynamic resources**（model を起動時一括 load せず lazy 化 — 大 modpack で heap -55%、startup 短縮）・off-thread texture stitch | 1.12.2 では VintageFix が同概念を backport |
 | **FerriteCore** (malte0811, 1.16+) | MIT | dedup: blockstate property map（FastMap）・multipart model instance（~200k→1.5k）・shape cache（~200MB）| RAM↓ → GC↓ |
 | **Flerovium** (MoePus, 1.21) | LGPL-3.0 | item render: backface culling/fast math/LOD・particle light cache・entity fast math | Sodium 依存 mod — 概念のみ |
-| EntityCulling（tr7zw） | **tr7zw Protective License**（再配布不可） | 使用しない。entity occlusion は独自実装のみ可 | — |
 
-**1.12.2 native mod は共存対象であり参照元ではない**（2026-10-12 方針確定）: インスタンスが動かす 1.12.2 最適化 stack（VintageFix・CensoredASM — 両者とも他 1.12.2 mod の上位互換・FoamFix・TexFix・VanillaFix を包含）は Celtium と同居するため、そこへの移植は重複か衝突になる。参照先は [TheUsefulLists/usefulmods Performance112](https://github.com/TheUsefulLists/usefulmods/blob/main/Performance/Performance112.md)。参考ソースは **1.7.10（GTNH）と modern MC** に限定する。
+**1.12.2 native mod は共存対象であり参照元ではない**（2026-10-12 方針確定）: インスタンスが動かす 1.12.2 最適化 stack（VintageFix・CensoredASM — 両者とも他 1.12.2 mod の上位互換・FoamFix・VanillaFix を包含）は Celtium と同居するため、そこへの移植は重複か衝突になる。参照先は [TheUsefulLists/usefulmods Performance112](https://github.com/TheUsefulLists/usefulmods/blob/main/Performance/Performance112.md)。参考ソースは **1.7.10（GTNH）と modern MC** に限定する。
 
 Angelica の `TesrMeshProvider` / `TesrMeshCache` / `ModelPartBatch` は、entity / TESR を個別に書き換えるより、**geometry の所有・dirty・instance transform を公開契約で分ける**方向の参考になる。自動 cache に安全でない renderer は従来の意味を保つ Celtium の native immediate pass で描く。これは GL fallback ではない。
 
@@ -688,7 +686,6 @@ FAILED / UNCALIBRATED / 欠測 / timeout / 未完了はこの表の受入状態�
 | VintageFix | root LGPL 3、FerriteCore の MIT、他由来部分の別条件 | component ごとに origin / license を保存する |
 | FermiumASM | LGPL 2.1 系と第三者 notices | 個別 file と系譜を確認。loader stack を追加しない |
 | StellarCore | root LGPL 3。**Patcher 由来 HUD caching は CC-BY-NC-SA 4.0** | root license だけで HUD code を採用しない。本計画の native geometry cache は独立した契約から設計 |
-| EntityCulling | tr7zw Protective License、商用利益等への制限 | source の取り込みは行わない。保守的 visibility の一般原理を独立に設計 |
 | MoreCulling | GPL 3 表示に加え、README は他 mod / client への merge に permission を要求 | そのまま取り込む候補にしない。条件を解決しないまま全体 GPL という理由だけで import しない |
 | Nothirium | 確認した tree / source では採用に必要な license 未確認 | 未確認を permissive と解釈しない。code import 対象外 |
 | FalseTweaks / ArchaicFix | LGPL 3 系。ただし **CoFHTweaks / Minecraft 1.8 由来 occlusion は別扱い** | occlusion 部分を LGPL として流用しない。FalseTweaks にも同じ例外が記載されている |
@@ -729,7 +726,6 @@ GitHub release / PR / file、開発元 README、Minecraft 公式、Khronos / GPU
 | R04 | [Sodium LICENSE](https://github.com/CaffeineMC/sodium/blob/dev/LICENSE.md)、[#3307](https://github.com/CaffeineMC/sodium/pull/3307)、[#3297](https://github.com/CaffeineMC/sodium/pull/3297) | 現行 source の境界、未 merge の案を採用済みと扱わない |
 | R05 | [ImmediatelyFast](https://github.com/RaphiMC/ImmediatelyFast)、[1.16.0](https://github.com/RaphiMC/ImmediatelyFast/releases/tag/v1.16.0)、[1.17.1](https://github.com/RaphiMC/ImmediatelyFast/releases/tag/v1.17.1) | Vulkan / 26.3 対応、batch / atlas / text cache、license |
 | R06 | [IF `MapAtlas`](https://github.com/RaphiMC/ImmediatelyFast/blob/a756fbac991bc8aacc2400347f050392193ae51c/common/src/main/java/net/raphimc/immediatelyfast/feature/map_atlas_generation/MapAtlas.java)、[`SignTextCache`](https://github.com/RaphiMC/ImmediatelyFast/blob/a756fbac991bc8aacc2400347f050392193ae51c/common/src/main/java/net/raphimc/immediatelyfast/feature/sign_text_buffering/SignTextCache.java)、[group reorder mixin](https://github.com/RaphiMC/ImmediatelyFast/blob/a756fbac991bc8aacc2400347f050392193ae51c/common/src/main/java/net/raphimc/immediatelyfast/injection/mixins/enhanced_batching/MixinRenderTypeFeatureRenderer_Group.java) | bounded atlas / reload と、順序処理を無条件移植しない根拠 |
-| R07 | [EntityCulling](https://github.com/tr7zw/EntityCulling)、[1.11.3](https://github.com/tr7zw/EntityCulling/releases/tag/1.11.3)、[license](https://github.com/tr7zw/EntityCulling/blob/5269dd55d4fb58899d3846c7b2422868ff54f9ac/LICENSE-EntityCulling) | bounds / whitelist 修正、非同期 visibility、採用制限 |
 | R08 | [MoreCulling](https://github.com/FxMorin/MoreCulling)、[1.9.0](https://github.com/FxMorin/MoreCulling/releases/tag/v1.9.0)、[README](https://github.com/FxMorin/MoreCulling/blob/83ec1192726d5ec1332d411166addd9aa7557c5e/README.md) | 26.3、opaque / leaves / frame の範囲と merge 条件 |
 | R09 | [Enhanced Block Entities](https://github.com/FoundationGames/EnhancedBlockEntities/tree/b0b202a18a1acbddfc038e5403bde973bece7c98)、[chest renderer](https://github.com/FoundationGames/EnhancedBlockEntities/blob/b0b202a18a1acbddfc038e5403bde973bece7c98/src/main/java/foundationgames/enhancedblockentities/client/render/entity/ChestBlockEntityRendererOverride.java) | baked geometry と dynamic part。default branch 1.21.4 |
 | R10 | [BadOptimizations](https://github.com/imthosea/BadOptimizations)、[releases](https://github.com/imthosea/BadOptimizations/releases) | dependency cache、機能の対応版と MIT。26.3 成立は未確認 |
@@ -789,7 +785,6 @@ release の tag と repository HEAD は同一とは限らない。以下は実�
 | NovaEngineering-Source/StellarCore | `98c0ea4684e4200d76d0c078cb51345c17e0a050` | v1.6.4 / 2026-10-08 |
 | ACGaming/UniversalTweaks | `3239ded2513f19b69b920dfc6ea6225458d70075` | GitHub release なし。HEAD で比較 |
 | RaphiMC/ImmediatelyFast | `a756fbac991bc8aacc2400347f050392193ae51c` | v1.17.1 / 2026-09-17 |
-| tr7zw/EntityCulling | `5269dd55d4fb58899d3846c7b2422868ff54f9ac` | 1.11.3 / 2026-10-08 |
 | FxMorin/MoreCulling | `83ec1192726d5ec1332d411166addd9aa7557c5e` | v1.9.0 / 2026-10-03 |
 | FoundationGames/EnhancedBlockEntities | `b0b202a18a1acbddfc038e5403bde973bece7c98` | GitHub release なし。1.21.4 branch |
 | xCollateral/VulkanMod | `087ef24e58e5522dec5ccb44f279768786bfb6da` | 0.6.0 / 2026-03-04 |
