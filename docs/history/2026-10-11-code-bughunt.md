@@ -1,5 +1,19 @@
 # Celtium — code-only full bug hunt
 
+> ## 解決状況（2026-10-12 時点・`docs/plan.md` §0.347 が根拠）
+>
+> **解決済み（23件）**: BH-01, BH-02, BH-05, BH-06, BH-07, BH-08, BH-10, BH-11, BH-12, BH-13, BH-15, BH-16,
+> BH-19, BH-22, BH-25, BH-27, BH-28, BH-29, BH-30, BH-32, BH-36, BH-37
+> — 各件の根拠（受入値・計器名・commit）は `docs/plan.md` §0.347 の表にある。
+>
+> **部分（1件）**: BH-09 — `lineBatchesNarrowed=215` は着地したが、plan 自身の `scissorCapturedGroups > 0` の
+> 半分を満たしていないため**解決済みとは書かない**。
+>
+> **未解決（13件・担当へ移譲済み）**: BH-03, BH-04, BH-14, BH-17, BH-18, BH-20, BH-21, BH-23, BH-24, BH-26,
+> BH-33, BH-34, BH-35
+> — この見出しの下の各項の本文は**起票時の記述**であり、現在の状態ではない。現在の状態は plan §0.347 を読むこと。
+
+
 作成日: 2026-10-11（JST）  
 対象: Minecraft 1.12.2 / Cleanroom / CeltiumのGL-less native Vulkan経路  
 方法: 固定ソースの静的な呼び出し追跡、shader/pipelineのABI照合、Celeritas・Minecraft/Forge原典との比較
