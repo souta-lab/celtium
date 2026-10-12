@@ -191,6 +191,9 @@ public final class TextureCopyService {
      */
     private long textureCopyWindowAlphaForced;
     private int textureCopyWindowAlphaCopies;
+    /** Copies served in the present the copy is in, so a probe can name "the last one of a frame" and "the first". */
+    private int copiesThisPresent;
+
     /** How many native blits were declined because the window's alpha rule cannot be expressed by a blit. */
     private int textureCopyWindowAlphaBlitsDeclined;
     private String lastTextureCopyRefusal = "none";
@@ -363,6 +366,7 @@ public final class TextureCopyService {
         // content (round 166 - the reason the main menu's panorama did not move).
         if (this.textureCopyPresent != this.host.presentSerial()) {
             this.textureCopyPresent = this.host.presentSerial();
+            this.copiesThisPresent = 0;
             this.textureCopiesServedThisFrame.clear();
             this.textureCopiesServedThisPresent = 0;
             if (this.textureCopiesServedLastPresent > this.textureCopiesServedPeakPerPresent) {
@@ -439,6 +443,7 @@ public final class TextureCopyService {
         if (!this.host.waitForIdle()) {
             return refuseTextureCopy("the GPU did not confirm the draws before the copy completed");
         }
+        this.copiesThisPresent++;
         long readbackStartedNanos = System.nanoTime();
         int[] pixels = readImageRectangle(image, x, y, width, height);
         this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;
@@ -601,6 +606,72 @@ public final class TextureCopyService {
                 }
             }
         }
+        // The depth the cube's faces were tested against, in the same bounded slot as the colour dump. A colour read
+        // cannot answer this: the box is 89% non-white whether it holds a fresh face or the previous frame's menu.
+        if (VulkanGlTexture.mirrorDumpConfigured() && this.textureCopyReadbacks == 3 && this.host.frameTarget() != null
+                && this.host.frameTarget().depthImage() != 0L) {
+            int depthFormat = VulkanDepthFormat.chosen();
+            float[] box = readDepthRectangle(this.host.frameTarget().depthImage(), 0, 0, 256, 256, depthFormat);
+            if (box != null) {
+                float min = Float.MAX_VALUE;
+                float max = -Float.MAX_VALUE;
+                double sum = 0.0D;
+                int atOne = 0;
+                int below = 0;
+                for (float value : box) {
+                    min = Math.min(min, value);
+                    max = Math.max(max, value);
+                    sum += value;
+                    if (value >= 0.999F) {
+                        atOne++;
+                    } else {
+                        below++;
+                    }
+                }
+                // The four numbers that decide the argument, plus the read's own extent so a partial read cannot be
+                // mistaken for a cleared one: min says whether *anything* wrote a nearer depth into the box, atOne
+                // says how much of it is the cleared value, and the two sample rows are the blur's own quad depth
+                // (GuiMainMenu.rotateAndBlurSkybox draws at zLevel with depthMask on, which NDC z=0.5 puts at 0.75).
+                System.out.println("[Celtium] CELTIUM_DEPTH_STAGE box=0,0 256x256 frame=" + this.host.frameId()
+                        + " present=" + this.host.presentSerial() + " depthFormat=0x" + Integer.toHexString(depthFormat)
+                        + " min=" + depth3(min) + " max=" + depth3(max) + " mean=" + depth3((float) (sum / box.length))
+                        + " atOne=" + atOne + "/" + box.length + " belowOne=" + below
+                        + " row0=" + depth3(box[0]) + " row128=" + depth3(box[128 * 256])
+                        + " clearDepth=" + depth3((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()));
+            }
+        }
+        // The cube's own contribution to the panorama's box, measured inside one run instead of argued from bounds: the
+        // box at the LAST copy of one frame (all seven blur iterations have run) and at the FIRST copy of the next
+        // frame, which is the only moment between the cube's window having been submitted and the next blur. The two
+        // reads bracket exactly the cube's draws, so a diff says how much of the box the 384 quads repaint - and a
+        // face's NDC bounds cannot say that, because a cube face is large and mostly outside the frustum, so
+        // "off-centre bounds" is its normal shape rather than a coverage hole.
+        if (VulkanGlTexture.mirrorDumpConfigured() && this.host.frameTarget() != null && pixels != null
+                && (this.host.presentSerial() == 100 || this.host.presentSerial() == 101)
+                && (this.copiesThisPresent == 1 || this.copiesThisPresent == 7)) {
+            int probeWidth = Math.min(256, this.host.targetWidth());
+            int probeHeight = Math.min(256, this.host.targetHeight());
+            int[] probe = readImageRectangle(this.host.frameTarget().colorImage(), 0, 0, probeWidth, probeHeight);
+            if (probe != null) {
+                java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(probeWidth * probeHeight * 4);
+                try {
+                    for (int index = 0; index < probe.length; index++) {
+                        int value = probe[index];
+                        rgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                        rgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                        rgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                        rgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                    }
+                    VulkanGlTexture.dumpStageImage("box-p" + this.host.presentSerial() + "-c" + this.copiesThisPresent,
+                            rgba, probeWidth, probeHeight);
+                    System.out.println("[Celtium] CELTIUM_BOX_PROBE present=" + this.host.presentSerial()
+                            + " copy=" + this.copiesThisPresent + " nonWhite=" + countNonWhite(probe)
+                            + "/" + probe.length);
+                } finally {
+                    org.lwjgl.system.MemoryUtil.memFree(rgba);
+                }
+            }
+        }
         // What the copy just put into the mirror, as an image, when the bounded mirror dump is enabled: the mirror's own
         // dump sites sit on the announce/upload paths and never see a copy-filled mirror (measured: 411 PNGs in one
         // leg, none of them the panorama's gl-21), so the one rectangle that matters could not be looked at.
@@ -751,6 +822,130 @@ public final class TextureCopyService {
     private boolean windowAlphaSource(int readFbo, long image) {
         return readFbo == 0 && this.host.currentRenderTarget() == 0L && this.host.frameTarget() != null
                 && image == this.host.frameTarget().colorImage();
+    }
+
+    /** Three decimals of a depth, so 0.750 and 1.000 are readable in the one line this instrument prints. */
+    private static String depth3(float value) {
+        return String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(value));
+    }
+
+    /**
+     * Reads a rectangle of a depth image into floats, the depth-side twin of {@link #readImageRectangle}.
+     * <p>
+     * It exists for one question round 223 narrowed the menu's grey background to and could not answer from pixels:
+     * the frame image's depth in the panorama's 256x256 box is either 1.0 (the game's per-frame
+     * {@code glClear(GL_DEPTH_BUFFER_BIT)} reached this image) or the previous frame's blur quad depth
+     * ({@code rotateAndBlurSkybox} draws at {@code zLevel} with {@code depthMask} left on at the end of
+     * {@code drawPanorama}, so it writes roughly 0.75 into exactly that box). The cube does not write depth at all
+     * ({@code drawPanorama} sets {@code depthMask(false)}), so the value read here is the value its faces were tested
+     * against - and a stale 0.75 rejects every face, because a face's 64 jitter copies do not change its depth. That
+     * is the difference between "the cube repaints the box and something else eats it" and "the cube is never drawn
+     * into the box at all", and no colour read can tell them apart.
+     * <p>
+     * Unit: the depth image's own format ({@code VulkanDepthFormat.chosen}), read as floats either way - a 16-bit
+     * unorm depth is scaled by 1/65535 so both devices report the same 0..1 quantity. Limit: one rectangle per call,
+     * and the caller bounds the calls, because this is a full command buffer plus a fence wait.
+     */
+    public float[] readDepthRectangle(long depthImage, int x, int y, int width, int height, int depthFormat) {
+        long buffer = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+        long memory = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+        boolean sixteenBit = depthFormat == org.lwjgl.vulkan.VK10.VK_FORMAT_D16_UNORM;
+        int bytesPerPixel = sixteenBit ? 2 : 4;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long bytes = (long) width * (long) height * (long) bytesPerPixel;
+            org.lwjgl.vulkan.VkBufferCreateInfo bufferInfo = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
+                    .sType$Default().size(bytes)
+                    .usage(org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                    .sharingMode(org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE);
+            LongBuffer handle = stack.mallocLong(1);
+            if (org.lwjgl.vulkan.VK10.vkCreateBuffer(this.host.context().device(), bufferInfo, null, handle)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return null;
+            }
+            buffer = handle.get(0);
+            org.lwjgl.vulkan.VkMemoryRequirements requirements =
+                    org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
+            org.lwjgl.vulkan.VK10.vkGetBufferMemoryRequirements(this.host.context().device(), buffer, requirements);
+            org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
+                    .sType$Default().allocationSize(requirements.size())
+                    .memoryTypeIndex(this.host.context().memoryTypeIndex(requirements.memoryTypeBits(),
+                            org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                                    | org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            "the depth-stage readback buffer"));
+            if (org.lwjgl.vulkan.VK10.vkAllocateMemory(this.host.context().device(), allocate, null, handle)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return null;
+            }
+            memory = handle.get(0);
+            org.lwjgl.vulkan.VK10.vkBindBufferMemory(this.host.context().device(), buffer, memory, 0);
+            VkCommandBuffer commands = this.host.context().beginCommands();
+            org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy =
+                    org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
+            copy.get(0).imageSubresource().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
+                    .mipLevel(0).baseArrayLayer(0).layerCount(1);
+            copy.get(0).imageOffset().set(x, y, 0);
+            copy.get(0).imageExtent().set(width, height, 1);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toTransfer =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            toTransfer.get(0).sType$Default()
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(depthImage)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_WRITE_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
+            toTransfer.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
+                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toTransfer);
+            org.lwjgl.vulkan.VK10.vkCmdCopyImageToBuffer(commands, depthImage,
+                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, copy);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer backToGeneral =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+            backToGeneral.get(0).sType$Default()
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(depthImage)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_READ_BIT);
+            backToGeneral.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
+                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
+            this.host.context().endCommands(commands);
+            org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
+            if (org.lwjgl.vulkan.VK10.vkMapMemory(this.host.context().device(), memory, 0, bytes, 0, mapped)
+                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                return null;
+            }
+            float[] depths = new float[width * height];
+            for (int pixel = 0; pixel < depths.length; pixel++) {
+                long at = mapped.get(0) + (long) pixel * bytesPerPixel;
+                depths[pixel] = sixteenBit
+                        ? (MemoryUtil.memGetShort(at) & 0xFFFF) / 65535.0F
+                        : MemoryUtil.memGetFloat(at);
+            }
+            org.lwjgl.vulkan.VK10.vkUnmapMemory(this.host.context().device(), memory);
+            return depths;
+        } catch (RuntimeException | LinkageError error) {
+            this.host.record("depth stage read failed: " + this.host.describe(error));
+            return null;
+        } finally {
+            if (buffer != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                org.lwjgl.vulkan.VK10.vkDestroyBuffer(this.host.context().device(), buffer, null);
+            }
+            if (memory != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
+                org.lwjgl.vulkan.VK10.vkFreeMemory(this.host.context().device(), memory, null);
+            }
+        }
     }
 
     public int[] readImageRectangle(long image, int x, int y, int width, int height) {
