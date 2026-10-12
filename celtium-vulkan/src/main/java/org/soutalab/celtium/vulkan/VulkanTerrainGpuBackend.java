@@ -2258,6 +2258,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public static final boolean CPU_SPLIT = Boolean.parseBoolean(
             System.getProperty("celtium.vulkan.cpuSplit", "false"));
 
+    /**
+     * Whether the per-batch/per-group {@code System.nanoTime()} deltas the immediateStatistics *Nanos counters take
+     * are read at all. The investigation added one nanoTime pair per stage of the batch-accept path - matrix copy,
+     * state capture, state key, program query, preflight, clone, group create, append - eight-to-ten clock reads on a
+     * ~3600-batch frame ≈ 1.3-1.9 ms/frame spent measuring, not drawing. Off by default
+     * ({@code -Dceltium.vulkan.batchTimings=true} or a diagnostics run re-enables); with it off the counters read 0,
+     * which the reports already treat as a missing measurement.
+     */
+    public static final boolean BATCH_TIMINGS = Boolean.getBoolean("celtium.vulkan.batchTimings")
+            || VulkanDiagnostics.enabled();
+
     public static long threadCpuNanos() {
         if (!CPU_SPLIT) {
             return -1L;
@@ -5546,7 +5557,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // only one this path is guaranteed to be able to mirror.
                 boundTexture = whiteTextureId();
             }
-            long matrixCopyStart = System.nanoTime();
+            long matrixCopyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             if (MIRRORED_MATRICES) {
                 System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
                         this.glProjection, 0, 16);
@@ -5554,11 +5565,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         this.glModelView, 0, 16);
                 this.matricesDirty = false;
             }
-            this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
-            long captureStart = System.nanoTime();
+            if (BATCH_TIMINGS) this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
+            long captureStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             int[] state = celtium$captureState();
-            this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - captureStart);
-            long keyStart = System.nanoTime();
+            if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - captureStart);
+            long keyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             long stateKey = celtium$stateKey(formatId, state);
             // A bound-texture term was tried here and reverted: the reuse predicate already compares
             // `currentGroupTexture != boundTexture` (below), and an A/B on two menu-hold legs of the same scene shows
@@ -5567,7 +5578,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // A bit of its own, so the preflight can pick the line pipeline without being told the mode again.
                 stateKey |= 1L << 61;
             }
-            this.immediateStatistics.addStateKeyNanos(System.nanoTime() - keyStart);
+            if (BATCH_TIMINGS) this.immediateStatistics.addStateKeyNanos(System.nanoTime() - keyStart);
             // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
             // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
             // full-screen passes with real programs, each of which mirrored its source texture - measured at 898
@@ -5576,12 +5587,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // keeps drawing those passes with the program that is actually bound. The question is per-batch state the
             // group key cannot see, so it is answered before the fast-merge decision - the fast path must not skip a
             // check that would have refused.
-            long programQueryStart = System.nanoTime();
+            long programQueryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             int boundProgram = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8B8D);
             if (boundProgram == Integer.MIN_VALUE) {
                 boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
             }
-            this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
+            if (BATCH_TIMINGS) this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
             this.immediateStatistics.noteProgramQueryCount();
             if (boundProgram != 0) {
                 // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
@@ -5669,8 +5680,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (!fastMerged) {
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
-            long preflightStart = System.nanoTime();
-            long preflightCpuStart = threadCpuNanos();
+            long preflightStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            long preflightCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             // A texture nothing has announced yet gets its one full supply here, before the preflight that refuses when no
             // mirror exists. Entity and TESR models sample their own skins and none of the upload hooks see them, so without
             // this their offers could never be accepted however correct the rest of the path was. Once per GL id.
@@ -5713,8 +5724,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 }
             }
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
-            long preflightCpuEnd = threadCpuNanos();
-            this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
+            long preflightCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+            if (BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
             if (preflightCpuStart >= 0 && preflightCpuEnd >= 0) this.preflightCpuNanos += preflightCpuEnd - preflightCpuStart;
             this.immediateStatistics.notePrepareImmediateCalls();
             if (prepared == null) {
@@ -5794,11 +5805,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     || lightParamsMoved) {
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
-                long groupCreateStart = System.nanoTime();
-                long groupCreateCpuStart = threadCpuNanos();
+                long groupCreateStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+                long groupCreateCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
                 this.currentImmediateMesh = celtium$newImmediateMesh();
-                long groupCreateCpuEnd = threadCpuNanos();
-                this.immediateStatistics.addGroupCreateNanos(System.nanoTime() - groupCreateStart);
+                long groupCreateCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+                if (BATCH_TIMINGS) this.immediateStatistics.addGroupCreateNanos(System.nanoTime() - groupCreateStart);
                 if (groupCreateCpuStart >= 0 && groupCreateCpuEnd >= 0) this.groupCreateCpuNanos += groupCreateCpuEnd - groupCreateCpuStart;
                 this.immediateStatistics.noteGroupCreateCount();
                 // The target and viewport belong to the group being created, here, and not to whichever group happened to be
@@ -5852,9 +5863,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // depth test, depth write, culling and the alpha reference all off - a state-keyed pipeline cache whose
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
-                long cloneStart = System.nanoTime();
+                long cloneStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 this.currentGroupState = state.clone();
-                this.immediateStatistics.addGroupCloneNanos(System.nanoTime() - cloneStart);
+                if (BATCH_TIMINGS) this.immediateStatistics.addGroupCloneNanos(System.nanoTime() - cloneStart);
                 this.immediateStatistics.noteGroupCloneCount();
                 // The fog this batch was offered under, taken here for the same reason the state above is: at this
                 // moment the live fog state is the batch's own, and by the time the group closes the game may have
@@ -5986,16 +5997,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return false;
             }
 
-            long appendStart = System.nanoTime();
-            long appendCpuStart = threadCpuNanos();
+            long appendStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            long appendCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             // A pre-transformed group bakes the live modelView into this batch's positions on append: the GUI matrices
             // that would have split the group are applied exactly here instead of being carried in its key.
             boolean appended = this.currentGroupPreTransformed
                     ? this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
                             indices, this.glModelView)
                     : this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices);
-            long appendCpuEnd = threadCpuNanos();
-            this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
+            long appendCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+            if (BATCH_TIMINGS) this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
             if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
             this.immediateStatistics.noteAppendCount();
             if (!appended) {
@@ -7071,8 +7082,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Counted here, after the emptiness check: clearOrderFlushes counts *calls* (many return early), so it cannot
         // say how many handoffs a frame really makes. The wall time is what says whether a handoff is a stall.
         this.immediateStatistics.noteActualFlushes();
-        long flushStartedNanos = System.nanoTime();
-        long flushCpuStartedNanos = threadCpuNanos();
+        long flushStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0;
+        long flushCpuStartedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
         try {
             FramePassTimings.begin("flush");
             try {
@@ -7088,8 +7099,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 FramePassTimings.end("flush");
             }
             this.immediateStatistics.noteOrderPreservingFlushes();
-            long tookNanos = System.nanoTime() - flushStartedNanos;
-            long flushCpuEndedNanos = threadCpuNanos();
+            long tookNanos = BATCH_TIMINGS ? System.nanoTime() - flushStartedNanos : 0;
+            long flushCpuEndedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (flushCpuStartedNanos >= 0 && flushCpuEndedNanos >= 0) {
                 this.immediateStatistics.addActualFlushCpuNanos(flushCpuEndedNanos - flushCpuStartedNanos);
             }
@@ -7687,7 +7698,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
-        long prepLookupStart = System.nanoTime();
+        long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
         // A fallback to this.terrainPipelineForFrame was tried here and measured preparePassFallbacks=0: the frame's world
         // pipeline is null at the same moments, which is what says those offers belong to the composite path's own layout
@@ -7695,7 +7706,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // rather than kept as an unreachable branch; only the named failure reason below is kept, because it is what
         // settled the question. Under the GL-less window the same absence means a UI-only screen, and those batches
         // must still draw: the standalone frame-compatible render pass stands in.
-        this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
         if (terrain == null && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             terrain = null; // keep the pass lookup result; the render pass handle below substitutes for it
         } else if (terrain == null) {
@@ -7712,7 +7723,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return null;
         }
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
-        long prepRegistryStart = System.nanoTime();
+        long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
         if (texture == null && textureId != 0) {
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
@@ -7722,8 +7733,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 texture = this.textureRegistry.get(textureId);
             }
         }
-        this.immediateStatistics.addPrepRegistryNanos(System.nanoTime() - prepRegistryStart);
-        this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepRegistryNanos(System.nanoTime() - prepRegistryStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
         if (format != 1 && texture == null) {
             this.prepareDescriptorFailures++;
             this.lastPrepareFailure = "format=" + format + " texture=" + textureId
@@ -7731,7 +7742,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return null;
         }
         long pass = terrain != null ? terrain.renderPass() : uiRenderPass();
-        long prepBranchStart = System.nanoTime();
+        long prepBranchStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         Object pipeline;
         long descriptor = 0;
         if (format == 5) {
@@ -7816,7 +7827,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.lineBatchesNative++;
             }
         }
-        this.immediateStatistics.addPrepBranchNanos(System.nanoTime() - prepBranchStart);
+        if (BATCH_TIMINGS) this.immediateStatistics.addPrepBranchNanos(System.nanoTime() - prepBranchStart);
         if (format != 1 && descriptor == 0) {
             // "pipeline or descriptor preflight failed" merged three different causes into one line and a decision could
             // not be made from it: no mirror, a mirror that never received its full content, or a descriptor that could
@@ -13566,7 +13577,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // overlay's draws and disables it immediately after, so a group flushed later used to read the
                 // disabled state and draw the overlay with no bias at all (measured: 62 glPolygonOffset calls, the
                 // overlay in the frame, and immediateDepthBiasedGroups=0).
-                long groupDrawStart = System.nanoTime();
+                long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 boolean offsetEnabled = group.polygonOffsetEnabled;
                 float constantFactor = offsetEnabled ? group.polygonOffsetUnits : 0.0F;
                 float slopeFactor = offsetEnabled ? group.polygonOffsetFactor : 0.0F;
@@ -13593,7 +13604,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 else if (pipeline instanceof VulkanImmediateBlockPipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else if (pipeline instanceof VulkanImmediateParticlePipeline value) value.draw(this.commandBuffer, mesh, push, prepared.descriptor);
                 else ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push);
-                this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
+                if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
                 int batches = group.batches;
                 this.immediateStatistics.addImmediateRecordedBatches(batches);
