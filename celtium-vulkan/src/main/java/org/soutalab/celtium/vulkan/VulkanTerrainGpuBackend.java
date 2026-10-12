@@ -5790,6 +5790,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // group after the first kept the first group's target - the main framebuffer - and the batches offered while a
                 // second framebuffer was bound were enqueued as main-target work. That is why the off-target pass found an
                 // empty queue every run (audit A10/A32). Resetting the flag keeps the older path consistent as well.
+                celtium$notePairNameSamplingDraw(boundTexture);
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
@@ -5928,6 +5929,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 Long pair = Long.valueOf((((long) this.currentGroupBlendSrc) << 20) | this.currentGroupBlendDst);
                 Integer seen = this.blendPairs.get(pair);
                 this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
+                celtium$notePairNameSamplingDraw(boundTexture);
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupTexMatrix = celtium$textureAffine();
@@ -7944,6 +7946,81 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * three shapes this rule had on 2026-10-11 (skip emptied the frame, routing identity 0 into the delivered image
      * wiped it, the pair lost the world) are why the switch exists before the default changes.
      */
+    /**
+     * Counts a group that samples a published name standing for the chain pair's image.
+     * <p>
+     * The fact the skip at {@code celtium$transitionPublishedFrameTextures}' {@code noteSkippedForAttach} site needs
+     * beside it: the pair's own pass refuses the sampling-side transition for a name that stands for the image it
+     * attaches, and whether that refusal leaves a draw without the layout its descriptor declares depends on whether
+     * any draw in the same frame samples that name at all. The count is per frame and reported with the skip, so the
+     * two are read together.
+     */
+    private void celtium$notePairNameSamplingDraw(int boundTexture) {
+        if (boundTexture == 0 || this.publishedFrameImages.isEmpty()) {
+            return;
+        }
+        Long publishedImage = this.publishedFrameImages.get(Integer.valueOf(boundTexture));
+        if (publishedImage == null) {
+            return;
+        }
+        GllessFrameTarget offTarget = offTargetTarget();
+        if (offTarget == null || publishedImage.longValue() != offTarget.chainPairColorImage()
+                || offTarget.chainPairColorImage() == 0L) {
+            return;
+        }
+        this.pairNameSamplingDraws++;
+    }
+
+    /** Groups that sampled a published chain-pair name, and the frame the last one was seen in. */
+    private long pairNameSamplingDraws;
+    private long pairNameSamplingDrawsFrame = -1L;
+    /** Lines {@code CELTIUM_PAIR_SKIP} has printed. */
+    private int pairSkipLogs;
+
+    /**
+     * Whether this group is the chain pair's own composite: it samples a published name standing for the pair image,
+     * and the identity it was accepted under routes to that pair - so the pass that draws it is the pass that attaches
+     * the very image it reads.
+     * <p>
+     * Measured (leg r212-world-hud35, jar 9f47d87489274db0): {@code CELTIUM_PAIR_SKIP frame=0 name=6
+     * attached=0x370000000037 identity=0x666c7da6 samplingDrawsThisRun=2,4,6,8} - the pair's pass refuses the
+     * sampling-side transition for a name that stands for the image it attaches (that is what
+     * {@code noteSkippedForAttach} counts, 39 in that leg) and two draws per occurrence sample that name inside that
+     * same pass. Sampling an image a render pass attaches is a feedback loop unless a feedback loop layout is enabled,
+     * and the descriptor those draws carry declares the sampling layout while the pass declares GENERAL - the two
+     * VUID-vkCmdDraw-None-09600 messages this leaves behind. The predicate is decided at creation, from the group's own
+     * identity, because by draw time {@code passAttachedColorImage} has moved on: an earlier attempt that asked it at
+     * draw time matched nothing (leg r212-world-hud32, selfCompositeSkips unchanged at 199).
+     * <p>
+     * The draw is content-neutral in the same way the finished-frame composite is: it copies the image it is writing
+     * into itself. The loading screen's visible pixels come from its own draws and from the identity-0 composite of the
+     * published splash name into the frame image, which is a different group and is not matched here.
+     */
+    private boolean celtium$isPairSelfCompositeGroup(ImmediateGroup group) {
+        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || group.texture == 0
+                || group.target == 0L) {
+            return false;
+        }
+        GllessFrameTarget offTarget = offTargetTarget();
+        if (offTarget == null || offTarget.chainPairColorImage() == 0L) {
+            return false;
+        }
+        // The offer-time fact is the bind census, not the publication: a name is published over the pair image when the
+        // pair's pass runs, which is after the draws that sample it were offered. What is known here is which
+        // framebuffer's colour attachment this name is - recorded at every bind - and which image that framebuffer's
+        // draws route to.
+        long owner = celtium$framebufferIdentityForColorTexture(group.texture);
+        if (owner == Long.MIN_VALUE || owner == 0L) {
+            return false;
+        }
+        long mainIdentity = this.targetRegistry.mainIdentity();
+        if (owner == mainIdentity || owner == this.gameFramebufferIdentity
+                || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(owner)))) {
+            return false;
+        }
+        return "chain-pair".equals(GllessFrameTarget.routeLabelForBinding(owner, false));
+    }
+
     private boolean celtium$isSelfCompositeGroup(ImmediateGroup group) {
         if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || this.frameTarget == null) {
             return false;
@@ -8717,6 +8794,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preTransformedBatches=" + this.immediateStatistics.preTransformedBatches()
                 + " preTransformedVertices=" + this.immediateStatistics.preTransformedVertices()
                 + " selfCompositeSkips=" + this.immediateStatistics.selfCompositeSkips()
+                + " pairNameSamplingDraws=" + this.pairNameSamplingDraws
                 + " " + celtium$pairLayoutSummary()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " fastMergedBatches=" + this.immediateStatistics.fastMergedBatches()
@@ -11444,6 +11522,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 + " would leave it in SHADER_READ_ONLY under a pass that declares GENERAL, so it is"
                                 + " skipped and the attach-side hand-back keeps it in GENERAL");
                     }
+                    if (this.pairSkipLogs < 8) {
+                        // Whether the refusal leaves a draw without the layout its descriptor declares: the count is
+                        // of groups that sampled a published chain-pair name, this frame and cumulatively.
+                        this.pairSkipLogs++;
+                        System.out.println("[Celtium] CELTIUM_PAIR_SKIP frame=" + this.frameId
+                                + " name=" + entry.getKey() + " attached=0x"
+                                + Long.toHexString(this.passAttachedColorImage)
+                                + " identity=0x" + Long.toHexString(this.targetRegistry.currentIdentity())
+                                + " samplingDrawsThisRun=" + this.pairNameSamplingDraws
+                                + " samplingDrawsLastFrame=" + this.pairNameSamplingDrawsFrame
+                                + " (0 means nothing sampled this name before the skip)");
+                    }
                     continue;
                 }
             }
@@ -13156,7 +13246,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.immediateStatistics.noteImmediateGroupsKeptForOtherTargets();
                     continue;
                 }
-                if (SELF_COMPOSITE_SKIP && celtium$isSelfCompositeGroup(group)) {
+                if (SELF_COMPOSITE_SKIP && (celtium$isSelfCompositeGroup(group)
+                        || celtium$isPairSelfCompositeGroup(group))) {
                     // The game's finished-frame composite, sampling the image it is about to be drawn into. Dropped by
                     // name rather than drawn: see SELF_COMPOSITE_SKIP for the measurement that makes this the repair
                     // and celtium$isScreenSelfComposite for the three shapes the same rule had in 2026-10-11.
