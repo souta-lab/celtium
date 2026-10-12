@@ -33,7 +33,14 @@ mezz and Rongmario), fetched from `maven.cleanroommc.com/mezz/jei/4.31.2/jei-4.3
 project's own README gives for developers. The JEI jar fetched earlier was removed rather than kept beside it,
 because two mods with modid `jei` in one instance is a conflict, not a comparison.
 
-**The first leg did not run** (`r142-hei`): it reported `Waiting for the game slot (held by pid 2997923)`,
+**The first leg that ran** (`r148-hei`): **6 mods locked** (the cohort was 3 before HEI was added), and
+`worldTicksAtEnd=241` - **the game reached the world with HEI loaded**, which is the first of the four
+conditions and the only one this leg establishes. It reported `presentedImageVerdict=FAILED_PRESENTED_IMAGE`,
+which is **not** read here as a HEI defect: that gate is calibrated per scene and this leg did not run the
+calibrated scene, so the verdict is evidence that the leg was not a picture leg, not evidence about HEI. A
+scene-calibrated leg is still needed for the picture, the item list, the search bar and the tooltips.
+
+**The earlier attempt did not run** (`r142-hei`): it reported `Waiting for the game slot (held by pid 2997923)`,
 `endedBy=process-exit`, `elapsedSeconds=31.4` - a slot timeout, not a result, which is the same shape of
 non-answer this project has already recorded once. What it does show is that the cohort was assembled with
 HEI in it: the run's own debug log names `HadEnoughItems_1.12.2-4.31.2.jar` and the `jei` modid, so the
