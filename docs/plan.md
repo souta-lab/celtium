@@ -395,6 +395,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.421 **round 217: host readback の source 行にも同じ flip が残っていた（パノラマが絵に出た）**
+
+- **見つけたもの**: `TextureCopyService.readImageRectangle` の `VkBufferImageCopy.imageOffset` が `targetHeight - y - height` のままだった ✓ ＝ **blit と `reverseRows` から外したのと同じ「top-down image 前提」が3つ目に残っていた** ✓。viewport 修正（`6e75884c1`）後は cube が image の行 0..256 に描かれるのに、read は行 824..1080（絵の上端側）を読んでいたため、copy の内容は**メニュー自身の背景勾配**（`bands=226…253`・`opaque=0`）で、cube は presented 画像にだけ写っていた ✓（§0.420 の測定がこれで説明できる）。
+- **修正**: `imageOffset().set(x, y, 0)` ✓（GL の y は下端原点、image も同じ GL order なので変換不要）。
+- **実測（menu leg `r212-panenq-readfix`・jar `0f8b…`・AMD・1920x1080）**: menu dump が **distinct=6914 → 26424** ✓、**左下に大きなパノラマ（ブラーのかかった地形と空）が出た** ✓（sha256 `fa09fd8befdb0763…`）。**未了**: パノラマはまだ全画面ではなく左下の一部で、残りは灰色 wash のまま ✓ ＝次の欠陥は**最終合成 quad が panorama texture を全面へ引き伸ばしていない**こと（vanilla は 256×256 texture の中央を全画面 quad でサンプルする）。
+- **注意（同じ族の残り）**: 「top-down 前提」は **viewport（修正済 `6e75884c1`）・blit src（同）・host readback（今round）** の3箇所で、私はすべて GL order に揃えた ✓。present は `VulkanSwapchain` が1回だけ反転する ✓（dump が正立していることがその証拠）。
+
 ## 0.420 **round 215: パノラマの copy が読む矩形は「前フレームのメニュー勾配」だった（flip 修正後の実測）**
 
 - **alpha の契約を修正（`640a1984a`）**: 我々の window image は GL の **default framebuffer** そのもの。GL では default framebuffer に alpha ビットが無いのが普通で、clear の alpha は観測不能・読み出しは常に 1（[Khronos の説明](https://community.khronos.org/t/questions-to-help-clarify-fragment-to-framebuffer-process/107715)・[glReadPixels の挙動](https://community.khronos.org/t/weird-glreadpixels-behavior/105416)・[ANGLE は `kEmulatedAlphaValue = 1` でエミュレート](https://github.com/google/angle/blob/c880f15d/src/renderer/vulkan/FramebufferVk.cpp)）。ゲームは `(1,1,1,0)` で clear し、その 0 が copy で panorama の DynamicTexture に運ばれ、**SRC_ALPHA で合成する blur／最終合成 quad が何も描かなくなっていた**。frame target の clear の alpha を 1 に固定 → 実測 `CELTIUM_MIRROR_SOURCE id=21` が **`opaque=0/65536` → `opaque=65536/65536`** ✓（copy 自身のサンプルも 0 → 65536）。**ただし絵は grey のまま**（distinct=6736・mean=(170,170,170)）。

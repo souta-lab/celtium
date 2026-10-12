@@ -681,12 +681,14 @@ public final class TextureCopyService {
             copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
             copy.get(0).imageSubresource().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
                     .mipLevel(0).baseArrayLayer(0).layerCount(1);
-            // GL's copy `y` counts from the *bottom* of the read framebuffer; a Vulkan image's rows count from the top.
-            // Passing `y` straight through read the top rows - the cleared ones - which is measured as
-            // `CELTIUM_TEX_COPY_SERVED dest=21 256x256 readFbo=0 mean=255,255,255 opaque=0/65536 nonWhite=0` while the
-            // panorama's faces were in the bottom 256 rows of the same image (GuiMainMenu.renderSkybox draws them under
-            // `GlStateManager.viewport(0, 0, 256, 256)`). The rows GL asks for start `height - y - height` from the top.
-            copy.get(0).imageOffset().set(x, this.host.targetHeight() - y - height, 0);
+            // The rows GL asks for, straight through. GL's copy `y` counts from the bottom of the read framebuffer and
+            // this image is in that same order - memory row 0 is the picture's bottom (VulkanSwapchain flips once at
+            // present) - so GL's y is the image row. The conversion that used to sit here
+            // (`targetHeight - y - height`) is the one a top-down image would need; with the viewport fix
+            // (6e75884c1) the panorama's cube is drawn into rows 0..256 and this read the picture's *top* rows
+            // instead, which is why the copy's sample was the menu's own background gradient at every present
+            // (bands 226..253, opaque=0, run r212-panhost-steady2) while the cube was visibly in the picture.
+            copy.get(0).imageOffset().set(x, y, 0);
             copy.get(0).imageExtent().set(width, height, 1);
             org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toTransfer =
                     org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
