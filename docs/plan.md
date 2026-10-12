@@ -395,7 +395,12 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.422 **round 220: 既存の mirror dump は copy 経路を覆っていない／R8 の重複 publication を削除**
+
 ## 0.421 **round 217: host readback の source 行にも同じ flip が残っていた（パノラマが絵に出た）**
+
+- **既存計器の確認（新設せず）**: `-Dceltium.vulkan.mirrorDump=<dir>` ＋ `-Dceltium.vulkan.mirrorDumpIds=<GL名>`（`VulkanGlTexture:121/:123`）が **mirror の level 0 を RGBA8 PNG で bounded に落とす** ✓（単位=ピクセル、上限=`MIRROR_DUMP_MAX_PIXELS`、`-n<bundle>` で同一ミラーの複数回を区別）。leg `r212-panmirror-dump2`（host アーム・jar `f8cdf4a1f6d4760a`）で **411ファイル**が出たが、**`gl-21`（panorama の宛先）は0件** ✓ — dump は `announceImage`／upload 経路（`:2600`,`:2628`）にあり、**copy が mirror を埋める経路は `announceFullPixels`（`TextureCopyService:512` から）で、そこに dump が無い** ✓。⇒ 次の小改修は `announceFullPixels` の適用点で同じ helper を呼ぶこと（担当: texture-mirror・`VulkanTextureRegistry`）。
+- **R8 の「重複 publication display」を削除**: backend は `Map<Integer, VulkanGlTexture> publishedFrameTextures` を**宣言だけ**残していた ✓（R1b で `PublishedFrameTextures.published` が所有者になり、読み手はゼロ）。削除し、画像ハンドルの `publishedFrameImages`（`:10453/:10492/:10539` で読まれる ✓）だけを残した ✓。あわせて **古い field 名を指す stale コメント**（`framebufferColorTextures` → `PublishedFrameTextures.colorTextures`）を訂正 ✓。build 緑・`field_initializer_check` PASS。
 
 - **見つけたもの**: `TextureCopyService.readImageRectangle` の `VkBufferImageCopy.imageOffset` が `targetHeight - y - height` のままだった ✓ ＝ **blit と `reverseRows` から外したのと同じ「top-down image 前提」が3つ目に残っていた** ✓。viewport 修正（`6e75884c1`）後は cube が image の行 0..256 に描かれるのに、read は行 824..1080（絵の上端側）を読んでいたため、copy の内容は**メニュー自身の背景勾配**（`bands=226…253`・`opaque=0`）で、cube は presented 画像にだけ写っていた ✓（§0.420 の測定がこれで説明できる）。
 - **修正**: `imageOffset().set(x, y, 0)` ✓（GL の y は下端原点、image も同じ GL order なので変換不要）。

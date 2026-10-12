@@ -161,15 +161,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int publishedChainTexture;
     private long publishedChainImage;
     /**
-     * Every game colour texture name published over the chain pair's image, and the image it names.
+     * Every game colour texture name published over the chain pair's image, as its *image handle*, so a pair
+     * recreated at a new size can be unpublished from every name it stood for instead of only from the outline's.
      * <p>
-     * The outline's own name has its own field above; this map is for the names published by the off-target pass -
-     * the vanilla loading screen's framebuffer is the measured one - so that a pair recreated at a new size can be
-     * unpublished from every name it stood for instead of only from the outline's.
+     * The name-to-wrapper half of this census is `PublishedFrameTextures.published` (refactoring plan R1b); the
+     * backend's own `Map<Integer, VulkanGlTexture> publishedFrameTextures` stood beside it and was read by nothing -
+     * the plan's R8 item "the duplicated publication display". It is removed here, and the image-handle map below
+     * stays because it is read at :10453/:10492/:10539.
      */
-    private final java.util.Map<Integer, VulkanGlTexture> publishedFrameTextures =
-            new java.util.HashMap<Integer, VulkanGlTexture>();
-    /** The image each published frame texture name stands for, so a recreated pair can be told from the same one. */
     private final java.util.Map<Integer, Long> publishedFrameImages = new java.util.HashMap<Integer, Long>();
     /**
      * The colour image the render pass being begun attaches, recorded when the framebuffer is chosen.
@@ -10359,10 +10358,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         // Only the identity the mixin reports as the chain's own first input, never "any framebuffer the game has
-        // bound". That second rule was measured to over-adopt: `framebufferColorTextures` also remembers the targets a
-        // chain bound while it was still rendering through GL, so the spectator group adopted all four of its own
-        // targets (postTargets=0, postAdopted=4) and every blur pass read and wrote one image. A chain-created target
-        // can never be reported as the chain's input, because the mixin reports what the group reads first.
+        // bound". That second rule was measured to over-adopt: the colour-texture census
+        // (`PublishedFrameTextures.colorTextures`, which this comment still named by its pre-R1b field name) also
+        // remembers the targets a chain bound while it was still rendering through GL, so the spectator group adopted
+        // all four of its own targets (postTargets=0, postAdopted=4) and every blur pass read and wrote one image. A
+        // chain-created target can never be reported as the chain's input, because the mixin reports what the group
+        // reads first.
         VulkanPostChain.Pass first = passes.get(0);
         if (first.groupMainFbId == 0) {
             return;
