@@ -669,6 +669,15 @@ public final class ValidationClient {
      * exits call {@link #finish} directly - a broken leg never idles to the hold tick.
      */
     private final int celtium$holdUntilTick = Integer.getInteger("celtium.validation.holdUntilTick", 0).intValue();
+    /**
+     * {@code -Dceltium.validation.churnInterval}: every N world ticks a block a few metres ahead of the player is
+     * toggled between dirt and stone. A block change marks its render section dirty, so the held window stops
+     * measuring a world that never rebuilds and starts showing what a section rebuild costs inside a frame -
+     * the anatomy the steady-state legs cannot attribute because nothing in them ever changes.
+     */
+    private final int celtium$churnInterval = Integer.getInteger("celtium.validation.churnInterval", 0).intValue();
+    private int celtium$churnToggles;
+    private net.minecraft.util.math.BlockPos celtium$churnPos;
     /** The world-frame count at the capture, so the presented-frame comparison names the window it is about. */
     private int celtium$captureWorldFrames = -1;
     /** The first world frame at which the renderer's presented-frame counter was above zero, or -1. */
@@ -3103,6 +3112,14 @@ public final class ValidationClient {
                 celtium$requestResize(mc, "world");
             }
             worldTicks++;
+            // The churn toggle is timed to the held window, not the capture: it only runs once the capture has
+            // happened, so the frames the verdict judges stay the unchanged world, and the slow-frame dump and the
+            // pass split then see rebuild frames rather than steady ones.
+            if (this.celtium$churnInterval > 0 && celtium$captureStartTick > 0
+                    && worldTicks > celtium$captureStartTick + 20
+                    && worldTicks % this.celtium$churnInterval == 0) {
+                celtium$churnBlock(mc);
+            }
             // The hold tick itself is a held run's exit, whatever asked to finish: a deferred finish lands here, and
             // a run whose picture never arrived cannot outlive the hold either.
             if (this.celtium$holdUntilTick > 0 && worldTicks >= this.celtium$holdUntilTick) {
@@ -8073,6 +8090,38 @@ public final class ValidationClient {
             return;
         }
         finish(mc);
+    }
+
+    /**
+     * Toggles one block inside the drawn scene so the render section it belongs to is rebuilt.
+     * <p>
+     * The position is fixed on the first toggle - three metres in the direction the held camera faces, at the
+     * player's eye level - and reused after that, so the same section is the one dirtied every interval. Flag 3 is
+     * the game's own notify-and-redraw pair: what a placing player causes, not a quieter write that only changes
+     * the chunk data. The toggle flips between two opaque solids so the change is a mesh difference without a
+     * transparency-pass side question.
+     */
+    private void celtium$churnBlock(Minecraft mc) {
+        if (mc.player == null || mc.world == null) {
+            return;
+        }
+        if (this.celtium$churnPos == null) {
+            net.minecraft.util.math.Vec3d look = mc.player.getLook(1.0f);
+            this.celtium$churnPos = new net.minecraft.util.math.BlockPos(
+                    mc.player.posX + look.x * 3.0, mc.player.posY + mc.player.getEyeHeight() + look.y * 3.0,
+                    mc.player.posZ + look.z * 3.0);
+        }
+        net.minecraft.block.state.IBlockState current = mc.world.getBlockState(this.celtium$churnPos);
+        net.minecraft.block.Block next = current.getBlock() == net.minecraft.init.Blocks.STONE
+                ? net.minecraft.init.Blocks.DIRT : net.minecraft.init.Blocks.STONE;
+        mc.world.setBlockState(this.celtium$churnPos, next.getDefaultState(), 3);
+        this.celtium$churnToggles++;
+        report.addProperty("churnToggles", Integer.valueOf(this.celtium$churnToggles));
+        report.addProperty("churnPos", this.celtium$churnPos.toString());
+        if (this.celtium$churnToggles <= 8 || this.celtium$churnToggles % 20 == 0) {
+            System.out.println("[Celtium] CELTIUM_CHURN tick=" + this.worldTicks + " toggles=" + this.celtium$churnToggles
+                    + " pos=" + this.celtium$churnPos + " next=" + next.getRegistryName());
+        }
     }
 
     private void finish(Minecraft mc) {

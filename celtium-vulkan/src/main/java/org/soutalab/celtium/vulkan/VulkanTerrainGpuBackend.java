@@ -11280,7 +11280,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // when the run ends before that present - which is what a capture followed by a shutdown does - the file on
         // disk is still the early one, and the picture assertions measure a frame from before the world existed.
         // Re-asking on a cadence bounds the age instead of depending on where the run happens to stop.
-        if (this.presentedDumpPath != null && presented % 40 == 0) {
+        int dumpEvery = Integer.getInteger("celtium.vulkan.presentedDumpEvery", 40).intValue();
+        if (this.presentedDumpPath != null && dumpEvery > 0 && presented % dumpEvery == 0) {
             this.swapchain.requestPresentedImageDump(this.presentedDumpPath);
         }
         String directory = System.getProperty("celtium.vulkan.frameDumpDir");

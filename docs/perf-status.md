@@ -48,22 +48,18 @@
 | OPT-31 | mod 受入互換の維持 | 継続 | submitImmediateBatch の Forge API 形状が土台 |
 | OPT-32 | index/vertex locality | 候補 | terrain mesh の post-process cache locality |
 | OPT-33 | glless frame semaphore pair の撤去 | **実装済/検証済（PR #4）** | glless の wait/done pair は同一 queue 自己同期の儀式（bridge の GL↔Vulkan 橋渡し由来）。stage 毎 beginFrame signal-only + work + endFrame consume = 3 submits → 1 submit。同一 jar A/B: `queueSubmitCalls` 1304/136F = **9.6 submits/frame** vs pair 復活 3225/173F = **18.6** → ~9 packet/frame 除去。VUID=0・画像 gate 正常（fixture 未較正注記）。`queueSubmitCalls` 計器追加（全 vkQueueSubmit 経路）。opt-out: `-Dceltium.vulkan.gllessFrameSemaphores=true` |
-| — | warm window fixture | **実装済（PR #3）** | `holdUntilTick` で成功経路の early-exit を保留 → warm 実測。pass 分解 `CELTIUM_FRAME_PASS_SPLIT` worst= 付き（world/hand/clouds/weather/gui + inside: entities/particles/present/flush/terrain/chunkUpload）|
-| — | presented-dump PNG 税の帰属 | **確定（計器税）** | held leg の p99≈318-390 spike は `dumpPresentedImage` の定期 PNG 書込み（present %40、render-thread 上）だった。`-Dceltium.vulkan.presentedDumpEvery=0`（測定ブランチの flag）で capture dump のみ残した脚は warm p50=16.3 / p95=18.5 / **p99=21.2**・warm slow frame ゼロ。両 flag とも既定 OFF → production 影響なし。**過去 leg の warm p99 は計器税を含む** |
-| — | section churn fixture | **実装済（測定ブランチ）** | `churnInterval=N` で in-view ブロックを周期性 dirt↔stone → 19 toggles/leg。単一 section rebuild は chunkUpload p50=0・worst ~9ms = この fixture 規模では安い |
 | OPT-34 | texture 変更検出の serial 化 | **実装済/検証済（PR #5）** | `uploadFromGlTexture` が unchanged 判定に全画素 FNV hash を毎 call 実行 → light-map 経路で warm-JFR top frame 9.8%。stub の filed write 毎に serial 採番（`TexCapture.serial`）→ 比較 O(1)・pixel 読取自体も skip。1ms-JFR 同一脚: **9.8%→2.1%** top-frame、submitImmediateBatchTimed 11.6%→4.4%。bridge は write log が無いので hash 維持 |
-
-## 真の定常数値（semaphore skip + cadence-0、warm・RX 6400）
-
-`CELTIUM_FRAME_PASS_SPLIT`（p-nodump2 末尾）: **frame p50=6.2 / p95=7.8 / worst=12.5**、world=5.4、terrain=1.5、flush=0.8、gui=0.2、particles=0.2、chunkUpload=0、unnamed-in-world ≈2.9（game renderWorldPass + Celeritas orchestration）。warmJFR(1ms): readBackBlock（diagnostic・production off）と uploadFromGlTexture（→PR #5で解消）以外は diffuse。
+| — | presented-dump PNG 税の帰属 | **確定（計器税）** | held leg の p99≈318-390 spike は `dumpPresentedImage` の定期 PNG 書込み（present %40、render-thread 上）だった。`presentedDumpEvery=0`（本ブランチの flag）で capture dump のみ残した脚は warm p50=16.3 / p95=18.5 / **p99=21.2**・warm slow frame ゼロ。両 flag とも既定 OFF → production 影響なし。**過去 leg の warm p99 は計器税を含む** |
+| — | section churn fixture | **実装済（本ブランチ）** | `churnInterval=N` で in-view ブロックを周期性 dirt↔stone → 19 toggles/leg。単一 section rebuild は chunkUpload p50=0・worst ~9ms = この fixture 規模では安い |
 
 ## 次の優先順（実測根拠順）
 
-1. **submitImmediateBatchTimed 残 4.4% の分解** — copyVertices/transform + registry/prepared lookup が次の offer 側コスト
-2. **ユーザ環境での `-Dceltium.vulkan.passSplit` 計測** — spike 内の unnamed ~200ms が game-side renderWorldPass か GC か（fixture はそこまで辿り切れない）。GC は `-Xlog:gc*` で Full (System.gc()) 68-101ms が periodic に出る
-3. **OPT-09 multidraw** — terrain 側は `vkCmdDrawIndexedIndirect` 実装済・flag 既定 off；immediate 側は per-group descriptor 差で効果薄（groups/frame ≈4 に減少済）
-4. ~~submit 集約~~ — JFR で vkQueueSubmit ≈0%、~30µs/call → 不採用（PR #4 で 18.6→9.6 までは撤去済）
-5. **OPT-01** — 計器の常時コスト（常駐税。小さいが全 frame）。main で cpuSplit opt-in 済。
+1. ~~OPT-18b pre-transform merge~~ — PR #2 (757ec0b4c)。
+2. ~~`gameRenderer` 残差 / world-pass 分解~~ — 帰属確定: spike は計器税（上段参照）。真の定常数値（skip ブランチ・cadence-0）: frame p50=6.2/worst=12.5、world=5.4=terrain 1.5+flush 0.8+unnamed ~2.9（game renderWorldPass + Celeritas orchestration・1ms-JFR で diffuse）。
+3. ~~OPT-01~~ — cpuSplit flag で既定 off（main）。
+4. ~~warm window 到達 fixture~~ — `-Dceltium.validation.holdUntilTick=600`（commit d0b85f804）+ `churnInterval` + `presentedDumpEvery`（d7a1dd4bd）。
+5. **submitImmediateBatchTimed 残 ~4.4%（1ms-JFR 比）の分解** — lightmap 実 upload ~1.9% + vertex copy ~1% + misc。
+6. **ユーザ環境での `-Dceltium.vulkan.passSplit` 計測** — spike 内の unnamed ~200ms が game-side renderWorldPass か GC か（fixture はそこまで辿り切れない）。GC は `-Xlog:gc*` で Full (System.gc()) 68-101ms が periodic に出る。
 
 ## 計器の範囲メモ（今回確認した事実）
 
