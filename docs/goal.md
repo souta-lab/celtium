@@ -32,8 +32,15 @@ goal revision 27 の objective は「完成目標 + 直近の必須修正3件 + 
    `ortho` が perspective の `[11] = -1` を継承すること（GL の `glOrtho` の最終行は `0 0 0 1`）。
    修正 `-Dceltium.vulkan.scratchZero=perspective,ortho` が HUD を frame image に届かせることは実測済みだが、
    同時に**提示画像が一色黒**になる（collapse が捨てていた GUI stage の全画面 draw が届くため）ので既定は
-   緑のまま。次の単位はこの黒の特定（`CELTIUM_MIRROR_DRAW` の world frame 行）。詳細は `docs/plan.md` の
-   ヘッダ表 round 246 行。
+   緑のまま。**round 248 で閉じた**: `scratchZero` 既定に `ortho` を加え、同時に **identity 0 の finished-frame
+   composite を名前で落とす** `SELF_COMPOSITE_SKIP` を既定化（述語は「identity 0 かつ frame image 自身の published
+   colour 名を sample する group」＝同一 image を sample しながら書く invalid usage の除去）。測定（leg
+   `r212-world-hud26` jar `3cc28cb1a40e0c32`・既定確認 leg `r212-world-hud27` jar `585ba082e6afa133`）:
+   `selfCompositeSkips=166`・`presentedMean=71.3`・present の `hotbarBand=(72,60,49)`・presented PNG に
+   **world＋hotbar＋crosshair＋HUD テキスト**（distinct 12537）✓、harness も `status=PASSED`・
+   `presentedImageVerdict=PASSED`・`worldFrameBlackFraction=0.010189`（床 0.05）✓。詳細は `docs/plan.md` の
+   ヘッダ表 round 248 行。**残る確認**: Intel leg、および同一 run の `celtium-probe` capability report が
+   `UNSUPPORTED_OR_UNAVAILABLE`/`effectiveTerrainBackend=opengl` と出す矛盾（plan の同項目 ✓）。
 4. **font renderer の overhaul（Smooth Font 的実装・ユーザー提案）。** 原典確認の結果、1.12.2 の font は
    **bitmap sheet**（`Minecraft.java:523` が `textures/font/ascii.png`、`FontRenderer.java:160-187` が alpha から
    `charWidth` を算出、unicode は `font/glyph_sizes.bin`）で **TTF/OTF が assets に無い**。したがって
