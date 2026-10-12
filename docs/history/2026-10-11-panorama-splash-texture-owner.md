@@ -46,3 +46,23 @@ CELTIUM_UPLOAD_CALLER id=8 256x256 first=0xffffffff callers=[
 - `splashSourcedGroups`: int[] 経路 (スプラッシュのキャンバス) で埋まった mirror をサンプルする format-2
   グループ数。修正の効果がこの 1 数で読める。
 - 描画経路・shader は変更していない。build 緑、`shader_push_constant_check` 33 shaders / 0 problems。
+
+## 追加の確定事実 (同じ leg)
+
+- **id 8 は一度も invalidate されない**: leg 全体で `CELTIUM_MIRROR_SOURCE id=8` は 1 回だけ (スプラッシュ時の
+  fill)、`CELTIUM_INVALIDATE_ORIGIN` は id 9/10/12/16 には出るが **id 8 には出ない**。スプラッシュの
+  白キャンバスがそのまま残り、以後 skybox の面がそれをサンプルする。
+- **id 9 は本物の内容**: `source=announcement size=128x128 content=opaque=4015/16384
+  firstOpaque=0xffffffff` — 一部だけ不透明な実際のテクスチャ。id 8 (65536/65536 不透明・全て白) とは別物。
+- frame 0 の enqueue 集計: skybox 系 (`target=非0`) は `texture=8/9`、GUI 系 (`target=0`) は
+  `texture=46..51`。パノラマ面が使うのは 8 (スプラッシュの白) で、46..51 ではない。
+
+## 修正の候補と、その担当
+
+1. **stub の bind 捕捉** (パノラマ面が本来の id を記録していないなら): これが正なら、記録側の修正であって
+   描画経路ではない。決め手は「面の描画時にゲームがどの id を bind していたか」の 1 行。
+2. **id 8 の mirror をスプラッシュ終了時に失効させる** (registry 側): 白を「未供給」に変えるだけで、
+   パノラマが出るようにはならない。ただし「白」と「欠落」を区別できるようになる。
+
+私が landed したのは計測器と census までで、stub の bind 捕捉は texture-mirror の担当領域なので
+書き換えていない。build 緑、`shader_push_constant_check` 33 shaders / 0 problems。
