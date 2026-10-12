@@ -387,6 +387,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.367 **round 174: `VulkanTerrainGpuBackend` の分割に着手 — 直列契約と継ぎ目（ユーザ指示）**
+
+- **ユーザ指示**: 「**絶対 vulkanterraingpubackend を分割してみんなで編集したほうがいい**」。現状は **14,018行・334トップレベルメソッド・957フィールド**で、
+  **複数担当が同じファイルを触ると必ず衝突する**（texture-mirror・sky-draws・perf-ring・frame-composite・Lead が全部この1ファイルを必要とする）。これが現在の最大のボトルネック。
+- **直列契約**: `VulkanTerrainGpuBackend.java` を編集してよいのは**同時に1人だけ**。ボードで **task-63 → task-64 → task-65** の `blocked_by` として符号化した。
+  他担当が必要とする変更は**保持者宛の要求**として送る。
+- **継ぎ目**（振る舞いを変えず、1継ぎ目=1 commit=1 leg で「抽出前と同一」を確認する）:
+
+| # | 新クラス | 内容 | 担当 | 状態 |
+|---|---|---|---|---|
+| 63 | `TextureCopyService` | コピー/readback/read解決（`celtium$serveTextureCopy`・`celtium$readImageRectangle`・`celtium$ownedReadImage`・`celtium$countNonWhite`・`celtium$reverseRows` と `textureCopies*`） | blend-state | 割当済（Lead の Y 反転着地後に開始） |
+| 64 | `PublishedFrameTextures` | `celtium$publishFrameTexture`・`celtium$transitionPublishedFrameTextures`・`celtium$pruneStalePublishedNames` と `publishedFrameTextures*` | sky-draws | task-63 待ち |
+| 65 | `BackendReport` | `verificationSummary()` と `*Summary` ヘルパ群・`describe()`・`record()`（**読み取り専用**の抽出。カウンタの書き込み側は backend に残す） | glyph-fix | task-64 待ち |
+
+- **受入の形（分割の性質に合わせる）**: 抽出は振る舞いを変えないので、受入は「**同一 leg・同一 flags で、対象カウンタと `CELTIUM_VERIFY` の文字列が完全一致**」。
+  task-65 は `CELTIUM_VERIFY` 行の文字列一致を機械的に取る（既存 leg `r172b-panorama-menu` の行がベースライン）。**1文字でも違えば抽出ミス**。
+- **抽出後に担当が所有するファイル**が決まる: task-63 後は blend-state が `TextureCopyService.java`、task-64 後は sky-draws が `PublishedFrameTextures.java`、task-65 後は glyph-fix が `BackendReport.java`。**backend 本体は Lead が統合に残す**。
+- **進行の記録**: texture-mirror は task-63 を**着地させずに返した**（context 枯渇。backend は未編集のまま）→ blend-state へ再割当。sky-draws は task-64 の**読み取り調査のみ**実施（backend 未編集・指示どおり）。
+- **このroundの副産物（sky-draws の2脚比較）**: `no-entry` の 1280×720 グループ（`groupTexture=6`）は **content が出た脚でも消えていない**。
+  publish カウンタも両脚でほぼ同一（`created=2 republished=0 stalePruned=0 unpublished=0`、`skippedForAttach` だけ 41→33）。
+  したがって**ロード画像に content が出た原因は publish 経路では説明できない**＝帰属は同一 jar での A/B が必要（`a6e8b2dfb` の `CeltiumGlStub` が候補）。
 ## 0.366 **round 173: パノラマのコピーが「別の画像」と「別の行」を読んでいた — read解決の非対称と Y 反転**
 
 - **実測（leg `r172b-panorama-menu`・jar `3d6ca14b0e76aebc`・fixture `3a652903b6edd9d1`・AMD RX 6400・`menuHoldTicks=60`）**: `fixtureStatus=PASSED`・`validationClean=true`・`validationMessageCount=0`・exit 0。
