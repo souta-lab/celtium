@@ -1139,9 +1139,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
     private java.util.Map<Long, Integer> blendPairs;
-    private int[] postAcceptDroppedByFormat;
-    private int[] drawnByFormat;
-    private int[] acceptedByFormat;
+    private final int[] postAcceptDroppedByFormat = new int[8];
+    private final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
+    private final int[] acceptedByFormat = new int[8];
     /**
      * The pending font run, its boundary rule and the retention queue (refactoring plan R3b). The state view and the
      * sink are the backend's, because the state they read and the submission they make are its own.
