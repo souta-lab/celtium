@@ -4302,6 +4302,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.lastFrameDrawn = this.frameDrawn;
         }
         this.frameId++;
+        // Third trigger for the counter summary: a fixture that exits without tearing its world down never reaches the
+        // teardown print, and the overlay trigger needs the Celeritas F3 section to be drawn. One bounded print at a
+        // frame every leg reaches makes the counters visible in any leg that runs at all.
+        if (this.frameId == 120) {
+            celtium$printVerificationSummary("frame 120");
+        }
         this.countersFrameId = this.frameId;
         // OPT-05: hand the frame its arena slot, and reclaim one only where GPU completion allows it. Done here
         // because this is the frame boundary (everything per frame is reset here and nowhere else), and done after
@@ -8276,16 +8282,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * be drawn against this world's freed buffers. That is the audit's B10 gap - the target generation says nothing
      * about a world, because the frame target survives one.
      */
+    /**
+     * Prints the counter summary once, naming what triggered it.
+     * <p>
+     * It is reachable from the F3 debug list, but that list is only built when the Celeritas section of the overlay
+     * is drawn - a leg with the overlay requested printed every counter as absent rather than zero, which is the
+     * confusion this whole summary exists to prevent. World teardown is the second trigger, and the frame counter is
+     * the third because a fixture that exits without tearing the world down never reaches the second.
+     */
+    private void celtium$printVerificationSummary(String trigger) {
+        if (this.celtium$summaryPrinted) {
+            return;
+        }
+        this.celtium$summaryPrinted = true;
+        System.out.println("[Celtium] CELTIUM_VERIFY via=" + trigger + " " + this.verificationSummary());
+    }
+
     private void celtium$releaseWorldResources() {
         // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
         // the Celeritas section of the overlay is drawn - a leg with F3 requested but no such line printed every counter
         // as absent, which reads exactly like a counter that never fired. World teardown happens at least once per leg
         // (the fixture leaves the world before exiting), so this makes the summary reachable without depending on the
         // overlay, and prints once so a leg that tears down twice does not repeat it.
-        if (!this.celtium$summaryPrinted) {
-            this.celtium$summaryPrinted = true;
-            System.out.println("[Celtium] CELTIUM_VERIFY " + this.verificationSummary());
-        }
+        celtium$printVerificationSummary("world teardown");
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
         // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
         // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a
