@@ -307,6 +307,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.339 **round 146: 2件の前進 — (1) `videoSettingsRowNames` が実名を返した（`options.renderClouds` を含む）(2) F3 に Vulkan device/driver 行を追加**
+
+- **(1) row-name 経路が動いた（測定 `r139-e`）**:
+  ```
+  videoSettingsChainSource = controller pages
+  videoSettingsRowNames = Render Distance,options.gamma,options.guiScale,options.fullscreen,options.vsync,
+                          options.framerateLimit,options.viewBobbing,options.attackIndicator,options.graphics,
+                          options.renderClouds,soundCategory.w…
+  ```
+  ＝**`controller.pages` から Option 名が読めている**。**目的の行 `options.renderClouds` が一覧に存在**。
+  実装は `celtium$vsRowNames` が**素の `java.util.List` を直接走査**し、`celtium$vsRowLabel` が
+  **`displayString`（GuiButton 形）→ `getName()`（Option 形・`getUnformattedText`/`getString`）**の順で読む（`c012870d9`）。
+- **残る最後の gate**: finder は依然 `id`/`field_146127_k` で照合しているため `no option button could be located`。
+  ＝**finder に同じ `getName()` 経路を足し、押す操作を control の action に切り替える**（§0.338 の3点セットの残り2点）。
+- **(2) goal D（配布準備）を1件前進（`RenderGlobalMixin`）**: **F3 の render-info 行に Vulkan device/driver を追記**
+  （`VulkanContext.deviceSummary()`/`driverSummary()` は static・device 未生成時は "unavailable"・空なら行を変えない）。
+  ＝goal D の「設定画面・F3のVulkan device/driver表示」を満たす。**他の D 項目は既に整備済み**:
+  `mcmod.info` が **Celtium 名・Celeritas/Sodium credits・検証済み GPU と未了項目の一覧**を持ち、
+  **`COPYING`/`COPYING.LESSER`** があり、**`docs/scope-and-limits.md`** が要求表と未検証一覧を持つ。
+- **このセッションで goal D に対して残るもの**: 再現可能な build 手順の文書化（`scripts/build.sh` はある）・
+  配布 jar の最終確認（version・`mcmod.info` の整合）・既知問題の実装との一致（`scope-and-limits.md` の更新）。
+
 ## 0.338 **round 145: 次の実装点を原典で確定 — finder は `id`/`field_146127_k`（GuiButton 形）で照合しており、`Option` 形には `getName()` 経路が要る**
 
 - **コード確認（Lead）**: `celtium$vsFindOptionButton` は候補を走査して
