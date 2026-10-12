@@ -2498,6 +2498,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final float[] pendingProjection = new float[16];
     private final float[] pendingModelView = new float[16];
     private int pendingGroups;
+    /**
+     * The scratch the per-call matrix builders fill in place of a fresh {@code new float[16]}: {@code ortho},
+     * {@code frustum} and the perspective helper each built a throwaway array per call on a path the matrix census
+     * counts in hundreds per frame. The consumers ({@code immediateState.loadMatrix}/{@code multiplyMatrix}) copy
+     * the values out before returning, so sharing one array is safe.
+     */
+    private final float[] matrixScratch = new float[16];
     private final float[] glProjection = new float[16];
     private final float[] glModelView = new float[16];
 
@@ -3885,7 +3892,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.worldPassActive = false;
         this.matricesDirty = true;
-        float[] matrix = new float[16];
+        float[] matrix = this.matrixScratch;
         // The OpenGL ortho matrix, written column-major, exactly as glOrtho builds it.
         matrix[0] = (float) (2.0 / (right - left));
         matrix[5] = (float) (2.0 / (top - bottom));
@@ -3952,7 +3959,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         double f = 1.0 / Math.tan(Math.toRadians(fovDegrees) / 2.0);
-        float[] frustum = new float[16];
+        float[] frustum = this.matrixScratch;
         frustum[0] = (float) (f / aspect);
         frustum[5] = (float) f;
         frustum[10] = (far + near) / (near - far);
@@ -4097,7 +4104,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (width == 0.0 || height == 0.0 || depth == 0.0) {
             return;
         }
-        float[] matrix = new float[16];
+        float[] matrix = this.matrixScratch;
         matrix[0] = (float) ((2.0 * near) / width);
         matrix[5] = (float) ((2.0 * near) / height);
         matrix[8] = (float) ((right + left) / width);
@@ -5041,7 +5048,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         float radians = (float) Math.toRadians(fovDegrees * 0.5F);
         float f = 1.0F / (float) Math.tan(radians);
-        float[] frustum = new float[16];
+        float[] frustum = this.matrixScratch;
         frustum[0] = f / aspect;
         frustum[5] = f;
         frustum[10] = (far + near) / (near - far);

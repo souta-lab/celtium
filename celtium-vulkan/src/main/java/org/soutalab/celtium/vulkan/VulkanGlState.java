@@ -201,12 +201,22 @@ public final class VulkanGlState {
         multiplyMatrix(matrix);
     }
 
+    /**
+     * The per-call scratch for the buffer forms and the multiply's result: the callers each used to allocate a fresh
+     * {@code float[16]} per call, on a path the matrix census measures at hundreds of calls per frame. The scratch is
+     * an instance field because this class already documents the render-thread confinement its stacks rely on; a
+     * shared array is safe because every consumer below copies the values out before returning (loadMatrix's
+     * arraycopy, multiply's read into {@link #multiplyResult}), and no caller may hold the reference.
+     */
+    private final float[] matrixScratch = new float[MATRIX_FLOATS];
+    private final float[] multiplyResult = new float[MATRIX_FLOATS];
+
     /** Replaces the active matrix from a column-major buffer, the {@code glLoadMatrix} case. */
     public void loadMatrixBuffer(java.nio.FloatBuffer buffer) {
         if (buffer == null || buffer.remaining() < MATRIX_FLOATS) {
             return;
         }
-        float[] matrix = new float[MATRIX_FLOATS];
+        float[] matrix = this.matrixScratch;
         int position = buffer.position();
         for (int i = 0; i < MATRIX_FLOATS; i++) {
             matrix[i] = buffer.get(position + i);
@@ -219,7 +229,7 @@ public final class VulkanGlState {
         if (buffer == null || buffer.remaining() < MATRIX_FLOATS) {
             return;
         }
-        float[] matrix = new float[MATRIX_FLOATS];
+        float[] matrix = this.matrixScratch;
         int position = buffer.position();
         for (int i = 0; i < MATRIX_FLOATS; i++) {
             matrix[i] = buffer.get(position + i);
@@ -240,9 +250,8 @@ public final class VulkanGlState {
         if (matrix == null || matrix.length < MATRIX_FLOATS) {
             throw new IllegalArgumentException("a matrix must have at least " + MATRIX_FLOATS + " floats");
         }
-        float[] result = new float[MATRIX_FLOATS];
-        multiply(top(this.matrixMode), matrix, result);
-        System.arraycopy(result, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        multiply(top(this.matrixMode), matrix, this.multiplyResult);
+        System.arraycopy(this.multiplyResult, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
     }
 
     /** {@return a copy of the active matrix}, for the push-constant block a draw uploads. */
