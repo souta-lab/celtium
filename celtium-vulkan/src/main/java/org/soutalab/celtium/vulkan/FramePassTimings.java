@@ -26,8 +26,15 @@ public final class FramePassTimings {
 
     /** Top-level passes: their sum is what the frame's residual is measured against. */
     private static final String[] TOP_LEVEL = {"world", "hand", "clouds", "weather", "gui"};
-    /** Measured inside {@code world}; reported, never subtracted. */
-    private static final String[] INSIDE = {"entities", "particles"};
+    /**
+     * Measured inside {@code world}; reported, never subtracted.
+     * <p>
+     * {@code present} and {@code flush} are ours rather than the game's: the lag-spike frame's {@code world} bracket
+     * holds the whole spike (fixture: 367.9 ms of a 411.5 ms frame) and the profiler cannot say which part of that
+     * pass is the renderer's own present/composite/window-flush chain against the game's renderWorldPass work. These
+     * two brackets name it.
+     */
+    private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload"};
 
     private static final int CAPACITY = 512;
 
@@ -133,7 +140,8 @@ public final class FramePassTimings {
         for (int i = 0; i < INSIDE.length; i++) {
             text.append(' ').append(INSIDE[i]).append("(inside world)[p50=")
                     .append(ms(percentile(inside[i], n, 0.50)))
-                    .append(" p95=").append(ms(percentile(inside[i], n, 0.95))).append(']');
+                    .append(" p95=").append(ms(percentile(inside[i], n, 0.95)))
+                    .append(" worst=").append(ms(worst(inside[i], n))).append(']');
         }
         return text.toString();
     }

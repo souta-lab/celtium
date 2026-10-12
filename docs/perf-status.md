@@ -14,7 +14,7 @@
 
 | OPT | 項目 | 状態 | 根拠・残件 |
 |---|---|---|---|
-| OPT-01 | 計器自身のコスト削減 | 未実装 | `threadCpuNanos()`(ManagementFactory ThreadMXBean) が全計測点で常時呼出。nanoTime 計で計測枠自体が残る。採用: 既定 off or サンプリング化 |
+| OPT-01 | 計器自身のコスト削減 | **実装済（main）** | `threadCpuNanos()` は `celtium.vulkan.cpuSplit=true`（既定 off）で -1 を返す — CPU-time read は既に gate 済。MXBean lookup は static init。残る nanoTime ペアは ~0.3-0.6µs/call で受入計器として残置 |
 | OPT-02 | 破損した GL 参照（参照実装比較経路）| 未実装→不採用方向 | GL-less が製品経路。原版比較は固定 vanilla jar で行う運用 |
 | OPT-03 | shader データ分離・128B push 統一 | 未実装 | terrain=128B 済・immediate=208B・item=216B。lightParams 等を UBO 側へ |
 | OPT-04 | completion epoch/代わりの全 drain | **実装済** | submitSequence/completedSubmitSequence watermark + per-slot confirm（`8b2bcd412`）|
