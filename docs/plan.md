@@ -307,6 +307,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.328 **round 134: 決定的 — `pinSections` が capture を止めていた（仮説確認）・chain は Celeritas 画面に `optionsRowList` が無いため押せない**
+
+- **測定（Lead の `r126-e`・`pinSections` を外した同一 flag・`scene=videoSettings`＋`videoSettingsOption=RENDER_CLOUDS`・150 s）**:
+  ```
+  guiScreenClassAtCapture = org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen
+  guiScreenCurrent        = CeleritasVideoOptionsScreen
+  guiScreenOpened         = GuiOptions  (atTick=201・via Minecraft.displayGuiScreen(new GuiOptions(...)))
+  guiScreenVerdict        = GuiVideoSettings was open at the capture
+  videoSettingsChain      = the captured screen has no optionsRowList to press
+  ```
+  ＝**(1) `pinSections` が capture を保留していたという仮説は確認**（外したら chain が走った）。
+  **(2) chain は `the captured screen has no optionsRowList to press` で止まる**＝**captured screen は Celeritas 画面**（`guiScreenClassAtCapture` が名指し）であり、
+  **Celeritas 画面は `optionsRowList` を持たない**ため**option を押せない**。
+- **これは gui-stage が予測した fixture gap そのもの**: **panel gate は `optionsRowList` を読む**＝**vanilla の `GuiVideoSettings` にしか無い**。
+  ＝**goal (e) の「設定を変更して native frame が変わる」を chain で取るには、Celeritas 画面自身の layout を読む実装が要る**。
+  ＝**renderer の gap ではなく fixture の gap**（gate を下げて通すのは不可）。
+- **現時点で goal (e) について確定したこと**:
+  - **Celeritas 画面は開き・捕捉されている**（`guiScreenClassAtCapture` が名指し・panel crop 587 色）
+  - **`guiScreenVerdict` は vanilla の文言**（`GuiVideoSettings was open`）＝**判定文言も Celeritas 画面に対応していない**（同じ gap の一部）
+  - **chain は Celeritas 画面の row list を読めない**ため**変更・復元の phase に進めない**
+- **次の実装（fixture・小さく明確）**: **Celeritas 画面の row list を読む経路を `ValidationClient` に足す**
+  （`SodiumGameOptionPages`/`CeleritasVideoOptionsScreen` の layout を原典で確認し、`optionsRowList` の代わりにその list を使う）。
+  その後 **同じ leg で 4 phase（変更→native frame の counter→復元→reload 行）**を取る。
+
 ## 0.327 **round 133: video-settings chain の report site を確認 — chain は capture 時に走るため `pinSections` が capture を止めていた可能性**
 
 - **コード確認（Lead）**: chain は capture の時点で走り、その report site は
