@@ -306,6 +306,28 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.320 **round 126: bind short-circuit 着地（`dfeee01cc`）— 連鎖の実測は ~0.07 µs/glyph で 3.17 µs の主因ではない**
+
+- **着地（glyph-fix・`dfeee01cc`・jar `d987b037`・build 緑）**: mixin の早期 return（`VulkanGlState.bindWouldChangeNothing`）＋
+  **`bindShortCircuits` を frame counter の隣に出力**＋**reporting line（`bindTextureCalls`/`bindShortCircuits`/`immediateStateCalls`）**＋
+  **safety 引数を commit message に**（vanilla の per-unit cache は HEAD 注入の上流で我々に届かない＝二重 filter ではない）。
+- **測定（同一 jar・両 leg `pinSections=64`・両 leg `PASSED`・`validationClean=true`・`validationMessageCount=0`）**:
+  | | F3 ON | F3 OFF |
+  |---|---|---|
+  | cold p50 | **171.2 ms** | **43.3 ms** |
+  | glyph windows | 1,280,000 | 80,000 |
+  | **`bindShortCircuits`** | **1,627,482** | 100,048 |
+  | `bindTextureCalls`（forward） | **1,587** | 3,801 |
+  | `immediateStateCalls` | 72,188 | 117,034 |
+  ＝**skip が設計どおり発火**（1,627,482 skip 対 1,587 forward・変更前は 1,628,711 全 forward）。
+- **連鎖の大きさ（既存計器で・新しい timer 無し）**: 同じ 1,280,000 glyph で `glyphMillis` が **4,635 ms → 4,546 ms**（**3.62 → 3.55 µs/glyph**）＝
+  **skip 可能な連鎖は ~0.07 µs/glyph ≈ 0.3 ms/frame**（4,600 glyph/frame）。＝**連鎖は 3.17 µs の主因ではない**。
+- **frame time の正直な扱い**: ON leg の p50 は前 pair の ON（187.3）より 16 ms 良いが、**OFF leg も同 session で 4.5 ms 改善**しているため
+  **session を跨いだ帰属は不可**として**主張しない**。**within-pair では overlay のコストは 128 ms/frame**（171.2 − 43.3）。
+- **次の bracket（Lead が承認・glyph-fix へ配布）**: **`renderString` 自身（`func_180455_b`）**を bracket する
+  （`stringMillis − glyphMillis ≈ 0` のため caller の per-character 仕事が分離できていない）。
+  その split が出て初めて **`renderStringAtPos` fast path に測定された標的**ができる。**split が出るまで fast path を主張しない**。
+
 ## 0.319 **round 125: bind short-circuit は glyph-fix が実装中（ツリーは一時的に赤・原因を名指しして依頼）**
 
 - **状態**: `VulkanGlState.java` に **`bindWouldChangeNothing`** が入り、`GlStateManagerMixin.java` はまだ新名を参照していない＝**mid-unit**。
