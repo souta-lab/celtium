@@ -1,7 +1,13 @@
 package org.taumc.celeritas.mixin.core;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 import net.minecraft.block.state.IBlockState;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BufferBuilder;
+import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.RenderItem;
 import net.minecraft.client.renderer.Tessellator;
@@ -12,35 +18,45 @@ import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.client.renderer.vertex.VertexFormat;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.EnumFacing;
+import net.minecraftforge.common.ForgeModContainer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.ArrayList;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Map;
-
 /**
- * Angelica's in-world item optimization (GTNewHorizons/Angelica PR #1034, LGPL), ported to this renderer's contract:
- * a {@code RenderItem.renderModel} call emits the same baked-quad vertex data every time it runs for the same model,
- * because the transform that distinguishes two draws lives in the matrix, not the vertices. The vanilla loop re-walks
- * {@code getQuads} per face and runs {@code renderQuads} per quad on every draw - for a held or dropped item that is
- * the identical sequence dozens of times per frame, and for an inventory grid hundreds. Forge's default
- * {@code allowEmissiveItems=true} makes it worse: every draw additionally allocates {@code allquads}, pipes every
- * quad through the light gatherer and splits it into segments, even though none of it depends on the frame.
+ * Item mesh cache, ported from Angelica's RenderItem optimization (PR1034, LGPL-3.0): a finished
+ * {@code func_191967_a(model, color, stack)} draw is, for almost every item, the identical sequence
+ * of {@code begin(QUADS, ITEM)} -> {@code renderQuads(...)} -> {@code draw()} calls on the shared
+ * tessellator. That work depends on (model geometry, color) - not on the frame - so the per-segment
+ * vertex bytes are emitted once through the genuine code path into a scratch builder, stored, and
+ * replayed later as {@code begin/addVertexData/draw} calls. Draw order, applied state, and every
+ * refusal path stay byte-identical to the uncached path; only the quad-emitting loop is skipped.
  * <p>
- * The cache keeps a <b>segment plan</b> per {@code (model instance, color)}: the segment boundaries, each segment's
- * emitted {@code int[]}, and the light/shade flags {@code drawSegment} would apply - so a hit replays the identical
- * GL state calls and the identical bytes through the identical uploader call, reading {@code lastBrightnessX/Y} live
- * the way the original does. The model instance is the right key on its own: a resource reload produces new
- * {@code IBakedModel} objects, so an entry can never outlive the bake it captured.
+ * Not cached, the inputs that genuinely vary per call: a stack-tinted render ({@code color == -1 &&
+ * !stack.isEmpty()}) on a model with tinted quads (the bytes are then per-stack), and a model whose
+ * quads carry lighting data outside the ITEM format - Forge's light-gatherer path handles those and
+ * keeps handling them here.
  * <p>
- * Not cached, the inputs that genuinely vary per call: a stack-tinted render ({@code color == -1 && !stack.isEmpty()})
- * on a model with tinted quads (the bytes are then per-stack), and a model whose quads carry lighting data outside
- * the ITEM format - Forge's light-gatherer path handles those and keeps handling them here.
+ * Audit fixes (docs/audit-2026-10-12-maximum.md B01/B02/B14):
+ * <ul>
+ * <li>B01: the scratch {@code BufferBuilder} is closed with {@code finishDrawing()} before upload,
+ * exactly as {@code Tessellator.draw()} does it, and the stored bytes are read from the resulting
+ * [0, used) range. Previously {@code WorldVertexBufferUploader.draw()} was invoked without
+ * {@code finishDrawing()} and {@code reset()} restored only {@code vertexCount}, so the saved array
+ * was the whole scratch capacity (32768 ints for a 168-int cube) and a hit re-emitted thousands of
+ * garbage vertices.</li>
+ * <li>B02: the replay applies {@code renderLitItem}'s post-loop cleanup ({@code hasLighting} ->
+ * lightmap restore + {@code enableLighting}) in a {@code finally}, so a hit leaves the same outgoing
+ * lighting state as a miss - including on an exception.</li>
+ * <li>B14: the negative set and the tint memo are bounded like the positive cache; all three plus the
+ * plans live under one resource-manager epoch (identity of {@code Minecraft#getResourceManager()},
+ * checked per call - a reload replaces the instance and clears every entry). A cached plan also
+ * re-verifies the model's null-face quad list (size + first-quad identity) on every hit, so a model
+ * whose {@code getQuads} output mutates invalidates instead of replaying stale bytes; repeated
+ * invalidation demotes the key to uncacheable.</li>
+ * </ul>
  */
 @Mixin(RenderItem.class)
 public abstract class RenderItemMixin {
@@ -51,20 +67,59 @@ public abstract class RenderItemMixin {
     private static final boolean ITEM_MESH_CACHE =
             !"false".equals(System.getProperty("celtium.itemMeshCache", "true"));
     private static final int ITEM_MESH_CACHE_CAP = 256;
+    /**
+     * Probe failures tolerated before the key is demoted to uncacheable: a model mutating its quads
+     * per draw would otherwise rebuild its plan every frame.
+     */
+    private static final int ITEM_MESH_INVALIDATIONS = 4;
 
     /** model+color-keyed plans; render-thread confined, like every other per-draw structure here. */
-    private final Map<ItemMeshKey, Segment[]> celtium$itemMeshes =
+    private final Map<ItemMeshKey, Plan> celtium$itemMeshes =
             new java.util.LinkedHashMap<>(64, 0.75f, true) {
                 @Override
-                protected boolean removeEldestEntry(Map.Entry<ItemMeshKey, Segment[]> eldest) {
+                protected boolean removeEldestEntry(Map.Entry<ItemMeshKey, Plan> eldest) {
                     return size() > ITEM_MESH_CACHE_CAP;
                 }
             };
-    /** (model,color) pairs the plan cannot cover - equality semantics, like the cache itself. */
-    private final java.util.Set<ItemMeshKey> celtium$uncacheableMeshes = new java.util.HashSet<>();
-    /** Per-model tinted check memo: the quad scan is identical work for every draw of the model. */
-    private final IdentityHashMap<IBakedModel, Boolean> celtium$tintedModels = new IdentityHashMap<>();
-    private long celtium$itemMeshHits, celtium$itemMeshMisses;
+    /**
+     * (model,color) pairs the plan cannot cover - equality semantics, like the cache itself, and the
+     * same bound. LinkedHashMap-as-set so the eldest unprofitable key evicts instead of growing
+     * without limit.
+     */
+    private final Map<ItemMeshKey, Boolean> celtium$uncacheableMeshes =
+            new java.util.LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<ItemMeshKey, Boolean> eldest) {
+                    return size() > ITEM_MESH_CACHE_CAP;
+                }
+            };
+    /**
+     * Per-model tinted check memo: the quad scan is identical work for every draw of the model.
+     * Bounded with the rest and dies with the same epoch - a resource reload replaces the models it
+     * keyes on.
+     */
+    private final Map<IBakedModel, Boolean> celtium$tintedModels =
+            new java.util.LinkedHashMap<IBakedModel, Boolean>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<IBakedModel, Boolean> eldest) {
+                    return size() > ITEM_MESH_CACHE_CAP;
+                }
+            };
+    /** Probe failures per key, for demotion; bounded with the rest. */
+    private final Map<ItemMeshKey, Integer> celtium$probeFailures =
+            new java.util.LinkedHashMap<ItemMeshKey, Integer>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<ItemMeshKey, Integer> eldest) {
+                    return size() > ITEM_MESH_CACHE_CAP;
+                }
+            };
+    /**
+     * The resource-manager instance the caches belong to. A resource reload installs a new resource
+     * manager and every model instance it keyed is replaced with it; the identity check turns the
+     * reload into one cheap epoch bump instead of a stale-geometry leak.
+     */
+    private Object celtium$resourceEpoch;
+    private long celtium$itemMeshHits, celtium$itemMeshMisses, celtium$itemMeshInvalidations;
 
     @Shadow
     public abstract void renderQuads(BufferBuilder renderer, List<BakedQuad> quads, int color, ItemStack stack);
@@ -74,29 +129,69 @@ public abstract class RenderItemMixin {
         if (!ITEM_MESH_CACHE || model == null) {
             return;
         }
-        ItemMeshKey key = new ItemMeshKey(model, color);
-        Segment[] plan = this.celtium$itemMeshes.get(key);
-        if (plan != null) {
-            celtium$replay(plan, stack, color);
-            this.celtium$itemMeshHits++;
-            info.cancel();
-            return;
+        Object manager = Minecraft.getMinecraft().getResourceManager();
+        if (manager != this.celtium$resourceEpoch) {
+            this.celtium$resourceEpoch = manager;
+            this.celtium$itemMeshes.clear();
+            this.celtium$uncacheableMeshes.clear();
+            this.celtium$tintedModels.clear();
+            this.celtium$probeFailures.clear();
         }
-        if (this.celtium$uncacheableMeshes.contains(key)) {
+        ItemMeshKey key = new ItemMeshKey(model, color);
+        Plan plan = this.celtium$itemMeshes.get(key);
+        if (plan != null) {
+            if (celtium$probe(model, plan)) {
+                celtium$replay(plan, stack, color);
+                this.celtium$itemMeshHits++;
+                info.cancel();
+                return;
+            }
+            // Geometry changed under the same model instance: drop the plan and demote when it
+            // keeps happening, rather than replaying bytes built from quads that no longer exist.
+            this.celtium$itemMeshes.remove(key);
+            this.celtium$itemMeshInvalidations++;
+            Integer failures = this.celtium$probeFailures.get(key);
+            int count = failures == null ? 1 : failures.intValue() + 1;
+            if (count >= ITEM_MESH_INVALIDATIONS) {
+                this.celtium$probeFailures.remove(key);
+                this.celtium$uncacheableMeshes.put(key, Boolean.TRUE);
+            } else {
+                this.celtium$probeFailures.put(key, Integer.valueOf(count));
+            }
+        }
+        if (this.celtium$uncacheableMeshes.containsKey(key)) {
             return;
         }
         plan = this.celtium$buildPlan(model, color, stack);
         if (plan == null) {
-            this.celtium$uncacheableMeshes.add(key);
+            this.celtium$uncacheableMeshes.put(key, Boolean.TRUE);
             return;
         }
         this.celtium$itemMeshes.put(key, plan);
         this.celtium$itemMeshMisses++;
-        if (this.celtium$itemMeshMisses == 1 || this.celtium$itemMeshMisses % 200 == 0) {
+        if (this.celtium$itemMeshMisses == 1 || this.celtium$itemMeshMisses % 200 == 0
+                || this.celtium$itemMeshInvalidations > 0) {
             System.out.println("[Celtium] CELTIUM_ITEM_MESH misses=" + this.celtium$itemMeshMisses
-                    + " hits=" + this.celtium$itemMeshHits + " entries=" + this.celtium$itemMeshes.size());
+                    + " hits=" + this.celtium$itemMeshHits + " entries=" + this.celtium$itemMeshes.size()
+                    + " uncacheable=" + this.celtium$uncacheableMeshes.size()
+                    + " invalidations=" + this.celtium$itemMeshInvalidations);
         }
         info.cancel();
+    }
+
+    /**
+     * The mutation probe: vanilla reads the null-face quad list on every draw, so re-reading it on a
+     * hit costs one {@code getQuads} call where the original ran seven. Size plus first-quad identity
+     * is the cheap stability signal - a dynamic model that rotates or rebuilds its quads changes one
+     * of the two almost always, and a false negative only costs a rebuilt plan.
+     */
+    private static boolean celtium$probe(IBakedModel model, Plan plan) {
+        List<BakedQuad> probe = model.getQuads((IBlockState) null, (EnumFacing) null, 0L);
+        if (probe.size() != plan.probeCount) {
+            return false;
+        }
+        BakedQuad first = probe.isEmpty() ? null : probe.get(0);
+        return first == plan.probeQuad;
     }
 
     /**
@@ -106,19 +201,27 @@ public abstract class RenderItemMixin {
      *
      * @return {@code null} when the draw cannot be cached (stack-tinted quads or lighting-carrying formats)
      */
-    private Segment[] celtium$buildPlan(IBakedModel model, int color, ItemStack stack) {
+    private Plan celtium$buildPlan(IBakedModel model, int color, ItemStack stack) {
         boolean stackColored = color == -1 && !stack.isEmpty();
         if (stackColored && celtium$modelHasTintedQuads(model)) {
             return null;
         }
-        if (!net.minecraftforge.common.ForgeModContainer.allowEmissiveItems) {
+        // The probe records what the hit path re-verifies: the null-face list's size and first quad.
+        List<BakedQuad> probe = model.getQuads((IBlockState) null, (EnumFacing) null, 0L);
+        BakedQuad probeQuad = probe.isEmpty() ? null : probe.get(0);
+        if (!ForgeModContainer.allowEmissiveItems) {
             BufferBuilder scratch = celtium$scratch();
             for (EnumFacing enumfacing : EnumFacing.values()) {
                 this.renderQuads(scratch, model.getQuads((IBlockState) null, enumfacing, 0L), color, stack);
             }
             this.renderQuads(scratch, model.getQuads((IBlockState) null, (EnumFacing) null, 0L), color, stack);
+            // Tessellator.draw()'s contract, applied to the scratch builder: finishDrawing freezes the
+            // used range before the uploader runs and before the bytes are read out of the same range.
+            scratch.finishDrawing();
+            int[] data = celtium$bytes(scratch);
             new WorldVertexBufferUploader().draw(scratch);
-            return new Segment[] { new Segment(celtium$bytes(scratch), false, 0, 0, false, false) };
+            return new Plan(new Segment[] {
+                    new Segment(data, false, 0, 0, false, false) }, false, probeQuad, probe.size());
         }
         // renderLitItem, faithfully: gather all quads, walk them by (blockLight, skyLight, shade) transitions, and
         // emit a segment whenever the lighting or shading state changes - with ITEM-format quads carrying no light
@@ -129,7 +232,7 @@ public abstract class RenderItemMixin {
         }
         allquads.addAll(model.getQuads((IBlockState) null, (EnumFacing) null, 0L));
         if (allquads.isEmpty()) {
-            return new Segment[0];
+            return new Plan(new Segment[0], false, probeQuad, probe.size());
         }
         // Any quad outside the ITEM layout that carries a light element goes back to the original code: the light
         // gatherer's pipe is the piece this port deliberately does not reimplement, and the format check is what
@@ -172,9 +275,9 @@ public abstract class RenderItemMixin {
         if (hasLighting) {
             OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit,
                     OpenGlHelper.lastBrightnessX, OpenGlHelper.lastBrightnessY);
-            net.minecraft.client.renderer.GlStateManager.enableLighting();
+            GlStateManager.enableLighting();
         }
-        return segments.toArray(new Segment[0]);
+        return new Plan(segments.toArray(new Segment[0]), hasLighting, probeQuad, probe.size());
     }
 
     /**
@@ -189,47 +292,63 @@ public abstract class RenderItemMixin {
         float lastSl = OpenGlHelper.lastBrightnessY;
         if (updateShading) {
             if (shade) {
-                net.minecraft.client.renderer.GlStateManager.enableLighting();
+                GlStateManager.enableLighting();
             } else {
-                net.minecraft.client.renderer.GlStateManager.disableLighting();
+                GlStateManager.disableLighting();
             }
         }
         if (updateLighting) {
             OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, Math.max(bl, lastBl), Math.max(sl, lastSl));
         }
         this.renderQuads(scratch, run, color, stack);
+        // B01: finishDrawing before the uploader is the contract Tessellator.draw() applies to the shared
+        // builder - without it the stored range was the buffer's capacity instead of its used range.
+        scratch.finishDrawing();
+        int[] data = celtium$bytes(scratch);
         uploader.draw(scratch);
         OpenGlHelper.lastBrightnessX = lastBl;
         OpenGlHelper.lastBrightnessY = lastSl;
         run.clear();
-        return new Segment(celtium$bytes(scratch), shade, bl, sl, updateShading, updateLighting);
+        return new Segment(data, shade, bl, sl, updateShading, updateLighting);
     }
 
     /**
      * Replays a plan: the identical state calls and bytes for every segment, with the lightmap read live per draw -
-     * the part of {@code drawSegment} that genuinely depends on the frame.
+     * the part of {@code drawSegment} that genuinely depends on the frame. The post-loop cleanup mirrors
+     * {@code renderLitItem}: when the plan recorded lighting, the lightmap coordinates captured at entry are
+     * restored and lighting is re-enabled - in a {@code finally}, so a hit (or a throw) leaves the same outgoing
+     * state a miss would.
      */
-    private void celtium$replay(Segment[] plan, ItemStack stack, int color) {
+    private void celtium$replay(Plan plan, ItemStack stack, int color) {
         BufferBuilder shared = Tessellator.getInstance().getBuffer();
-        for (Segment segment : plan) {
-            shared.begin(org.lwjgl.opengl.GL11.GL_QUADS, DefaultVertexFormats.ITEM);
-            float lastBl = OpenGlHelper.lastBrightnessX;
-            float lastSl = OpenGlHelper.lastBrightnessY;
-            if (segment.updateShading) {
-                if (segment.shade) {
-                    net.minecraft.client.renderer.GlStateManager.enableLighting();
-                } else {
-                    net.minecraft.client.renderer.GlStateManager.disableLighting();
+        float entryBl = OpenGlHelper.lastBrightnessX;
+        float entrySl = OpenGlHelper.lastBrightnessY;
+        try {
+            for (Segment segment : plan.segments) {
+                shared.begin(org.lwjgl.opengl.GL11.GL_QUADS, DefaultVertexFormats.ITEM);
+                float lastBl = OpenGlHelper.lastBrightnessX;
+                float lastSl = OpenGlHelper.lastBrightnessY;
+                if (segment.updateShading) {
+                    if (segment.shade) {
+                        GlStateManager.enableLighting();
+                    } else {
+                        GlStateManager.disableLighting();
+                    }
                 }
+                if (segment.updateLighting) {
+                    OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit,
+                            Math.max(segment.blockLight, lastBl), Math.max(segment.skyLight, lastSl));
+                }
+                shared.addVertexData(segment.verts);
+                Tessellator.getInstance().draw();
+                OpenGlHelper.lastBrightnessX = lastBl;
+                OpenGlHelper.lastBrightnessY = lastSl;
             }
-            if (segment.updateLighting) {
-                OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit,
-                        Math.max(segment.blockLight, lastBl), Math.max(segment.skyLight, lastSl));
+        } finally {
+            if (plan.hasLighting) {
+                OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, entryBl, entrySl);
+                GlStateManager.enableLighting();
             }
-            shared.addVertexData(segment.verts);
-            Tessellator.getInstance().draw();
-            OpenGlHelper.lastBrightnessX = lastBl;
-            OpenGlHelper.lastBrightnessY = lastSl;
         }
     }
 
@@ -239,6 +358,11 @@ public abstract class RenderItemMixin {
         return scratch;
     }
 
+    /**
+     * Reads the builder's used vertex range. Correct only after {@code finishDrawing()} has run: it
+     * rewinds the position to 0 and sets the limit to the used size - the contract
+     * {@code Tessellator.draw()} hands the uploader, and the one this method assumes.
+     */
     private static int[] celtium$bytes(BufferBuilder scratch) {
         java.nio.IntBuffer ints = scratch.getByteBuffer().asIntBuffer();
         ints.rewind();
@@ -281,6 +405,25 @@ public abstract class RenderItemMixin {
         }
         this.celtium$tintedModels.put(model, Boolean.valueOf(found));
         return found;
+    }
+
+    /**
+     * A plan: the segments plus the plan-level facts the replay cannot recompute - {@code hasLighting}
+     * for {@code renderLitItem}'s post-loop cleanup, and the null-face probe
+     * ({@code probeQuad}/{@code probeCount}) the hit path re-verifies before trusting the bytes.
+     */
+    private static final class Plan {
+        final Segment[] segments;
+        final boolean hasLighting;
+        final BakedQuad probeQuad;
+        final int probeCount;
+
+        Plan(Segment[] segments, boolean hasLighting, BakedQuad probeQuad, int probeCount) {
+            this.segments = segments;
+            this.hasLighting = hasLighting;
+            this.probeQuad = probeQuad;
+            this.probeCount = probeCount;
+        }
     }
 
     /** One segment of a plan: the emitted bytes plus the light/shade state {@code drawSegment} applies around them. */
