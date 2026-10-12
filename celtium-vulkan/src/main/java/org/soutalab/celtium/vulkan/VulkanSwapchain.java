@@ -278,10 +278,30 @@ public final class VulkanSwapchain {
      * a flag the present path consumes, and the copy uses the same routine as the centre sample.
      */
     public void requestPresentedImageDump(java.nio.file.Path path) {
-        if (path != null) {
-            this.pendingDumpPaths.add(path);
+        if (path == null) {
+            return;
         }
+        // A request that arrives when no further present is coming is answered from the image the last present
+        // handed over, rather than queued for a frame that will never arrive. Measured need (leg hei006br): the
+        // fixture's capture-time request lands at tick 223, near the end of the run, and the queued path was never
+        // consumed - the run directory held the early dump (requested mid-run, written) and no world dump at all,
+        // while the report recorded pictureRequested_world. The image is still the presenter's at that moment only
+        // if a present is in flight; otherwise lastPresentedImage is the frame that was shown, which is what a
+        // capture-time request means. The queued path is still used when there is nothing to answer from, and the
+        // immediate write is reported through lastDumpWritten and lastDumpFailure like the queued one.
+        if (this.lastPresentedImage != VK_NULL_HANDLE) {
+            boolean written = writePresentedImage(path, this.lastPresentedImage);
+            this.lastDumpWritten = written;
+            if (!written) {
+                this.lastDumpFailure = "an immediate presented-image dump did not write (image=0x"
+                        + Long.toHexString(this.lastPresentedImage) + ", size=" + this.width + "x" + this.height + ")";
+                this.pendingDumpPaths.add(path);
+            }
+            return;
+        }
+        this.pendingDumpPaths.add(path);
     }
+
 
     /** Writes the image the present just handed over, while it is still ours to read. */
     private boolean writePresentedImage(java.nio.file.Path path, long image) {
