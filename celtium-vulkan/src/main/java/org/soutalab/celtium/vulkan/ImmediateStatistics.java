@@ -109,8 +109,8 @@ public final class ImmediateStatistics {
     private int lastAlphaFunc;
     private int lastFrameAccepted;
     private int lastFrameDrawn;
-    private String lastTwoArgBlendPair;
-    private String lastUniformPreparationFailure;
+    private String lastTwoArgBlendPair = "none";
+    private String lastUniformPreparationFailure = "none";
     private float mirroredProjectionDelta;
     private String particleDescriptorFailureReason;    private long actualFlushWorstNanos;
     private long blendPairs;    private int drawsWithoutCommandBuffer;

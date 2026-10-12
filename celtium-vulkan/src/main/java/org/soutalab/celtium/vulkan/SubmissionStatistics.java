@@ -30,7 +30,7 @@ public final class SubmissionStatistics {
     private int idleWaitTimeouts;
     private int idleWaitRetries;
     private long deviceWaitToken;
-    private String stallOrigin;
+    private String stallOrigin = "none";
 
     /** Records one stalledStops. */
     void noteStalledStops() {

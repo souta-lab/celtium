@@ -301,7 +301,7 @@ public final class TerrainRenderer {
 
     private VulkanBuffer indirectBuffer;
     private long indirectGrowths;
-    private String lastTerrainIndirectFallback;
+    private String lastTerrainIndirectFallback = "none";
 
     private long terrainIndirectOffers;
     private long terrainIndirectCalls;

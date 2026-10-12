@@ -34,7 +34,7 @@ public final class TargetStatistics {
     private int pairClearsRefusedOtherIdentity;
     private int windowDrawsToFrameImage;
     private int windowFramesMarkedPresentable;
-    private String lastPairClearRefusal;
+    private String lastPairClearRefusal = "none";
     private int outsideWorldPassRefusals;
     private int outsideWorldPassAccepted;
     private int gameClearsLatchedForFrame;

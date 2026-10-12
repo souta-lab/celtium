@@ -17,7 +17,7 @@ public final class TerrainStatistics {
     private int passSubmissions;
     private int passSkips;
     private int passErrors;
-    private String lastSkipReason;
+    private String lastSkipReason = "none";
     private long lastDrawCommands;
     private long lastSectionsDrawn;
     private int terrainPasses;
