@@ -307,6 +307,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.342 **round 149: パノラマの所有者が判明（fog-path `1a308c25d`）・tooltip の light-state 契約を原典で確認（GUI 文字の暗転の候補機序）**
+
+- **パノラマ（fog-path の着地）**: **所有者は splash の白い `DynamicTexture`（id 8）**
+  ＝パノラマの copy が読む内容が **splash のテクスチャ**と混ざっている、という根因。mirror/descriptor の描画行と census を追加（`1a308c25d`）。
+- **GUI 文字の暗転（原典から確認・`GuiScreen.func_146283_a`）**: vanilla の tooltip は
+  ```
+  glDisable(GL_RESCALE_NORMAL); RenderHelper.disableStandardItemLighting(); glDisable(GL_LIGHTING); glDisable(GL_DEPTH_TEST);
+  … drawStringWithShadow(各行) …
+  glEnable(GL_LIGHTING); glEnable(GL_DEPTH_TEST); RenderHelper.enableStandardItemLighting(); glEnable(GL_RESCALE_NORMAL);
+  ```
+  ＝**tooltip は lighting を明示的に落として描き、描いた後に戻す**。
+  さらに **`drawStringWithShadow` は影パス（RGB を1/4）を先に描いてから本体パスを描く**ので、
+  **影の暗い色が本体パスに漏れると文字が暗く見える**＝**ユーザ報告の症状そのもの**。
+  ＝`gui-text` の2仮説（カラーコード経路／影パス）のうち**後者が有力**で、判定点は
+  **`RenderHelper.disableStandardItemLighting`/`enableStandardItemLighting` と `glDisable(GL_LIGHTING)` を我々が state として追えているか**、
+  および **影パスと本体パスの間で色が復元されているか**。
+- **font 刷新の進行**: `glyph-fix` が **証拠画像**を出し始めた
+  （`docs/history/evidence/font-f3-20261012/fast-on-line1-sheet-vs-frame.png`・`fast-on-line4-background-residual.png`）＝**leg の画像比較つき**。
+- **スロット**: 他担当が使用中（pid 3011394）。HEI leg は依然待ち。
+
 ## 0.341 **round 148: ロード画面が出ない機序が確定（sky-draws）— 欠けているのはテクスチャではなく「幾何」**
 
 - **機序（原典＋既存 census）**: Forge のスプラッシュは **レガシー即時モード**で描いている
