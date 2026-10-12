@@ -263,6 +263,12 @@ public final class VulkanGlTexture {
 
     /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
     private long lastPixelHash;
+    /**
+     * The stub write serial the last upload under GL-less mirrored; see {@link #uploadFromGlTexture}. Real serials
+     * start at 1 and the missing-record answer is {@link Long#MIN_VALUE}, so the -1 initial value keeps the first
+     * call - and every call for a texture the stub has never seen - on the old read-and-hash path.
+     */
+    private long lastUploadSerial = -1L;
 
     /**
      * Per-level write provenance, which is what makes "which levels did this write touch" a number rather than a
@@ -1262,6 +1268,17 @@ public final class VulkanGlTexture {
         this.poisonColour = poisonFor(glTextureId);
         this.flatPoisonColour = flatPoisonFor(glTextureId);
         this.encodeLabel = glTextureId;
+        // Under the stub every write the pixels came through was numbered, so "did the level change" answers in O(1):
+        // equal serial means identical bytes, and the read of the captured surface plus the FNV pass over it - which is
+        // what this method used to spend on every unchanged texture - are both skipped. The bridge keeps the hash: it
+        // has no write log to ask. A level with no record answers MIN_VALUE, which matches no lastUploadSerial, so the
+        // first ask always proceeds.
+        final long uploadSerial = fromCapture
+                ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(glTextureId, 0)
+                : Long.MIN_VALUE;
+        if (uploadSerial == this.lastUploadSerial) {
+            return;
+        }
         GlLevel level = readGlLevel0(glTextureId, glTextureTarget);
         try {
             long hash = 1469598103934665603L;
@@ -1275,6 +1292,7 @@ public final class VulkanGlTexture {
                 return;
             }
             lastPixelHash = hash;
+            this.lastUploadSerial = uploadSerial;
             dumpForDebugging(glTextureId, level);
             dumpSourcePixels(glTextureId, level);
             // The chain is generated here rather than copied from OpenGL. Copying GL's own levels needs the readback path
@@ -1549,6 +1567,7 @@ public final class VulkanGlTexture {
         // this a later full upload of the same pixels is skipped as a duplicate and the patch survives in a texture that should
         // have been replaced wholesale (audit A06).
         this.lastPixelHash = 0L;
+            this.lastUploadSerial = -1L;
         return true;
     }
 
@@ -2227,6 +2246,7 @@ public final class VulkanGlTexture {
             this.height = 0;
             this.fullContentArrived = false;
             this.lastPixelHash = 0L;
+            this.lastUploadSerial = -1L;
             this.levelWrites = new long[0];
             this.levelLastWrite = new long[0];
             synchronized (VulkanGlTexture.class) {
@@ -2357,6 +2377,7 @@ public final class VulkanGlTexture {
         }
         this.fullContentArrived = false;
         this.lastPixelHash = 0L;
+            this.lastUploadSerial = -1L;
         this.levelWrites = new long[0];
         this.levelLastWrite = new long[0];
         this.levelLayouts = new int[0];

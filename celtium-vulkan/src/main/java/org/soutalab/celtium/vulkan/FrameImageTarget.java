@@ -41,6 +41,20 @@ public interface FrameImageTarget {
     default void noteDoneSignalled(long semaphore) {
     }
 
+    /**
+     * {@return whether this target's frames take part in the wait/done semaphore contract}.
+     * <p>
+     * The pair exists so two producers meet on the queue: under the shared target, GL's signal is what the frame's
+     * first submission waits on. Under the owned target there is no second producer - every signal and every wait
+     * is one of our own submissions on one queue, where submission order already gives the same ordering - so the
+     * three queue packets the contract costs per stage (beginFrame's signal, the work submission's semaphore pair,
+     * endFrame's consume) buy nothing. {@link GllessFrameTarget} reports false by default;
+     * {@code -Dceltium.vulkan.gllessFrameSemaphores=true} keeps the pair anyway.
+     */
+    default boolean needsFrameSemaphores() {
+        return true;
+    }
+
 
     /**
      * Marks the frame open: under the shared target the game framebuffer's content is copied in and the

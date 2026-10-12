@@ -650,6 +650,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     @Override
     public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                        CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+        // "terrain" inside "world": the world pass holds the spike (fixture worst 368 ms of a 411 ms frame) and
+        // its named parts stop at the immediate flush - the terrain pass's own submit+record share needs a bracket
+        // of its own to be told from the game's renderWorldPass work around it.
+        FramePassTimings.begin("terrain");
+        try {
+            celtium$renderPass(matrices, renderLists, pass, occlusionCamera, camera, profile);
+        } finally {
+            FramePassTimings.end("terrain");
+        }
+    }
+
+    private void celtium$renderPass(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists,
+            TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
         if (Boolean.getBoolean("celtium.vulkan.refuseTerrainPass")) {
             // Isolation switch: with the terrain pass out of the frame, whatever is still wrong in the picture
             // belongs to the immediate path, and the other way round.
@@ -5754,7 +5767,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             this.frameAccepted++;
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
-                try { flushImmediateWindow(); }
+                try {
+                    FramePassTimings.begin("flush");
+                    try { flushImmediateWindow(); }
+                    finally { FramePassTimings.end("flush"); }
+                }
                 catch (RuntimeException | LinkageError error) {
                     // Bounded, not latched (task-60). This catch used to call noteStalled(), which stops the renderer
                     // for the rest of the session: measured on the loading screen's font path at frame 0, where the
@@ -6763,13 +6780,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long flushStartedNanos = System.nanoTime();
         long flushCpuStartedNanos = threadCpuNanos();
         try {
-            if (this.commandState != null && this.commandState.inRenderPass()) {
-                // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
-                // accepted has to reach the image first, inside the pass that is already open.
-                this.immediateDrawSite = "order-flush-in-pass";
-                drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
-            } else {
-                flushImmediateWindow();
+            FramePassTimings.begin("flush");
+            try {
+                if (this.commandState != null && this.commandState.inRenderPass()) {
+                    // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
+                    // accepted has to reach the image first, inside the pass that is already open.
+                    this.immediateDrawSite = "order-flush-in-pass";
+                    drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
+                } else {
+                    flushImmediateWindow();
+                }
+            } finally {
+                FramePassTimings.end("flush");
             }
             this.orderPreservingFlushes++;
             long tookNanos = System.nanoTime() - flushStartedNanos;
@@ -8223,6 +8245,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
                 // reading them here is what makes a zero that cannot move (no increment site) visible as such.
                 + " immediateGroupsDrawn=" + this.immediateGroupsDrawn
+                // Every vkQueueSubmit the process issued, all paths together: the owned target's per-stage
+                // semaphore packets show up here as part of the same total the work submissions do, so "submissions
+                // per frame" is readable as queueSubmitCalls/worldFrames rather than assembled from call sites.
+                + " queueSubmitCalls=" + VulkanContext.queueSubmitCalls
                 // The light-map census, printed here because the two counters it is read with had no reporting site at
                 // all: lightmapCoordGroups counts the groups whose captured coordinate reached the push block and
                 // lightmapFullBrightGroups the GUI-stage groups that were given the full-bright pair instead. A
@@ -8319,6 +8345,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results, Runnable graphUpdateTrigger) {
+        // "chunkUpload" inside "world": the section rebuild uploads are the last unnamed part of a world-pass
+        // spike - the terrain submit, the window flush and the present already have brackets, and what is left is
+        // the mesh-copy + endCommands path this call holds.
+        FramePassTimings.begin("chunkUpload");
+        try {
+            celtium$uploadMeshesPass(results, graphUpdateTrigger);
+        } finally {
+            FramePassTimings.end("chunkUpload");
+        }
+    }
+
+    private void celtium$uploadMeshesPass(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
+            Runnable graphUpdateTrigger) {
         Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = new Reference2ReferenceOpenHashMap<>();
         for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
             ChunkTaskOutput output = holder.output();
@@ -13353,6 +13392,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * GL wait inside {@code endFrame} has nothing to wait for and blocks the render thread for good (audit S18).
      */
     private void submitSignalOnly() {
+        // With the pair skipped there is no frame synchronization to release: the frame-close flags this path set
+        // are still set, because they gate the present's own "a frame reached the queue" question, but no packet
+        // goes to the queue for a contract nothing honours.
+        if (!this.frameTarget.needsFrameSemaphores()) {
+            this.frameSubmitReachedQueue = true;
+            this.lastFrameReachedQueue = true;
+            return;
+        }
         // Counted, so a leg can say whether the frame-close path fired rather than whether the leg was green: the
         // per-image change made consumeDone wait on whichever done semaphore was recorded, and this is the producer
         // whose pairing that could break. Two legs were green without this path firing at all, which is a leg about
@@ -13375,6 +13422,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // touched. That is the property this switch exists to check.
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
+                        VulkanContext.queueSubmitCalls++;
                         check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
             this.frameSubmitReachedQueue = true;
             this.lastFrameReachedQueue = true;
@@ -13401,6 +13449,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // reported, after the pass-level ones.
             return;
         }
+        // The owned target's semaphore pair synchronizes the renderer with itself on one queue, which is ordering
+        // the queue already has: when the target says the contract does not apply the submission takes no semaphore
+        // at all, and every per-stage packet that exists only to carry the pair is skipped with it.
+        boolean frameSemaphores = withFrameSemaphores && this.frameTarget.needsFrameSemaphores();
         // OPT-07: every copy the frame recorded goes out as one submission before this one, so the vertices, indices
         // and uniform bytes this command buffer reads are in place. It is a no-op when nothing is pending, and it is
         // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
@@ -13413,13 +13465,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             LongBuffer waitSemaphores = null;
             IntBuffer waitStages = null;
             LongBuffer signalSemaphores = null;
-            if (withFrameSemaphores) {
+            if (frameSemaphores) {
                 waitSemaphores = stack.mallocLong(1);
                 waitSemaphores.put(0, this.frameTarget.waitSemaphore());
                 waitStages = stack.mallocInt(1);
                 waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
             }
-            if (withFrameSemaphores) {
+            if (frameSemaphores) {
                 signalSemaphores = stack.mallocLong(1);
                 signalSemaphores.put(0, this.frameTarget.doneSemaphore());
             }
@@ -13429,7 +13481,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // waitSemaphoreCount must be set explicitly: LWJGL's pWaitSemaphores(LongBuffer) writes only the
             // pointer, unlike pSignalSemaphores which also sets its count. Leaving it to calloc's zero meant this
             // submission waited on nothing at all - which is what the validation layer was reporting all along.
-            if (withFrameSemaphores) {
+            if (frameSemaphores) {
                 submit.waitSemaphoreCount(waitSemaphores.remaining());
                 submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
                         .pSignalSemaphores(signalSemaphores);
@@ -13453,6 +13505,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // touched. That is the property this switch exists to check.
                 check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
+                        VulkanContext.queueSubmitCalls++;
                         check(vkQueueSubmit(this.context.queue(), submit, this.fence), "vkQueueSubmit");
 
             // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
@@ -13485,7 +13538,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.recordedImmediateGroups.clear();
             this.frameSubmitReachedQueue = true;
             this.lastFrameReachedQueue = true;
-            if (withFrameSemaphores && this.frameTarget instanceof GllessFrameTarget gllessTarget) {
+            if (frameSemaphores && this.frameTarget instanceof GllessFrameTarget gllessTarget) {
                 // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
                 // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
                 // outstanding and the next beginFrame signalled the same binary semaphore twice).
