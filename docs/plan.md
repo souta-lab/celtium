@@ -38,8 +38,8 @@
 | **0.0.2-alpha** | **公開済み** | `celtium-forge-mc1.12.2-0.0.2-alpha.jar`・2,594,729 bytes・SHA-256 `c2b69d03…b94471fc`・package verifier `verified: true`。**開発版は `0.0.2-alpha-dev`（Celeritas 上流番号を除去）** |
 | **BH-03/04/23/34** | **解決済み** | 各1コミット・一旗対照・両脚 clean（`9982ac634` が列挙） |
 | **BH-09（scissor）** | **修正着地・受入未取得** | `218ea2120`。**原典で「vanilla は `glScissor`/`GL_SCISSOR_TEST` を一切呼ばない」を確定**（出現0）・唯一の発行元は `VulkanDrawContext.enableScissor`・呼び手は `ScrollableFrame.render` のみ・**`canScrollVertical` が立つ時だけ**。`scissorCalls`/`scissorToggles` が判定子。**leg 側の注意**: `r154-bh09` は `scissorCalls` 計器より前の jar なので**この脚にカウンタが無いこと＝0 ではない**。カウンタを持つ脚は `r157/r158/r160-bh09`・`guiscale2-leg`・`ownerfix-menu`・`splashdrop*`・`bh18b-amd/intel`・`r162-release`・`loading-leg` で、いずれも `scissorCalls=0`（ただし**リストが overflow する条件を踏んだ脚はまだ無い**） |
-| BH 全体 | **解決済み 27 / 未解決 9（うち1件は受入条件が未取得）** | 未解決は BH-14, 17, **18（実装修正済・本文が要求する合成入力の確認が未取得）**, 20, 21, 24, 26, **33（UI側は「有効に見せない」で着地・fade 自体は未移植）**, 35（測定済・広告契約を裁定済み）（`docs/history/2026-10-11-code-bughunt.md` 冒頭に状態） |
-| **パノラマ** | **修正着地・受入未取得（測定は前進）** | 白の出所は **id 8 の mirror**（splash の白 256×256 `DynamicTexture`・`CELTIUM_UPLOAD_CALLER id=8 … first=0xffffffff`）。`59441d6bb` が splash 由来 upload を id で記録し、**splash upload が無かった最初のフレームで `forgetTexture`** する。**現行ツリーの leg（`bh18b-amd`/`bh18b-intel`）で `splashCanvasInvalidations=1` を実測＝破棄は実際に走る**。**`splashSourcedGroups` は旧定義の脚で 239** だったが、その脚（`splashdrop*`）は HEAD `5a8ee96af` で**計器より前**。menu-hold の判定 leg は**まだ無い**。`mirrorSourceById` を `forgetTexture` で消す契約修正は dirty（texture-mirror） |
+| BH 全体 | **解決済み 28 / 未解決 8** | **BH-18 解決（`0a8b8d253`・合成入力 harness 全条件 PASS／recreate のみ未測定）**・**BH-35 解決（`4fb0b581b`・広告を列挙で決定し両GPU同一）**。残りは BH-14, 17, 20, 21, 24, 26, **33（UI側は「有効に見せない」で着地・fade 自体は未移植）**（`docs/history/2026-10-11-code-bughunt.md` 冒頭に状態） |
+| **パノラマ** | **受入済み（ユーザ可視・メニュー画像）** | メニュー presented 画像が**ブラー付きパノラマ背景＋ロゴ＋ボタン＋版表示**で描画（sha256 `090d98f7dd60be62…`・21,962色・白1.2%）。計器: `CELTIUM_TEX_COPY_SERVED dest=21 256x256 mean=106,119,135 opaque=65536/65536 nonWhite=65536`（旧: `255,255,255` / `0/65536` / `0`）。2修正 = `bbe0bbe71`（read解決の default-pair 対称分岐）＋`aea5fec0c`（**コピーの Y 反転**）。旧本文: 白の出所は **id 8 の mirror**（splash の白 256×256 `DynamicTexture`・`CELTIUM_UPLOAD_CALLER id=8 … first=0xffffffff`）。`59441d6bb` が splash 由来 upload を id で記録し、**splash upload が無かった最初のフレームで `forgetTexture`** する。**現行ツリーの leg（`bh18b-amd`/`bh18b-intel`）で `splashCanvasInvalidations=1` を実測＝破棄は実際に走る**。**`splashSourcedGroups` は旧定義の脚で 239** だったが、その脚（`splashdrop*`）は HEAD `5a8ee96af` で**計器より前**。menu-hold の判定 leg は**まだ無い**。`mirrorSourceById` を `forgetTexture` で消す契約修正は dirty（texture-mirror） |
 | **ロード画面** | **未表示（機序と到達性は確定・次の一手は描画先の追跡）** | **GL-less では `SplashProgress.start()` が cancel** され `:294/:353/:416` は実行されない。走るのは Tessellator 経路。**順序を原典で確定**: `Minecraft.startGame` 内で `beginMinecraftLoading`(preInit)=`:514` → `SplashProgress.drawVanillaScreen`=`:517` → `finishMinecraftLoading`(init)=`:588`＝**init での latch は遅すぎた**（fixture をコンストラクタ latch に変更）。隔離は1脚で確定: `CELTIUM_SPLASH_HOOK drawSplashScreen=true`（mixin 適用）＋ `fixture instanceSet=true`（到達）。**受入の絵**: `loading` stage の dump は client tick 0 で取得できたが **1280x720・全白 (255,255,255)・distinct=1**（＝ロード画面の幾何が presented frame に届いていない）。次は `CELTIUM_DRAW_SITE … passImage=` と `offTargetPerTarget` で描画先を追う。**注意**: 直前の1脚は**旧名 jar**（`2.5.12-celtium.0.1.0-dev.1`、`celtium$dumpLoadingFrame` 無し）で走っており**無効**だった（下の「成果物バージョンの罠」） |
 | **GUI 文字の暗転** | **現行ツリーでは再現せず（`172b5ab93`）** | ユーザ crop は1行目がアトラスモデルと**画素完全一致**、2行目も `colorCode[7]`/`[23]` で厳密。**影パス漏れ説は反証**。実差は quad 単位の 24/196 セル欠落だが、§7 tooltip 0/2718・fast path on/off 両方 0 |
 | **性能（ユーザの実プロファイル）** | **優先順の根拠** | 358 frame/20 s・frame mean 55.9・p50 34.1・p95 331.8・p99 358.9・worst 384.6 ms。**≥50 ms の 64 frame（17.9 %）が wall time の 50 %**。スパイクの `gameRenderer` 318.6 ms のうち**約 246 ms/frame が未帰属**。`gui` は**定数 ~13.7 ms/frame**（スパイク源ではない） |
@@ -387,6 +387,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.368 **round 175: パノラマがユーザ可視で成立（メニュー画像を実測）。BH-18 / BH-35 完了、Y反転の受入**
+
+- **パノラマ受入（ユーザ優先順1位）**: leg `r174-panorama-menu-dump`（jar `31931ee858a43817e29b5b76`・fixture `9eab548f9c786592`・AMD RX 6400・`menuHoldTicks=60`・`dumpPresentedMenuTick=30`・
+  `validationClean=true`・`validationMessageCount=0`・exit 0）。**menu stage の presented 画像**は
+  `.celtium-work/runtime/r174-panorama-menu-dump/screenshots/celtium-presented-menu-run-1a05b3536bf4e-66d3c617-kept.png`
+  （sha256 `090d98f7dd60be62f0e9c1162febc14f8e3e3bcdceb22e08608c1a5886cfcf88`・1280x720・**21,962 distinct colours**・白 1.2%）。
+  **内容**: ブラー付きのワールドパノラマ背景（空・水面・大地）＋ Minecraft ロゴ＋"Java Edition"＋splash テキスト＋
+  Singleplayer/Multiplayer/Mods/Options…/Quit Game のボタン＋左下の `Minecraft 1.12.2 / MCP 9.42 / Cleanroom 0.6.13-alpha / 17 mods loaded, 17 mods active`＋
+  著作権行。**白プレートは無い。**
+- **その計器側の根拠（同一 leg）**: `CELTIUM_TEX_COPY_SERVED dest=21 256x256 readFbo=0 mean=106,119,135 opaque=65536/65536 nonWhite=65536`。
+  旧 jar `3d6ca14b` は `mean=255,255,255 opaque=0/65536 nonWhite=0`。**宛先ミラーが空のクリア面から実パノラマ画素に変わった**。
+- **2つの修正が効いた**: (1) `bbe0bbe71` read解決の `default-pair` 対称分岐（`readImage == lastDrawnImage == passAttached`）、
+  (2) `aea5fec0c` **コピーの Y 反転**（GL の copy y は下端原点・Vulkan の `imageOffset` は上端原点。`imageOffset.y = targetHeight - y - height`＋`celtium$reverseRows`）。
+  併せて**矩形が画像外なら名前付きで拒否**（黙って clamp しない）。
+- **測定上の注意（次に読む人へ）**: `stage=loading` の dump は `presentedFrame=2` で取られるが、その画像は**既にメニュー**（loading と menu の distinct は 21,955 / 21,962、サンプル平均も一致）。
+  つまり **loading stage の dump は splash を捉えていない**。ロード画面の受入をこの stage で取るのは誤りで、splash を捉えるには `drawSplashScreen` RETURN から**次の present より前**に読む必要がある。
+- **BH-35 完了（`4fb0b581b`）**: 広告を **`GL_VERSION="3.0.0 Celtium"` / `GLSL="1.20"` / `EXTENSIONS=""`** に。下限は**列挙**で決定（vanilla の `framebufferSupported` が `OpenGL30` を要求し、
+  3.0 未満だと `shadersSupported=false` で outline/spectator/post が落ちる。GLSL は別決めで vanilla の `#version 120`）。AMD/Intel 同一 jar で advertised 一致・
+  `validationMessageCount=0`・**未 backing 到達集合は両GPUで完全一致（distinct 647）**・**描画経路の名前ゼロ**・200件の call site は全て LWJGL の自己テスト。
+  到達 legacy 名を no-op に移して数を減らす処置は**していない**（裁定どおり）。限界も記載: この cohort では消えたのは「4.6 の機能がある」という**主張**の側。
+- **BH-18 完了（`0a8b8d253`）**: 単一 `VK_FORMAT_UNDEFINED` 採用の穴を閉じ、選択を純関数 `SwapchainCreateArguments.select(...)` に切り出して
+  **本番 `createSwapchain` がそれを呼ぶ**形にし、**`python3 scripts/cpu-contract/swapchain_create_args_check.py`（GPU不要・1コマンド）で全条件 PASS**。
+  実 surface は clamp 分岐に到達せず、**recreate 経路は依然未測定**（分岐の保証は harness 側）。
 ## 0.367 **round 174: `VulkanTerrainGpuBackend` の分割に着手 — 直列契約と継ぎ目（ユーザ指示）**
 
 - **ユーザ指示**: 「**絶対 vulkanterraingpubackend を分割してみんなで編集したほうがいい**」。現状は **14,018行・334トップレベルメソッド・957フィールド**で、
