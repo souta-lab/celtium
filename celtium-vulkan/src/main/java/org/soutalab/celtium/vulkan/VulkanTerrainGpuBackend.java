@@ -10681,6 +10681,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // declares GENERAL, and the sampling side left it in SHADER_READ_ONLY.
             celtium$transitionPublishedFrameTextures(true);
             int chainRecording = this.postChain.recordPasses(this.commandBuffer, passes);
+            // The chain records into *this* command buffer and sets its own viewport and scissor
+            // (`VulkanPostChain.recordPasses` -> vkCmdSetViewport/vkCmdSetScissor at VulkanPostChain.java:965/968).
+            // The dedup trackers describe what this stream last set, so a writer that does not go through them makes
+            // them stale, and the next group whose rectangle equals the remembered one would skip the command and be
+            // drawn with the *chain's* rectangle. That is BH-13's failure shape reached from the other side, so the
+            // trackers are invalidated here instead of routed: after the chain the state on this buffer is the
+            // chain's, and the next group emits whatever it needs whatever that is.
+            this.passVpX = this.passVpY = this.passVpW = this.passVpH = -1;
+            this.passScX = this.passScY = this.passScW = this.passScH = -1;
+            this.passBiasC = this.passBiasS = Float.NaN;
             if (this.publishedChainOutput != null) {
                 // The chain has written the image and the game's composite samples it next, through a descriptor the
                 // immediate pipelines declare as SHADER_READ_ONLY_OPTIMAL. Recorded in the chain's own submission,
