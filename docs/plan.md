@@ -397,6 +397,9 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 
 ## 0.422 **round 220: 既存の mirror dump は copy 経路を覆っていない／R8 の重複 publication を削除**
 
+- **原典（`.celtium-work/mc-sources/.../DynamicTexture.java:25-31`）**: `DynamicTexture(int,int)` は `new int[w*h]`（**全ゼロ＝透明黒**）を確保し `TextureUtil.allocateTexture` で GL texture を確保するだけ（ピクセルは未定義）✓。⇒ **panorama texture の未書き込み部分が白いという説明は棄却** ✓（白なら「7回の copy が届いていない」、透明黒なら「サンプル時に SRC_ALPHA で寄与しない」）。presented の灰色 wash は**テクスチャの未書き込みではなく、テクスチャを書いた後の合成/勾配**側の話であることが確定 ✓。この事実は `docs/diagnosis-r213-user-visual-breakage.md` の viewport 説と独立に使える ✓。
+
+
 ## 0.421 **round 217: host readback の source 行にも同じ flip が残っていた（パノラマが絵に出た）**
 
 - **既存計器の確認（新設せず）**: `-Dceltium.vulkan.mirrorDump=<dir>` ＋ `-Dceltium.vulkan.mirrorDumpIds=<GL名>`（`VulkanGlTexture:121/:123`）が **mirror の level 0 を RGBA8 PNG で bounded に落とす** ✓（単位=ピクセル、上限=`MIRROR_DUMP_MAX_PIXELS`、`-n<bundle>` で同一ミラーの複数回を区別）。leg `r212-panmirror-dump2`（host アーム・jar `f8cdf4a1f6d4760a`）で **411ファイル**が出たが、**`gl-21`（panorama の宛先）は0件** ✓ — dump は `announceImage`／upload 経路（`:2600`,`:2628`）にあり、**copy が mirror を埋める経路は `announceFullPixels`（`TextureCopyService:512` から）で、そこに dump が無い** ✓。⇒ 次の小改修は `announceFullPixels` の適用点で同じ helper を呼ぶこと（担当: texture-mirror・`VulkanTextureRegistry`）。
