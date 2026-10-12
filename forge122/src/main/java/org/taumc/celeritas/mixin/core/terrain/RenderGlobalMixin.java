@@ -241,7 +241,17 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      */
     @Overwrite
     public String getDebugInfoRenders() {
-        return this.renderer.getChunksDebugString();
+        // The objective requires the F3 overlay to show which Vulkan device and driver the frame was drawn with, and
+        // this line is the overlay's own render-info slot - appending keeps the vanilla chunk counts readable while
+        // naming the renderer. Both accessors are static and return "unavailable" before a device exists, so the
+        // line is honest on a run that never selected Vulkan.
+        String base = this.renderer.getChunksDebugString();
+        String device = org.soutalab.celtium.vulkan.VulkanContext.deviceSummary();
+        String driver = org.soutalab.celtium.vulkan.VulkanContext.driverSummary();
+        if (device == null || device.isEmpty()) {
+            return base;
+        }
+        return base + " | Vulkan: " + device + (driver == null || driver.isEmpty() ? "" : " / " + driver);
     }
 
     private final EntityGatherer celeritas$entityGatherer = new EntityGatherer();
