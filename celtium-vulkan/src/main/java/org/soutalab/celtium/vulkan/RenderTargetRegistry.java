@@ -244,6 +244,73 @@ public final class RenderTargetRegistry {
         return this.targetKnown;
     }
 
+    /** Per pair slot: the framebuffer handle, the render pass it was built for, and how many were created. */
+    private final Map<ImageSlot, long[]> pairFramebuffers = new HashMap<ImageSlot, long[]>();
+
+    /** {@return the pair slot's framebuffer handle, or 0 when it has none}. */
+    public long pairFramebuffer(ImageSlot slot) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        return entry == null ? 0L : entry[0];
+    }
+
+    /** {@return the render pass the slot's framebuffer was built for, or 0}. */
+    public long pairFramebufferRenderPass(ImageSlot slot) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        return entry == null ? 0L : entry[1];
+    }
+
+    /** {@return how many framebuffers were created for the slot}. */
+    public int pairFramebufferCreations(ImageSlot slot) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        return entry == null ? 0 : (int) entry[2];
+    }
+
+    /** Records the framebuffer a slot now has, counting the creation when it replaces a different handle. */
+    public void notePairFramebuffer(ImageSlot slot, long handle, long renderPass) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        if (entry == null) {
+            this.pairFramebuffers.put(slot, new long[] { handle, renderPass, 1L });
+            return;
+        }
+        if (entry[0] != handle) {
+            entry[2]++;
+        }
+        entry[0] = handle;
+        entry[1] = renderPass;
+    }
+
+    /** Forgets the slot's framebuffer, after it has been destroyed. */
+    public void clearPairFramebuffer(ImageSlot slot) {
+        this.pairFramebuffers.remove(slot);
+    }
+
+    /** Records the identity adopted as the main frame target, which the bind path can also discover later. */
+    public void noteMainIdentity(long identity) {
+        this.mainIdentity = identity;
+    }
+
+    /**
+     * Whether a frame-target replacement is in progress: announced when the bind path sees the framebuffer changing,
+     * settled by the first ensure that finds the new target ready. The two setters are named because the flag had
+     * three writers in the backend and the two clears were proven equivalent before the move.
+     */
+    private boolean replacementInProgress;
+
+    /** Records that a frame-target replacement has been announced. */
+    public void noteReplacementAnnounced() {
+        this.replacementInProgress = true;
+    }
+
+    /** Records that the replacement has settled: the target is ready. */
+    public void noteReplacementSettled() {
+        this.replacementInProgress = false;
+    }
+
+    /** {@return whether a frame-target replacement is in progress}. */
+    public boolean replacementInProgress() {
+        return this.replacementInProgress;
+    }
+
     public long generation() {
         return this.generation;
     }
