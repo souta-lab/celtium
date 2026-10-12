@@ -96,4 +96,10 @@ Celtium retains Celeritas' **LGPL-3.0** licensing and upstream history. See [COP
 
 The fixed source reference is [GTNewHorizons/Celeritas at `989ebf2e52ceed052ec112a569e0c1d172095756`](https://github.com/GTNewHorizons/Celeritas/tree/989ebf2e52ceed052ec112a569e0c1d172095756); Celeritas' upstream is [embeddedt/celeritas](https://git.taumc.org/embeddedt/celeritas).
 
+Optimizations derived from [GTNewHorizons/Angelica](https://github.com/GTNewHorizons/Angelica) (**LGPL-3.0**, including its own notices for code adapted from Sodium/Iris, FalseTweaks, Beddium and Mesa) are used with attribution — the design is re-implemented against this renderer's GL-less contract rather than copied; each derived change names its Angelica source in its commit message and code comment:
+
+- **Item mesh cache** (`RenderItemMixin`, PR #21) — after [Angelica PR #1034, "Optimize in-world item rendering"](https://github.com/GTNewHorizons/Angelica/pull/1034) (VBO caching of held/dropped/GUI item geometry, ~4–6x on item-heavy scenes).
+
+Angelica's other assessed-to-date candidates for this renderer are inventoried in [docs/performance_plan.md](docs/performance_plan.md) (per-frame upload arena, bounded item geometry, instancing, TESR mesh keys, pipeline/constant-buffer reuse, dropped-item render distance).
+
 Current Sodium source under its newer restrictive license is not imported by this project. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.

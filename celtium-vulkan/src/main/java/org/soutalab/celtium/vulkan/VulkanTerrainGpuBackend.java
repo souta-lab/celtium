@@ -883,6 +883,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateStateCalls;
     private int immediateBatchesOffered;
     private String immediateLastRefusal = "unrecorded";
+    /**
+     * The shape the unrecorded marker stands for, stored primitive: the offer path used to build the full
+     * "unrecorded (format=.. stride=.. mode=.. count=..)" string on every offered batch - ~300 string
+     * concatenations plus their garbage per frame on a busy scene, for a message that is read only when a refusal
+     * actually happens. The marker stays a real string so the report's .replace() and the startsWith checks keep
+     * working; the detail is expanded at the read sites by {@link #celtium$refusalText()}.
+     */
+    private int immediateOfferFormat = -1;
+    private int immediateOfferStride, immediateOfferMode, immediateOfferCount;
     /** The checkpoint the offer path last passed, so an unnamed refusal can still say where it stopped. */
     private int offerStage;
     /**
@@ -4240,14 +4249,27 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return glless == null ? "none" : glless.pairSummary();
     }
 
+    /**
+     * {@return the last refusal reason}, with the "unrecorded" marker expanded into the shape the offer stored -
+     * the string is built here, where a reader asked for it, instead of on every offered batch.
+     */
+    private String celtium$refusalText() {
+        String reason = this.immediateLastRefusal;
+        if (reason != null && "unrecorded".equals(reason) && this.immediateOfferFormat >= 0) {
+            return "unrecorded (format=" + this.immediateOfferFormat + " stride=" + this.immediateOfferStride
+                    + " mode=" + this.immediateOfferMode + " count=" + this.immediateOfferCount + ")";
+        }
+        return reason;
+    }
+
     @Override
     public String lastRefusal() {
         if (this.immediateLastRefusal != null && this.immediateLastRefusal.startsWith("unrecorded")) {
             // The refusal never named itself; the stage says where the batch stopped. Stages are set at the checkpoints of
             // the offer path below, so a number here is a location and not a guess.
-            return this.immediateLastRefusal + " stage=" + this.offerStage;
+            return celtium$refusalText() + " stage=" + this.offerStage;
         }
-        return this.immediateLastRefusal;
+        return celtium$refusalText();
     }
 
     public void flushBeforeClear(int mask) {
@@ -5104,8 +5126,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     // The marker carries what the batch is, so an unnamed refusal still says which kind of batch it was: with 967 of them
     // per run the tally could not tell one group from another. Naming the refusing condition itself is the next step; this
     // at least splits the group so that step has one target instead of one number.
-    this.immediateLastRefusal = "unrecorded (format=" + formatId + " stride=" + vertexStride + " mode=" + drawMode
-            + " count=" + vertexCount + ")";
+    this.immediateOfferFormat = formatId;
+    this.immediateOfferStride = vertexStride;
+    this.immediateOfferMode = drawMode;
+    this.immediateOfferCount = vertexCount;
+    this.immediateLastRefusal = "unrecorded";
         if (REFERENCE_RENDER) {
             // Same reason as the pass entry: this method is called by the uploader hook directly, so reference mode has to
             // refuse it here as well.
@@ -5142,7 +5167,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (!taken && !this.currentRenderTargetIsMain) {
                 // Refused in this very call: attribute the reason now, because the offers arrive in one burst at the end of a
                 // run and there is no later call to sample from.
-                this.offTargetRefusalsByReason.merge(this.immediateLastRefusal == null ? "unset" : this.immediateLastRefusal,
+                this.offTargetRefusalsByReason.merge(celtium$refusalText(),
                         Integer.valueOf(1), Integer::sum);
             }
             return taken;
@@ -8483,7 +8508,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateGroupsClosed=" + this.immediateGroupsClosed
                 + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
-                + " immediateRefusal=" + this.immediateLastRefusal.replace(' ', '_')
+                + " immediateRefusal=" + celtium$refusalText().replace(' ', '_')
                 + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals
                 + " offTargetRefusals=" + this.offTargetRefusals
                 + " textureRefusalsBeforeAccept=" + this.textureRefusalsBeforeAccept
