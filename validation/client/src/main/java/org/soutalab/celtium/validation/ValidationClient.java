@@ -60,6 +60,21 @@ public final class ValidationClient {
      * bit-for-bit what it was - the value the run used is reported as {@code pinnedWorldTime} either way, so a night
      * leg states its own time in the artifact rather than leaving the reader to assume noon.
      */
+    /**
+     * GUI scale to force before any GUI screen is opened, {@code -Dceltium.validation.guiScale=<N>}.
+     * <p>
+     * BH-09's acceptance needs Celeritas' video-settings list to actually overflow, because that is the only
+     * condition under which {@code ScrollableFrame} sets {@code canScrollVertical} and calls
+     * {@code VintageDrawContext.enableScissor} - the game's only scissor caller. Shrinking the window does not do
+     * it: GUI scale is AUTO, so a smaller window lowers the scale instead of overflowing the list (640x480 gives
+     * scale 2, 480x320 gives scale 1). Raising the scale is the route the player actually uses, and it is the same
+     * field the GUI Scale option writes. The value is named in the report as {@code guiScaleForced}, so a leg never
+     * has to infer which scale it ran at.
+     */
+    private static final int FORCED_GUI_SCALE = Integer.getInteger("celtium.validation.guiScale", 0).intValue();
+    /** Reported once, so a leg names the scale it actually ran at. */
+    private boolean celtium$guiScaleForcedReported;
+
     private static final long PINNED_WORLD_TIME =
             Long.getLong("celtium.validation.worldTime", 6000L).longValue();
 
@@ -3367,6 +3382,16 @@ public final class ValidationClient {
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
                 flickerPinned = pinLightmapFlicker(mc);
                 mc.world.setWorldTime(PINNED_WORLD_TIME);
+                // BH-09: force the GUI scale while a world exists, so it is already in effect when the GUI stage
+                // opens the options screen later in this run. Set here rather than at the screen because the screen
+                // is opened by a path that may be the mod's own, and the scale has to be right before it lays out.
+                if (FORCED_GUI_SCALE > 0 && mc.gameSettings.guiScale != FORCED_GUI_SCALE) {
+                    mc.gameSettings.guiScale = FORCED_GUI_SCALE;
+                    if (!celtium$guiScaleForcedReported) {
+                        celtium$guiScaleForcedReported = true;
+                        report.addProperty("guiScaleForced", Integer.valueOf(FORCED_GUI_SCALE));
+                    }
+                }
                 // The cloud setting, for the same reason the time is pinned: the user's complaint names clouds, and no
                 // run of this fixture could contain a cloud pixel because nothing set the game's own cloud option. The
                 // default is -1 = "leave the game's value alone", so every existing leg and calibration key is
