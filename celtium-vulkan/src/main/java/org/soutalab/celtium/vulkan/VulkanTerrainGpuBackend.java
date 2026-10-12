@@ -6937,9 +6937,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** The viewport key that means "the whole render target", packed the same way {@code viewport} packs it. */
-    private long fullTargetViewportKey() {
-        return ((long) 0 << 42) ^ ((long) 0 << 21) ^ ((long) this.targetWidth << 10) ^ (long) this.targetHeight;
-    }
+
 
     private void flushPendingBeforeGlDraw() {
         if (this.immediateWindowBusy) return;
@@ -7505,28 +7503,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * conversion with its own program, VAO and texture bindings, and GL's viewport, scissor and capabilities could
      * survive in a shape GL's later drawing does not expect.
      */
-    private String snapshotGlState() {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            java.nio.IntBuffer viewport = stack.mallocInt(4);
-            java.nio.IntBuffer scissor = stack.mallocInt(4);
-            org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, viewport);
-            org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_SCISSOR_BOX, scissor);
-            return "viewport=" + viewport.get(0) + "," + viewport.get(1) + "," + viewport.get(2) + "," + viewport.get(3)
-                    + " scissor=" + scissor.get(0) + "," + scissor.get(1) + "," + scissor.get(2) + ","
-                    + scissor.get(3)
-                    + " scissorTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_SCISSOR_TEST)
-                    + " blend=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND)
-                    + " depthTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST)
-                    + " cull=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_CULL_FACE)
-                    + " program=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM)
-                    + " vao=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_VERTEX_ARRAY_BINDING)
-                    + " drawFbo=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING)
-                    + " readFbo=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_READ_FRAMEBUFFER_BINDING)
-                    + " tex2d=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
-        } catch (RuntimeException | LinkageError error) {
-            return "unavailable: " + error;
-        }
-    }
+
 
     /** {@return the mean of a small centre sample of the bound framebuffer}, or -1 when it cannot be read. */
     public static float sampleBoundFramebufferMean(int width, int height) {
@@ -7577,12 +7554,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Records the exception with its stack, so a failure identifies its own origin instead of being guessed at. */
-    private static String describeWithStack(Throwable error) {
-        java.io.StringWriter writer = new java.io.StringWriter();
-        error.printStackTrace(new java.io.PrintWriter(writer));
-        String trace = writer.toString().replace('\n', ' ').replace('\r', ' ');
-        return trace.length() > 600 ? trace.substring(0, 600) : trace;
-    }
+
 
     /** Records a render pass containing nothing but the pending immediate groups. */
     /**
@@ -9401,40 +9373,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the one comparison that the draw-time readback cannot make - whether the arena holds what the upload path was
      * given.
      */
-    private void verifyUpload(TerrainRenderer.RegionResources resources, java.util.List<TerrainRenderer.PendingMesh> pending) {
-        if (uploadVerified || resources.vertexArena.isEmpty()) {
-            return;
-        }
-        for (TerrainRenderer.PendingMesh mesh : pending) {
-            if (mesh.parts == null) {
-                continue;
-            }
-            uploadVerified = true;
-            ensureReadback();
-            long offset = 0;
-            VkCommandBuffer commands = this.context.beginCommands();
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                org.lwjgl.vulkan.VkBufferCopy.Buffer region = org.lwjgl.vulkan.VkBufferCopy.calloc(1, stack);
-                region.get(0).srcOffset(offset).dstOffset(0L).size(64L);
-                vkCmdCopyBuffer(commands, resources.vertexArena.buffer().buffer(), this.readbackBuffer, region);
-                org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
-                barrier.get(0).sType$Default().srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
-                        .dstAccessMask(VK_ACCESS_HOST_READ_BIT);
-                vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
-                        barrier, null, null);
-            } finally {
-                this.context.endCommands(commands);
-            }
-            ByteBuffer view = MemoryUtil.memByteBuffer(this.readbackMapped, 64);
-            view.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-            record("arena after upload: pos=(" + view.getFloat(0) + "," + view.getFloat(4) + ","
-                    + view.getFloat(8) + ") colour=0x" + Integer.toHexString(view.getInt(12))
-                    + " uv=(" + view.getFloat(16) + "," + view.getFloat(20) + ") light=0x"
-                    + Integer.toHexString(view.getInt(24))
-                    + " | source meshes=" + pending.size());
-            return;
-        }
-    }
+
 
     private TerrainRenderer.RegionResources resourcesFor(RenderRegion region) {
         return this.terrain.resourcesFor(this.context, region, this.commonVertexStride);
@@ -10137,13 +10076,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return 3;
     }
 
-    private static float[] regionTranslation(RenderRegion region, CameraTransform camera) {
-        return new float[] {
-                (region.getOriginX() - camera.intX) - camera.fracX,
-                (region.getOriginY() - camera.intY) - camera.fracY,
-                (region.getOriginZ() - camera.intZ) - camera.fracZ,
-        };
-    }
+
 
     private VulkanTerrainPipeline pipelineFor(TerrainRenderPass pass) {
         if (pass == null) {
@@ -12238,15 +12171,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    private static int currentDrawableWidth() {
-        int[] viewport = currentViewport();
-        return Math.max(0, viewport[2]);
-    }
 
-    private static int currentDrawableHeight() {
-        int[] viewport = currentViewport();
-        return Math.max(0, viewport[3]);
-    }
+
+
 
     private static int[] currentViewport() {
         IntBuffer viewport = org.lwjgl.BufferUtils.createIntBuffer(4);
@@ -13350,19 +13277,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
     }
 
-    private static void pushMatrixColumnsInto(float[] matrix, ByteBuffer target, int offset) {
-        for (int column = 0; column < 3; column++) {
-            for (int row = 0; row < 4; row++) {
-                target.putFloat(offset + (column * 4 + row) * 4, matrix[column * 4 + row]);
-            }
-        }
-    }
 
-    private static void pushMatrixInto(float[] matrix, ByteBuffer target, int offset) {
-        for (int i = 0; i < 16; i++) {
-            target.putFloat(offset + (i * 4), matrix[i]);
-        }
-    }
+
+
 
     private void addQuadVertex(float x, float y, float u, float v) {
         this.uiMesh.nextVertex();
