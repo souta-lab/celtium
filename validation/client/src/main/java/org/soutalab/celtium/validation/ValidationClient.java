@@ -1475,6 +1475,12 @@ public final class ValidationClient {
      * lava and fire measured about twice the frame time of the one without, and an A/B of the same build has to be able
      * to tell "the world got heavier" apart from "the renderer got slower". The default is the fuller world.
      */
+    /**
+     * The save directory name to launch instead of the generated flat world, or {@code null}: the runner copies the
+     * instance's {@code saves/} tree into the leg's game dir, and this names which folder inside it to load - the
+     * real-world fixture the flat world cannot stand in for.
+     */
+    private final String celtium$saveSlot = System.getProperty("celtium.validation.saveSlot");
     private final String celtium$worldLayers = System.getProperty("celtium.validation.worldLayers",
             celtium$DEFAULT_WORLD_LAYERS);
     private boolean celtium$rejoinPending;
@@ -2951,7 +2957,15 @@ public final class ValidationClient {
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
                 settings.setGeneratorOptions(celtium$worldLayers);
-                mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
+                if (celtium$saveSlot != null && !celtium$saveSlot.isEmpty()) {
+                    // An existing save instead of the generated flat world: the directory the runner copies the
+                    // instance's saves into, loaded the way the game's own selection screen loads it - the real
+                    // terrain/entity mix the flat world cannot show.
+                    report.addProperty("saveSlot", celtium$saveSlot);
+                    mc.launchIntegratedServer(celtium$saveSlot, celtium$saveSlot, null);
+                } else {
+                    mc.launchIntegratedServer("celtium-validation", "Celtium validation", settings);
+                }
             }
             // Dimension travel: the same player is moved to another dimension, which re-generates terrain with a
             // different sky, fog and block set (the Nether has no sky and its own light rules). The dimension and the
