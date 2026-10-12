@@ -339,6 +339,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.359 **round 166: 決定的 — `scissorCalls=0`・`scissorToggles=0`（どの scene も clip していない＝scene 側のギャップ）**
+
+- **計器の追加（Lead・`bd0852e78`）**: stub が **`glScissor` の呼び出し回数**と **`GL_SCISSOR_TEST` の enable/disable 回数**を数え、
+  static accessor（`scissorCallCount()`/`scissorToggleCount()`）と **verification summary の `scissorCalls=`/`scissorToggles=`** に出す。
+  ＝**`lineBatchesNarrowed` では区別できなかった「scene が clip していない」と「捕捉が欠陥」を分ける数**。
+- **測定（`r157-bh09`・`-Dceltium.validation.screen=language`）**: `CELTIUM_VERIFY via=present 120`（present trigger も動作）で
+  **`scissorCalls=0`・`scissorToggles=0`・`lineBatchesNarrowed=0`・`scissorCapturedGroups=0`・`scissorLateCapturedGroups=0`**。
+  ＝**言語画面は `glScissor` を一度も呼ばず、`GL_SCISSOR_TEST` も一度も切り替えていない**。
+- **結論（測定に基づく・推測ではない）**: **解釈1が正しい** ＝ **この scene は clip しない**（`GuiLanguage` のリストが短く、
+  `GuiSlot.drawScreen` が view box 外を描かないため scissor が発行されない）。**renderer の欠陥ではなく scene のギャップ**。
+  ＝**BH-09 の `scissorCapturedGroups > 0` は「実際に clip する scene」が無い限り原理的に取れない**。
+- **次の一手（具体的）**: **スクロールする長いリスト**を持つ画面を開く。候補: **リソースパック画面**（`GuiResourcePackList extends GuiListExtended extends GuiSlot`）、
+  **クリエイティブインベントリ**（タブ多数）、**ワールド選択**（多数のワールド）。fixture の `screen=` knob は既に `resourcepacks` を実装済み
+  ＝**次はそれをそのまま打ち、`scissorCalls` を先に読む**（0 なら別の画面へ、非0 なら `lineBatchesNarrowed` → 捕捉カウンタ → 一旗対照）。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地・計器4 trigger 着地・fixture knob 着地・
+  scene ギャップを測定で名指し**・**受入は clip する scene の発見待ち**。**6 leg を費やしたが、各 leg は計器が自分で理由を示した**
+  （経路未 exercise / trigger 未到達 / scene が clip しない）。
+
 ## 0.358 **round 165: fixture knob は効いた（`namedScreenOpened=GuiLanguage` at tick 31）— ただし画面が開くと frame カウンタが止まり summary が出ない**
 
 - **測定（`r155-bh09`・`-Dceltium.validation.screen=language`）**: report に **`namedScreenOpened = net.minecraft.client.gui.GuiLanguage`・`namedScreenOpenedAtTick = 31`**
