@@ -1454,7 +1454,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         Fn fn = TABLE.get(functionId);
-        long[] c = new long[SLOTS];
+        long[] c = dispatchArgsScratch();
         for (int i = 0; i < fn.args.length && i < SLOTS; i++) {
             long slot = MemoryUtil.memGetAddress(args + (long) i * org.lwjgl.system.Pointer.POINTER_SIZE);
             switch (fn.args[i]) {
@@ -1478,7 +1478,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     break;
             }
         }
-        APIUtil.apiClosureRetP(result, dispatchArgs(functionId, c));
+        APIUtil.apiClosureRetP(result, dispatchArgs(fn, c));
     }
 
     /**
@@ -1489,8 +1489,45 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private long dispatch(int functionId, long c0, long c1, long c2, long c3, long c4, long c5, long c6, long c7,
             long c8, long c9, long c10, long c11) {
-        return dispatchArgs(functionId,
-                new long[] { c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11 });
+        long[] c = dispatchArgsScratch();
+        c[0] = c0;
+        c[1] = c1;
+        c[2] = c2;
+        c[3] = c3;
+        c[4] = c4;
+        c[5] = c5;
+        c[6] = c6;
+        c[7] = c7;
+        c[8] = c8;
+        c[9] = c9;
+        c[10] = c10;
+        c[11] = c11;
+        return dispatchArgs(functionId, c);
+    }
+
+    /**
+     * The per-call argument scratch: both entries below unpacked a call's arguments into a fresh
+     * {@code new long[SLOTS]}, measured at tens of thousands of GL calls per frame - ~4 MB of garbage per frame
+     * feeding every GC pause the p99 bands blame on the game. The first thread to call owns the shared array (a
+     * field read and an identity compare, cheaper than {@code ThreadLocal.get} on a path this hot); a call on any
+     * other thread falls back to a fresh array so a class-loading thread can never race the render thread's
+     * arguments. Re-use is safe because dispatch handlers never call back through a C trampoline - a nested
+     * {@link #legacyDispatch} would have to originate inside a handler, and handlers are pure Java - so one array
+     * per owning thread cannot be corrupted by re-entry.
+     */
+    private final long[] dispatchScratch = new long[SLOTS];
+    private Thread dispatchScratchOwner;
+
+    private long[] dispatchArgsScratch() {
+        Thread calling = Thread.currentThread();
+        if (calling == this.dispatchScratchOwner) {
+            return this.dispatchScratch;
+        }
+        if (this.dispatchScratchOwner == null) {
+            this.dispatchScratchOwner = calling;
+            return this.dispatchScratch;
+        }
+        return new long[SLOTS];
     }
 
     /**
@@ -1503,7 +1540,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             // A function outside the table: the generic no-op.
             return 0L;
         }
-        Fn fn = TABLE.get(functionId);
+        return dispatchArgs(TABLE.get(functionId), c);
+    }
+
+    /**
+     * The dispatch with the table entry already looked up - the legacy entry needs the {@link Fn} for its arg-count
+     * loop, so resolving it twice per call paid a second map probe on every GL call.
+     */
+    private long dispatchArgs(Fn fn, long[] c) {
         if (TRACE && this.dispatchCount.incrementAndGet() < TRACE_LIMIT) {
             System.out.println("[GLSTUB] #" + this.dispatchCount.get() + " " + fn.name
                     + " (" + Long.toHexString(c[0]) + "," + Long.toHexString(c[1]) + "," + Long.toHexString(c[2])
