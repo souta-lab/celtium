@@ -339,6 +339,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.360 **round 167: リソースパック画面でも `scissorCalls=0` — 原因は「リストがスクロールしない」ことと確定**
+
+- **測定（`r158-bh09`・`-Dceltium.validation.screen=resourcepacks`）**: **`namedScreenOpened = net.minecraft.client.gui.GuiScreenResourcePacks`** で
+  **`scissorCalls=0`・`scissorToggles=0`・`lineBatchesNarrowed=0`・`scissorCapturedGroups=0`・`scissorLateCapturedGroups=0`**。
+  ＝**2つ目の `GuiSlot` 画面でも一度も clip しない**。
+- **確定した原因（測定の積み上げ）**: vanilla の `GuiSlot.drawScreen` は **リストがスクロール可能なとき**（内容高 > view 高）に
+  `GL_SCISSOR_TEST` を enable して `glScissor` を発行する。**この instance のリソースパックは少なく、言語も少ない**ため
+  **どちらのリストもスクロールせず、scissor が一度も発行されない**。
+  ＝**`scissorCalls=0` は「scene が clip しない」ことの直接の証拠**であり、**renderer の欠陥ではない**。
+- **次の一手（これで決まる・具体的）**: **fixture が開いた画面のリストをスクロールさせる**（`GuiSlot` にホイール入力を送る／
+  `handleMouseInput` 相当を叩く）。＝**スクロール可能になれば `GuiSlot` が clip し、`scissorCalls > 0` になる**。
+  既存の `screen=` knob の隣に「開いた後 N tick でスクロール」を足すのが最小（新しい機構を作らない）。
+  **その leg で `scissorCalls` を先に読み**、非0 を確認してから `lineBatchesNarrowed` → 捕捉カウンタ → 一旗対照。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地・計器4 trigger 着地・fixture knob 着地・
+  「scene が clip しない」ことを2画面で測定**・**受入はスクロールさせる fixture 追加待ち**。
+  **7 leg を費やしたが、各 leg は計器が自分で理由を示した**（経路未 exercise / trigger 未到達 / scene が clip しない）。
+
 ## 0.359 **round 166: 決定的 — `scissorCalls=0`・`scissorToggles=0`（どの scene も clip していない＝scene 側のギャップ）**
 
 - **計器の追加（Lead・`bd0852e78`）**: stub が **`glScissor` の呼び出し回数**と **`GL_SCISSOR_TEST` の enable/disable 回数**を数え、
