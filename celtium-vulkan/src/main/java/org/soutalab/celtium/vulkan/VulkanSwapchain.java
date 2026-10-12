@@ -1290,6 +1290,7 @@ public final class VulkanSwapchain {
             }
             submit.pSignalSemaphores(stack.longs(signals));
         }
+        this.context.celtium$flushBatchedSubmits();
         int result = vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE);
         return result == VK_SUCCESS ? null : "present image: vkQueueSubmit failed with " + result;
     }

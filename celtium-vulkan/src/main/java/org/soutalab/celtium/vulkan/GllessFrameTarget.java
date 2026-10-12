@@ -323,6 +323,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * exactly the way it already does.
      */
     private void signalWait() {
+        this.context.celtium$flushBatchedSubmits();
         try (MemoryStack stack = stackPush()) {
             LongBuffer signal = stack.mallocLong(1);
             signal.put(0, this.waitSemaphore);
@@ -367,6 +368,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // The wait below is what makes the next signal legal: this is the one place the bridge's done semaphore
             // is consumed, so clearing the flag here keeps the invariant in the target that owns the semaphore.
             this.doneSemaphoreOutstanding = false;
+            this.context.celtium$flushBatchedSubmits();
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                     .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
                     .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
@@ -449,6 +451,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         try (MemoryStack stack = stackPush()) {
             LongBuffer wait = stack.mallocLong(1);
             wait.put(0, this.waitSemaphore);
+            this.context.celtium$flushBatchedSubmits();
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                     .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
                     .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
