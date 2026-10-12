@@ -223,6 +223,27 @@ public final class RenderTargetRegistry {
     // ---------------------------------------------------------------- generation
 
     /** {@return the frame-target generation}: bumped by the backend whenever it replaces the frame image. */
+    /**
+     * The latch the model-draw gate reads: whether the frame target's identity is known.
+     * <p>
+     * Moved here mechanically from the backend (refactoring plan R5). It is <b>not</b> cleared when the target is
+     * replaced, which is today's behaviour: after a resize it can read true while the new target's identity is not
+     * known yet. That is the same class as B10 - a fact fixed at the old target's time read as if it described the new
+     * one - and clearing it in {@link #noteFrameTargetReplaced()} is a behaviour change that gets its own commit and
+     * its own evidence, not a ride on this extraction.
+     */
+    private boolean targetKnown;
+
+    /** Records that the frame target's identity has been established. */
+    public void noteTargetKnown() {
+        this.targetKnown = true;
+    }
+
+    /** {@return whether the frame target's identity is known}. */
+    public boolean targetKnown() {
+        return this.targetKnown;
+    }
+
     public long generation() {
         return this.generation;
     }

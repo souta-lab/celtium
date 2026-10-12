@@ -7870,7 +7870,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // Recorded for the model draw: it needs a render pass, and this is the one the frame is using. When no
         // terrain pass has run (the GL-less menu is all UI batches), the standalone frame-compatible pass stands in.
         this.terrainPipelineForFrame = terrain;
-        this.frameTargetKnown = true;
+        this.targetRegistry.noteTargetKnown();
         if (this.gpuStalled) {
             // The pass-level recording is closed too: with the buffer never begun, vkCmdBeginRenderPass, vkCmdSetViewport and
             // vkCmdSetScissor were still being recorded into it, which is what the steady-state injection reported.
@@ -10855,7 +10855,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int modelLastMissingList = Integer.MIN_VALUE;
     private String modelLastRefusal = "none";
     /** Whether a frame target exists, so a pass can be opened. */
-    private boolean frameTargetKnown;
+    // frameTargetKnown moved to RenderTargetRegistry (refactoring plan R5), as a latch.
     /** Texture uploads that were made to fail, and the last one, for the failure-path acceptance. */
     private int textureUploadFailures;
     private String lastTextureUploadFailure = "none";
@@ -10960,7 +10960,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         ? null : this.modelMeshes.get(Integer.valueOf(listId));
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId
                         + " target=" + callTarget + " main=" + this.mainTargetIdentity
-                        + " modelDraw=" + MODEL_DRAW + " frameTargetKnown=" + this.frameTargetKnown
+                        + " modelDraw=" + MODEL_DRAW + " frameTargetKnown=" + this.targetRegistry.targetKnown()
                         + " meshes=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
                         + " inTable=" + (looked != null) + " verts=" + (looked == null ? -1 : looked.vertexCount()));
             }
@@ -10972,7 +10972,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         + " lastRefusal=[" + this.modelLastRefusal + "]");
             }
         }
-        if (!MODEL_DRAW || this.modelMeshes == null || !this.frameTargetKnown) {
+        if (!MODEL_DRAW || this.modelMeshes == null || !this.targetRegistry.targetKnown()) {
             return false;
         }
         if (MODEL_ONLY_LIST != 0 && listId != MODEL_ONLY_LIST) {
