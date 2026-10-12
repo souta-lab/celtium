@@ -1806,6 +1806,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean GROUP_SCISSOR = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.groupScissor", "true"));
     /**
+     * BH-04's colour half as a measurement control: {@code -Dceltium.vulkan.groupColour=false} stops the current colour
+     * from closing a group, which is the pre-fix shape. The fixture's own probe (two POSITION batches, one red and one
+     * green, identical otherwise) then merges and the second is drawn with the first colour, so the two legs differ in
+     * the right rectangle and nowhere else.
+     */
+    private static final boolean GROUP_COLOUR = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.groupColour", "true"));
+    /**
      * How the game's {@code glScissor} box becomes the image's rows.
      * <p>
      * The shared frame image is stored bottom-up - the present blit reads it back to front to leave the swapchain
@@ -5308,8 +5316,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // a glColor change used to be drawn with the previous colour. Compared only for the formats that
                     // take the colour from the mirror and only when the mirror has a value, which is exactly when the
                     // capture below reads it.
-                    || ((formatId == 7 || formatId == 6 || formatId == 9) && this.colorMirrorHasValue
-                            && this.celtium$colourDiffers())
+                    || (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9)
+                            && this.colorMirrorHasValue && this.celtium$colourDiffers())
                     // BH-04, the other two halves: the texture affine and the fog are per-draw state as well, and both
                     // are captured once when the group opens. A batch offered after either changed used to be appended
                     // to the open group and drawn with the earlier value - the glint's scrolling affine and a quad drawn
