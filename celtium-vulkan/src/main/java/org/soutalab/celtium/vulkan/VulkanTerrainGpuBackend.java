@@ -1869,6 +1869,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** CPU time spent in the frame's own fence wait: the serialisation OPT-08's second step (two frames in flight) targets. */
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
+    /** The four-float scratch {@code GL_CURRENT_COLOR} is read into, reused across groups rather than alloc/freed. */
+    private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+    /** Shared immutable white for a group whose GL colour read failed; only ever read, never written. */
+    private static final float[] WHITE_GROUP_COLOR = {1.0f, 1.0f, 1.0f, 1.0f};
     /**
      * True when this group's vertices are baked with each batch's own modelView on append and the recorded modelView
      * is identity (OPT-18b). Only normal-free, unlit, unfogged formats under an axis-aligned matrix qualify: for them
@@ -5936,15 +5940,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                             this.immediateState.colorGreen(), this.immediateState.colorBlue(),
                             this.immediateState.colorAlpha()};
                 } else if (formatId == 7 || formatId == 6 || formatId == 9) {
-                    java.nio.FloatBuffer colour = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+                    // The colour read needs only a four-float scratch: one native buffer reused across groups rather
+                    // than an alloc/free pair per group.
+                    java.nio.FloatBuffer colour = this.colourScratch;
+                    colour.clear();
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_CURRENT_COLOR, colour);
                         this.currentGroupColor = new float[] {colour.get(0), colour.get(1), colour.get(2),
                                 colour.get(3)};
                     } catch (RuntimeException | LinkageError error) {
-                        this.currentGroupColor = new float[] {1.0f, 1.0f, 1.0f, 1.0f};
-                    } finally {
-                        org.lwjgl.system.MemoryUtil.memFree(colour);
+                        // Read-only after the group holds it, so the shared white cannot be corrupted by a later
+                        // group that draws it.
+                        this.currentGroupColor = WHITE_GROUP_COLOR;
                     }
                 } else {
                     this.currentGroupColor = null;
