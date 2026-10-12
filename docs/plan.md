@@ -405,7 +405,11 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **機構（HEAD leg のログ）**: `CELTIUM_WINDOW_DRAW identity=0 phase=before-adoption image=frame frameSerial=1` が**1回だけ**出る（＝adopt 前のフレームだけ name-0 の描画が frame image へ、以降は default pair へ）一方、パノラマの copy は `CELTIUM_TEX_COPY_SERVED … readFbo=0 … readImage=0x7feef10f81c0` ＝ **pair を読む**。**同じウィンドウ(name 0)への描画先と copy の読み先が食い違う**。良好な旧 jar には `CELTIUM_WINDOW_DRAW` 行自体が無い（phase routing が存在しなかった）。
 - **修正の契約（blend-state に P0 として指示済み）**: **name 0 は常にウィンドウ**＝描画は全 phase で frame image へ、`readFbo=0` の copy も同じ frame image を解決する（読み解決は既に「描画が入った image」を返す規則なので、name-0 bind の答えをウィンドウ image にすれば揃う）。**phase 依存を残して menu を場当たりに直さない**。world で `presentedDistinctColours=1` になった既存失敗は「window pass が frame image を clear している」＝**clear 順序の契約**として別に扱う。
 - **ユーザー影響の緩和**: インスタンスの jar を **`a3f9f98d8fb652c5`（menu 受入済み・#14/#15＋blit 入り）へ rollback 済み**。loading の白はこの rollback では変わらない（元から未解決）。
-- **受入**: menu 画が受入済み形状へ戻る（distinct ~96k・上部 mean ~(164,167,177)）＋splash/loading が出る＋world 非回帰＋AMD/Intel（AGENTS.md のレシピ）。
+- **受入**: menu 画が受入済み形状へ戻る＋splash/loading が出る＋world 非回帰＋AMD/Intel（AGENTS.md のレシピ）。
+- **round 181: P0 は未達（担当の報告を再現できず・私の 2-jar テストが反証）**。blend-state の修正 `36530f542`（jar `d41d67c945d9d73f`、HEAD から再ビルドして同一ハッシュを確認）は routing としては発火している（`CELTIUM_WINDOW_DRAW identity=0 image=frame` が before-adoption / adopted 両方で出る）が、**同一 fixture・同一 flags・同一 GPU・同一解像度の 4 脚すべてで menu が灰色のまま**（downscale 480x270 で distinct 10,531 / 10,664 / 10,448、top mean (198,197,195)）。**rollback jar `a3f9f98d8fb652c5` は同じ条件で 34,842 / (147,147,134) と正常**（旧 fixture の blit380 leg も 34,706 で一致）＝**2-jar で切り分け済み**。画を見ると現行 jar は「画面四隅にシャープなパノラマ片＋中央グレー」、rollback は「ぼけたパノラマが全面」＝routing ではなく**blur/copy 連鎖**が疑わしい。
+- **担当 leg の入力が復元不能**（`runtime/p0-menu/mods/` に celtium jar が残っていない）ため、担当の 99,902/(146,146,134) とは突き合わせられない。`prism_validation.py` 直呼び（run dir に jar が残る）での再走と jar hash の報告を依頼済み。
+- **次の仮説（要検証）**: name 0 を frame image に向けた結果、copy が読むのは**提示済み image**で、そこには前フレームの menu（タイトル・ボタン）が残っている。vanilla の window はその時点で「このフレームが描いた分」しか無いので、7 回の blur pass が前フレームを混ぜると灰色に流れる。判定は安い: 最初の blur copy の直前に frame image を dump（または faces が覆った領域を数える）し、copy が読む領域が faces で覆われていたかを見る。
+- **ユーザー影響**: インスタンスは引き続き rollback jar（`a3f9f98d8fb652c5`）のまま。menu 画が参照 jar と一致するまで現行 jar には戻さない。
 
 ## 0.382 **round 171: upload ring 8→16 slot で pressure wait が両GPUで消滅（`ee2ae0182`）。PR #16（stub dispatch scratch）で p99 31.2→18.4 ms**
 
