@@ -128,7 +128,7 @@ public final class ImmediateGroup {
      * {@code -Dceltium.vulkan.groupPool=true}; the constructor path is untouched, so off is byte-for-byte the old
      * behaviour.
      */
-    private static final boolean POOL = Boolean.getBoolean("celtium.vulkan.groupPool");
+    static final boolean POOL = Boolean.getBoolean("celtium.vulkan.groupPool");
     private static final java.util.ArrayDeque<ImmediateGroup> FREELIST =
             new java.util.ArrayDeque<ImmediateGroup>();
     /** Pool cap: beyond it the garbage collector takes the extra instances, so a frame spike cannot grow it forever. */
@@ -208,6 +208,7 @@ public final class ImmediateGroup {
         this.polygonOffsetFactor = 0.0f;
         this.polygonOffsetUnits = 0.0f;
         this.polygonOffsetEnabled = false;
+        GroupStamp.recycle(this.stamp);
         this.stamp = null;
         this.retireSequence = 0L;
     }
@@ -226,18 +227,50 @@ public final class ImmediateGroup {
  * gone is retired without being drawn.
  */
 final class GroupStamp {
-    final long frameId;
-    final int targetGeneration;
+    long frameId;
+    int targetGeneration;
     /** {@code true} when the mesh belongs to someone else and must not be freed when the group retires. */
-    final boolean meshBorrowed;
+    boolean meshBorrowed;
     /** The world the group was accepted in; a group from an older world must never be drawn. */
-    final int worldEpoch;
+    int worldEpoch;
 
     GroupStamp(long frameId, int targetGeneration, boolean meshBorrowed, int worldEpoch) {
         this.frameId = frameId;
         this.targetGeneration = targetGeneration;
         this.meshBorrowed = meshBorrowed;
         this.worldEpoch = worldEpoch;
+    }
+
+    /** One stamp per group, like the group itself; pooled under the same opt-in flag. */
+    private static final java.util.ArrayDeque<GroupStamp> FREELIST = new java.util.ArrayDeque<GroupStamp>();
+    private static final int FREELIST_CAP = 8192;
+    static long poolCreated;
+    static long poolReused;
+    static long poolRecycled;
+
+    static GroupStamp obtain(long frameId, int targetGeneration, boolean meshBorrowed, int worldEpoch) {
+        if (!ImmediateGroup.POOL) {
+            return new GroupStamp(frameId, targetGeneration, meshBorrowed, worldEpoch);
+        }
+        GroupStamp stamp = FREELIST.poll();
+        if (stamp == null) {
+            poolCreated++;
+            return new GroupStamp(frameId, targetGeneration, meshBorrowed, worldEpoch);
+        }
+        poolReused++;
+        stamp.frameId = frameId;
+        stamp.targetGeneration = targetGeneration;
+        stamp.meshBorrowed = meshBorrowed;
+        stamp.worldEpoch = worldEpoch;
+        return stamp;
+    }
+
+    static void recycle(GroupStamp stamp) {
+        if (!ImmediateGroup.POOL || stamp == null || FREELIST.size() >= FREELIST_CAP) {
+            return;
+        }
+        poolRecycled++;
+        FREELIST.add(stamp);
     }
 }
 

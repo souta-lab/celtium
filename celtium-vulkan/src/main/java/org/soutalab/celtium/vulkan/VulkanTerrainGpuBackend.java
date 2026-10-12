@@ -3550,7 +3550,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
         // must not free it - which is the whole reason the stamp exists.
-        group.stamp = new GroupStamp(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
+        group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
         // The model path creates its own group, so the per-identity texture census has to see it here as well: with the
         // census only at the immediate path's creation site the verification line listed a single identity (the loading
         // screen's) while the world and the GUI stage had both been drawn, which reads as "those stages never ran".
@@ -8483,7 +8483,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             celtium$reportHudGroup(projection);
-            ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
+            ImmediateGroup group = ImmediateGroup.obtain(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
                     this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
             group.color = this.currentGroupColor;
@@ -8525,7 +8525,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             group.polygonOffsetFactor = this.currentGroupPolygonOffsetFactor;
             group.polygonOffsetUnits = this.currentGroupPolygonOffsetUnits;
             celtium$noteFogCaptureDrift(group);
-            group.stamp = new GroupStamp(this.frameId, (int) this.targetRegistry.generation(), false, this.worldEpoch);
+            group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(), false, this.worldEpoch);
             this.immediateGroups.add(group);
             if (GROUP_BOUNDS_DIAGNOSTICS) {
                 // Off by default: with the switch off this method keeps the "no caller" property it had, and no line
