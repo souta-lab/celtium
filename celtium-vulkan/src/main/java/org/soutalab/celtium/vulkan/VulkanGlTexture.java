@@ -2574,6 +2574,12 @@ public final class VulkanGlTexture {
      * {@code stage-<label>-<W>x<H>.png}, the label being the caller's, so the file says which image it is rather than
      * which GL name happened to be bound to it. Unit: RGBA8 pixels; limit: none beyond the gate, so callers bound
      * their own calls (one dump per run at the copy site).
+     * <p>
+     * <b>Orientation:</b> the rows are the image's own, which for every image this renderer owns means row 0 is the
+     * picture's <em>bottom</em> - GL texture order, with the present doing the one flip. A viewer that puts row 0 at
+     * the top therefore shows any dump of one upside down, and an upside-down logo reads as mirrored text: that
+     * misreading produced two "defects" that did not exist. Use {@link #dumpStageImageAsPicture} when a human is going
+     * to look at the file.
      */
     public static void dumpStageImage(String label, java.nio.ByteBuffer rgba, int width, int height) {
         if (!mirrorDumpConfigured() || rgba == null || width <= 0 || height <= 0) {
