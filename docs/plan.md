@@ -307,6 +307,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.329 **round 135: Celeritas 画面の widget 構造を確認 — `optionsRowList` ではなく自前の `OptionListWidget`/`ControlElement` を使う**
+
+- **原典確認（Lead・upstream-baseline の `CeleritasVideoOptionsScreen` ＋ Sodium の GUI 構造）**:
+  Celeritas の画面は**自前の option framework**（`Tab`/`OptionPage`/`Group`/`Option`/`Control`→`ControlElement`）で構築され、
+  行は **`OptionListWidget`** に **`ControlElement`** として並ぶ（[Sodium の Options GUI 構造](https://deepwiki.com/CaffeineCeleritas/sodium/5.1-options-gui)・
+  [SodiumGameOptionPages](https://github.com/CaffeineMC/sodium/blob/ed6c1afe/common/src/main/java/net/caffeinemc/mods/sodium/client/gui/SodiumGameOptionPages.java)）。
+  ＝**vanilla の `optionsRowList` は存在しない**（`videoSettingsChain` の報告どおり）。
+- **fixture に必要な実装（小さく明確）**: `ValidationClient` の chain に
+  **Celeritas 画面の widget list（`OptionListWidget` 相当）から `ControlElement` を拾う経路**を足し、
+  **`RENDER_CLOUDS` に相当する control を押す**（Sodium の Quality page に Clouds がある＝`SodiumGameOptionPages` の構造で確認可能）。
+  ＝**`optionsRowList` 依存を「vanilla 画面のときだけ」に限定し、Celeritas 画面では自前 list を読む**のが正しい形。
+- **`guiScreenVerdict` の文言も同様**: 現在は `GuiVideoSettings was open at the capture` という**vanilla 前提の文言**なので、
+  **Celeritas 画面のときはその旨を出す**よう揃える（同じ gap の一部・判定と実態の不一致を残さない）。
+- **受入（この実装の後）**: **同一 leg で 4 phase** — (1) `RENDER_CLOUDS` を変更 (2) **`partialColorMaskGroups` が 506→368 に動く**（native 側の counter）
+  (3) 元の値へ復元し **counter が 506 に戻る** (4) **GUI scale の `REQUIRES_RENDERER_RELOAD` 行**を押して frame が壊れないこと。
+- **現状**: goal (e) は**「画面は開き捕捉される」まで受入済み**、**「変更・復元・reload」は fixture gap を特定済み**（実装待ち）。
+
 ## 0.328 **round 134: 決定的 — `pinSections` が capture を止めていた（仮説確認）・chain は Celeritas 画面に `optionsRowList` が無いため押せない**
 
 - **測定（Lead の `r126-e`・`pinSections` を外した同一 flag・`scene=videoSettings`＋`videoSettingsOption=RENDER_CLOUDS`・150 s）**:
