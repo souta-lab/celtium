@@ -8380,6 +8380,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixCopyMillis=" + (this.matrixCopyNanos / 1000000L)
                 + " captureStateMillis=" + (this.captureStateNanos / 1000000L)
                 + " stateKeyMillis=" + (this.stateKeyNanos / 1000000L)
+                + " " + VulkanImmediateDrawer.indexCacheStats()
                 + " groupDrawCount=" + this.groupDrawCount
                 + " groupDrawMillis=" + (this.groupDrawNanos / 1000000L)
                 + " groupCloneCount=" + this.groupCloneCount
