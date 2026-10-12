@@ -307,6 +307,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.331 **round 138: 読むべき field が確定 — `CeleritasVideoOptionsScreen` は `controller`（`CeleritasVideoOptionsController`）に行を持つ**
+
+- **原典確認（Lead・upstream-baseline の `CeleritasVideoOptionsScreen`）**:
+  ```java
+  private final GuiScreen prevScreen;
+  private final CeleritasVideoOptionsController controller;   // ← 行はここ
+  ```
+  ＝**Celeritas 画面は行を `GuiScreen.buttonList` ではなく自前の `controller` に持つ**（`createExtraTabs`/`applyFlagSideEffects` も同クラスで override）。
+- **chain に足す経路（次の実装・小さく明確）**: `celtium$fieldValue(screen, new String[] {"controller", "field_..."})` で
+  **`CeleritasVideoOptionsController` を取得**し、その**行（`ControlElement` 相当）を列挙して `RENDER_CLOUDS` に相当する行を押す**。
+  ＝**`videoSettingsRowNames` が実際の行名を返すこと**が次に進んだ証拠。
+- **fixture 側の進捗（3段の gate が artifact で見える）**:
+  1. `optionsRowList` 不在 → **`buttonList` fallback で通過**（`f972ef381`）
+  2. `buttonList` に行が無い（`videoSettingsRowNames=none`）→ **`controller` を読む**（本ラウンドで field を確定）
+  3. 次の leg で **`controller` から行を拾えるか**を確認
+  ＝**各段で失敗メッセージがどの gate かを名指しする**ので、次に読む field が artifact から決まる（推測しない）。
+- **未了は変わらず**: frame-close pairing・BH-14・**goal (e) 4 phase（fixture は3段目）**・`scissorCapturedGroups=0`・主要mod対応・Intel UHD630。
+
 ## 0.330 **round 137: buttonList fallback で最初の gate を通過 — 次の gate は「Celeritas 画面の row list に option button が無い」**
 
 - **実装（Lead・`f972ef381`）**: chain が `optionsRowList` 不在時に **`buttonList`/`field_146292_n` へ fallback**（build 緑）。
