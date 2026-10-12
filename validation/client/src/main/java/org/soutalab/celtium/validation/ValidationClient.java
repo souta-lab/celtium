@@ -6080,10 +6080,15 @@ public final class ValidationClient {
         // list handed to the finder is built by flattening those pages' options. Measured: with optionsRowList and
         // buttonList alone the chain reached "no option button could be located in the screen's row list" with
         // videoSettingsRowNames=none, and the screen's own field is the controller.
-        if (list == null) {
-            list = celtium$vsOptionsFromController(screen);
-            report.addProperty("videoSettingsChainSource", list != null ? "controller pages"
+        // An empty list is as useless as a missing one, and that is the case here: GuiScreen always has a buttonList,
+        // so the Celeritas screen's is non-null but holds no rows, and a null-only check never reaches the controller.
+        if (list == null || (list instanceof java.util.List && ((java.util.List<?>) list).isEmpty())) {
+            Object fromController = celtium$vsOptionsFromController(screen);
+            report.addProperty("videoSettingsChainSource", fromController != null ? "controller pages"
                     : celtium$vsControllerStep);
+            if (fromController != null) {
+                list = fromController;
+            }
         }
         if (list == null) {
             report.addProperty("videoSettingsChain",
