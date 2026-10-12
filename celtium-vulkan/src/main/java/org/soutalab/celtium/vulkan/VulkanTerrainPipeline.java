@@ -587,10 +587,10 @@ public final class VulkanTerrainPipeline {
 
             VkDescriptorImageInfo.Buffer atlasInfo = VkDescriptorImageInfo.calloc(1, stack);
             atlasInfo.get(0).sampler(atlasSamplerFor(atlas)).imageView(atlas.view())
-                    .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    .imageLayout(atlas.samplingLayout());
             VkDescriptorImageInfo.Buffer lightmapInfo = VkDescriptorImageInfo.calloc(1, stack);
             lightmapInfo.get(0).sampler(lightmap.sampler()).imageView(lightmap.view())
-                    .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    .imageLayout(lightmap.samplingLayout());
 
             // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
             // goes to BLOCK_ATLAS_BINDING (2) and the lightmap to LIGHTMAP_BINDING (1), matching the shader source.

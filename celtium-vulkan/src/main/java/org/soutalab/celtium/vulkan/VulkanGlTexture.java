@@ -1888,7 +1888,38 @@ public final class VulkanGlTexture {
      */
     /** Identity for caches: the view plus the generation, so a reused handle cannot resurrect a stale entry. */
     public long key() {
-        return (this.view * 31L) ^ this.generation;
+        return ((this.view * 31L) ^ this.generation) * 31L + samplingLayout();
+    }
+
+    /**
+     * Whether a descriptor written from this wrapper is being asked to declare the sampling layout, or the pair's.
+     * <p>
+     * {@code -Dceltium.vulkan.pairStayGeneral=true}, default off, is the separation experiment for the chain pair's
+     * {@code VUID-vkCmdDraw-None-09600} messages: the pair's render pass declares the constant {@code GENERAL}, so if
+     * the image is never moved to {@code SHADER_READ_ONLY_OPTIMAL} and the descriptors that sample it declare
+     * {@code GENERAL} too, then the pass's declaration, the image's actual layout and the descriptor's declaration are
+     * one value and the messages cannot come from a disagreement between them.
+     */
+    private static final boolean PAIR_STAY_GENERAL = Boolean.getBoolean("celtium.vulkan.pairStayGeneral");
+
+    /** Marks this wrapper as standing for one of the renderer's pair images; see {@link #samplingLayout()}. */
+    public void notePairImage(boolean pairImage) {
+        this.pairImage = pairImage;
+    }
+
+    private boolean pairImage;
+
+    /**
+     * {@return the layout a descriptor written from this wrapper should declare}.
+     * <p>
+     * {@code SHADER_READ_ONLY_OPTIMAL} unless this wrapper stands for a pair image and the pair is being kept in
+     * {@code GENERAL} ({@link #PAIR_STAY_GENERAL}), in which case it declares {@code GENERAL} - which is a legal layout
+     * for a sampled image and the layout the pair's pass and its hand-back leave the image in.
+     */
+    public int samplingLayout() {
+        return this.pairImage && PAIR_STAY_GENERAL
+                ? VK_IMAGE_LAYOUT_GENERAL
+                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     /**

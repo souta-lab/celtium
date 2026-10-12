@@ -179,11 +179,11 @@ public final class VulkanImmediateBlockPipeline {
             }
             long set = handle.get(0);
             VkDescriptorImageInfo.Buffer image = VkDescriptorImageInfo.calloc(1, stack);
-            image.get(0).imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            image.get(0).imageLayout(texture.samplingLayout())
                     .imageView(texture.view())
                     .sampler(texture.sampler());
             VkDescriptorImageInfo.Buffer lightImage = VkDescriptorImageInfo.calloc(1, stack);
-            lightImage.get(0).imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            lightImage.get(0).imageLayout(lightmap.samplingLayout())
                     .imageView(lightmap.view())
                     .sampler(lightmap.sampler());
             org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write =
