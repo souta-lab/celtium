@@ -47,14 +47,15 @@
 | OPT-30 | GPU culling/dispatch | research | 同左 |
 | OPT-31 | mod 受入互換の維持 | 継続 | submitImmediateBatch の Forge API 形状が土台 |
 | OPT-32 | index/vertex locality | 候補 | terrain mesh の post-process cache locality |
+| OPT-33 | glless frame semaphore pair の撤去 | **実装済/検証済（PR #4）** | glless の wait/done pair は同一 queue 自己同期の儀式（bridge の GL↔Vulkan 橋渡し由来）。stage 毎 beginFrame signal-only + work + endFrame consume = 3 submits → 1 submit。同一 jar A/B: `queueSubmitCalls` 1304/136F = **9.6 submits/frame** vs pair 復活 3225/173F = **18.6** → ~9 packet/frame 除去。VUID=0・画像 gate 正常（fixture 未較正注記）。`queueSubmitCalls` 計器追加（全 vkQueueSubmit 経路）。opt-out: `-Dceltium.vulkan.gllessFrameSemaphores=true` |
+| — | warm window fixture | **実装済（PR #3）** | `holdUntilTick` で成功経路の early-exit を保留 → warm p50≈15.5-17.9 / p95≈19-77 / p99≈318-385 実測。pass 分解 `CELTIUM_FRAME_PASS_SPLIT` worst= 付き（world/hand/clouds/weather/gui + inside: entities/particles/present/flush/terrain/chunkUpload）|
 
 ## 次の優先順（実測根拠順）
 
-1. **OPT-18b pre-transform merge**（実装中・本ブランチ）— `gui` 定数税の仕組みを潰す。
-2. **`gameRenderer` 残差 246ms の帰属** — per-pass CPU instrument or JFR。帰属できれば最大の単一 spike 要因。
-3. **OPT-01** — 計器の常時コスト（常駐税。小さいが全 frame）。
-4. **warm window 到達 fixture** — 定常 tail latency が未計測。
-5. **OPT-09 multidraw** or **OPT-10 state merge**（stateKey 差分断の解消は GUI の残半分）。
+1. **submit 集約（frame 末 1 submit）** — 残 ~9.6 submits/frame の work 部分 ~7 を drain-at-present へ。slot→fence override が必要（~200 行、glless のみ）
+2. **OPT-09 multidraw** or **OPT-10 state merge**（stateKey 差分断の解消は GUI の残半分）。
+3. **ユーザ環境での `-Dceltium.vulkan.passSplit` 計測** — spike 内の unnamed ~200ms が game-side renderWorldPass か GC か（fixture はそこまで辿り切れない）。
+4. **OPT-01** — 計器の常時コスト（常駐税。小さいが全 frame）。main で cpuSplit opt-in 済。
 
 ## 計器の範囲メモ（今回確認した事実）
 
