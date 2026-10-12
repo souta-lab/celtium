@@ -237,13 +237,18 @@ public final class VulkanContext {
      * ~2-3 MB per frame on the AMD leg) filled the ring and the reservation path waited on the oldest deferred
      * submission 84 times in 98 frames ({@code uploadRingPressureWaits}), about a millisecond of CPU per frame that
      * the GPU would have spent anyway. Eight slots give the ring a two-frame wrap, so a batch's fence has almost
-     * always signalled by the time its slot is wanted again. The memory cost is bounded and reported:
-     * {@code uploadRingBytes} goes from 4 MiB to 8 MiB of host-visible staging.
+     * always signalled by the time its slot is wanted again.
+     * <p>
+     * Sixteen rather than eight, from the cold-window measurement: world-entry bursts (section uploads as the flat
+     * world's chunks land) produced 8,407 batched copies with 168 ring-pressure waits and 168 early flushes on one
+     * leg - about 445 ms of waits on the old eight slots, which is cold-window time the GPU may still need but a
+     * bigger runway turns into production instead. The memory cost is bounded and reported:
+     * {@code uploadRingBytes} goes to 16 MiB of host-visible staging.
      * <p>
      * The reuse rule is unchanged and is the point of the ring: a slot is free only after the fence of the submission
      * that read it has signalled ({@link #celtium$pollDeferredSubmits()}), never because a frame number moved.
      */
-    private static final int UPLOAD_SLOT_COUNT = 8;
+    private static final int UPLOAD_SLOT_COUNT = 16;
     private static final long UPLOAD_SLOT_BYTES = 1L << 20;
     private long uploadRingBuffer = VK_NULL_HANDLE;
     private long uploadRingMemory = VK_NULL_HANDLE;
