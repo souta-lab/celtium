@@ -12543,12 +12543,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         this.groupViewportNarrowed = true;
         this.immediateNarrowViewports++;
-        if (this.immediateNarrowViewports <= 3) {
+        // The bounded four lines the first three narrow groups get never reach the group that matters on the main menu:
+        // its panorama renders into a 256x256 window and the composite quad that stretches that texture over the frame
+        // is drawn after several hundred other groups, so the line that would say whether the rectangle came back to
+        // the full target was never printed (round 218: the panorama covers 1486x934 of a 1920x1080 frame). So the
+        // *transition* back to the full target is printed too, bounded, as is every 256th narrow group.
+        boolean restoredToFull = width == this.targetWidth && height == this.targetHeight;
+        if (this.immediateNarrowViewports <= 3
+                || (restoredToFull && this.immediateNarrowViewportLogs < 8)
+                || this.immediateNarrowViewports % 256 == 0) {
+            if (restoredToFull) {
+                this.immediateNarrowViewportLogs++;
+            }
             System.out.println("[Celtium] CELTIUM_GROUP_VIEWPORT gl=" + viewport[0] + "," + viewport[1] + " "
                     + viewport[2] + "x" + viewport[3] + " clipped=" + x0 + "," + y + " " + width + "x" + height
-                    + " target=" + this.targetWidth + "x" + this.targetHeight);
+                    + " target=" + this.targetWidth + "x" + this.targetHeight
+                    + " narrowCount=" + this.immediateNarrowViewports
+                    + " full=" + restoredToFull);
         }
     }
+
+    /** Bounded lines of the narrow-to-full viewport transitions (see CELTIUM_GROUP_VIEWPORT). */
+    private int immediateNarrowViewportLogs;
 
     /** Groups drawn with a viewport narrower than the target: the counter that says the sub-rect path is live. */
     private long immediateNarrowViewports;
