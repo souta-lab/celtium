@@ -244,6 +244,10 @@ public final class VulkanSwapchain {
      * silently dropped whichever asked first.
      */
     private final java.util.List<java.nio.file.Path> pendingDumpPaths = new java.util.ArrayList<>();
+    /** How many failed dump requests may be kept for a retry, so a permanently failing path cannot grow the list. */
+    private static final int DUMP_RETRY_CAP = 8;
+    /** The last reason a requested presented-image dump did not write, for the report. */
+    private String lastDumpFailure = "none";
     private boolean lastDumpWritten;
 
     /**
@@ -926,10 +930,28 @@ public final class VulkanSwapchain {
                             new java.util.ArrayList<>(this.pendingDumpPaths);
                     this.pendingDumpPaths.clear();
                     boolean written = false;
+                    // A request whose write fails is put back rather than swallowed. Measured need (leg
+                    // r212-world-glref): the bridge run recorded presentedDumpRequestedAtCapture=True and
+                    // presentedImageMeanAtCapture=44.0 - the request was made and the presented image was read back -
+                    // and yet no world dump file existed anywhere in the run directory, because this loop cleared the
+                    // path before trying and the attempt did not write. The capture's dump is the only picture a
+                    // GL-bridge run has, so the retry belongs here, bounded so a permanently failing path cannot grow
+                    // the list without end.
+                    java.util.List<java.nio.file.Path> failed = new java.util.ArrayList<>();
                     for (java.nio.file.Path path : paths) {
-                        written |= writePresentedImage(path, image);
+                        if (writePresentedImage(path, image)) {
+                            written = true;
+                        } else {
+                            failed.add(path);
+                        }
                     }
                     this.lastDumpWritten = written;
+                    if (!failed.isEmpty() && this.pendingDumpPaths.size() + failed.size() <= DUMP_RETRY_CAP) {
+                        this.pendingDumpPaths.addAll(failed);
+                        this.lastDumpFailure = "a presented-image dump did not write this present (image=0x"
+                                + Long.toHexString(image) + ", size=" + this.width + "x" + this.height
+                                + "); the request is kept for the next present";
+                    }
                 }
             }
             if (this.presentTraces < 4) {
