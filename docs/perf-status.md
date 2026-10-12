@@ -8,7 +8,7 @@
 - `gameRenderer` スパイク残差 ~246ms/frame は**未帰属**（pass 計器なしでは名指し不能）。JFR/GC ログと FramePassTimings の時間軸突合が必要作業。
 - `gui` self 5,359ms/20s = frame の 26.8%（**定数税**、最大の単一項目）。
 - chunk 構築系セクションはスパイク内にのみ出現（帰属済だが経路の分解は未済）。
-- `getBrightness` 448,707 calls / 255.7ms — 呼出回数が突出。
+- `getBrightness` 448,707 calls / 255.7ms — 呼出回数が突出 → particle/entity light cache（PR #27 merged・#30 open）で per-frame lookup は tick-epoch cache 化済。
 
 ## 台帳
 
@@ -35,7 +35,7 @@
 | OPT-18b | GUI/HUD 即時モードの coalesced run | **実装済/受入済（fixture 下限のみ）** | (1) pre-transform merge（normal-free + unlit + unfog + axis-aligned MV → CPU bake で matrix split 解消、group MV=identity） (2) fast-merge skip（material 全一致 → prepareImmediate/registry/group-open 全体 skip；image identity で descriptor 再生成 split を保存） 計器: `preTransformedGroups=567` `preTransformedBatches=879/1333` `fastMergedBatches=629/1424` `matrixSplits`。calibrated 画像 bit 一致・VUID=0。fixture は同 texture run が薄く win の下限のみ — 実 HUD 効果は未計測 |
 | OPT-19 | entity/TESR visibility | 未実装 | Celeritas existing visibility が first level — render bounding box 例外 |
 | OPT-20 | sprite visibility・upload 抑制 | 未実装 | active marking 監査から。hidden sprite の upload skip（interpolation 保ち）|
-| OPT-21 | lightmap/sky dependency cache | 未実装 | dirty flag 尊重の dedup から |
+| OPT-21 | lightmap/sky dependency cache | **一部実装** | texSubImage identical dedup（PR #29 merged: serial bump 回避）済。残: dirty flag 尊重の sky/fog cache |
 | OPT-22 | texture decode/mip/atlas worker 化 | 未実装 | bounded worker pool — startup/reload 効果候補 |
 | OPT-23 | model/quad/state dedup | 未実装 | immutable quad vertex data の共有 |
 | OPT-24 | 描画系 task の budget | 未実装 | mesh/sort/upload の per-frame budget |
@@ -77,11 +77,11 @@
 | — | char-index cache + unicode fast path | **実装済（PR #15 open）** | (1) 巨大 font テーブルの per-glyph `String.indexOf`（~7%）→ interned 定数キーの direct-index map（範囲外は実 indexOf fallback）。func_181559_a/func_78255_a/func_78263_a の 3 redirect。(2) `unicodeFlag`（ja_jp・forceUnicode）で全文字 renderUnicodeChar 経由・fast path 全死（p-fu: 880K unicode windows・**p50=71.5ms**）→ func_78277_a intercept・page-0 glyph を unicode ジオメトリ通り buffer。**ASCII F3 43→10.4ms・unicode F3 71.5→10.3ms・no-F3 6.9ms との差 ~1.5×** |
 | OPT-14 | item mesh cache (Angelica PR1034 port) | **実装済（PR #21 open）** | `RenderItem.func_191967_a` HEAD で (model,color) 毎に segment plan（bytes + shade/light flags）を cache — miss は同一 emit+d raw で bytes 保存、hit は cached ints を同 path で replay（lastBrightness は live read）。tint quads/light-carrying format は除外。fixture では item render ほぼ無く効果未測定（NOLAVA=0 calls、実 save=1 call）— benefit は inventory/drop/item-frame 密集場面のみ |
 | — | index list cache | **実装済（PR #25 open）** | `expandIndices` が batch 毎に int[] alloc（~300/frame、GC churn の一因）→ (mode,count) key の LRU 512 cache。consumers は read-only のため安全。census `indexCache=hits/misses/entries` |
-| — | particle basis/light cache | **実装済（PR #27 open）** | Flerovium 移植: `renderParticle` の per-particle Vec3d×4 + basis 計算を frame 共通化（angle==0 のみ、rotating は元経路）・`getBrightnessForRender` の BlockPos alloc + getCombinedLight を tick 単位 cache。実 save leg: particle pass 正常・clean・p50 4.27/p95 6.2 |
+| — | particle basis/light cache | **実装済（PR #27 merged）** | Flerovium 移植: `renderParticle` の per-particle Vec3d×4 + basis 計算を frame 共通化（angle==0 のみ、rotating は元経路）・`getBrightnessForRender` の BlockPos alloc + getCombinedLight を tick 単位 cache。実 save leg: particle pass 正常・clean・p50 4.27/p95 6.2 |
 | — | item mesh audit fix | **実装済（PR #28 open）** | B01: `finishDrawing` なしで `draw(scratch)` → `bytes()` が capacity 全体を保存（CPU witness: 旧 131072 ints → 新 168 ints for 24v cube）。B02: replay に `renderLitItem` の hasLighting cleanup がなく hit で lighting=false が漏れた → Plan.hasLighting + finally cleanup（normal+exception 両方、javap 確認済）。B14: negative/tinted cache が無制限 + reload なし → 4 構造全て LRU 256 + ResourceManager epoch invalidation + hit 毎の probe（null-face size + first-quad identity）で mutation 検出・4連続で uncacheable 降格 |
 | — | VulkanMod 照合 | **評価済** | 主要技法の我々側対応: UberBuffer/VirtualBuffer = **frame arena 実装済**（OPT-05、group 毎 suballoc・per-batch VkBuffer/map なし）・combined renderlayer = **group state merge 済**（~160 group/frame）・clear-skip = **pendingClears OR-accumulation で coalesce 済**（連続 glClear → 1 vkCmdClear、draw 間 clear は意味的に必要）。残差は indirect draw（~160 draws/frame の cmd record 節約、µs 級で限界）→ 優先度低として inventory に留める |
 | — | format census | **計測済** | 実 save leg `drawnByFormat`: **POSITION_TEX_COLOR=106K**（text+GUI quads ~60/frame）・ITEM=83K・他は少数。text batching（ImmediatelyFast 流）は order 依存で risk 高 |
-| — | identical texSubImage dedup | **実装済（PR #29 open）** | OPT-21 第一歩: patch が surface row と byte 完全一致なら serial bump なし（GPU re-supply 回避）・`gamePixels` guard で undefined surface 初 patch は必ず landing。実 leg: `identicalPatches=17/4206` — lightmap はほぼ毎回変化するので効果は小さいが honest |
+| — | identical texSubImage dedup | **実装済（PR #29 merged）** | OPT-21 第一歩: patch が surface row と byte 完全一致なら serial bump なし（GPU re-supply 回避）・`gamePixels` guard で undefined surface 初 patch は必ず landing。実 leg: `identicalPatches=17/4206` — lightmap はほぼ毎回変化するので効果は小さいが honest |
 | — | entity light cache | **実装済（PR #30 open、B19 epoch 強化込み）** | `Entity.getBrightnessForRender`/`getBrightness` も per-frame `getCombinedLight`/`getLightBrightness` → 共有 `CeltiumLightCache`（tick epoch・packed-pos key・1024 LRU）へ。particle 側 cache も helper へ移行。leg clean・injection error なし |
 | — | Angelica 残移植棚卸 | **評価済** | TESR translucency sorting（#1384, region 反復 + sort）= backend 領域 → main 解体中のため保留。`efbca29` block-item renderer cache = 1.12.2 では全 block baked model → `func_191967_a` cache で cover 済。item VBO 化（PR1034）・item render dist（#653）= PR #21/#23 済 |
 | — | font flush 部分拒否 (B16) | **実装済（PR #31 open）** | `flushBufferedQuads` fallback が OR で全件 accepted 化 → per-quad submit 結果を各カウント・`refusedQuads` 新設・`flush-quad-refused` reason 記録。全受理/部分受理/拒否が識別可能に |
