@@ -77,8 +77,25 @@ public class CeltiumJeiPlugin implements IModPlugin {
             boolean focus = overlay != null && overlay.hasKeyboardFocus();
             String text = filter == null ? null : filter.getFilterText();
             int filtered = filter == null ? -1 : filter.getFilteredIngredients().size();
+            // The recipe screen carries its own search box. `IRecipesGui.getSearchFilter()`/`getSearchMode()` exist in
+            // the HEI 4.31.2 API the run uses but not in the JEI 4.22 API this source set compiles against (read from
+            // both jars with javap), so they are resolved reflectively here: the mod's own public API either way, and
+            // the same shape the fixture uses for everything mod-specific. An API without them reports "unavailable"
+            // rather than failing the build or the run.
+            mezz.jei.api.IRecipesGui recipes = jei.getRecipesGui();
+            String recipeSearch = "n/a";
+            String recipeMode = "n/a";
+            if (recipes != null) {
+                try {
+                    recipeSearch = String.valueOf(recipes.getClass().getMethod("getSearchFilter").invoke(recipes));
+                    recipeMode = String.valueOf(recipes.getClass().getMethod("getSearchMode").invoke(recipes));
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+                    recipeSearch = "unavailable: " + error;
+                }
+            }
             return "visible=" + visible + " filtered=" + filtered + " keyboardFocus=" + focus
-                    + " filterText=\"" + text + "\"";
+                    + " filterText=\"" + text + "\" recipeSearch=\"" + recipeSearch + "\" recipeSearchMode="
+                    + recipeMode;
         } catch (RuntimeException | LinkageError error) {
             return "unavailable: " + error;
         }

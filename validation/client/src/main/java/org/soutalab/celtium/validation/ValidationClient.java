@@ -4372,8 +4372,11 @@ public final class ValidationClient {
         //
         // The ticks are "at or after" flags for the reason the block above records: `worldTicks` advances in the tick
         // handler while these hooks run in the render handler, so an exact equality can be stepped over and the step
-        // then never happens. 31/33/38 are the earliest points at which the inventory screen is up (opened at 30), the
-        // overlay has had two frames to lay its list out, and the filter's own frame has been drawn.
+        // then never happens. 31/40/46 are the earliest points at which the inventory screen is up (opened at 30), the
+        // recipe screen the `jeiRecipe` knob opens is up as well (opened at 34) and its overlay has laid out, and the
+        // filter's own frame has been drawn. Measured: typing at 33 reached `GuiContainerCreative.keyTyped` but not the
+        // mod's search field (`keyboardFocus=false filterText=""`), which is why the read-back exists and why the write
+        // moved after the recipe screen's own open.
         String jeiSearch = System.getProperty("celtium.validation.jeiSearch", "");
         if (!jeiSearch.isEmpty()) {
             if (worldTicks >= 31 && !celtium$jeiSearchBefore && mc.currentScreen != null) {
@@ -4381,7 +4384,7 @@ public final class ValidationClient {
                 report.addProperty("jeiSearchScreen", mc.currentScreen.getClass().getName());
                 report.addProperty("jeiSearchStateBefore", celtium$jeiListState());
             }
-            if (worldTicks >= 33 && !celtium$jeiSearchTyped && mc.currentScreen != null) {
+            if (worldTicks >= 40 && !celtium$jeiSearchTyped && mc.currentScreen != null) {
                 celtium$jeiSearchTyped = true;
                 StringBuilder keyCodes = new StringBuilder();
                 try {
@@ -4410,7 +4413,7 @@ public final class ValidationClient {
                     report.addProperty("jeiSearchError", String.valueOf(cause));
                 }
             }
-            if (worldTicks >= 38 && !celtium$jeiSearchAfter && celtium$jeiSearchTyped) {
+            if (worldTicks >= 46 && !celtium$jeiSearchAfter && celtium$jeiSearchTyped) {
                 celtium$jeiSearchAfter = true;
                 report.addProperty("jeiSearchStateAfter", celtium$jeiListState());
             }
