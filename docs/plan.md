@@ -339,6 +339,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.351 **round 158: GUI 文字の暗転は「現行ツリーでは再現せず」で閉じた（gui-text）— 私の §0.342 仮説は測定で反証**
+
+- **反証（私の記録の訂正）**: §0.342 で私が書いた「**影パスの暗色が本体パスに漏れる**」説は**測定で否定**された。
+  ユーザ crop の2行目は **本体 (170,170,170) = `colorCode[7]`・影 (42,42,42) = `colorCode[23]` で厳密**、1行目はストローク **321/321 が本体色 (255,255,85)・影 (63,63,21) で +1,+1・異色画素 0**＝**ピクセル完全一致**。
+- **唯一の実差**: 2行目の ink 196 セルのうち **24 セル（12 %）が本体パスに欠落**（影パスは全部描いている）。欠落は**透明テクセルに接する端の画素**で、**glyph 単位ではなく quad 単位**（同じ 'o' が index 8 では無傷・14 では 2px 欠落）。
+- **対照（新計器 `scripts/cpu-contract/font-shadow-main-check.py`＝「影画素の左上1 GUI px は本体色でなければならない」契約）は全て clean**:
+  | 対照 | 色 | 影画素 | 欠落 |
+  |---|---|---|---|
+  | ユーザ crop 1行目 | §e | 1305 | **0** |
+  | **ユーザ crop 2行目** | **§7** | 1467 | **207（14.1 %）** |
+  | **`r135-e` 09:51 の video options tooltip**（`§7Performance Impact:` を含む） | **§7** | **2718** | **0** |
+  | `fast-f3off`（chat） | 白 | 35,208 | **0** |
+  | **同一 jar・1 flag 差 `-Dceltium.font.fastPath=false`** | 白 | 36,018 | **0** |
+  上流 GL 参照・Intel tooltip・JEI tooltip も 0。**`fastGlyphs=60000` 対 `0`** で両 leg の経路差を証明＝**旧 capture 経路も新 fast path も機序ではない**。
+- **結論**: **現行ツリーでは再現せず、直すべき契約は名指しできない**（推測で文字経路を変えない＝AGENTS.md の規則に従った正しい停止）。
+  ユーザの jar（10:32・md5 `2747418b…`）と対照 jar（10:47・`c068dd6c…`）の差は **19 class entry**（font 側は1旗実験で除外済み・残るのは stub/backend/registry 側で glyph の色/UV/alpha 契約の所有者ではない）。
+- **次の1点**: ユーザに **crop ではなく元の PNG 全体**（または現行 jar での再取得）を依頼し、同じ計器を当てる。違反が出たら
+  **`-Dceltium.vulkan.groupBoundsFormat=2`** で影 run と本体 run の group の `texMat`/`state`/`colour0`/`vertexColour0` を並べる（`CELTIUM_GROUP_BOUNDS` が全部印字）＝**2パス間に差が残り得る唯一の場所**。
+- **計器の修正（Lead・本ラウンド）**: カウンタ summary が **F3 の Celeritas 節が描かれた時だけ**届く経路だったため、
+  `showDebugInfo=true` の leg でも**カウンタが「無い」ように見えた**（0 ではなく不在）。**world teardown で `CELTIUM_VERIFY` を1回印字**するようにした（leg は必ず world を離れるため）。
+
 ## 0.350 **round 157: ユーザ profiler の解読完了（perf-ring `d2211795c`）— 「ラグい」の実体はスパイクで、優先順が変わる**
 
 - **解読（`.celtium-work/evidence/user-reports/analyse_lagspike.py`・全表 `lagspike_analysis.txt`・`docs/plan.md` §0.227・`docs/performance_plan.md`）**:
