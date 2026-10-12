@@ -292,6 +292,24 @@ public final class VulkanPostChain {
     private final long[] setRing = new long[32];
     private int setCursor;
     /**
+     * The completion epoch each ring slot was handed out in, and the epoch this recording started at (audit B11).
+     * <p>
+     * The ring had no completion ownership across frames: N16 refuses a wrap <em>inside</em> one recording, but the
+     * next frame's recording starts the cursor where the last one stopped, so it can take a slot whose set the
+     * previous frame's - still pending - command buffer bound, and {@code vkUpdateDescriptorSets} then changes what
+     * that pending buffer reads (VUID-vkUpdateDescriptorSets-None-03047).
+     * <p>
+     * The ticket is {@link VulkanContext#completedEpoch()}, sampled at the start of every recording: a slot bound in a
+     * recording that began when {@code E} had completed is reusable once at least one completion has happened since
+     * ({@code completedEpoch() >= E + 1}), which is the submission that read it on this renderer's lockstep frame
+     * path. When confirmations lag, the value is smaller and the slot is <b>refused</b> rather than reused - the same
+     * shape as the exhaustion refusal, and no wait is added anywhere.
+     */
+    private final long[] setBoundEpoch = new long[32];
+    private long recordingEpochStart = -1L;
+    private long ringOwnershipRefusals;
+    private long ringOwnershipReuses;
+    /**
      * How many ring sets the recording in progress has taken. The ring is only safe if a set is updated after the
      * command buffer that last bound it has completed, and that stops being true the moment the cursor wraps inside a
      * single recording: the set pass 33 takes is the one pass 1 bound, and updating it changes what the pending
@@ -487,6 +505,7 @@ public final class VulkanPostChain {
             // The set ring is allocated once: each pass takes the next set, so a set is only ever bound and then
             // updated again after the command buffer that bound it has long completed - the pattern the spec
             // allows without UPDATE_AFTER_BIND.
+            java.util.Arrays.fill(chain.setBoundEpoch, -1L);
             for (int i = 0; i < chain.setRing.length; ++i) {
                 LongBuffer layouts = stack.longs(setLayout);
                 VkDescriptorSetAllocateInfo alloc = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
@@ -873,6 +892,8 @@ public final class VulkanPostChain {
         // A recording starts here, so the ring budget is this recording's: what earlier recordings took is already
         // behind a submitted (or abandoned) command buffer and plays no part in this one's safety.
         this.setsThisRecording = 0;
+        // The completion epoch this recording starts at: what the ring's ownership rule compares against (audit B11).
+        this.recordingEpochStart = VulkanContext.completedEpoch();
 
         List<String> details = new ArrayList<>();
         boolean interesting = false;
@@ -1383,6 +1404,8 @@ public final class VulkanPostChain {
                 + ", postUncommittedRecordings=" + this.uncommittedRecordings
                 + ", postRepeatInits=" + this.repeatInits
                 + ", postRingExhaustions=" + this.ringExhaustions
+                + ", postRingOwnershipRefusals=" + this.ringOwnershipRefusals
+                + ", postRingOwnershipReuses=" + this.ringOwnershipReuses
                 + ", postRingCapacity=" + this.setRing.length
                 + ", postAdoptedIds=[" + adoptedIds + "]";
     }
@@ -1500,6 +1523,22 @@ public final class VulkanPostChain {
                     + ", passes so far=" + this.setsThisRecording + ")");
         }
         int slot = this.setCursor;
+        // Audit B11: the slot must be free. A slot this recording already took is free by construction (one set per
+        // pass, never reused inside a recording - N16). A slot an earlier recording took is free only once the
+        // submission that bound it has completed; when that cannot be shown, this refuses exactly like the exhaustion
+        // path below and leaves the caller the same way out.
+        long boundEpoch = this.setBoundEpoch[slot];
+        if (boundEpoch >= 0L && VulkanContext.completedEpoch() < boundEpoch + 1L) {
+            this.ringOwnershipRefusals++;
+            throw new IllegalStateException("post chain descriptor ring slot " + slot
+                    + " is still owned by a submission that has not completed (boundEpoch=" + boundEpoch
+                    + ", completedEpoch=" + VulkanContext.completedEpoch() + ", recording=" + this.pendingRecording
+                    + ", refusals=" + this.ringOwnershipRefusals + "); the set is not updated and nothing was bound");
+        }
+        if (boundEpoch >= 0L) {
+            this.ringOwnershipReuses++;
+        }
+        this.setBoundEpoch[slot] = this.recordingEpochStart;
         long set = this.setRing[slot];
         this.setCursor = (this.setCursor + 1) % this.setRing.length;
         this.setsThisRecording++;
