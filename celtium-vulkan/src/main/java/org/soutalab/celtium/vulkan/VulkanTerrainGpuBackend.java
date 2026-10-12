@@ -7812,13 +7812,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         boolean windowIdentity = this.currentRenderTarget == 0L;
         if (windowIdentity) {
             this.windowDrawsToFrameImage++;
-            if (this.windowDrawLogs < 4) {
-                this.windowDrawLogs++;
-                System.out.println("[Celtium] CELTIUM_WINDOW_DRAW identity=0 image=frame"
-                        + " phase=" + (this.mainTargetIdentity == Long.MIN_VALUE ? "before-adoption" : "adopted")
-                        + " frameSerial=" + celtium$frameSerial() + " windowsThisFrame="
-                        + this.immediateWindowsThisFrame);
-            }
         }
         boolean chainIdentity = this.currentRenderTarget != 0L;
         GllessFrameTarget offTarget = (this.currentRenderTargetIsMain || windowIdentity) ? null : offTargetTarget();
@@ -7936,6 +7929,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // exactly the VUID-vkCmdDraw-None-09600 the vsync leg reported on three distinct images at vkQueueSubmit. The
         // transition is recorded outside the pass, before the draw, like the outline's.
         celtium$transitionPublishedFrameTextures(false);
+        // The handle this pass actually records against, not the label: the copy's resolution question is whether
+        // the image the window's draws land in is the image the copy reads, and a label that says "frame" while the
+        // pass attaches something else is exactly that mismatch. Printed beside the frame image's current handle and
+        // the chain pair's, so it compares with the copy's own readImage= without another leg.
+        if (windowIdentity && this.windowDrawLogs < 6) {
+            this.windowDrawLogs++;
+            System.out.println("[Celtium] CELTIUM_WINDOW_DRAW identity=0 image=frame"
+                    + " phase=" + (this.mainTargetIdentity == Long.MIN_VALUE ? "before-adoption" : "adopted")
+                    + " attachedImage=0x" + Long.toHexString(this.passAttachedColorImage)
+                    + " frameImage=0x" + Long.toHexString(this.frameTarget == null ? 0L : this.frameTarget.colorImage())
+                    + " chainPair=0x" + Long.toHexString(offTargetTarget() == null ? 0L
+                            : offTargetTarget().chainPairColorImage())
+                    + " frameSerial=" + celtium$frameSerial() + " windowsThisFrame="
+                    + this.immediateWindowsThisFrame);
+        }
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.currentRenderTarget;
         this.commandState.beginPass(this.activeImmediateTarget);
@@ -8495,6 +8503,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The native route's own census: a copy the GPU wrote into the mirror directly, against one the blit
                 // refused (which then took the host route above). The two lines together are what says which path a
                 // leg's copies took, rather than the absence of a readback implying the blit ran.
+                + " textureCopiesServedPeakPerPresent=" + this.textureCopyService.textureCopiesServedPeakPerPresent()
+                + " textureCopiesReServedAfterContentChange="
+                + this.textureCopyService.textureCopiesReServedAfterContentChange()
                 + " textureCopyBlits=" + this.textureCopyService.textureCopyBlits()
                 + " textureCopyBlitRefusals=" + this.textureCopyService.textureCopyBlitRefusals()
                 + " lastTextureCopyBlitRefusal=[" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"

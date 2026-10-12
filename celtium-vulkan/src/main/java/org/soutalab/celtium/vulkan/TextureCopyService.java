@@ -160,7 +160,13 @@ public final class TextureCopyService {
      * answered from the first frame's content, so the panorama did not move while {@code panoramaTimer} advanced.
      */
     private long textureCopyPresent = -1L;
-    private final java.util.Set<Long> textureCopiesServedThisFrame = new java.util.HashSet<Long>();
+    /** The copies served this present, keyed by the exact request, against the content marker they were served at. */
+    private final java.util.Map<String, Long> textureCopiesServedThisFrame = new java.util.HashMap<String, Long>();
+    /** Copies served for one present, and the most any single present has served (the panorama's seven passes). */
+    private int textureCopiesServedThisPresent;
+    private int textureCopiesServedLastPresent;
+    private int textureCopiesServedPeakPerPresent;
+    private int textureCopiesReServedAfterContentChange;
     private int textureCopiesReusedInFrame;
     /** Readback submissions the copy path actually made, and the wall time they took. */
     private int textureCopyReadbacks;
@@ -210,6 +216,20 @@ public final class TextureCopyService {
 
     public int readResolvedFromLastDrawnTarget() {
         return this.readResolvedFromLastDrawnTarget;
+    }
+
+    /**
+     * {@return the most copies any one present has served}, which is the number the panorama's seven
+     * {@code rotateAndBlurSkybox} passes make: one per pass, not one per frame. A cache that answers them all from the
+     * first copy shows 1 here, which is what the menu's flat picture was.
+     */
+    public int textureCopiesServedPeakPerPresent() {
+        return Math.max(this.textureCopiesServedPeakPerPresent, this.textureCopiesServedLastPresent);
+    }
+
+    /** {@return copies re-served because the same request's source content had changed since the cached one}. */
+    public int textureCopiesReServedAfterContentChange() {
+        return this.textureCopiesReServedAfterContentChange;
     }
 
     /** {@return copies the GPU wrote into the mirror directly}. */
@@ -304,20 +324,41 @@ public final class TextureCopyService {
                     + " is not inside the " + this.host.targetWidth() + "x" + sourceImageHeight + " image");
         }
         // The frame's first request for this destination rectangle pays for the readback; the rest are answered from it.
-        long copyKey = (((long) destName) << 32) ^ (((long) level) << 28) ^ (((long) xoffset) << 20)
-                ^ (((long) yoffset) << 12) ^ (((long) x) << 8) ^ (((long) y) << 4) ^ (((long) width) << 2)
-                ^ ((long) height);
+        // B08: the key is the exact tuple, as a string, because the bit-mix this used to be collided across different
+        // rectangles (each field was shifted into a range narrower than the value it carries, so two distinct copies
+        // could share one key and one of them was silently served from the other's pixels). It includes the source
+        // image, which the mix did not name at all.
+        String copyKey = destName + ":" + level + ":" + xoffset + ":" + yoffset + ":" + x + ":" + y + ":" + width + ":"
+                + height + ":0x" + Long.toHexString(image);
+        // ...and the entry remembers the content marker it was served at, because "the same request" is not "the same
+        // pixels": the panorama asks for the same 256x256 seven times per frame and draws a blurred quad between them
+        // (GuiMainMenu.rotateAndBlurSkybox), so each pass's source content differs from the last one's. A copy whose
+        // source has changed since the cached one is never elided - the marker is the last draw's epoch, which moves
+        // exactly when a draw has landed in the image since.
+        long copyMarker = this.host.lastDrawnEpoch() * 1000003L + this.host.lastDrawnFrame();
         // The serial is the present's, not frameId's: a screen presents without advancing frameId, and keying on frameId
         // made this set never clear during the menu, so the panorama's per-frame copy was served from the first frame's
         // content (round 166 - the reason the main menu's panorama did not move).
         if (this.textureCopyPresent != this.host.presentSerial()) {
             this.textureCopyPresent = this.host.presentSerial();
             this.textureCopiesServedThisFrame.clear();
+            this.textureCopiesServedThisPresent = 0;
+            if (this.textureCopiesServedLastPresent > this.textureCopiesServedPeakPerPresent) {
+                this.textureCopiesServedPeakPerPresent = this.textureCopiesServedLastPresent;
+            }
+            this.textureCopiesServedLastPresent = 0;
         }
-        if (this.textureCopiesServedThisFrame.contains(Long.valueOf(copyKey))) {
+        Long servedAt = this.textureCopiesServedThisFrame.get(copyKey);
+        if (servedAt != null && servedAt.longValue() == copyMarker) {
             this.textureCopiesReusedInFrame++;
             this.textureCopiesServed++;
+            this.textureCopiesServedLastPresent++;
             return "served";
+        }
+        if (servedAt != null) {
+            // The request is the same and the content is not: counted, so "the cache elided a copy that had to happen"
+            // is a number rather than an inference from a picture.
+            this.textureCopiesReServedAfterContentChange++;
         }
         // ---- the native route: the GPU writes the mirror, so the render thread neither waits for the source's draws
         // nor round-trips the pixels through host memory. Everything checkable was checked before this point, and the
@@ -340,8 +381,9 @@ public final class TextureCopyService {
                         this.host.context().celtium$submitDeferred(commands, 0L);
                         commands = null; // submitted: the context owns it and frees it at its fence
                         this.textureCopyBlits++;
-                        this.textureCopiesServedThisFrame.add(Long.valueOf(copyKey));
+                        this.textureCopiesServedThisFrame.put(copyKey, Long.valueOf(copyMarker));
                         this.textureCopiesServed++;
+                        this.textureCopiesServedLastPresent++;
                         return "served";
                     }
                     blitRefusal = recorded;
@@ -429,8 +471,9 @@ public final class TextureCopyService {
             return refuseTextureCopy("the destination mirror refused the pixels: "
                     + registry.lastFailure());
         }
-        this.textureCopiesServedThisFrame.add(Long.valueOf(copyKey));
+        this.textureCopiesServedThisFrame.put(copyKey, Long.valueOf(copyMarker));
         this.textureCopiesServed++;
+        this.textureCopiesServedLastPresent++;
         return "served";
     }
 
