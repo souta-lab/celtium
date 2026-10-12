@@ -392,6 +392,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.380 **round 169: 「ロード画面」は2経路ある（splash の FBO 経路＝§0.378 と、world load の進捗バー＝FBO を通らない別経路）。後者を独立 unit に分離**
+
+- **原典の行単位確認（sky-draws、`Minecraft.java` オフセット）**: `drawSplashScreen` の読みは全部正しい — `:963` `new Framebuffer(scaledW*i, scaledH*i, true)`・`:964` `bindFramebuffer(false)`・`:976-977` ロゴ `DynamicTexture`・`:995-998` **全面 quad（4頂点すべて `tex(0,0)`.color(255,255,255,255)）**・`:1000` draw・`:1003` 中央 256×256 ロゴ・`:1006` unbind・`:1007` `framebufferRender`。追加の注意: **FBO と `framebufferRender` は `scaledW*i × scaledH*i`、全面 quad は `displayWidth/Height`**（`i` はスケール係数）。
+- **第2経路（別欠陥クラス）**: `LoadingScreenRenderer` は setter 専用（`resetProgressAndMessage:43`・`displaySavingString:52`・`displayLoadingString:95`・`setLoadingProgress:116`・`setDoneWorking:225`）で、**描画は private `displayString:58`** が行う: `:71 clear(256)` → `:72-73` `matrixMode(PROJECTION)`+`loadIdentity` → `:78/:83` `ortho(0, scaledW*i, scaledH*i, 0, 100, 300)` → `:86-88` `matrixMode(MODELVIEW)`+`loadIdentity`+`translate(0,0,-200)` → 進捗バー/文字。**FBO を作らず `framebufferRender` も通らない**（GUI と同じ ortho + immediate 経路）。呼び出し元は `Minecraft.java:2512`/`:2526`/`:2530`/`:2610`（world load 中）。
+- **したがってユーザーの「メニューからワールドへ直行して進捗バーが出ない」は splash の白とは別の欠陥**で、同じ修正では閉じない。**独立 unit**: world load 中に `displayString` の ortho/quad が**どの target に行き、composite がそれをサンプルしているか**を `CELTIUM_DRAW_SITE … passImage=`・`offTargetPerTarget`・`mirrorSource=` で追う（splash とは別の判定子）。担当は sky-draws。
+- **受入の分離**: U1（splash, §0.378）= `stage=loading` dump の**中心 260×260 にロゴ**（四隅は白のままが正しい: vanilla 自身が全面 `tex(0,0)` 白で塗る）。U2（world load 進捗バー）= **world load 中の presented frame に進捗バーが出る**ことで、これは現在 dump の対象になっていない（fixture の stage は early/loading/menu/world）。必要なら fixture に world-load 中の dump を足す（Lead のファイル）。
+
 ## 0.379 **round 168: F3 パネルを実測で短くした（本文 149 文字・gui p50 −24 ms）。「ホンマに直したんか」に数字で答える**
 
 - **ユーザー報告**: 「f3文字列長すぎやろ。ホンマに修正したんか」。**curated 既定は jar に入っていた**（ユーザーのインスタンス jar の `CeleritasVintage.class` に `celtium$addCuratedLines` を javap で確認）が、**curated でも 1,449 文字**（perf-ring 測定）＝1行あたり約290文字で、確かに長かった。

@@ -147,6 +147,7 @@ Sodium の #3735 は `VK_EXT_multi_draw` の経路と indirect fallback を区�
 | StellarCore | `1.6.4` / `98c0ea4` | texture / model loading の粒度、stitcher cache、quad pool、bounded cache / JFR で特定した mod hot path | renderer 競合 mod との共存は追わない。HUD cache 部分は別 license。20 FPS の HUD 更新を標準化しない [R20] |
 | Nothirium | `0.4.9-beta` / `eed4511` | GL 版の dynamic VBO・multidraw・upload 管理を設計比較に使う | Celeritas の CPU mesher と重複させない。確認できた tree に明確な license がなく、コード取り込みは許可済みと扱わない [R21] |
 | UniversalTweaks | `3239ded` の公開 source | item color / model helper など、profile で hit した計算の cache と mod 固有 invalidation | server tick・AI・ゲーム挙動改変まで FPS 名目で取り込まない [R22] |
+| **Angelica** (1.7.10, GTNewHorizons) | README と公開 PR の記述（**コード取り込みはしない**）。GL 3.3 core 前提・FFP を生成 GLSL で置換・display list エミュレーション・`GL_QUADS`→`GL_TRIANGLES`・GLSL builtin 変換 | **item rendering の VBO cache**（held/dropped item をまとめて cache、上限付き・未使用は削除。PR #1034 の記述では **~4-6x**、FalseTweaks 由来）・chunk multidraw・vertex objects・GL state cache・entity culling | **同じ「legacy を native 化する」問題に対する最も近い先行例**なので設計比較に使う。ただし **LGPL-3.0**（Angelica 本体・FalseTweaks 由来部分とも）で、Celeritas 系の表示義務と同じ扱いをする。**「entity ごとに cache なし」と扱わない**: Celtium には既に `modelMeshes` の generation 管理と immediate group merge があるので、拡張候補は **item/held/dropped の per-stack cache** と key・retire・miss の実測、および multidraw の native 実装 [R25]。PR の 4-6x は**PR 著者の主張であり我々の測定ではない** |
 | Celeritas Extra / Leaf Culling | 公開機能と license を確認 | profiler / settings 表示、見えない opaque face の証明 | animation disable、距離減少、hollow leaves、見える face の間引きは性能改善に数えない [R23–R24] |
 
 ### 3.3 Minecraft 1.7.10: Angelica を中心に

@@ -787,6 +787,20 @@ public final class ValidationClient {
             Integer.getInteger("celtium.validation.dumpPresentedMenuTick", 0).intValue();
     private boolean celtium$menuDumpRequested;
     /**
+     * Client ticks after the world launch to dump a frame at, and whether that dump has been requested.
+     * <p>
+     * A third dump window, because the other two cannot reach it: the world-gated dump is measured in world ticks and
+     * cannot fire while the world is still loading, and the menu dump requires the title screen. This is the window
+     * {@code LoadingScreenRenderer} draws its progress bar in - {@code Minecraft.java:2512/2526/2530/2610} call
+     * {@code displaySavingString}/{@code displayLoadingString}/{@code resetProgressAndMessage} during a world load, and
+     * {@code LoadingScreenRenderer.displayString} draws it with ortho and immediate quads, creating no framebuffer
+     * (docs/plan.md §0.380), so the splash's defect cannot explain a missing progress bar. Off unless
+     * {@code -Dceltium.validation.dumpPresentedWorldLoadTick} is set.
+     */
+    private final int celtium$worldLoadDumpTick =
+            Integer.getInteger("celtium.validation.dumpPresentedWorldLoadTick", 0).intValue();
+    private boolean celtium$worldLoadDumpRequested;
+    /**
      * Client ticks to hold the title screen before any world is created, {@code -Dceltium.validation.menuHoldTicks}.
      * <p>
      * The panorama's acceptance is a {@code CELTIUM_TEX_COPY_SERVED ... mean=} line, and that copy is made by
@@ -2863,6 +2877,20 @@ public final class ValidationClient {
                             new String[] {"panoramaTimer", "field_73979_m"})));
             report.addProperty("menuDumpRenderPartialTicks", Float.toString(mc.getRenderPartialTicks()));
             celtium$requestPresentedDump(mc, "menu");
+        }
+        // The world-load window (docs/plan.md §0.380): the progress bar LoadingScreenRenderer draws while a world
+        // loads. `launched` is the fixture's own "the world launch was requested" flag, so the request lands after the
+        // game started loading and before the first world frame; worldTicks == 0 keeps it out of the world stage.
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$worldLoadDumpRequested
+                && celtium$worldLoadDumpTick > 0 && worldTicks == 0 && launched
+                && celtium$clientTicks >= celtium$worldLoadDumpTick) {
+            celtium$worldLoadDumpRequested = true;
+            report.addProperty("worldLoadDumpClientTick", Integer.valueOf(celtium$clientTicks));
+            report.addProperty("worldLoadDumpWindowSize", mc.displayWidth + "x" + mc.displayHeight);
+            // Whether the game's own loading screen object exists, so a leg can say the window was the load's rather
+            // than an early menu frame: it is created at startup and used by displayString during a load.
+            report.addProperty("worldLoadDumpLoadingScreen", Boolean.valueOf(mc.loadingScreen != null));
+            celtium$requestPresentedDump(mc, "world-load");
         }
         try {
             if (!launched && mc.currentScreen instanceof GuiMainMenu) {
