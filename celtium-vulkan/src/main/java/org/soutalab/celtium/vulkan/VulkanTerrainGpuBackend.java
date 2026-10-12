@@ -6171,24 +6171,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.retiredImmediateGroups.isEmpty()) {
             return;
         }
-        java.util.Iterator<ImmediateGroup> iterator = this.retiredImmediateGroups.iterator();
-        while (iterator.hasNext()) {
-            ImmediateGroup group = iterator.next();
-            if (group.retireSequence > this.scheduler.completedSubmitSequence()) {
+        // Swap-remove rather than the iterator's remove(): iterator.remove() on an ArrayList shifts the whole tail
+        // one slot per call, so draining N retired groups was O(N^2) element moves. A retire's place in this list is
+        // positional noise - the watermark, not the order, decides who is released - so moving the tail into the hole
+        // and re-reading the same index is correct and O(1) a removal.
+        java.util.List<ImmediateGroup> retired = this.retiredImmediateGroups;
+        long completed = this.scheduler.completedSubmitSequence();
+        for (int i = 0; i < retired.size(); ) {
+            ImmediateGroup group = retired.get(i);
+            if (group.retireSequence > completed) {
                 // Its submission is still in flight; the mesh stays until the watermark covers it.
+                i++;
                 continue;
             }
             this.immediateStatistics.addImmediateCompletedBatches(group.batches);
             if (group.target != this.targetRegistry.mainIdentity()) this.offTargetCompletedBatches += group.batches;
-            if (group.stamp != null
-                    && (group.stamp).meshBorrowed) {
-                // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so retiring
-                // the group must not free it.
-                iterator.remove();
-                continue;
+            if (group.stamp == null
+                    || !(group.stamp).meshBorrowed) {
+                // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so a
+                // borrowed-mesh group retires without freeing it; an owned mesh goes with the group.
+                group.mesh.delete();
             }
-            group.mesh.delete();
-            iterator.remove();
+            ImmediateGroup tail = retired.remove(retired.size() - 1);
+            if (i < retired.size()) {
+                retired.set(i, tail);
+            }
         }
     }
 
