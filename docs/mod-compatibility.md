@@ -216,3 +216,42 @@ observed through the offer/accept counters and the absence of Mixin transformati
 drawing** - images compared against GL with a per-configuration noise floor, with validation messages counted as failures.
 A mod that loads and whose calls are accepted is not reported as a mod whose drawing is correct, and the current state of
 both columns is in [the second audit](audit-2026-10-09-second.md).
+
+## Cohort attempt: Storage Drawers 1.12.2-5.5.2 (2026-10-12) — **does not load on this runtime**
+
+The cohort's TESR / custom block-and-item-model coverage is still zero (HEI is the only mod with an acceptance), so
+the next member was chosen to fill exactly that: **Storage Drawers**, whose drawers are drawn by a
+`TileEntitySpecialRenderer` and whose items carry custom models, and whose in-world block can be exercised by an
+existing instrument - the fixture's `-Dceltium.validation.blockSweep=<n>` walks `Block.REGISTRY` (modded blocks
+included) and places a bounded slice of it in the flat world.
+
+| | |
+|---|---|
+| Storage Drawers | `StorageDrawers-1.12.2-5.5.2.jar`, 621,835 bytes, sha1 `512979dd3ecfe70cffc4d1c59630855474837fd1` - **matches Modrinth's published hash**; `mcmod.info` modid `storagedrawers`, version 5.5.2, `requiredMods: [forge, chameleon]`; licence **MIT** (Modrinth project `guitPqEi`) |
+| Chameleon (its required dependency) | `Chameleon-1.12.2-4.1.3.jar`, 94,972 bytes, sha1 `77c74d2311db380ba8251617b131f2f7fe5a7b44` - **matches Modrinth's published hash** |
+| Source | both from Modrinth's CDN, project ids `guitPqEi` / `rZrAKGe1` |
+
+**Result: the game crashes during startup, before any fixture report.** Two legs (one with the sweep, one without)
+both ended `exitCode 255`, `fixtureStatus=MISSING_REPORT`, ~10 s in, with
+
+```
+[FML]: Exception caught during firing event net.minecraftforge.client.event.ModelRegistryEvent@…:
+java.lang.NoSuchMethodError: 'net.minecraft.item.Item net.minecraft.item.Item.getItemFromBlock(net.minecraft.block.Block)'
+```
+
+**What that is and is not.** The decompiled, patched source this project builds against *has* that method
+(`.celtium-work/mc-sources/net/minecraft/item/Item.java:125`, and vanilla uses it at `:1990`/`:1994`), so the mod's
+call is legitimate against the source - the failure is between the mod's compiled references and Cleanroom
+0.6.13-alpha's runtime. The exact mechanism (a remapping difference, a patched-away overload, or the mod being built
+against a different Forge) was **not** determined, and this row does not claim one. What it does establish is the
+practical fact for the cohort: **a third-party 1.12.2 mod cannot be assumed to load here**, so every candidate needs a
+load check before it is used as an acceptance vehicle.
+
+**Action taken**: both jars were removed from the shared Prism instance immediately (a crashing mod breaks every
+leg), and the instance was re-verified: 6 mods locked, `fixtureStatus=PASSED`, `presentedImageVerdict=PASSED`,
+`worldFrames=153` (leg `cohort-healthcheck`, jar `239b59cf5071c371`). The jars are kept in `.celtium-work/cohort/`
+with their hashes above so a future attempt does not have to re-download them.
+
+**Next for this coverage**: either a mod published for Cleanroom (the instance's own set - HEI, Fugue, flare,
+scalar, LagSpikeProfiler - is the known-good cohort), or an in-repo test mod built against the same Forge, which
+would give TESR/custom-model/particle coverage under our control. The choice is recorded here before it is acted on.
