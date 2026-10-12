@@ -254,7 +254,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int READBACK_SLOTS = 32;
     private final long[] readbackOffsets = new long[READBACK_SLOTS];
     /** The region the remembered reads come from; a frame's first draws all belong to the same one in practice. */
-    private TerrainRenderer.RegionResources readbackFrom;
     /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
     /** The diagnostic copy's size: one whole block per remembered draw, and the range the guard must cover. */
     private static final int READBACK_COPY_BYTES = 64;
@@ -1022,7 +1021,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
     private int offTargetTargetsCreated;
-    private int offTargetReadyToTake;
     private int offTargetDrawn;
     /** Batches offered for an off-target target, which is not the same as batches taken for one. */
     private int offTargetOffered;
@@ -1706,8 +1704,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * state the run was appended under and restores it afterwards, and the menu text is legible with the batching on
      * (compositor capture, jar 64923c0a: every button label, the splash line and the copyright line).
      */
-    private static final boolean FONT_BATCHING = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.font.batching", "true"));
 
     /** The run's vertices, owned by this backend and grown as needed; the font's own buffer is copied into it. */
     /** The cheap state witnesses a run was started with: a change in any of them flushes it through the normal path. */
@@ -1725,7 +1721,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
     /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
-    private long fontAppendMillis;
     /**
      * Degenerate separator vertices inserted between glyphs of a strip run (see {@code celtium$fontAppend}): the
      * joining triangles a strip would otherwise draw between consecutive glyphs are the user-visible bars.
@@ -1872,7 +1867,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private VulkanTextureRegistry textureRegistry;
     private int immediateFlushes;
     private int pendingImmediateIndices;
-    private VulkanDynamicMesh pendingImmediate;
     /**
      * Immediate geometry grouped by the projection/model-view pair it was built with.
      * <p>
@@ -2063,8 +2057,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
     private int immediateIsolationDraws;
-    private VulkanImmediateTexturePipeline texturedImmediatePipeline;
-    private int immediateTextureRefusals;
     /**
      * Which immediate layouts this backend accepts, as a comma-separated list.
      * <p>
@@ -2209,8 +2201,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private boolean immediateWindowBusy;
     private int immediateWindows;
-    private int immediateFlushDeferredDefaultFbo;
-    private int immediateContentSamples;
     private int immediateWindowsThisFrame;
     /**
      * A real frame identity (audit S11).
@@ -2327,7 +2317,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int lastFrameDrawn;
     private int immediateDeferredNextFrame;
     private int whiteTextureGlId;
-    private int immediateRefusedDefaultFbo;
     private int immediatePresentedFrames;
     private int immediateTextureInvalidations;
     private int directMirrorRefreshes;
@@ -2387,7 +2376,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private boolean frameSubmitReachedQueue;
     /** Times a present skipped the bridge semaphore pair because its done signal was still outstanding. */
-    private int presentBridgeSignalOutstanding;
     /** Times the frame-close submission (the second producer of the done semaphore) ran. */
     private int signalOnlySubmissions;
     private int emptyFrameReleases;
@@ -2539,7 +2527,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateDrawSiteLogged;
     /** Groups left in the queue because they belong to another render target (audit A32). */
     private int immediateGroupsKeptForOtherTargets;
-    private int immediateGroupsOffTargetRetired;
     /** Off-target passes not begun because their target had no pending geometry. */
     private int offTargetPassesSkippedEmpty;
     /** Groups enqueued with a target other than the main one (audit A10). */
@@ -2548,7 +2535,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int acceptedForOtherTargets;
     /** Flushes refused because no command buffer was recording (A11 exposes this path). */
     private int drawsWithoutCommandBuffer;
-    private int flushWithoutBufferStacks;
     /** Refusal reasons seen for batches offered while a non-main framebuffer was bound (audit A10). */
     private final java.util.Map<String, Integer> offTargetRefusalsByReason =
             new java.util.LinkedHashMap<String, Integer>();
@@ -2556,7 +2542,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int otherTargetGroupsAtMainFlush;
     private int otherTargetGroupsDiscarded;
     private int otherTargetGroupsFlushedByWindow;
-    private int offTargetOfferDiagnostics;
     /** Groups seen at pass time and drawing passes, per target; the offers come from offTargetBatchesByTarget. */
     private final java.util.Map<Long, Integer> offTargetPassGroupsByTarget = new java.util.HashMap<Long, Integer>();
     private final java.util.Map<Long, Integer> offTargetDrawnByTarget = new java.util.HashMap<Long, Integer>();
@@ -2572,9 +2557,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.List<ImmediateGroup> retiredImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanImmediatePipeline immediatePipeline;
     /** The matrices in force when the pending batches were built; the flush runs a frame later. */
-    private final float[] pendingProjection = new float[16];
-    private final float[] pendingModelView = new float[16];
-    private int pendingGroups;
     /**
      * The scratch the per-call matrix builders fill in place of a fresh {@code new float[16]}: {@code ortho},
      * {@code frustum} and the perspective helper each built a throwaway array per call on a path the matrix census
@@ -4875,7 +4857,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return this.fontBatch.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
                 drawMode);
     }
-    private long fontAppendNanos;
 
     /**
      * A matrix change is a boundary for the coalesced font run (task-59). The run's quads were appended while these
@@ -9890,7 +9871,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * It is a nullable Boolean rather than a primitive so the report can say "the latch was on by default" instead of
      * reading a false as if it had been asked for.
      */
-    private static final String GAME_CLEAR_LATCH_PROPERTY = "celtium.vulkan.gameClearLatch";
 
     /** {@return whether the clear-attribution latch is enabled for this process}, defaulting to on. */
     private static boolean celtium$gameClearLatchEnabled() {
@@ -10509,8 +10489,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Set<String> modelOffTargetLogged = new java.util.HashSet<String>();
     private int modelOffTargetLogs;
     /** The last off-target call count printed from the build, and how many such lines have printed. */
-    private int modelOffTargetReported = -1;
-    private int modelOffTargetReports;
     /** How many flush-outcome lines have printed for off-target model batches, and the bound on them. */
     private int modelOffTargetFlushLogs;
     private static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
@@ -12449,7 +12427,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final int FRAME_SLOTS = FrameSubmissionScheduler.FRAME_SLOTS;
     private final VkCommandBuffer[] slotCommandBuffers = new VkCommandBuffer[FRAME_SLOTS];
     private final long[] slotFences = new long[FRAME_SLOTS];
-    private final boolean[] slotPending = new boolean[FRAME_SLOTS];
     /** The order this slot's last submission was made in; 0 means it has never submitted. */
     private final long[] slotSubmitSequence = new long[FRAME_SLOTS];
     /**
