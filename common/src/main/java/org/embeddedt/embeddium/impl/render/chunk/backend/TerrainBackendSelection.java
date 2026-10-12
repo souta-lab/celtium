@@ -32,8 +32,13 @@ public final class TerrainBackendSelection {
      */
     public static TerrainBackendSelection select(TerrainGpuBackend vulkan, List<String> reasons) {
         if (vulkan != null) {
+            // This sentence used to claim the OpenGL identity match unconditionally, and under GL-less - the default
+            // configuration - there is no GL identity at all: the leg reports nativeDeviceMatchedOpenGl=false, so the
+            // line named a contract that was never made. It now says what is true of both paths and points at the one
+            // line that answers the match question from the live context.
             return new TerrainBackendSelection(vulkan.getName(), true,
-                    "Vulkan device matched the OpenGL device UUID and the interop contract was satisfied");
+                    "the Vulkan terrain backend was selected for this run; whether the device was pinned by an OpenGL"
+                            + " identity is reported by CELTIUM_NATIVE_DEVICE ... matchedOpenGl=");
         }
         if (reasons.isEmpty()) {
             reasons.add("no native terrain backend was offered for this device");

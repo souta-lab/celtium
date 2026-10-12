@@ -1583,6 +1583,7 @@ public final class VulkanContext {
             // configuration is the stub's own name and therefore says nothing about which GPU is actually rendering.
             // `matchedOpenGl=false` is the honest form of "no GL identity was available to pin the choice", i.e. the
             // first capable device was taken - a run in that state is a measurement of whatever device this names.
+            matchedOpenGlDevice = openGl != null ? 1 : 0;
             System.out.println("[Celtium] CELTIUM_NATIVE_DEVICE name=\"" + this.deviceName + "\" uuid="
                     + this.deviceUuid + " matchedOpenGl=" + (openGl != null));
             Set<String> extensions = deviceExtensionNames(stack, this.physicalDevice);
@@ -1710,6 +1711,14 @@ public final class VulkanContext {
 
     /** The rendering device's own identity, queried once and named in one line. "unavailable" when it cannot be. */
     private static volatile String driverLine = "unavailable";
+    /**
+     * Whether the selected device was pinned by an OpenGL identity, i.e. the {@code matchedOpenGl=} field of
+     * {@code CELTIUM_NATIVE_DEVICE}. Static because the F3 section asks the question before a world exists and must
+     * not create a context to answer it; -1 is "no device has been selected yet", which is not the same as false.
+     */
+    private static volatile int matchedOpenGlDevice = -1;
+    /** Vulkan loader version, queried once and guarded: a missing loader must not break a support line. */
+    private static volatile String loaderVersion = "unqueried";
     private static volatile String driverName = "unavailable";
     private static volatile String driverVersion = "unavailable";
     private static volatile String deviceLine = "unavailable";
@@ -1737,6 +1746,40 @@ public final class VulkanContext {
     /** {@return the rendering device and its API version}, or "unavailable". */
     public static String deviceSummary() {
         return deviceLine;
+    }
+
+    /**
+     * {@return whether the selected device was pinned by an OpenGL identity}, from the same value
+     * {@code CELTIUM_NATIVE_DEVICE ... matchedOpenGl=} prints; {@code null} before any device is selected.
+     * <p>
+     * Null rather than false on purpose: "no device yet" and "selected without a GL identity" are different answers,
+     * and the F3 section shows them differently.
+     */
+    public static Boolean matchedOpenGlDevice() {
+        int recorded = matchedOpenGlDevice;
+        return recorded < 0 ? null : Boolean.valueOf(recorded != 0);
+    }
+
+    /**
+     * {@return the Vulkan loader's version, or "unavailable"}.
+     * <p>
+     * Queried through {@code VK.getInstanceVersionSupported()}, which loads the loader but creates no instance, device
+     * or swapchain - the F3 section must be able to name the loader without initialising Vulkan. Cached, and every
+     * failure (no native loader, no bindings) answers "unavailable" rather than throwing into a support line.
+     */
+    public static String loaderVersion() {
+        String cached = loaderVersion;
+        if (!"unqueried".equals(cached)) {
+            return cached;
+        }
+        String resolved;
+        try {
+            resolved = versionString(VK.getInstanceVersionSupported());
+        } catch (RuntimeException | LinkageError unavailable) {
+            resolved = "unavailable";
+        }
+        loaderVersion = resolved;
+        return resolved;
     }
 
     /**
