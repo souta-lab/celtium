@@ -126,6 +126,11 @@ public final class RenderTargetRegistry {
     }
 
     /** {@return the identity the game's main framebuffer has}, or {@link Long#MIN_VALUE} when none was bound yet. */
+    /** Records the identity adopted as the main frame target, which the bind path can also discover later. */
+    public void noteMainIdentity(long identity) {
+        this.mainIdentity = identity;
+    }
+
     public long mainIdentity() {
         return this.mainIdentity;
     }
