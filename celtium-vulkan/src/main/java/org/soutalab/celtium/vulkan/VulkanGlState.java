@@ -260,6 +260,17 @@ public final class VulkanGlState {
     }
 
     /**
+     * {@return the active matrix's elements without copying}, for a caller that copies them out or reads a few and does
+     * not need the sixteen-float snapshot {@link #matrix(int)} allocates. The batch-accept path reads the projection
+     * and modelview tops into {@code glProjection}/{@code glModelView} per batch - a copy fed straight to
+     * {@code arraycopy} was a wasted allocation on a ~3600-batch frame. The returned array is the stack's own - do not
+     * write into it.
+     */
+    public float[] peekMatrix(int mode) {
+        return top(mode);
+    }
+
+    /**
      * {@return a copy of the named texture unit's matrix}, regardless of which unit is active: the immediate path's
      * draws all sample unit 0, so the unit-1 lightmap matrix - which the game rewrites every frame - must not read
      * as theirs.

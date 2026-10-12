@@ -3777,7 +3777,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             java.nio.FloatBuffer live = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
             try {
                 org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX, live);
-                float[] mirrored = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+                float[] mirrored = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
                 float delta = 0.0f;
                 for (int i = 0; i < 16; i++) {
                     delta = Math.max(delta, Math.abs(mirrored[i] - live.get(i)));
@@ -3790,7 +3790,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     while (this.trace.size() >= 12) {
                         this.trace.remove(0);
                     }
-                    float[] mvBefore = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+                    float[] mvBefore = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
                     java.nio.FloatBuffer glMv = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
                     try {
                         org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, glMv);
@@ -3828,7 +3828,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void loadIdentity() {
         celtium$fontMatrixBoundary();
         if (this.trace.size() < 40) {
-            float[] v = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            float[] v = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
             this.trace.add("L" + this.framesSeen + "[mv " + fmt3(v[12]) + "," + fmt3(v[13]) + "," + fmt3(v[14]) + "]");
         }
         this.mirrorMidSetup = true;
@@ -4786,7 +4786,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
             // The camera transform is mirrored from the hooked GlStateManager matrix calls, so it is already here:
             // the GL read would answer zeros, and a zeroed camera transform degenerates every world draw.
-            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
                     this.worldSnapshotModelView, 0, 16);
         } else {
             java.nio.FloatBuffer modelView = org.lwjgl.system.MemoryUtil.memAllocFloat(16);
@@ -5559,9 +5559,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             long matrixCopyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             if (MIRRORED_MATRICES) {
-                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
+                // peekMatrix: matrix() returns a sixteen-float copy that is fed straight to arraycopy here - an
+                // allocation made only to be copied again. The stack's own array is the same sixteen floats.
+                System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0,
                         this.glProjection, 0, 16);
-                System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
+                System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0,
                         this.glModelView, 0, 16);
                 this.matricesDirty = false;
             }
@@ -6802,7 +6804,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Skip while the mirror is still the zeroed array a reset leaves, which is the condition itself rather than a
         // proxy for it: a flag that cleared after one skip was too narrow, and the worst sample stayed a zeroed matrix.
         // Comparing an unset matrix with GL's measures the interval between two frames, not the mirror.
-        float[] viewNow = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+        float[] viewNow = this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
         if (viewNow[0] == 0.0f && viewNow[5] == 0.0f && viewNow[12] == 0.0f && viewNow[13] == 0.0f && viewNow[14] == 0.0f) {
             this.midSetupComparisonsSkipped++;
             return;
@@ -6825,9 +6827,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         this.matrixComparisons++;
-        float projectionDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION),
+        float projectionDelta = maxDelta(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION),
                 this.glProjection);
-        float modelViewDelta = maxDelta(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW),
+        float modelViewDelta = maxDelta(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW),
                 this.glModelView);
         // Dump the first comparison's sixteen elements from each side. The counter said the mirror is wrong
         // everywhere; whether that is a transpose, a clip-depth remap or a different stack cannot be read from a
@@ -13951,8 +13953,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // Minecraft's overlay/FBO setup uses the mirrored GlStateManager ortho/model-view stacks. These batches ARE
             // accepted: returning without capturing them left the previous world's perspective here and clipped real GUI
             // geometry. Snapshot the local pass matrices, never borrow another pass's camera.
-            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
-            System.arraycopy(this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION), 0, this.glProjection, 0, 16);
+            System.arraycopy(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, this.glModelView, 0, 16);
             return;
         }
         try {
