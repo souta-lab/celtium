@@ -602,13 +602,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
                         ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge")
                 + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
-                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge") + " modelMissingMeshes=" + this.modelMissingMeshes
+                        ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary() : "bridge") + " modelMissingMeshes=" + this.modelGeometry.modelMissingMeshes()
                 + " modelLastRefusal=" + this.modelLastRefusal
-                + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " modelMeshLists=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + this.modelMeshQuads
-                + " modelMeshFailure=" + this.modelMeshFailure
+                + " modelMeshQuads=" + this.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + this.modelGeometry.modelMeshFailure()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -645,11 +645,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelDraws=" + this.modelDraws
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
-                + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " modelMeshLists=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + this.modelMeshQuads
-                + " modelMeshFailure=" + this.modelMeshFailure
+                + " modelMeshQuads=" + this.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + this.modelGeometry.modelMeshFailure()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -1174,6 +1174,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * plan moves those in R5 rather than now.
      */
     private final PublishedFrameTextures publishedTextures = new PublishedFrameTextures();
+
+    /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
+    private final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
     // The colour-texture census lives in publishedTextures (refactoring plan R1b).
     /** Names the sampling side resolved through the framebuffer census, and the bounded log of them. */
@@ -8560,11 +8563,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " texMatrixGroups=" + this.texMatrixGroups
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelLastRefusal=" + this.modelLastRefusal
-                + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                + " modelMeshLists=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + this.modelMeshQuads
-                + " modelMeshFailure=" + this.modelMeshFailure
+                + " modelMeshQuads=" + this.modelGeometry.modelMeshQuads()
+                + " modelMeshFailure=" + this.modelGeometry.modelMeshFailure()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -9093,12 +9096,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             record("world teardown retired " + orphans + " queued immediate group(s) that the world owned");
         }
         this.worldEpoch++;
-        if (this.modelMeshes != null) {
-            for (VulkanDynamicMesh mesh : this.modelMeshes.values()) {
-                mesh.releaseAfterIdle();
-            }
-            this.modelMeshes.clear();
-        }
+        this.modelGeometry.releaseAfterWorldTeardown();
         int drained = VulkanRetireQueue.flush();
         if (drained > 0) {
             record("world teardown destroyed " + drained + " retired resources; the window device stays");
@@ -9171,12 +9169,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // The model meshes belong to this backend and hold buffers this device owns. settleGpu succeeded just above, so
         // the last submission has completed and nothing more will be recorded: the release is immediate and counted as
         // teardown, not as a free without a completed wait (audit N02).
-        if (this.modelMeshes != null) {
-            for (VulkanDynamicMesh mesh : this.modelMeshes.values()) {
-                mesh.releaseAfterIdle();
-            }
-            this.modelMeshes.clear();
-        }
+        this.modelGeometry.releaseAll();
         // Teardown: the device has been settled above, so anything still retired can be destroyed now.
         int drained = VulkanRetireQueue.flush();
         if (drained > 0) {
@@ -10633,208 +10626,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the meshes that attempt created are released before it returns.
      */
     private void celtium$buildModelMeshes() {
-        if (!MODEL_MESH_BUILD) {
-            return;
-        }
-        int[] ids = org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listIds();
-        if (ids.length == 0 && this.modelMeshes == null) {
-            // Nothing captured yet and nothing built: the table stays null, which the report prints as -1 rather than as
-            // a build that found no lists. An empty capture with meshes already built is not this case, because those
-            // meshes' lists are gone and are retired below.
-            return;
-        }
-        java.util.LinkedHashMap<Integer, VulkanDynamicMesh> built =
-                new java.util.LinkedHashMap<Integer, VulkanDynamicMesh>();
-        java.util.LinkedHashMap<Integer, Integer> builtGenerations =
-                new java.util.LinkedHashMap<Integer, Integer>();
-        java.util.List<VulkanDynamicMesh> superseded = new java.util.ArrayList<VulkanDynamicMesh>();
-        if (this.modelMeshes != null) {
-            for (java.util.Map.Entry<Integer, VulkanDynamicMesh> entry : this.modelMeshes.entrySet()) {
-                int listId = entry.getKey().intValue();
-                VulkanDynamicMesh mesh = entry.getValue();
-                if (mesh.matches(listId, org.soutalab.celtium.vulkan.VulkanModelQuadCapture.generationOf(listId))) {
-                    // Unchanged since it was built: reused as it is, which is the point of the generation identity.
-                    built.put(entry.getKey(), mesh);
-                } else {
-                    // Recompiled, deleted or emptied: the mesh is stale from the moment its list's generation moved and
-                    // must not be drawn again. The retire is queued rather than freed here, so the frames that already
-                    // used these buffers have completed before they are destroyed.
-                    superseded.add(mesh);
-                }
-            }
-        }
-            VulkanDynamicMesh pending = null;
-        try {
-            // The mesh being built, held so a failure before it reaches the table can still release it.
-            for (int id : ids) {
-                org.soutalab.celtium.vulkan.VulkanModelQuadCapture.Snapshot snapshot =
-                        org.soutalab.celtium.vulkan.VulkanModelQuadCapture.snapshot(id);
-                if (snapshot == null) {
-                    continue;
-                }
-                VulkanDynamicMesh existing = built.get(Integer.valueOf(id));
-                if (existing != null && existing.matches(id, snapshot.generation)) {
-                    continue;
-                }
-                VulkanDynamicMesh mesh = new VulkanDynamicMesh(this.context);
-                // The mesh exists before it is in the table, so a failure while filling it must release it here: the
-                // catch below can only discard what the table already holds, and this mesh is not in it yet (audit
-                // ownership gap - the model builder leaked the one mesh it was in the middle of building).
-                pending = mesh;
-                // The ITEM layout: position, colour, texture, normal, padding - 28 bytes, the same one the dropped item
-                // is drawn through. The colour is the material the fixed-function lighting evaluates (glColorMaterial
-                // AMBIENT_AND_DIFFUSE, and vanilla draws a model with the current colour = white), and the normal is the
-                // quad's own, carried by the capture since the first quad and discarded by every mesh before this.
-                //
-                // Measured, and this is why the layout changed: the native model draw was 1.2-1.6x brighter than the
-                // upstream Celeritas reference on every entity family while the ITEM-drawn apple matched at 0.98. The
-                // term is the fixed-function lighting, which IS in effect for entities - `RenderHelper
-                // .enableStandardItemLighting()` is called immediately before `renderEntities` (EntityRenderer:1397-1402)
-                // - and the twenty-byte POSITION_TEX pipeline has no lighting term at all. The light map, which was the
-                // first candidate, was measured on this run and is nearly white at the scene's light level
-                // (raw=(128,240) -> mapped=(0.531,0.969) -> factor 0.988), so it is not what the 1.3x was.
-                mesh.begin(new VulkanDynamicMesh.Layout(28, 0, 16, 12, 24, -1));
-                // A limit on how many quads go into the mesh, so a single quad can be drawn on its own: if one quad comes
-                // out as a quad the mesh and draw path are sound and the capture is what is wrong, and if it comes out as
-                // a triangle the fault is on this side. That is the question the stray triangles leave open.
-                int quadLimit = snapshot.quads;
-                if (MODEL_QUAD_LIMIT > 0 && quadLimit > MODEL_QUAD_LIMIT) {
-                    quadLimit = MODEL_QUAD_LIMIT;
-                }
-                for (int quad = 0; quad < quadLimit; quad++) {
-                    // nextVertex() belongs INSIDE the loop: it starts a new vertex and returns its index, and every
-                    // put* call writes the vertex it started. Calling it once per quad and then writing four times
-                    // overwrote one vertex with the quad's four corners, so a quad contributed ONE vertex while the
-                    // indices still asked for base..base+3 - a count of Q instead of 4Q and indices past the end of
-                    // the buffer. That is the corruption the shards and wedges in the presented frames were made of,
-                    // and it is upstream of every matrix, topology and depth question the same frames raised.
-                    int base = mesh.vertexCount();
-                    for (int vertex = 0; vertex < 4; vertex++) {
-                        int started = mesh.nextVertex();
-                        if (vertex == 0) {
-                            base = started;
-                        } else if (started != base + vertex) {
-                            throw new IllegalStateException("model mesh vertex contract: quad " + quad + " vertex "
-                                    + vertex + " started at " + started + ", expected " + (base + vertex));
-                        }
-                        int source = (quad * 4 + vertex) * 3;
-                        mesh.putPosition(snapshot.positions[source], snapshot.positions[source + 1],
-                                snapshot.positions[source + 2]);
-                        mesh.putUv(snapshot.uvs[(quad * 4 + vertex) * 2], snapshot.uvs[(quad * 4 + vertex) * 2 + 1]);
-                        // White: what glColor holds when vanilla draws a model, and the material the lighting scales.
-                        mesh.putColor(255, 255, 255, 255);
-                        // One normal per quad, as vanilla submits it (flat shading, one normal for all four vertices).
-                        mesh.putNormal(snapshot.normals[quad * 3], snapshot.normals[quad * 3 + 1],
-                                snapshot.normals[quad * 3 + 2]);
-                    }
-                    mesh.index(base);
-                    mesh.index(base + 1);
-                    mesh.index(base + 2);
-                    mesh.index(base);
-                    mesh.index(base + 2);
-                    mesh.index(base + 3);
-                }
-                // The contract, checked as arithmetic rather than assumed: four vertices and six indices per quad, and
-                // the indices must address vertices this mesh actually holds. A mesh that fails is not drawn.
-                //
-                // The failure is scoped to THIS list, not to the build. Throwing out of the loop aborts every list -
-                // which is how one bad snapshot would remove every model in the scene at once, a far worse outcome
-                // than the single missing model it is meant to protect against. The mesh is released and the list is
-                // recorded as failed; the rest of the build continues, and the reason names the list so the snapshot
-                // can be fixed rather than the symptom hidden.
-                if (mesh.vertexCount() != quadLimit * 4 || mesh.indexCount() != quadLimit * 6) {
-                    String failure = "list " + id + ": " + quadLimit + " quads produced " + mesh.vertexCount()
-                            + " vertices and " + mesh.indexCount() + " indices, expected " + (quadLimit * 4)
-                            + " and " + (quadLimit * 6);
-                    this.modelMeshContractFailures++;
-                    if (this.modelMeshFailure == null) {
-                        this.modelMeshFailure = failure;
-                    }
-                    // The mesh never reaches the table, so this is a partial build's leftovers: released here rather
-                    // than left for the next rebuild to replace (the audit's N02 failure path).
-                    mesh.discard();
-                    continue;
-                }
-                built.put(Integer.valueOf(id), mesh);
-                pending = null;
-                builtGenerations.put(Integer.valueOf(id), Integer.valueOf(snapshot.generation));
-            }
-        } catch (RuntimeException | LinkageError error) {
-            if (pending != null) {
-                pending.discard();
-                pending = null;
-            }
-            // A failure this far out is not attributable to one list, so the previous table stays in place - nothing
-            // above touched it - and the meshes this attempt created are released rather than leaked. Before N02 the
-            // table was replaced at the end and every newly built mesh stayed alive on this path.
-            this.modelMeshFailure = String.valueOf(error);
-            for (java.util.Map.Entry<Integer, VulkanDynamicMesh> entry : built.entrySet()) {
-                VulkanDynamicMesh previous = this.modelMeshes == null ? null : this.modelMeshes.get(entry.getKey());
-                if (previous != entry.getValue()) {
-                    entry.getValue().discard();
-                }
-            }
-            return;
-        }
-        // Committed: the table the scene draws from is replaced in one step, every mesh in it is stamped with the
-        // generation it was built from, and only then are the superseded meshes retired. Stamping after the commit is
-        // what keeps a failed build from leaving a stamped mesh in a table that was never installed.
-        this.modelMeshes = built;
-        // Retired first: a list never has two meshes registered at once, so the registry's replacement counter means
-        // what it says - a mesh replaced without being retired - instead of counting this commit's own window.
-        for (VulkanDynamicMesh mesh : superseded) {
-            mesh.retire();
-        }
-
-        for (java.util.Map.Entry<Integer, Integer> entry : builtGenerations.entrySet()) {
-            built.get(entry.getKey()).stamp(entry.getKey().intValue(), entry.getValue().intValue());
-        }
-        int quads = 0;
-        for (VulkanDynamicMesh mesh : built.values()) {
-            quads += mesh.indexCount() / 6;
-        }
-        this.modelMeshQuads = quads;
-        // Printed as well as reported: the report's debug strings are assembled per configuration, and the bridge's
-        // report has never carried the model counters (checked across p530-tp, ref-gl, glow-bridge3 and bridge-model,
-        // all absent while the GL-less reports carry them). Without a line both configurations emit, "the models did
-        // not draw" and "the counters were not collected" look identical - which is exactly the confusion this line
-        // exists to end. Printed per change, bounded: the first 64 changes one by one and every hundredth after.
-        // The off-target aggregate, printed from the frame's build as the counters move: the off-target replays are the
-        // entity-outline pass's, and whether they are enqueued or refused is the question the picture cannot answer on
-        // its own ("a missing counter is not a missing draw" applies to the queue as much as to a census).
-        if (this.modelOffTargetCalls != this.modelOffTargetReported) {
-            this.modelOffTargetReported = this.modelOffTargetCalls;
-            if ((this.modelOffTargetReports < 24 || this.modelOffTargetCalls % 64 == 0) && VulkanDiagnostics.enabled()) {
-                this.modelOffTargetReports++;
-                System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + this.modelOffTargetCalls
-                        + " drawn=" + this.modelOffTargetDraws
-                        + " missingMeshes=" + this.modelMissingMeshes
-                        + " refusals=" + this.modelDrawRefusals
-                        + " lastRefusal=[" + this.modelLastRefusal + "]");
-            }
-        }
-        if (builtGenerations.size() > 0 || !superseded.isEmpty()) {
-            this.modelBuildLogs++;
-            if ((this.modelBuildLogs <= 64 || this.modelBuildLogs % 100 == 0) && VulkanDiagnostics.enabled()) {
-            System.out.println("[Celtium] CELTIUM_MODEL_BUILD lists=" + built.size() + " quads=" + quads
-                    + " rebuilt=" + builtGenerations.size() + " reused=" + (built.size() - builtGenerations.size())
-                    + " retired=" + superseded.size()
-                    + " contractFailures=" + this.modelMeshContractFailures + " failure="
-                    + (this.modelMeshFailure == null ? "none" : this.modelMeshFailure)
-                    + " " + VulkanDynamicMesh.describeModel()
-                    + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle());
-            }
-        }
+        // The table, its generation-driven builder and the lending rule moved to ModelGeometryCache (R3a).
+        this.modelGeometry.build(this.context);
     }
 
     /** Whether the model meshes are built from the captured display lists (lab switch: off leaves GL drawing them). */
     // On by default since the staged acceptance: two scenes, both GPUs, the model draw inside the default's own
     // run-to-run floor (the spider scene's floor is 0 pixels and the effect 20 of 921600). -Dceltium.vulkan.modelMeshBuild=false
     // and -Dceltium.vulkan.modelDraw=false restore the previous behaviour.
-    private static final boolean MODEL_MESH_BUILD = Boolean.parseBoolean(
-            System.getProperty("celtium.vulkan.modelMeshBuild", "true"));
     /** The built meshes, keyed by display-list id, or null when they have not been built. */
-    private java.util.LinkedHashMap<Integer, VulkanDynamicMesh> modelMeshes;
     /**
      * Native model draws and the reasons they were refused.
      * <p>
@@ -10846,13 +10646,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static int modelDraws;
     private int modelDrawRefusals;
     /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
-    private int modelMissingMeshes;
     /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
-    private int modelMeshContractFailures;
     /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
-    private int modelBuildLogs;
-    private int modelMissingMeshLog;
-    private int modelLastMissingList = Integer.MIN_VALUE;
     private String modelLastRefusal = "none";
     /** Whether a frame target exists, so a pass can be opened. */
     // frameTargetKnown moved to RenderTargetRegistry (refactoring plan R5), as a latch.
@@ -10863,8 +10658,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private VulkanTerrainPipeline terrainPipelineForFrame;
     /** The texture the immediate path most recently bound. */
     private int currentImmediateTexture;
-    private int modelMeshQuads;
-    private String modelMeshFailure = "none";
     /** The frame in which a terrain pass last ran, so a window can say whether it came first. */
     private long lastTerrainPassFrame = -1L;
     /** One-shot: the frame's order, for settling whether the window runs before the terrain. */
@@ -10956,37 +10749,35 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.modelOffTargetLogged.add(listId + "@" + callTarget)
                     && this.modelOffTargetLogs < MODEL_OFFTARGET_LOG_LIMIT) {
                 this.modelOffTargetLogs++;
-                VulkanDynamicMesh looked = this.modelMeshes == null
-                        ? null : this.modelMeshes.get(Integer.valueOf(listId));
+                VulkanDynamicMesh looked = this.modelGeometry.modelMeshes() == null
+                        ? null : this.modelGeometry.modelMeshes().get(Integer.valueOf(listId));
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId
                         + " target=" + callTarget + " main=" + this.mainTargetIdentity
                         + " modelDraw=" + MODEL_DRAW + " frameTargetKnown=" + this.targetRegistry.targetKnown()
-                        + " meshes=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
+                        + " meshes=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
                         + " inTable=" + (looked != null) + " verts=" + (looked == null ? -1 : looked.vertexCount()));
             }
             if ((this.modelOffTargetCalls == 1 || this.modelOffTargetCalls % 32 == 0) && VulkanDiagnostics.enabled()) {
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_BATCHES calls=" + this.modelOffTargetCalls
                         + " drawn=" + this.modelOffTargetDraws
-                        + " missingMeshes=" + this.modelMissingMeshes
+                        + " missingMeshes=" + this.modelGeometry.modelMissingMeshes()
                         + " refusals=" + this.modelDrawRefusals
                         + " lastRefusal=[" + this.modelLastRefusal + "]");
             }
         }
-        if (!MODEL_DRAW || this.modelMeshes == null || !this.targetRegistry.targetKnown()) {
+        if (!MODEL_DRAW || this.modelGeometry.modelMeshes() == null || !this.targetRegistry.targetKnown()) {
             return false;
         }
         if (MODEL_ONLY_LIST != 0 && listId != MODEL_ONLY_LIST) {
             return false;
         }
-        VulkanDynamicMesh mesh = this.modelMeshes.get(Integer.valueOf(listId));
+        VulkanDynamicMesh mesh = this.modelGeometry.modelMeshes().get(Integer.valueOf(listId));
         if (mesh == null || mesh.isEmpty()) {
             // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
             // body would draw and that nothing draws without a context. Counting it is what turns "the model is missing"
             // into "list N, texture M, no mesh", which is the only form in which it can be fixed.
-            this.modelMissingMeshes++;
-            if (this.modelMissingMeshLog < 8 && listId != this.modelLastMissingList) {
-                this.modelLastMissingList = listId;
-                this.modelMissingMeshLog++;
+            this.modelGeometry.noteMissingMesh();
+            if (this.modelGeometry.shouldLogMissingMesh(listId)) {
                 System.out.println("[Celtium] CELTIUM_MODEL_MISSING list=" + listId + " texture=" + boundTextureId
                         + " (no captured mesh for this display list; the GL body runs and there is no context)");
             }
@@ -12471,7 +12262,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Draws at most this many quads per list, for isolating a single quad (0 = all). */
-    private static final int MODEL_QUAD_LIMIT = Integer.getInteger("celtium.vulkan.modelQuadLimit", 0).intValue();
     /** Draws only this display list, for isolating one list (0 = all). */
     private static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
 

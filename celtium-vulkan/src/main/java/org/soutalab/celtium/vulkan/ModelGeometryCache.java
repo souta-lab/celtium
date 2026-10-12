@@ -54,6 +54,24 @@ public final class ModelGeometryCache {
     }
 
     /** {@return how many replays asked for a list this cache has no mesh for}. */
+    /**
+     * Whether a missing-mesh line should be printed for this list: bounded, and only when the list differs from the
+     * last one logged, so a scene with many draws of one list does not flood the log.
+     */
+    public boolean shouldLogMissingMesh(int listId) {
+        if (this.modelMissingMeshLog >= 8 || listId == this.modelLastMissingList) {
+            return false;
+        }
+        this.modelLastMissingList = listId;
+        this.modelMissingMeshLog++;
+        return true;
+    }
+
+    /** Records a model list that had no mesh to draw, which the borrow path names one by one. */
+    public void noteMissingMesh() {
+        this.modelMissingMeshes++;
+    }
+
     public int modelMissingMeshes() {
         return this.modelMissingMeshes;
     }
