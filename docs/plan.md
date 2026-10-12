@@ -393,6 +393,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.387 **round 188: R1b 配線完了と出口 leg、B05 の GPU 再現、build 赤の即修復**
+
+- **R1b 完了（`9cfd09b37`）**: `PublishedFrameTextures`（169行）が census を所有し、backend の約30呼び出しが委譲。**検証行のフィールド名・順序は不変**（backend に残る旧識別子は文字列リテラルとコメントのみ ✓）。`scripts/cpu-contract/TextureContractCheck.java` → **`CELTIUM_CPU_CONTRACT PASS`** ✓（plan §7.1）。
+- **R1b 出口 leg（抽出前後の比較、同一 flags・1920x1080・AMD）**:
+  | 計器 | 抽出前 | 抽出後 |
+  |---|---|---|
+  | `textureCopiesServed` / `textureCopyBlits` | 2037 / 290 | 1925 / 274 |
+  | `textureCopyReadbacks` / `textureCopiesRefused` | 1 / 0 | 1 / 0 |
+  | `publishedFrameTexturesCreated/Unpublished/SkippedForAttach/StalePruned/Republished` | 2/0/41/0/0 | 2/0/33/0/0 |
+  | menu 画（distinct / top mean） | 10,531 / (198,197,195) | 10,614 / (199,198,195) |
+  **限界（正直に）**: 両 leg とも **P0 flake の grey 側**に落ちたため、**画の比較は抽出の証拠にならない**（同じ状態であることまで）。受入の根拠は「カウンタの存在と書式が不変」「CPU 契約 PASS」「委譲がコード上で一対一」の3点。
+- **B05 の GPU 再現（perf-ring `f2366557a`）**: 既定 arena（1 MiB / 256 KiB）では pinned scene の peak 781 KB / 215 KB で growth に届かず（最初のペアは `retiredAllocations=0` で無意味）、計測レバー `celtium.vulkan.frameArenaInitialVertexBytes/IndexBytes`（**既定値不変**）で 256 KiB / 64 KiB に下げると同一 scene が growth を跨ぎ、**`validationMessageCount=4` / `validationClean=false` / `VUID-vkDestroyBuffer-buffer-00922`** が3 jar すべてで再現 ✓。**修正2案は失敗**（deferred fence は growth 時点で古い batch のもの／slot epoch は recording 中 `-1`）→ 次の設計は**「旧 allocation を slot に retire し、slot reset で解放」**（`:93` の完了前提を使う）。**B05 は open**。
+- **build 赤の即修復（私）**: `f2366557a` が失敗案②の呼び出し（`ensureCapacity(align(target), this.epoch)`）をコミットしたまま `VulkanHostBuffer.ensureCapacity(long)` が1引数だったため **`VulkanFrameArena.java:456/475` で全担当がブロック** ✗。**呼び出し2箇所のみ**を1引数へ戻し（レバーと再現記録は保持）、`0433936d4` で build 緑 ✓。担当に「compiles しないものはコミットしない（失敗案は記録と revert を同一 commit に）」を再確認。
+- **Intel leg の再確認**: perf-ring の `bh35-intel` / `goalG4-intel` / `pc-intel` は3本とも `CELTIUM_NATIVE_DEVICE="Intel(R) UHD Graphics 630 (CFL GT2)"` ＋ `gpuRequirementMet=True` ✓（AMD ではなかった ✓）。
+
 ## 0.386 **round 187: REFACTORING_PLAN を最優先に（ユーザー指示）。PR を全部 merge してから R1b を開始**
 
 - **ユーザー指示**: 「REFACTORING_PLAN を最優先で実行しろ」「gpubackend がデカすぎてボトルネックになっている」「refactoring で PR が merge できなくなる前に、まず一旦全部 merge しろ（検証はもうやってる）」。
