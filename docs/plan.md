@@ -393,6 +393,15 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.390 **round 191: B05 修正完了（GPU 証拠つき）／R6 `FrameSubmissionScheduler` 納品／R5・R4 の配線準備完了**
+
+- **B05 修正完了（perf-ring `b02a592a5`）**: **「旧 allocation を slot に retire し、slot reset で解放」**。再現 leg（`frameArenaInitialVertexBytes=262144`・`…IndexBytes=65536`・layers ON・`hostBuffersCreated=16`）で **`validationMessageCount=0` / `validationClean=true` / VUID なし** ✓（before・fence 版・epoch 版はいずれも msgs=4）。＝**監査 B05 は GPU 証拠つきで閉じた** ✓。drain・budget 拡大・counter 抑制は不使用 ✓。
+- **R6 `FrameSubmissionScheduler` 納品**（perf-ring `cd1658997`・未参照の新規クラス・単一ファイル `javac` で型検査 0 エラー・Gradle build なし）: `FRAME_SLOTS=4`・slot の pending/sequence/awaitingCompletion・`submitSequence`/`completedSubmitSequence`・ledger 表示・poll/wait counter・submission→retire 対応。規則は**名前付きメソッド** `retireToSlot`/`releaseOnSlotReset`/`mayResetSlot`/`canRecordInto` で、**device-wide wait はゼロ** ✓（R6 の禁止条件をクラス構造で担保 ✓）。backend に残すのは command buffer/fence 生成・`vkWaitForFences` 本体・記録/submit 呼び出し ✓。
+- **裁定（ledger の所在）**: **ledger（`submitCompletions`・wait outcome）は `VulkanContext` に残す**（writer が upload batch/texture staging/present の3経路で、移すと `VulkanContext`/`VulkanSwapchain` が scheduler を呼ぶ3ファイル編成になる＝所有の利得なし）。scheduler は slot と規則を持ち、完了 sequence は**引数**で受け取る（`mayResetSlot(slot, epoch, completedEpoch)` ✓）。
+- **裁定（名前）**: scheduler の語彙（`isPending`/`isAwaitingCompletion`）に統一し、`VulkanFrameArena` の private field 名は据え置き ✓（同じ事実を2層で表すだけ・公開 rename 不要 ✓）。arena の `:93` は `mayResetSlot(...)` を呼び、**条件式の二重定義を消す** ✓＝B05 の修正が1箇所に集約 ✓。
+- **次の担当作業**: B11/B12（`VulkanContext`/`VulkanSwapchain` 内で完結・backend 不要 ✓）を perf-ring が着手 ✓。R4 `TerrainRenderer` は sky-draws が次roundに一括執筆（interface 3点確定済み ✓）。R2/R3a/R3b は執筆中 ✓。
+- **build は全配線が入るまで回さない**（ユーザー指示）。R5/R6 の新クラスは未参照なので現時点の緑を壊さない ✓。
+
 ## 0.389 **round 190: R5 クラス完成＋配線表、R4 の interface 確定。配線は Lead が一括（build は最後に1回）**
 
 - **R5 `RenderTargetRegistry` 完成**（frame-composite・~330行・純 state）: alias（identity→ImageSlot＋generation、`sharedSlots()` は BH-14 の計器）、layout 帳（slot×generation、stale read は `-1` を返し計数）、**clear 所有**（latch＋slot＋generation、1 frame に colour-clear の owner は1つ、衝突は計数して拒否）。R1b の colour-texture map と publication counter は**重複所有しない** ✓。
