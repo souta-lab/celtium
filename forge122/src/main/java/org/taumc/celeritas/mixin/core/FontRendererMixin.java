@@ -1,8 +1,11 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.gui.FontRenderer;
+import net.minecraft.util.ResourceLocation;
 import org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
@@ -26,9 +29,55 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(FontRenderer.class)
 public abstract class FontRendererMixin {
 
-    @Inject(method = "func_78266_a", at = @At("HEAD"), require = 0)
+    /** The sheet's own width table, the pen position and the sheet's location: the four inputs the fast path needs. */
+    @Shadow
+    @Final
+    private int[] charWidth;
+    @Shadow
+    private float posX;
+    @Shadow
+    private float posY;
+    @Shadow
+    @Final
+    private ResourceLocation locationFontTexture;
+    @Shadow
+    protected abstract void bindTexture(ResourceLocation location);
+
+    /**
+     * The GL name the sheet is bound under, cached after the first bind: vanilla re-binds it for every glyph, and the
+     * fast path only needs to when the unit no longer holds it (a unicode page between two ASCII glyphs of one string,
+     * a mod's own texture, the light map's unit dance). Zero means "not resolved yet".
+     */
+    private int celtium$fontTextureName;
+
+    /**
+     * The default-page glyph: vanilla's body, or the Celtium path that writes the same quad straight into the capture.
+     * <p>
+     * The fast path is taken only when the capture is armed for GL-less drawing and the property is on; otherwise this
+     * injection is the window bracket it always was. The advance, the four vertices and their texture coordinates are
+     * vanilla's ({@code renderDefaultChar}, {@code FontRenderer.java:230-249}), and the submit is the capture's own -
+     * format 2, stride 24, mode 5, the coalesced run with its strip separators - so nothing downstream changes. What
+     * disappears is the per-glyph {@code TextureManager.bindTexture} chain and the nine {@code GlStateManager} wrapper
+     * calls, which are the measured 3.15 µs/glyph of vanilla glyph body.
+     */
+    @Inject(method = "func_78266_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$openDefaultGlyph(int ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.beginGlyph();
+        if (CeltiumFontGlyphCapture.fastPathAvailable()) {
+            if (celtium$fontTextureName == 0
+                    || org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D)
+                            != celtium$fontTextureName) {
+                bindTexture(this.locationFontTexture);
+                celtium$fontTextureName = org.lwjgl.opengl.GL11
+                        .glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+                CeltiumFontGlyphCapture.noteFontTextureRebind();
+            }
+            float advance = CeltiumFontGlyphCapture.fastDefaultGlyph(this.charWidth, this.posX, this.posY, ch, italic);
+            if (advance >= 0.0F) {
+                info.setReturnValue(Float.valueOf(advance));
+                return;
+            }
+        }
         CeltiumFontGlyphCapture.openWindow(false);
     }
 

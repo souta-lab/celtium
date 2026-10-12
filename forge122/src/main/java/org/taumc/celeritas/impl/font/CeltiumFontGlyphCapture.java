@@ -232,6 +232,16 @@ public final class CeltiumFontGlyphCapture {
     private static long renderStringNanos;
     private static long renderStringCalls;
     private static long renderStringStartNanos;
+    /**
+     * {@code -Dceltium.font.fastPath=false} turns the Celtium-side default-glyph path off inside the same jar, so the
+     * before/after is one variable: with it off every glyph goes through vanilla's body (the {@code bindTexture} chain
+     * and the nine {@code GlStateManager} wrappers) and the capture window, exactly as before this path existed.
+     */
+    private static final boolean FAST_PATH = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.font.fastPath", "true"));
+    /** Glyphs drawn by {@link #fastDefaultGlyph} rather than through vanilla's body, and the texture re-binds it needed. */
+    private static long fastGlyphs;
+    private static long fontTextureRebinds;
     private static long glyphStartNanos;
     private static long stringStartNanos;
     private static long accepted;
@@ -315,6 +325,69 @@ public final class CeltiumFontGlyphCapture {
                     + " unicode=" + unicode + " " + glState() + " " + matrices() + " " + mirroredMatrices());
         }
         reset();
+    }
+
+    /** {@return whether the Celtium-side default-glyph path may draw a glyph itself right now}. */
+    public static boolean fastPathAvailable() {
+        return FAST_PATH && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                && TerrainGpuBackends.current() != null;
+    }
+
+    /** Records that the fast path had to re-bind the font sheet because another texture had taken the unit. */
+    public static void noteFontTextureRebind() {
+        fontTextureRebinds++;
+    }
+
+    /**
+     * Draws one default-page glyph without vanilla's body, and hands it to the same submit the capture window uses.
+     * <p>
+     * The geometry, the texture coordinates, the colour and the advance are copied from {@code renderDefaultChar}
+     * ({@code FontRenderer.java:230-249}) exactly: {@code i = ch % 16 * 8}, {@code j = ch / 16 * 8},
+     * {@code k = italic ? 1 : 0}, {@code l = charWidth[ch]}, {@code f = l - 0.01F}, the four vertices
+     * {@code (posX+k, posY)}, {@code (posX-k, posY+7.99)}, {@code (posX+f-1+k, posY)}, {@code (posX+f-1-k, posY+7.99)},
+     * and the four texture coordinates {@code (i/128, j/128)}, {@code (i/128, (j+7.99)/128)},
+     * {@code ((i+f-1)/128, j/128)}, {@code ((i+f-1)/128, (j+7.99)/128)}. What is not copied is the cost: the
+     * {@code TextureManager.bindTexture} chain (the caller binds the sheet when the unit no longer holds it) and the
+     * nine {@code GlStateManager} wrapper calls per glyph, each a stub no-op plus a hook. The submit is the capture's
+     * own - format 2, stride 24, mode 5, the coalesced run and the strip separators - so the format, glyph and unicode
+     * contracts and the batching are the ones that already existed.
+     *
+     * @return the advance vanilla would have returned, or -1 when this glyph must take the window path
+     */
+    public static float fastDefaultGlyph(int[] charWidth, float posX, float posY, int ch, boolean italic) {
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend == null || charWidth == null || ch < 0 || ch >= charWidth.length) {
+            return -1.0F;
+        }
+        int i = ch % 16 * 8;
+        int j = ch / 16 * 8;
+        int k = italic ? 1 : 0;
+        int l = charWidth[ch];
+        float f = (float) l - 0.01F;
+        float[] xs = {posX + (float) k, posX - (float) k, posX + f - 1.0F + (float) k, posX + f - 1.0F - (float) k};
+        float[] ys = {posY, posY + 7.99F, posY, posY + 7.99F};
+        float[] us = {(float) i / 128.0F, (float) i / 128.0F, ((float) i + f - 1.0F) / 128.0F,
+                ((float) i + f - 1.0F) / 128.0F};
+        float[] vs = {(float) j / 128.0F, ((float) j + 7.99F) / 128.0F, (float) j / 128.0F,
+                ((float) j + 7.99F) / 128.0F};
+        windows++;
+        defaultWindows++;
+        fastGlyphs++;
+        armed = true;
+        mode = GL_TRIANGLE_STRIP;
+        vertexCount = MAX_VERTICES;
+        texCoordCount = MAX_VERTICES;
+        for (int n = 0; n < MAX_VERTICES; n++) {
+            positionX[n] = xs[n];
+            positionY[n] = ys[n];
+            positionZ[n] = 0.0F;
+            textureU[n] = us[n];
+            textureV[n] = vs[n];
+        }
+        submit();
+        armed = false;
+        reset();
+        return (float) l;
     }
 
     /** Opens the vanilla glyph method's own bracket. Called from the mixin's HEAD injection. */
@@ -743,6 +816,8 @@ public final class CeltiumFontGlyphCapture {
                 + " stringCalls=" + stringCalls
                 + " renderStringMillis=" + (renderStringNanos / 1000000L)
                 + " renderStringCalls=" + renderStringCalls
+                + " fastGlyphs=" + fastGlyphs
+                + " fontTextureRebinds=" + fontTextureRebinds
                 + " meanSubmitMicros=" + (submitted == 0 ? 0 : submitNanos / submitted / 1000L)
                 + " reasons=" + REFUSALS);
     }
@@ -757,6 +832,8 @@ public final class CeltiumFontGlyphCapture {
                 + " stringMillis=" + (stringNanos / 1000000L) + " stringCalls=" + stringCalls
                 + " renderStringMillis=" + (renderStringNanos / 1000000L)
                 + " renderStringCalls=" + renderStringCalls
+                + " fastGlyphs=" + fastGlyphs
+                + " fontTextureRebinds=" + fontTextureRebinds
                 + " reasons=" + REFUSALS + " modes=" + MODE_CENSUS + " " + batchSummary();
     }
 
