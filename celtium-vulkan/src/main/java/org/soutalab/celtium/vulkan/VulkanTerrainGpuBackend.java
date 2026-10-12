@@ -1043,6 +1043,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int presentHookCalls;
     /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
     private java.nio.file.Path presentedDumpPath;
+    /**
+     * A presented-image dump asked for before the swapchain existed.
+     * <p>
+     * The loading phase is the caller: {@code Minecraft.startGame} reaches {@code drawSplashScreen}
+     * ({@code Minecraft.java:517}) before the first present, and the swapchain is created lazily on the present path -
+     * so a request made from the splash's own head has nothing to write into yet. It used to be refused
+     * ({@code return false}), and the fixture honestly recorded "the presented-image dump could not be requested" and
+     * lost the frame. Held instead, and forwarded the moment the swapchain is created; if the creation fails the path
+     * stays here and is named in the report rather than dropped silently.
+     */
+    private java.nio.file.Path pendingPresentedDumpBeforeSwapchain;
     /** How many bound-pipeline/descriptor lines have been recorded; bounded so a run cannot flood. */
     private int boundHandleLogs;
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
@@ -9976,7 +9987,23 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         java.util.List<String> reasons = new java.util.ArrayList<String>();
         this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons);
+        if (this.swapchain != null && this.pendingPresentedDumpBeforeSwapchain != null) {
+            // The dump the loading phase asked for before there was a swapchain: it is the frame the first present
+            // writes, so the request goes in now and the path is cleared only once it is handed over.
+            java.nio.file.Path held = this.pendingPresentedDumpBeforeSwapchain;
+            this.pendingPresentedDumpBeforeSwapchain = null;
+            this.presentedDumpPath = held;
+            this.swapchain.requestPresentedImageDump(held);
+            System.out.println("[Celtium] CELTIUM_PRESENTED_DUMP_HELD path=" + held
+                    + " (requested before the swapchain existed; forwarded at creation)");
+        }
         if (this.swapchain == null) {
+            if (this.pendingPresentedDumpBeforeSwapchain != null) {
+                // Not dropped: the request stays held and is named, so the next creation attempt can still serve it and
+                // a leg can tell "no frame was presented" from "the request was thrown away".
+                record("presented-image dump held across a failed swapchain creation: "
+                        + this.pendingPresentedDumpBeforeSwapchain + " (" + reasons + ")");
+            }
             record("swapchain unavailable at surface and swapchain creation: " + reasons);
             // BH-19 evidence: this list is what names *why* the swapchain was refused - the present-support contract,
             // a surface usage/alpha/format refusal, or a vkCreateSwapchainKHR result. record()'s line reaches the
@@ -11356,7 +11383,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
         if (this.swapchain == null) {
-            return false;
+            // The loading phase's request: accepted and held, because the swapchain is created on the present path and
+            // the splash's own last updateDisplay() is this run's first present. Returning false here made the fixture
+            // record "could not be requested" for a frame that was about to be presented - the request was possible,
+            // it just had no object to write through yet.
+            this.pendingPresentedDumpBeforeSwapchain = path;
+            this.presentedImageDumpRequested = true;
+            return true;
         }
         this.swapchain.requestPresentedImageDump(path);
         this.presentedDumpPath = path;

@@ -74,13 +74,20 @@ public class MinecraftMixin {
      * world legs see the same single renderer as before because this is the same latch the tick path uses.
      */
     /**
-     * Requests the presented dump for the loading phase, from the splash's own return.
+     * Requests the presented dump for the loading phase, from the splash's own <em>head</em>.
      * <p>
      * No existing switch can land in this window: the tick-keyed dumps need a world or the main menu, and the loading
      * phase runs inside {@code Minecraft.startGame} before the first client tick
      * ({@code Minecraft.java:517} -> {@code SplashProgress.drawVanillaScreen} -> {@code drawSplashScreen}). The fixture
      * is a separate mod jar, so the call is reflective and silent when it is absent; the stage name is {@code loading}
      * and the request is latched once inside the fixture.
+     * <p>
+     * <b>HEAD, not RETURN, and that is the whole measurement.</b> The swapchain is created lazily on the present path,
+     * so a request made at the splash's return - after its last {@code updateDisplay()} has already presented - has no
+     * swapchain to write through and was refused. Requested at the head instead, the request is pending when that first
+     * present runs, and the frame it writes is the splash's own. Measured before this change: the request line existed
+     * with no PNG beside it ({@code pictureRequested_loading … after 0 presented frames}); the backend now holds such a
+     * request instead of refusing it.
      */
     /**
      * The control anchor: {@code startGame} runs on every launch, so a leg that shows no splash line at all can be
@@ -92,7 +99,7 @@ public class MinecraftMixin {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");
     }
 
-    @Inject(method = "drawSplashScreen", at = @At("RETURN"), require = 0)
+    @Inject(method = "drawSplashScreen", at = @At("HEAD"), require = 0)
     private void celtium$dumpLoadingFrame(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK drawSplashScreen=true");
         try {
