@@ -6938,7 +6938,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // The splash's own frame image, once, before its first present: the launch splash is a single
                     // colour on screen, and a colour read of the image the present serves is what separates "the
                     // logo quad never reached the image" from "the image is right and the present serves white".
-                    if (!this.splashProbeDone && this.celtium$presentCount >= 1 && this.celtium$presentCount <= 3
+                    if (!this.splashProbeDone && this.celtium$presentCount >= 1
                             && this.frameTarget.colorImage() != 0L
                             && System.getProperty("celtium.vulkan.mirrorDump") != null) {
                         this.splashProbeDone = true;
@@ -6966,6 +6966,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 // says frame-image, pairLabelForIdentity says default-pair). Task-76 rules the ordering
                                 // and the replacement-drop explanations out and leaves exactly this question, so the
                                 // probe reads all three images and lets the pictures answer it.
+                                // The handles, on one line: the published image the composite samples for GL name 6 and
+                                // the pair the splash actually drew into. If they differ, the sample is stale by number
+                                // rather than by symptom, and that is the round-232 suspicion stated as a fact.
+                                GllessFrameTarget handles = offTargetTarget();
+                                Long publishedSix = this.publishedFrameImages.get(Integer.valueOf(6));
+                                record("CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
+                                        + " publishedName6=" + (publishedSix == null ? "none"
+                                                : "0x" + Long.toHexString(publishedSix.longValue()))
+                                        + " chainPair=" + (handles == null ? "none"
+                                                : "0x" + Long.toHexString(handles.chainPairColorImage()))
+                                        + " defaultPair=" + (handles == null ? "none"
+                                                : "0x" + Long.toHexString(handles.offTargetColorImage()))
+                                        + " frameImage=0x" + Long.toHexString(this.frameTarget.colorImage())
+                                        + " publishedNames=" + this.publishedFrameImages.keySet());
                                 GllessFrameTarget defaultPairTarget = offTargetTarget();
                                 long defaultPairImage = defaultPairTarget == null ? 0L
                                         : defaultPairTarget.offTargetColorImage();
