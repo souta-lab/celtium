@@ -119,6 +119,18 @@ defect, and the defect is in the shared font path, not in HEI's rendering. It is
 "HEI verified" and must not be read as one: the acceptance gate for this row is the tooltip crop, and the
 tooltip crop is the thing that fails.
 
+**Round 168 additions, kept separate from the measurement above:**
+* **The user reports HEI works in their own session** ("HEI動作確認済み"). That is a user observation on a
+  different build and a different scene from the legs below, so it is recorded as such: it does not close this
+  row, and it does not contradict the tooltip measurement either - a tooltip that loses part of its main pass is
+  still a working mod screen to a player who is not looking for it.
+* **Re-measured on the merged build** (jar `7e7a16597d1d73a0`, which includes the font-batching PR #12, fixture
+  `5eb174f084d525c7`): the tooltip reads **`shadow_px=797 shadow_without_main=585 (73.4%)`** - pixel-identical
+  to the candidate measured before #12 - and the search box stays at `675 / 0`. So #12 neither fixed nor
+  regressed this defect; the instrument needs the tooltip's own colours to reproduce the numbers
+  (`--main 255,255,255 --shadow 63,63,63 --scale 3`), which are recorded here because the earlier entry did not
+  name them and a reader cannot reproduce the row without them.
+
 ## What is actually verified today
 
 Measured on the runs cited in `docs/plan.md` and `docs/scope-and-limits.md`; the mod set is what the harness puts in the
