@@ -76,6 +76,32 @@ P1 は通常描画、状態、資源寿命、長時間の継続動作に関わ�
 
 これは24個の独立した GPU 不具合を実機再現した表ではない。B03〜B07 / B11〜B13 には非同期 ownership の共通根因があり、まとめて契約を修復できる。以前の24項目 ledger とこの表の ID は別物である。
 
+## 2a. 既存 BH-01〜37 の引継ぎと作業入口（2026-10-12 20:06 JST）
+
+**監査を読む入口は本書。現在の担当・優先順・受入の更新先は docs/plan.md。**
+古い監査を別々の未処理キューとして実行しない。本書の B01〜B24 と下表で重複をまとめ、同じ根因・所有契約を一つの作業単位として扱う。
+docs/history/2026-10-11-code-bughunt.md は起票時の根拠。冒頭の件数も現在の判定ではない。
+本表は修正履歴を照合した引継ぎであり、37件全部を最新HEADで再受入したとの主張ではない。以後の修正はcommit・受入証拠とともにplanへ反映し、本書の固定時点と区別する。
+
+| 既存ID | 引継ぎ判定 | 今回の監査との対応・残る作業 |
+| --- | --- | --- |
+| BH-01, 02, 03, 04, 05, 06, 07, 08, 10, 11, 12, 13, 15, 16, 19, 23, 25, 27, 28, 29, 30, 32, 34, 36, 37 | 修正・受入の履歴あり（各件の受入範囲は異なる） | 旧指摘をそのまま再実装しない。BH-27の待ち削減はB03〜B07等のpending ownershipを免除しない。BH-28のarena導入後の穴はB05/B15。BH-36のindirect実装後の穴はB07（既定off）。BH-15の安全な失敗処理を全FBO対応完了としない。 |
+| BH-09 | clip経路の受入あり | 5cc4002f0 / 5586370ff。強制viewportでscissorCapturedGroups=63。旧「受入未取得」は失効。ただしB21のquery/save-restore不一致は別契約。 |
+| BH-18 | create引数の修正・CPU契約受入あり | 0a8b8d253。surface条件の合成入力を検査。未行使のrecreate条件やB12のacquire semaphore寿命まで受入済みとしない。 |
+| BH-35 | 広告境界の修正・受入記録あり | 4fb0b581b。広告をGL3.0 / GLSL1.20等の列挙した下限へ変更。全GL機能や全mod互換の実装証明ではない。B21のquery値の意味は別。 |
+| BH-14 | 未完の引継ぎ | 非main FBOごとのidentity / generation / size契約。B10のpost resizeも合わせ、main / owned / adopted targetの所有境界を整合する。B10だけ直してBH-14全部を閉じない。 |
+| BH-17 | 未完の引継ぎ | 128B push-constant baseline。通常immediateが208B以上を要求する状態と、postのUBO化を区別。本書の能力・配布条件も参照。 |
+| BH-20 | 部分修正・残りあり | acc99fe3cのpipeline rollbackはfault実測済み。未解決と一括表示しない。PostChain / Targetの残りはB20へ統合。 |
+| BH-21 | 受入完了を確認できていない | world destroyのCPU/off-heap/staging所有とworld-switch/reloadのcreated/released census。今ある資源解放を保持し、資源分類と不足分を確認する。 |
+| BH-22 | 部分修正・残りあり | 退役とcensusは追加済み。継続再利用・FIFO producer・generation churnの枯渇対策はB13へ統合。 |
+| BH-24 | 未完の引継ぎ | UBO交換のtransactionと旧bufferのconsumer完了までの保持。B03/B04と一緒に修復するが、毎recordingのrange再利用とgrow失敗rollbackは別の受入条件。 |
+| BH-26 | 未完の引継ぎ | 未submit / discard時のlayout・first clearのpending/confirmed契約。新Bの番号だけではこの要件を代替しない。 |
+| BH-31 | 判定欠落・未解決扱いで保持 | 非一様scale / shear時のnormal lighting。旧解決一覧・残件一覧の両方から抜けていた。既存修正と原典のnormal matrixを照合し、数値対照・画像受入が得られるまで閉じない。 |
+| BH-33 | 設定側のみ対処・描画機能未完 | fade未対応を有効に見せない対応は保持。fadeそのものの移植・設定連動・画像受入は別に必要。 |
+
+**作業順**: 既知P0のpanorama回帰を分離して修復 → B01/B02/B14のitem cache契約 → B03〜B07/B11〜B13/B15とBH-24/26の非同期所有 → B08/B09/B10/B20とBH-14/20/21のtarget・copy・寿命 → BH-17/31/33および互換・計器の残り → 正しい画像を維持した性能改善・主要content mod受入。
+同じ巨大backendの並行編集を増やさず、担当ファイルとinterfaceを決めて進める。未受入のdirty修正を完了へ繰り上げない。
+
 ## 3. 最優先: PR #21 の item cache
 
 ### B01 — 使用範囲を確定しないまま容量全体を保存

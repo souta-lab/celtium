@@ -54,6 +54,7 @@ ruled out.
 
 ## Where things are
 
+- `docs/audit-2026-10-12-maximum.md` — audit entry point; section 2a reconciles all legacy BH IDs with the new findings. Do not treat historical audits as independent pending queues.
 - `docs/plan.md` — the single place the current state, priorities and acceptance live,
   including a header table that is kept current. Corrections are made in place.
 - `docs/goal.md` — the objective, in sync with the goal the session runs under.
