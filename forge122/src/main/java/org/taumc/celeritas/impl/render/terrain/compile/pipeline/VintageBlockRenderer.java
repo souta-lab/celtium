@@ -3,7 +3,6 @@ package org.taumc.celeritas.impl.render.terrain.compile.pipeline;
 import net.minecraft.block.Block;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.BlockModelShapes;
 import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.color.IBlockColor;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -69,7 +68,6 @@ public class VintageBlockRenderer {
             System.out.println(text);
         }
     }
-    private final BlockModelShapes shapes;
     private final VintageChunkBuildContext context;
     private final VertexBufferConsumer consumer;
     private final LightPipelineProvider lighters;
@@ -90,7 +88,6 @@ public class VintageBlockRenderer {
 
 
     public VintageBlockRenderer(VintageChunkBuildContext context, LightDataCache cache) {
-        this.shapes = Minecraft.getMinecraft().getBlockRendererDispatcher().getBlockModelShapes();
         this.consumer = new VertexBufferConsumer();
         this.context = context;
         this.lighters = new LightPipelineProvider(cache, VintageDiffuseProvider.INSTANCE, true);
@@ -110,9 +107,19 @@ public class VintageBlockRenderer {
         this.analyzer.setDefaultRenderingFlags(defaultFlags);
 
         if (blockAccess.getWorldType() != WorldType.DEBUG_ALL_BLOCK_STATES) {
-            state = state.getActualState(blockAccess, pos);
+            // B23: vanilla tolerates a throwing getActualState (BlockRendererDispatcher.java:65-72 -
+            // catches Exception and keeps the un-extended state). The fast path must be able to run
+            // where vanilla could, so the same guard applies here.
+            try {
+                state = state.getActualState(blockAccess, pos);
+            } catch (Exception ignored) {
+                ;
+            }
         }
-        var model = this.shapes.getModelForState(state);
+        // B23: the model is fetched through the dispatcher's entry, not the shapes' own - that is the
+        // call site mods intercept (BlockRendererDispatcher.getModelForState), and going straight to
+        // blockModelShapes skipped every hook installed there for an identical vanilla result.
+        var model = Minecraft.getMinecraft().getBlockRendererDispatcher().getModelForState(state);
         state = state.getBlock().getExtendedState(state, blockAccess, pos);
         this.currentState = state;
         this.currentBlockAccess = blockAccess;
