@@ -61,6 +61,18 @@ is exactly what that record states ("the chat's texel check is not established (
 item-icon false positive), and the upstream GL reference finds none either. The user's crop is therefore not a
 picture the current tree draws.
 
+The two strongest controls are from **after** the user's jar (their instance's jar is 10:32, the report 10:38), so
+the comparison is not against an old tree:
+
+| frame (run) | time | shadow px | shadow without main |
+|---|---|---|---|
+| `fast-f3off` `celtium-presented-world-run-193464c672f54-kept.png` (startup chat, whole frame) | 10-12 10:49 | **35208** | **0 (0.0 %)** |
+| `bs44-texenv` `celtium-presented-world-run-1949a4e9a58f6-kept.png` (chat + the F3 chart) | 10-12 11:13 | 28672 | 238 (0.8 %), **all of them in x 276..821 / y 343..533** |
+
+The 238 in the newest frame are not text: that rectangle is the F3 overlay's frame-time chart, whose bars are
+`(0,255,0)`/`(255,255,0)`/`(0,0,255)` over dark panel pixels - the chart's own `(63,63,63)` pixels have no glyph
+above-left of them. Every one of the 35,208 chat glyph-shadow pixels in the 10:49 frame has its main pixel.
+
 Two more facts from the user's own logs (their instance jar md5 `2747418bc071642e2ed2fd0352b15bd2`, which
 *contains* the strip separators, the coalesced run and the light-map rule):
 
