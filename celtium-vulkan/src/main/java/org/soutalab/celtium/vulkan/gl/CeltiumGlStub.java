@@ -11,6 +11,7 @@ import org.lwjgl.system.APIUtil;
 import org.lwjgl.system.Callback;
 import org.lwjgl.system.FunctionProvider;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.system.libffi.FFICIF;
 import org.lwjgl.system.libffi.FFIType;
 import org.lwjgl.system.libffi.LibFFI;
 
@@ -1160,6 +1161,15 @@ public final class CeltiumGlStub implements FunctionProvider {
             System.out.println("[GLSTUB] addressFor " + name + " id=" + id);
         }
         byte[] args = id >= 0 ? TABLE.get(id).args : new byte[0];
+        if (celtium$ffmCompatible(args)) {
+            Long stub = this.ffmAddresses.computeIfAbsent(name, n -> {
+                long address = celtium$ffmStub(id >= 0 ? id : -1, args);
+                return address != 0 ? Long.valueOf(address) : null;
+            });
+            if (stub != null) {
+                return stub.longValue();
+            }
+        }
         if (args.length > 0 && args[0] == A_DOUBLE) {
             return this.trampolines.computeIfAbsent(name, n -> {
                 CeltiumGlDoubleTrampoline trampoline = new CeltiumGlDoubleTrampoline(id, this);
@@ -1180,6 +1190,130 @@ public final class CeltiumGlStub implements FunctionProvider {
             return trampoline;
         }).address();
     }
+
+    // ---- FFM upcalls -----------------------------------------------------------------
+
+    /**
+     * {@code -Dceltium.glstub.ffm=false} forces every trampoline onto the libffi path. The default is FFM:
+     * LWJGL's runtime binder turns the same SAM + CIF into a {@code java.lang.foreign} upcall, which the steady
+     * JFR showed paying a fraction of the legacy path's libffi closure plus per-argument pointer dereferences.
+     */
+    private static final boolean FFM_UPCALLS = !"false".equals(System.getProperty("celtium.glstub.ffm", "true"));
+
+    /**
+     * {@return whether the signature can ride the FFM upcall}: the FFM path shares the uniform long-argument SAM, so
+     * it can only carry calls whose every argument the ABI puts in a general-purpose register. Float and double
+     * arguments live in the SSE registers - a long-typed parameter reads the wrong slot (the glClearColor colour that
+     * arrived as -1.6e29 before the CIF declared the floats) - and those stay on the libffi trampolines whose own
+     * CIFs marshal them. NOOP rows are exempt anyway: they discard every argument, so their declared
+     * all-pointer signature already reads general-purpose registers correctly.
+     */
+    private static boolean celtium$ffmCompatible(byte[] args) {
+        if (!FFM_UPCALLS) {
+            return false;
+        }
+        for (byte arg : args) {
+            if (arg == A_FLOAT || arg == A_DOUBLE) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Reflective handles into {@code org.lwjgl.system.ffm}: present on JDK 25+, absent on older runtimes. */
+    private static final class FfmRuntime {
+        private java.lang.reflect.Method ffmUpcall;
+        private java.lang.reflect.Method binderAllocate;
+        private java.lang.reflect.Method segmentAddress;
+        private Object arena;
+        private Throwable failure;
+    }
+
+    private static volatile FfmRuntime ffmRuntime;
+
+    private static FfmRuntime celtium$ffmRuntime() {
+        FfmRuntime runtime = ffmRuntime;
+        if (runtime == null) {
+            synchronized (CeltiumGlStub.class) {
+                runtime = ffmRuntime;
+                if (runtime == null) {
+                    runtime = new FfmRuntime();
+                    try {
+                        Class<?> ffmClass = Class.forName("org.lwjgl.system.ffm.FFM");
+                        Class<?> arenaClass = Class.forName("java.lang.foreign.Arena");
+                        Class<?> segmentClass = Class.forName("java.lang.foreign.MemorySegment");
+                        runtime.arena = arenaClass.getMethod("ofAuto").invoke(null);
+                        runtime.segmentAddress = segmentClass.getMethod("address");
+                        runtime.ffmUpcall = ffmClass.getMethod("ffmUpcall",
+                                Class.class, org.lwjgl.system.libffi.FFICIF.class);
+                        runtime.binderAllocate = Class.forName("org.lwjgl.system.ffm.UpcallBinder")
+                                .getMethod("allocate", arenaClass, Object.class);
+                        // The binder generates its upcall class under a per-package configuration: nothing is
+                        // registered for our package until this runs, and the unconfigured call fails with
+                        // "No FFMConfig registered". One default config is enough - the stub needs no symbol
+                        // lookup, no tracing and no nullable mapping.
+                        Object builder = ffmClass.getMethod("ffmConfigBuilder",
+                                java.lang.invoke.MethodHandles.Lookup.class)
+                                .invoke(null, java.lang.invoke.MethodHandles.lookup());
+                        Object config = builder.getClass().getMethod("build").invoke(builder);
+                        ffmClass.getMethod("ffmConfig", Package.class,
+                                Class.forName("org.lwjgl.system.ffm.FFMConfig"))
+                                .invoke(null, CeltiumGlStub.class.getPackage(), config);
+                    } catch (Throwable error) {
+                        runtime.failure = error;
+                        System.out.println("[Celtium] GLSTUB ffm runtime unavailable: " + error);
+                    }
+                    ffmRuntime = runtime;
+                }
+            }
+        }
+        return runtime;
+    }
+
+    /**
+     * Creates one FFM upcall for {@code functionId} with the signature's own CIF and returns its callable address,
+     * or 0 when the runtime or the binder refused - the caller then takes the libffi trampoline for the same name.
+     * The SAM instance, the CIF and the returned segment all stay referenced for the stub's lifetime.
+     */
+    private long celtium$ffmStub(int functionId, byte[] args) {
+        FfmRuntime runtime = celtium$ffmRuntime();
+        if (runtime == null || runtime.failure != null) {
+            return 0L;
+        }
+        try {
+            int id = functionId;
+            // dispatch() fills the shared argument scratch - allocating a fresh array per call here was exactly the
+            // ~4 MB/frame of garbage the scratch exists to avoid.
+            GlTrampolineI callback = (a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11) ->
+                    dispatch(id, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
+            Object binder = runtime.ffmUpcall.invoke(null, GlTrampolineI.class, cifFor(args));
+            Object segment = runtime.binderAllocate.invoke(binder, runtime.arena, callback);
+            long address = ((Long) runtime.segmentAddress.invoke(segment)).longValue();
+            if (ENTRY_LOGGED.compareAndSet(false, true)) {
+                System.out.println("[Celtium] GLSTUB entry=ffm (the java.lang.foreign upcall)");
+            }
+            this.ffmOwned.add(segment);
+            this.ffmOwned.add(callback);
+            return address;
+        } catch (Throwable error) {
+            if (runtime.failure == null) {
+                runtime.failure = error;
+            }
+            this.ffmFailures++;
+            if (this.ffmFailures <= 3) {
+                Throwable cause = error.getCause() != null ? error.getCause() : error;
+                System.out.println("[Celtium] GLSTUB ffmStub failed for functionId=" + functionId + ": "
+                        + cause.getClass().getName() + " " + cause.getMessage());
+            }
+            return 0L;
+        }
+    }
+
+    /** Function-name -> callable address for the FFM stubs; misses fall through to the libffi trampolines. */
+    private final Map<String, Long> ffmAddresses = new HashMap<>();
+    /** Objects whose lifetime pins the FFM stubs: binder segments and their SAM instances. */
+    private final List<Object> ffmOwned = new ArrayList<>();
+    private int ffmFailures;
 
     // ---- trampoline plumbing ---------------------------------------------------------
 
@@ -1225,22 +1359,25 @@ public final class CeltiumGlStub implements FunctionProvider {
         for (byte arg : args) {
             key.append((char) ('a' + arg));
         }
-        return SIGNATURE_DESCRIPTORS.computeIfAbsent(key.toString(), ignored -> {
-            java.util.List<FFIType> types = new java.util.ArrayList<FFIType>(SLOTS);
-            for (byte arg : args) {
-                if (types.size() == SLOTS) {
-                    break;
-                }
-                types.add(ffiTypeFor(arg));
+        return SIGNATURE_DESCRIPTORS.computeIfAbsent(key.toString(), ignored ->
+                new Callback.Descriptor(java.lang.invoke.MethodHandles.lookup(), cifFor(args)));
+    }
+
+    /** The signature's call interface itself, so the FFM binder can see the CIF the Callback descriptor wraps. */
+    private static FFICIF cifFor(byte[] args) {
+        java.util.List<FFIType> types = new java.util.ArrayList<FFIType>(SLOTS);
+        for (byte arg : args) {
+            if (types.size() == SLOTS) {
+                break;
             }
-            // Padded to the uniform arity: the dispatcher ignores the slots past the declared arguments, and the
-            // native side reads only what the caller passed.
-            while (types.size() < SLOTS) {
-                types.add(ffi_type_pointer);
-            }
-            return new Callback.Descriptor(java.lang.invoke.MethodHandles.lookup(),
-                    apiCreateCIF(ffi_type_pointer, types.toArray(new FFIType[0])));
-        });
+            types.add(ffiTypeFor(arg));
+        }
+        // Padded to the uniform arity: the dispatcher ignores the slots past the declared arguments, and the
+        // native side reads only what the caller passed.
+        while (types.size() < SLOTS) {
+            types.add(ffi_type_pointer);
+        }
+        return apiCreateCIF(ffi_type_pointer, types.toArray(new FFIType[0]));
     }
 
     private static FFIType ffiTypeFor(byte arg) {
