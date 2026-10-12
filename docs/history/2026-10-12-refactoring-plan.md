@@ -1,5 +1,27 @@
 # Celtium refactoring plan
 
+> **STATUS (2026-10-12, moved to docs/history/):** this plan is a design and migration document, not a completion
+> claim. What actually landed on main, in the order the plan's own stage table defines:
+>
+> | stage | state |
+> |---|---|
+> | R0 baseline freeze | done: HEAD/jar/fixture/flags recorded in docs/plan.md |
+> | R1a `TextureCopyService` | done and wired |
+> | R1b `PublishedFrameTextures` | done and wired (census, counters, accessors; `CELTIUM_CPU_CONTRACT PASS`) |
+> | R1c `BackendReport` | done and wired (the verification line's output contract; counters stay in the backend) |
+> | R2 per-domain statistics | **not complete.** Attempted twice: the first application used a line-range map against a file my own earlier wiring had shifted and produced uncompilable code (reverted); the second anchored on the method and produced a clean call sequence, but the seven classes reference backend members they were never given, so they cannot compile without a host interface the plan's section 6.1 warns against inventing in bulk. The classes and the run/line map are parked in `docs/history/refactoring-r2-classes/` and `docs/history/2026-10-12-r2-wiring-map.md`; the verification line is back to its own expression, which is what leg records expect. |
+> | R3a `ModelGeometryCache` | class written (319 lines, table + builder + lending predicate + counters); **not wired** - wiring it is a mechanical pass now that the tree is green |
+> | R3b `FontBatch` | class written with a CPU contract check (30 checks, retention proof, summary-key invariance); **not wired** - it needs the `FontRunState`/`RunSink` host implementation and its call sites |
+> | R4 `TerrainRenderer` | delegation list and the three interface points agreed; **not written** |
+> | R5 `RenderTargetRegistry` | target generation and `frameTargetKnown` wired; pair handles, identity/census and `framebufferReplacing` were wired and then reverted with the R2 attempt, so they are unwired again; the pair clear decisions need `pairClearNeeded`'s semantics read first |
+> | R6 `FrameSubmissionScheduler` | class written and type-checked; **not wired** - and the slot counters have an ownership conflict with R2's `SubmissionStatistics` to settle first |
+> | R7 root/`FrameCoordinator`, R8 cleanup | not started |
+>
+> **Method lesson, recorded because it cost two attempts:** a line-range map is only valid for the revision it was
+> measured on. Wiring has to anchor on text, and the tree has to be built before the next stage starts - a stage that
+> cannot compile blocks every other unit, which is what happened here twice.
+
+
 **巨大backendを、Minecraftの描画単位と資源所有に沿って段階的に分ける。既に成立したGL-less描画、CeleritasのCPUエンジン、直近の非同期提出とGUI batch統合を維持し、各領域を別々に改良できる構造にする。**
 
 作成日: 2026-10-12 JST。これは既存コードを読んだ設計・移行計画であり、分割実装や新しいGPU受入の完了報告ではない。
