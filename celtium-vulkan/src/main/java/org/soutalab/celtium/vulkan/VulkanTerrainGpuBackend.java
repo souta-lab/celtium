@@ -302,6 +302,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The lighting generation the open group was created under; see {@code VulkanGlState.lightGeneration()}. */
     private long currentGroupLightGeneration;
     /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
+    /** Set once the counter summary has been printed, so a second world teardown does not repeat it. */
+    private boolean celtium$summaryPrinted;
+
     private long scissorCapturedGroups;
     /**
      * Groups whose clip came from the live record because the group opened with the scissor disabled.
@@ -7704,6 +7707,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " alphaTestDisabledGroups=" + this.alphaTestDisabledGroups
                 + " lastAlphaFunc=" + this.lastAlphaFunc
                 + " alphaSelectorCounts=" + alphaSelectorSummary()
+                + " samplerFilters=" + VulkanGlTexture.samplerFilterCensus()
                 + " lastAlphaPushRef=" + round3(this.lastAlphaPushReference)
                 + " alphaReferenceValues=" + alphaReferenceValueSummary()
                 + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
@@ -8273,6 +8277,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * about a world, because the frame target survives one.
      */
     private void celtium$releaseWorldResources() {
+        // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
+        // the Celeritas section of the overlay is drawn - a leg with F3 requested but no such line printed every counter
+        // as absent, which reads exactly like a counter that never fired. World teardown happens at least once per leg
+        // (the fixture leaves the world before exiting), so this makes the summary reachable without depending on the
+        // overlay, and prints once so a leg that tears down twice does not repeat it.
+        if (!this.celtium$summaryPrinted) {
+            this.celtium$summaryPrinted = true;
+            System.out.println("[Celtium] CELTIUM_VERIFY " + this.verificationSummary());
+        }
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
         // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
         // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a
