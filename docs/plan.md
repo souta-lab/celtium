@@ -393,6 +393,17 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.411 **round 212: R7 の `FrameCoordinator` を試作（30エラー残で revert）— 次回のための完全な下ごしらえを記録**
+
+- **試作内容**: `submitCommands(boolean)`（102行 ✓）＋ `submitSignalOnly()`（42行 ✓）を `FrameCoordinator` へ移し、backend の状態は **`Host` interface（18メンバ）** で読む形 ✓（`TerrainRenderer` と同じ「呼び戻さない」契約 ✓）。実測依存は `commandBuffer`・`commandState`・`context`・`fence`・`frameArena`・`frameId`・`frameSlot`・`frameSubmitReachedQueue`・`frameTarget`・`gpuStalled`・`immediateStatistics`・`immediateWindowBusy`・`lastFrameReachedQueue`・`recordedImmediateGroups`・`retiredImmediateGroups`・`scheduler`・`submissionPending`・`submissionStatistics` ✓。
+- **エラーは 68 → 30 まで減少** ✓ したが**セッション内で収束せず revert** ✓（build 緑に復帰 ✓）。残っていた形は記録済み ✓:
+  1. **`FAIL_SUBMITS_REMAINING` は `static final` ではない** ✗（`private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();` ✓ — `static final` を前提にした抽出では拾えない ✓）
+  2. **Host の型**: `frameTarget()` は `GllessFrameTarget` ✓（`VulkanFrameTarget` ではない ✗）、group 列は `List<ImmediateGroup>` ✓、`commandState()` は `VulkanCommandBufferState` ✓
+  3. **imports**: `LongBuffer`・`IntBuffer`・`VkSubmitInfo`・`VK_PIPELINE_STAGE_ALL_COMMANDS_BIT` ✓
+  4. **`check(int, String)`**（`VulkanTerrainGpuBackend:13148` ✓）は helper ✓ → Host 経由か複製 ✓
+  5. 失敗注入カウンタ `failImmediateSubmits` ✓ は coordinator 側に持つ ✓
+- **次回**: 上記5点を最初から入れて1回で通す ✓（`FrameCoordinator.java` の骨格・Host の18メンバ・移す2メソッドは確定済み ✓）。**R7 の残り**（`VulkanRenderer` root・window/world 生涯の分離・cast 除去 ✓）はこの後 ✓。
+
 ## 0.410 **round 211: R4 の terrain 所有分を完了（backend 14,493 → 13,300行・`TerrainRenderer` 1,011行・build 緑）**
 
 - **移動済み（`TerrainRenderer` が所有 ✓）**: region arena 群・failed-upload ledger・BH-25 counter・`resourcesFor`/`indexArena`/`resourcesIfPresent`/`releaseAll` ✓／`bindVertexBuffer`/`bindIndexBuffer`（command buffer は引数 ✓）／**terrain pipeline cache ＋ `pipelineFor` ＋ release** ✓／**indirect batch 一式**（`tryIndirectBatch`・`ensureIndirectBuffer`・indirect buffer＋growth・9 counter・`commandHash` ✓）／**uniform ring ＋ `writeUniforms`** ✓／**`uploadRegion` ＋ 頂点色サンプラ・first-vertex 診断・colour histogram・upload byte counter** ✓。
