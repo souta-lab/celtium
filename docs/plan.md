@@ -339,6 +339,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.357 **round 164: 履歴からユーザの実画面スクリーンショットを削除（`git filter-repo`・force-push 済み）**
+
+- **ユーザの指示**: `docs/history/evidence/compositor-output-2026-10-11/desktop-real-output-HDMI-A-4.png`（**687,829 bytes**）を
+  **GitHub からも履歴からも消す**（実コンポジタ出力＝ユーザの実画面であり、残すべきでない）。
+- **実施（手順を記録する）**:
+  1. **バックアップ**: `git bundle create /tmp/celtium-before-purge.bundle --all`（**26,583,248 bytes**・4916 commit）
+  2. `pip install --break-system-packages git-filter-repo`（同梱の wrapper は module 不在で動かなかった）
+  3. `git filter-repo --path <file> --invert-paths --force` → **0.48 s で新履歴**・**4916 commit 維持**
+  4. `git remote add origin …`（filter-repo は remote を外す）→ **`git push --force origin main`** ＝ `+ 770620c0c...c9e94bb9e (forced update)`
+  5. `git reflog expire --expire=now --all`・`.git/filter-repo` 削除・**`git gc --prune=now`**
+- **検証**: **`git log --all -- <file>` = 0**・**worktree から消滅**・**旧 commit `1e08cfd60` は prune 済み**（`git cat-file -e` が失敗）。
+- **重要な副作用（記録）**: **この rewrite は全 commit のハッシュを変えた**（ファイルが初期に導入されたため）。
+  ＝**本節より前の docs にある commit ハッシュ（`218ea2120`・`7117bbdf3` 等）は rewrite 前の履歴を指す**。
+  **バックアップ bundle が rewrite 前の全履歴を持つ**ので、旧ハッシュの照合はそれで行う。**今後の commit は新ハッシュで記録する**。
+- **限界（正直に）**: **GitHub 側は force-push 後も旧 object をしばらく保持しうる**（旧 SHA を直接指定すれば到達可能な期間がある）。
+  ＝**「消えた」と断言しない**。恒久的な削除が要るなら **GitHub Support に cached view の purge を依頼**する必要がある。
+- **他担当への影響**: 共有 working tree なので **未コミットの作業は無事**（rewrite 時点で dirty 0 を確認）。**次の commit は `c9e94bb9e` の上に載る**。
+
 ## 0.356 **round 163: BH-09 の受入は fixture gap で塞がっている（`GuiSlot` 系画面を開く knob が無い）**
 
 - **確認**: `ValidationClient` の knob を全部読んだが、**任意の `GuiScreen` を開く経路が無い**。
