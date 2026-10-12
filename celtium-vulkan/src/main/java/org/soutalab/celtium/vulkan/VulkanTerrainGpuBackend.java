@@ -11674,6 +11674,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 glless.ensureOffTarget(this.targetWidth, this.targetHeight);
                 return glless.chainPairColorImage();
             }
+            if ("default-pair".equals(route)) {
+                // The symmetric half of the rule above, and its absence is what the panorama measured. The binding is
+                // the default framebuffer (identity 0), whose draws the pass below sends to the default pair - so a
+                // read of GL name 0 is a read of the default pair, and the label the binding already carries says so.
+                // Without this branch the resolution fell through to the accept-time identity, which is a different
+                // fact: `lastDrawnOffTargetIdentity` records which target a batch was *accepted* for (`:5744`), while
+                // `passAttachedColorImage` records which image the pass *attached* (`:7539`/`:7563`). Vanilla's panorama
+                // is the case that separates them - `GuiMainMenu.renderSkybox` unbinds the main framebuffer, draws the
+                // cube faces into it at a 256x256 viewport, and `rotateAndBlurSkybox` then copies 256x256 of it back
+                // into the panorama texture (`GuiMainMenu.java:483`) - and it measured `readFbo=0` with
+                // `passAttached=defaultPair` while `readImage` came back as the chain pair:
+                // `CELTIUM_TEX_COPY_SERVED dest=21 256x256 readFbo=0 mean=255,255,255 opaque=65536/65536 nonWhite=0`.
+                // The gate is therefore the binding's own route, and the last-drawn identity is left as the last
+                // resort below rather than the second guess.
+                this.readResolvedFromLastDrawnTarget++;
+                glless.ensureOffTarget(this.targetWidth, this.targetHeight);
+                return glless.offTargetColorImage();
+            }
             if (this.lastDrawnOffTargetIdentity != 0L && this.lastDrawnOffTargetFrame == this.frameId) {
                 // The copy reads name 0 and the default pair is bound, but this frame's non-main content was drawn
                 // into this identity's pair: that image is what the copy is of. Measured on the menu, where the

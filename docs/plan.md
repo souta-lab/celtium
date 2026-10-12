@@ -387,6 +387,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.366 **round 173: パノラマのコピーが「別の画像」と「別の行」を読んでいた — read解決の非対称と Y 反転**
+
+- **実測（leg `r172b-panorama-menu`・jar `3d6ca14b0e76aebc`・fixture `3a652903b6edd9d1`・AMD RX 6400・`menuHoldTicks=60`）**: `fixtureStatus=PASSED`・`validationClean=true`・`validationMessageCount=0`・exit 0。
+- **旧 leg（`splashdrop3`・HEAD `5a8ee96af`）の白の説明がついた**: コピー行は `readImage=chainPair` だが `passAttached=defaultPair` で食い違っていた。
+  `CELTIUM_DRAW_SITE #1 frame=0 target=565929989 passImage=<chainPair> vertices=8 indices=12 batches=2` ＝**splash 自身の2 quad が chain pair に行き**、
+  `lastDrawnOffTargetIdentity`（`:5744` の **accept 時**の代入）がその splash FBO の identity を指していたため、read 解決（`:11677-11692`）が
+  **splash の白キャンバス（chain pair）を読んでいた**。`opaque=65536/65536` はその白。
+- **修正**: `routeLabelForBinding` の結果に対する分岐が **`chain-pair` 側にしか無かった**。対称の **`default-pair` 分岐**を足し、binding 自身の route で決めるようにした
+  （identity 0 = default pair、それ以外の非 main = chain pair。`FramebufferMixin:157` が `unbindFramebuffer` で `bindFramebuffer(0L,false)` を報告するので identity 0 が default framebuffer）。
+  結果: **`readImage == lastDrawnImage == passAttached`** に一致（`readResolvedFromLastDrawnTarget=294`）。
+- **残る欠陥（これがパノラマの白の本体）**: `celtium$readImageRectangle`（`:11749`）が `copy.get(0).imageOffset().set(x, y, 0)`（`:11799`）と
+  **GL の y を Vulkan の imageOffset にそのまま渡している**。GL の `glCopyTexSubImage2D` の y は**フレームバッファ下端原点**、Vulkan の imageOffset は**上端原点**なので、
+  `y=0` の読みは**上 256 行**（＝クリア色。`mean=255,255,255 opaque=0/65536 nonWhite=0`）になる。panorama の faces は `viewport(0,0,256,256)`＝GL の**下** 256 行に描かれている。
+  正しい変換は「読む行を `[H-y-height .. H-1-y]` にし、ミラーの行順を反転して書く」（GL は framebuffer の下から `yoffset` 行目へ書くため）。
+- **ロード画面（同時に測れた）**: 同じ leg の `stage=loading`（`presentedFrame=2`）は **405 distinct colours**（中心256×256で189色、`(111,111,111)`/`(0,0,0)`/`(126,136,191)` を含む）。
+  直前 leg（jar `3aaeec13`）の同じ stage は **distinct=1 の全面白**（私が PNG を復号して中心260×260まで単色と確認）。**内容が出るようになった**が、
+  間に入った landing が複数あるため**1変更への帰属は未分離**（`a6e8b2dfb` の `CeltiumGlStub` 変更が候補）。判定子は「白か」ではなく「**ロゴが居るか**」。
+- **`refused=4` は欠落ではないと確定**: 4件すべて `RenderGlobal.func_174976_a:1375`（sky）で、`calls=4` 以降 `refused=4` のまま固定＝**最初のフレームで投影が未 seed のときの拒否**。拒否は正しい選択で、以後 `drawn` は伸びる。
+- **ユーザ指示（このround）**: 「絶対 vulkanterraingpubackend を分割してみんなで編集したほうがいい」→ **14,018行の単一ファイルが並列編集のボトルネック**なので分割に入る（§0.367 以降）。
 ## 0.365 **round 172: 成果物バージョンの罠（stale jar）を根因から除去。BH-18 は未受入と判定し直し、パノラマの破棄が実測で走ることを確認**
 
 - **復帰**: goal は `disarmed` だった（revision 30）。**objective を変更せず** `resume` して `armed`（revision 31）。未 push の2 commit（`5a8ee96af` BH-20・`59441d6bb` パノラマ）を `origin/main` へ push。
