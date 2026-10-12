@@ -2536,18 +2536,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * <p>
      * The property remains the bisect instrument: {@code frustum} and {@code glu} are deliberately not in the default,
      * because zeroing all four turned every presented frame black in round 226 and neither has been measured to need
-     * it. <b>{@code ortho} is also not in the default</b>, for the same reason and by this round's own measurement:
-     * {@code -Dceltium.vulkan.scratchZero=perspective,ortho} repairs the collapse - measured on leg r212-world-hud23
-     * (jar 578fbee77c33d8f4), where the HUD's groups then carry {@code proj=[m00=0.005 m11=-0.008 m22=0.0 m32=-0.5]}
-     * instead of {@code m22=-0.501}, and frame 130's window 5 changes the frame image's hotbar band from the world's
-     * colour {@code (109,23,22)} to the hotbar's own {@code (66,54,41)} with the crosshair patch following it - but the
-     * presented image then becomes a single black colour ({@code presentedDistinctColours=1 presentedMean=0.0},
-     * leg r212-world-hud22/23). That black is the next defect and it is exposed rather than caused by the repair: the
-     * same full-screen GUI-stage draws that the collapse was silently discarding now reach the image. It is not yet
-     * named, so the default keeps the world picture that the tree has today.
+     * it. <b>{@code ortho} is in the default as of round 248</b>, together with {@link #SELF_COMPOSITE_SKIP} and for a
+     * stated reason: with the ortho repaired the HUD's quads project correctly - leg r212-world-hud23/26
+     * (jar 578fbee77c33d8f4 / 3cc28cb1a40e0c32) reports {@code proj=[m00=0.005 m11=-0.008 m22=0.0 m32=-0.5]} and frame
+     * 140's window 5 moves the frame image's hotbar band from the world's colour to the hotbar's own
+     * {@code (66,54,41)} - and the game's finished-frame composite then paints that same image black unless it is
+     * dropped, which the skip does by name. The two together are the measured pair: the leg with both reports
+     * {@code presentedMean=71.3}, {@code hotbarBand=(72,60,49)} at the present, and a presented PNG carrying the
+     * hotbar, the crosshair and the HUD text over the world (distinct 11932, was 2440 before the HUD and 1 with the
+     * ortho repair alone).
      */
     private static boolean scratchZeroWanted(String builder) {
-        String list = System.getProperty("celtium.vulkan.scratchZero", "perspective");
+        String list = System.getProperty("celtium.vulkan.scratchZero", "perspective,ortho");
         for (String part : list.split(",")) {
             if (part.trim().equalsIgnoreCase(builder)) {
                 return true;
@@ -7930,6 +7930,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return frameColorTexture != 0 && this.immediateState.boundTextureName() == frameColorTexture;
     }
 
+    /**
+     * Whether this group is the game's finished-frame composite drawn into the image it samples.
+     * <p>
+     * The per-group form of {@link #celtium$isScreenSelfComposite}: the group carries the identity it was accepted
+     * under and the texture it samples, so the question is asked of the group rather than of the live bind - which by
+     * the time the group is drawn has usually moved on. The frame image's own published colour name is the main
+     * framebuffer's colour attachment ({@code framebufferColorTextureName(mainIdentity)}), which is the name
+     * {@code celtium$publishFramebufferColorTexture} gives the frame image, and identity 0's draws are routed to the
+     * frame image; so a group that matches both samples the image it is about to write.
+     * <p>
+     * This is a predicate, not a rule: {@link #SELF_COMPOSITE_SKIP} decides whether anything is done with it, and the
+     * three shapes this rule had on 2026-10-11 (skip emptied the frame, routing identity 0 into the delivered image
+     * wiped it, the pair lost the world) are why the switch exists before the default changes.
+     */
+    private boolean celtium$isSelfCompositeGroup(ImmediateGroup group) {
+        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled() || this.frameTarget == null) {
+            return false;
+        }
+        if (group.target != 0L || group.texture == 0) {
+            return false;
+        }
+        long mainIdentity = this.targetRegistry.mainIdentity();
+        if (mainIdentity == Long.MIN_VALUE) {
+            return false;
+        }
+        return group.texture == framebufferColorTextureName(mainIdentity);
+    }
+
     /** {@return how many pending non-empty groups belong to a target other than the main one}. */
     private int pendingGroupsForOtherTargets() {
         int count = 0;
@@ -8688,6 +8716,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " preTransformedGroups=" + this.immediateStatistics.preTransformedGroups()
                 + " preTransformedBatches=" + this.immediateStatistics.preTransformedBatches()
                 + " preTransformedVertices=" + this.immediateStatistics.preTransformedVertices()
+                + " selfCompositeSkips=" + this.immediateStatistics.selfCompositeSkips()
                 + " matrixSplits=" + this.immediateStatistics.matrixSplits()
                 + " fastMergedBatches=" + this.immediateStatistics.fastMergedBatches()
                 + " prepLookupMillis=" + (this.immediateStatistics.prepLookupNanos() / 1000000L)
@@ -9219,6 +9248,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** How many window boundaries that frame reports; {@code -Dceltium.vulkan.frameAtWindowLines}, default 8. */
     private static final int FRAME_AT_WINDOW_LINES =
             Integer.getInteger("celtium.vulkan.frameAtWindowLines", 8).intValue();
+    /**
+     * Whether the game's finished-frame composite is dropped when it samples the image it is drawn into.
+     * <p>
+     * {@code -Dceltium.vulkan.skipSelfComposite=false} turns the drop off; it is <b>on by default as of round 248</b>,
+     * together with {@code ortho} in {@link #scratchZeroWanted}, because the two are one contract: the ortho repair is
+     * what makes the composite's full-screen quad draw at all, and without the drop that quad paints the frame image
+     * black. The draw is {@code Minecraft.runGameLoop}'s {@code unbindFramebuffer()} + {@code framebufferRender}
+     * ({@code Minecraft.java:1234-1237}), which runs after {@code EntityRenderer.updateCameraAndRender} - i.e. after
+     * the HUD - with no framebuffer bound, so under GL-less it lands in the frame image (identity 0) and samples the
+     * main framebuffer's colour texture, which the adoption path publishes over that same frame image.
+     * <p>
+     * Measured (leg r212-world-hud25, jar be90e52ccd1a2203, {@code scratchZero=perspective,ortho} alone): frame 150's
+     * window readbacks stop at {@code windows=1188} and the present probe then reports {@code windows=1189}, so the
+     * blackening draw is in the window the trace could not read; {@code CELTIUM_MIRROR_DRAW frame=100 groupTexture=3
+     * mirrorSource=none@1280x720 view=0xe900000000e9 target=0 batches=1} names the composite's source as the published
+     * frame image view, and the presented image is a single black colour with the HUD gone
+     * ({@code presentedDistinctColours=1 presentedMean=0.0}). Sampling an image while writing it as a colour attachment
+     * is invalid usage unless a feedback loop is enabled, so a driver is free to return black.
+     * <p>
+     * With the drop (leg r212-world-hud26, jar 3cc28cb1a40e0c32): {@code selfCompositeSkips=103} at frame 100 and 167 at
+     * frame 200 (one per frame), {@code presentedMean=71.3}, the present's {@code hotbarBand=(72,60,49)}, and the
+     * presented PNG carries the hotbar, the crosshair and the HUD text over the world (distinct 11932). The counter
+     * {@code selfCompositeSkips} is what makes the drop visible; only a group that samples the frame image's own
+     * published colour name under identity 0 matches.
+     */
+    private static final boolean SELF_COMPOSITE_SKIP =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.skipSelfComposite", "true"));
     /**
      * Whether every textured group's descriptor is rebuilt at the draw from the registry's current wrapper.
      * {@code -Dceltium.vulkan.rebuildDescriptors=true}; separates the set the prepare wrote from the set the draw binds.
@@ -13017,6 +13073,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // keep-events, like the pass-boundary counter counts boundary events, so a group held across
                     // three flushes raises it three times.
                     this.immediateStatistics.noteImmediateGroupsKeptForOtherTargets();
+                    continue;
+                }
+                if (SELF_COMPOSITE_SKIP && celtium$isSelfCompositeGroup(group)) {
+                    // The game's finished-frame composite, sampling the image it is about to be drawn into. Dropped by
+                    // name rather than drawn: see SELF_COMPOSITE_SKIP for the measurement that makes this the repair
+                    // and celtium$isScreenSelfComposite for the three shapes the same rule had in 2026-10-11.
+                    iterator.remove();
+                    this.retiredImmediateGroups.add(group);
+                    this.immediateStatistics.noteSelfCompositeSkips();
                     continue;
                 }
                 if (group.stamp != null) {

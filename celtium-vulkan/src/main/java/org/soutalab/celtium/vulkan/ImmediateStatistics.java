@@ -98,6 +98,16 @@ public final class ImmediateStatistics {
     private long orderingFlushDroppedBatches;
     private int postAcceptDroppedGroups;
     private long preTransformedVertices;
+    /**
+     * Groups dropped because they are the game's finished-frame composite drawn into the image they sample.
+     * <p>
+     * The identity-0 composite samples the main framebuffer's colour texture, and under the adoption path that texture
+     * is published over the frame image - the same image the identity-0 pass attaches. Sampling an image while writing
+     * it as a colour attachment is invalid usage without a feedback loop, and RADV returns black: measured on leg
+     * r212-world-hud25, the presented frame became a single black colour the moment the GUI ortho was repaired and the
+     * quad actually drew. This counter is what makes the drop visible instead of silent.
+     */
+    private long selfCompositeSkips;
     private long prepBranchNanos;
     private long prepLookupNanos;
     private long prepRegistryNanos;
@@ -906,6 +916,16 @@ public final class ImmediateStatistics {
     /** Records one preTransformedBatches. */
     void notePreTransformedBatches() {
         this.preTransformedBatches++;
+    }
+
+    /** Records one group dropped as the game's finished-frame composite drawn into the image it samples. */
+    void noteSelfCompositeSkips() {
+        this.selfCompositeSkips++;
+    }
+
+    /** {@return how many groups were dropped as the game's finished-frame composite}. */
+    long selfCompositeSkips() {
+        return this.selfCompositeSkips;
     }
 
     /** Sets preTransformedBatches. */
