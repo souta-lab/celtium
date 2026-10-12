@@ -89,3 +89,17 @@ export DRI_PRIME=pci-0000_00_02_0!        # Intel UHD 630 (8086:3e92); the '!' e
 
 With that, the same leg reports `nativeDeviceName="Intel(R) UHD Graphics 630 (CFL GT2)"` and
 `gpuRequirementMet=true`. `DRI_PRIME` also steers the compositor, which is why both ends then agree.
+
+## A leg with no picture has not necessarily run your build
+
+Measured on 2026-10-12 (round 212): the instance's `minecraft/mods/` held a second celtium jar,
+`celtium-6794b0df2-pre-stub-changes.jar`, carrying the same modid (`celeritas`). The harness copies
+the instance's mods into every run, so **every leg from that moment ran with two celtium jars**, and
+the validation fixture went silent: `fixtureStatus=MISSING_REPORT`, no presented dump, and not one
+`ValidationClient` line in the log - only the mod's own `CELTIUM_SPLASH_HOOK drawSplashScreen=true`.
+The same leg with `--exclude-instance-mod 'celtium-*pre-stub-changes.jar'` wrote its dumps and
+returned a report immediately.
+
+So before reading a silent leg as a renderer finding, list `<run>/mods/` and count the celtium jars,
+and pass `--exclude-instance-mod` for anything the run is not testing. A duplicate jar is a
+*different artefact*, not a stale copy of the one you built: the results belong to nobody.

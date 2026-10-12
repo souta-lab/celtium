@@ -15,13 +15,21 @@
 > | R4 `TerrainRenderer` | **first half done** (region arenas, failed-upload ledger, BH-25 counter, `resourcesFor`/`indexArena`/`resourcesIfPresent`/`releaseAll`, `bindVertexBuffer`/`bindIndexBuffer` with the command buffer as a parameter). **Second half open**: `render`, `recordRenderPass`, `uploadRegion`, `writeUniforms` (needs `TerrainUniformSink`), `celtium$tryIndirectBatch` with its buffer and counters, `pipelineFor`, `terrainPipelineForFrame` - measured at 678 lines. `verifyUpload` was deleted because it had no caller |
 > | R5 `RenderTargetRegistry` | **done and wired** (target generation, `frameTargetKnown` latch, pair framebuffer handles, identity/census, `framebufferReplacing`, pair clear bookkeeping - with the policy left in the backend) |
 > | R6 `FrameSubmissionScheduler` | **done and wired** (slots, sequences, retirement rules, counters; `FRAME_SLOTS` is an alias; the Vulkan calls stay in the backend) |
-> | R7 root/`FrameCoordinator` | **first half done**: `FrameCoordinator` owns the submit sequence (the scheduler still owns the slots and their rules), and `VulkanRenderer` is the root the terrain factory asks instead of testing for the concrete class - the plan's cast removal. **Second half open**: the window/world lifetime split, then `render`/`recordRenderPass` (forty dependencies, the "common class" the literature describes) and the remaining domains |
+> | R7 root/`FrameCoordinator` | **first half done**: `FrameCoordinator` owns the submit sequence (the scheduler still owns the slots and their rules), and `VulkanRenderer` is the root the terrain factory asks instead of testing for the concrete class - the plan's cast removal. **The window/world lifetime split is done and its first real regression is fixed** (`e77a2bd91`): `celtium$adoptTerrainState` updated the backend's own fields and **none of the owners built during the window-time construction**, so `TerrainRenderer` carried the placeholder stride (1), a null configuration and a null fog service into the world - the first region upload threw a message-less NullPointerException, `regionUploadFailures=2`, `lastDraw=0 lastSections=0`, and the presented world was sky only (132 distinct colours, `FAILED_PRESENTED_IMAGE`, exit 1) until the three values are handed over at adoption (`regionUploadFailures=0`, `lastDraw=54`, world dump 2504 distinct, `PASSED`, exit 0). **Second half open**: `render`/`recordRenderPass` (forty dependencies, the "common class" the literature describes) and the remaining domains |
 > | R8 cleanup | **partly done**: twenty-two declaration-only fields, nine declaration-only methods and three more fields across three files removed, each proven by the build. Remaining: the stale comment that still names a field the registry owns, the duplicated publication display, and the `replaceBoundaryDrops` / `postAcceptDroppedGroups` double count - which the menu leg cannot settle, because `postAcceptDroppedGroups` reads 0 there and a zero is only evidence if the instrument could have said one; it needs a scene where the drop happens as a positive control |
 >
 > **Extraction safety, learned from two crashes:** moving a field without its initializer compiles, passes the CPU contract
 > check, and dies on the first render tick. `scripts/cpu-contract/field_initializer_check.py` compares every field
 > declaration against the R0 baseline and fails when one that carried an initializer now has none; it found fifteen such
 > losses in total (six strings, three arrays, six sentinels). Run it with every extraction. |
+>
+> **Wiring safety, learned from a missing world (`e77a2bd91`, round 212):** an owner that is built *before* the state it
+> reads exists keeps the placeholder it was given until someone hands it the real value. `createForWindow` constructs the
+> backend with a null configuration, so the terrain owner was wired with `vertexStride = 1`; the world arrives later
+> through `celtium$adoptTerrainState`, which updated the backend's fields and not the owner's. Every check the plan had -
+> build, initializer check, verification line - stayed green while the game rendered a world with no terrain.
+> **Rule: when a state arrives, re-wire every owner that was given its previous value**, and when a leg disagrees with a
+> green check, look for the owner that still holds the old value.
 >
 > **On size:** the line count is not this plan's landing condition - the ownership and state contracts are. Each
 > stage above is accepted by its own evidence (a build, the CPU contract checks, the line's byte-exact baseline),
