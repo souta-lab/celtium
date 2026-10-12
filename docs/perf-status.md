@@ -75,6 +75,8 @@
 積算の内訳: lazy-supply retry 除去（p95 49.7→18.7）・semaphore pair 撤去（18.6→9.6 submits/frame）・pre-transform merge・texture serial・dispatch/CHM・font string batch（F3 時）・entity tick cache。**実ワールドは fixture より地形・entity・mod が多いので倍率は下がる** — ユーザー実機での計測が残る（fixture は flat 60-64 sections のみ）。
 
 | — | char-index cache + unicode fast path | **実装済（PR #15 open）** | (1) 巨大 font テーブルの per-glyph `String.indexOf`（~7%）→ interned 定数キーの direct-index map（範囲外は実 indexOf fallback）。func_181559_a/func_78255_a/func_78263_a の 3 redirect。(2) `unicodeFlag`（ja_jp・forceUnicode）で全文字 renderUnicodeChar 経由・fast path 全死（p-fu: 880K unicode windows・**p50=71.5ms**）→ func_78277_a intercept・page-0 glyph を unicode ジオメトリ通り buffer。**ASCII F3 43→10.4ms・unicode F3 71.5→10.3ms・no-F3 6.9ms との差 ~1.5×** |
+| — | dispatch arg scratch | **実装済（PR #16 open）** | GL call 毎 `new long[12]`（~4MB/frame garbage）→ owner-claimed field scratch（非 owner thread は fresh alloc・handler は pure Java で再入経路なし）+ Fn 二重解消。同じ脚で clean と back-to-back: **p50 7.99→7.56・p95 20.0→13.0・p99 31.2→18.4**（tail で効く＝GC 圧除去） |
+| — | glMatrixMode 冗長 skip | **実装済（PR #17 open）** | stub `matrixMode` field を権威に GlStateManager wrapper HEAD で identical set を cancel — FFI+unpack+dispatch 全体を回避。mode arrivals **243,684→108,538（55% skip）**。p50 は脚ノイズ内・絵 byte-identical |
 | — | 実ワールド fixture（saves ロード） | **実装済（本ブランチ・未 commit）** | runner が instance の `saves/` を leg dir へ copy + `-Dceltium.validation.saveSlot="New World"` で既存 save を `launchIntegratedServer` 起動 → **End（エンドラ戦）で実ワールド JFR**。frame p50=10.5ms。帰属（warm main）: GL trampoline ~15%・submit ~6%・EntityRenderer world pass ~15%（game）・Zip/jimage ~6%（mod scan）・present/readback ~8%（leg instrument）。verdict は uncalibrated scene で FAILED 想定通り |
 
 ## 次の優先順（実測根拠順）
