@@ -131,6 +131,14 @@ public final class TextureCopyService {
         String describe(Throwable error);
     }
 
+    /**
+     * {@code -Dceltium.vulkan.nativeTextureCopy=false} forces the host route (flush, device wait, readback, upload),
+     * which is the measurement control for this unit: the same jar then has both paths and the counters say which one
+     * ran. Default on - the native route is what the menu's frame should pay.
+     */
+    private static final boolean NATIVE_TEXTURE_COPY = !"false".equalsIgnoreCase(
+        System.getProperty("celtium.vulkan.nativeTextureCopy", "true"));
+
     /** Bounded lines for the copy's read resolution (see {@link #ownedReadImage}). */
     private static final int READ_RESOLVE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.readResolveLog", 6).intValue();
@@ -159,6 +167,10 @@ public final class TextureCopyService {
     private long textureCopyReadbackNanos;
     private String lastTextureCopyRefusal = "none";
     private int readResolveLogs;
+    /** Copies that took the native GPU blit route, and those the blit refused, with the last reason. */
+    private int textureCopyBlits;
+    private int textureCopyBlitRefusals;
+    private String lastTextureCopyBlitRefusal = "none";
     /** Reads that resolved through the frame's last non-main draw target rather than the bound target (panorama). */
     private int readResolvedFromLastDrawnTarget;
     private int copyReadLogs;
@@ -198,6 +210,20 @@ public final class TextureCopyService {
 
     public int readResolvedFromLastDrawnTarget() {
         return this.readResolvedFromLastDrawnTarget;
+    }
+
+    /** {@return copies the GPU wrote into the mirror directly}. */
+    public int textureCopyBlits() {
+        return this.textureCopyBlits;
+    }
+
+    /** {@return copies the native route refused, which then took the host route}. */
+    public int textureCopyBlitRefusals() {
+        return this.textureCopyBlitRefusals;
+    }
+
+    public String lastTextureCopyBlitRefusal() {
+        return this.lastTextureCopyBlitRefusal;
     }
 
     /**
@@ -293,6 +319,45 @@ public final class TextureCopyService {
             this.textureCopiesServed++;
             return "served";
         }
+        // ---- the native route: the GPU writes the mirror, so the render thread neither waits for the source's draws
+        // nor round-trips the pixels through host memory. Everything checkable was checked before this point, and the
+        // blit's own refusal names itself; the host route below stays reachable and the counters say which ran.
+        if (NATIVE_TEXTURE_COPY) {
+            String blitRefusal = this.host.registry().blitRefusal(destName, image, this.host.targetWidth(),
+                    this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
+            if (blitRefusal == null) {
+                // The faces' window first, and no wait: the queue runs the blit after the draws that filled the
+                // source and before the draws that sample the mirror, which is the ordering the host path got from
+                // waiting for the device to go idle.
+                if (this.host.immediateGroupCount() > 0) {
+                    this.host.flushPendingBeforeGlDraw();
+                }
+                VkCommandBuffer commands = this.host.context().beginCommands();
+                try {
+                    String recorded = this.host.registry().blitInto(destName, commands, image,
+                            this.host.targetWidth(), this.host.targetHeight(), x, y, width, height, xoffset, yoffset);
+                    if (recorded == null) {
+                        this.host.context().celtium$submitDeferred(commands, 0L);
+                        commands = null; // submitted: the context owns it and frees it at its fence
+                        this.textureCopyBlits++;
+                        this.textureCopiesServedThisFrame.add(Long.valueOf(copyKey));
+                        this.textureCopiesServed++;
+                        return "served";
+                    }
+                    blitRefusal = recorded;
+                } catch (RuntimeException | LinkageError error) {
+                    blitRefusal = "the native copy threw: " + error;
+                } finally {
+                    if (commands != null) {
+                        this.host.context().celtium$abandonCommands(commands);
+                    }
+                }
+            }
+            this.textureCopyBlitRefusals++;
+            this.lastTextureCopyBlitRefusal = blitRefusal;
+        }
+        // ---- the host route: flush, wait for the device, read the rectangle back and upload it. Kept reachable (a
+        // device without the blit features, a mirror that does not exist yet, the control flag) and counted.
         // What the game drew into that image is still queued as groups: submitting them is what makes the read the
         // frame the copy is about. flushPendingBeforeGlDraw draws into an open pass if there is one, otherwise it opens
         // and completes an immediate window, which is the same ordering boundary the game's own draw calls use.

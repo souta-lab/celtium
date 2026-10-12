@@ -8,6 +8,7 @@ import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.glGetTexLevelParameteri;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+import org.lwjgl.vulkan.VkCommandBuffer;
 
 /**
  * Mirrors the OpenGL textures Minecraft binds into Vulkan images, keyed by their GL name.
@@ -54,6 +55,13 @@ public final class VulkanTextureRegistry {
     }
 
     private final VulkanContext context;
+    /** Copies that took the native GPU blit route, and those the blit refused, with the last reason. */
+    private int blitsInto;
+    private int blitRefusals;
+    private String lastBlitRefusal = "none";
+    private boolean blitQueried;
+    private boolean blitUnsupported;
+    private String blitUnsupportedReason = "unqueried";
     private final Map<Integer, Entry> entries = new HashMap<Integer, Entry>();
     /**
      * Images this registry does not own, published under a GL name so the immediate path can sample them.
@@ -1490,6 +1498,110 @@ public final class VulkanTextureRegistry {
     /** {@return announcements an image-less delete kept alive, for the census and the summary line} */
     public int retainedAnnouncements() {
         return this.retainedAnnouncements;
+    }
+
+    /**
+     * {@return the reason a GPU blit into this GL name's mirror cannot be recorded, or {@code null} when it can}.
+     * <p>
+     * Split from {@link #blitInto} on purpose: the copy path begins a command buffer only after this answers null, so
+     * a refusal costs no allocation and needs no cleanup. Everything checkable is checked here - the device's blit
+     * features for the two formats, the existence of the mirror and the two rectangles - and what remains inside
+     * {@code blitInto} is the recording itself.
+     */
+    public String blitRefusal(int glTextureId, long sourceImage, int sourceWidth, int sourceHeight, int sx, int sy,
+            int width, int height, int xoffset, int yoffset) {
+        String unsupported = celtium$blitUnsupportedReason();
+        if (unsupported != null) {
+            return unsupported;
+        }
+        if (sourceImage == 0L) {
+            return "the source image is not one this renderer owns";
+        }
+        Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+        if (entry == null) {
+            return "no mirror exists for GL texture " + glTextureId;
+        }
+        if (width <= 0 || height <= 0) {
+            return "the rectangle has no area";
+        }
+        if (sx < 0 || sy < 0 || sx + width > sourceWidth || sy + height > sourceHeight) {
+            return "the source rectangle " + sx + "," + sy + " " + width + "x" + height + " is not inside the "
+                    + sourceWidth + "x" + sourceHeight + " source image";
+        }
+        if (xoffset < 0 || yoffset < 0 || xoffset + width > entry.texture.width()
+                || yoffset + height > entry.texture.height()) {
+            return "the destination rectangle " + xoffset + "," + yoffset + " " + width + "x" + height
+                    + " is not inside the " + entry.texture.width() + "x" + entry.texture.height() + " mirror";
+        }
+        return null;
+    }
+
+    /**
+     * Records the GPU blit of an owned source image's rectangle into this GL name's mirror.
+     * <p>
+     * The caller has already asked {@link #blitRefusal} and submits the command buffer itself (deferred, which is what
+     * preserves the ordering: the queue runs this after the draws that filled the source and before the draws that
+     * sample the mirror).
+     *
+     * @return {@code null} when recorded, otherwise a reason that names itself
+     */
+    public String blitInto(int glTextureId, VkCommandBuffer commandBuffer, long sourceImage, int sourceWidth,
+            int sourceHeight, int sx, int sy, int width, int height, int xoffset, int yoffset) {
+        String refusal = blitRefusal(glTextureId, sourceImage, sourceWidth, sourceHeight, sx, sy, width, height,
+                xoffset, yoffset);
+        if (refusal != null) {
+            this.blitRefusals++;
+            this.lastBlitRefusal = refusal;
+            return refusal;
+        }
+        Entry entry = this.entries.get(Integer.valueOf(glTextureId));
+        String reason = entry.texture.blitRectangleFrom(commandBuffer, sourceImage, sourceWidth, sourceHeight, sx, sy,
+                width, height, xoffset, yoffset);
+        if (reason != null) {
+            this.blitRefusals++;
+            this.lastBlitRefusal = reason;
+            return reason;
+        }
+        this.blitsInto++;
+        return null;
+    }
+
+    /** {@return how many copies took the native route, and how many were refused with the last reason}. */
+    public String blitSummary() {
+        return "textureCopyBlits=" + this.blitsInto + " textureCopyBlitRefusals=" + this.blitRefusals
+                + " lastTextureCopyBlitRefusal=[" + this.lastBlitRefusal + "]";
+    }
+
+    /**
+     * {@return the reason a blit is unsupported on this device, or {@code null}}.
+     * <p>
+     * Queried once per device, from the spec's own requirement rather than from an assumption: {@code vkCmdBlitImage}
+     * needs {@code VK_FORMAT_FEATURE_BLIT_SRC_BIT} on the source format and {@code VK_FORMAT_FEATURE_BLIT_DST_BIT} on
+     * the destination format (VUID-vkCmdBlitImage-srcImage-01999 / dstImage-02000). The copy path's source images and
+     * its mirrors are the same format here, so one query covers both.
+     */
+    private String celtium$blitUnsupportedReason() {
+        if (!this.blitQueried) {
+            this.blitQueried = true;
+            try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkFormatProperties properties = org.lwjgl.vulkan.VkFormatProperties.calloc(stack);
+                org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties(this.context.physicalDevice(),
+                        org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM, properties);
+                long needed = org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_SRC_BIT
+                        | org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_DST_BIT;
+                long have = properties.optimalTilingFeatures();
+                this.blitUnsupported = (have & needed) != needed;
+                this.blitUnsupportedReason = this.blitUnsupported
+                        ? "VK_FORMAT_R8G8B8A8_UNORM lacks BLIT_SRC/BLIT_DST (optimalTilingFeatures=0x"
+                                + Long.toHexString(have) + ")"
+                        : "none";
+            } catch (RuntimeException | LinkageError error) {
+                // A query that cannot be made is not a licence to assume support: the host path stays the answer.
+                this.blitUnsupported = true;
+                this.blitUnsupportedReason = "the blit feature query failed: " + error;
+            }
+        }
+        return this.blitUnsupported ? this.blitUnsupportedReason : null;
     }
 
     /** {@return whether a mirror already exists for this id at exactly this size} */    public boolean hasEntry(int glTextureId, int width, int height) {

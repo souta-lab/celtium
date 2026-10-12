@@ -8254,6 +8254,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " textureCopiesReusedInFrame=" + this.textureCopyService.textureCopiesReusedInFrame()
                 + " textureCopyReadbacks=" + this.textureCopyService.textureCopyReadbacks()
                 + " textureCopyReadbackMillis=" + (this.textureCopyService.textureCopyReadbackNanos() / 1000000L)
+                // The native route's own census: a copy the GPU wrote into the mirror directly, against one the blit
+                // refused (which then took the host route above). The two lines together are what says which path a
+                // leg's copies took, rather than the absence of a readback implying the blit ran.
+                + " textureCopyBlits=" + this.textureCopyService.textureCopyBlits()
+                + " textureCopyBlitRefusals=" + this.textureCopyService.textureCopyBlitRefusals()
+                + " lastTextureCopyBlitRefusal=[" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lastTextureCopyRefusal=[" + this.textureCopyService.lastTextureCopyRefusal() + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement

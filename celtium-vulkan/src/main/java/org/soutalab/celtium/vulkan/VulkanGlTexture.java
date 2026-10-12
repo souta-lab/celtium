@@ -247,6 +247,8 @@ public final class VulkanGlTexture {
      */
     private boolean fullContentArrived;
     private int currentLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
+    /** GPU blits recorded into this mirror (the copy path's native route; see blitRectangleFrom). */
+    private int blitRectangles;
     private boolean nearestFilter;
     /** The source GL texture's wrap on each axis: {@code true} for GL_REPEAT, {@code false} for a clamp mode. */
     private boolean wrapRepeatU;
@@ -2431,6 +2433,112 @@ public final class VulkanGlTexture {
             // and the newest tracked fence is what the await uses - queue order makes it stand for the earlier ones.
             this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
         }
+    }
+
+    /**
+     * Records a GPU blit of another image's rectangle into this mirror's level 0, and leaves this mirror sampled.
+     * <p>
+     * This is the native replacement for the copy path's host round-trip (readback to an int[], then an upload back):
+     * the destination is written by the GPU, so the render thread neither maps memory nor waits for the source's
+     * draws. The caller submits the command buffer (the copy path submits it deferred, which is what keeps the
+     * ordering: the queue runs it after the draws that filled the source and before the draws that sample this
+     * mirror).
+     * <p>
+     * The source region is given in GL's convention - {@code sy} counts from the bottom of the source image - and is
+     * blitted <em>inverted</em>, because this mirror's rows are GL texture order (row 0 is the picture's bottom), which
+     * is what the host path's {@code reverseRows} produced. {@code vkCmdBlitImage} is used rather than
+     * {@code vkCmdCopyImage} for exactly that flip: a copy cannot invert a region.
+     * <p>
+     * The layouts: the source stays {@code GENERAL} (a legal blit source layout) with an availability barrier for the
+     * colour writes, and this mirror goes from whatever it is in to {@code TRANSFER_DST_OPTIMAL} and back to
+     * {@code SHADER_READ_ONLY_OPTIMAL}, which is the state the next pass samples it in. Both the per-level ledger and
+     * {@code currentLayout} are updated, so the next render pass's own transitions are recorded against the truth.
+     *
+     * @return {@code null} when the blit was recorded, otherwise a reason that names itself
+     */
+    public String blitRectangleFrom(VkCommandBuffer commandBuffer, long sourceImage, int sourceWidth, int sourceHeight,
+            int sx, int sy, int width, int height, int xoffset, int yoffset) {
+        if (commandBuffer == null || sourceImage == VK_NULL_HANDLE) {
+            return "no command buffer or no source image";
+        }
+        if (width <= 0 || height <= 0) {
+            return "the rectangle has no area";
+        }
+        if (sx < 0 || sy < 0 || sx + width > sourceWidth || sy + height > sourceHeight) {
+            return "the source rectangle " + sx + "," + sy + " " + width + "x" + height + " is not inside the "
+                    + sourceWidth + "x" + sourceHeight + " source image";
+        }
+        if (xoffset < 0 || yoffset < 0 || xoffset + width > this.width() || yoffset + height > this.height()) {
+            return "the destination rectangle " + xoffset + "," + yoffset + " " + width + "x" + height
+                    + " is not inside the " + this.width() + "x" + this.height() + " mirror";
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(this.image);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            // The mirror's way in: whatever it was in (UNDEFINED at creation, SHADER_READ_ONLY once sampled) to the
+            // transfer-destination layout the blit names.
+            barrier.get(0).oldLayout(this.currentLayout)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .srcAccessMask(0)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, barrier);
+
+            // The source's availability: its layout stays GENERAL (VUID-vkCmdBlitImage-srcImageLayout-01398 allows
+            // it), but the colour attachment writes that filled it have to be visible to the transfer read.
+            VkImageMemoryBarrier.Buffer sourceBarrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(sourceImage);
+            sourceBarrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            sourceBarrier.get(0).oldLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                    | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, sourceBarrier);
+
+            VkImageBlit.Buffer region = VkImageBlit.calloc(1, stack);
+            region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                    .layerCount(1);
+            // Inverted in y: srcOffset0 is the region's *bottom* in image rows (GL's sy) and srcOffset1 its top, so the
+            // destination's row 0 gets the source's bottom row - the GL texture order this mirror's rows are in.
+            int sourceBottomRow = sourceHeight - sy;
+            int sourceTopRow = sourceBottomRow - height;
+            region.get(0).srcOffsets().get(0).set(sx, sourceBottomRow, 0);
+            region.get(0).srcOffsets().get(1).set(sx + width, sourceTopRow, 0);
+            region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                    .layerCount(1);
+            region.get(0).dstOffsets().get(0).set(xoffset, yoffset, 0);
+            region.get(0).dstOffsets().get(1).set(xoffset + width, yoffset + height, 0);
+            vkCmdBlitImage(commandBuffer, sourceImage, VK_IMAGE_LAYOUT_GENERAL, this.image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+
+            // The mirror's way back out: transfer writes to shader reads, which is the state the next pass samples it
+            // in. The ledger follows in the same call, or the next pass would transition from a stale layout.
+            barrier.get(0).oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
+            this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            setLevelLayout(0, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            this.blitRectangles++;
+            return null;
+        }
+    }
+
+    /** {@return the Vulkan format of this mirror's image}, for a caller that has to query transfer features for it. */
+    public int format() {
+        return IMAGE_FORMAT;
+    }
+
+    /** {@return the number of GPU blits recorded into this mirror}, for the copy path's census. */
+    public int blitRectangles() {
+        return this.blitRectangles;
     }
 
     /** {@return whether this GL name is one the dump was asked for}, so a per-frame light map cannot flood the log. */

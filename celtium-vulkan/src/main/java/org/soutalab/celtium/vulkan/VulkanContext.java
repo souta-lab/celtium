@@ -526,6 +526,19 @@ public final class VulkanContext {
     }
 
     /**
+     * Frees a command buffer that was begun and will not be submitted.
+     * <p>
+     * The copy path's native route pre-checks everything it can before {@link #beginCommands()}, but a recording that
+     * throws must not leave the buffer allocated: this is the same cleanup the failure paths inside this class do, and
+     * it exists so a caller outside it can do the same rather than leak one allocation per refused copy.
+     */
+    public void celtium$abandonCommands(VkCommandBuffer commandBuffer) {
+        if (commandBuffer != null) {
+            vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
+        }
+    }
+
+    /**
      * Ends recording, submits the command buffer to the context queue, waits for the queue to go idle and frees the
      * command buffer. The wait is what makes the bootstrap-quality upload path safe: when this method returns, the
      * recorded copies have completed and the staging memory can be reused or destroyed.
