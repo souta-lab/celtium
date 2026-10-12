@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.386 **round 187: REFACTORING_PLAN を最優先に（ユーザー指示）。PR を全部 merge してから R1b を開始**
+
+- **ユーザー指示**: 「REFACTORING_PLAN を最優先で実行しろ」「gpubackend がデカすぎてボトルネックになっている」「refactoring で PR が merge できなくなる前に、まず一旦全部 merge しろ（検証はもうやってる）」。
+- **PR 掃除（完了）**: open 8本をすべて main へ。GitHub 経由で #22/#23/#24/#28/#29、**conflict した #25/#26/#27 はローカルで解消して取り込み push**（`583d0a861`/`1e5bf7ee3`/`6af1d675e`）。conflict は **README.md のみ**（external-references 節。branch 版を採用し、`Item mesh cache` の bullet を移植して欠落なし）。`gh pr list --state open` → **`[]`（open ゼロ）** ✓ 全マージ後 `scripts/build.sh` → **BUILD SUCCESSFUL**（jar `8578b44bfd3c2f27`）✓
+- **R0 基準固定**: HEAD `6af1d675e`・jar `8578b44bfd3c2f27`・fixture `d48d970dbb09cd1d`・scene/pose/flags は各 leg の記録どおり。backend は **14,385行**（`VulkanTerrainGpuBackend.java`）＝ユーザーの言う bottleneck。
+- **R1b 開始**: `PublishedFrameTextures.java` を新設（refactoring plan §6.1 の「薄い state owner」方式 ✓）— framebuffer identity→colour texture の census、GL name→published texture の map、publication counter 群（created/unpublished/skippedForAttach/stalePruned/republished/colorTexturesPublished）とその accessor/summary を所有。**決定（どの image を指すか）は R5 まで backend に残す**（plan §6.1 が明記: R1 では copy→publication→report の既存順を維持し、根本の所有分離は R2 以降）。次の commit で backend の呼び出し側を delegate に置換する（同ファイルの単一ライターは Lead）。
+- **P0 の再定義（blend-state の発見）**: **同じ jar `d41d67c9` が grey（10,485 / opaque 10356）と正常（34,717 / opaque 65536）の両方を出す**＝**jar では分離できない run 間 flake（timing 依存）** ✗。私の 2-jar 判定も flake 比較だった。copy 総数も同型（served 1757 vs 1981）で判別不能。→ **受入は N 回 run の発生率**で取り、B08 の `textureCopiesServedPeakPerPresent`（1 対 7）を run dir 内 `--mod`＋`testMods` sha256 で provenance を固定して読む。**検証ギャップ**: これまでの B08 leg は run dir の `mods/` が空で、どの jar をロードしたか未検証。
+
 ## 0.385 **round 186: 既存の番号付き frame dump は splash/loading をカバーしない（負の結果）。B08 着地・B10 片側着地**
 
 - **B08 着地（blend-state `7a6c1b8fe`）**: copy key を**厳密な tuple 文字列**（source image を含む）にし、entry が**内容マーカー**（最後の draw の epoch+frame）を持ち、**source の内容が変わったら elide しない**（panorama の7パスがその形）。計器は `textureCopiesServedPeakPerPresent`（旧 cache は 1 を出す＝**これが「grey leg 1 対 correct leg 7」の判別そのもの**）と `textureCopiesReServedAfterContentChange`。window pass が実際に attach した handle の印字（`attachedImage=`/`frameImage=`/`chainPair=`）も入った（menu leg では発火せず＝splash/loading 用）。**受入は未取得**（下記のツリー問題で停止していた）。
