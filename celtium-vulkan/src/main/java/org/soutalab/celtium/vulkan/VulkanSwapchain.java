@@ -62,6 +62,11 @@ public final class VulkanSwapchain {
     private int height;
 
     private String argumentSummary = "not attempted";
+    /** What the surface reported at the last creation attempt, and how the request differs from it (BH-18). */
+    private String surfaceOffer = "surface-offer: not queried";
+    /** The present modes the surface offered at that attempt, by name. */
+    private String presentModesOffered = "not enumerated";
+    private String reconciliation = "not reconciled";
     private long acquireSemaphore = VK_NULL_HANDLE;
 
     /**
@@ -588,7 +593,7 @@ public final class VulkanSwapchain {
     public String describe() {
         return "swapchain: platform=" + this.platform + " format=" + this.format + " colourSpace="
                 + this.colorSpace + " presentMode=" + this.presentMode + " images=" + this.images.length + " size="
-                + this.width + "x" + this.height;
+                + this.width + "x" + this.height + " " + offeredVersusRequested();
     }
 
     /**
@@ -1106,13 +1111,22 @@ public final class VulkanSwapchain {
     }
 
     /**
+     * {@code VkSurfaceCapabilitiesKHR.currentExtent} carries this value (as an unsigned 32-bit number) when the
+     * surface does not dictate a size, and the swapchain then has to be created inside
+     * {@code minImageExtent..maxImageExtent} from the application's own request. Named rather than written as
+     * {@code -1} at the comparison, because the sentinel is a specific bit pattern and the next reader should not
+     * have to know that a signed -1 means {@code 0xFFFFFFFF} here.
+     */
+    private static final long SURFACE_EXTENT_UNSPECIFIED = 0xFFFFFFFFL;
+
+    /**
      * The extent a swapchain against this surface gets: the current extent the driver pins, or the request clamped
      * into the advertised limits when it does not. The request is the window's framebuffer size; the clamp keeps a
      * zero-sized (minimised) request inside the legal {@code minImageExtent} bound.
      */
     private static int[] effectiveExtent(VkSurfaceCapabilitiesKHR capabilities, int requestedWidth,
             int requestedHeight) {
-        if (capabilities.currentExtent().width() != -1) {
+        if (Integer.toUnsignedLong(capabilities.currentExtent().width()) != SURFACE_EXTENT_UNSPECIFIED) {
             return new int[]{capabilities.currentExtent().width(), capabilities.currentExtent().height()};
         }
         int width = Math.max(capabilities.minImageExtent().width(),
@@ -1120,6 +1134,18 @@ public final class VulkanSwapchain {
         int height = Math.max(capabilities.minImageExtent().height(),
                 Math.min(Math.max(1, requestedHeight), capabilities.maxImageExtent().height()));
         return new int[]{width, height};
+    }
+
+    /**
+     * {@return one line saying what the surface offered and what was requested, so a leg can reconcile the two}.
+     * <p>
+     * The acceptance for BH-18 is a measurement rather than a source reading: the numbers the surface reports and the
+     * numbers that went into {@code vkCreateSwapchainKHR}, side by side, with every place they differ named. It is
+     * filled at creation and survives into the renderer's diagnostics, so a report carries it (the stdout line alone
+     * is lost when a leg's console is truncated).
+     */
+    public String offeredVersusRequested() {
+        return this.surfaceOffer + " requested[" + this.reconciliation + "]";
     }
 
     /**
@@ -1183,6 +1209,7 @@ public final class VulkanSwapchain {
             boolean immediate = false;
             boolean fifo = false;
             StringBuilder supported = new StringBuilder();
+            this.presentModesOffered = "";
             for (int i = 0; i < modes.capacity(); i++) {
                 int mode = modes.get(i);
                 if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
@@ -1220,6 +1247,7 @@ public final class VulkanSwapchain {
                 PRESENT_MODE_FALLBACKS.incrementAndGet();
             }
             this.builtForRequestRevision = VSYNC_REQUEST_REVISION.get();
+            this.presentModesOffered = supported.toString().trim();
             presentModeLine = "requested=" + requested + " chosen=" + presentModeName(this.presentMode)
                     + " supported=[" + supported + "]" + (fallback == null ? "" : " fallback=[" + fallback + "]")
                     + " fallbacks=" + PRESENT_MODE_FALLBACKS.get()
@@ -1239,8 +1267,11 @@ public final class VulkanSwapchain {
             int desiredImages = 3;
             int imageCount = Math.max(capabilities.minImageCount(), desiredImages);
             int surfaceMaxImages = capabilities.maxImageCount();
+            // maxImageCount == 0 is the spec's "no limit", not "zero images": the request is only clamped when the
+            // surface names a finite maximum, and the offer line below prints which of the two it was.
+            boolean imagesUnlimited = surfaceMaxImages == 0;
             boolean imageCountClamped = false;
-            if (surfaceMaxImages != 0 && imageCount > surfaceMaxImages) {
+            if (!imagesUnlimited && imageCount > surfaceMaxImages) {
                 imageCount = surfaceMaxImages;
                 imageCountClamped = true;
             }
@@ -1287,6 +1318,32 @@ public final class VulkanSwapchain {
                 return false;
             }
 
+            // BH-18's measurement: the surface's own numbers beside the ones that will be requested. currentExtent
+            // is printed as "unspecified(0xFFFFFFFF)" when the surface does not dictate a size, because that value is
+            // the trap - read as a size it is 4294967295x..., and read as a signed -1 it skips the clamp.
+            boolean extentFromSurface =
+                    Integer.toUnsignedLong(capabilities.currentExtent().width()) != SURFACE_EXTENT_UNSPECIFIED;
+            this.surfaceOffer = "surface-offer: minImages=" + capabilities.minImageCount()
+                    + " maxImages=" + (imagesUnlimited ? "unlimited(0)" : Integer.toString(surfaceMaxImages))
+                    + " usage=0x" + Integer.toHexString(supportedUsage)
+                    + " compositeAlpha=0x" + Integer.toHexString(supportedAlpha)
+                    + " currentExtent=" + (extentFromSurface
+                            ? capabilities.currentExtent().width() + "x" + capabilities.currentExtent().height()
+                            : "unspecified(0xFFFFFFFF)")
+                    + " minExtent=" + capabilities.minImageExtent().width() + "x"
+                    + capabilities.minImageExtent().height()
+                    + " maxExtent=" + capabilities.maxImageExtent().width() + "x"
+                    + capabilities.maxImageExtent().height()
+                    + " transform=0x" + Integer.toHexString(capabilities.currentTransform())
+                    + " presentModesOffered=[" + this.presentModesOffered + "]";
+            this.reconciliation = "images=" + imageCount + " (desired " + desiredImages
+                    + (imageCountClamped ? ", clamped to maxImageCount" : "")
+                    + (imagesUnlimited ? ", max unlimited" : "") + ")"
+                    + " extent=" + this.width + "x" + this.height + " ("
+                    + (extentFromSurface ? "surface currentExtent" : "request clamped into min..max") + ")"
+                    + " usage=0x" + Integer.toHexString(swapchainUsage)
+                    + (droppedUsage.isEmpty() ? "" : " dropped[" + droppedUsage.trim() + "]")
+                    + " compositeAlpha=0x" + Integer.toHexString(compositeAlpha) + " " + alphaNote;
             VkSwapchainCreateInfoKHR create = VkSwapchainCreateInfoKHR.calloc(stack).sType$Default()
                     .surface(this.surface)
                     .minImageCount(imageCount)
@@ -1331,8 +1388,11 @@ public final class VulkanSwapchain {
             // probe-failure message, so the chosen image count, usage set, composite alpha and format were measurable
             // only when the call failed - and "the fields are set in the source" is not a measurement of the surface's
             // values. One line per swapchain, including the ones recreated by a VSync change or an out-of-date surface.
-            System.out.println("[Celtium] CELTIUM_SWAPCHAIN " + this.argumentSummary
-                    + " semaphorePoolRollbacks=" + semaphorePoolRollbacks);
+            // The stdout line carries the offer as well as the request (BH-18): a leg's console is the artifact that
+            // survives even when the renderer's diagnostics list is never dumped, and "what the surface offered beside
+            // what was requested" is the acceptance - the request alone cannot be reconciled with anything.
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN " + offeredVersusRequested()
+                    + " | " + this.argumentSummary + " semaphorePoolRollbacks=" + semaphorePoolRollbacks);
             result = vkCreateSwapchainKHR(this.context.device(), create, null, handle);
             if (result != VK_SUCCESS) {
                 reasons.add("vkCreateSwapchainKHR returned " + result + " (formats " + availableFormats + ") ["

@@ -173,6 +173,29 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.228 **BH-18 受入: surface が提示した値と要求値を1行で突き合わせ、AMD/Intel で一致（clamp 分岐は未行使と明記）**
+
+- **変更**: `VulkanSwapchain` が **surface の提示値**（`minImageCount`・`maxImageCount`（0 は `unlimited(0)`）・`supportedUsageFlags`・
+  `supportedCompositeAlpha`・`currentExtent`（未指定なら `unspecified(0xFFFFFFFF)`）・`min/maxImageExtent`・`currentTransform`・
+  `presentModesOffered`）と **要求値＋突き合わせ**（`images=`（clamp の有無）・`extent=`（'surface currentExtent' か 'request clamped into min..max'）・
+  `usage=`（落とした任意 bit）・`compositeAlpha=`（OPAQUE でない理由））を `CELTIUM_SWAPCHAIN` の stdout 行と renderer diagnostics の
+  `describe()` の両方に出す。**罠は定数と分岐で符号化**: `SURFACE_EXTENT_UNSPECIFIED = 0xFFFFFFFF`（unsigned 比較）と
+  `maxImageCount == 0 = unlimited`。
+- **受入 leg（両 GPU・layers ON・jar `485bc6d5b55079f2`・fixture `a15857b0b594314b`・glless・`minWorldFrames=5`）**:
+  - **AMD RX 6400**: `surface-offer: minImages=3 maxImages=unlimited(0) usage=0x8009f compositeAlpha=0x9 currentExtent=1280x720
+    minExtent=1280x720 maxExtent=1280x720 transform=0x1 presentModesOffered=[IMMEDIATE,MAILBOX,FIFO,FIFO_RELAXED]
+    requested[images=3 (desired 3, max unlimited) extent=1280x720 (surface currentExtent) usage=0x13 compositeAlpha=0x1 OPAQUE]`・
+    **`validationMessageCount=0`・`validationClean=true`**。
+  - **Intel UHD 630**: **同じ数字**（`usage=0x8009f`・`compositeAlpha=0x9`・`currentExtent=1280x720`・`min=max=1280x720`・同じ present mode 集合）・
+    **`validationMessageCount=0`・`validationClean=true`**。＝要求値はどちらも surface の集合から導出されている（`usage 0x13` は
+    COLOR_ATTACHMENT|TRANSFER_SRC|TRANSFER_DST、`compositeAlpha 0x1` は OPAQUE が提示されているため）。
+- **未行使（明記）**: この2つの surface は `currentExtent` を**指定**し（`min=max=1280x720`）、`maxImageCount` も unlimited なので、
+  **clamp 分岐（0xFFFFFFFF のときの min..max への丸め、有限 maxImageCount への切下げ）はこの leg では走っていない**。
+  コードは両分岐を持ち、罠は定数と報告文字列で符号化されているが、**行使した証拠は無い**。
+  また world resize 要求（`resizeAtTick=60`・`resizeTo=1000x600`）は trace に `CELTIUM_RESIZE_REQUEST` を残したが
+  framebuffer は 1280x720 のまま＝**recreate 経路はこの harness では行使できなかった**（swapchain 生成は同じ関数を通るが、この leg は2回目の生成を示していない）。
+- 両 leg の `fixtureStatus` は既知の画像ゲート `FAILED_PRESENTED_IMAGE`（BH-18 とは独立）。
+
 ## 0.227 **ユーザーの LagSpike プロファイルを解読: スパイクの 5% の frame が wall time の 50% を食い、中身は `gameRenderer` の無名の残差。`gui` は毎 frame 約14 ms の定数**
 
 - **証拠**: `.celtium-work/evidence/user-reports/2026-10-12-lagspike.json`（bzip2 原版 `.lagspikeprofile` を伸長、sha256
