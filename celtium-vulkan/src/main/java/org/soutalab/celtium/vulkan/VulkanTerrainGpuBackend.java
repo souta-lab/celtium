@@ -7666,6 +7666,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // enable bit. acceptance measured 0 groups with the break overlay present, so one of these is false
                 // and the pair says which without another round of guessing.
                 + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCallCount()
+                + " framePassSplit=[" + FramePassTimings.summary() + "]"
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
                 // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
@@ -9405,11 +9406,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * geometry) without the fixture growing a knob for every piece of GL state; 0 means "use the game's own".
      */
     private static int celtium$alphaFuncSelector(int[] state) {
+        int captured = state.length > 14 ? state[14] : 0;
         int override = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.alphaFuncOverride();
-        if (override != 0) {
-            return override;
+        // The override applies only where a comparison is in force. Slot 14 encodes "the test is disabled" as 0 - no
+        // GL enum is 0 - so overriding a 0 would switch the test *on* with a reference the batch never asked for
+        // (measured before this condition: the override leg's census read `[0x203:4536]` with no 0x0 slot at all,
+        // i.e. the batches the game draws with the test off were compared against a threshold of 0 and discarded).
+        // A measurement switch must change the one thing it names, not the enable as well.
+        if (captured == 0) {
+            return 0;
         }
-        return state.length > 14 ? state[14] : 0;
+        return override != 0 ? override : captured;
     }
 
     private long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {
