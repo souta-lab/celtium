@@ -24,7 +24,7 @@
 | OPT-08 | frames in flight + present 非同期 | **実装済** | FRAME_SLOTS=4 + deferred present（同上）|
 | OPT-09 | native multidraw | 未実装 | `VulkanMultiDrawBatch.upload()` は no-op — per-command `vkCmdDrawIndexed` のまま |
 | OPT-10 | command/state の merge | 未実装 | group merge 済だが state key 差で分断（GUI の要素毎 enable 切替）|
-| OPT-11 | 24B compact vertex | **実装済/計測済（fixture）** | entity-free NOLAVA pair (tick=200 同一 tick capture): `arenaUploadedBytes` 24.2MB→18.5MB **-23.8%**・frame p50 16.15→16.18 不変・画像は **63.8% 画素差だが 92% が ≤16 delta**（position/color 量子化の辺縁差 + 大差 ~13K）→ 画質は bit 不変ではない。既定 off 維持が妥当（受入判断はユーザー側）。`-Dceltium.validation.compactVertexFormat=true` で切替 |
+| OPT-11 | 24B compact vertex | **実装済/計測済（fixture）** | entity-free NOLAVA pair (tick=200 同一 tick capture): `arenaUploadedBytes` 24.2MB→18.5MB **-23.8%**・frame p50 16.15→16.18 不変。**画像差は実行間 jitter と区別不能**: 統制(base同士)で masked-diff 495,236px/mean 2.11/>16=16、format pair で 496,202/mean 2.18/>16=93（超過 ~0.008%）。初回比較の 63.8% は overlay テキスト(run dir 埋込) + 全画素の lightmap flicker ノイズで、format 効果ではなかった（目視では両画像同一）。既定 off は opt-in のまま、画質上の阻害は実測なし。切替: `-Dceltium.validation.compactVertexFormat=true` |
 | OPT-12 | descriptor キャッシュ | 一部実装 | per-pipeline map 済（hits 実測）・driver `VkPipelineCache` 未使用（起動時効果は限定的と予想）|
 | OPT-13 | pipeline spec/キャッシュ | 一部実装 | `cache`/`itemCache`/`blockCache`/`particleCache` map。specialization constants 未使用 |
 | OPT-14 | entity model の Vulkan 直 draw | 一部実装? | captured model mesh 借用（`stamp.meshBorrowed`）あり — 残: model 再利用の範囲・bone animation |
