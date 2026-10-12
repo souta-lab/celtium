@@ -1,7 +1,7 @@
 # Celtium refactoring plan
 
-> **STATUS (2026-10-12, moved to docs/history/):** this plan is a design and migration document, not a completion
-> claim. What actually landed on main, in the order the plan's own stage table defines:
+> **STATUS (2026-10-12):** this plan is a design and migration document, not a completion claim. It stays in docs/
+> until R8 lands - moving it to history before the stages are done would have made unfinished work look finished. What actually landed on main, in the order the plan's own stage table defines:
 >
 > | stage | state |
 > |---|---|
@@ -9,7 +9,7 @@
 > | R1a `TextureCopyService` | done and wired |
 > | R1b `PublishedFrameTextures` | done and wired (census, counters, accessors; `CELTIUM_CPU_CONTRACT PASS`) |
 > | R1c `BackendReport` | done and wired (the verification line's output contract; counters stay in the backend) |
-> | R2 per-domain statistics | **not complete.** Attempted twice: the first application used a line-range map against a file my own earlier wiring had shifted and produced uncompilable code (reverted); the second anchored on the method and produced a clean call sequence, but the seven classes reference backend members they were never given, so they cannot compile without a host interface the plan's section 6.1 warns against inventing in bulk. The classes and the run/line map are parked in `docs/history/refactoring-r2-classes/` and `docs/history/2026-10-12-r2-wiring-map.md`; the verification line is back to its own expression, which is what leg records expect. |
+> | R2 per-domain statistics | **not complete.** Attempted twice: the first application used a line-range map against a file my own earlier wiring had shifted and produced uncompilable code (reverted); the second anchored on the method and produced a clean call sequence, but the seven classes reference backend members they were never given, so they cannot compile without a host interface the plan's section 6.1 warns against inventing in bulk. The classes and the run/line map are parked in `docs/history/refactoring-r2-classes/` (their own directory, not a claim that the stage is done) and `docs/history/2026-10-12-r2-wiring-map.md`; the verification line is back to its own expression, which is what leg records expect. |
 > | R3a `ModelGeometryCache` | **done and wired** (665a099b8): ten fields gone, the builder delegates, the teardown loops, the borrow path and every report read go through the class |
 > | R3b `FontBatch` | class written with a CPU contract check (30 checks, retention proof, summary-key invariance); **not wired.** The `FontRunState` view and the `RunSink` body are written and understood (the sink is the old flush's apply/restore around `submitImmediateBatch`), but replacing the backend's four font entry points needs brace-matched replacement of multi-line signatures, and two attempts cut inside the old bodies. It is a careful single pass, not a bulk edit |
 > | R4 `TerrainRenderer` | delegation list and the three interface points agreed; **not written** |

@@ -406,7 +406,7 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **build 緑** ✓（`f6347572f`）: R1a/R1b/R1c 配線済み ✓ ＋ R5 の `targetGeneration`/`frameTargetKnown` ✓。**CPU 契約 `CELTIUM_CPU_CONTRACT PASS`** ✓。
 - **R2 は未完（正直に）**: ①行範囲マップを**自分の R5 配線で移動したファイル**に適用して 65呼び出しが誤ったメソッドに入り**コンパイル不能** ✗（revert 済み ✓）②アンカー方式で呼び出し列は正しく作れたが、**statistics クラスが backend の member を直接参照**しており（`textureRegistry`・`textureCopyService`・`swapchain`・`offTargetTarget()`・`celtium$perFormat` 等）、plan §6.1 が禁じる**大量 accessor/host を発明しない限りコンパイルできない** ✗ → **7クラスを `docs/history/refactoring-r2-classes/` に退避** ✓、検証行は**元の式に戻した**（leg 記録が期待する形 ✓）。
 - **教訓（2回失敗したので記録）**: **行範囲マップは測定時のリビジョンでしか有効でない** → 配線はテキストにアンカーし、**次段の前に必ず build する**（コンパイル不能な段は全 unit を止める ✗）。
-- **refactoring plan を history へ移動** ✓: `docs/history/2026-10-12-refactoring-plan.md`（冒頭に **R0〜R8 の実状表**を付与 ✓）。`docs/plan.md` の参照も更新 ✓。
+- **refactoring plan を history へ移動** ✓: `docs/refactoring-plan.md`（冒頭に **R0〜R8 の実状表**を付与 ✓）。`docs/plan.md` の参照も更新 ✓。
 - **残る段（緑の上で1段ずつ・build 付きで）**: R3a 配線（機械的 ✓）→ R3b（`FontRunState`/`RunSink`＋call site ✓）→ R5 の残り（pair handle・identity・replacing・clear ✓）→ R6（**slot counter の所有を R2 と決着させてから** ✓）→ R4 `TerrainRenderer`（執筆＋配線 ✓）→ R7/R8 ✓。
 
 ## 0.400 **round 201: 残る配線の仕様を確定（次 round で機械適用）— 現状は build 未検証のまま保持**
@@ -693,7 +693,7 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   | 修正後 long20 vs long380 | 418（≈42°） | **48** | **0.573**（構造が変化） | 77.7% / mean 61.2 |
   ＝ **画素差では分離できない（66.9 vs 77.7）が、プロファイル相関は 0.906 → 0.573 で分離する**。
 - **測定法の限界（自分の誤りを2回訂正した記録）**: 私は最初「画素差 37〜75%」を運動と読み（誤り）、次に「NCC が dx=0 で最大だから動いていない」と結論した（これも短い間隔では誤り）。**Δtimer 15（≈1.5° yaw ≈32 px）は 256×256 blur の下では不可視**で、NCC も dx=0 のままになる。**判定は「大きく離した2点（Δtimer 400 以上）」で行う**こと。`menuDumpPanoramaTimer`（`GuiMainMenu.panoramaTimer` / `field_73979_m`）と `menuDumpRenderPartialTicks` を fixture が report するようにして、**回転角は推測せず実測**する。
-- **コスト**: 正しさの代償として **present ごとに同期 readback 1回（約24 ms）**。menu の脚で `textureCopyReadbackMillis=1143`（48回）。**GPU 側 copy へ置き換えるのが次の最適化**（`docs/history/2026-10-12-refactoring-plan.md` R1a の後続作業として既記載）。
+- **コスト**: 正しさの代償として **present ごとに同期 readback 1回（約24 ms）**。menu の脚で `textureCopyReadbackMillis=1143`（48回）。**GPU 側 copy へ置き換えるのが次の最適化**（`docs/refactoring-plan.md` R1a の後続作業として既記載）。
 - **解像度側は我々の欠陥ではない**: 面は 256×256（`opaque=65536/65536`）で vanilla と同じ。拡大は滑らか（隣接差 p99=3.0・硬い段差 0.30%・一定長の中央値 1）で、**ユーザー自身のスクリーンショットも同一指標**（p99=2.3・run 中央値 1）＝ blocky ではない。`CELTIUM_SAMPLER_FILTER glTexture=8` は `wasMag=LINEAR wasMin=LINEAR`（＝`GuiMainMenu.java:479-481` の LINEAR は届いている）。
 - **recipe**: `bash .celtium-work/r166-panorama.sh <tick> <suffix> [<menuHoldTicks>]`、pin は `CELTIUM_PIN_JAR`/`CELTIUM_PIN_FIX`（2-jar 実験用）。判定は `.celtium-work/ncc_shift.py`（**大角度でのみ有効**）。menu dump は `celtium$menuDumpRequested` で一回きりなので2点は2脚。
 
@@ -749,7 +749,7 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 ## 0.372 **round 179: PR #6（動的state の dedup）を穴を閉じて着地。ユーザ提示の分割計画を採用**
 
 - **ユーザの指示**: 「**PR6,ポテンシャルあるぞ、普通に。これが可能なら大幅な最適か。**」「**あとAIにリファクタリングプランつくってもらったから分割はこれを参考にして。**」
-  → PR#6 は**棄却ではなく安全に成立させる**方針で扱い、分割計画は §0.371 で単一計画として採用済み（`docs/history/2026-10-12-refactoring-plan.md`）。
+  → PR#6 は**棄却ではなく安全に成立させる**方針で扱い、分割計画は §0.371 で単一計画として採用済み（`docs/refactoring-plan.md`）。
 - **PR #6 の中身**: `vkCmdSetViewport`/`vkCmdSetScissor`/`vkCmdSetDepthBias` を「直前と同じ値なら発行しない」tracker で省略（+67/-11・1ファイル・`perf/state-dedup`）。
 - **レビューで見つけた穴（これが唯一のブロッカー）**: tracker は「**tracker == command buffer に実際に設定されている状態**」を前提にするが、それを壊す writer が**同じ command buffer** に居た。
   `celtium$postChainRun` は `this.postChain.recordPasses(this.commandBuffer, passes)` と**この command buffer を渡し**、`VulkanPostChain.java:965/968` が**自前の viewport/scissor を tracker を通さず設定**する。
@@ -763,13 +763,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **重要な限界（記録）**: **どの fixture scene も post chain を踏まない**（`postChains=0`）。したがってこの穴は**測定では取れず、構造で塞ぐしかなかった**。次に post chain を踏む scene を作る価値がある（entity outline の `glowEntities=true` でも `postChains=0` だった）。
 - **着地**: `3870c4ae6`（PR#6 の変更＋無効化を1コミット）。PR #6 は**理由と測定を添えて close**（GitHub の merge バッジより、main に入った事実と根拠を残す方を選んだ）。**arm A/B/C の jar は `.celtium-work/pr6-arm{A,B,C}.jar` に pin 済み。**
 - **同時に着地した他担当**: `534a34066`（perf-ring・**upload ring slot 4→8**。`uploadRingPressureWaits` **66→7**・deferred 待ち 82→23 ms・pressure wait/copy 0.036→0.0095 ms を**仕事量で正規化して**主張。**copy 数が 1831 vs 733 と違うため frame 時間差はこの変更に帰属しないと本人が明記**）、`7fbea6150`（glyph-fix・task-65 の merge 後ベースライン `24bd28fd…`・16,114文字・移管表）。
-## 0.371 **round 178: 分割の実行計画書 `docs/history/2026-10-12-refactoring-plan.md` を単一の計画として採用**
+## 0.371 **round 178: 分割の実行計画書 `docs/refactoring-plan.md` を単一の計画として採用**
 
 - **経緯**: リポジトリ直下に未追跡の `REFACTORING_PLAN.md`（424行）が作成されていた。ユーザ指示「**vulkanterraingpubackend を分割してみんなで編集したほうがいい**」に対する実行計画で、
   読取点（`0a8b8d253`・`46854aa9`・`7d48f0741` = PR統合後 main）・14,106行の backend・差分再計数・既存の良い分離の保持・目標構造（`VulkanRenderer`/`TerrainRenderer`/`ImmediateRenderer`/`ModelGeometryCache`/`FontBatch`/
   `CapturedRenderState`/`RenderTargetRegistry`/`PublishedFrameTextures`/`TextureCopyService`/`VanillaPostProcessor`/`FrameCoordinator`/`FrameSubmissionScheduler`）・守る契約（state snapshot、group移動、command完了、target/alias/layout、copy、thread寿命）・
   **移行順 R0→R8**・検証3分類・停止条件を定めている。
-- **私の判断**: **別名の分割計画を増やさない**ため、`docs/history/2026-10-12-refactoring-plan.md` へ移し、`docs/plan.md` の冒頭から参照させる。**状態・受入・優先順は本ファイル（plan.md）が持ち、refactoring-plan は構造の実行方法だけを持つ**（受入表を二重に作らない）。
+- **私の判断**: **別名の分割計画を増やさない**ため、`docs/refactoring-plan.md` へ移し、`docs/plan.md` の冒頭から参照させる。**状態・受入・優先順は本ファイル（plan.md）が持ち、refactoring-plan は構造の実行方法だけを持つ**（受入表を二重に作らない）。
 - **本書が私の §0.367 の task-63/64/65 を前提に据えている**ことを確認（「別の新クラスでやり直さない」）。段階 R1a/R1b/R1c がそれに対応する。
 - **計画書による私の設計への訂正（採用する）**:
   1. **§6.1: task-65 の「287 private field を package-private にして `BackendReport` が backend を丸ごと読む」形は恒久の責任境界にしない。** R1c は**書式互換のための暫定移動**とし、**暫定 visibility 拡張には使用者と R2〜R7 での撤去先を記録**する。最終形は「domain ごとの statistics を domain と一緒に移し、report はその snapshot を組み合わせる」。
