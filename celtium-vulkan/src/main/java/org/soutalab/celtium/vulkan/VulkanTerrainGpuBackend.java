@@ -584,7 +584,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " lastTextureUploadFailure=" + this.lastTextureUploadFailure
                 + " descriptorFaultInjections=" + VulkanDescriptorFault.injections()
                 + " descriptorRequests=" + VulkanDescriptorFault.requests()
-                + " modelDraws=" + this.modelDraws
+                + this.modelStats.run0(this.modelDraws)
                 + " texMatrixGroups=" + this.texMatrixGroups
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " stubTransformCalls=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
@@ -597,8 +597,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " modelMeshLists=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + this.modelGeometry.modelMeshQuads()
-                + " modelMeshFailure=" + this.modelGeometry.modelMeshFailure()
+                + this.modelStats.run2()
                 + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
                 + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
                 + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
@@ -633,9 +632,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
                 + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
                 + " modelDraws=" + this.modelDraws
-                + " modelDrawRefusals=" + this.modelDrawRefusals
-                + " modelLastRefusal=" + this.modelLastRefusal
-                + " modelMeshLists=" + (this.modelGeometry.modelMeshes() == null ? -1 : this.modelGeometry.modelMeshes().size())
+                + this.modelStats.run1(this.modelDrawRefusals, this.modelLastRefusal)
                 + " " + VulkanDynamicMesh.describeModel()
                 + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
                 + " modelMeshQuads=" + this.modelGeometry.modelMeshQuads()
@@ -1171,6 +1168,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** The font domain's fragment of the verification line (refactoring plan R2, stage 1). */
     private final FontStatistics fontStats = new FontStatistics(this.fontBatch);
+
+    /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
+    private final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
 
     {
         this.fontBatch.celtium$setFontRunState(new FontBatch.FontRunState() {
