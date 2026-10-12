@@ -1894,11 +1894,11 @@ public final class VulkanGlTexture {
     /**
      * Whether a descriptor written from this wrapper is being asked to declare the sampling layout, or the pair's.
      * <p>
-     * {@code -Dceltium.vulkan.pairStayGeneral=true}, default off, is the separation experiment for the chain pair's
-     * {@code VUID-vkCmdDraw-None-09600} messages: the pair's render pass declares the constant {@code GENERAL}, so if
-     * the image is never moved to {@code SHADER_READ_ONLY_OPTIMAL} and the descriptors that sample it declare
-     * {@code GENERAL} too, then the pass's declaration, the image's actual layout and the descriptor's declaration are
-     * one value and the messages cannot come from a disagreement between them.
+     * The same switch the backend reads ({@code -Dceltium.vulkan.pairStayGeneral=false} turns it off), and it must
+     * read it with the same default: round 254 ran the backend with this on and this class with it off, because the two
+     * constants read one property with two defaults, and the leg measured ten {@code VUID-vkCmdDraw-None-09600}
+     * messages instead of the one the consistent pair had measured (legs r212-world-hud39 versus hud38). One property,
+     * one default.
      */
     private static final boolean PAIR_STAY_GENERAL = Boolean.getBoolean("celtium.vulkan.pairStayGeneral");
 

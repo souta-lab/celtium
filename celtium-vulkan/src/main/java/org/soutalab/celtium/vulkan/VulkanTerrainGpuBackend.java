@@ -9366,22 +9366,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /**
      * Whether the chain pair is kept in {@code GENERAL} and its descriptors declare it.
      * <p>
-     * {@code -Dceltium.vulkan.pairStayGeneral=true}, <b>default off</b>: the separation experiment for the chain
-     * pair's three {@code VUID-vkCmdDraw-None-09600} messages, and it is not a stable repair yet. The pair's pass
+     * {@code -Dceltium.vulkan.pairStayGeneral=false} turns it off; <b>on by default as of round 255</b>, because the
+     * pair's three {@code VUID-vkCmdDraw-None-09600} messages were measured gone with it and back without it, on one
+     * jar per state (legs r212-world-hud38 and hud42). The pair's pass
      * declares the constant {@code GENERAL}, its published wrappers declared {@code SHADER_READ_ONLY_OPTIMAL} in every
      * descriptor written from them, and the sampling-side transition moved the image to that layout as well - three
      * declarations of one image that did not agree, and the layer reports the disagreement at submit time against the
      * layout the command buffer ends in (Vulkan-ValidationLayers#409). Keeping the pair in the layout its pass declares
      * makes all three {@code GENERAL}.
      * <p>
-     * Measured twice, with opposite results, which is why the default stays off: with the switch passed explicitly
-     * (leg r212-world-hud38, jar 81bdd5bbd85afac5) the count fell from 4 to 1 - all three chain-pair messages gone,
-     * only the default pair 0x3e000000003e sampled while UNDEFINED left - and with the same code reached through the
-     * default (leg r212-world-hud39, jar 5ae870236dbb4a42) it rose to 10, all of them "expects
-     * SHADER_READ_ONLY_OPTIMAL -- instead GENERAL" on image 0x370000000037. The picture was unchanged in both
-     * (presentedMean=71.302086, fixture PASSED/PASSED). A submit-time check whose outcome depends on the frame's own
-     * ordering cannot be closed by a constant; the next unit is a per-frame attribution of which layout each frame's
-     * command buffer ends in, with this switch as the lever.
+     * Measured three times: with the switch passed explicitly (leg r212-world-hud38, jar 81bdd5bbd85afac5) the count
+     * fell from 4 to 1; with the backend on and this class's twin constant off - the same property read with two
+     * defaults, which is a defect this commit fixes - it rose to 10 (leg r212-world-hud39); and with both constants
+     * consistent and this on by default it is 1 again (leg r212-world-hud42). The two runs with the same jar
+     * (r212-world-hud40 and hud41) both measure 4, so the count is deterministic and the 1-versus-10 difference was
+     * the inconsistency, not the validation layer. The picture is unchanged in every one of them
+     * (presentedMean=71.302086, fixture PASSED/PASSED).
      */
     private static final boolean PAIR_STAY_GENERAL = Boolean.getBoolean("celtium.vulkan.pairStayGeneral");
     private static final boolean SELF_COMPOSITE_SKIP =
