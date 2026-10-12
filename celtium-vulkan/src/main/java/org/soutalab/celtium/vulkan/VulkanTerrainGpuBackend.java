@@ -8508,6 +8508,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapQueueWaits=" + VulkanContext.bootstrapQueueWaits
                 + " arenaUploads=" + this.celtium$arenaUploadCount() + " arenaUploadedBytes="
                 + this.celtium$arenaUploadedBytes()
+                + " arenaCreateCalls=" + org.soutalab.celtium.vulkan.VulkanArena.arenaCreateCalls
+                + " arenaCreateMillis=" + (org.soutalab.celtium.vulkan.VulkanArena.arenaCreateNanos / 1000000L)
                 + " textureDiagnostics=" + TEXTURE_DIAGNOSTICS + " diagnosed=" + this.diagnosedTextures.size()
                 + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
                 + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored

@@ -158,10 +158,19 @@ public final class VulkanArena {
         this.stride = stride;
         this.alignUnit = lcm4And(stride);
         this.capacity = alignUpTo(initialCapacityBytes, this.alignUnit);
+        long started = System.nanoTime();
         this.buffer = new VulkanBuffer(context, this.capacity, usageFlags);
+        arenaCreateCalls++;
+        arenaCreateNanos += System.nanoTime() - started;
         this.head = new Segment(this, 0, this.capacity);
         this.head.free = true;
     }
+
+    /** Arenas created, and the total time their buffers took to create - each is a buffer plus a device
+     *  allocation, so a rebuild burst that opens many regions at once (a dimension switch is the fixture's
+     *  case) pays the driver allocation cost in one frame. Read back by the backend summary. */
+    static volatile long arenaCreateCalls;
+    static volatile long arenaCreateNanos;
 
     /**
      * Allocates a range of at least {@code byteSize} bytes. The returned range is a multiple of 4 bytes long and
