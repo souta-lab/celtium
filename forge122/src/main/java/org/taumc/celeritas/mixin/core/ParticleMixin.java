@@ -3,7 +3,6 @@ package org.taumc.celeritas.mixin.core;
 import net.minecraft.client.particle.Particle;
 import net.minecraft.client.renderer.BufferBuilder;
 import net.minecraft.entity.Entity;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -58,42 +57,16 @@ public abstract class ParticleMixin {
     /** The arguments the cached basis was computed for; a changed value means a new frame/pass. */
     private static float celtium$basisX = Float.NaN, celtium$basisZ, celtium$basisYZ, celtium$basisXY, celtium$basisXZ;
 
-    /** The tick the light cache belongs to; BlockPos-packed key -> combined light. */
-    private static long celtium$lightTick = Long.MIN_VALUE;
-    private static final java.util.LinkedHashMap<Long, Integer> celtium$lightCache =
-            new java.util.LinkedHashMap<Long, Integer>(1024, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(java.util.Map.Entry<Long, Integer> eldest) {
-                    return size() > 1024;
-                }
-            };
-
     @Inject(method = "func_189214_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$lightCache(float partialTicks, CallbackInfoReturnable<Integer> info) {
-        if (!CELTIUM_PARTICLE_LIGHT || this.world == null) {
+        if (!CELTIUM_PARTICLE_LIGHT) {
             return;
         }
-        long tick = this.world.getTotalWorldTime();
-        if (tick != celtium$lightTick) {
-            celtium$lightTick = tick;
-            celtium$lightCache.clear();
-        }
-        // The BlockPos the original allocates is only ever a key on the lookup path, so the key is
-        // packed by hand (same layout as BlockPos.toLong: 25 bits z, 12 bits y, 25 bits x) and the
-        // object is materialised only on a cache miss, where the world call needs it anyway.
-        long x = net.minecraft.util.math.MathHelper.floor(this.posX);
-        long y = net.minecraft.util.math.MathHelper.floor(this.posY);
-        long z = net.minecraft.util.math.MathHelper.floor(this.posZ);
-        long key = (x & 0x3ffffffL) << 37 | (y & 0xfffL) << 25 | (z & 0x3ffffffL);
-        Integer cached = celtium$lightCache.get(Long.valueOf(key));
-        if (cached != null) {
-            info.setReturnValue(cached.intValue());
-            return;
-        }
-        BlockPos pos = new BlockPos(this.posX, this.posY, this.posZ);
-        int value = this.world.isBlockLoaded(pos) ? this.world.getCombinedLight(pos, 0) : 0;
-        celtium$lightCache.put(Long.valueOf(key), Integer.valueOf(value));
-        info.setReturnValue(value);
+        // The shared per-tick cache in CeltiumLightCache (also used by entities): the BlockPos the
+        // original allocates is only ever a key on the lookup path, so the key is packed by hand and
+        // the object materialises only on a miss, where the world call needs it anyway.
+        info.setReturnValue(Integer.valueOf(org.taumc.celeritas.impl.CeltiumLightCache
+                .combinedLightAtPos(this.world, this.posX, this.posY, this.posZ)));
     }
 
     @Inject(method = "func_180434_a", at = @At("HEAD"), cancellable = true, require = 0)
