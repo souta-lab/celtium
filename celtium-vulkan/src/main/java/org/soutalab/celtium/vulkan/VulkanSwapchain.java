@@ -1120,29 +1120,10 @@ public final class VulkanSwapchain {
     private static final long SURFACE_EXTENT_UNSPECIFIED = 0xFFFFFFFFL;
 
     /**
-     * The extent a swapchain against this surface gets: the current extent the driver pins, or the request clamped
-     * into the advertised limits when it does not. The request is the window's framebuffer size; the clamp keeps a
-     * zero-sized (minimised) request inside the legal {@code minImageExtent} bound.
-     */
-    private static int[] effectiveExtent(VkSurfaceCapabilitiesKHR capabilities, int requestedWidth,
-            int requestedHeight) {
-        if (Integer.toUnsignedLong(capabilities.currentExtent().width()) != SURFACE_EXTENT_UNSPECIFIED) {
-            return new int[]{capabilities.currentExtent().width(), capabilities.currentExtent().height()};
-        }
-        int width = Math.max(capabilities.minImageExtent().width(),
-                Math.min(Math.max(1, requestedWidth), capabilities.maxImageExtent().width()));
-        int height = Math.max(capabilities.minImageExtent().height(),
-                Math.min(Math.max(1, requestedHeight), capabilities.maxImageExtent().height()));
-        return new int[]{width, height};
-    }
-
-    /**
      * {@return one line saying what the surface offered and what was requested, so a leg can reconcile the two}.
      * <p>
      * The acceptance for BH-18 is a measurement rather than a source reading: the numbers the surface reports and the
-     * numbers that went into {@code vkCreateSwapchainKHR}, side by side, with every place they differ named. It is
-     * filled at creation and survives into the renderer's diagnostics, so a report carries it (the stdout line alone
-     * is lost when a leg's console is truncated).
+     * numbers that went into {@code vkCreateSwapchainKHR}, side by side, with every place they differ named.
      */
     public String offeredVersusRequested() {
         return this.surfaceOffer + " requested[" + this.reconciliation + "]";
@@ -1163,7 +1144,16 @@ public final class VulkanSwapchain {
                     capabilities) != VK_SUCCESS) {
                 return true;
             }
-            int[] extent = effectiveExtent(capabilities, framebufferWidth, framebufferHeight);
+            // The same pure decision the creation path uses, so "would a fresh swapchain get this extent" cannot
+            // disagree with "what extent does a fresh swapchain get".
+            SwapchainCreateArguments.Surface offer = new SwapchainCreateArguments.Surface();
+            offer.currentExtentWidth = Integer.toUnsignedLong(capabilities.currentExtent().width());
+            offer.currentExtentHeight = Integer.toUnsignedLong(capabilities.currentExtent().height());
+            offer.minExtentWidth = capabilities.minImageExtent().width();
+            offer.minExtentHeight = capabilities.minImageExtent().height();
+            offer.maxExtentWidth = capabilities.maxImageExtent().width();
+            offer.maxExtentHeight = capabilities.maxImageExtent().height();
+            int[] extent = SwapchainCreateArguments.extentOf(offer, framebufferWidth, framebufferHeight);
             return extent[0] == this.width && extent[1] == this.height;
         }
     }
@@ -1182,24 +1172,14 @@ public final class VulkanSwapchain {
             VkSurfaceFormatKHR.Buffer formats = VkSurfaceFormatKHR.calloc(count.get(0), stack);
             vkGetPhysicalDeviceSurfaceFormatsKHR(this.context.physicalDevice(), this.surface, count, formats);
             List<String> availableFormats = new ArrayList<>();
-            boolean chosen = false;
+            // The surface's format list as (format, colourSpace) pairs, which is what the pure selection function
+            // takes; the list itself is still enumerated into the argument summary below (BH-18: what was offered and
+            // what was chosen, one line).
+            int[] offeredFormats = new int[formats.capacity() * 2];
             for (int i = 0; i < formats.capacity(); i++) {
-                int candidate = formats.get(i).format();
-                availableFormats.add(String.valueOf(candidate));
-                if (!chosen && (candidate == VK_FORMAT_B8G8R8A8_UNORM || candidate == VK_FORMAT_R8G8B8A8_UNORM)) {
-                    this.format = candidate;
-                    this.colorSpace = formats.get(i).colorSpace();
-                    chosen = true;
-                }
-            }
-            if (!chosen) {
-                if (formats.capacity() > 0) {
-                    this.format = formats.get(0).format();
-                    this.colorSpace = formats.get(0).colorSpace();
-                } else {
-                    reasons.add("the surface advertises no formats");
-                    return false;
-                }
+                offeredFormats[i * 2] = formats.get(i).format();
+                offeredFormats[i * 2 + 1] = formats.get(i).colorSpace();
+                availableFormats.add(String.valueOf(formats.get(i).format()));
             }
 
             vkGetPhysicalDeviceSurfacePresentModesKHR(this.context.physicalDevice(), this.surface, count, null);
@@ -1256,94 +1236,58 @@ public final class VulkanSwapchain {
                     + " size=" + requestedWidth + "x" + requestedHeight;
             System.out.println("[Celtium] CELTIUM_PRESENT_MODE " + presentModeLine);
 
-            int[] extent = effectiveExtent(capabilities, requestedWidth, requestedHeight);
-            this.width = extent[0];
-            this.height = extent[1];
-            // BH-18: the request is clamped into the surface's own limits on both sides. The old expression asked for
-            // minImageCount+1 - one more than the minimum - and only clamped downwards, so a surface that pins
-            // minImageCount == maxImageCount (2, on some WSIs) was asked for 3 and vkCreateSwapchainKHR failed for a
-            // reason the GPU has nothing to do with. Triple buffering is a preference, not a requirement: ask for 3,
-            // then honour min and max exactly.
-            int desiredImages = 3;
-            int imageCount = Math.max(capabilities.minImageCount(), desiredImages);
-            int surfaceMaxImages = capabilities.maxImageCount();
-            // maxImageCount == 0 is the spec's "no limit", not "zero images": the request is only clamped when the
-            // surface names a finite maximum, and the offer line below prints which of the two it was.
-            boolean imagesUnlimited = surfaceMaxImages == 0;
-            boolean imageCountClamped = false;
-            if (!imagesUnlimited && imageCount > surfaceMaxImages) {
-                imageCount = surfaceMaxImages;
-                imageCountClamped = true;
-            }
-
-            // BH-18: usage comes from what the surface advertises. COLOR_ATTACHMENT is required - the native path
-            // attaches the swapchain image as the frame target's colour - and is a named refusal when absent rather
-            // than a request the driver is expected to reject. TRANSFER_DST/SRC are added only when advertised, and
-            // which optional ones were dropped is recorded: silently asking for an unsupported bit is the failure the
-            // audit names, and silently *dropping* one the present path needs would be the same defect mirrored.
-            int supportedUsage = capabilities.supportedUsageFlags();
-            int requiredUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-            if ((supportedUsage & requiredUsage) == 0) {
-                reasons.add("the surface does not support colour-attachment usage (supported=0x"
-                        + Integer.toHexString(supportedUsage) + "), which the native present path attaches the frame"
-                        + " to; there is no fallback present method in this renderer");
+            // BH-18: the decision is one pure function of the surface's numbers (SwapchainCreateArguments.select),
+            // so the contract can be checked with synthetic inputs and the checked function is the one that runs here.
+            SwapchainCreateArguments.Surface surfaceOfferValues = new SwapchainCreateArguments.Surface();
+            surfaceOfferValues.minImageCount = capabilities.minImageCount();
+            surfaceOfferValues.maxImageCount = capabilities.maxImageCount();
+            surfaceOfferValues.supportedUsage = capabilities.supportedUsageFlags();
+            surfaceOfferValues.supportedCompositeAlpha = capabilities.supportedCompositeAlpha();
+            surfaceOfferValues.currentExtentWidth = Integer.toUnsignedLong(capabilities.currentExtent().width());
+            surfaceOfferValues.currentExtentHeight = Integer.toUnsignedLong(capabilities.currentExtent().height());
+            surfaceOfferValues.minExtentWidth = capabilities.minImageExtent().width();
+            surfaceOfferValues.minExtentHeight = capabilities.minImageExtent().height();
+            surfaceOfferValues.maxExtentWidth = capabilities.maxImageExtent().width();
+            surfaceOfferValues.maxExtentHeight = capabilities.maxImageExtent().height();
+            surfaceOfferValues.formats = offeredFormats;
+            SwapchainCreateArguments.Result choice =
+                    SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight, 3);
+            if (choice.refusal != null) {
+                reasons.add(choice.refusal + " (surface offered formats " + availableFormats + ")");
                 return false;
             }
-            int swapchainUsage = requiredUsage
-                    | (supportedUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-                    | (supportedUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-            String droppedUsage = ((supportedUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0
-                            ? "TRANSFER_DST " : "")
-                    + ((supportedUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0 ? "TRANSFER_SRC" : "");
-
-            // BH-18: the composite alpha is chosen from the surface's own set. OPAQUE is what the present path wants;
-            // when the surface does not offer it the next supported mode is taken and named, and a surface offering
-            // none at all is a refusal rather than a request for OPAQUE.
-            int supportedAlpha = capabilities.supportedCompositeAlpha();
-            int compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-            String alphaNote = "OPAQUE";
-            if (supportedAlpha != 0 && (supportedAlpha & compositeAlpha) == 0) {
-                if ((supportedAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) != 0) {
-                    compositeAlpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
-                    alphaNote = "PRE_MULTIPLIED (OPAQUE not offered)";
-                } else if ((supportedAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) != 0) {
-                    compositeAlpha = VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
-                    alphaNote = "POST_MULTIPLIED (OPAQUE not offered)";
-                } else {
-                    compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-                    alphaNote = "INHERIT (OPAQUE not offered)";
-                }
-            } else if (supportedAlpha == 0) {
-                reasons.add("the surface advertises no composite-alpha mode at all");
-                return false;
-            }
-
-            // BH-18's measurement: the surface's own numbers beside the ones that will be requested. currentExtent
-            // is printed as "unspecified(0xFFFFFFFF)" when the surface does not dictate a size, because that value is
-            // the trap - read as a size it is 4294967295x..., and read as a signed -1 it skips the clamp.
-            boolean extentFromSurface =
-                    Integer.toUnsignedLong(capabilities.currentExtent().width()) != SURFACE_EXTENT_UNSPECIFIED;
-            this.surfaceOffer = "surface-offer: minImages=" + capabilities.minImageCount()
-                    + " maxImages=" + (imagesUnlimited ? "unlimited(0)" : Integer.toString(surfaceMaxImages))
-                    + " usage=0x" + Integer.toHexString(supportedUsage)
-                    + " compositeAlpha=0x" + Integer.toHexString(supportedAlpha)
-                    + " currentExtent=" + (extentFromSurface
-                            ? capabilities.currentExtent().width() + "x" + capabilities.currentExtent().height()
-                            : "unspecified(0xFFFFFFFF)")
-                    + " minExtent=" + capabilities.minImageExtent().width() + "x"
-                    + capabilities.minImageExtent().height()
-                    + " maxExtent=" + capabilities.maxImageExtent().width() + "x"
-                    + capabilities.maxImageExtent().height()
+            // BH-18's measurement, assembled from the same surface values the decision used: what the surface offered
+            // beside what was requested, with the reconciliation the pure function produced. Printed on stdout (a
+            // leg's console survives when the diagnostics list is never dumped) and carried in describe() for the
+            // report.
+            this.surfaceOffer = "surface-offer: minImages=" + surfaceOfferValues.minImageCount
+                    + " maxImages=" + (choice.imagesUnlimited
+                            ? "unlimited(0)" : Integer.toString(surfaceOfferValues.maxImageCount))
+                    + " usage=0x" + Integer.toHexString(surfaceOfferValues.supportedUsage)
+                    + " compositeAlpha=0x" + Integer.toHexString(surfaceOfferValues.supportedCompositeAlpha)
+                    + " currentExtent=" + (choice.extentFromSurface
+                            ? choice.width + "x" + choice.height : "unspecified(0xFFFFFFFF)")
+                    + " minExtent=" + surfaceOfferValues.minExtentWidth + "x" + surfaceOfferValues.minExtentHeight
+                    + " maxExtent=" + surfaceOfferValues.maxExtentWidth + "x" + surfaceOfferValues.maxExtentHeight
                     + " transform=0x" + Integer.toHexString(capabilities.currentTransform())
-                    + " presentModesOffered=[" + this.presentModesOffered + "]";
-            this.reconciliation = "images=" + imageCount + " (desired " + desiredImages
-                    + (imageCountClamped ? ", clamped to maxImageCount" : "")
-                    + (imagesUnlimited ? ", max unlimited" : "") + ")"
-                    + " extent=" + this.width + "x" + this.height + " ("
-                    + (extentFromSurface ? "surface currentExtent" : "request clamped into min..max") + ")"
-                    + " usage=0x" + Integer.toHexString(swapchainUsage)
-                    + (droppedUsage.isEmpty() ? "" : " dropped[" + droppedUsage.trim() + "]")
-                    + " compositeAlpha=0x" + Integer.toHexString(compositeAlpha) + " " + alphaNote;
+                    + " presentModesOffered=[" + this.presentModesOffered + "]"
+                    + " offeredFormats=" + availableFormats;
+            this.reconciliation = choice.describe();
+            this.format = choice.format;
+            this.colorSpace = choice.colorSpace;
+            this.width = choice.width;
+            this.height = choice.height;
+            int imageCount = choice.imageCount;
+            boolean imageCountClamped = choice.imageCountClamped;
+            boolean imagesUnlimited = choice.imagesUnlimited;
+            int swapchainUsage = choice.usage;
+            String droppedUsage = choice.droppedUsage;
+            int compositeAlpha = choice.compositeAlpha;
+            String alphaNote = choice.alphaNote;
+            String formatNote = choice.formatNote;
+            String imageCountNote = choice.imageCountNote;
+            String extentNote = choice.extentNote;
+
             VkSwapchainCreateInfoKHR create = VkSwapchainCreateInfoKHR.calloc(stack).sType$Default()
                     .surface(this.surface)
                     .minImageCount(imageCount)
@@ -1367,8 +1311,10 @@ public final class VulkanSwapchain {
             // NullPointerException when a buffer it considers required is null, and a bare frame list does not say
             // which one. Everything LWJGL could dereference is logged with its value here.
             this.argumentSummary = "create-info: surface=" + this.surface + " minImages=" + create.minImageCount()
-                    + " imageCountClamped=" + imageCountClamped + " droppedOptionalUsage=["
-                    + droppedUsage.trim() + "] surfaceAlphaNote=" + alphaNote
+                    + " imageCountClamped=" + imageCountClamped + " imageCountNote=[" + imageCountNote
+                    + "] droppedOptionalUsage=[" + droppedUsage + "] surfaceAlphaNote=" + alphaNote
+                    + " formatNote=[" + formatNote + "] extentNote=[" + extentNote + "]"
+                    + " offeredFormats=" + availableFormats
                     + " format=" + create.imageFormat() + " colourSpace=" + create.imageColorSpace()
                     + " extent=" + create.imageExtent().width() + "x" + create.imageExtent().height()
                     + " layers=" + create.imageArrayLayers() + " usage=" + create.imageUsage()
