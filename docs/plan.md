@@ -339,6 +339,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.356 **round 163: BH-09 の受入は fixture gap で塞がっている（`GuiSlot` 系画面を開く knob が無い）**
+
+- **確認**: `ValidationClient` の knob を全部読んだが、**任意の `GuiScreen` を開く経路が無い**。
+  画面を開くのは **`GuiOptions` → `MixinGuiOptions` が `CeleritasVideoOptionsScreen` へ divert** する経路だけで、
+  利用できる scene は **terrain・videoSettings・videoSettings+GUI_SCALE** の3つ＝**この3つはすべて `lineBatchesNarrowed=0`**。
+- **原典**: vanilla で scissor を使うのは **`GuiSlot.drawScreen`**（Forge javadoc: *"GL_SCISSOR is enabled for anything that is rendered outside of the view box"*）。
+  `GuiLanguage$List extends GuiSlot`・`GuiScreenResourcePacks`・`GuiContainerCreative`・`GuiScreenWorldSelection` が該当。
+  ＝**fixture はそのどれも開けない**。
+- **結論（次の unit は leg ではなく fixture）**: **`GuiSlot` 系画面（最小は `GuiLanguage`）を開く knob** を fixture に足す。
+  ＝**これが無い限り BH-09 の `scissorCapturedGroups > 0` は原理的に取れない**。
+  **leg を重ねるのは無駄**（3 leg で確認済み）。**fixture gap を gap として名指しする**のが正しい処理（「未対応を成功風に黙殺しない」）。
+- **fixture 追加の形（次の担当へ）**: `celtium.validation.openScreen=<class名>` のような knob を1つ足し、
+  既存の `guiClickDivertedTo`/`guiScreenClassAtCapture` の記録に乗せる（新しい機構を作らず既存の divert 経路の隣に置く）。
+  受入は **その leg で `lineBatchesNarrowed > 0`**（＝経路を踏んだ証拠）→ その後に `scissorCapturedGroups`/`scissorLateCapturedGroups` と一旗対照。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地（`218ea2120`）・計器修正着地（3 trigger・各 leg で印字確認）・
+  受入は fixture の knob 待ち**。**4 leg を費やしたが、いずれも経路未 exercise と計器が自分で示した**。
+
 ## 0.355 **round 162: BH-09 の受入は3 leg 連続で `lineBatchesNarrowed=0` — 「経路を exercise する構成」自体が未発見**
 
 - **3 leg の結果（すべて計器は正常・すべて 0）**:
