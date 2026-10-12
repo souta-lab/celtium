@@ -1533,6 +1533,9 @@ public final class ValidationClient {
     private boolean celtium$breakSubjectPlaced;
     private int celtium$breakProgressCalls;
     private boolean celtium$interopChecked;
+    /** Set once the named-screen knob has been acted on, so the screen is opened once per leg. */
+    private boolean celtium$namedScreenOpened;
+
     private boolean celtium$jeiScreen;
     /** Set once the property-driven screenshot at a specific tick has been taken. */
     private boolean celtium$tickScreenshotTaken;
@@ -4132,6 +4135,34 @@ public final class ValidationClient {
             }
             mc.player.setHeldItem(net.minecraft.util.EnumHand.MAIN_HAND, inHand);
             report.addProperty("heldItem", held);
+        }
+        // BH-09's acceptance needs a screen whose list actually moves the scissor, and vanilla's own scissor user is
+        // GuiSlot.drawScreen ("GL_SCISSOR is enabled for anything that is rendered outside of the view box"): the
+        // language, resource-pack, creative-inventory and world-selection screens. The fixture could open only the
+        // options screen, so three legs read lineBatchesNarrowed=0 and the counter could not be accepted in principle.
+        // This opens one of them by name, defaulting to nothing so no existing leg or calibration key moves.
+        String screenRequest = System.getProperty("celtium.validation.screen", "");
+        if (worldTicks >= 30 && !celtium$namedScreenOpened && !screenRequest.isEmpty()) {
+            celtium$namedScreenOpened = true;
+            try {
+                net.minecraft.client.gui.GuiScreen requested = null;
+                if ("language".equalsIgnoreCase(screenRequest)) {
+                    requested = new net.minecraft.client.gui.GuiLanguage((net.minecraft.client.gui.GuiScreen) null,
+                            mc.gameSettings, mc.getLanguageManager());
+                } else if ("resourcepacks".equalsIgnoreCase(screenRequest)) {
+                    requested = new net.minecraft.client.gui.GuiScreenResourcePacks(
+                            (net.minecraft.client.gui.GuiScreen) null);
+                }
+                if (requested != null) {
+                    mc.displayGuiScreen(requested);
+                    report.addProperty("namedScreenOpened", requested.getClass().getName());
+                    report.addProperty("namedScreenOpenedAtTick", worldTicks);
+                } else {
+                    report.addProperty("namedScreenOpened", "unknown request: " + screenRequest);
+                }
+            } catch (Throwable error) {
+                report.addProperty("namedScreenOpened", "failed: " + error);
+            }
         }
         if (worldTicks >= 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
