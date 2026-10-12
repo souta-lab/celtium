@@ -393,6 +393,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.383 **round 179 (P0): loading-fix シリーズが main menu のパノラマを壊した（ユーザー報告・再現済み・インスタンスは rollback 済み）**
+
+- **ユーザー報告（1920x1080 のスクリーンショット付き）**: 「ホーム画面がとてもバグってる、パノラマも変な場所いってるし、どこも押せない(クリック音はなるけど)」。
+- **再現（同一 leg・同一解像度・menu dump tick 380）**:
+  | jar | distinct colours | 画面上部 mean |
+  |---|---|---|
+  | `c0e4d65dff8ea269`（受入済み・pre-blit） | **96,239** | (164,167,177) 詳細なパノラマ |
+  | `a3f9f98d8fb652c5`（post-blit・routing 変更前） | 99,591 | (146,146,134) |
+  | **`68fc425ed08e6e2f`（HEAD・ユーザーが実行中）** | **20,999** | **(203,201,198) 一様なグレー** |
+- **機構（HEAD leg のログ）**: `CELTIUM_WINDOW_DRAW identity=0 phase=before-adoption image=frame frameSerial=1` が**1回だけ**出る（＝adopt 前のフレームだけ name-0 の描画が frame image へ、以降は default pair へ）一方、パノラマの copy は `CELTIUM_TEX_COPY_SERVED … readFbo=0 … readImage=0x7feef10f81c0` ＝ **pair を読む**。**同じウィンドウ(name 0)への描画先と copy の読み先が食い違う**。良好な旧 jar には `CELTIUM_WINDOW_DRAW` 行自体が無い（phase routing が存在しなかった）。
+- **修正の契約（blend-state に P0 として指示済み）**: **name 0 は常にウィンドウ**＝描画は全 phase で frame image へ、`readFbo=0` の copy も同じ frame image を解決する（読み解決は既に「描画が入った image」を返す規則なので、name-0 bind の答えをウィンドウ image にすれば揃う）。**phase 依存を残して menu を場当たりに直さない**。world で `presentedDistinctColours=1` になった既存失敗は「window pass が frame image を clear している」＝**clear 順序の契約**として別に扱う。
+- **ユーザー影響の緩和**: インスタンスの jar を **`a3f9f98d8fb652c5`（menu 受入済み・#14/#15＋blit 入り）へ rollback 済み**。loading の白はこの rollback では変わらない（元から未解決）。
+- **受入**: menu 画が受入済み形状へ戻る（distinct ~96k・上部 mean ~(164,167,177)）＋splash/loading が出る＋world 非回帰＋AMD/Intel（AGENTS.md のレシピ）。
+
 ## 0.382 **round 171: upload ring 8→16 slot で pressure wait が両GPUで消滅（`ee2ae0182`）。PR #16（stub dispatch scratch）で p99 31.2→18.4 ms**
 
 - **`ee2ae0182`（perf-ring）**: bracket 分解で world 内の最大項目が upload staging の **reserve slot（探索＋ring-pressure wait）1.90 ms/frame** と判明（318 frame・11,116 copies・2.1 GB＝6.65 MB/frame に対し 8 MiB ring が 1.2 frame で一巡、211 回の待機が 1.9 ms のほぼ全部）。**`UPLOAD_SLOT_COUNT` 8 → 16（staging 8 → 16 MiB、`uploadRingBytes` で報告）**で、**pressure waits 211 → 0（AMD・Intel 両方）**、reserve 1.90 → 0.03（AMD）/0.007（Intel）ms/frame、phase 合計 3.13 → 1.23/1.61 ms/frame。**再利用規則は不変**（slot は読んだ submission の fence が signal した時だけ解放）＝ordering 契約に触らない。コストは +8 MiB。**frame レベルの差は主張しない**（leg 間で仕事量が違い、interval は逆方向）。
