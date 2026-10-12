@@ -245,7 +245,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private final Matrix4f vulkanProjection = new Matrix4f();
 
-    private long lastDrawCommands;
     private int command0Logged;
     private int verticesLogged;
     private boolean uniformsLogged;
@@ -376,10 +375,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private TerrainRenderPass lastUiPass;
     private boolean swapchainProbeDone;
     private VulkanSwapchain swapchain;
-    private int passSubmissions;
-    private int passSkips;
-    private int passErrors;
-    private String lastSkipReason;
 
     /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
     /** Passes a single frame can have; used to reserve uniform blocks before recording. */
@@ -403,7 +398,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private TerrainRenderer.RegionResources readbackRegion;
     private boolean readbackPending;
     private boolean readbackDone;
-    private long lastSectionsDrawn;
     private long lastUploadedBytes;
 
     public VulkanTerrainGpuBackend(VulkanContext context,
@@ -535,8 +529,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         StringBuilder builder = new StringBuilder("vulkan");
         builder.append(" [").append(this.context.deviceName()).append(']');
         builder.append(" regions=").append(this.terrain.regionCount());
-        builder.append(" draws=").append(this.lastDrawCommands);
-        builder.append(" sections=").append(this.lastSectionsDrawn);
+        builder.append(" draws=").append(this.terrainStatistics.lastDrawCommands());
+        builder.append(" sections=").append(this.terrainStatistics.lastSectionsDrawn());
         builder.append(" uploaded=").append(this.lastUploadedBytes).append("B");
         builder.append(" index=").append(this.sharedIndexBuffers.size());
         if (this.frameTarget != null) {
@@ -702,7 +696,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // thing each of them touches - so a null one threw, was caught by the batch handler, and surfaced as
             // "copy failed: NullPointerException ... TerrainRenderPass.name() ... pass is null". A caller with no pass has no
             // pass to draw, so the answer is to say so rather than to dereference it.
-            this.lastSkipReason = "render was called with no render pass";
+            this.terrainStatistics.setLastSkipReason("render was called with no render pass");
             return;
         }
         if (REFERENCE_RENDER) {
@@ -726,8 +720,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // S02's other half: once a wait has timed out, the frame's remaining stages are skipped rather than run against
             // a command buffer that was never begun. Recording is refused earlier; this stops everything that would use the
             // recording, so the renderer stops drawing and the process keeps running.
-            this.passSkips++;
-            this.lastSkipReason = pass.name() + ": the GPU stalled";
+            this.terrainStatistics.notePassSkips();
+            this.terrainStatistics.setLastSkipReason(pass.name() + ": the GPU stalled");
             return;
         }
         if (!renderLists.hasPass(pass)) {
@@ -735,14 +729,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         if (!ensureFrameTarget()) {
-            this.passSkips++;
-            this.lastSkipReason = pass.name() + ": no frame target";
+            this.terrainStatistics.notePassSkips();
+            this.terrainStatistics.setLastSkipReason(pass.name() + ": no frame target");
             return;
         }
         VulkanTerrainPipeline pipeline = pipelineFor(pass);
         if (pipeline == null) {
-            this.passSkips++;
-            this.lastSkipReason = pass.name() + ": no pipeline";
+            this.terrainStatistics.notePassSkips();
+            this.terrainStatistics.setLastSkipReason(pass.name() + ": no pipeline");
             return;
         }
         ChunkPrimitiveType primitiveType = this.configuration.getPrimitiveTypeForPass(pass);
@@ -761,7 +755,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.uniformPreparationFailures++;
             this.lastUniformPreparationFailure = String.valueOf(error);
             record("pass skipped: uniform preparation failed: " + error);
-            this.passSkips++;
+            this.terrainStatistics.notePassSkips();
             return;
         }
 
@@ -769,20 +763,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.atlasTexture == null || this.lightmapTexture == null) {
             // Without both textures the descriptor set cannot be filled; the pass is skipped and the reason is
             // recorded instead of drawing with an unbound atlas.
-            this.passSkips++;
-            this.lastSkipReason = pass.name() + ": atlas or lightmap not mirrored";
+            this.terrainStatistics.notePassSkips();
+            this.terrainStatistics.setLastSkipReason(pass.name() + ": atlas or lightmap not mirrored");
             record("pass " + nameOf(pass) + " skipped: the block atlas or the lightmap is not mirrored yet");
             return;
         }
 
         boolean useBlockFaceCulling = !pass.isSorted();
-        this.lastDrawCommands = 0;
-        this.lastSectionsDrawn = 0;
+        this.terrainStatistics.setLastDrawCommands(0);
+        this.terrainStatistics.setLastSectionsDrawn(0);
         this.frameIndex++;
 
         this.renderCalls++;
         this.lastUiPass = pass;
-        this.lastTerrainPassFrame = this.frameId;
+        this.terrainStatistics.setLastTerrainPassFrame(this.frameId);
 
         // One complete handoff per pass. GL signals its GL->Vulkan semaphore exactly once in beginFrame() and waits
         // for the Vulkan->GL semaphore exactly once in endFrame(), so exactly one submission must consume the first
@@ -800,7 +794,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameOpens++;
             recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
-            this.passErrors++;
+            this.terrainStatistics.notePassErrors();
             record("frame begin failed: " + describe(error));
             return;
         }
@@ -814,12 +808,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             submitCommands();
             submitted = true;
-            this.passSubmissions++;
+            this.terrainStatistics.notePassSubmissions();
             if (this.readbackPending) {
 
             }
         } catch (RuntimeException | LinkageError error) {
-            this.passErrors++;
+            this.terrainStatistics.notePassErrors();
             record("render failed: " + describe(error));
         }
 
@@ -852,7 +846,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // semaphore that endFrame makes GL wait on. Ending the frame would stall the render thread on that wait
                 // and hand the game a frame nobody finished; leaving it unended keeps the failure visible, which is the
                 // fail-closed behaviour the audit asks for here.
-                this.passErrors++;
+                this.terrainStatistics.notePassErrors();
                 record("no submission reached the queue this frame, so the frame is not ended and GL is not left waiting"
                         + " on a semaphore that was never signalled");
                 return;
@@ -863,7 +857,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameCloses++;
             recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
-            this.passErrors++;
+            this.terrainStatistics.notePassErrors();
             record("frame end failed: " + describe(error));
         }
     }
@@ -1153,6 +1147,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * plan moves those in R5 rather than now.
      */
     private final PublishedFrameTextures publishedTextures = new PublishedFrameTextures();
+
+    /** The terrain domain's counters (refactoring plan R2). */
+    private final TerrainStatistics terrainStatistics = new TerrainStatistics();
 
     /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
     private final ModelGeometryCache modelGeometry = new ModelGeometryCache();
@@ -1637,8 +1634,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int lightBindPrints;
     /** Set for reference captures: load the mod, run the fixture, install nothing, let OpenGL draw. */
     private static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
-    private int terrainPasses;
-    private int immediateOnlyPasses;
     private static final boolean TEXTURE_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
     private final java.util.Set<Integer> diagnosedTextures = new java.util.HashSet<Integer>();
@@ -1676,7 +1671,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * before the GUI stage's depth-writing quad; without the rule the same groups were drawn afterwards and silently
      * failed their depth test while still counting as drawn.
      */
-    private int worldPassBoundaryFlushes;
 
     // ---- the coalesced font glyph batch (task-59) ----------------------------------------------------------------
     //
@@ -2435,8 +2429,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " target=" + this.targetRegistry.currentIdentity() + " onMain=" + this.targetRegistry.currentIsMain()
                 + " activeTarget=" + this.activeImmediateTarget
                 + " windowsThisFrame=" + this.immediateWindowsThisFrame
-                + " lastTerrainPassFrame=" + this.lastTerrainPassFrame
-                + " terrainRanThisFrame=" + (this.lastTerrainPassFrame == this.frameId));
+                + " lastTerrainPassFrame=" + this.terrainStatistics.lastTerrainPassFrame()
+                + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId));
     }
 
     /**
@@ -3003,7 +2997,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     INDIRECT_COMMAND_BYTES);
             this.terrainIndirectCalls++;
             this.terrainIndirectDraws += count;
-            this.lastDrawCommands += count;
+            this.terrainStatistics.addLastDrawCommands(count);
             first += count;
         }
         return true;
@@ -4610,7 +4604,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // empty queue, a framebuffer replacement and a stall, and a counter that moved on those would not
                 // describe the rule. Measured with the full default mask: 1 per world frame, and the box is then in
                 // the picture at the isolation leg's coordinates.
-                this.worldPassBoundaryFlushes++;
+                this.terrainStatistics.noteWorldPassBoundaryFlushes();
             }
         }
     }
@@ -7056,7 +7050,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // draws into an empty one and the fault is the order.
             this.windowOrderLogged = true;
             System.out.println("[Celtium] CELTIUM_WINDOW_ORDER frame=" + this.frameId + " lastTerrainPassFrame="
-                    + this.lastTerrainPassFrame + " terrainRanFirst=" + (this.lastTerrainPassFrame == this.frameId)
+                    + this.terrainStatistics.lastTerrainPassFrame() + " terrainRanFirst=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId)
                     + " lastUiPass=" + nameOf(this.lastUiPass) + " groups=" + this.immediateGroups.size());
         }
         if (countGroupsForTarget(this.targetRegistry.currentIdentity()) == 0) return; // others remain owned in the queue
@@ -7106,7 +7100,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     celtium$pollCompletedSlots();
                     this.frameTarget.endFrame();
                     opened = false;
-                    this.passSubmissions++;
+                    this.terrainStatistics.notePassSubmissions();
                     this.immediateWindows++;
                     this.immediateWindowsThisFrame++;
                     // Who owns "a frame reached the queue": for a window that drew the window's own picture in a
@@ -7656,7 +7650,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
-        this.immediateOnlyPasses++;
+        this.terrainStatistics.noteImmediateOnlyPasses();
         // Recorded for the model draw: it needs a render pass, and this is the one the frame is using. When no
         // terrain pass has run (the GL-less menu is all UI batches), the standalone frame-compatible pass stands in.
         this.terrainPipelineForFrame = terrain;
@@ -8103,9 +8097,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public String verificationSummary() {
-        return "celtium/vulkan-check passes=" + this.passSubmissions + " skipped=" + this.passSkips + " errors="
-                + this.passErrors + " lastDraw=" + this.lastDrawCommands + " lastSections=" + this.lastSectionsDrawn
-                + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
+        return "celtium/vulkan-check passes=" + this.terrainStatistics.passSubmissions() + " skipped=" + this.terrainStatistics.passSkips() + " errors="
+                + this.terrainStatistics.passErrors() + " lastDraw=" + this.terrainStatistics.lastDrawCommands() + " lastSections=" + this.terrainStatistics.lastSectionsDrawn()
+                + " skipReason=" + (this.terrainStatistics.lastSkipReason() == null ? "none" : this.terrainStatistics.lastSkipReason().replace(' ', '_'))
                 + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
                 + " frameId=" + this.frameId + " flushCount=" + this.flushCount
                 + " orderPreservingFlushes=" + this.orderPreservingFlushes
@@ -8445,8 +8439,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // timeouts, and latching on the first one stopped the renderer for the session (measured on the
                 // world-resize leg). Both the retries and the timeouts are reported so the two are told apart.
                 + " idleWaitTimeouts=" + this.idleWaitTimeouts + " idleWaitRetries=" + this.idleWaitRetries
-                + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
-                + " worldPassBoundaryFlushes=" + this.worldPassBoundaryFlushes
+                + " terrainPasses=" + this.terrainStatistics.terrainPasses() + " immediateOnlyPasses=" + this.terrainStatistics.immediateOnlyPasses()
+                + " worldPassBoundaryFlushes=" + this.terrainStatistics.worldPassBoundaryFlushes()
                 // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
                 // reports. VulkanContext.bootstrapQueueWaits is incremented by beginCommands()'s vkQueueWaitIdle and
                 // was printed only by CELTIUM_WAIT_CENSUS from VulkanContext.delete(), which appears in no run at all -
@@ -8528,7 +8522,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateGroupsPending=" + this.immediateGroups.size()
                 + " recordedGroupsHeld=" + this.recordedImmediateGroups.size()
                 + " retiredGroupsHeld=" + this.retiredImmediateGroups.size()
-                + " lastTerrainPassFrame=" + this.lastTerrainPassFrame + " frameId=" + this.frameId
+                + " lastTerrainPassFrame=" + this.terrainStatistics.lastTerrainPassFrame() + " frameId=" + this.frameId
                 + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
                 // The application side of the stub's raw glMultMatrixf arrival census. Without this print the field was
                 // an instrument with no output (proj-channel found it incremented at :3102 and printed nowhere), and
@@ -9386,7 +9380,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                   CameraTransform camera,
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
-        this.terrainPasses++;
+        this.terrainStatistics.noteTerrainPasses();
         // Before anything this pass records: the model meshes are built once, from geometry captured while Minecraft
         // compiled its display lists. Guarded by a lab switch, so the default path is untouched until the draw lands.
         celtium$buildModelMeshes();
@@ -9528,7 +9522,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 indexBound = true;
             }
 
-            if (this.lastDrawCommands == 0 && command0Logged < 6) {
+            if (this.terrainStatistics.lastDrawCommands() == 0 && command0Logged < 6) {
                 command0Logged++;
                 StringBuilder colors = new StringBuilder("drawn section colours:");
                 byte[] sections = renderList.getSectionsWithGeometry();
@@ -9605,11 +9599,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.readbackRegions[this.readbackSlots] = resources;
                     this.readbackSlots++;
                 }
-                this.lastDrawCommands++;
+                this.terrainStatistics.noteLastDrawCommands();
             }
             }
 
-            this.lastSectionsDrawn += renderList.getSectionsWithGeometryCount();
+            this.terrainStatistics.addLastSectionsDrawn(renderList.getSectionsWithGeometryCount());
 
             if (resources.indexArena != null) {
                 // The next region may use the shared index buffer again.
@@ -10397,7 +10391,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The texture the immediate path most recently bound. */
     private int currentImmediateTexture;
     /** The frame in which a terrain pass last ran, so a window can say whether it came first. */
-    private long lastTerrainPassFrame = -1L;
     /** One-shot: the frame's order, for settling whether the window runs before the terrain. */
     private boolean windowOrderLogged;
     /** One-shots: the frame-target refusals that used to collapse into "no frame target". */
@@ -11595,7 +11588,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
         @Override
         public int passSubmissions() {
-            return VulkanTerrainGpuBackend.this.passSubmissions;
+            return VulkanTerrainGpuBackend.this.terrainStatistics.passSubmissions();
         }
 
         @Override
@@ -12938,7 +12931,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             + " vertices=" + mesh.vertexCount() + " indices=" + mesh.indexCount()
                             + " batches=" + batches + " pending=" + this.immediateGroups.size()
                             + " windows=" + this.immediateWindows + " windowsThisFrame=" + this.immediateWindowsThisFrame
-                            + " terrainRanThisFrame=" + (this.lastTerrainPassFrame == this.frameId)
+                            + " terrainRanThisFrame=" + (this.terrainStatistics.lastTerrainPassFrame() == this.frameId)
                             // The image this pass attached, so the draw site and the copy can be put against each
                             // other in one frame: the copy line already carries frame= and readImage=, and the
                             // ordering question (does the copy run before the faces' pass, or is the pair cleared
@@ -13173,7 +13166,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 MemoryUtil.memFree(push);
             }
         } catch (RuntimeException | LinkageError error) {
-            this.passErrors++;
+            this.terrainStatistics.notePassErrors();
             record("ui test quad failed: " + describe(error));
         }
     }
