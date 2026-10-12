@@ -23,8 +23,8 @@
 | OPT-07 | batched texture/mesh copy・CPU待ちなし | **実装済** | deferred submit 化（同上）。残: ring 容量超過時の fallback 直列 copy |
 | OPT-08 | frames in flight + present 非同期 | **実装済** | FRAME_SLOTS=4 + deferred present（同上）|
 | OPT-09 | native multidraw | 未実装 | `VulkanMultiDrawBatch.upload()` は no-op — per-command `vkCmdDrawIndexed` のまま |
-| OPT-10 | command/state の merge | 未実装 | group merge 済だが state key 差で分断（GUI の要素毎 enable 切替）|
-| OPT-11 | 24B compact vertex | 実装済/未検証 | `useCompactVertexFormat=false` 既定 — 画質比較と VRAM/bandwidth 計測が必要 |
+| OPT-10 | command/state の merge | **実装済/検証済（`3870c4ae6`）** | dynamic-state 重複 skip: viewport/scissor/depthBias の同値コマンドを tracker sentinel で skip。warm leg: `stateSkipsViewport=2192 Scissor=2192 DepthBias=1390`（~5.8k vkCmd 除去）・`groupViewportSets=0`。post chain 経由の buffer 共有で tracker が古くなる穴は chain 記録後の invalidate で閉塞（lead 修正）。ユーザー A/B: noise 4,255px (0.4617%) > candidate 4,180px (0.4536%) → picture-neutral |
+| OPT-11 | 24B compact vertex | **実装済/計測済（fixture）** | entity-free NOLAVA pair (tick=200 同一 tick capture): `arenaUploadedBytes` 24.2MB→18.5MB **-23.8%**・frame p50 16.15→16.18 不変。**画像差は実行間 jitter と区別不能**: 統制(base同士)で masked-diff 495,236px/mean 2.11/>16=16、format pair で 496,202/mean 2.18/>16=93（超過 ~0.008%）。初回比較の 63.8% は overlay テキスト(run dir 埋込) + 全画素の lightmap flicker ノイズで、format 効果ではなかった（目視では両画像同一）。既定 off は opt-in のまま、画質上の阻害は実測なし。切替: `-Dceltium.validation.compactVertexFormat=true` |
 | OPT-12 | descriptor キャッシュ | 一部実装 | per-pipeline map 済（hits 実測）・driver `VkPipelineCache` 未使用（起動時効果は限定的と予想）|
 | OPT-13 | pipeline spec/キャッシュ | 一部実装 | `cache`/`itemCache`/`blockCache`/`particleCache` map。specialization constants 未使用 |
 | OPT-14 | entity model の Vulkan 直 draw | 一部実装? | captured model mesh 借用（`stamp.meshBorrowed`）あり — 残: model 再利用の範囲・bone animation |
@@ -51,6 +51,7 @@
 | OPT-34 | texture 変更検出の serial 化 | **実装済/検証済（PR #5）** | `uploadFromGlTexture` が unchanged 判定に全画素 FNV hash を毎 call 実行 → light-map 経路で warm-JFR top frame 9.8%。stub の filed write 毎に serial 採番（`TexCapture.serial`）→ 比較 O(1)・pixel 読取自体も skip。1ms-JFR 同一脚: **9.8%→2.1%** top-frame、submitImmediateBatchTimed 11.6%→4.4%。bridge は write log が無いので hash 維持 |
 | — | presented-dump PNG 税の帰属 | **確定（計器税）** | held leg の p99≈318-390 spike は `dumpPresentedImage` の定期 PNG 書込み（present %40、render-thread 上）だった。`presentedDumpEvery=0`（本ブランチの flag）で capture dump のみ残した脚は warm p50=16.3 / p95=18.5 / **p99=21.2**・warm slow frame ゼロ。両 flag とも既定 OFF → production 影響なし。**過去 leg の warm p99 は計器税を含む** |
 | — | section churn fixture | **実装済（本ブランチ）** | `churnInterval=N` で in-view ブロックを周期性 dirt↔stone → 19 toggles/leg。単一 section rebuild は chunkUpload p50=0・worst ~9ms = この fixture 規模では安い |
+| — | upload ring slots 4→8 | **実装済（`534a34066`・perf-ring）** | `uploadRingPressureWaits` 66→7 — ring 拡張で GPU 待ち解消。本 ledger に欠落していた着陸項目 |
 
 ## 次の優先順（実測根拠順）
 
@@ -58,8 +59,11 @@
 2. ~~`gameRenderer` 残差 / world-pass 分解~~ — 帰属確定: spike は計器税（上段参照）。真の定常数値（skip ブランチ・cadence-0）: frame p50=6.2/worst=12.5、world=5.4=terrain 1.5+flush 0.8+unnamed ~2.9（game renderWorldPass + Celeritas orchestration・1ms-JFR で diffuse）。
 3. ~~OPT-01~~ — cpuSplit flag で既定 off（main）。
 4. ~~warm window 到達 fixture~~ — `-Dceltium.validation.holdUntilTick=600`（commit d0b85f804）+ `churnInterval` + `presentedDumpEvery`（d7a1dd4bd）。
-5. **submitImmediateBatchTimed 残 ~4.4%（1ms-JFR 比）の分解** — lightmap 実 upload ~1.9% + vertex copy ~1% + misc。
+5. **submitImmediateBatchTimed 残 ~4.4%（1ms-JFR 比）の分解 — 確定（p-jfr5・main + OPT-33/34/10 統合後）**: submit 配下 646 sample のうち `uploadFromGlTexture` **49.8%**（lightmap の実 upload — serial skip 後の残は変更分＝正当）、vertex copy `copyVertices`+`copyVerticesTransformed`+`memCopy` **~18%**（OPT-11 が直接削減）、`prepareImmediate`/`TextureRegistry.get`/group bookkeeping **~10%**。残は分散。
+   - **world-pass「unnamed」の帰属も確定**（同 JFR・renderWorldPass 内 391 sample）: `ParticleManager.func_78874_a` 直下 **22.5%**（particle tessellation — `Particle.func_180434_a` 7.4% + `BufferBuilder` 9.4% + `ParticlePortal` 3.1%）、`RenderGlobal.func_180446_a` entities **15.9%**、`EntityRenderer` camera/hand/rain 系 **~15%**、`func_174970_a` terrain_setup **10.2%**、clouds/sky ~8%、Forge `dispatchRenderLast`/EventBus ~4%、`EntityGatherer.getLoadedEntityList` 4.9%。**ほぼ全て game/Celeritas 側の orchestration** — backend 側の残は無し。
+   - **game-Profiler 帰属 route は不採用**（実測で判明）: `mc.profiler.profilingEnabled` は `Minecraft.runFrame` が毎 frame 書き戻し、stack 補正には `profilingSection` が stack 全体を string 連結するため二次コスト（**246ms/frame**）— instrument として不成立（revert 済）。JFR で同等の帰属が取れる。
 6. **ユーザ環境での `-Dceltium.vulkan.passSplit` 計測** — spike 内の unnamed ~200ms が game-side renderWorldPass か GC か（fixture はそこまで辿り切れない）。GC は `-Xlog:gc*` で Full (System.gc()) 68-101ms が periodic に出る。
+7. **OPT-11 compact vertex の検証 leg** — `useCompactVertexFormat` flag 済み・未検証。vertex copy ~18% share の直接削減候補（24B vs 32B）。画質比較 + upload byte 削減の実測が必要。
 
 ## 計器の範囲メモ（今回確認した事実）
 
