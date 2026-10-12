@@ -2256,6 +2256,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The stack the stub last saw selected; GL starts in MODELVIEW. */
     private volatile int matrixMode = GL_MODELVIEW;
 
+    /**
+     * {@return whether the stub already believes {@code mode} is current}, for the GlStateManager mixin's redundant-
+     * call skip.
+     * <p>
+     * The stub's own value is the authority, not a second cache in the mixin: code that calls
+     * {@code GL11.glMatrixMode} directly - several vanilla render paths do - reaches the stub through the trampoline
+     * and updates the field either way, so a skip keyed on this field can never leave the stub believing the wrong
+     * mode. The value is a plain state word the GL already treats as idempotent, so skipping the identical call is
+     * semantics-preserving by construction.
+     */
+    public static boolean celtium$matrixModeIsCurrent(int mode) {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.matrixMode == mode;
+    }
+
     private static String matrixModeName(int mode) {
         switch (mode) {
             case GL_MODELVIEW: return "MODELVIEW";
