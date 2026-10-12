@@ -384,6 +384,9 @@ public final class VulkanFrameArena {
         private final VulkanContext context;
         private VulkanHostBuffer vertices;
         private VulkanHostBuffer indices;
+        /** Buffers this slot replaced by growth and still owes a free to, released at reset (audit B05). */
+        private final java.util.ArrayDeque<VulkanHostBuffer> retiredBuffers =
+                new java.util.ArrayDeque<VulkanHostBuffer>();
         private long vertexCursor;
         private long indexCursor;
         private boolean inUse;
@@ -412,6 +415,13 @@ public final class VulkanFrameArena {
         }
 
         private void reset() {
+            // Audit B05: allocations replaced by growth are freed here, not at the moment of growth. A buffer that was
+            // replaced while this slot was being recorded may already have been captured by a batch command buffer and
+            // by the frame submission that consumes it, and this reset runs only once that submission has completed
+            // (the precondition is !awaitingCompletion && epoch <= completedEpoch).
+            while (!this.retiredBuffers.isEmpty()) {
+                this.retiredBuffers.poll().delete();
+            }
             this.vertexCursor = 0L;
             this.indexCursor = 0L;
             this.inUse = false;
@@ -422,6 +432,9 @@ public final class VulkanFrameArena {
         }
 
         private void freeBuffers() {
+            while (!this.retiredBuffers.isEmpty()) {
+                this.retiredBuffers.poll().delete();
+            }
             if (this.vertices != null) {
                 this.vertices.delete();
                 this.vertices = null;
@@ -451,7 +464,16 @@ public final class VulkanFrameArena {
                 this.vertices = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
             } else {
-                this.vertices.ensureCapacity(align(target));
+                // The replacement is a new object and the old one is retired to this slot, because ensureCapacity frees
+                // the allocation it replaces the moment the copy is done - and at growth time, while the frame is still
+                // being recorded, no ticket names the reader (audit B05, both measured: the deferred fence belongs to
+                // an older batch, the slot's epoch is still -1).
+                VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, align(target),
+                        VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+                org.lwjgl.system.MemoryUtil.memCopy(this.vertices.mappedAddress(), replacement.mappedAddress(),
+                        this.vertices.size());
+                this.retiredBuffers.add(this.vertices);
+                this.vertices = replacement;
             }
             return true;
         }
@@ -470,7 +492,12 @@ public final class VulkanFrameArena {
                 this.indices = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true);
             } else {
-                this.indices.ensureCapacity(align(target));
+                VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, align(target),
+                        VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true);
+                org.lwjgl.system.MemoryUtil.memCopy(this.indices.mappedAddress(), replacement.mappedAddress(),
+                        this.indices.size());
+                this.retiredBuffers.add(this.indices);
+                this.indices = replacement;
             }
             return true;
         }

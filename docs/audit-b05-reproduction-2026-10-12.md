@@ -47,3 +47,27 @@ are what the evidence supports so far, and neither is a fix.
 
 Nothing was widened to hide this: no drain, no budget, no counter suppression. The default arena sizes and the
 shipping behaviour are unchanged; only the measurement lever and this record were added.
+
+---
+
+# B05 closed: the slot-retire form is clean on the growth-crossing leg (2026-10-12)
+
+The shape the two failures pointed at was taken: the old allocation is retired **into the slot** and freed at that
+slot's **reset**, whose completion precondition already exists (`VulkanFrameArena.java:93`,
+`!awaitingCompletion && epoch <= completedEpoch`). The growth now builds a replacement object, copies the contents,
+and keeps the old object in the slot's retired list (`VulkanFrameArena.Slot.retiredBuffers`), released in `reset()` and
+in `freeBuffers()`.
+
+Leg: jar `bbc3bf95319fa23b…`, AMD RX 6400, GL-less, **layers ON**, fixture-driven, 854x480, duration 150, the same
+growth-crossing lever (`frameArenaInitialVertexBytes=262144`, `frameArenaInitialIndexBytes=65536`),
+`hostBuffersCreated=16` (the growth really is crossed, as in the legs that failed):
+
+| | before | retire-to-fence | retire-to-epoch | **slot retire** |
+|---|---|---|---|---|
+| `validationMessageCount` | 4 | 4 | 4 | **0** |
+| `validationClean` | false | false | false | **true** |
+| VUID | `vkDestroyBuffer-buffer-00922` | same | same | **none** |
+
+So B05 moves from code-confirmed through GPU-reproduced to **fixed and witnessed** on the configuration that
+reproduces it. The default arena sizes and the shipping behaviour are unchanged; the fix is a lifetime rule, not a
+drain or a widened budget.
