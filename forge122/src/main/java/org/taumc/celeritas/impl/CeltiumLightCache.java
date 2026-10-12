@@ -36,6 +36,19 @@ public final class CeltiumLightCache {
     private static final int CAP = 1024;
 
     private static long tick = Long.MIN_VALUE;
+    /**
+     * The second half of the epoch (audit B19): world time alone is not the whole invalidation
+     * condition - a light write that lands mid-tick must be visible to the very next lookup, or the
+     * cache would serve a stale value vanilla would not have produced. Every write to the light
+     * map funnels through {@code World.setLightFor}; the mixin on that method bumps this counter,
+     * so the cache flushes exactly when the light map the lookups read changes.
+     */
+    private static volatile long lightEpoch;
+
+    /** Bumps the light epoch; called by the mixin on {@code World.setLightFor}. */
+    public static void noteLightWrite() {
+        lightEpoch++;
+    }
 
     private static final LinkedHashMap<Long, Integer> COMBINED =
             new LinkedHashMap<Long, Integer>(CAP, 0.75f, true) {
@@ -137,10 +150,14 @@ public final class CeltiumLightCache {
         return value;
     }
 
+    private static long lightEpochSeen = Long.MIN_VALUE;
+
     private static void rollTick(World world) {
         long now = world.getTotalWorldTime();
-        if (now != tick) {
+        long epoch = lightEpoch;
+        if (now != tick || epoch != lightEpochSeen) {
             tick = now;
+            lightEpochSeen = epoch;
             COMBINED.clear();
             BRIGHTNESS.clear();
         }
