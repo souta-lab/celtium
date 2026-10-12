@@ -18,33 +18,33 @@
 
 ## 0. 直近の到達点（最新実測・冒頭表）
 
-> **冒頭表（このセッションの受入状況・最終更新 2026-10-12・round 96）** — 詳細と数値は下の §0.2xx に、旧測定は `docs/history/` にある。
+> **冒頭表（現在の受入状況・最終更新 2026-10-12・round 159）** — 詳細と数値は下の §0.2xx〜§0.36x に、旧測定は
+> `docs/history/` にある。**過去の数値を現在の事実として転載しない。**
 
 | 対象 | 状態 | 実測の要点 |
 |---|---|---|
-| entity / item の不可視 | **受入済み** | `drawnByFormat` id9 228/228・`windowFlushFailures=0`・HUD mean\|d\| 1.87・entity band 18.85・hand 21.25 |
+| entity / item の不可視 | **受入済み** | `drawnByFormat` id9 228/228・`windowFlushFailures=0`・HUD mean\|d\| 1.87 |
 | 明るい entity・雲 | **受入済み** | 上流参照との比較で一致 |
-| **文字間のアーティファクト** | **受入済み** | 機序 = coalesced font run が mode 5 strip で glyph を連結。退化頂点セパレータで **バー 26/36 → 0**・`refused=0`・**0.23 µs/glyph**（基準 0.56）・texel 449/449・104/104 不変 |
-| **block entity の z-fighting** | **受入済み** | 機序 = polygon offset を draw 時に live 読み（vanilla は overlay の周りだけ enable）。group へ捕捉する修正で **`immediateDepthBiasedGroups` 48（対照 0）**・block region **mean\|d\| 18.75・29.1% の画素が >8** |
-| **ホットバー item の暗転** | **受入済み（上流参照一致）** | TESR item（chest）を night で: 参照 `(106.5,74.7,25.6)`・修正後 `(111.0,76.4,26.2)`・対照 `(82.2,48.1,16.8)`（明るい画素なし） |
-| 選択枠の欠落 | **受入済み** | `lineBatchesNarrowed` 215・outline が presented frame に存在 |
-| clip 矩形・BH-10 | **受入済み（probe で pixel 証明）** | 同一 jar・1 flag 差で green x 318..638 対 未 clip・`colorMaskHistogram=[0x0:397 0x7f:357 0xf:6645]` |
-| **動画設定が開かない** | **受入済み（画面が開く）** | 真因 = 0 範囲 slider が `SliderControl` の assert で throw。`guiClickDivertedTo=CeleritasVideoOptionsScreen`・verdict PASSED。(e) の3段階は未了 |
-| **パノラマ / ロード画面の白** | **機序確定・未修正** | mirror 内容（replay 修正済みで実内容）・bind（42/44/45-48）・捕捉（stale でない）・clear（face の draw より前）・copy の出所（panorama 自身）・pending 39・**readback は全画素白**。faces の内容がどちらの pair にも無いことが残る1点 |
-| **較正済み picture gate** | **PASSED** | 素の terrain で `PASSED`・assertion failure 0・`validationMessageCount=0`・`presentedDistinctColours=2142`・non-background 0.759463・628 bands・black 0.0。`keepGui+captureEntities` 変種は**未較正**として併記 |
-| **OPT-09（indirect terrain）** | **受入完了（緑の leg）** | **1449 call が 29,065 draw**・`indirectChecksum == directChecksum == d89b513407194482`・`match=true`・**`validationMessageCount=0`**・`validationClean=true` |
-| **F3 overlay のコスト** | **機序確定・連鎖を1つ除去済み** | **bind short-circuit 着地**（`dfeee01cc`）: F3 on で **1,627,482 skip 対 1,587 forward**（変更前は 1,628,711 全 forward）。`glyphMillis` は同一 1,280,000 glyph で **4,635 → 4,546 ms（3.62 → 3.55 µs/glyph）**＝**連鎖は ~0.07 µs/glyph ≈ 0.3 ms/frame** で 3.17 µs の主因ではない。**within-pair の overlay コストは 128 ms/frame**（171.2 − 43.3・cross-session 帰属は主張しない）。次の bracket は **`renderString` 自身**（`stringMillis − glyphMillis ≈ 0` のため caller の per-character 仕事が未分離） |
- 0.48 µs/glyph（capture）に対し **vanilla glyph 本体 3.62 µs/glyph**。**bind 経路の到達は 248 回 / 1,280,000 glyph（0.02 %）**＝連鎖は glyph ごとに走っていない。実体は **vanilla の per-character 仕事（`renderStringAtPos` の `charmap.indexOf`・`renderDefaultChar` 本体）**。選択肢は (a) fast path（大・互換リスク）(b) overlay 構築削減（証拠未取得）(c) 現状維持で、**測ってから決める** |
- 0.48 µs/glyph（capture）に対し **vanilla glyph 本体 3.62 µs/glyph**・text 経路 ~22 ms/frame（overlay の 139 ms のうち）・残りは per-frame overlay 構築 |
-| **video settings 画面** | **self-consistency 受入** | `guiScreenClassAtCapture=CeleritasVideoOptionsScreen`・panel crop 587 distinct colours。same-screen upstream 参照は**存在し得ない**（diverter は我々の tree）と明記 |
-| **light-params 境界** | **lit-only 化で受入** | terrain 416→**17**・videoSettings 425→**2**（両 leg clean） |
-| **BH-10（雲）** | **counter で受入・絵は不可** | Fancy clouds 506 対 368 partialColorMaskGroups・159 group が zero mask を得る。雲 scene の scatter は **r=0.945**（frame phase が動く）ため絵では解像しない |
-| **per-image present-wait semaphore** | **実装済・resize 受入済み** | frame 単位の単一 semaphore を present の wait に渡していたのを、**swapchain image 数で引く成長のみの配列**に変更（`cf6c968cd`）。**window 1280x720 → 1024x640 の実 resize で `glfwWindowSizeAtEnd=1024x640`・VUID 0・hang なし**（`r111-resize`・`resizeViaCompositor=true`）。**frame-close pairing のみ未取得**（`submitSignalOnly` は fixture で到達不能・counter 可視化済み） |
-| **semaphore VUID（P1）** | **閉じた** | 10件 → **0件**（`5d508be38`＝done semaphore の flag を present の結果で記録）。**latent な misuse は残置起票**: `doneSemaphore` が frame 単位のまま present の wait semaphore に渡っており、Khronos の規則は image 数配列＋acquired index |
-
-| 性能 | **着地** | OPT-05（hostBuffers 6 for 8316 groups）・OPT-07(b)（`uploadSubmitWaitsAtEnd` 31343→6910）・**OPT-09（1086 indirect call が 17,651 draw を運ぶ＝16.3:1・fallback 0・VUID 0）**・BH-22（descriptor cache 退役＋census）・BH-32（atlas sampler の maxLod を level 数に追従） |
-| 未了 | — | パノラマの最後の1点・menu hold 経路の layout VUID（hold 依存）・OPT-09 step(3)（geometry/order 比較）・BH-14 per-identity pair・goal (e) の3段階・較正済み scene での picture gate 再取得 |
-
+| 文字間のアーティファクト | **受入済み** | coalesced font run の退化頂点セパレータ。26/36 → 0 |
+| block entity の z-fighting | **受入済み** | polygon offset を draw 時の live 読みから group 捕捉へ |
+| ホットバー item の暗転 | **受入済み（上流参照一致）** | 参照 `(106.5,74.7,25.6)`・修正後 `(111.0,76.4,26.2)` |
+| 選択枠の欠落・clip 矩形 | **受入済み** | `lineBatchesNarrowed` 215・`colorMaskHistogram` の pixel 証明 |
+| 動画設定が開かない | **受入済み（画面が開く）** | 真因 = 0 範囲 slider の assert |
+| 較正済み picture gate | **PASSED** | 素の terrain・assertion failure 0・`validationMessageCount=0` |
+| **font レンダラ刷新（OPT-18 前半）** | **着地・受入済み（`27123e756`）** | **`glyphMillis` 14,280 → 0（vanilla 本体が走らない）・1 glyph 14.4 → 0.85 µs・cold p50 550.6 → 144.7 ms**（同一 jar・両 leg `pinSections`・両方 clean）。文字不変をテクセル検査で確認（449/449・104/104・空 0/896） |
+| **GL-less が既定** | **着地・受入済み（`dd67ed93a`）** | `-Dceltium.vulkan.glless=false` が opt-out。**flag なしの leg で `CELTIUM_GLLESS stub GL provider installed`・`window hinted GLFW_NO_API`・`worldTicksAtEnd=241`** |
+| **GPU 待ちの排除（PR#1）** | **着地（`c2595aa9f`）** | `frameIntervalP50/P95/P99` **18.6/28.0/333 → 15.7/22.5/326 ms**・errors 0・**VUID 0**・`celtium-validation.png` が baseline と**完全一致** |
+| **GUI batch の matrix 跨ぎ統合（PR#2）** | **着地（`d1f0042b4`）** | 軸並行 modelView をコピー中に適用（**頂点shaderと bit 一致**）。回転は matrix-keyed 経路に残す |
+| **0.0.2-alpha** | **公開済み** | `celtium-forge-mc1.12.2-0.0.2-alpha.jar`・2,594,729 bytes・SHA-256 `c2b69d03…b94471fc`・package verifier `verified: true`。**開発版は `0.0.2-alpha-dev`（Celeritas 上流番号を除去）** |
+| **BH-03/04/23/34** | **解決済み** | 各1コミット・一旗対照・両脚 clean（`9982ac634` が列挙） |
+| **BH-09（scissor）** | **修正着地・受入未取得** | `218ea2120`。**3 leg + 原典で「どの scene も clip していない」を確定**：vanilla は `glScissor`/`GL_SCISSOR_TEST` を**一切呼ばない**（原典で出現0）・唯一の発行元は `VulkanDrawContext.enableScissor` で呼び手は `ScrollableFrame.render` のみ・**`canScrollVertical` が立つ時だけ**。`scissorCalls`/`scissorToggles` が判定子 |
+| BH 全体 | **解決済み 27 / 未解決 9** | 未解決は BH-14, 17, 18, 20, 21, 24, 26, 33, 35（`docs/history/2026-10-11-code-bughunt.md` 冒頭に状態） |
+| **パノラマ** | **所有者確定・未修正** | 白の出所は **id 8 の mirror**（splash の白 256×256 `DynamicTexture`・`CELTIUM_UPLOAD_CALLER id=8 … first=0xffffffff`）。**id 8 は一度も invalidate されない**（9/10/12/16 には出る）。`forgetTexture(8)` は発火し entry も消えるが、**名前再利用後に `int[]` で再充填される**。判定子は `splashSourcedGroups` |
+| **ロード画面** | **機序訂正済み・未修正** | **GL-less では `SplashProgress.start()` が cancel** され、`:294/:353/:416` の3サイトは**実行されない**（census の旧数値は**フォントのもの**）。走るのは **Tessellator 経路**で幾何は即時経路に届いている。**必要なのは splash 段階の presented dump 契約**（既存 switch はどれもロード窓に届かない） |
+| **GUI 文字の暗転** | **現行ツリーでは再現せず（`172b5ab93`）** | ユーザ crop は1行目がアトラスモデルと**画素完全一致**、2行目も `colorCode[7]`/`[23]` で厳密。**影パス漏れ説は反証**。実差は quad 単位の 24/196 セル欠落だが、§7 tooltip 0/2718・fast path on/off 両方 0 |
+| **性能（ユーザの実プロファイル）** | **優先順の根拠** | 358 frame/20 s・frame mean 55.9・p50 34.1・p95 331.8・p99 358.9・worst 384.6 ms。**≥50 ms の 64 frame（17.9 %）が wall time の 50 %**。スパイクの `gameRenderer` 318.6 ms のうち**約 246 ms/frame が未帰属**。`gui` は**定数 ~13.7 ms/frame**（スパイク源ではない） |
+| **bridge 経路（`glless=false`）** | **本機で deadlock** | 最初の world frame で確定的（baseline 3 leg）。**GL-less 既定なので公開物は晒されない**が、比較 arm としては使えない |
+| 未了 | — | **パノラマ・ロード画面・BH 9件・BH-09 受入・Intel 受入・mod cohort（HEI は world 到達のみ）・shader 対応（E）** |
 
 **この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.92 にある（新しい節ほど新しい実測）。
 
