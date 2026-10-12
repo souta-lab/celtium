@@ -1360,7 +1360,12 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **受入（この unit の後）**: **同一 leg で 4 phase**（変更→`partialColorMaskGroups` 506→368→復元→reload 行）。
 - **round 180 の実測（fixture を1段進めた）**: `videoSettingsRowNames` は **34 行の実名**を出していた（`options.renderClouds` を含む）のに finder は**常に失敗**していた — 原因は finder が vanilla の `GuiOptionsRowList`（`getListEntry` + `enumOptions`）しか歩かず、**Celeritas の行は Sodium 風 `Option` の plain List** なので最初の反復で break していたこと。修正: `list instanceof List` の分岐を足し、**行自身のラベル**で照合（`CLOUDS` ↔ `options.renderClouds`、大小無視＋`_`/`.` を除いた比較）。結果 `videoSettingsOptionButton=…OptionImpl`・`videoSettingsOptionChanged=true` まで前進。
 - **残り2点（この unit の続き）**: (1) **press が 0,0 に落ちる** — `OptionImpl` に dimension が無い（bounds は `Control.createElement(Dim2i)` が作る `ControlElement` 側）。§0.333 の指示どおり**control の action を呼ぶ**方式に切り替える。(2) **値の読み取りが null** — `videoSettingsOptionBefore=null` / `After=none` も同じ理由（Sodium `Option` 自身の accessor を使う）。fallback 表示は「name が null」で誤って true になっていたので、**照合したラベル**を記録するよう修正済み（`videoSettingsOptionMatchedLabel`）。
-- **現状**: goal (e) の fixture は**行の特定まで到達**（press の方式と値の読み取りが次の実装）。
+- **round 184 の実測（さらに前進・press の方式は2つとも塞がった）**:
+  - **値読みは成立** ✓ `getValue()` から `videoSettingsOptionValueAfter=2`、行も `videoSettingsOptionMatchedLabel=options.renderClouds` で特定 ✓
+  - **element 自身の入力呼び出しは不可** ✗: 署名は `mouseClicked(org.embeddedt.embeddium.impl.gui.framework.InteractionContext, double, double, int)`（`mouseReleased` も同型）と判明したが、**`InteractionContext` は public コンストラクタも public static factory も持たない**（計器が両リストを空で印字 ✓）ため fixture からは合成できない。引数は**位置ではなく型で**組むよう修正済み（座標を `InteractionContext` に渡していたのが `argument type mismatch` の原因だった）。
+  - **画面 dispatch 経由の座標クリックも未成立** ✗: Sodium の `rebuildGUIOptions` レイアウト（`y=28+18*slot`）を仮定して 48 slot を走査したが**どの slot でも値が変わらず**（自己検証つきなので「変わらなかった」と明示）。Celeritas 画面はタブ/フレーム構造でレイアウトが異なる。
+  - **次の一手**: レイアウトを推測せず、**画面自身の構造から行の bounds を読む**（`CeleritasVideoOptionsScreen` が保持するフレーム/要素のリストと `Dim2i`）→ その中心を `screen.mouseClicked` で叩く。要素の `getDimension()` が使えるなら §0.333 の「control の action を呼ぶ」より素直。
+  - **副産物**: 私の diagnostic が `args` を catch から参照して**共有ツリーを一時的にビルド不能にした**（`ValidationClient.java:7250`、担当がブロック）。即修正・build 緑を確認し、担当へ連絡済み（私のミスとして記録）。
 
 ## 0.332 **round 139: 行の在処を確定 — `CeleritasVideoOptionsController.pages`（`List<OptionPage>`）を辿る必要がある**
 

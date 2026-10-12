@@ -905,6 +905,8 @@ public final class ValidationClient {
     private static String celtium$vsMatchedLabel;
     /** The row object the press acted on, so step 1 reads the same row's value instead of re-finding a vanilla list. */
     private static Object celtium$vsPressedRow;
+    /** The matched row's index in the flattened list, so the screen-level click can be aimed at its row slot. */
+    private static int celtium$vsMatchedIndex = -1;
     private String celtium$vsOption = "none";
     private String celtium$vsBefore = "none";
     private String celtium$vsAfter = "none";
@@ -6655,7 +6657,7 @@ public final class ValidationClient {
         celtium$vsPressY = y + h / 2;
         // The screen's own mouseClicked, not the widget's method: GuiVideoSettings.mouseClicked forwards to
         // optionsRowList.mouseClicked and to super (the Done button), which is the whole of what a real click does.
-        String sodiumPress = celtium$vsPressSodiumControl(option);
+        String sodiumPress = celtium$vsPressSodiumRow(screen, option);
         java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
                 new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
         click.setAccessible(true);
@@ -6953,6 +6955,7 @@ public final class ValidationClient {
                 for (String token : new String[] {"RENDER_CLOUDS", "GRAPHICS", "AMBIENT_OCCLUSION", "PARTICLES"}) {
                     if (celtium$vsLabelMatches(label, token)) {
                         celtium$vsMatchedLabel = label;
+                        celtium$vsMatchedIndex = i;
                         return new Object[] {row, row};
                     }
                 }
@@ -7104,6 +7107,45 @@ public final class ValidationClient {
      * taken from the method's parameter type rather than hardcoded, and clicked at its centre; a CyclingControl
      * advances its value, which is what the player's click does.
      */
+    /**
+     * Presses a Sodium-style row by clicking where the screen's own input dispatch will find it, and verifies that
+     * the option's value actually moved.
+     * <p>
+     * The element's own input method cannot be called from here: it takes the framework's {@code InteractionContext},
+     * which has no public constructor and no public static factory (measured: the failure path printed both lists
+     * empty). The screen's dispatch builds that context itself, so the click is aimed at the row slot instead - the
+     * framework lays rows out from y=28 in 18-pixel steps (Sodium's own rebuildGUIOptions) - and the value is read
+     * after each candidate so the press is confirmed rather than assumed. The search is bounded and reports the slot
+     * it used, so a layout change is visible as "no slot changed the value" instead of a silent miss.
+     */
+    private static String celtium$vsPressSodiumRow(net.minecraft.client.gui.GuiScreen screen, Object option) {
+        Object before = celtium$invokeNoArg(option, new String[] {"getValue"});
+        String beforeText = before == null ? "no getValue()" : String.valueOf(before);
+        try {
+            java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
+                    new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
+            java.lang.reflect.Method release = celtium$requireMethod(screen.getClass(),
+                    new String[] {"mouseReleased", "func_146286_b"}, int.class, int.class, int.class);
+            click.setAccessible(true);
+            release.setAccessible(true);
+            int x = 6 + 120;
+            for (int slot = 0; slot < 48; slot++) {
+                int y = 28 + 18 * slot + 9;
+                click.invoke(screen, Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(0));
+                release.invoke(screen, Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(0));
+                Object after = celtium$invokeNoArg(option, new String[] {"getValue"});
+                String afterText = after == null ? "no getValue()" : String.valueOf(after);
+                if (!afterText.equals(beforeText)) {
+                    return "the screen's own dispatch changed the value " + beforeText + " -> " + afterText
+                            + " at slot " + slot + " (" + x + "," + y + ")";
+                }
+            }
+            return "no row slot changed the value (tried 48 slots from y=37 in 18-pixel steps; before=" + beforeText + ")";
+        } catch (ReflectiveOperationException | RuntimeException failed) {
+            return "the screen-level press failed: " + failed;
+        }
+    }
+
     private static String celtium$vsPressSodiumControl(Object option) {
         Object control = celtium$invokeNoArg(option, new String[] {"getControl"});
         if (control == null) {
