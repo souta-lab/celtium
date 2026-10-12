@@ -1175,6 +1175,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private final PublishedFrameTextures publishedTextures = new PublishedFrameTextures();
 
+    // R2: the verification line is assembled by these domain statistics classes, in the order recorded in
+    // docs/history/2026-10-12-r2-wiring-map.md. Counters they do not own stay where their writers are, and the runs
+    // only place them.
+    private final TerrainStatistics terrainStats = new TerrainStatistics();
+    private final ImmediateStatistics immediateStats = new ImmediateStatistics();
+    private final SubmissionStatistics submissionStats = new SubmissionStatistics();
+    private final TextureStatistics textureStats = new TextureStatistics();
+    private final TargetStatistics targetStats = new TargetStatistics();
+    private final ModelStatistics modelStats = new ModelStatistics();
+    private final FontStatistics fontStats = new FontStatistics();
+
     // The colour-texture census lives in publishedTextures (refactoring plan R1b).
     /** Names the sampling side resolved through the framebuffer census, and the bounded log of them. */
     private int framebufferColorTextureLogs;
@@ -8309,488 +8320,83 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public String verificationSummary() {
-        return "celtium/vulkan-check passes=" + this.passSubmissions + " skipped=" + this.passSkips + " errors="
-                + this.passErrors + " lastDraw=" + this.lastDrawCommands + " lastSections=" + this.lastSectionsDrawn
-                + " skipReason=" + (this.lastSkipReason == null ? "none" : this.lastSkipReason.replace(' ', '_'))
-                + " immediateState=" + this.immediateStateCalls + " immediateOffered=" + this.immediateBatchesOffered
-                + " frameId=" + this.frameId + " flushCount=" + this.flushCount
-                + " orderPreservingFlushes=" + this.orderPreservingFlushes
-                + " actualFlushes=" + this.actualFlushes
-                + " actualFlushMillis=" + (this.actualFlushNanos / 1000000L)
-                + " actualFlushWorstMillis=" + (this.actualFlushWorstNanos / 1000000L)
-                + " actualFlushCpuMillis=" + (this.actualFlushCpuNanos / 1000000L)
-                // Task-60: the wait facts, so the JSON report names the wait instead of a reader guessing. The
-                // bootstrap path's waits have no API bound at all; the frame path's fence wait has a 5 s one and is
-                // the only place that sets gpuStalled. Worst is the number that says whether either is a hazard.
-                + " bootstrapQueueWaits=" + VulkanContext.bootstrapQueueWaits
-                + " bootstrapQueueWaitMillis=" + VulkanContext.bootstrapQueueWaitMillis
-                + " bootstrapQueueWaitWorstMillis=" + VulkanContext.bootstrapQueueWaitWorstMillis
-                + " bootstrapSubmitWaits=" + VulkanContext.bootstrapSubmitWaits
-                + " bootstrapSubmitWaitMillis=" + VulkanContext.bootstrapSubmitWaitMillis
-                + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
-                + " " + this.context.uploadBatchSummary()
-                + " " + (this.frameArena == null ? "frameArena=not-created" : this.frameArena.describe())
-                + " frameArenaFallbackGroups=" + this.frameArenaFallbackGroups
-                + " frameSlots=" + FRAME_SLOTS + " frameSlotReuseWaits=" + this.slotReuseWaits
-                + " slotPolls=" + this.slotPolls + " slotPollConfirms=" + this.slotPollConfirms
-                + " slotWaitConfirms=" + this.slotWaitConfirms
-                + " submitSequence=" + this.submitSequence
-                + " completedSubmitSequence=" + this.completedSubmitSequence
-                + " frameFenceWaitMillis=" + this.frameFenceWaitMillis
-                + " frameFenceWaitCount=" + this.frameFenceWaitCount
-                + " frameFenceWaitWorstMillis=" + this.frameFenceWaitWorstMillis
-                + " " + VulkanHostBuffer.allocationSummary()
-                + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
-                + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
-                + " offerStages=[" + offerStageSummary() + "]"
-                + " splashSourcedGroups=" + this.splashSourcedGroups
-                + " splashCanvasInvalidations=" + this.splashCanvasInvalidations
-                + " immediateDrawSiteLogged=" + this.immediateDrawSiteLogged
-                + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
-                + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
-                + " drainedOtherTargetPasses=" + this.drainedOtherTargetPasses
-                + " flushEntries=[" + flushEntrySummary() + "]"
-                + " unflushedTargetPassFailures=" + this.unflushedTargetPassFailures
-                + " lastUnflushedTargetFailure=" + (this.lastUnflushedTargetFailure == null ? "none"
-                        : this.lastUnflushedTargetFailure.replace(' ', '_').substring(0,
-                                Math.min(120, this.lastUnflushedTargetFailure.length())))
-                + " submitTimeouts=" + VulkanContext.submitTimeouts
-                + " gpuStalled=" + this.gpuStalled
-                + " deviceWaitToken=" + this.deviceWaitToken
-                + " stalledGeometryDrops=" + this.stalledGeometryDrops
-                + " stalledGeometryDroppedBatches=" + this.stalledGeometryDroppedBatches
-                + " stallOrigin=" + (this.stallOrigin == null ? "none" : this.stallOrigin.replace(' ', '_'))
-                + " windowFlushFailures=" + this.windowFlushFailures
-                // Printed, not just counted: a zero that never reaches the artifact is an absence rather than a
-                // measurement, and this number is the one that says whether the frame-close producer (the second
-                // producer of the done semaphore) ran at all - the path the per-image change could have broken.
-                + " signalOnlySubmissions=" + this.signalOnlySubmissions
-                + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
-                + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
-                + " groupViewportSets=" + this.groupViewportSets
-                + " stateSkipsViewport=" + this.stateSkipsViewport
-                + " stateSkipsScissor=" + this.stateSkipsScissor
-                + " stateSkipsDepthBias=" + this.stateSkipsDepthBias
-                + " cullEnabledGroups=" + this.cullEnabledGroups
-                + " cullDisabledGroups=" + this.cullDisabledGroups
-                // BH-11 and BH-12's counters, at the same place as BH-08's. acceptance found
-                // immediateDepthBiasedGroups declared and incremented with zero print sites, so "the bias was
-                // applied" had no evidence in any artifact; the narrowed-line total had the same gap (only the
-                // first four events printed). Both are now in the verification summary.
-                + " immediateDepthBiasedGroups=" + this.immediateDepthBiasedGroups
-                // The two halves that decide whether the bias can fire at all: the call reaching the stub, and the
-                // enable bit. acceptance measured 0 groups with the break overlay present, so one of these is false
-                // and the pair says which without another round of guessing.
-                + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCallCount()
-                + " framePassSplit=[" + FramePassTimings.summary() + "]"
-                + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
-                + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
-                // BH-16: a clear that names one of the game's own framebuffers is dropped instead of being applied
-                // to the shared chain pair, so the counter is what says the fix fired and the owner is what makes it
-                // attributable - the panorama's faces were wiped by exactly such a clear before this existed.
-                + " gameClearsDroppedForeignTarget=" + (offTargetTarget() == null ? -1
-                        : offTargetTarget().gameClearsDroppedForeignTargetCount())
-                + " lastDroppedClearOwner=" + (offTargetTarget() == null ? -1
-                        : offTargetTarget().lastDroppedClearOwnerName())
-                + " lineBatchesNarrowed=" + this.lineBatchesNarrowed
-                // BH-07/BH-10/BH-03's counters, at the same place as BH-08's: captured per batch, so a leg says how
-                // many batches carried an alpha pair the old pipelines could not express, how many carried a write
-                // mask that was not all four channels, and which alpha comparison reached the shader. Before the fix
-                // the first two were zero by construction (the capture never read them) and the third did not exist.
-                + " blendGroups=" + this.blendGroups
-                + " blendAlphaNonDefaultGroups=" + this.blendAlphaNonDefaultGroups
-                + " partialColorMaskGroups=" + this.partialColorMaskGroups
-                + " lastPartialColorMask=0x" + Integer.toHexString(this.lastPartialColorMask)
-                + " colorMaskHistogram=" + colorMaskHistogramText()
-                + " nonAddBlendEquationGroups=" + this.nonAddBlendEquationGroups
-                + " scissorBoundarySplits=" + this.scissorBoundarySplits
-                + " lightParamBoundarySplits=" + this.lightParamBoundarySplits
-                + " scissorCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCallCount()
-                + " scissorToggles=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorToggleCount()
-                + " scissorCapturedGroups=" + this.scissorCapturedGroups
-                + " scissorLateCapturedGroups=" + this.scissorLateCapturedGroups
-                + " alphaFuncGroups=" + this.alphaFuncGroups
-                + " nonGreaterAlphaFuncGroups=" + this.nonGreaterAlphaFuncGroups
-                + " alphaTestDisabledGroups=" + this.alphaTestDisabledGroups
-                + " lastAlphaFunc=" + this.lastAlphaFunc
-                + " alphaSelectorCounts=" + alphaSelectorSummary()
-                + " samplerFilters=" + VulkanGlTexture.samplerFilterCensus()
-                + " lastAlphaPushRef=" + round3(this.lastAlphaPushReference)
-                + " alphaReferenceValues=" + alphaReferenceValueSummary()
-                + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
-                + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
-                        : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
-                                Math.min(200, this.lastWindowFlushFailure.length())))
-                // The ordering flush's own bounded catch: the site the user's loading screen latched at before it was
-                // bounded, so the next leg reads whether it still happens and what it throws.
-                + " orderingFlushFailures=" + this.orderingFlushFailures
-                + " orderingFlushDroppedBatches=" + this.orderingFlushDroppedBatches
-                + " lastOrderingFlushFailure=" + (this.lastOrderingFlushFailure == null ? "none"
-                        : this.lastOrderingFlushFailure.replace(' ', '_').substring(0,
-                                Math.min(200, this.lastOrderingFlushFailure.length())))
-                + " batchCallCount=" + batchCallCount
-                + " batchCallMillis=" + (batchCallNanos / 1000000L)
-                + " batchCallWorstMillis=" + (batchCallWorstNanos / 1000000L)
-                + " batchCallOpeningMillis=" + (batchCallOpeningNanos / 1000000L)
-                + " batchCallOpeningCount=" + batchCallOpeningCount
-                + " batchCallCpuMillis=" + (batchCallCpuNanos / 1000000L)
-                + " threadCpuSupported=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.THREAD_CPU_SUPPORTED
-                + " threadWaitedMillis=" + threadWaitedMillis()
-                + " threadBlockedMillis=" + threadBlockedMillis()
-                + " threadCpuTotalMillis=" + (threadCpuNanos() / 1000000L)
-                + " uniformPreparationFailures=" + this.uniformPreparationFailures
-                + " lastUniformPreparationFailure=" + this.lastUniformPreparationFailure
-                + " regionUploadFailures=" + this.regionUploadFailures
-                + " sectionsLeftUnbuilt=" + this.sectionsLeftUnbuilt
-                + " terrainIndirect=[offers=" + this.terrainIndirectOffers
-                + " calls=" + this.terrainIndirectCalls
-                + " draws=" + this.terrainIndirectDraws
-                + " clamps=" + this.terrainIndirectClampEvents
-                + " growths=" + this.terrainIndirectGrowths
-                + " fallbacks=" + this.terrainIndirectFallbacks
-                + " lastFallback=" + this.lastTerrainIndirectFallback.replace(' ', '_') + "]"
-                + " terrainIndirectStream=[indirectDraws=" + this.terrainIndirectCommandDraws
-                + " indirectChecksum=" + Long.toHexString(this.terrainIndirectCommandChecksum)
-                + " directDraws=" + this.terrainDirectEquivalentDraws
-                + " directChecksum=" + Long.toHexString(this.terrainDirectEquivalentChecksum)
-                + " match=" + (this.terrainIndirectCommandDraws == this.terrainDirectEquivalentDraws
-                        && this.terrainIndirectCommandChecksum == this.terrainDirectEquivalentChecksum)
-                + "]"
-                + " " + org.soutalab.celtium.vulkan.VulkanArena.alignmentSummary()
-                + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
-                + " innerWallCpu=[preflight " + (this.prepareImmediateNanos / 1000000L) + "/"
-                + (this.preflightCpuNanos / 1000000L) + ", append " + (this.appendNanos / 1000000L) + "/"
-                + (this.appendCpuNanos / 1000000L) + ", groupCreate " + (this.groupCreateNanos / 1000000L) + "/"
-                + (this.groupCreateCpuNanos / 1000000L) + "]"
-                + " prepareImmediateCalls=" + this.prepareImmediateCalls
-                + " prepareImmediateMillis=" + (this.prepareImmediateNanos / 1000000L)
-                + " groupCreateCount=" + this.groupCreateCount
-                + " groupCreateMillis=" + (this.groupCreateNanos / 1000000L)
-                + " appendCount=" + this.appendCount
-                + " appendMillis=" + (this.appendNanos / 1000000L)
-                + " programQueryCount=" + this.programQueryCount
-                + " programQueryMillis=" + (this.programQueryNanos / 1000000L)
-                + " matrixCopyMillis=" + (this.matrixCopyNanos / 1000000L)
-                + " captureStateMillis=" + (this.captureStateNanos / 1000000L)
-                + " stateKeyMillis=" + (this.stateKeyNanos / 1000000L)
-                + " " + VulkanImmediateDrawer.indexCacheStats()
-                + " groupDrawCount=" + this.groupDrawCount
-                + " groupDrawMillis=" + (this.groupDrawNanos / 1000000L)
-                + " groupCloneCount=" + this.groupCloneCount
-                + " groupCloneMillis=" + (this.groupCloneNanos / 1000000L)
-                + " preTransformedGroups=" + this.preTransformedGroups
-                + " preTransformedBatches=" + this.preTransformedBatches
-                + " preTransformedVertices=" + this.preTransformedVertices
-                + " matrixSplits=" + this.matrixSplits
-                + " fastMergedBatches=" + this.fastMergedBatches
-                + " prepLookupMillis=" + (this.prepLookupNanos / 1000000L)
-                + " prepTerrainPipelineMillis=" + (this.prepTerrainPipelineNanos / 1000000L)
-                + " prepRegistryMillis=" + (this.prepRegistryNanos / 1000000L)
-                + " regAnnouncedCalls=" + VulkanTextureRegistry.ANNOUNCED_CALLS
-                + " regAnnouncedMillis=" + (VulkanTextureRegistry.ANNOUNCED_NANOS / 1000000L)
-                + " regStaleCalls=" + VulkanTextureRegistry.STALE_CALLS
-                + " regStaleMillis=" + (VulkanTextureRegistry.STALE_NANOS / 1000000L)
-                + " regHitCalls=" + VulkanTextureRegistry.HIT_CALLS
-                + " regAnnouncedSkips=" + VulkanTextureRegistry.ANNOUNCED_SKIPS
-                + " prepBranchMillis=" + (this.prepBranchNanos / 1000000L)
-                + " descriptorHits=" + VulkanImmediateTexturePipeline.DESCRIPTOR_HITS
-                + " descriptorMisses=" + VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + this.clearOrderFlushes
-                + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
-                + " refusedBeforeAppend=" + this.refusedBeforeAppend
-                + " partialMirrorRefusals=" + this.partialMirrorRefusals
-                + " partialMirrorsCompleted=" + this.partialMirrorsCompleted
-                + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
-                + " offTargetPerTarget=[" + offTargetPerTarget() + "]"
-                + " offTargetPairs=[" + frameTargetPairSummary() + "]"
-                + " offTargetPairClears=[default-pair=" + this.defaultPairClears
-                + ",chain-pair=" + this.chainPairClears + "]"
-                + " gameClearAttribution=[latchedForFrame=" + this.gameClearsLatchedForFrame
-                + ",routedToPairs=" + this.gameClearsRoutedToPairs + "]"
-                + " offTargetPairFramebuffers=[default-pair=" + this.offTargetFramebufferCreations
-                + ",chain-pair=" + this.chainPairFramebufferCreations + "]"
-                + " otherTargetGroups=[atMainFlush=" + this.otherTargetGroupsAtMainFlush
-                + ",discarded=" + this.otherTargetGroupsDiscarded
-                + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
-                + ",enqueuedForOtherTargets=" + this.groupsEnqueuedForOtherTargets
-                + ",acceptedForOtherTargets=" + this.acceptedForOtherTargets + "]"
-                + " immediateRecordedBatches=" + this.immediateRecordedBatches
-                + " immediateSubmittedBatches=" + this.immediateSubmittedBatches
-                + " immediateCompletedBatches=" + this.immediateCompletedBatches
-                + " immediateRetries=" + this.immediateRetryCount
-                + " invalidImmediateRecords=" + this.invalidImmediateRecords
-                + " backendCommandBuffer=" + Long.toHexString(this.commandBuffer.address())
-                + " backendCommandState=" + this.commandState.state()
-                + " drawsWithoutCommandBuffer=" + this.drawsWithoutCommandBuffer
-                + " offTargetRefusals=" + (this.offTargetRefusalsByReason.isEmpty()
-                        ? "none" : this.offTargetRefusalsByReason.toString())
-                + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
-                + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
-                + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
-                + " descriptorSets=" + this.descriptorSetCensus()
-                // BH-20's census, beside the descriptor sets it shares a lifetime with: how many pipeline builds failed
-                // after a stage had created handles and were rolled back rather than leaked. Zero on a normal leg is
-                // expected; the injected-failure leg is what distinguishes "nothing failed" from "not wired".
-                + " pipelineBuildRollbacks=" + VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.get()
-                + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
-                + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
-                + " externalImages=[" + (this.textureRegistry != null
-                        ? this.textureRegistry.externalSummary() : "none") + "]"
-                // Condition (c) evidence: what the swapchain last presented, and whether the present was accepted. With
-                // presentMarker the image is cleared to magenta (1,0,1), whose 8-bit channel mean is ~170, so a
-                // presented mean near 170 says the swapchain image held this renderer's frame rather than nothing.
-                + " presentSucceeded=" + (this.swapchain != null && this.swapchain.lastPresentSucceeded())
-                + " presentSubmitDone=" + (this.swapchain != null && this.swapchain.lastPresentSubmitDone())
-                + " depthFormat=" + org.soutalab.celtium.vulkan.VulkanDepthFormat.chosenName()
-                + " depthFormatDecision=[" + org.soutalab.celtium.vulkan.VulkanDepthFormat.decisionSummary() + "]"
-                // Which leg of the clear-attribution A/B this run is. On by default; the control leg sets
-                // -Dceltium.vulkan.gameClearLatch=false, and a reader of one report must be able to tell which is
-                // which without a log. Surfaced here and not in diagnostics(): that list is not part of the report.
-                + " gameClearLatch=" + (celtium$gameClearLatchEnabled() ? "on" : "off")
-                + " presentedMean=" + (this.swapchain != null ? this.swapchain.lastPresentedMean() : -1.0f)
-                + " presentMarkerExpected=170.0_magenta_1_0_1"
-                + " fogModeSource=" + (VulkanFogMirror.hasValue() ? "mirror" : "gl_query")
-                + " boundTextureSamples=" + this.boundTextureComparisons
-                + " boundTextureMismatches=" + this.boundTextureMismatches
-                + " announcedDynamicTextures=" + this.announcedDynamicTextures
-                + " colorMirrorUses=" + this.colorMirrorUses
-                // The refusal counters belong in this summary, not in diagnostics(): diagnostics() is not surfaced in
-                // the report (it is a separate list, and the report keeps ten items), while this string is the one the
-                // fixture reads. shaderProgramRefusals is what the custom-program shutter took out of Vulkan.
-                + " modelDraws=" + this.modelDraws
-                + " texMatrixGroups=" + this.texMatrixGroups
-                + " modelDrawRefusals=" + this.modelDrawRefusals
-                + " modelLastRefusal=" + this.modelLastRefusal
-                + " modelMeshLists=" + (this.modelMeshes == null ? -1 : this.modelMeshes.size())
-                + " " + VulkanDynamicMesh.describeModel()
-                + " " + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lifecycle()
-                + " modelMeshQuads=" + this.modelMeshQuads
-                + " modelMeshFailure=" + this.modelMeshFailure
-                + " modelStoredFloats=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedFloats()
-                + " modelFirstVertex=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredVertex()
-                + " modelMatrixPair=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.matrixComparison()
-                + " modelLists=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.lists()
-                + " modelListQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listSummary()
-                + " modelQuads=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.quads()
-                + " modelQuadVertices=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.vertices()
-                + " modelQuadExtent=" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.summary()
-                + " displayListOrigins=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.origins()
-                + " displayListReplaysPassOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassOpen()
-                + " displayListReplaysPassClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithPassClosed()
-                + " displayListOriginCancels=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originCancels()
-                + " displayListCancelled=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.cancelled()
-                + " displayListReplaysOpen=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameOpen()
-                + " displayListReplaysClosed=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.replaysWithFrameClosed()
-                + " displayListReplays=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.total()
-                + " displayListDistinct=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.distinctLists()
-                + " displayListTop=" + org.soutalab.celtium.vulkan.VulkanDisplayListCensus.summary()
-                + " shaderProgramRefusals=" + this.shaderProgramRefusals
-                + " acceptedBatches=" + this.frameAccepted
-                + " imageFilledMirrors=" + (this.textureRegistry != null ? this.textureRegistry.imageUploads() : 0)
-                + " imageUploadsSkipped="
-                + (this.textureRegistry != null ? this.textureRegistry.imageUploadsSkipped() : 0)
-                + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
-                + " textureCopiesServed=" + this.textureCopyService.textureCopiesServed()
-                + " textureCopiesRefused=" + this.textureCopyService.textureCopiesRefused()
-                + " textureCopiesReusedInFrame=" + this.textureCopyService.textureCopiesReusedInFrame()
-                + " textureCopyReadbacks=" + this.textureCopyService.textureCopyReadbacks()
-                + " textureCopyReadbackMillis=" + (this.textureCopyService.textureCopyReadbackNanos() / 1000000L)
-                // The native route's own census: a copy the GPU wrote into the mirror directly, against one the blit
-                // refused (which then took the host route above). The two lines together are what says which path a
-                // leg's copies took, rather than the absence of a readback implying the blit ran.
-                + " textureCopiesServedPeakPerPresent=" + this.textureCopyService.textureCopiesServedPeakPerPresent()
-                + " textureCopiesReServedAfterContentChange="
-                + this.textureCopyService.textureCopiesReServedAfterContentChange()
-                + " textureCopyBlits=" + this.textureCopyService.textureCopyBlits()
-                + " textureCopyBlitRefusals=" + this.textureCopyService.textureCopyBlitRefusals()
-                + " lastTextureCopyBlitRefusal=[" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
-                + " lastTextureCopyRefusal=[" + this.textureCopyService.lastTextureCopyRefusal() + "]"
-                // The pair clear-once contract: applied clears against the clears a second identity's pass asked for
-                // and did not get. Without the second number the rule's effect is inferred from a picture.
-                + " pairClearsRefusedOtherIdentity=" + this.pairClearsRefusedOtherIdentity
-                + " windowDrawsToFrameImage=" + this.windowDrawsToFrameImage
-                + " windowFramesMarkedPresentable=" + this.windowFramesMarkedPresentable
-                + " lastPairClearRefusal=[" + this.lastPairClearRefusal + "]"
-                + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
-                + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
-                + " dynamicTextureFills=" + this.dynamicTextureFills
-                + " readbackByOrigin=" + (this.textureRegistry != null ? this.textureRegistry.readbackByOrigin() : "none")
-                + " mirrorsCreatedByAnnouncement="
-                + (this.textureRegistry != null ? this.textureRegistry.createdByAnnouncement() : 0)
-                + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
-                + " acquireOutOfDate=" + (this.swapchain != null ? this.swapchain.acquireOutOfDate() : -1)
-                + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()
-                + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
-                + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
-                + " immediateGroupsClosed=" + this.immediateGroupsClosed
-                + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
-                + " immediateRefusal=" + celtium$refusalText().replace(' ', '_')
-                + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals
-                + " offTargetRefusals=" + this.offTargetRefusals
-                + " textureRefusalsBeforeAccept=" + this.textureRefusalsBeforeAccept
-                + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
-                + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
-                + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
-                + " publishedFrameTexturesCreated=" + this.publishedTextures.created()
-                + " publishedFrameTexturesUnpublished=" + this.publishedTextures.unpublished()
-                // The attach-side rule's counter: a published name that stands for the image the pass attaches is kept
-                // out of the sampling-side transition, which is the VUID-00900 fix. It must be visible, because a rule
-                // that silently stops transitioning an image is indistinguishable from one that forgot to.
-                + " publishedFrameTexturesSkippedForAttach=" + this.publishedTextures.skippedForAttach()
-                // A name whose image was recreated under it is unpublished at the point of use: a barrier on the freed
-                // handle was measured as a validation error followed by a SIGSEGV inside libvulkan_radeon.
-                + " publishedFrameTexturesStalePruned=" + this.publishedTextures.stalePruned()
-                + " publishedFrameTexturesRepublished=" + this.publishedTextures.republished()
-                // A group that outlived its texture wrapper: the descriptor is rebuilt from the current wrapper, or the
-                // group is refused. Both are counted because "the picture lost a batch" and "the device was lost" are
-                // different outcomes and only the counter says which happened.
-                + " staleGroupDescriptorsRebuilt=" + this.staleGroupDescriptorsRebuilt
-                + " staleGroupRefusals=" + this.staleGroupRefusals
-                + " stalledTeardownSkips=" + this.stalledTeardownSkips
-                + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
-                // A timed-out fence wait is retried before the latch: a resize or a swapchain rebuild produces transient
-                // timeouts, and latching on the first one stopped the renderer for the session (measured on the
-                // world-resize leg). Both the retries and the timeouts are reported so the two are told apart.
-                + " idleWaitTimeouts=" + this.idleWaitTimeouts + " idleWaitRetries=" + this.idleWaitRetries
-                + " terrainPasses=" + this.terrainPasses + " immediateOnlyPasses=" + this.immediateOnlyPasses
-                + " worldPassBoundaryFlushes=" + this.worldPassBoundaryFlushes
-                // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
-                // reports. VulkanContext.bootstrapQueueWaits is incremented by beginCommands()'s vkQueueWaitIdle and
-                // was printed only by CELTIUM_WAIT_CENSUS from VulkanContext.delete(), which appears in no run at all -
-                // a counter that cannot be read is not a measurement. The arena totals beside it are what make the
-                // cost per upload readable instead of the wait count alone.
-                + " bootstrapQueueWaits=" + VulkanContext.bootstrapQueueWaits
-                + " arenaUploads=" + this.celtium$arenaUploadCount() + " arenaUploadedBytes="
-                + this.celtium$arenaUploadedBytes()
-                + " textureDiagnostics=" + TEXTURE_DIAGNOSTICS + " diagnosed=" + this.diagnosedTextures.size()
-                + " blendObserved=" + this.blendObserved + "(" + this.observedBlendSrc + "," + this.observedBlendDst + ")"
-                + " blendPairs=" + this.blendPairs + " blendFuncIgnored=" + this.blendFuncIgnored
-                + " blendOutlier=\"" + (this.blendOutlier == null ? "none" : this.blendOutlier) + "\""
-                // The 2-argument glBlendFunc calls, which used to reach the counters but not the mirror. A run whose
-                // value here is 0 and whose picture has an additive layer is a run where the call never arrived.
-                + " blendFuncTwoArg=" + this.blendFuncTwoArgCalls
-                + " lastTwoArgBlendPair=\"" + this.lastTwoArgBlendPair + "\""
-                + " particleDescriptorFailure=\"" + this.particleDescriptorFailureReason + "\""
-                + " acceptedByFormat=[" + celtium$perFormat(this.acceptedByFormat) + "]"
-                + " drawnByFormat=[" + celtium$perFormat(this.drawnByFormat) + "]"
-                + " droppedByFormat=[" + celtium$perFormat(this.postAcceptDroppedByFormat) + "]"
-                + " passBoundaryFlushes=" + this.passBoundaryFlushes + " matrixDiagnostics=" + MATRIX_DIAGNOSTICS
-                // Per-format arrival and acceptance over every id the layouts class declares, built from COUNT rather
-                // than from a hand-written list: the list stopped at 9 and hid POSITION_NORMAL's own entry, which is
-                // the same shape as the counters that hid ids 6..10 before. droppedByFormat stays for whichever sites
-                // increment it; it is empty today, and printing every id is what says so rather than a list that
-                // stops at 5.
-                // The group lifecycle at the end of the run: what the queue did with what it accepted.
-                // immediateFlushes is incremented beside immediateGroupsDrawn, so both count groups drawn - closed
-                // minus drawn is the number that reached no pipeline, and the pending/recorded/retired sizes are what
-                // is still held. immediateGroupsKeptForOtherTargets, immediateDeferredNextFrame and
-                // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
-                // reading them here is what makes a zero that cannot move (no increment site) visible as such.
-                + " immediateGroupsDrawn=" + this.immediateGroupsDrawn
-                // Every vkQueueSubmit the process issued, all paths together: the owned target's per-stage
-                // semaphore packets show up here as part of the same total the work submissions do, so "submissions
-                // per frame" is readable as queueSubmitCalls/worldFrames rather than assembled from call sites.
-                + " queueSubmitCalls=" + VulkanContext.queueSubmitCalls
-                // The light-map census, printed here because the two counters it is read with had no reporting site at
-                // all: lightmapCoordGroups counts the groups whose captured coordinate reached the push block and
-                // lightmapFullBrightGroups the GUI-stage groups that were given the full-bright pair instead. A
-                // hotbar leg that reports the capture without the second number cannot say which coordinate was drawn.
-                + " lightmapCoordCalls=" + this.lightmapCoordCalls
-                + " lightmapCoordGroups=" + this.lightmapCoordGroups
-                + " lightmapFullBrightGroups=" + this.lightmapFullBrightGroups
-                // The hook's own census: a zero here means the enableLightmap/disableLightmap injection never ran, and
-                // the full-bright rule then degrades to the captured coordinate rather than to full-bright entities.
-                + " lightmapUnitEnables=" + this.lightmapUnitEnables
-                + " lightmapUnitDisables=" + this.lightmapUnitDisables
-                // The ITEM variant split, so "the GUI item is bright" can be read as "it was lit and the coordinate was
-                // full-bright" or as "it was never lit at all" rather than assumed from the picture.
-                + " itemLitGroups=" + this.itemLitGroups
-                + " itemLitGuiGroups=" + this.itemLitGuiGroups
-                + " itemUnlitGroups=" + this.itemUnlitGroups
-                + " itemUnlitGuiGroups=" + this.itemUnlitGuiGroups
-                // The strip separators, in the census as well as in the font summary. The summary is printed by a
-                // shutdown hook, and a leg whose fixture exits early loses it - measured: the font-strip2 leg has no
-                // CELTIUM_FONT_GLYPH_SUMMARY line at all, so the counter that says the degenerate vertices were
-                // inserted was unreadable exactly in the leg that needed it. This line is written during the run.
-                + " fontStripSeparators=" + this.fontStripSeparators
-                + " fontRunsStarted=" + this.fontBatchesStarted
-                + " fontQuadsAppended=" + this.fontQuadsAppended
-                // The bind chain, in the summary rather than only in the bounded CELTIUM_UNIT_BIND lines: the arrivals
-                // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
-                // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
-                // make impossible - 248 lines against 1,628,711 arrivals is what they actually said.
-                + " bindTextureCalls=" + this.bindTextureCalls
-                + " bindShortCircuits=" + this.bindShortCircuits
-                + " immediateStateCalls=" + this.immediateStateCalls
-                + " immediateGroupsDiscarded=" + this.immediateGroupsDiscarded
-                + " immediateGroupsKeptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
-                + " immediateDeferredNextFrame=" + this.immediateDeferredNextFrame
-                + " immediateRefusedWindowBudget=" + this.immediateRefusedWindowBudget
-                + " groupsStaleTargetGeneration=" + this.groupsStaleTargetGeneration
-                + " groupsStaleWorldEpoch=" + this.groupsStaleWorldEpoch
-                + " worldEpoch=" + this.worldEpoch
-                + " groupsDiscardedAtWorldTeardown=" + this.groupsDiscardedAtWorldTeardown
-                + " groupsDiscardedAtFullTeardown=" + this.groupsDiscardedAtFullTeardown
-                + " immediateWindows=" + this.immediateWindows
-                + " immediateWindowsThisFrame=" + this.immediateWindowsThisFrame
-                + " pendingImmediateIndices=" + this.pendingImmediateIndices
-                + " immediateGroupsPending=" + this.immediateGroups.size()
-                + " recordedGroupsHeld=" + this.recordedImmediateGroups.size()
-                + " retiredGroupsHeld=" + this.retiredImmediateGroups.size()
-                + " lastTerrainPassFrame=" + this.lastTerrainPassFrame + " frameId=" + this.frameId
-                + " matrixMirrorDelta=proj:" + this.mirroredProjectionDelta + ",view:" + this.mirroredModelViewDelta
-                // The application side of the stub's raw glMultMatrixf arrival census. Without this print the field was
-                // an instrument with no output (proj-channel found it incremented at :3102 and printed nowhere), and
-                // "arrivals without a mirrored multiply" is the pair that says a raw call reached GL with no owner.
-                + ",mirroredMultiplies:" + this.mirroredMultiplies
-                + ",comparisons:" + this.matrixComparisons + ",exact:" + this.matrixExactComparisons
-                + ",translateCalls:" + this.translateCalls + ",zeroTranslates:" + this.translateZeroCalls
-                + ",passSplits:" + this.passSplits + ",target:" + this.currentRenderTarget
-                + ",worstView[" + (this.worstModelViewSample == null ? "none" : this.worstModelViewSample) + "]"
-                + " trace[" + String.join(" ", this.trace) + "]"
-                + ",steadyComparisons:" + this.steadyComparisons + ",crossPassSkipped:" + this.crossPassComparisonsSkipped + ",midSetupSkipped:" + this.midSetupComparisonsSkipped
-                + ",steadyDelta=proj:" + this.steadyProjectionDelta + ",view:" + this.steadyModelViewDelta
-                + ",derivedProj:" + this.derivedProjections + ",refused:" + this.derivedProjectionRefusals
-                + ",cameraSeeds:" + this.cameraSetupSeeds
-                + ",derivedCompared:" + this.derivedProjectionComparisons
-                + ",writeId:" + this.derivedWriteIdentity + ",compareId:" + this.derivedCompareIdentity
-                + ",loadIdentityWhilePending:" + this.loadIdentityWhilePending
-                + ",loadIdentityByMode=proj:" + this.loadIdentityByMode[0] + ",view:" + this.loadIdentityByMode[1]
-                + ",matrixModeByMode=proj:" + this.matrixModeCallsByMode[0] + ",view:" + this.matrixModeCallsByMode[1]
-                + ",derivedDelta:" + this.derivedProjectionDelta
-                + " derivedWorst[" + (this.derivedProjectionWorst == null ? "none" : this.derivedProjectionWorst) + "]"
-                + " matrixDump[" + (this.matrixDump == null ? "none" : this.matrixDump) + "]"
-                + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
-                : this.immediateSubmitNanos / this.immediateBatchesOffered)
-                + " immediateSubmitWorldAvgNs=" + (this.immediateSubmitBaselineNanos < 0
-                        || this.immediateBatchesOffered <= this.immediateSubmitBaselineOffered ? 0
-                : (this.immediateSubmitNanos - this.immediateSubmitBaselineNanos)
-                        / (this.immediateBatchesOffered - this.immediateSubmitBaselineOffered))
-                + " submitBuckets=[<5us:" + this.immediateSubmitUnder5 + " 5-50:" + this.immediateSubmit5to50
-                + " 50-200:" + this.immediateSubmit50to200 + " >200us:" + this.immediateSubmitTailCalls
-                + " tailMillis=" + (this.immediateSubmitTailNanos / 1000000L) + "]"
-                + " tailCarried=[flush:" + this.tailCarriedFlush + " supply:" + this.tailCarriedSupply
-                + " both:" + this.tailCarriedBoth + " neither:" + this.tailCarriedNeither + "]"
-                // Audit B03/B04: what the descriptor pools did (pools, growths, sets, cached texture keys,
-                // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
-                // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
-                // in every run, and "the counter is in a log line nobody read" is how a bound stays invisible.
-                + " immediateDescriptors=[" + VulkanImmediateTexturePipeline.descriptorPoolSummary() + "]"
-                // Task-46: the authoritative "what renders now" fields - the real driver, from the device that
-                // renders. The old GL bootstrap probe also has a glRenderer/vulkanDevice pair and those describe a
-                // different, earlier question (the GL identity and the interop contract); this is the live one.
-                + " driverInfo=[" + VulkanContext.driverSummary() + "]"
-                + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
-                + " identityPairs=[" + org.soutalab.celtium.vulkan.GllessFrameTarget.identityPairCensus() + "]"
-                + " presentMode=[" + VulkanSwapchain.presentModeSummary()
-                + " rebuilds=" + this.presentModeRebuilds + "]"
-                + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
-                + " fences=" + VulkanContext.quarantinedResourceCounts()[1] + "]"
-                + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
-                + ",gluPerspective:" + this.mirroredGluPerspectives + ",gluSkipped:"
-                + this.skippedGluPerspectives + ",gluSites:" + this.gluPerspectiveShapes.size()
-                + ",gluSkipSites:" + this.gluPerspectiveSkips.size()
-                + ",mode:" + this.matrixModeCalls + ",identity:" + this.loadIdentityCalls
-                + ",texture:" + this.bindTextureCalls;
+        // The line is assembled by the domain statistics classes, in the order recorded in
+        // docs/history/2026-10-12-r2-wiring-map.md. Counters the classes do not own (VulkanContext, the GL stub,
+        // the texture copy service, the registry, the model quad capture) are placed by the runs that emit them.
+        StringBuilder out = new StringBuilder("celtium/vulkan-check ");
+        this.terrainStats.appendRun0(out);
+        this.immediateStats.appendRun0(out);
+        this.submissionStats.appendRun0(out);
+        this.textureStats.appendRun0(out);
+        this.targetStats.appendRun0(out);
+        this.immediateStats.appendRun1(out);
+        this.targetStats.appendRun1(out);
+        this.submissionStats.appendRun1(out);
+        this.targetStats.appendRun2(out);
+        this.submissionStats.appendRun2(out);
+        this.targetStats.appendRun3(out);
+        this.immediateStats.appendRun2(out);
+        this.submissionStats.appendRun3(out);
+        this.immediateStats.appendRun3(out);
+        this.textureStats.appendRun1(out);
+        this.immediateStats.appendRun4(out);
+        this.targetStats.appendRun4(out);
+        this.immediateStats.appendRun5(out);
+        this.terrainStats.appendRun1(out);
+        this.immediateStats.appendRun6(out);
+        this.textureStats.appendRun2(out);
+        this.textureStats.appendRun11(out);
+        this.immediateStats.appendRun7(out);
+        this.targetStats.appendRun5(out);
+        this.immediateStats.appendRun8(out);
+        this.targetStats.appendRun6(out);
+        this.immediateStats.appendRun9(out);
+        this.targetStats.appendRun7(out);
+        this.textureStats.appendRun3(out);
+        this.submissionStats.appendRun4(out);
+        this.targetStats.appendRun8(out);
+        this.submissionStats.appendRun5(out);
+        this.immediateStats.appendRun10(out);
+        this.textureStats.appendRun4(out);
+        this.modelStats.appendRun0(out);
+        this.immediateStats.appendRun11(out);
+        this.modelStats.appendRun1(out);
+        this.immediateStats.appendRun12(out);
+        this.textureStats.appendRun5(out);
+        this.targetStats.appendRun9(out);
+        this.textureStats.appendRun6(out);
+        this.submissionStats.appendRun6(out);
+        this.immediateStats.appendRun13(out);
+        this.targetStats.appendRun10(out);
+        this.targetStats.appendRun11(out);
+        this.textureStats.appendRun7(out);
+        this.immediateStats.appendRun14(out);
+        this.submissionStats.appendRun7(out);
+        this.textureStats.appendRun8(out);
+        this.immediateStats.appendRun15(out);
+        this.submissionStats.appendRun8(out);
+        this.terrainStats.appendRun2(out);
+        this.submissionStats.appendRun9(out);
+        this.terrainStats.appendRun3(out);
+        this.textureStats.appendRun9(out);
+        this.immediateStats.appendRun16(out);
+        this.immediateStats.appendRun17(out);
+        this.submissionStats.appendRun10(out);
+        this.immediateStats.appendRun18(out);
+        this.fontStats.appendRun0(out);
+        this.textureStats.appendRun10(out);
+        this.immediateStats.appendRun19(out);
+        this.terrainStats.appendRun4(out);
+        this.immediateStats.appendRun20(out);
+        this.immediateStats.appendRun21(out);
+        this.submissionStats.appendRun11(out);
+        this.immediateStats.appendRun22(out);
+        this.submissionStats.appendRun12(out);
+        this.immediateStats.appendRun23(out);
+        this.submissionStats.appendRun13(out);
+        this.immediateStats.appendRun24(out);
+        out.append(",texture:").append(this.bindTextureCalls);
+        return out.toString();
     }
 
     @Override
