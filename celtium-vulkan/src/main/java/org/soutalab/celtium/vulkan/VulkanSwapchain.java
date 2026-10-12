@@ -750,12 +750,35 @@ public final class VulkanSwapchain {
     private long presentNanos;
     private long presentWorstNanos;
     private long presentFrames;
+    /**
+     * The present blit, recorded once per (swapchain image, source, size, layout) key instead of per frame.
+     * <p>
+     * The blit the present path emits is identical every present - same source image, same source layouts, same
+     * four transition calls and the same 1:1 flip region; only the destination swapchain image index varies, and
+     * that is exactly what the array dimension covers. Recording it once at first use (and re-recording when the
+     * key changes - a new frame target, a resize, a layout change) removes the per-frame command-pool alloc,
+     * {@code vkBeginCommandBuffer}, two barrier struct fills, a blit struct fill and {@code vkEndCommandBuffer},
+     * and it removes the deferred-submit bookkeeping the per-frame buffer needed, because a pre-recorded buffer
+     * carries {@code SIMULTANEOUS_USE} and is never freed until the pool dies.
+     */
+    private long presentBlitPool = VK_NULL_HANDLE;
+    private long[] preRecordedBlits = new long[0];
+    private long preRecordedSourceImage = VK_NULL_HANDLE;
+    private int preRecordedSourceLayout = -1;
+    private int preRecordedSourceLayoutAfter = -1;
+    private int preRecordedWidth = -1;
+    private int preRecordedHeight = -1;
+    private long preRecordedSwapchain = VK_NULL_HANDLE;
+    private long preRecordedBlitPresents;
+    private long preRecordedBlitRecords;
 
     /** {@return the present path's own cost}, so the outside-the-bracket time has a number rather than a guess. */
     public String presentTimingSummary() {
         return "presentCalls=" + this.presentCalls + " presentMillis=" + (this.presentNanos / 1000000L)
                 + " presentWorstMillis=" + (this.presentWorstNanos / 1000000L)
-                + " presentPerCallMicros=" + (this.presentCalls == 0 ? 0 : this.presentNanos / this.presentCalls / 1000L);
+                + " presentPerCallMicros=" + (this.presentCalls == 0 ? 0 : this.presentNanos / this.presentCalls / 1000L)
+                + " preRecordedBlitPresents=" + this.preRecordedBlitPresents
+                + " preRecordedBlitRecords=" + this.preRecordedBlitRecords;
     }
 
     private void celtium$notePresentTime(long nanos) {
@@ -860,80 +883,28 @@ public final class VulkanSwapchain {
                 int bareResult = vkQueuePresentKHR(this.context.queue(), bare);
                 return "present image (no record): presented image " + index.get(0) + " (" + bareResult + ")";
             }
-            VkCommandBuffer commands = this.context.beginCommands();
-            try {
-                transitionForBlitSource(stack, commands, sourceImage, sourceLayout);
-                transitionToTransferDst(stack, commands, image);
-                org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
-                region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
-                        .layerCount(1);
-                // The blit reproduces the semantics of the GL composite it replaces: Minecraft draws the game
-                // framebuffer one texel per pixel into a viewport anchored at the window's lower left, clipped by
-                // the drawable. The shared image's row 0 is the picture's bottom (GL texture order), so the source
-                // is read back to front to leave the swapchain image upright for presentation; the destination is
-                // bottom-anchored and never scaled - a frame smaller than the swapchain lands where the viewport
-                // puts it (measured: a mid-run resize to 1024x640 left the real window at 1280x720, and stretching
-                // filled it instead), and a frame larger than the swapchain shows its lower left the way the
-                // window clips an oversized viewport.
-                int blitWidth = Math.min(width, this.width);
-                int blitHeight = Math.min(height, this.height);
-                region.get(0).srcOffsets().get(0).set(0, blitHeight, 0);
-                region.get(0).srcOffsets().get(1).set(blitWidth, 0, 1);
-                region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
-                        .layerCount(1);
-                region.get(0).dstOffsets().get(0).set(0, this.height - blitHeight, 0);
-                region.get(0).dstOffsets().get(1).set(blitWidth, this.height, 1);
-                if (PRESENT_MARKER) {
-                    // A deliberately distinguishable present. The blit is replaced by a solid marker colour, so a screen that
-                    // shows the marker can only have been written by this path - which is the question the screen readback
-                    // could observe but not settle, because an effective present and an effective copy-back followed by a GL
-                    // frame both leave the right frame on the screen.
-                    transitionToTransferDst(stack, commands, image);
-                    org.lwjgl.vulkan.VkClearColorValue marker = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
-                    marker.float32(0, 1.0f);
-                    marker.float32(1, 0.0f);
-                    marker.float32(2, 1.0f);
-                    marker.float32(3, 1.0f);
-                    // The Buffer form, exactly as the other clear in this class declares it: the struct overload is what a
-                    // bare type name resolves to, and it is not what this call takes.
-                    org.lwjgl.vulkan.VkImageSubresourceRange.Buffer markerRange =
-                            org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
-                    markerRange.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
-                    vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, marker, markerRange);
-                } else {
-                    vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
-                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
-                }
-                transitionForBlitSourceBack(stack, commands, sourceImage, sourceLayoutAfter);
-                transitionToPresent(stack, commands, image);
-            } finally {
-                // Waiting on the acquire semaphore and signalling a render-finished one: the submission writes the
-                // acquired image, so it has to wait for the presentation engine to release it, and the presentation has
-                // to wait for this submission rather than for the acquire.
-                // Both contracts in one submission: the window-system acquire and the GL-to-Vulkan bridge semaphore are
-                // waited, and both this swapchain's render-finished semaphore and the bridge's done semaphore are
-                // signalled - the latter because the frame target's endFrame makes GL wait on it. The three-argument form
-                // waits one and signals one, which is what this path used after a broad revert took the corrected call
-                // with it: the bridge's semaphores arrived as parameters and were never used.
-                // The present-wait semaphore is per swapchain image, not per frame: the presentation engine knows only
-                // the acquired image index, so a frame-sized semaphore can be signalled again while the engine still
-                // waits on it from a previous frame (VUID-vkQueueSubmit-pSignalSemaphores-00067). The frame target
-                // owns that array; the frame-close semaphore it also owns stays frame-sized because its own pair
-                // closes inside the frame.
-                long bridgeDone = this.bridgeTarget != null
-                        ? this.bridgeTarget.presentDoneSemaphore(index.get(0)) : bridgeDoneSemaphore;
-                // The deferred form: the blit reaches the queue in the same place and with the same semaphore
-                // contract, but the render thread stops paying a fence wait for it on every present - the wait only
-                // existed to free this command buffer, which the deferred reclaim now does on confirmation instead.
-                this.context.celtium$submitDeferredWithSemaphores(commands,
-                        new long[] {acquire, bridgeWaitSemaphore},
-                        new long[] {renderFinished, bridgeDone});
-                if (this.bridgeTarget != null && bridgeDone != 0L) {
-                    this.bridgeTarget.noteDoneSignalled(bridgeDone);
-                }
-                this.lastPresentSubmitDone = true;
-                this.lastPresentSucceeded = false;
+            long recorded = preRecordedPresentBlit(index.get(0), sourceImage, sourceLayout,
+                    sourceLayoutAfter, width, height);
+            if (recorded == VK_NULL_HANDLE) {
+                return "present image: could not record the blit command buffer";
             }
+            // The pre-recorded buffer goes to the queue directly - no vkEndCommandBuffer (recording closed at
+            // build time) and no fence or deferred reclaim (the buffer lives for the pool's life, so there is
+            // nothing to retire). The semaphore contract is the one the deferred path satisfied: waits on the
+            // acquire and the bridge, signals renderFinished and the bridge's done semaphore per image.
+            long bridgeDone = this.bridgeTarget != null
+                    ? this.bridgeTarget.presentDoneSemaphore(index.get(0)) : bridgeDoneSemaphore;
+            String submitError = submitPreRecorded(stack, recorded,
+                    new long[] {acquire, bridgeWaitSemaphore},
+                    new long[] {renderFinished, bridgeDone});
+            if (submitError != null) {
+                return submitError;
+            }
+            if (this.bridgeTarget != null && bridgeDone != 0L) {
+                this.bridgeTarget.noteDoneSignalled(bridgeDone);
+            }
+            this.lastPresentSubmitDone = true;
+            this.lastPresentSucceeded = false;
             VkPresentInfoKHR present = VkPresentInfoKHR.calloc(stack).sType$Default()
                     .pWaitSemaphores(stack.longs(renderFinished))
                     .swapchainCount(1)
@@ -1166,6 +1137,175 @@ public final class VulkanSwapchain {
                 barrier);
     }
 
+    /**
+     * {@return the pre-recorded blit command buffer for this swapchain image}, recording the whole set when the
+     * key changed.
+     * <p>
+     * The key covers everything the recorded commands embed: the source image handle and the two source layouts,
+     * the blit extent (the source and swapchain sizes) and the swapchain itself, whose images the commands write.
+     * Any change - a recreated frame target, a resize, a layout contract change - re-records every buffer, because
+     * a stale command stream writing the wrong handles is worse than the one-time record cost. The buffers are
+     * allocated {@code SIMULTANEOUS}: the same image's buffer can be re-submitted while a previous present of it is
+     * still on the queue (the presentation engine only returns an image after its last presentation retires, which
+     * is exactly what makes re-submission legal).
+     */
+    private long preRecordedPresentBlit(int imageIndex, long sourceImage, int sourceLayout,
+            int sourceLayoutAfter, int width, int height) {
+        boolean keyMatches = this.preRecordedSourceImage == sourceImage
+                && this.preRecordedSourceLayout == sourceLayout
+                && this.preRecordedSourceLayoutAfter == sourceLayoutAfter
+                && this.preRecordedWidth == width
+                && this.preRecordedHeight == height
+                && this.preRecordedSwapchain == this.swapchain;
+        if (keyMatches && imageIndex < this.preRecordedBlits.length
+                && this.preRecordedBlits[imageIndex] != VK_NULL_HANDLE) {
+            this.preRecordedBlitPresents++;
+            return this.preRecordedBlits[imageIndex];
+        }
+        discardPreRecorded();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkCommandPoolCreateInfo poolInfo =
+                    org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack).sType$Default();
+            LongBuffer poolOut = stack.mallocLong(1);
+            if (vkCreateCommandPool(this.context.device(), poolInfo, null, poolOut) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            this.presentBlitPool = poolOut.get(0);
+            org.lwjgl.vulkan.VkCommandBufferAllocateInfo alloc =
+                    org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
+                            .commandPool(this.presentBlitPool)
+                            .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                            .commandBufferCount(this.images.length);
+            PointerBuffer handles = stack.mallocPointer(this.images.length);
+            if (vkAllocateCommandBuffers(this.context.device(), alloc, handles) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            // The GL-composite semantics the per-frame record used: 1:1 blit, lower-left anchored, no scaling, and
+            // the source read bottom-to-top so the presented image lands upright.
+            int blitWidth = Math.min(width, this.width);
+            int blitHeight = Math.min(height, this.height);
+            this.preRecordedBlits = new long[this.images.length];
+            for (int i = 0; i < this.images.length; i++) {
+                long handle = handles.get(i);
+                VkCommandBuffer commands = new VkCommandBuffer(handle, this.context.device());
+                org.lwjgl.vulkan.VkCommandBufferBeginInfo begin =
+                        org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack).sType$Default()
+                                .flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT);
+                if (vkBeginCommandBuffer(commands, begin) != VK_SUCCESS) {
+                    return VK_NULL_HANDLE;
+                }
+                transitionForBlitSource(stack, commands, sourceImage, sourceLayout);
+                transitionToTransferDst(stack, commands, this.images[i]);
+                org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
+                region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                        .layerCount(1);
+                region.get(0).srcOffsets().get(0).set(0, blitHeight, 0);
+                region.get(0).srcOffsets().get(1).set(blitWidth, 0, 1);
+                region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                        .layerCount(1);
+                region.get(0).dstOffsets().get(0).set(0, this.height - blitHeight, 0);
+                region.get(0).dstOffsets().get(1).set(blitWidth, this.height, 1);
+                if (PRESENT_MARKER) {
+                    transitionToTransferDst(stack, commands, this.images[i]);
+                    org.lwjgl.vulkan.VkClearColorValue marker = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+                    marker.float32(0, 1.0f);
+                    marker.float32(1, 0.0f);
+                    marker.float32(2, 0.0f);
+                    marker.float32(3, 1.0f);
+                    org.lwjgl.vulkan.VkImageSubresourceRange.Buffer markerRange =
+                            org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
+                    markerRange.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+                    vkCmdClearColorImage(commands, this.images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            marker, markerRange);
+                } else {
+                    vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, this.images[i],
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+                }
+                transitionForBlitSourceBack(stack, commands, sourceImage, sourceLayoutAfter);
+                transitionToPresent(stack, commands, this.images[i]);
+                if (vkEndCommandBuffer(commands) != VK_SUCCESS) {
+                    return VK_NULL_HANDLE;
+                }
+                this.preRecordedBlits[i] = handle;
+            }
+            this.preRecordedSourceImage = sourceImage;
+            this.preRecordedSourceLayout = sourceLayout;
+            this.preRecordedSourceLayoutAfter = sourceLayoutAfter;
+            this.preRecordedWidth = width;
+            this.preRecordedHeight = height;
+            this.preRecordedSwapchain = this.swapchain;
+            this.preRecordedBlitRecords++;
+            return this.preRecordedBlits[imageIndex];
+        }
+    }
+
+    /**
+     * Submits a pre-recorded command buffer with the present's semaphore contract and no fence: the buffer
+     * persists for the pool's life, so there is nothing to retire and nothing to wait on. Null handles are
+     * compacted out of both lists, the same rule the deferred path applies.
+     */
+    private String submitPreRecorded(MemoryStack stack, long commandBuffer, long[] waitSemaphores,
+            long[] signalSemaphores) {
+        org.lwjgl.vulkan.VkSubmitInfo submit = org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType$Default()
+                .pCommandBuffers(stack.pointers(commandBuffer));
+        int waitCount = 0;
+        if (waitSemaphores != null) {
+            for (long semaphore : waitSemaphores) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    waitCount++;
+                }
+            }
+        }
+        if (waitCount > 0) {
+            long[] waits = new long[waitCount];
+            int[] stages = new int[waitCount];
+            int slot = 0;
+            for (long semaphore : waitSemaphores) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    waits[slot] = semaphore;
+                    stages[slot] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                    slot++;
+                }
+            }
+            submit.waitSemaphoreCount(waits.length)
+                    .pWaitSemaphores(stack.longs(waits))
+                    .pWaitDstStageMask(stack.ints(stages));
+        }
+        int signalCount = 0;
+        if (signalSemaphores != null) {
+            for (long semaphore : signalSemaphores) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    signalCount++;
+                }
+            }
+        }
+        if (signalCount > 0) {
+            long[] signals = new long[signalCount];
+            int slot = 0;
+            for (long semaphore : signalSemaphores) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    signals[slot] = semaphore;
+                    slot++;
+                }
+            }
+            submit.pSignalSemaphores(stack.longs(signals));
+        }
+        int result = vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE);
+        return result == VK_SUCCESS ? null : "present image: vkQueueSubmit failed with " + result;
+    }
+
+    /** Drops the recorded blit set: the queue is drained first because a previous present may still read them. */
+    private void discardPreRecorded() {
+        this.preRecordedSourceImage = VK_NULL_HANDLE;
+        this.preRecordedSwapchain = VK_NULL_HANDLE;
+        this.preRecordedBlits = new long[0];
+        if (this.presentBlitPool != VK_NULL_HANDLE) {
+            vkQueueWaitIdle(this.context.queue());
+            vkDestroyCommandPool(this.context.device(), this.presentBlitPool, null);
+            this.presentBlitPool = VK_NULL_HANDLE;
+        }
+    }
+
     public void delete() {
         if (!this.freshSemaphorePool.isEmpty()) {
             vkQueueWaitIdle(this.context.queue());
@@ -1208,6 +1348,7 @@ public final class VulkanSwapchain {
         if (this.surface != VK_NULL_HANDLE) {
             vkDestroySurfaceKHR(this.context.instance(), this.surface, null);
         }
+        discardPreRecorded();
     }
 
     /**
