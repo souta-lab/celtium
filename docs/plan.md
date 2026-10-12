@@ -307,6 +307,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.335 **round 142: traversal の統合点を確定（既存 helper の位置）— 次 unit は「ここに controller 経路を足す」だけ**
+
+- **コード確認（Lead）**: chain の既存 helper と統合点は
+  **`celtium$vsFindOptionButton(list)`（`:6084`・`:6150`・`:6204` で使用）**・**`celtium$vsRowNames(list)`（`:6088`）**・**`celtium$vsOptionName(option, button)`（`:6096`）**、
+  行の取得は `celtium$fieldValue(screen, {"optionsRowList","field_146501_h"})` → **`buttonList`/`field_146292_n` fallback（`f972ef381`）**。
+  ＝**controller 経路を足す場所はこの3 helper の入口**で、**`list` を作るところを「`controller.pages` から `Option` を集めたリスト」に差し替える**のが最小の形。
+- **次 unit の具体形（これだけ・§0.334 の6手順と対）**:
+  1. `celtium$fieldValue(screen, {"controller", "field_..."})` で controller を取得
+  2. controller の `pages`（`List<OptionPage>`）→ 各 `getGroups()` → `getOptions()` を走査し、
+     **`Option` のリスト（＋その `getControl()`）を作る**（`celtium$vsFindOptionButton` が扱える形に揃える）
+  3. 既存の token 照合で clouds の option を選び、**control の action を呼ぶ**（`CyclingControl` は1つ進める）
+  4. `GameSettings.renderClouds` の変化を確認し `saveOptions()`
+  5. **`videoSettingsRowNames` に実名を出す**（`none` が消えることが進捗の証拠）
+- **受入（その後）**: 同一 leg で 4 phase。
+- **現状の区別（再掲・正確に）**: 画面が開く・捕捉される＝**受入済み**／`optionsRowList` gate＝**通過**／`buttonList` gate＝**通過せず**／
+  **controller traversal＝統合点まで確定・未実装**／4 phase＝**未取得**。
+
 ## 0.334 **round 141: 引き継ぎ — goal (e) の fixture traversal は「明細化済み・未実装」で次 unit に固定**
 
 - **このセッションで確定した goal (e) の現状（正確に区別する）**:
