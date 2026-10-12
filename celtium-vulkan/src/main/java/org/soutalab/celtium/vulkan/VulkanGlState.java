@@ -624,6 +624,21 @@ public final class VulkanGlState {
         return this.boundTextureByUnit[0];
     }
 
+    /**
+     * {@return whether binding {@code glTextureId} on the active unit would leave the mirror exactly as it is}.
+     * <p>
+     * This is what lets the {@code GlStateManager.bindTexture} hook skip a bind the mirror already holds. The game's own
+     * per-unit cache ({@code GlStateManager.java:481-488}) skips the {@code GL11.glBindTexture} call for a repeated
+     * name, but the hook is injected at the method's HEAD, so a cache hit still runs it - measured on an F3 leg:
+     * 1,628,711 arrivals at this mirror for 1,280,000 glyphs, i.e. once per glyph, of which the overwhelming majority
+     * bind the same font sheet again. Comparing per unit is what makes the skip exact: the value the mirror would be
+     * set to is the value it already holds, so the call is a no-op and vanilla's filter - which sits upstream of the
+     * hook - is not duplicated by it.
+     */
+    public boolean bindWouldChangeNothing(int glTextureId) {
+        return this.boundTextureByUnit[unitIndex(this.activeTextureUnit)] == glTextureId;
+    }
+
     /** {@return whether {@code TEXTURE_2D} is enabled on unit 0}, the base sampler's unit. */
     public boolean texture2dEnabled() {
         return this.texture2dEnabledByUnit[0];

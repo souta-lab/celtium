@@ -200,9 +200,33 @@ public abstract class GlStateManagerMixin {
         celtium$mirror(backend -> backend.setTexture2dEnabled(false));
     }
 
+    /** Bounded caller census for BH-06: which code binds, and whether it is the light-map id. */
+    private static int celtium$bindCallerLogs;
+
     @Inject(method = "func_179144_i", at = @At("HEAD"), require = 0)
     private static void celtium$bindTexture(int glTextureId, CallbackInfo info) {
-        celtium$mirror(backend -> backend.bindTexture(glTextureId));
+        if (celtium$bindCallerLogs < 12) {
+            celtium$bindCallerLogs++;
+            StackTraceElement[] frames = Thread.currentThread().getStackTrace();
+            StringBuilder caller = new StringBuilder();
+            for (int i = 2; i < Math.min(frames.length, 6); i++) {
+                caller.append(frames[i].getClassName().replaceAll(".*\\.", "")).append('.')
+                        .append(frames[i].getMethodName()).append(':').append(frames[i].getLineNumber()).append(" <- ");
+            }
+            System.out.println("[Celtium] CELTIUM_BIND_CALLER id=" + glTextureId + " callers=[" + caller + "]");
+        }
+        // The skip: this hook is injected at the method's HEAD, so it runs on every call - including the ones the
+        // game's own per-unit cache (GlStateManager.java:481-488) turns into a no-op before GL ever sees them. The
+        // font renderer binds the same sheet once per glyph, measured at 1,628,711 arrivals for 1,280,000 glyphs, and
+        // a bind the mirror already holds would be written back with the same value. Vanilla's filter sits upstream of
+        // this hook and cannot reach it, so this is not a second filter on the same decision; it removes our own work
+        // per arrival, which is the half of the chain we own. The comparison is per unit inside the mirror, so a
+        // light-map bind on unit 1 is never skipped because unit 0 happens to hold the same name.
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend != null && backend.skipUnchangedBind(glTextureId)) {
+            return;
+        }
+        celtium$mirror(backend2 -> backend2.bindTexture(glTextureId));
     }
 
     @Inject(method = "func_179131_c", at = @At("HEAD"), require = 0)

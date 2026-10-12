@@ -1671,6 +1671,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int matrixModeCalls;
     private int loadIdentityCalls;
     private int bindTextureCalls;
+    /**
+     * Binds the hook skipped because the mirror already held the name. Counted here rather than in the mixin so it
+     * prints in the same summary as {@code bindTextureCalls} (the forwards) and {@code immediateStateCalls} (every
+     * mirror call): the chain's size is then visible in every leg instead of only in the bounded
+     * {@code CELTIUM_UNIT_BIND} lines, which is the reading that hid the per-glyph arrivals once already.
+     */
+    private int bindShortCircuits;
     private VulkanTextureRegistry textureRegistry;
     private int immediateFlushes;
     private int pendingImmediateIndices;
@@ -3539,6 +3546,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.immediateState.bindTexture(glTextureId);
         this.immediateStateCalls++;
         this.bindTextureCalls++;
+    }
+
+    /**
+     * The skip the {@code GlStateManager.bindTexture} hook asks for before it forwards: the game calls that method for
+     * every glyph, and the same font sheet is bound again each time, so the mirror call is a no-op. Measured on an F3
+     * leg: 1,628,711 arrivals for 1,280,000 glyphs. The comparison is per unit inside the mirror, so a light-map bind
+     * on unit 1 is never skipped because unit 0 happens to hold the same name.
+     */
+    @Override
+    public boolean skipUnchangedBind(int glTextureId) {
+        if (!this.immediateState.bindWouldChangeNothing(glTextureId)) {
+            return false;
+        }
+        this.bindShortCircuits++;
+        return true;
     }
 
     @Override
@@ -7843,6 +7865,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " fontStripSeparators=" + this.fontStripSeparators
                 + " fontRunsStarted=" + this.fontBatchesStarted
                 + " fontQuadsAppended=" + this.fontQuadsAppended
+                // The bind chain, in the summary rather than only in the bounded CELTIUM_UNIT_BIND lines: the arrivals
+                // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
+                // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
+                // make impossible - 248 lines against 1,628,711 arrivals is what they actually said.
+                + " bindTextureCalls=" + this.bindTextureCalls
+                + " bindShortCircuits=" + this.bindShortCircuits
+                + " immediateStateCalls=" + this.immediateStateCalls
                 + " immediateGroupsDiscarded=" + this.immediateGroupsDiscarded
                 + " immediateGroupsKeptForOtherTargets=" + this.immediateGroupsKeptForOtherTargets
                 + " immediateDeferredNextFrame=" + this.immediateDeferredNextFrame

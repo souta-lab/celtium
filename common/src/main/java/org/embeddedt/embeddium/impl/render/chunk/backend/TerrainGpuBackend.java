@@ -343,6 +343,17 @@ public interface TerrainGpuBackend {
     }
 
     /**
+     * {@return whether a bind of {@code glTextureId} on the active unit would leave the mirror unchanged, in which case
+     * the {@code GlStateManager.bindTexture} hook skips it}.
+     * <p>
+     * A backend that does not track bindings answers {@code false}, so the hook stays a straight forward for it. The
+     * skip is safe where it is answered: the value the mirror would be set to is the value it already holds.
+     */
+    default boolean skipUnchangedBind(int glTextureId) {
+        return false;
+    }
+
+    /**
      * {@code GlStateManager.glLight} with {@code GL_POSITION}: the raw direction the caller passed - the mirror is
      * responsible for folding the current modelview into it the way the driver does.
      */
