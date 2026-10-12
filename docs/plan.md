@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.389 **round 190: R5 クラス完成＋配線表、R4 の interface 確定。配線は Lead が一括（build は最後に1回）**
+
+- **R5 `RenderTargetRegistry` 完成**（frame-composite・~330行・純 state）: alias（identity→ImageSlot＋generation、`sharedSlots()` は BH-14 の計器）、layout 帳（slot×generation、stale read は `-1` を返し計数）、**clear 所有**（latch＋slot＋generation、1 frame に colour-clear の owner は1つ、衝突は計数して拒否）。R1b の colour-texture map と publication counter は**重複所有しない** ✓。
+- **配線表（Lead が実行する順序）**: ①`bindFramebuffer` の census と `currentRenderTarget`/`currentRenderTargetIsMain`/`mainTargetIdentity` を `registry.noteBind(identity,isMain,routeLabel)`＋accessor へ（`:4546/:4550/:4557/:4579-4583`）②`GroupStamp` 構築2箇所（`:3679/:8202`）は**1つの** `registry.generation()` を読む ③`targetGeneration++`（`:9234`）→ `noteFrameTargetReplaced()` ＋ `adoptFrameTarget(this.frameTarget, registry.generation())` ④pair clear の決定（`:7977-7980/:7923-7939/:11449`）を `beginFrame`/`noteClear` へ（**`GllessFrameTarget` の記録は暫定契約として現状位置のまま**）⑤pair framebuffer handle（`:117-127`）⑥census counter（`:1208/:1209`）⑦`frameTargetKnown`（`:7868/:10958/:10970`）は**latch として機械的に移すだけ**。`publishedChainImage`（`:140`）と `replaceBoundaryDrops`（`:1550`）は**触らない** ✓。
+- **裁定（plan §9.2 に従い挙動変更を抽出に載せない）**: `framebufferReplacing` は**3 writer**（`:4379` 設定・`:12396`/`:12417` 解除）なので、**2つの解除が等価であることを先に証明**してから registry 所有（`noteReplacementAnnounced`/`noteReplacementSettled`）へ。`frameTargetKnown` は**clear しない現状のまま移す** ✗→「resize 後も true のまま」は **B10 と同じクラス（旧 target 時点の事実を新 target の事実として読む）**なので、**独立 commit＋独自の証拠**で直す（配線に載せない）。
+- **R4 `TerrainRenderer` の interface 確定**（sky-draws・読み取りのみ）: `terrainIndirectBuffer`（`:1424`）は**同一ファイル内の indirect 経路のみ**が使う（他ファイル参照0）→ `celtium$tryIndirectBatch`（`:2937`）と一緒に移動可・**accessor 不要** ✓。interface は3点だけ: **command buffer を引数で受け取る**（`:3017` の `this.commandBuffer` は frame 側 state）、`passAttachedColorImage`（frame 側が書く）を渡す、readback 用の arena/segment accessor（依存は backend → TerrainRenderer の一方向）。readback は **(b)** で確定（`:14344`/`:9902` は backend に残す）✓。**B06 の ticket／`segmentReuseWaits`／B07 の packet offset は移動後 `TerrainRenderer.java` が担当**＝単一ライター契約もそちらへ移る。
+- **build は全配線が入ってから1回**（ユーザー指示）。その時に `scripts/build.sh` ＋ `TextureContractCheck` ＋ 検証行の書式差分 ＋ leg。
+
 ## 0.388 **round 189: ビルドを止めて refactoring を一括で進める（ユーザー指示）— R1c 着地と6 unit の並列執筆**
 
 - **ユーザー指示**: 「一旦ビルドなどの壁時間がかかる行動をやめて refactor を完全にやって。ビルドはそれから」。→ **この期間は build/leg を回さず、plan §9.1 の分担（巨大 backend の単一ライターは Lead／他担当は新規独立ファイルと設計）で進める**。配線は Lead が一括で行い、**最後にまとめて build と受入**。
