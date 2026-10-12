@@ -12,6 +12,24 @@ Minecraft public APIs are kept as the **compatibility entry point**, not as an a
 them is replaced by Vulkan rendering that understands what the call means in Minecraft. There is no plan to translate all of
 GL so that all mods work, and no general GL-emulation layer is being built. See [the plan](plan.md), section 0.
 
+## Planned cohort (2026-10-12): the item/recipe mod is HEI, not JEI
+
+Cleanroom's own modpack guide names **HadEnoughItems (HEI)** as the current choice for 1.12.2 and marks JEI
+outdated for this loader ("JustEnoughItems (JEI) | Outdated | ✅ Use HadEnoughItems (HEI)"), and HEI is
+Cleanroom's own fork with load-time, memory and render optimizations
+([the guide](https://cleanroommc.com/wiki/end-user-guide/preparing-your-modpack),
+[HEI](https://www.curseforge.com/minecraft/mc-mods/had-enough-items)). Its maven coordinate is
+`mezz:jei:4.29.11` on `maven.cleanroommc.com`, so it is a drop-in for the JEI API that mods already target.
+
+**What this changes for the plan**: the objective names JEI as the first representative mod, and on this
+loader the honest target is HEI - the same API, the same GUI shape (item list, search bar, tooltips, recipe
+pages, scroll, animation) and the same rendering paths, but the build Cleanroom itself recommends. A JEI jar
+was fetched for a first look (`jei_1.12.2-4.16.5.1026.jar` from `maven.blamejared.com`), and JEI's own 1.12.2
+issue tracker is dominated by OptiFine conflicts rather than by anything a renderer can fix.
+
+**Status**: neither is installed in the harness cohort yet. The verified set below is still the whole of what
+the current runs load, and this section states an intention with its source rather than a result.
+
 ## What is actually verified today
 
 Measured on the runs cited in `docs/plan.md` and `docs/scope-and-limits.md`; the mod set is what the harness puts in the
