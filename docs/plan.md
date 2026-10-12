@@ -173,6 +173,38 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **混合構成で「絵が止まった」と結論する前に、renderer 自身の番号付き dump と fixture の dump を分けて読む**。
 - 計器の意味を変えたら、その名前と意味を変える（`mirrorMisses`→`stubTransformCalls` の経緯）。
 
+## 0.227 **ユーザーの LagSpike プロファイルを解読: スパイクの 5% の frame が wall time の 50% を食い、中身は `gameRenderer` の無名の残差。`gui` は毎 frame 約14 ms の定数**
+
+- **証拠**: `.celtium-work/evidence/user-reports/2026-10-12-lagspike.json`（bzip2 原版 `.lagspikeprofile` を伸長、sha256
+  `ef29c446697ccad047cfa704f30daa8d97fe917ec6a0f926f2cd3acb6335bcf8`）。解読器は `.celtium-work/evidence/user-reports/analyse_lagspike.py`、
+  出力は同ディレクトリ `lagspike_analysis.txt`。
+- **判明した形式（version 文字列 `1.1.0`）**: `[u8 0][u8 len]["1.1.0"]` → `u32be セクション数 77` → 77 ×（`u8 0`, `u8 len`, 名前）で byte 830 まで →
+  **varint 列**（prologue 3個 `0,0,1`、末尾に varint 1個 = 0）。本体は **1,364,259 レコード**、各
+  **（childCount varint, sectionId varint, durationNanos varint）**、**frame ごとのブロック**（各ブロックは `frame` レコードで始まる。358 ブロック）。
+  単位は ns。**推測であって確定でない点**: 末尾 varint の意味（値 0。これが無いと 3 で割り切れない）、frame レコードの childCount が
+  ブロック内の実 children より大きい場合がある（block 0: 102 対 100 で閉じない）。frame 直下のセクションは childCount 0 の
+  **平坦な列**で、入れ子なのは entity/particle の部分木だけ（各ブロックが自分のレコード数を過不足なく消費することは検算済み）。
+- **捕獲範囲**: **358 frame / 20.00 s**（`frame` レコードの duration 合計）。frame 時間 mean **55.9** / p50 **34.1** / p95 **331.8** /
+  p99 **358.9** / worst **384.6 ms**。ヒストグラム: 16.7–33.4 ms 172・33.4–50 122・50–100 41・100–200 1・200–300 2・**300–500 20**。
+  **≥50 ms は 64 frame（17.9%）だが wall time の 10.1 s / 20.0 s＝50% を占める**（≥100 ms は 23 frame）。
+- **スパイクの帰属**（最悪 5%＝18 frame、≥331.8 ms、中央値 frame 27.0 ms）: **`gameRenderer` が 318.6 ms/frame 対 25.0 ms（12.7×）**、
+  `level` 31.9 対 11.3（2.8×）、`tick` +23.5、`blocks` +8.9・`getChunk` +7.8・`regular` +4.1・`getBrightness` +3.7・`chunkCache` +1.9
+  （**いずれも中央値 frame では 0**＝chunk 構築/upload 系がスパイク内にだけ現れる）。一方 **`gui` は 15.4 対 13.7 ms（1.1×）＝スパイクではない**。
+  最悪 frame（384.6 ms）の中身: gameRenderer 342.0・tick 29.7・keyboard 26.6・level 15.8・gui 14.8。
+- **無名の残差（最重要の未帰属）**: スパイクの `gameRenderer` 318.6 ms/frame のうち名前のある子セクションで説明できるのは約 72 ms。
+  **残り約 246 ms/frame はどのセクションにも現れない**。形式側の理由は明確で、frame 直下が平坦な列なので
+  「profiler が計器を持たない pass」または「pass 内の待ち（GPU 完了待ち等）」は `gameRenderer` 自身の時間に入る。
+  我々の `frameFenceWaitMillis`（検証 leg で 1,201 waits / 167 ms＝0.14 ms/wait、別 leg で 5,832 waits / 448 ms）は
+  **桁が違いすぎてこの残差の説明にならない**ので、機構は断定しない。
+- **定数の `gui` 税**: `gui` は 1 frame あたり約 **13.7 ms**（757 レコード/358 frame＝2.11 record/frame、record p95 19.0 ms）で、
+  中央値 frame 27.0 ms の約半分。スパイクで増えない＝**定数コスト**。font/panel の作業が効く対象。
+- **我々の計器との不一致（記録すべき発見）**: `forgeHudText` 合計 **2.7 ms**・`chat` **201.8 ms**（20 s 中）で、**文字はこの捕獲では支配要因ではない**
+  （F3 を開いていなかった可能性が高い）。「F3 text が最大」という我々の仮説はこの session では支持されない。
+  `getBrightness` は **448,707 呼び出し**（p50 0.4 µs・合計 255.7 ms）と回数が突出。
+- **限界**: 形式の 2 点（末尾 varint、frame の childCount 過多）は未確定。section の自己時間は `frame`/`root`/`gameRenderer` が
+  それぞれ全 frame 時間を持つため単純合計が frame 時間の 4.01 倍になり、**重複しない分解ではない**（本節は record duration＝inclusive として読む）。
+  プロファイルからはユーザーがどの jar で遊んだかは分からない（jar hash は profile に無い）。
+
 ## 0.226 **OPT-08 step 1（upload batch を semaphore で frame submission へ渡す）は撤回。二重 signal の正体は upload batch 自身の semaphore と計器で確定**
 
 - **やったこと**: `flushUploads()` を「submit して待たない」形にし、binary semaphore を signal、frame の `submitCommands` がその wait を取る形にした

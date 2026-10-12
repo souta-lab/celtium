@@ -279,6 +279,16 @@ Angelica の `TesrMeshProvider` / `TesrMeshCache` / `ModelPartBatch` は、entit
 > 効果: submit 数 **31343 → 6910（−78%）**（cold 3889→1309・warm 7969→579）。**待ち時間の合計は不変**（972→958 ms）＝
 > batch 全体の完了を待つため。真に待ちを消すのは semaphore で frame submission に渡す形で、OPT-08 の領域。詳細は `docs/plan.md` §0.225。
 
+> **2026-10-12 ユーザーの LagSpike プロファイル（`docs/plan.md` §0.227、sha256 `ef29c446…`）が優先順に与える変更**:
+> 358 frame / 20.0 s で **≥50 ms の 64 frame（17.9%）が wall time の 50%** を占め、そのスパイクは **`gameRenderer` 12.7×**（318.6 対 25.0 ms/frame）に集中する。
+> しかしそのうち名前のある子セクションで説明できるのは約 72 ms で、**約 246 ms/frame が無名**＝frame 直下が平坦な列という形式の性質上、
+> 「計器の無い pass」か「pass 内の待ち」が `gameRenderer` 自身の時間に入る。**OPT-08（frame の完了待ちを消す）はこの残差の候補**だが、
+> 我々の `frameFenceWaitMillis`（0.14 ms/wait）は桁が合わず、まず**残差を pass 単位で割る計器**が要る（プロファイル側には無い）。
+> 一方 **`gui` は毎 frame 約 13.7 ms の定数**（中央値 frame 27.0 ms の約半分、スパイクで増えない）＝OPT-18 系（GUI/font/panel）は
+> スパイクではなく定数税として優先度を上げる。**文字（`forgeHudText` 2.7 ms・`chat` 201.8 ms/20 s）はこの捕獲では支配要因ではない**
+> ＝F3 仮説はこの session では支持されない。chunk 構築系（`getChunk`/`blocks`/`chunkCache`/`regular`）は**スパイク内にだけ**現れる
+> ＝OPT-20/22（chunk upload と CPU 構築）は spike 側の候補。
+
 ### OPT-08: 2 frames in flight と非同期 present
 
 - 各 frame slot に command pool / command buffer、uniform / instance / geometry slice、query range、必要な descriptor と attachment を所有させる。
