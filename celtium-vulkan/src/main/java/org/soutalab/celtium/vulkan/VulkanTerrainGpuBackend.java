@@ -10899,7 +10899,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         StringBuilder preview = new StringBuilder("stride=").append(stride).append(" count=").append(count)
                 .append(" v={");
-        int shown = Math.min(4, count);
+        // Twelve, not four: the splash's own group is two quads (the full-screen background whose four texture
+        // coordinates are all (0,0), then the logo), and the logo's coordinates are the ones that say whether the
+        // captured geometry runs backwards in x. Printing four vertices showed the background twice and the logo
+        // never.
+        int shown = Math.min(12, count);
         for (int i = 0; i < shown; i++) {
             if (i > 0) {
                 preview.append(' ');
