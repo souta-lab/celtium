@@ -1917,6 +1917,47 @@ public final class ValidationClient {
         report.addProperty("stateProbeClipRects", "green " + clipTop + "-" + clipMid + " under the left half, yellow "
                 + clipMid + "-" + clipBottom + " under the right half");
         report.addProperty("stateProbesDrawn", true);
+        if (Boolean.getBoolean("celtium.validation.texEnvProbe")) {
+            celtium$texEnvProbe();
+        }
+    }
+
+    /**
+     * BH-34's acceptance: the same enum through the int and the float API must be recorded - and answered - the same
+     * way. {@code glTexEnvf(target, pname, GL_MODULATE)} is legal GL with the enum passed as {@code 8448.0f}, and the
+     * legacy dispatch hands the semantic case the raw IEEE-754 bits, so the two forms are the same state only if the
+     * float slot is decoded instead of cast. The query answers come from the stub's own record, which is what makes
+     * this a check of the record rather than of a picture.
+     */
+    private void celtium$texEnvProbe() {
+        final int textureEnv = 0x2300;      // GL_TEXTURE_ENV
+        final int envMode = 0x2200;         // GL_TEXTURE_ENV_MODE
+        final int modulate = 0x2100;        // GL_MODULATE = 8448
+        final int combine = 0x8570;         // GL_COMBINE = 34160
+        java.nio.IntBuffer out = org.lwjgl.BufferUtils.createIntBuffer(1);
+        org.lwjgl.opengl.GL11.glGetTexEnviv(textureEnv, envMode, out);
+        int before = out.get(0);
+        org.lwjgl.opengl.GL11.glTexEnvi(textureEnv, envMode, modulate);
+        org.lwjgl.opengl.GL11.glGetTexEnviv(textureEnv, envMode, out);
+        int afterIntModulate = out.get(0);
+        org.lwjgl.opengl.GL11.glTexEnvf(textureEnv, envMode, (float) combine);
+        org.lwjgl.opengl.GL11.glGetTexEnviv(textureEnv, envMode, out);
+        int afterFloatCombine = out.get(0);
+        org.lwjgl.opengl.GL11.glTexEnvi(textureEnv, envMode, combine);
+        org.lwjgl.opengl.GL11.glGetTexEnviv(textureEnv, envMode, out);
+        int afterIntCombine = out.get(0);
+        org.lwjgl.opengl.GL11.glTexEnvf(textureEnv, envMode, (float) modulate);
+        org.lwjgl.opengl.GL11.glGetTexEnviv(textureEnv, envMode, out);
+        int afterFloatModulate = out.get(0);
+        org.lwjgl.opengl.GL11.glTexEnvi(textureEnv, envMode, before == 0 ? modulate : before);
+        report.addProperty("texEnvBefore", before);
+        report.addProperty("texEnvAfterIntModulate", afterIntModulate);
+        report.addProperty("texEnvAfterFloatModulate", afterFloatModulate);
+        report.addProperty("texEnvAfterIntCombine", afterIntCombine);
+        report.addProperty("texEnvAfterFloatCombine", afterFloatCombine);
+        boolean agree = afterIntModulate == modulate && afterFloatModulate == modulate
+                && afterIntCombine == combine && afterFloatCombine == combine;
+        report.addProperty("texEnvProbeVerdict", agree ? "int and float agree" : "DISAGREE");
     }
 
     /**
