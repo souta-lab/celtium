@@ -895,6 +895,14 @@ public final class ValidationClient {
      * still the calibrated variant.
      */
     private int celtium$vsStep = -1;
+    /**
+     * The label a Sodium-style row matched the requested token by, or null when the request matched no row.
+     * <p>
+     * The fallback report used to be computed from the option's name, which a Sodium {@code OptionImpl} does not
+     * have: measured on the fixed finder, the row was found and changed ({@code videoSettingsOptionChanged=true})
+     * while the report still said "the requested token matched no row". The label is the fact that was matched.
+     */
+    private static String celtium$vsMatchedLabel;
     private String celtium$vsOption = "none";
     private String celtium$vsBefore = "none";
     private String celtium$vsAfter = "none";
@@ -6618,23 +6626,28 @@ public final class ValidationClient {
         // The fallback is still pressed (the chain needs a press) but it says so, and the requested token is quoted
         // beside it so the next reader can tell a missing row from a missing match.
         String celtium$vsRequested = System.getProperty("celtium.validation.videoSettingsOption", "");
-        boolean celtium$vsFellBack = !celtium$vsRequested.isEmpty() && !celtium$vsRequested.equals(celtium$vsOption);
+        boolean celtium$vsFellBack = !celtium$vsRequested.isEmpty()
+                && !celtium$vsRequested.equals(celtium$vsOption)
+                && celtium$vsMatchedLabel == null;
         report.addProperty("videoSettingsOptionRequested", celtium$vsRequested.isEmpty() ? "[none]" : celtium$vsRequested);
         report.addProperty("videoSettingsOptionFallback", celtium$vsFellBack);
         if (celtium$vsFellBack) {
             report.addProperty("videoSettingsOptionFallbackNote",
                     "the requested token matched no row; the first pressable row was pressed instead. Rows on the page: "
                             + celtium$vsRowNames(list));
+        } else if (celtium$vsMatchedLabel != null) {
+            report.addProperty("videoSettingsOptionMatchedLabel", celtium$vsMatchedLabel);
         }
         report.addProperty("videoSettingsOptionBefore", celtium$vsBefore);
         report.addProperty("videoSettingsOptionButton", button.getClass().getName());
         if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
             celtium$vsPictureBefore = celtium$requestPresentedDump(mc, "vs-before");
         }
-        int x = ((Number) celtium$fieldValue(button, new String[] {"x", "field_146128_h"})).intValue();
-        int y = ((Number) celtium$fieldValue(button, new String[] {"y", "field_146129_i"})).intValue();
-        int w = ((Number) celtium$fieldValue(button, new String[] {"width", "field_146120_f"})).intValue();
-        int h = ((Number) celtium$fieldValue(button, new String[] {"height", "field_146121_g"})).intValue();
+        int[] box = celtium$vsPressBox(button);
+        int x = box[0];
+        int y = box[1];
+        int w = box[2];
+        int h = box[3];
         celtium$vsPressX = x + w / 2;
         celtium$vsPressY = y + h / 2;
         // The screen's own mouseClicked, not the widget's method: GuiVideoSettings.mouseClicked forwards to
@@ -6896,6 +6909,42 @@ public final class ValidationClient {
         // with the mode the option asks for, which is the player's path and not a property that flips the policy at
         // startup. Empty keeps the old preferred list, so every existing run is unchanged.
         String requested = System.getProperty("celtium.validation.videoSettingsOption", "");
+        // The Celeritas screen's rows are a plain List of Sodium-style Options: they have no `getListEntry` and no
+        // `enumOptions`, so the loop below breaks on its first iteration and this method returned nothing while
+        // `videoSettingsRowNames` listed 34 real rows ("no option button could be located in the screen's row list").
+        // They are matched by their own label instead, which is what the row names in that report are.
+        if (list instanceof java.util.List) {
+            java.util.List<?> rows = (java.util.List<?>) list;
+            Object firstRow = null;
+            int limit = Math.min(64, rows.size());
+            for (int i = 0; i < limit; i++) {
+                Object row = rows.get(i);
+                if (row == null) {
+                    continue;
+                }
+                String label = celtium$vsRowLabel(row);
+                if (label == null) {
+                    continue;
+                }
+                if (firstRow == null) {
+                    firstRow = row;
+                }
+                if (!requested.isEmpty()) {
+                    if (celtium$vsLabelMatches(label, requested)) {
+                        celtium$vsMatchedLabel = label;
+                        return new Object[] {row, row};
+                    }
+                    continue;
+                }
+                for (String token : new String[] {"RENDER_CLOUDS", "GRAPHICS", "AMBIENT_OCCLUSION", "PARTICLES"}) {
+                    if (celtium$vsLabelMatches(label, token)) {
+                        celtium$vsMatchedLabel = label;
+                        return new Object[] {row, row};
+                    }
+                }
+            }
+            return firstRow == null ? null : new Object[] {firstRow, firstRow};
+        }
         String[] preferred = requested.isEmpty()
                 ? new String[] {"RENDER_CLOUDS", "GRAPHICS", "AMBIENT_OCCLUSION", "PARTICLES"}
                 : new String[] {requested};
@@ -6978,6 +7027,62 @@ public final class ValidationClient {
             text = celtium$invoke(name, "getString");
         }
         return text == null ? String.valueOf(name) : String.valueOf(text);
+    }
+
+    /**
+     * {@return whether a row's own label names the requested option}, so {@code CLOUDS} finds
+     * {@code options.renderClouds}.
+     * <p>
+     * Two comparisons, because the screen's rows carry translation keys while the requests in this project's own
+     * legs are enum names: a case-insensitive substring, and the same with {@code _} and {@code .} removed so
+     * {@code RENDER_CLOUDS} and {@code options.renderClouds} meet. Measured: the row list held
+     * {@code options.renderClouds} while a request for {@code CLOUDS} matched nothing and the chain reported that no
+     * option button could be located.
+     */
+    private static boolean celtium$vsLabelMatches(String label, String token) {
+        if (label == null || token == null || token.isEmpty()) {
+            return false;
+        }
+        String upperLabel = label.toUpperCase(java.util.Locale.ROOT);
+        String upperToken = token.toUpperCase(java.util.Locale.ROOT);
+        if (upperLabel.contains(upperToken)) {
+            return true;
+        }
+        return upperLabel.replace("_", "").replace(".", "").contains(upperToken.replace("_", "").replace(".", ""));
+    }
+
+    /**
+     * {@return the widget's {@code {x, y, width, height}}}, from a vanilla {@code GuiButton}'s fields or from a
+     * Sodium-style row's own dimension.
+     * <p>
+     * The Celeritas screen's rows are not buttons: their bounds live in the {@code ControlElement} they were created
+     * with (a {@code Dim2i}), so the field lookup returns null for every one of them and the press would otherwise
+     * land at 0,0. The dimension accessors are tried under both the record's own names and {@code getX}-style names
+     * because Sodium's {@code Dim2i} is a record.
+     */
+    private static int[] celtium$vsPressBox(Object widget) {
+        Object x = celtium$fieldValue(widget, new String[] {"x", "field_146128_h"});
+        Object y = celtium$fieldValue(widget, new String[] {"y", "field_146129_i"});
+        Object w = celtium$fieldValue(widget, new String[] {"width", "field_146120_f"});
+        Object h = celtium$fieldValue(widget, new String[] {"height", "field_146121_g"});
+        if (x instanceof Number && y instanceof Number && w instanceof Number && h instanceof Number) {
+            return new int[] {((Number) x).intValue(), ((Number) y).intValue(),
+                    ((Number) w).intValue(), ((Number) h).intValue()};
+        }
+        Object dimension = celtium$invokeNoArg(widget, new String[] {"getDimension", "dimension"});
+        if (dimension != null) {
+            return new int[] {
+                    celtium$vsDimInt(dimension, new String[] {"x", "getX"}),
+                    celtium$vsDimInt(dimension, new String[] {"y", "getY"}),
+                    celtium$vsDimInt(dimension, new String[] {"width", "getWidth"}),
+                    celtium$vsDimInt(dimension, new String[] {"height", "getHeight"})};
+        }
+        return new int[] {0, 0, 0, 0};
+    }
+
+    private static int celtium$vsDimInt(Object dimension, String[] names) {
+        Object value = celtium$invokeNoArg(dimension, names);
+        return value instanceof Number ? ((Number) value).intValue() : 0;
     }
 
     private static String celtium$vsRowNames(Object list) {

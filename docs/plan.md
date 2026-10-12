@@ -1350,7 +1350,9 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   5. **`GameSettings.renderClouds` の変化を確認**し `saveOptions()`
   6. **`videoSettingsRowNames` に実名を出す**（今は `none`）＝進捗の証拠
 - **受入（この unit の後）**: **同一 leg で 4 phase**（変更→`partialColorMaskGroups` 506→368→復元→reload 行）。
-- **現状**: goal (e) の fixture は**3段の gate の3段目**で、**必要な API 面と手順を全て確定**（実装待ち）。
+- **round 180 の実測（fixture を1段進めた）**: `videoSettingsRowNames` は **34 行の実名**を出していた（`options.renderClouds` を含む）のに finder は**常に失敗**していた — 原因は finder が vanilla の `GuiOptionsRowList`（`getListEntry` + `enumOptions`）しか歩かず、**Celeritas の行は Sodium 風 `Option` の plain List** なので最初の反復で break していたこと。修正: `list instanceof List` の分岐を足し、**行自身のラベル**で照合（`CLOUDS` ↔ `options.renderClouds`、大小無視＋`_`/`.` を除いた比較）。結果 `videoSettingsOptionButton=…OptionImpl`・`videoSettingsOptionChanged=true` まで前進。
+- **残り2点（この unit の続き）**: (1) **press が 0,0 に落ちる** — `OptionImpl` に dimension が無い（bounds は `Control.createElement(Dim2i)` が作る `ControlElement` 側）。§0.333 の指示どおり**control の action を呼ぶ**方式に切り替える。(2) **値の読み取りが null** — `videoSettingsOptionBefore=null` / `After=none` も同じ理由（Sodium `Option` 自身の accessor を使う）。fallback 表示は「name が null」で誤って true になっていたので、**照合したラベル**を記録するよう修正済み（`videoSettingsOptionMatchedLabel`）。
+- **現状**: goal (e) の fixture は**行の特定まで到達**（press の方式と値の読み取りが次の実装）。
 
 ## 0.332 **round 139: 行の在処を確定 — `CeleritasVideoOptionsController.pages`（`List<OptionPage>`）を辿る必要がある**
 
