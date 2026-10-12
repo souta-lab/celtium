@@ -307,6 +307,30 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.346 **round 153: ロード画面の診断を訂正（blend-state の測定）— `glBegin` 機構は誤り・census の数字はフォントのもの**
+
+- **訂正（前ラウンドの記録は誤り・名指しで直す）**:
+  1. **GL-less では `SplashProgress.start()` が cancel される**（`SplashProgressMixin.java:19-22`・fancy splash は2つ目の共有 GL context を要し、
+     `DrawableGL.createSharedContext` が GL context 無しで throw するため）。**測定（leg `bs39-begin`）**: skip 行はログにあり、
+     **`CELTIUM_IMMEDIATE_BEGIN` は 0 行**・census に `glBegin`/`glEnd`/`glVertex3f`/`glTexCoord2f` が**一切無い**
+     ＝**`SplashProgress` の3サイト（:294/:353/:416）は受入構成で実行されない**。＝**蓄積器は蓄積するものが無い**。
+  2. **census の `glVertex3f=152460`・`glBegin=38115` はフォントのもの**（原典: `glVertex3f` は `FontRenderer.java:240-246/:294-300` で
+     `GlStateManager.glBegin(5)`（GL_TRIANGLE_STRIP）`:238/:292` の中）。**splash は `glVertex2f`**（`:296/:355/:417`）を使い、
+     **stub は `glVertex2f` を列挙していない**＝generic no-op で**一度も数えられていない**。色は `glColor3ub`（`:409-412`）。
+     **旧 census の 353316/88329 = 4.0 頂点/run はフォントの4頂点 strip と一致**し、**glyph バッチ後はフォントが run を開かない**。
+     ＝**「census の `glVertex3f` と一致するか」という指定した判定は、ロード画面ではなくフォントを測っていた**（blend-state は採用しなかった・正しい判断）。
+- **受入脚の契約欠落（step 4 が「名指しされていない契約」である理由）**: ロード段階は **`Minecraft.java:517`**（`SplashProgress.drawVanillaScreen` →
+  `Minecraft.drawSplashScreen`）＝**`startGame` の中・最初の client tick より前**。既存の dump switch はすべて後段に鍵がある
+  （`dumpPresentedTick`＝world tick・`dumpPresentedMenuTick`＝`GuiMainMenu` が開いた client tick・`screenshotAtTick`＝world tick）。
+  ＝**どの flag 値でもその窓に落ちない**。必要なのは **splash 段階のフック**（例: `Minecraft.drawSplashScreen` の HEAD/RETURN で presented dump を要求し、
+  record に `loading` stage 名を入れる）＝**新しい契約**（blend-state は発明せず止めた・正しい）。
+- **GL-less で実際に走っているロード画面**: **Tessellator のもの**で、その幾何は即時経路に届いている
+  （ログ: `DynamicTexture.<init> <- Minecraft.func_180510_a:889 <- SplashProgress.drawVanillaScreen:1051`・
+  `Tessellator.func_78381_a:22 <- Minecraft.func_180510_a:908`）。
+  ＝**「ロード画面が無い」は `glBegin` 機構ではない**。次の unit は **(a) ロード段階の dump 契約を足して presented frame に何が入っているかを測る**か、
+  **(b) `drawSplashScreen` の既に届いている幾何の picture/timing 問題**のどちらか。**(a) を先に取る**（測らずに (b) を論じない）。
+- **step 1 は最後の緑コミット**（`654dc9253`）。**step 2-3 は前提が崩れたので実装しない**（blend-state の判断を支持する）。
+
 ## 0.345 **round 152: ユーザの profiler 画像（frame/tick 内訳）— `gui` self 5.36 s（26.8 %）と `gameRenderer` self 6.19 s（31 %）が最大**
 
 - **受領**: `2026-10-12-profile-frame.png`（48,882 bytes）・`2026-10-12-profile-tick.png`（79,076 bytes）
