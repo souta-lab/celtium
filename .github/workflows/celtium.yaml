@@ -58,6 +58,12 @@ jobs:
           "-Pglslang_validator=$(command -v glslangValidator)"
       - name: Verify packaged mod contents
         run: python3 scripts/verify_forge_jar.py build-1122/build/libs/*/*.jar
+      # The artifact's name, its mcmod.info version, the build's default and the plan's header table are four places the
+      # same version is written; nothing compared them, and a leg was once run against a jar left over from the previous
+      # naming family because a recipe still pointed at the old path (docs/plan.md row 47). This reads all four and
+      # names the field that disagrees.
+      - name: Verify artifact versions
+        run: python3 scripts/verify_version_consistency.py
       - uses: actions/upload-artifact@v4
         with:
           name: celtium-forge-1122
