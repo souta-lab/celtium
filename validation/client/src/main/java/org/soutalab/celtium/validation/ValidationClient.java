@@ -6462,8 +6462,46 @@ public final class ValidationClient {
      * named differently) rather than misspelled - so the names are read from the same {@code optionsRowList} the
      * finder walks instead of inferred from the option enum. Bounded to the finder's own 64 rows.
      */
+    /** {@return the row's label}, reading a GuiButton's displayString or a Sodium-style Option's getName. */
+    private static String celtium$vsRowLabel(Object row) {
+        Object display = celtium$fieldValue(row, new String[] {"displayString", "field_146126_j"});
+        if (display != null) {
+            return String.valueOf(display);
+        }
+        Object name = celtium$invoke(row, "getName");
+        if (name == null) {
+            return null;
+        }
+        Object text = celtium$invoke(name, "getUnformattedText");
+        if (text == null) {
+            text = celtium$invoke(name, "getString");
+        }
+        return text == null ? String.valueOf(name) : String.valueOf(text);
+    }
+
     private static String celtium$vsRowNames(Object list) {
         StringBuilder names = new StringBuilder();
+        // A plain list of Options (the Celeritas screen's rows) has no getListEntry, so it is walked directly;
+        // without this the loop below breaks on the first iteration and the report reads "none" even though the
+        // list is not empty.
+        if (list instanceof java.util.List) {
+            int shown = 0;
+            for (Object row : (java.util.List<?>) list) {
+                if (shown >= 64) {
+                    break;
+                }
+                String label = celtium$vsRowLabel(row);
+                if (label == null) {
+                    continue;
+                }
+                if (names.length() > 0) {
+                    names.append(',');
+                }
+                names.append(label);
+                shown++;
+            }
+            return names.length() == 0 ? "none" : names.toString();
+        }
         for (int i = 0; i < 64; i++) {
             Object row;
             try {
