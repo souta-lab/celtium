@@ -1871,6 +1871,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final float[] currentGroupModelView = new float[16];
     /** The four-float scratch {@code GL_CURRENT_COLOR} is read into, reused across groups rather than alloc/freed. */
     private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+    /** The nine-float working matrix {@link #celtium$lightParams} inverts the modelview's upper 3x3 into. */
+    private final float[] lightInverseScratch = new float[9];
     /** Shared immutable white for a group whose GL colour read failed; only ever read, never written. */
     private static final float[] WHITE_GROUP_COLOR = {1.0f, 1.0f, 1.0f, 1.0f};
     /**
@@ -3441,17 +3443,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         float b = modelView[4], e = modelView[5], h = modelView[6];
         float c = modelView[8], f = modelView[9], i22 = modelView[10];
         float det = a * (e * i22 - f * h) - b * (d * i22 - f * g) + c * (d * h - e * g);
-        float[] inv;
+        // The inverse is a local working matrix: a member scratch rather than a nine-float allocation per lit group.
+        float[] inv = this.lightInverseScratch;
         if (Math.abs(det) < 1.0e-8f) {
             // A singular modelview degenerates the draw anyway; identity directions refuse nothing.
-            inv = new float[] {1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f};
+            java.util.Arrays.fill(inv, 0f);
+            inv[0] = inv[4] = inv[8] = 1f;
         } else {
             float invDet = 1.0f / det;
-            inv = new float[] {
-                    (e * i22 - f * h) * invDet, (f * g - d * i22) * invDet, (d * h - e * g) * invDet,
-                    (c * h - b * i22) * invDet, (a * i22 - c * g) * invDet, (b * g - a * h) * invDet,
-                    (b * f - c * e) * invDet, (c * d - a * f) * invDet, (a * e - b * d) * invDet,
-            };
+            inv[0] = (e * i22 - f * h) * invDet; inv[1] = (f * g - d * i22) * invDet; inv[2] = (d * h - e * g) * invDet;
+            inv[3] = (c * h - b * i22) * invDet; inv[4] = (a * i22 - c * g) * invDet; inv[5] = (b * g - a * h) * invDet;
+            inv[6] = (b * f - c * e) * invDet; inv[7] = (c * d - a * f) * invDet; inv[8] = (a * e - b * d) * invDet;
         }
         float[] params = new float[20];
         float[] dirs = this.immediateState.lightDirections();
