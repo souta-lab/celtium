@@ -36,7 +36,8 @@
 | OPT-19 | entity/TESR visibility | 未実装 | Celeritas existing visibility が first level — render bounding box 例外 |
 | OPT-20 | sprite visibility・upload 抑制 | 未実装 | active marking 監査から。hidden sprite の upload skip（interpolation 保ち）|
 | OPT-21 | lightmap/sky dependency cache | **一部実装** | texSubImage identical dedup（PR #29 merged: serial bump 回避）済。残: dirty flag 尊重の sky/fog cache |
-| OPT-22 | texture decode/mip/atlas worker 化 | 未実装 | bounded worker pool — startup/reload 効果候補 |
+| OPT-22 | texture decode/mip/atlas worker 化 | **実装・実測（PR #35）** | `generateMipmaps`（resource read+PNG decode+mip pyramid、sprite-local）を bounded daemon pool(<=4) に submit。`stitcher.addSprite` は順序記録のみ→`finishLoading` HEAD で順次 await+stitch（sequential・順序保持・FML tracking は render thread）。custom-loader sprite は replicated body で sync。`-Dceltium.parallelAtlas=false` で kill。Leg: submitted=817 awaited=817 awaitMillis=0 window=470ms busy=92ms・clean。効果はこの instance で ~92ms — pack sprite 数に比例。**発見: json client list 非空が CleanMix の mixin 適用を阻害する**（plugin getMixins 発見済でも apply されない）— mixin 追加時は client list に書かないこと |
+
 | OPT-23 | model/quad/state dedup | 未実装 | immutable quad vertex data の共有 |
 | OPT-24 | 描画系 task の budget | 未実装 | mesh/sort/upload の per-frame budget |
 | OPT-25 | visibility graph 深堀 | 未実装 | Celeritas visibility の camera epoch/stale 監査 |
