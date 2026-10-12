@@ -202,6 +202,21 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private long defaultPairClearedFrame = -1L;
     private long chainPairClearedFrame = -1L;
+    /**
+     * Which identity's content each pair holds this frame, which is what the clear-once rule is about.
+     * <p>
+     * The rule used to be "once per pair per frame", and that is not the same contract: two identities can route to
+     * one pair in a single frame (the vanilla splash's own framebuffer and the game's next one), and the second
+     * identity's pass beginning later cleared a pair that already held the first one's picture. Measured: the loading
+     * frame was one colour because a pass whose identity is not main cleared the chain pair the logo had just been
+     * drawn into. The rule is now "once per pair per frame <em>per content identity</em>": a different identity's
+     * later pass does not clear, and the refusal is counted and named.
+     */
+    private long defaultPairContentIdentity = Long.MIN_VALUE;
+    private long chainPairContentIdentity = Long.MIN_VALUE;
+    private int pairClearsRefusedOtherIdentity;
+    private int pairClearRefusalLogs;
+    private String lastPairClearRefusal = "none";
     /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
     private int defaultPairClears;
     private int chainPairClears;
@@ -7789,13 +7804,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // initialLayout GENERAL - which is VUID-vkCmdBeginRenderPass-initialLayout-00900 unless the image is
                     // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
                     celtium$transitionPublishedFrameTextures(true);
-                    if (!offTarget.chainPairAcquired() || this.chainPairClearedFrame != celtium$frameSerial()) {
+                    if (celtium$pairClearNeeded(offTarget.chainPairAcquired(), this.chainPairClearedFrame,
+                            this.chainPairContentIdentity, "chain-pair")) {
                         // Outside the pass, which is where the clear and its first-use barrier belong, and once per
-                        // frame: the game clears a framebuffer when it binds it, and clearing per window would erase
-                        // what an earlier window of the same frame already drew there. The acquire state is asked of
-                        // the pair as well as the frame, because a pair recreated after this frame's clear is
-                        // UNDEFINED again while the frame flag still says otherwise - which is the layout error a
-                        // dimension change produced.
+                        // frame per content identity: the game clears a framebuffer when it binds it, and clearing per
+                        // window would erase what an earlier window of the same frame already drew there. The acquire
+                        // state is asked of the pair as well as the frame, because a pair recreated after this frame's
+                        // clear is UNDEFINED again while the frame flag still says otherwise - which is the layout
+                        // error a dimension change produced.
                         if (offTarget.chainPairNeedsSelfTest()) {
                             // The one legal-use sequence of the images this pair now holds, recorded through the
                             // validation layer and reported once per creation: it is the same clear the ordinary path
@@ -7805,6 +7821,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                             offTarget.clearChainPair(this.commandBuffer);
                         }
                         this.chainPairClearedFrame = celtium$frameSerial();
+                        this.chainPairContentIdentity = this.currentRenderTarget;
                         this.chainPairClears++;
                         // Order against the faces' own pass: the copy reads this pair and the faces drew into it, so
                         // a clear that lands after their DRAW_SITE is what leaves the copy white.
@@ -7841,9 +7858,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
                     // No hand-back here: the published image is the chain pair's, and this pass attaches the default
                     // pair. Transitioning the published image is the sampling site's job, below.
-                    if (!offTarget.offTargetAcquired() || this.defaultPairClearedFrame != celtium$frameSerial()) {
+                    if (celtium$pairClearNeeded(offTarget.offTargetAcquired(), this.defaultPairClearedFrame,
+                            this.defaultPairContentIdentity, "default-pair")) {
                         offTarget.clearOffTarget(this.commandBuffer);
                         this.defaultPairClearedFrame = celtium$frameSerial();
+                        this.defaultPairContentIdentity = this.currentRenderTarget;
                         this.defaultPairClears++;
                     }
                     framebuffer = ensureOffTargetFramebuffer(renderPass);
@@ -8443,6 +8462,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " textureCopyBlitRefusals=" + this.textureCopyService.textureCopyBlitRefusals()
                 + " lastTextureCopyBlitRefusal=[" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lastTextureCopyRefusal=[" + this.textureCopyService.lastTextureCopyRefusal() + "]"
+                // The pair clear-once contract: applied clears against the clears a second identity's pass asked for
+                // and did not get. Without the second number the rule's effect is inferred from a picture.
+                + " pairClearsRefusedOtherIdentity=" + this.pairClearsRefusedOtherIdentity
+                + " lastPairClearRefusal=[" + this.lastPairClearRefusal + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
                 + " dynamicTextureFills=" + this.dynamicTextureFills
@@ -10308,6 +10331,36 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return true;
     }
 
+    /**
+     * The pair's clear decision: once per frame per content identity, not once per frame.
+     * <p>
+     * A pair that already holds this frame's content from another identity is not cleared by this identity's pass -
+     * the game clears a framebuffer when it binds it, but two identities sharing one pair means the second clear would
+     * erase the first identity's picture. The refusal is counted and named rather than silent, because "the pair was
+     * not cleared" and "nothing was drawn into it" look the same in a dump.
+     *
+     * @param acquired whether the pair's images exist (a recreated pair is UNDEFINED and must be cleared)
+     * @return whether the caller must record the clear
+     */
+    private boolean celtium$pairClearNeeded(boolean acquired, long clearedFrame, long contentIdentity, String pair) {
+        if (!acquired || clearedFrame != celtium$frameSerial()) {
+            return true;
+        }
+        if (contentIdentity == this.currentRenderTarget) {
+            // The ordinary repeat: this identity already had its clear this frame.
+            return false;
+        }
+        this.pairClearsRefusedOtherIdentity++;
+        this.lastPairClearRefusal = pair + ": identity 0x" + Long.toHexString(this.currentRenderTarget)
+                + " would have cleared a pair holding identity 0x" + Long.toHexString(contentIdentity)
+                + "'s content (frame serial " + celtium$frameSerial() + ")";
+        if (this.pairClearRefusalLogs < 6) {
+            this.pairClearRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_PAIR_CLEAR_REFUSED " + this.lastPairClearRefusal);
+        }
+        return false;
+    }
+
     private void runSwapchainProbe() {
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
@@ -11245,13 +11298,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // Before anything in this submission clears, attaches or samples the image: the previous frame's composite
         // may have left it in SHADER_READ_ONLY, and both the clear and the chain declare GENERAL.
         this.celtium$syncPublishedChainOutput(glless.chainPairColorImage());
-        if (!glless.chainPairAcquired() || this.chainPairClearedFrame != celtium$frameSerial()) {
+        // The same clear-once contract as the pass sites: this is the post-chain adoption path, and it shares the
+        // chain pair with them, so the rule has to be one rule. Stated here because it is the second site of the same
+        // shape - it is not a different question that happened to look alike.
+        if (celtium$pairClearNeeded(glless.chainPairAcquired(), this.chainPairClearedFrame,
+                this.chainPairContentIdentity, "chain-pair(sync)")) {
             if (glless.chainPairNeedsSelfTest()) {
                 record(glless.chainPairSelfTest(this.commandBuffer));
             } else {
                 glless.clearChainPair(this.commandBuffer);
             }
             this.chainPairClearedFrame = celtium$frameSerial();
+            this.chainPairContentIdentity = this.currentRenderTarget;
             this.chainPairClears++;
             celtium$noteChainPairClear("sync-published-chain-output");
         }
