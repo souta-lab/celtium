@@ -1117,6 +1117,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int cameraSetupSeedsSkipped;
     /** identity -> {colour texture name, texture width, texture height}, reported at each framebuffer bind. */
     private final java.util.Map<Long, long[]> framebufferColorTextures = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Names the sampling side resolved through the framebuffer census, and the bounded log of them. */
+    private int framebufferColorTexturesPublished;
+    private int framebufferColorTextureLogs;
+    /**
+     * Which framebuffer identities were bound as the game's main one.
+     * <p>
+     * The census above ties an identity to a colour texture name, but not to the main-ness the routing rule needs:
+     * the same run can have the splash's own framebuffer and the game's main one bound in turn, and the identity the
+     * main framebuffer reports is not always {@code mainTargetIdentity} (which is set when the main framebuffer is
+     * adopted, not on every bind). Recorded where the bind reports it - {@code FramebufferMixin} calls
+     * {@code bindFramebuffer(identity, isMain)} immediately before the census call - so the two facts travel together.
+     */
+    private final java.util.Map<Long, Boolean> framebufferIdentityIsMain = new java.util.concurrent.ConcurrentHashMap<>();
     private int framebufferColorTextureReports;
     private int framebufferColorTextureLog;
     /** Distinct framebuffer identities the game has bound, for the bounded census the routing rule is read against. */
@@ -4298,6 +4311,87 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return this.framebufferColorTextures.get(Long.valueOf(identity));
     }
 
+    /** {@return the framebuffer identity whose colour attachment carries this GL texture name}, or {@code MIN_VALUE}. */
+    private long celtium$framebufferIdentityForColorTexture(int glTextureName) {
+        if (glTextureName == 0) {
+            return Long.MIN_VALUE;
+        }
+        for (java.util.Map.Entry<Long, long[]> entry : this.framebufferColorTextures.entrySet()) {
+            long[] reported = entry.getValue();
+            if (reported != null && reported[0] == glTextureName) {
+                return entry.getKey().longValue();
+            }
+        }
+        return Long.MIN_VALUE;
+    }
+
+    /**
+     * Gives a bound texture name the image its own framebuffer draws into, when the registry holds no mirror for it.
+     * <p>
+     * The sampling side's half of the rule the copy path already follows: a name that is a framebuffer's colour
+     * attachment stands for the image that framebuffer's draws went into, and which image that is comes from the same
+     * routing rule the draws themselves were accepted under ({@code GllessFrameTarget.routeLabelForBinding}) - main to
+     * the frame image, identity 0 to the default pair, every other non-main identity to the chain pair. Nothing here
+     * looks at a size or a name to decide: the census is what ties the two together, and it is filled where the
+     * framebuffer is bound.
+     * <p>
+     * The measured case is the vanilla loading screen: {@code Minecraft.drawSplashScreen} draws into its own
+     * {@code new Framebuffer(...)} and then composites it with {@code framebufferRender}, whose quad samples that
+     * framebuffer's colour texture. Under GL-less that texture has an extent and no pixels, so with no mirror the
+     * composite sampled an empty image and the window showed one colour.
+     *
+     * @return whether the name resolves to an image now
+     */
+    private boolean celtium$publishFramebufferColorTexture(int glTextureName) {
+        long identity = celtium$framebufferIdentityForColorTexture(glTextureName);
+        if (identity == Long.MIN_VALUE) {
+            return false;
+        }
+        long[] reported = framebufferColorTexture(identity);
+        int width = reported == null || reported[1] <= 0 ? this.targetWidth : (int) reported[1];
+        int height = reported == null || reported[2] <= 0 ? this.targetHeight : (int) reported[2];
+        boolean isMain = identity == this.mainTargetIdentity
+                || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(identity)));
+        String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
+        long image;
+        long view;
+        if ("frame-image".equals(route)) {
+            if (this.frameTarget == null) {
+                return false;
+            }
+            image = this.frameTarget.colorImage();
+            view = this.frameTarget.colorView();
+        } else {
+            GllessFrameTarget offTarget = offTargetTarget();
+            if (offTarget == null) {
+                return false;
+            }
+            // The pairs exist only once something has drawn into one of them; the composite is the caller that needs
+            // them, so the size is asked for here rather than assumed to be there.
+            offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
+            if ("chain-pair".equals(route)) {
+                image = offTarget.chainPairColorImage();
+                view = offTarget.chainPairColorView();
+            } else {
+                image = offTarget.offTargetColorImage();
+                view = offTarget.offTargetColorView();
+            }
+        }
+        if (image == 0L || view == 0L) {
+            return false;
+        }
+        celtium$publishFrameTexture(glTextureName, image, view, width, height);
+        this.framebufferColorTexturesPublished++;
+        if (this.framebufferColorTextureLogs < 8) {
+            this.framebufferColorTextureLogs++;
+            System.out.println("[Celtium] CELTIUM_FBO_TEXTURE_PUBLISHED name=" + glTextureName
+                    + " identity=0x" + Long.toHexString(identity) + " route=" + route
+                    + " image=0x" + Long.toHexString(image) + " size=" + width + "x" + height
+                    + " main=" + isMain);
+        }
+        return this.textureRegistry.get(glTextureName) != null;
+    }
+
     /** The colour texture name standing for a framebuffer identity, or 0 when none was reported. */
     private int framebufferColorTextureName(long identity) {
         long[] entry = framebufferColorTexture(identity);
@@ -4305,6 +4399,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     public void bindFramebuffer(long targetIdentity, boolean isMain) {
+        this.framebufferIdentityIsMain.put(Long.valueOf(targetIdentity), Boolean.valueOf(isMain));
         // The stub classifies a clear by this decision, not by the raw GL name: the game's main render target is not
         // necessarily the default framebuffer, so name-based classification dropped the frame's own clears.
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noteDrawFramebufferIsMain(isMain);
@@ -4526,6 +4621,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.textureRegistry = celtium$registry();
         }
         VulkanGlTexture texture = this.textureRegistry.get(boundTexture);
+        if (texture == null && boundTexture != 0) {
+            // The acceptance path resolves the same rule as prepareImmediate, so a batch is not refused for a name
+            // whose image is simply not published yet.
+            if (celtium$publishFramebufferColorTexture(boundTexture)) {
+                texture = this.textureRegistry.get(boundTexture);
+            }
+        }
         if (this.lightmapTexture == null) {
             ensureLightmapMirror();
         }
@@ -7259,6 +7361,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
         long prepRegistryStart = System.nanoTime();
         VulkanGlTexture texture = this.textureRegistry.get(textureId);
+        if (texture == null && textureId != 0) {
+            // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
+            // into is what it stands for (see celtium$publishFramebufferColorTexture). Resolved here, where a bound
+            // name becomes a descriptor, so every sampling path gets the same rule.
+            if (celtium$publishFramebufferColorTexture(textureId)) {
+                texture = this.textureRegistry.get(textureId);
+            }
+        }
         this.prepRegistryNanos += System.nanoTime() - prepRegistryStart;
         this.prepLookupNanos += System.nanoTime() - prepLookupStart;
         if (format != 1 && texture == null) {
@@ -7652,8 +7762,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // black loading screen. Nothing is created, resized, transitioned or freed here.
                     long[] reported = framebufferColorTexture(this.currentRenderTarget);
                     if (reported != null && reported[0] != 0L) {
-                        celtium$publishFrameTexture((int) reported[0], offTarget.chainPairColorImage(),
-                                offTarget.chainPairColorView(), this.targetWidth, this.targetHeight);
+                        // The image comes from the routing rule this identity's draws were accepted under, not from
+                        // "the pair this pass happens to attach": two identities can be bound in one frame - the
+                        // splash's own framebuffer and the game's main one - and publishing both of their colour
+                        // textures over one image made framebufferRender's quad sample the main framebuffer's
+                        // white-cleared picture instead of the splash's. Main goes to the frame image, identity 0 to
+                        // the default pair, every other non-main identity to the chain pair.
+                        celtium$publishFramebufferColorTexture((int) reported[0]);
                     }
                 } else {
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);

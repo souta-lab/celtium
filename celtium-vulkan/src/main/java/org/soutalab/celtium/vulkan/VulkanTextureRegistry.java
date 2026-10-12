@@ -1349,7 +1349,16 @@ public final class VulkanTextureRegistry {
         Entry entry = this.entries.get(Integer.valueOf(glTextureId));
         String source = this.mirrorSourceById.get(Integer.valueOf(glTextureId));
         if (entry == null) {
-            return source == null ? "no-entry" : source + "@no-entry";
+            if (source != null) {
+                return source + "@no-entry";
+            }
+            // A name can resolve without a filled mirror: a published external image is what a framebuffer's colour
+            // texture name stands for, and "no-entry" read as "nothing to sample" when the draw had an image.
+            VulkanGlTexture external = this.externalImages.get(Integer.valueOf(glTextureId));
+            if (external != null) {
+                return "published-image@" + external.width() + "x" + external.height();
+            }
+            return "no-entry";
         }
         return (source == null ? "unfilled" : source) + "@" + entry.width + "x" + entry.height;
     }
