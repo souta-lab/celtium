@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.385 **round 186: 既存の番号付き frame dump は splash/loading をカバーしない（負の結果）。B08 着地・B10 片側着地**
+
+- **B08 着地（blend-state `7a6c1b8fe`）**: copy key を**厳密な tuple 文字列**（source image を含む）にし、entry が**内容マーカー**（最後の draw の epoch+frame）を持ち、**source の内容が変わったら elide しない**（panorama の7パスがその形）。計器は `textureCopiesServedPeakPerPresent`（旧 cache は 1 を出す＝**これが「grey leg 1 対 correct leg 7」の判別そのもの**）と `textureCopiesReServedAfterContentChange`。window pass が実際に attach した handle の印字（`attachedImage=`/`frameImage=`/`chainPair=`）も入った（menu leg では発火せず＝splash/loading 用）。**受入は未取得**（下記のツリー問題で停止していた）。
+- **共有ツリーは緑**（私が `scripts/build.sh` で確認 ✓ `BUILD SUCCESSFUL`）。blend-state が見た `VulkanPostChain.java:1032/1047/1048/1061` のエラーは **frame-composite の編集中の一時状態**で、commit 済みの破損ではない。blend-state に受入続行を連絡済み。
+- **B10 片側着地（frame-composite）**: `VulkanPostChain.java` に `currentTarget()`/`targetGeneration()`/`adoptFrameTarget(target,generation)` を実装し、`recordPasses` が開始時の世代を捕捉して**return 直前に世代を検証**、記録中に動いていたら `IllegalStateException` で拒否（破棄済み image を指すコマンドを submit しない）。`targetMovesRefused` を加算。残りは backend の `ensureFrameTarget` 直後の**通知1行**（`postChain != null` のときだけ）＝blend-state が backend を離れたので**今入れられる**。
+- **B06 の witness 確定（sky-draws・読み取りのみ）**: 既存 `VulkanArena.free`（`:547`）は即 coalesce で completion 計器なし。既存の `submitCompletions`（`VulkanContext:191`/`:788`）を**分母**に使い、`Segment` に free 時点の ticket を持たせて `current < freedTicket` なら再利用しない。**新設カウンタは1本だけ** `segmentReuseWaits`（単位: segments、上限なし）。受入は pending terrain draw と同一 section rebuild/sort を重ね、**最終 buffer 内容だけでは受入にしない**。
+- **負の結果（私・round 186）**: 既存の番号付き presented frame dump（`-Dceltium.vulkan.frameDumpDir` + `frameDumpEvery=1` + `frameDumpCount=240`）は **23 枚しか出ず、`frame-1` が既に world 内容**（distinct 2748）✗ ＝ **splash/loading 期をカバーしない**（dump は adoption 後にしか始まらない）。したがって**白 phase の判定は既存 dump では取れない** — 現時点の証拠は compositor 時系列（AMD: 0016-0021 が一様白 → 0022 から loading 画面、約6秒）であり、番号付きで取るには **dump を pre-adoption frame まで拡張**する必要がある（blend-state が P0/B08 の後に担当）。
+
 ## 0.384 **round 185: 最大監査（2026-10-12）の受入状況と担当割当 — 監査は「コード確定」であり GPU 受入ではない**
 
 - **監査**: `docs/audit-2026-10-12-maximum.md`（commit `5b41093f7`）＋ CPU witness 7本 `docs/audits/2026-10-12/`（`cpu-witnesses.json` / `source-witnesses.py`）。**証拠クラスは「CPU再現」「コード確定」で、GPU 受入ではない**（監査自身が明記）。したがって各項目は **validation-clean の leg で witness を取って初めて受入**になる。
