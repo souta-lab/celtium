@@ -307,6 +307,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.334 **round 141: 引き継ぎ — goal (e) の fixture traversal は「明細化済み・未実装」で次 unit に固定**
+
+- **このセッションで確定した goal (e) の現状（正確に区別する）**:
+  | 項目 | 状態 |
+  |---|---|
+  | Celeritas 画面が開く | **受入済み**（`guiClickDivertedTo`・`guiScreenClassAtCapture=CeleritasVideoOptionsScreen`・panel crop 587 色） |
+  | 画面が捕捉される | **受入済み**（上と同時に取得） |
+  | `optionsRowList` gate | **通過**（`buttonList` fallback・`f972ef381`） |
+  | `buttonList` gate | **通過せず**（Celeritas の行は `GuiButton` ではない・`videoSettingsRowNames=none`） |
+  | **`controller` → `pages` traversal** | **明細化済み・未実装**（§0.333 の6手順・API 面確定） |
+  | 4 phase（変更/復元/reload） | **未取得**（traversal 待ち） |
+- **次 unit の手順（再掲・これだけ実装すれば進む）**:
+  1. `screen.controller` を取得（field 名は原典で確認）
+  2. `controller.pages` → `getGroups()` → `getOptions()` を走査
+  3. clouds の `Option` を `getName()`/既存 token 照合で特定
+  4. **その control の action を呼ぶ**（`CyclingControl` は値を1つ進める・`GuiButton.mousePressed` ではない）
+  5. `GameSettings.renderClouds` の変化を確認し `saveOptions()`
+  6. **`videoSettingsRowNames` に実名を出す**（`none` が消えることが進捗の証拠）
+- **受入（その後）**: 同一 leg で 4 phase（`partialColorMaskFields` 506→368→復元→GUI scale の `REQUIRES_RENDERER_RELOAD` 行）。
+- **このセッションの教訓（fixture 側・4回の同型失敗から）**: **leg を打つ前に (a) scene の定義と較正条件、(b) capture の発火条件、
+  (c) その scene が読む widget 構造を原典で確認する**。各段の失敗メッセージがどの gate かを名指しするよう fixture を直したので、
+  次の実装対象は artifact から決まる（推測しない）。
+- **他に残る未完**: frame-close pairing（`submitSignalOnly` は fixture で到達不能・counter 可視化済み）・BH-14 per-identity pair・
+  `scissorCapturedGroups=0`（plan の `>0` が失敗）・主要mod対応（goal C）・Intel UHD630 受入・パノラマの白（mirror が白・7仮説棄却）。
+
 ## 0.333 **round 140: traversal に必要な API 面を確定（`OptionPage.getGroups()` → `OptionGroup.getOptions()` → `Option.getControl()`/`getName()`）**
 
 - **原典確認（Lead・upstream-baseline と Sodium の構造）**: 行を辿る API は
