@@ -24,7 +24,7 @@
 | OPT-08 | frames in flight + present 非同期 | **実装済** | FRAME_SLOTS=4 + deferred present（同上）|
 | OPT-09 | native multidraw | 未実装 | `VulkanMultiDrawBatch.upload()` は no-op — per-command `vkCmdDrawIndexed` のまま |
 | OPT-10 | command/state の merge | 未実装 | group merge 済だが state key 差で分断（GUI の要素毎 enable 切替）|
-| OPT-11 | 24B compact vertex | 実装済/未検証 | `useCompactVertexFormat=false` 既定 — 画質比較と VRAM/bandwidth 計測が必要 |
+| OPT-11 | 24B compact vertex | **実装済/計測済（fixture）** | entity-free NOLAVA pair (tick=200 同一 tick capture): `arenaUploadedBytes` 24.2MB→18.5MB **-23.8%**・frame p50 16.15→16.18 不変・画像は **63.8% 画素差だが 92% が ≤16 delta**（position/color 量子化の辺縁差 + 大差 ~13K）→ 画質は bit 不変ではない。既定 off 維持が妥当（受入判断はユーザー側）。`-Dceltium.validation.compactVertexFormat=true` で切替 |
 | OPT-12 | descriptor キャッシュ | 一部実装 | per-pipeline map 済（hits 実測）・driver `VkPipelineCache` 未使用（起動時効果は限定的と予想）|
 | OPT-13 | pipeline spec/キャッシュ | 一部実装 | `cache`/`itemCache`/`blockCache`/`particleCache` map。specialization constants 未使用 |
 | OPT-14 | entity model の Vulkan 直 draw | 一部実装? | captured model mesh 借用（`stamp.meshBorrowed`）あり — 残: model 再利用の範囲・bone animation |
@@ -58,8 +58,11 @@
 2. ~~`gameRenderer` 残差 / world-pass 分解~~ — 帰属確定: spike は計器税（上段参照）。真の定常数値（skip ブランチ・cadence-0）: frame p50=6.2/worst=12.5、world=5.4=terrain 1.5+flush 0.8+unnamed ~2.9（game renderWorldPass + Celeritas orchestration・1ms-JFR で diffuse）。
 3. ~~OPT-01~~ — cpuSplit flag で既定 off（main）。
 4. ~~warm window 到達 fixture~~ — `-Dceltium.validation.holdUntilTick=600`（commit d0b85f804）+ `churnInterval` + `presentedDumpEvery`（d7a1dd4bd）。
-5. **submitImmediateBatchTimed 残 ~4.4%（1ms-JFR 比）の分解** — lightmap 実 upload ~1.9% + vertex copy ~1% + misc。
+5. **submitImmediateBatchTimed 残 ~4.4%（1ms-JFR 比）の分解 — 確定（p-jfr5・main + OPT-33/34/10 統合後）**: submit 配下 646 sample のうち `uploadFromGlTexture` **49.8%**（lightmap の実 upload — serial skip 後の残は変更分＝正当）、vertex copy `copyVertices`+`copyVerticesTransformed`+`memCopy` **~18%**（OPT-11 が直接削減）、`prepareImmediate`/`TextureRegistry.get`/group bookkeeping **~10%**。残は分散。
+   - **world-pass「unnamed」の帰属も確定**（同 JFR・renderWorldPass 内 391 sample）: `ParticleManager.func_78874_a` 直下 **22.5%**（particle tessellation — `Particle.func_180434_a` 7.4% + `BufferBuilder` 9.4% + `ParticlePortal` 3.1%）、`RenderGlobal.func_180446_a` entities **15.9%**、`EntityRenderer` camera/hand/rain 系 **~15%**、`func_174970_a` terrain_setup **10.2%**、clouds/sky ~8%、Forge `dispatchRenderLast`/EventBus ~4%、`EntityGatherer.getLoadedEntityList` 4.9%。**ほぼ全て game/Celeritas 側の orchestration** — backend 側の残は無し。
+   - **game-Profiler 帰属 route は不採用**（実測で判明）: `mc.profiler.profilingEnabled` は `Minecraft.runFrame` が毎 frame 書き戻し、stack 補正には `profilingSection` が stack 全体を string 連結するため二次コスト（**246ms/frame**）— instrument として不成立（revert 済）。JFR で同等の帰属が取れる。
 6. **ユーザ環境での `-Dceltium.vulkan.passSplit` 計測** — spike 内の unnamed ~200ms が game-side renderWorldPass か GC か（fixture はそこまで辿り切れない）。GC は `-Xlog:gc*` で Full (System.gc()) 68-101ms が periodic に出る。
+7. **OPT-11 compact vertex の検証 leg** — `useCompactVertexFormat` flag 済み・未検証。vertex copy ~18% share の直接削減候補（24B vs 32B）。画質比較 + upload byte 削減の実測が必要。
 
 ## 計器の範囲メモ（今回確認した事実）
 
