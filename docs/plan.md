@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.397 **round 198: R3b の裁定反映＋CPU 検査（30項目）／R5 配線は `frameTargetKnown` まで完了**
+
+- **R3b 反映（glyph-fix `31a618217`・3ファイルのみ）**: ①保持を**修正として既定 ON**（property は `celtium.font.retaining`、`nativeTextureCopy=false` と同じ位置づけ＝**正しさが lab flag に依存しない** ✓）。commit/doc に **「implemented and unexercised」**を明記（leg 未実行・カウンタ発火は CPU 検査のみ → **拒否が起きない leg で `retainedRuns=0` なのは期待値であって fix の証拠ではない** ✓）。`celtium$fontBatchSummary()` の文字列は不変 ✓（保持カウンタは `celtium$fontRetentionSummary()` 側 ✓）。②target witness は**独立の証拠**（silent な折り込みにしない ✓）: **`scripts/cpu-contract/FontBatchContractCheck.java`**（CPU のみ・Gradle build なし）で **retention ON = 30 checks / 0 failed**、**コントロール `-Dceltium.font.retaining=false` = 24 checks / 0 failed** ✓（旧挙動の再現と drop 計上 ✓）。保持の証拠は **pending buffer を別バイトで上書き後も checksum が元 glyph と一致**＝alias していないことの証明 ✓、summary のキー順不変も検査 ✓。
+- **検査を書く過程で実装の無駄を1件修正**: 同一 flush 内で拒否した run を即再提示していた（1 flush に拒否2回）→ **保持 run を先・open run を後**に提示し、拒否 run は次の flush まで待つ ✓（古い glyph が新しい glyph より後に描かれない順序も同時に保証 ✓）。
+- **未確立（doc 明記）**: 実 leg で font run が拒否されること（ゲーム内で保持が発火）は未測定 ✓／target witness が絵を変えることも未測定（CPU 検査は key が target 切替で変わる証明まで ✓）。`close()` 未配線・拒否理由は owner 側・順序規則は現位置 ✓。
+- **R5 配線（Lead）**: 第1項 `targetGeneration` 統一（`e23f914d1`）に続き、**`frameTargetKnown` を latch として registry へ機械移動** ✓（`noteTargetKnown()`/`targetKnown()`、backend の残参照 0 ✓）。**clear はしない**＝現状挙動のまま ✓（resize 後に true のまま＝B10 と同じクラスなので**独立 commit＋独自証拠**で直す ✓ と javadoc に明記 ✓）。
+
 ## 0.396 **round 197: 監査 B11 の2機構を別 commit で実装（未行使であることも明記）**
 
 - **`e73de9907` — still-pending submission 中の slot 再利用**: `VulkanPostChain.java` に `setBoundEpoch[slot]`（その slot を渡した recording 開始時の epoch）と `recordingEpochStart`（`VulkanContext.completedEpoch()` を recording 境界で採取）を追加し、**`vkUpdateDescriptorSets` の直前に `completedEpoch() < boundEpoch + 1` なら拒否**（既存 exhaustion と同じ例外形・何も書かない・**wait 追加なし** ✓）。ticket を epoch にする理由は B05 と同じ測定（recording 中に取れる fence は古い batch のもの・frame 自身の epoch はまだ無い）✓。計器 `postRingOwnershipRefusals`/`postRingOwnershipReuses` ✓。
