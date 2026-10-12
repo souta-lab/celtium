@@ -339,6 +339,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.355 **round 162: BH-09 の受入は3 leg 連続で `lineBatchesNarrowed=0` — 「経路を exercise する構成」自体が未発見**
+
+- **3 leg の結果（すべて計器は正常・すべて 0）**:
+  | leg | 構成 | `lineBatchesNarrowed` | `scissorCapturedGroups` | `scissorLateCapturedGroups` |
+  |---|---|---|---|---|
+  | `r152-bh09` | terrain 既定 | **0** | 0 | 0 |
+  | `r153-bh09` | `scene=videoSettings`＋`keepGui` | **0** | 0 | 0 |
+  | `r154-bh09` | ＋`videoSettingsOption=GUI_SCALE`＋`menuHoldTicks=200` | **0** | 0 | 0 |
+  ＝**3 leg とも scissor 経路を踏んでいない**。`CELTIUM_VERIFY via=frame 120` は各 leg で印字＝**計器は正常**。
+- **sky-draws の独立確認（成果物の上の測定）**: 手元の脚（`guiscale-leg`・`intel-inv-glless`・`intel-panel-glless`・`t30-count-keys`・`t30-growth-keys`・`glow-glless`）の
+  **いずれにも scissor 系カウンタが出ていない**。`guiscale-leg` は報告 JSON はあるが**カウンタ不在**＝あの jar は `CELTIUM_VERIFY` より前なので
+  **「0」と「未計装」を区別できない**（＝**カウンタの不在は描画の不在ではない**というこの件の罠そのもの）。
+  ＝**`lineBatchesNarrowed=215` を出した構成は成果物からは特定できない**（Lead の結論と一致）。
+- **次の一手（より強い見当）**: **`lineBatchesNarrowed` は「開いた group の中で live scissor が動いた」時に数える**ので、
+  **group の途中で scissor が変わる**構成が要る。vanilla で確実に scissor を使うのは **`GuiSlot.drawScreen`**（Forge javadoc が
+  "GL_SCISSOR is enabled for anything that is rendered outside of the view box" と明記）＝**`GuiLanguage`・`GuiScreenResourcePacks`・
+  `GuiContainerCreative`・`GuiScreenWorldSelection`** など。Celeritas のスクロール UI より**こちらが確実**。
+  ＝**次は `GuiLanguage`（言語画面）か resource pack 画面を開く leg**で `lineBatchesNarrowed > 0` を先に確認する。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地（`218ea2120`）・計器修正着地（3 trigger・各 leg で印字確認）・
+  受入は「scissor が live な構成」の発見待ち**。**3 leg を費やしたが、いずれも経路未 exercise と計器が自分で示した**。
+
 ## 0.354 **round 161: BH-09 の受入は GUI scene でも 0（`lineBatchesNarrowed=0`）— 「経路を exercise していない」ことを計器が自分で示した**
 
 - **測定（`r153-bh09`・`scene=videoSettings` ＋ `keepGui=true`）**: `CELTIUM_VERIFY via=frame 120` は印字され（計器は正常）、
