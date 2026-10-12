@@ -61,9 +61,10 @@ HEI loaded, the item list, search bar and tooltips draw natively, and the run is
 with the picture gate's own verdict quoted. A leg that merely starts is not acceptance - and neither is one
 that never got the slot.
 
-**Measured 2026-10-12 (reference half; owner gui-text, record `docs/history/2026-10-12-hei-acceptance.md`).**
-**Still not acceptance: this row stays "HEI loads, and the reference picture is established" until the candidate
-leg exists** - the reference says what the mod's screens should look like, not what Celtium draws.
+**Measured 2026-10-12 (reference half first, candidate half below; owner gui-text, record
+`docs/history/2026-10-12-hei-acceptance.md`).**
+The reference says what the mod's screens should look like; the candidate half (further down) says what Celtium
+draws, and it is the candidate half that decides this row.
 Four reference legs were taken with upstream Celeritas `d12425eaaf184e79` (jar sha256
 `d12425ea…`), the same HEI 4.31.2 jar and fixture `c39840d62e3695e9`, scene `jeiScreen`+`keepInventoryScreen`
 with `pinSections=64` at tick 200, all `validationClean=true` and `validationMessageCount=0`, all
@@ -91,11 +92,32 @@ through the screen's own `keyTyped` leave the mod's filter at `keyboardFocus=fal
 mod reads the LWJGL keyboard event rather than the method's arguments. The filter is therefore driven through
 the mod's API and the artifact names that path (`jeiFilterTextPath`) rather than presenting it as a keystroke.
 
-**The candidate half is not taken yet, deliberately**: the candidate jar available while these legs ran
-contained an unlanded `TextureCopyService` extraction (another worker's WIP, touching exactly the texture-copy
-path HEI's icons and tooltips use), so a leg on it could not separate HEI's drawing from the WIP. The candidate
-must be taken on a clean tree with the same fixture and flags, and compared with `compare_jei_pair.py` plus the
-cell-fill table; until then **this row stays "loads and the reference is established", not "verified"**.
+**The candidate half is now taken** (`hei-cand`, `hei-cand2`, `hei-cand-cycle`; same fixture and flags as
+`hei-ref-list`, celtium jars `543745fbe076f15d…` = the content of HEAD `cc103738f` and `7bd467145b0d28e4…` =
+that plus perf-ring's F3-panel WIP, `glless`/`presentReadback`/`validation`, RX 6400, all
+`validationClean=true`, `validationMessageCount=0`, `errors=0`, `UNCALIBRATED_PRESENTED_IMAGE`, counter read from
+the last `CELTIUM_VERIFY` line, `via=fixture end`). Measured against the reference frame:
+
+* the grid, the icons and the filter **match**: the same detected `origin=(378,213) pitch=54 cols=9 rows=7`,
+  cell fill `median=0.781 mean=0.682` against the reference's `0.681`, the search box's 801 pure-white text
+  pixels identical to the reference's 801, and the mod's own `60/908 "" -> 13/13 "diamond"` unchanged;
+* the transitions **match**: `jeiScreenOpenedAtTick` 30/33 against 31, `jeiRecipeOpenedAtTick` 43 against 41,
+  `screenshotAtTickScreen=none` on the cycle leg exactly as on the reference's, i.e. inventory -> HEI -> back;
+* **the tooltip does not match**, and this is the finding of the leg: the vanilla item tooltip loses **most of
+  its main text pass** under GL-less - 585 of 797 shadow-coloured pixels have no main-pass pixel (reference
+  `0 / 693`), the white ink drops 828 px -> 238 px, and the candidate's white pixels are a strict subset of the
+  reference's (same glyphs, same positions, cells simply not drawn). It is scoped to the **vanilla** GUI text of
+  that screen: HEI's own search-box text is pixel-identical to the reference (0 / 675), and the item-count and
+  hotbar regions match at `mean|d|=0.000`. Two candidate builds give the same numbers, so it is not a capture
+  race. It is the user's dark-text complaint on a real mod screen, reported to the renderer owners rather than
+  fixed here (`docs/history/2026-10-12-hei-acceptance.md`, instrument
+  `scripts/cpu-contract/font-shadow-main-check.py`).
+
+So the row is **"HEI loads; the reference is established; the candidate's item list, icons, filter and screen
+transitions match it, and the tooltip text does not"** - the mod's own screens are accepted except for that
+defect, and the defect is in the shared font path, not in HEI's rendering. It is **not** an unqualified
+"HEI verified" and must not be read as one: the acceptance gate for this row is the tooltip crop, and the
+tooltip crop is the thing that fails.
 
 ## What is actually verified today
 

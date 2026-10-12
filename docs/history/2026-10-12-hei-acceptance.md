@@ -96,25 +96,121 @@ hei-ref-recipe: screenshotAtTickScreen=mezz.jei.gui.recipes.RecipesGui (HEI's ow
 mod offers), not by simulating input; `jeiRecipeOpened=true` is the mod's answer, and the captured screen class
 is the mod's own GUI.
 
-## The candidate half: not taken, and why
+## The candidate half (taken 2026-10-12)
 
-Not taken **on purpose**. The candidate jar available at the time (`forge122/build/libs/…-0.0.2-alpha-dev.jar`)
-contained `TextureCopyService.class`, i.e. another worker's **unlanded** texture-copy extraction, and was built
-before `3870c4ae6`. A HEI acceptance taken on that jar could not separate "HEI's drawing is wrong" from "the
-unlanded extraction broke the copy path", which is the same shape as the old-name-jar trap this project already
-lost a leg to. The Lead's decision was the same: hold the candidate until the extraction lands, and spend the
-wait on the reference.
+### The artifacts, and how they are attributed
 
-**The candidate leg must use the same fixture and flags** as `hei-ref-list` and be compared with
-`compare_jei_pair.py` (regions: whole frame, the item count, the tooltip, the inventory panel, the hotbar) plus
-the cell-fill table above, with `mods[].sha256`, HEAD and `git status --short` in the record. The candidate's
-per-format counters (`id4` accepted/drawn per frame) come from its own report; the upstream reference has no
-such counters and none are claimed for it.
+The candidate legs run on jars copied out of the build tree into `.celtium-work/hei-cand-frozen/` **while the
+tree was clean**, so that a concurrent rebuild cannot move the artifact under the evidence:
+
+| file | sha256 | built (mtime) | attribution |
+|---|---|---|---|
+| `celtium-pre1830.jar` | `543745fbe076f15d…` | 16:30:25 | the content of `cc103738f`: that commit (16:35:46) captures the tree whose newest source edit is 16:30:05, and no source file changed between the jar write and the commit |
+| `celtium-7bd46714.jar` | `7bd467145b0d28e4…` | 16:39:26 | the Lead's rebuild at `cc103738f` + perf-ring's curated-F3-panel WIP (which does not touch the HEI draw path) |
+| `fixture-pre1830.jar` | `6ee2eb580015f94e…` | 16:29:28 | byte-identical to the fixture jar the Lead rebuilt afterwards (same sha256) |
+
+Disclosure, because it costs a round if it is not written down: between the two legs the worktree stopped
+compiling - perf-ring's first cut of `celtium$addCuratedLines` called the **instance** method
+`VulkanContext.uploadBatchSummary()` (`VulkanContext.java:2425`) from a static context
+(`CeleritasVintage.java:84`), and `scripts/build.sh` failed with that one error in 24 s
+(`.celtium-work/hei-build.log`). The Lead reports the fix and a `BUILD SUCCESSFUL`; the second candidate leg was
+taken on that rebuild. No renderer source was edited for this unit.
+
+The fixture flags are **identical** to `hei-ref-list` (checked by diffing the flag sets); the only difference is
+the three celtium-side flags under test (`glless`, `presentReadback`, `validation`).
+
+### The legs
+
+| run | celtium jar | flags vs `hei-ref-list` | verdict |
+|---|---|---|---|
+| `hei-cand` | `543745fbe076f15d…` | same | `UNCALIBRATED_PRESENTED_IMAGE`, `validationClean=true`, `validationMessageCount=0`, `errors=0` |
+| `hei-cand2` | `7bd467145b0d28e4…` | same | same |
+| `hei-cand-cycle` | `7bd467145b0d28e4…` | `keepInventoryScreen=false`, `jeiRecipe=true`, no `jeiFilterText` (mirrors `hei-ref-cycle`) | same |
+
+All three: AMD Radeon RX 6400 (RADV NAVI24), 1280x720, `--headless --force-x11`, `--slot-wait`, HEAD
+`cc103738f`, 6 mods locked, `nativeDeviceMatchedOpenGl=false` (correct under GL-less). The picture is the
+**presented dump** (`pictureEvidenceSource=presented-dump`); the GL screenshot is black by construction and the
+fixture says so (`pictureScreenshotUsable_tick200=false`).
+
+### Measured, candidate against the reference frame
+
+| quantity | reference (`hei-ref-list`, GL) | candidate (`hei-cand` / `hei-cand2`) |
+|---|---|---|
+| detected slot grid | `origin=(378,213) pitch=54 cols=9 rows=7` | identical |
+| cell fill (median / mean) | `0.781` / `0.681` | `0.781` / `0.682` |
+| search box pure-white text px | 801 | 801 (identical) |
+| item-list strip distinct colours | 1042 | 1415 / 1330 |
+| filter state (mod's own API) | `60/908 ""` -> `13/13 "diamond"` | `60/908 ""` -> `13/13 "diamond"` |
+| tooltip region mean abs diff, px>8 | - | `22.710`, 662 (10.34 %) |
+| `jeiScreenOpenedAtTick` | 31 (cycle) | 30 / 33 |
+| `jeiRecipeOpenedAtTick` | 41 | 43 |
+| `screenshotAtTickScreen` (cycle) | `none` | `none` (screen gone again before the tick-200 capture) |
+
+Counters, read from the **last** `CELTIUM_VERIFY` line (`via=fixture end`) of each leg: `passed=1030 errors=0
+refusals=0`, `acceptedByFormat[4]` (the item format, `id4`) `5614` / `8305` / `5666` and
+`drawnByFormat[4]` `7876` / `11647` / `6866` (drawn > accepted because a group is replayed across passes);
+`lastFrameAccepted=154 lastFrameDrawn=135` on the two list legs and `48/41` on the cycle leg. The upstream
+reference has no such counters and none are claimed for it: **its legs print no `CELTIUM_VERIFY` line at all**,
+which is a property of that leg (a slow leg never reaches the bounded `frame 120`/`present 120` triggers), not
+evidence that its counters were zero.
+
+### The finding: the tooltip's main text pass loses ink
+
+The vanilla item tooltip ("Gold Ore", region `(660,315)-(820,355)`) is where the candidate and the reference
+disagree, and `scripts/cpu-contract/font-shadow-main-check.py` names why. The invariant it checks comes from
+`FontRenderer.renderString` (`.celtium-work/mc-sources/net/minecraft/client/gui/FontRenderer.java:562-593`,
+called twice by `drawStringWithShadow`): both passes draw the *same* glyph geometry, the shadow at `(x+1,y+1)`
+in the shadow colour, the main at `(x,y)` in the text colour, so every shadow-coloured pixel must have a
+main-coloured pixel one GUI pixel up and to the left.
+
+```
+reference  tooltip: shadow_px=693  shadow_without_main=0   (0.0 %)
+candidate  tooltip: shadow_px=797  shadow_without_main=585 (73.4 %)      (both candidate builds, identical)
+```
+
+The white main-pass ink in that box drops from **828 px to 238 px**, and the candidate's 238 white pixels are a
+**strict subset** of the reference's 828 (candidate-only = 0, reference-only = 590): same geometry, same
+positions, pixels simply not drawn - what shows through them in the candidate is the tooltip's own background
+(`(19,4,19)`, `(18,3,18)`, `(25,10,25)`, …), and 104 of them are the exact shadow colour. The loss is
+column-structured at GUI-pixel resolution (whole 18-px cells missing, neighbours perfect), which is what makes
+it visible as "part of the text is dark" rather than as a shifted or dimmed string.
+
+Scoping, from the same instrument on the same frame:
+
+| region | reference | candidate |
+|---|---|---|
+| tooltip `(660,315,820,355)` | 0 / 693 | 585 / 797 |
+| creative panel `(420,120,860,600)` | 26 / 719 | 732 / 944 (`cand2` 741 / 953) |
+| HEI search box `(950,655,1270,712)` | 0 / 675 | 0 / 675 |
+| item count `(1030,20,1140,60)`, hotbar `(490,660,790,720)` | 0 shadow px | 0 shadow px; `compare_jei_pair.py` reads a mean abs diff of `0.000` and 0 px > 8 on both |
+
+So **HEI's own text is pixel-identical to the reference** (675 shadow pixels, zero violations, 801 pure-white
+search text pixels on both sides) while the **vanilla GUI text drawn in the same screen** (the tooltip, and the
+creative panel region around it) loses most of its main pass. The reference passes the same check cleanly, and
+the two candidate builds - taken hours apart on two jars - give the same numbers to the pixel, so this is not a
+capture race: the whole leg's other text (`item count`, `hotbar`) matches the GL reference **exactly**, and a
+dump/readback artifact cannot preserve one run of glyphs to the pixel while deleting whole cells of another.
+
+This is the user's original complaint ("part of the GUI text goes dark", the tooltip crop) reproduced on a real
+mod screen with a GL partner that is clean, and it is **reported, not fixed here**: the state that differs
+between the two passes in the immediate path is renderer-source territory
+(`VulkanTerrainGpuBackend.submitImmediateBatchTimed`, the batch site the format counters come from). Which
+state that is - clipping, the second pass's colour/coverage, or the batch split - has to be named by whoever
+owns that file, with a two-jar experiment on this same crop.
+
+### Crops
+
+`.celtium-work/hei-acceptance/crops/`: `ref-`/`cand-`/`cand2-{tooltip,search,overlay}.png`, and
+`tooltip-ref-vs-cand-4x.png` (the two tooltip boxes, 4x nearest, reference above candidate).
 
 ## Instruments named
 
 * `scripts/cpu-contract/hei_screen_check.py` (new): one frame in, cell-fill table + search-box text pixels +
   item-list strip statistics + crops out. Geometry detected and printed, not hard-coded.
 * `scripts/cpu-contract/compare_jei_pair.py` (existing): the region-by-region pair comparison.
+* `scripts/cpu-contract/font-shadow-main-check.py` (existing, from the GUI-text unit): the shadow/main invariant
+  above - it needs no known string and no reference picture, which is why it can be pointed at the candidate's
+  tooltip box and at the reference's with the same arguments. A frame-wide count includes non-text pixels and is
+  only a finding inside a region known to be text; the numbers quoted above are per-region.
 * Fixture: `-Dceltium.validation.jeiSearch=<text>` (real keyboard path, with the mod-API read-back that measured
   its limit) and `-Dceltium.validation.jeiFilterText=<text>` (the mod's public API, named as such in the report).
