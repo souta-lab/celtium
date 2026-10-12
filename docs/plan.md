@@ -307,6 +307,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.333 **round 140: traversal に必要な API 面を確定（`OptionPage.getGroups()` → `OptionGroup.getOptions()` → `Option.getControl()`/`getName()`）**
+
+- **原典確認（Lead・upstream-baseline と Sodium の構造）**: 行を辿る API は
+  **`OptionPage.getGroups()` → `OptionGroup.getOptions()` → `Option.getControl()` / `Option.getName()`** で、
+  widget は **`Control.createElement(Dim2i)`** が作る `ControlElement`（`CyclingControl` は enum を巡回・`SliderControl`/`TickBoxControl` が同階層）。
+  Celeritas 側の対応物は **`CeleritasVideoOptionsController.pages`**（`List<OptionPage>`・`OptionPageFrame` が描画を担う）。
+- **押す操作の意味**: `GuiButton.mousePressed` ではなく **`ControlElement` 自身の入力処理**（`CyclingControl` は値を1つ進める）。
+  ＝**fixture は「行を見つける」だけでなく「control の action を呼ぶ」必要がある**（多段 traversal＋control 呼び出し）。
+- **実装の明細（gui-stage へ渡す unit として確定）**:
+  1. `screen.controller` を取得（field 名は原典で確認）
+  2. `controller.pages` → `getGroups()` → `getOptions()` を走査
+  3. **clouds に対応する `Option`** を `getName()`（または既存の token 照合）で特定
+  4. **その control の action を呼ぶ**（`CyclingControl` なら値が1つ進む）
+  5. **`GameSettings.renderClouds` の変化を確認**し `saveOptions()`
+  6. **`videoSettingsRowNames` に実名を出す**（今は `none`）＝進捗の証拠
+- **受入（この unit の後）**: **同一 leg で 4 phase**（変更→`partialColorMaskGroups` 506→368→復元→reload 行）。
+- **現状**: goal (e) の fixture は**3段の gate の3段目**で、**必要な API 面と手順を全て確定**（実装待ち）。
+
 ## 0.332 **round 139: 行の在処を確定 — `CeleritasVideoOptionsController.pages`（`List<OptionPage>`）を辿る必要がある**
 
 - **原典確認（Lead・upstream-baseline）**: `CeleritasVideoOptionsController` の field は
