@@ -269,6 +269,16 @@ public final class VulkanGlState {
     }
 
     /**
+     * {@return the named texture unit's matrix elements without copying}, for a caller that reads a few elements and
+     * does not need the sixteen-float snapshot {@link #textureMatrix(int)} allocates. The immediate path's
+     * {@code textureAffine} reads six elements once per closed group (~3600/frame); the copy was pure allocation on
+     * the 99%-identity path. The returned array is the stack's own - do not write into it.
+     */
+    public float[] peekTextureMatrix(int unit) {
+        return (unit == 1 ? this.textureStack1 : this.textureStack0).peek();
+    }
+
+    /**
      * Writes sixteen values into the current top of a stack.
      * <p>
      * {@link #matrix(int)} returns a **copy**, so writing into what it returns - which two earlier changes did - silently

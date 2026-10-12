@@ -3390,7 +3390,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private float[] celtium$textureAffine() {
         try {            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
             // and reading the shared stack would return whichever unit was last active.
-            float[] matrix = this.immediateState.textureMatrix(0);
+            float[] matrix = this.immediateState.peekTextureMatrix(0);
             if (matrix == null) {
                 return null;
             }
