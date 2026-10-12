@@ -117,6 +117,20 @@ public final class FramePassTimings {
     }
 
     /**
+     * {@return the frame bracket alone, p50/p95/worst}, the short form the F3 panel's default shows.
+     * <p>
+     * The complaint about that panel was its length, not its content: the full split is a few hundred characters of
+     * bracket text per line. The same numbers stay available through {@link #summary()} in the log's
+     * {@code CELTIUM_VERIFY} line and in the panel under {@code -Dceltium.f3.fullSummary=true}.
+     */
+    public static String summaryShort() {
+        if (written == 0) return "not measured yet";
+        int n = Math.min(written, CAPACITY);
+        return "p50=" + ms(percentile(frameTotals, n, 0.50)) + " p95=" + ms(percentile(frameTotals, n, 0.95))
+                + " worst=" + ms(worst(frameTotals, n)) + " ms";
+    }
+
+    /**
      * {@return the per-pass split of the frames measured so far}, as p50/p95/worst milliseconds plus the residual.
      * <p>
      * The residual is per frame ({@code frame - sum(top-level)}) and then summarised, not a difference of

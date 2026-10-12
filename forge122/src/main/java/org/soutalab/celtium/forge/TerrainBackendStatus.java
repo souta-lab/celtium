@@ -26,4 +26,18 @@ public final class TerrainBackendStatus {
         return TerrainBackendSelection.pending(
                 "terrain is not initialized yet; the live selection is reported once a world is loaded").describe();
     }
+
+    /**
+     * {@return the backend's name alone}, for the F3 panel's one-line default.
+     * <p>
+     * {@link #describe()} carries the selection's whole reason, which is right for the log and wrong for a panel read
+     * at a glance: the reason stays in the full summary ({@code -Dceltium.f3.fullSummary=true}) and in
+     * {@code CELTIUM_VERIFY}. This build renders terrain with the Vulkan backend or not at all, so the name is the
+     * constant when a renderer exists.
+     */
+    public static String name() {
+        return CeleritasWorldRenderer.instanceNullable() == null
+                ? TerrainBackendSelection.VULKAN + " (not initialized yet)"
+                : TerrainBackendSelection.VULKAN + " (native)";
+    }
 }

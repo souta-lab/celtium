@@ -74,20 +74,16 @@ public class CeleritasVintage {
     private static final boolean FULL_SUMMARY = Boolean.getBoolean("celtium.f3.fullSummary");
 
     /**
-     * Adds the default panel's bounded subset: the device/driver line, the terrain backend, the frame split and the
-     * censuses that are cheap to build and short to draw, plus a line naming where the rest went.
+     * Adds the default panel's bounded subset: three short lines, because the complaint about this panel was its
+     * length. The device/driver line above it is the fourth. Everything else - the per-pass split of every bracket,
+     * the host-buffer allocation census, the unmodelled GL entry points, all 602 counters - stays in the log's
+     * {@code CELTIUM_VERIFY} line and in the panel under {@code -Dceltium.f3.fullSummary=true}, and the line below
+     * says so where the user can read it.
      */
     private static void celtium$addCuratedLines(java.util.List<String> strings) {
-        strings.add("Terrain backend: " + org.soutalab.celtium.forge.TerrainBackendStatus.describe());
-        strings.add("Frame: " + org.soutalab.celtium.vulkan.FramePassTimings.summary());
-        // The upload-batch census is an instance method on VulkanContext and no static accessor exists, so it is not
-        // reachable from here without creating a context or reaching into the backend - both of which this line must
-        // not do. What is reachable and bounded is the allocation census; the batch/refusal counters stay in the log's
-        // full summary.
-        strings.add("Buffers: " + org.soutalab.celtium.vulkan.VulkanHostBuffer.allocationSummary());
-        strings.add("Unmodelled GL entry points: "
-                + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.unknownSymbolSummary());
-        strings.add("full counters: CELTIUM_VERIFY in the log (-Dceltium.f3.fullSummary=true for the panel)");
+        strings.add("Backend: " + org.soutalab.celtium.forge.TerrainBackendStatus.name());
+        strings.add("Frame: " + org.soutalab.celtium.vulkan.FramePassTimings.summaryShort());
+        strings.add("Full counters: CELTIUM_VERIFY in the log (-Dceltium.f3.fullSummary=true for the panel)");
     }
 
     /** How many F3 frames a built section is shown for; {@code -Dceltium.f3.sectionRefreshFrames} overrides it. */
