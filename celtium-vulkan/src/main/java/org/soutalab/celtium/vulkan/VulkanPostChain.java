@@ -310,6 +310,19 @@ public final class VulkanPostChain {
     private long ringOwnershipRefusals;
     private long ringOwnershipReuses;
     /**
+     * The cursor this recording started at, and the counters of recordings thrown away after taking slots (B11's
+     * second finding: <em>slots leaked when a recording is abandoned</em>).
+     * <p>
+     * Distinct from the cross-frame reuse above: there the slot is taken again while a submission still reads it; here
+     * the slots are simply never given back, because the ring's accounting is reset at the <em>start</em> of a
+     * recording and a recording that throws after taking slots leaves {@code setCursor} advanced. With 32 slots and a
+     * burst of frame-target refusals after a resize, that ends in exhaustion - so an abandoned recording rewinds the
+     * cursor and returns its slots here.
+     */
+    private int recordingStartCursor;
+    private long ringAbandonedRecordings;
+    private long ringSlotsReclaimedOnAbandon;
+    /**
      * How many ring sets the recording in progress has taken. The ring is only safe if a set is updated after the
      * command buffer that last bound it has completed, and that stops being true the moment the cursor wraps inside a
      * single recording: the set pass 33 takes is the one pass 1 bound, and updating it changes what the pending
@@ -851,6 +864,37 @@ public final class VulkanPostChain {
      *     that carried it has been accepted by the queue
      */
     public int recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
+        try {
+            return celtium$recordPasses(commandBuffer, passes);
+        } catch (RuntimeException | Error failure) {
+            // B11, second finding: a recording that throws after it has taken ring slots never returned them, because
+            // the ring's accounting is reset at the start of a recording rather than at the end. The slots go back
+            // before the caller sees the failure, and their ownership marks are cleared: the command buffer that bound
+            // those sets was thrown away, so no submission reads them and they are free again.
+            celtium$returnSlotsOfAbandonedRecording();
+            throw failure;
+        }
+    }
+
+    /** {@return the slots a recording that threw had taken}, so the ring leaks nothing (B11). */
+    private void celtium$returnSlotsOfAbandonedRecording() {
+        int taken = this.setsThisRecording;
+        if (taken <= 0) {
+            // The unsupplied-input refusal happens before anything is taken: nothing to return, and it is not an
+            // abandoned recording with a leak.
+            return;
+        }
+        for (int i = 0; i < taken; i++) {
+            int slot = (this.recordingStartCursor + i) % this.setRing.length;
+            this.setBoundEpoch[slot] = -1L;
+        }
+        this.setCursor = this.recordingStartCursor;
+        this.setsThisRecording = 0;
+        this.ringAbandonedRecordings++;
+        this.ringSlotsReclaimedOnAbandon += taken;
+    }
+
+    private int celtium$recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
         long recordedUnder = this.frameTargetGeneration;
         String unsupplied = unsuppliedInput(passes);
         if (unsupplied != null) {
@@ -894,6 +938,7 @@ public final class VulkanPostChain {
         this.setsThisRecording = 0;
         // The completion epoch this recording starts at: what the ring's ownership rule compares against (audit B11).
         this.recordingEpochStart = VulkanContext.completedEpoch();
+        this.recordingStartCursor = this.setCursor;
 
         List<String> details = new ArrayList<>();
         boolean interesting = false;
@@ -1406,6 +1451,8 @@ public final class VulkanPostChain {
                 + ", postRingExhaustions=" + this.ringExhaustions
                 + ", postRingOwnershipRefusals=" + this.ringOwnershipRefusals
                 + ", postRingOwnershipReuses=" + this.ringOwnershipReuses
+                + ", postRingAbandonedRecordings=" + this.ringAbandonedRecordings
+                + ", postRingSlotsReclaimedOnAbandon=" + this.ringSlotsReclaimedOnAbandon
                 + ", postRingCapacity=" + this.setRing.length
                 + ", postAdoptedIds=[" + adoptedIds + "]";
     }
