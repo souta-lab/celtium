@@ -94,24 +94,101 @@ abstract class CeltiumCompileShaders extends DefaultTask {
     @InputFiles
     abstract ConfigurableFileCollection getShaderSources()
 
+    /** The explicit {@code -Pglslang_validator=...}, or empty when the candidates below decide. */
     @Input
     abstract Property<String> getCompilerPath()
+
+    /**
+     * Where the compiler may be, in the order it is tried: the explicit property, the developer machine's copy under
+     * {@code .celtium-work} (the extracted Debian package - gitignored, so a fresh checkout does not have it), and the
+     * bare name {@code glslangValidator}, which {@link #findOnPath} resolves. Listing them as inputs is what makes a
+     * change of compiler re-run the task.
+     */
+    @Input
+    abstract ListProperty<String> getCompilerCandidates()
 
     @OutputDirectory
     abstract DirectoryProperty getSpirvDirectory()
 
+    /**
+     * {@return the first candidate that can be started}.
+     * <p>
+     * The default used to be the workspace copy alone, so a checkout without the gitignored {@code .celtium-work}
+     * directory - CI, a fresh clone, another machine - could not start the program at all and failed with a bare
+     * {@code Exec failed, error: 2} that named neither the tool nor what to install. A missing compiler is a build
+     * input problem, so it is reported as one.
+     */
+    private String resolveCompiler() {
+        def candidates = getCompilerCandidates().get().findAll { it != null && !it.isEmpty() }
+        for (candidate in candidates) {
+            def file = new File(candidate)
+            if (file.isAbsolute()) {
+                if (file.canExecute()) {
+                    return candidate
+                }
+                continue
+            }
+            def onPath = findOnPath(candidate)
+            if (onPath != null) {
+                return onPath
+            }
+        }
+        throw new GradleException(compilerNotFound(candidates))
+    }
+
+    /**
+     * {@return the first executable {@code name} on {@code PATH}, then in the package's own directories}.
+     * <p>
+     * Resolved here rather than left to the OS because the Gradle daemon outlives the shell that installed the
+     * package: its PATH can be the one from before the install. {@code /usr/bin} is where the Debian/Ubuntu package
+     * puts it, so a daemon started earlier still finds it.
+     */
+    private static String findOnPath(String name) {
+        def path = System.getenv('PATH')
+        def directories = []
+        if (path != null) {
+            directories.addAll(path.split(File.pathSeparator).findAll { !it.isEmpty() })
+        }
+        directories.addAll(['/usr/bin', '/usr/local/bin', '/bin'])
+        for (directory in directories) {
+            def candidate = new File(directory, name)
+            if (candidate.canExecute()) {
+                return candidate.absolutePath
+            }
+        }
+        return null
+    }
+
+    /** The message a build without the work directory and without the package needs, naming both ways out. */
+    private static String compilerNotFound(List<String> candidates) {
+        return "glslangValidator was not found. Looked at: ${candidates.join(', ')}.\n" +
+                "The shaders are compiled into the packaged resources, so this task cannot be skipped - install the " +
+                "compiler (Debian/Ubuntu: 'apt-get install glslang-tools') or point the build at one with " +
+                "-Pglslang_validator=/absolute/path/to/glslangValidator."
+    }
+
     @TaskAction
     void compileShaders() {
+        def compiler = resolveCompiler()
+        logger.lifecycle("compileTerrainShaders: compiling ${getShaderSources().files.size()} shaders with ${compiler}")
         def directory = new File(getSpirvDirectory().get().asFile, 'org/soutalab/celtium/vulkan/spirv')
         directory.mkdirs()
         getShaderSources().files.sort { it.name }.each { shader ->
             def output = new ByteArrayOutputStream()
-            def result = getExecOperations().exec {
-                commandLine getCompilerPath().get(), '-V', '--target-env', 'vulkan1.0', shader.absolutePath,
-                        '-o', new File(directory, shader.name + '.spv').absolutePath
-                standardOutput = output
-                errorOutput = output
-                ignoreExitValue = true
+            def result
+            try {
+                result = getExecOperations().exec {
+                    commandLine compiler, '-V', '--target-env', 'vulkan1.0', shader.absolutePath,
+                            '-o', new File(directory, shader.name + '.spv').absolutePath
+                    standardOutput = output
+                    errorOutput = output
+                    ignoreExitValue = true
+                }
+            } catch (java.io.IOException failure) {
+                // A candidate that disappeared between the check and the launch lands here; keep the actionable message
+                // rather than the raw IOException.
+                throw new GradleException(compilerNotFound(getCompilerCandidates().get()) + "\nUnderlying: ${failure.message}",
+                        failure)
             }
             if (result.exitValue != 0) {
                 logger.error("glslangValidator failed on ${shader.name} (exit ${result.exitValue}):\n${output.toString('UTF-8')}")
@@ -123,11 +200,18 @@ abstract class CeltiumCompileShaders extends DefaultTask {
 
 def compileTerrainShaders = tasks.register('compileTerrainShaders', CeltiumCompileShaders) {
     def workspaceRoot = rootProject.projectDir.parentFile
-    def compilerSetting = providers.gradleProperty('glslang_validator')
-            .getOrElse('.celtium-work/gpu-tools/extracted/usr/bin/glslangValidator')
+    def compilerSetting = providers.gradleProperty('glslang_validator').orNull
     shaderSources.from(fileTree('src/main/shaders'))
-    compilerPath.set(new File(compilerSetting).absolute ? compilerSetting
-            : new File(workspaceRoot, compilerSetting).absolutePath)
+    compilerPath.set(compilerSetting == null ? ''
+            : (new File(compilerSetting).absolute ? compilerSetting : new File(workspaceRoot, compilerSetting).absolutePath))
+    // The workspace copy first so this machine keeps using the pinned package, then PATH so a checkout that has no
+    // .celtium-work (CI, a fresh clone, another machine) can compile and validate the same shaders instead of failing
+    // to start a program that was never there. The property, when given, wins over both.
+    compilerCandidates.set([
+            compilerPath.get(),
+            new File(workspaceRoot, '.celtium-work/gpu-tools/extracted/usr/bin/glslangValidator').absolutePath,
+            'glslangValidator',
+    ])
     spirvDirectory.set(terrainSpirvOutput)
 }
 sourceSets.main.resources.srcDir(terrainSpirvOutput)
