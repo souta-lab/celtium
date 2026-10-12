@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.409 **round 210: backend の構成を実測（「まだ13,813行」への回答）— R4 だけでは1,000行にならない**
+
+- **実測（メソッド本体の行数・ドメイン別）**: backend **13,813行** のうち、メソッド本体として数えられる **7,179行** の内訳は **immediate 2,580／other 2,181／terrain 930／texture 550／target 462／frame 453／model 23** ✓（残り約6,600行は **field・コメント・nested/anonymous class** ✓）。
+- **算術（正直に）**: **R4 の残り（terrain pass 全体）は約930行** ✓ → 全部移しても backend は **約12,900行** ✗。**1,000行以下**にするには R4 だけでは不可能で、**R5〜R7 で全ドメイン（immediate 2,580・texture 550・target 462・frame 453 ＋ 残る field/コメント約6,600）を移し、backend を facade にする**必要がある ✓ — これは plan の R7 の終状態そのもの ✓（R4 単独の到達点ではない ✓）。
+- **R2 は完了済み** ✓（7/7 stage・line の field 名/順序は不変・CPU 契約 PASS ✓）。**R8** は 22+9+3 field/method の削除済み ✓（残りは `replaceBoundaryDrops` と `postAcceptDroppedGroups` の二重計上＝leg が必要な唯一の候補 ✓）。
+- **R4 の残り（930行・interface 込み）**: `render`／`recordRenderPass`／`uploadRegion`／`writeUniforms`（`TerrainUniformSink` ✓）／`celtium$tryIndirectBatch`＋indirect buffer＋counter ✓／`pipelineFor`／`terrainPipelineForFrame` ✓。**1メソッドずつ build** ✓（`bindVertexBuffer`/`bindIndexBuffer` は移動済み ✓・`verifyUpload` は呼び手ゼロで削除済み ✓）。
+- **R7**: `VulkanRenderer` root ＋ `FrameCoordinator` ✓（window/world/frame 生涯の分離 ✓）— **ここで backend が facade になる** ✓。
+
 ## 0.408 **round 209: R2 完了（7/7 stage・build 緑・CPU 契約 PASS）**
 
 - **stage 7（Immediate）完了**（`85149b125`）: 4形状に分けて移動 ✓ — ①**単純 count 70** ②**累算（複合代入）22** ③**値 8** ④**その他 15** ✓（＋共有宣言行で漏れた2 ✓）。**build が名指しした3つの教訓**（同型の罠）: **Map（`blendPairs`）と配列3つ（`acceptedByFormat`/`drawnByFormat`/`postAcceptDroppedByFormat`）は counter ではない** → backend へ返却 ✓／**駐機クラスのリストが不完全**で2つ漏れていた（`immediateRecordedBatches`・`immediateSubmittedBatches` ✓）／**生成した setter/adder の型が field と不一致**（narrowing として検出 ✓）。
