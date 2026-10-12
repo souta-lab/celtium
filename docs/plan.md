@@ -402,8 +402,12 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   そして `ScrollableFrame` を組み立てるのは **`Tab.from`（`tab/Tab.java:29-41`）と `TabFrame`（`tab/TabFrame.java:146`）だけ**で、Celeritas の画面は `CeleritasVideoOptionsController` 経由でそれを使う。
 - **結論（受入の状態）**: **BH-09 の修正（`218ea2120`）は着地しているが、受入には「ゲーム自身が clip する scene」が必要で、いまの fixture にはそれが無い。**
   これは renderer の欠陥ではなく **scene ギャップ**であり、**BH-09 を「解決済み」にしない**（受入が取れていないため）。他セッションも独立に同じ結論へ到達している（`celtium-perf` worktree の commit `080736ee8`「no scene in our fixture clips at all, so BH-09's acceptance is a scene gap」）。
-- **次の一手（gui-stage へ）**: (a) vanilla/mod 側で `glScissor`/`GL_SCISSOR_TEST` を実際に発行する到達可能な画面を探す（`scripts/mc-sources.sh --grep glScissor` は vanilla で 0 件なので、Celeritas/Sodium 系の UI に限られる）、
-  または (b) **mod 自身の経路で clip を制御下に駆動**する（`ScrollableFrame` の `canScrollVertical` が立つ寸法でその画面を作る）。**scene が作れない場合は「作れない理由」を測定で示す**のが受入の代わりになる。
+- **cohort に clip する mod は存在しない（実測・決定的）**: 全 mod jar を走査（`unzip -p <jar> | strings | grep -icE "glScissor|ScissorStack|enableScissor|GL_SCISSOR_TEST"`）して
+  **HEI 4.31.2 / Fugue / flare / scalar / LagSpikeProfiler すべて 0 件**（`GuiItemStackGroup`・`IngredientListOverlay` 等の個別 javap でも 0）。vanilla も 0 件（確定済み）。
+  → **「自然に clip する到達可能な scene」は現構成に存在しない**ので、`canScrollVertical` を真にする条件を fixture が作るしかない。
+- **次の一手（gui-stage へ・承認済み）**: **`-Dceltium.validation.frameViewportHeight=<n>`（既定 0=off）で Celeritas 画面の frame に渡る viewport 高だけを小さく**し、mod 自身の `ScrollableFrame.render` が `canScrollVertical` を真と判断して `enableScissor` を呼ぶ**実経路**を通す（GL 呼び出しを捏造しない）。
+  条件: (1) `ScrollableFrame`（common）は編集しない・fixture 側から dim に効かせる、(2) **report に `frameViewportHeightForced=<n>` を出して「fixture が条件を作った」と分かるようにする**、(3) 受入は `scissorCalls>0`・`scissorCapturedGroups>0`・crop・`groupScissor=false` 対照との画素差・`validationMessageCount=0`、(4) sky band/terrain/GUI の既存受入を壊さない。
+  **GUI scale では条件が立たない理由**（scale は内側 frame の寸法も一緒に動かすので比が変わらない）は gui-stage の説明で、私の leg 2本（scale 4・`scissorCalls=0`）がその実測。
 - **capability 表の整合（`300e4e21b`）**: `docs/scope-and-limits.md` §0.1/§0.2 の `file:line` 引用を tree に照合したところ **6件が既に移動していた**（`GllessFrameTarget.create` の呼び出しは `:8286`→`:12068`、device apiVersion 検査は `:759-763`→`:1513-1515`、glless 読みは `:31`→`:30-34`、`REQUIRED_API_*`、`isAvailable`、no-device throw、depth 候補列）。
   **行番号を実装へ合わせ、表に「いつ再確認したか」を書いた**（日付の無い番号を信用させないため）。
 - **このroundの割当**: gui-text → Goal C（HEI の実画面受入: item 一覧・検索・tooltip・画面遷移）、perf-ring → 契約行の `pushConstants>=208` ＋ 優先度2の leg、gui-stage → BH-09 の clip scene。
