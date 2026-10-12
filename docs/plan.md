@@ -396,7 +396,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 ## 0.382 **round 171: upload ring 8→16 slot で pressure wait が両GPUで消滅（`ee2ae0182`）。PR #16（stub dispatch scratch）で p99 31.2→18.4 ms**
 
 - **`ee2ae0182`（perf-ring）**: bracket 分解で world 内の最大項目が upload staging の **reserve slot（探索＋ring-pressure wait）1.90 ms/frame** と判明（318 frame・11,116 copies・2.1 GB＝6.65 MB/frame に対し 8 MiB ring が 1.2 frame で一巡、211 回の待機が 1.9 ms のほぼ全部）。**`UPLOAD_SLOT_COUNT` 8 → 16（staging 8 → 16 MiB、`uploadRingBytes` で報告）**で、**pressure waits 211 → 0（AMD・Intel 両方）**、reserve 1.90 → 0.03（AMD）/0.007（Intel）ms/frame、phase 合計 3.13 → 1.23/1.61 ms/frame。**再利用規則は不変**（slot は読んだ submission の fence が signal した時だけ解放）＝ordering 契約に触らない。コストは +8 MiB。**frame レベルの差は主張しない**（leg 間で仕事量が違い、interval は逆方向）。
-- **PR #16（ユーザー、`de562469e` で merge）**: stub dispatch が GL 呼び出しごとに `new long[12]`（96 B）を確保していたのを per-call scratch に。PR の検証は p50 7.99→7.56・**p95 20.0→13.0・p99 31.2→18.4 ms**・worldFrames 746→**1063**（同一 leg shape・back-to-back）。我々の計器では次 round に同形 leg で確認する。
+- **PR #16（ユーザー、`de562469e` で merge）**: stub dispatch が GL 呼び出しごとに `new long[12]`（96 B）を確保していたのを per-call scratch に。PR の検証は p50 7.99→7.56・**p95 20.0→13.0・p99 31.2→18.4 ms**・worldFrames 746→**1063**（同一 leg shape・back-to-back）。
+  **我々の独立検証（round 172・GC ログ付き 2-jar＋同一 jar 再走、`scene=terrain` 854x480 150 s・fixture 駆動・`-Xlog:gc:file=…:uptime`）**:
+  | leg | jar | GC pauses / total / worst | p50 | p95 | p99 | worldFrames |
+  |---|---|---|---|---|---|---|
+  | pre-#16 | `357b12f09e460d61`（`r166-gcand-tick1` に pin） | 68 / 783.5 ms / 110.9 | 41.06 | 130.33 | **208.40** | 193 |
+  | post-#16 | `af5b3f0f0415d2df` | 66 / 744.9 ms / 87.6 | 41.30 | 61.65 | **89.80** | 211 |
+  | post-#16 再走（同一 jar） | 同上 | 66 / 743.0 ms / 97.4 | 34.34 | 59.22 | **70.41** | 239 |
+  → **確認した**: tail は明確に改善（pre p95 130 / p99 208 に対し post は p95 59-62 / p99 70-90、同一 jar 再走の振れ p50 41.3↔34.3 を超える）・frames も増加。**確認しなかった**: 「per-call 確保 → GC 圧 → tail」という**機構**。GC の pause 合計は 783.5 → 743-745 ms（−5%）でほぼ不変、pause 数も 68→66、full GC 3→3。**post jar は #16 だけでなく #17/#19（matrix scratch/skip）と blend-state の未着地 WIP を含む**ため、単一変更への帰属はできない（jar のビルド時刻 18:31:51 は彼の編集 18:32:08 より前だが、その後 af5b3f0f に再ビルドされている）。**倍率は主張しない**。
 - **測定条件の注記（(g) の次回用）**: ユーザーの unbounded run は `frameInterval p50 ≈ 7.6-8.0 ms`（PR #16 の clean/scratch leg）で **reference の 9.07 ms と同水準**。一方 perf-ring の fixture 駆動 arm は ~35-40 ms。つまり (g) の差の一部は **fixture 自身の per-frame 作業**（`pinSections`・camera 駆動・画面）で、次回は pinning 無しの leg か両 arm 併記で「renderer 分」と「fixture 駆動分」を分ける。
 
 ## 0.381 **round 171: 条件 (c) の再検証（既存計器で再走）— 訂正: この計器は既に存在しており、私が書いたものは重複だった**
