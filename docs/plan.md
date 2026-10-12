@@ -307,6 +307,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.343 **round 150: ユーザの LagSpike profiler を受領（「絶対に参考にするべき」）— perf-ring が解析中**
+
+- **受領物**: `profiler-2026-10-12_10-49-18(1).lagspikeprofile`
+  （**1,018,235 bytes・bzip2・sha256 `ef29c446697ccad047cfa704f30daa8d97fe917ec6a0f926f2cd3acb6335bcf8`**）
+  ＝**ユーザ自身のプレイセッションのプロファイル**＝**我々の計器より優先すべき一次証拠**。
+- **複製・展開済み**: `.celtium-work/evidence/user-reports/2026-10-12-lagspike.lagspikeprofile`（原本）と
+  `.celtium-work/evidence/user-reports/2026-10-12-lagspike.json`（**4,763,531 bytes**・展開後）。
+- **Lead が読んだ構造（担当が再導出しなくて済むように記録）**: ASCII の版文字列 **`1.1.0`** → **長さ前置の section 名テーブル（77 個）** → バイナリの timing データ。
+  名前には **`frame`・`render`・`clouds`・`toasts`・`root`・`culling`・`toolHighlight`・`sky`・`center`・`bossHealth`・`prepareterrain`・
+  `forgeHudText`・`frustum`・`clear`・`scheduledExecutables`・`terrain_setup`・`sound`・`forge_render_last`・`display_update`・`weather`・
+  `preRenderErrors`・`hand`・`chat`・`terrain`・`translucent`・`destroyProgress`・`outline`・`camera`・`litParticles`・`updatechunks`・
+  `display`・`keyboard`・`textures`・`animateTick`・`chunkCache`・`reEntryProcessing`・`regular`・`blockentities`・`prepare`・`particles`・
+  `mouse`・`gui`・`pick`・`level`・`gameRenderer` 系**が含まれる。名前テーブルは**約 830 byte** で終わり、以降が値。
+- **担当**: **`perf-ring`** に解析を依頼（単位と限界を明記・per-section の合計と分布・frame 数と窓・spike の帰属・
+  **識別できない field は推測せずそう言う**）。**我々の計器と食い違えばそれが知見**という枠も明示。
+- **パノラマ（fog-path が完全着地・`1a308c25d`/`1d759f25d`）**: 白の所有者は **id 8 の mirror を埋めた `SplashProgress.drawVanillaScreen` の
+  白一色 256×256 DynamicTexture**。**id 8 は一度も invalidate されない**（`CELTIUM_INVALIDATE_ORIGIN` は 9/10/12/16 に出るが 8 には出ない）。
+  descriptor の key は古くなくサイズも一致＝**面はスプラッシュの残り物をサンプルしている**。比較で id 9 は `opaque=4015/16384` の実内容。
+  残る修正は2案（stub の bind 捕捉を直す／**splash 終了時に id 8 の mirror を失効**）。計器は landed（`CELTIUM_MIRROR_DRAW`・`splashSourcedGroups`）。
+
 ## 0.342 **round 149: パノラマの所有者が判明（fog-path `1a308c25d`）・tooltip の light-state 契約を原典で確認（GUI 文字の暗転の候補機序）**
 
 - **パノラマ（fog-path の着地）**: **所有者は splash の白い `DynamicTexture`（id 8）**
