@@ -108,6 +108,15 @@ Optimizations are also derived from — or cross-checked against — the followi
 | [makamys/Neodymium](https://github.com/makamys/Neodymium) | LGPL-3.0 | concept reference: bounded mesh/VBO reuse, tessellator-state capture |
 | [GTNewHorizons/Hodgepodge](https://github.com/GTNewHorizons/Hodgepodge) | LGPL-3.0 | concept reference: renderer memoization, leak fixes |
 | [embeddedt/ArchaicFix](https://github.com/embeddedt/ArchaicFix) | LGPL-3.0 — **occlusion module excluded** (not LGPL) | concept reference: cache lifetime, world-change freeing |
+| [xCollateral/VulkanMod](https://github.com/xCollateral/VulkanMod) | LGPL-3.0 | closest architecture analogue (Vulkan replaces GL, modern versions): combined render-layer draws (~80% fewer draw calls), upload buffer reuse instead of per-frame buffer recreation, redundant color-clear skipping |
+| [embeddedt/ModernFix](https://github.com/embeddedt/ModernFix) | LGPL-3.0 (config derived from Sodium under LGPL-3.0) | concept reference: dynamic/lazy model loading, faster startup, memory reduction |
+| [embeddedt/VintageFix](https://github.com/embeddedt/VintageFix) | LGPL-3.0 | **1.12.2-native**: ModernFix concepts backported — lazy model loading, FerriteCore-style blockstate/model dedup, texture memory release |
+| [malte0811/FerriteCore](https://github.com/malte0811/FerriteCore) | MIT | concept reference: dedup blockstate property maps, multipart model instances (~200k→1.5k), cached shape internals |
+| [asiekierka/FoamFix](https://github.com/asiekierka/FoamFix) | LGPL-3.0 | **1.12.2-native**: model data dedup, RAM reduction |
+| [LoliKingdom/CensoredASM (LolASM)](https://github.com/LoliKingdom/LoliASM) | LGPL-3.0 | **1.12.2-native**: string dedup, faster init, RAM optimization |
+| [MoePus/Flerovium](https://github.com/MoePus/Flerovium) | LGPL-3.0 | modern (1.21): item render backface culling / fast math / LOD, particle light caching, entity fast math |
+| TexFix (Speiger, 1.12.2) | **All Rights Reserved — not ported** | concept noted only: release CPU-side copies of non-animated texture data after GPU upload |
+| EntityCulling (tr7zw) | **tr7zw Protective License — no derivative distribution** | not used; entity occlusion ideas, if ever pursued, must be implemented independently |
 
 The inventoried candidates per project are kept in [docs/performance_plan.md](docs/performance_plan.md). Porting a listed item means: check the file/module license first (FalseTweaks and ArchaicFix contain non-LGPL islands), re-implement — do not copy code —, then credit in commit, code comment and PR.
 

@@ -160,6 +160,15 @@ Sodium の #3735 は `VK_EXT_multi_draw` の経路と indirect fallback を区�
 | ImmediatelyFast | RaphiMC, Fabric（新しいバージョン向け） | **immediate-mode draw 全体の batch 化**（entities・BE・particles・text・GUI/HUD — 我々の group aggregation と同型）・`fast_text_lookup`（glyph 間 cache）・`avoid_redundant_framebuffer_switching`・`sign_text_buffering`（Schild のテキストを frame 毎に再描画せず buffer — TESR mesh cache の直接の類似例）・font atlas resizing | 新しいバージョン向け mod。LGPL 系。概念は移植可能: Schild/TESR の text buffering は未実装 |
 | Neodymium | `0.2.5` / `4c2e018` | bounded mesh / VBO 再利用、CPU draw submission の削減。**追加**: tessellator-state を capture → 独自 mesh format 化 → vanilla の GL-list 処理を停止・per-face backface culling・Normal render distance で mesh memory ~70-150MB | chunk meshing 自体を改善する mod と誤認しない。VRAM / RAM と rebuild throughput の交換条件を測る [R31]。face culling は我々では GPU 側で既に実施済（vkCmdSetCullMode） |
 | Hodgepodge | `2.7.216` / `4668d63` | mod renderer の memoization、texture / world leak の修復例、調査計器 | particle 上限変更や chat 背景除去などを同画質の最適化と数えない [R33] |
+| **VulkanMod** (xCollateral, 現行 MC) | LGPL-3.0 | **最も近い先行実装**（GL を Vulkan に置き換える mod）: combined render-layer draw（drawcall ~80% 減）・frame 毎の buffer 再生成をやめる upload buffer reuse・既に同じ clear color が適用済みの color attachment clear の skip・per-chunk-area push constants | 我々と同問題の native Vulkan 解。1.12.2 との差（renderlayer 構成、atlas 構成）は把握してから適用 |
+| **ModernFix** (embeddedt, 1.16+) | LGPL-3.0 | **dynamic resources**（model を起動時一括 load せず lazy 化 — 大 modpack で heap -55%、startup 短縮）・off-thread texture stitch | 1.12.2 では VintageFix が同概念を backport |
+| **VintageFix** (embeddedt, **1.12.2**) | LGPL-3.0 | 1.12.2 native: FerriteCore 式 blockstate/model dedup + VanillaFix dynamic resources（lazy model load）+ texture memory release | 我々の version と同じ。dedup は heap ↓ → GC pause ↓ と直結（計測済 G1 pause 729ms への対策）|
+| **FerriteCore** (malte0811, 1.16+) | MIT | dedup: blockstate property map（FastMap）・multipart model instance（~200k→1.5k）・shape cache（~200MB）| RAM↓ → GC↓。1.12.2 では VintageFix/FoamFix 経由が現実的 |
+| **FoamFix** (asiekierka, **1.12.2**) | LGPL-3.0 | model data dedup・heap -50% 級 | 1.12.2 native |
+| **CensoredASM/LolASM** (LoliKingdom, **1.12.2**) | LGPL-3.0 | string dedup・init 高速化・TexFix/VanillaFix 機能を包含 | 1.12.2 native |
+| **Flerovium** (MoePus, 1.21) | LGPL-3.0 | item render: backface culling/fast math/LOD・particle light cache・entity fast math | Sodium 依存 mod — 概念のみ |
+| TexFix（Speiger, 1.12.2） | **All Rights Reserved** | 概念メモのみ: upload 後の非 animated texture CPU copy を解放 | コード参照・移植不可 |
+| EntityCulling（tr7zw） | **tr7zw Protective License**（再配布不可） | 使用しない。entity occlusion は独自実装のみ可 | — |
 
 Angelica の `TesrMeshProvider` / `TesrMeshCache` / `ModelPartBatch` は、entity / TESR を個別に書き換えるより、**geometry の所有・dirty・instance transform を公開契約で分ける**方向の参考になる。自動 cache に安全でない renderer は従来の意味を保つ Celtium の native immediate pass で描く。これは GL fallback ではない。
 
