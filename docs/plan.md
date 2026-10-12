@@ -392,6 +392,23 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.372 **round 179: PR #6（動的state の dedup）を穴を閉じて着地。ユーザ提示の分割計画を採用**
+
+- **ユーザの指示**: 「**PR6,ポテンシャルあるぞ、普通に。これが可能なら大幅な最適か。**」「**あとAIにリファクタリングプランつくってもらったから分割はこれを参考にして。**」
+  → PR#6 は**棄却ではなく安全に成立させる**方針で扱い、分割計画は §0.371 で単一計画として採用済み（`docs/refactoring-plan.md`）。
+- **PR #6 の中身**: `vkCmdSetViewport`/`vkCmdSetScissor`/`vkCmdSetDepthBias` を「直前と同じ値なら発行しない」tracker で省略（+67/-11・1ファイル・`perf/state-dedup`）。
+- **レビューで見つけた穴（これが唯一のブロッカー）**: tracker は「**tracker == command buffer に実際に設定されている状態**」を前提にするが、それを壊す writer が**同じ command buffer** に居た。
+  `celtium$postChainRun` は `this.postChain.recordPasses(this.commandBuffer, passes)` と**この command buffer を渡し**、`VulkanPostChain.java:965/968` が**自前の viewport/scissor を tracker を通さず設定**する。
+  したがって**chain の後**に、記憶値と同じ矩形の group が来ると発行を skip し、**chain の矩形で描かれる**＝BH-13 と同じ失敗形（逆向きから到達）。
+- **閉じ方**: `recordPasses` の直後で tracker を**無効化**（sentinel に戻す）。これでこの buffer 上の3コマンドの writer が**全て説明できる**:
+  `setViewportAndScissor`（pass）が再 arm・group 経路が維持・`VulkanPostChain.recordPasses` が無効化・その他の借用先（`frameTarget.recordAcquire/ReleaseBarriers`・`offTarget.clearChainPair/clearOffTarget`・`publishedChainOutput.ensureSampledLayout`）は **barrier/clear/layout のみ**・`VulkanImmediate*Pipeline` の一致はコメント・`celtium-interop` の `VkTriangleDraw` は別 command buffer。
+  **perf-ring が独立に自分のファイル（`VulkanContext`/`Swapchain`/`Arena`/`Buffer`/`DynamicMesh`/`UniformBuffer`/`FrameArena`/`SwapchainCreateArguments`/`CeltiumGlStub`）で writer ゼロを確認**。
+- **測定（同一 entity scene・同一 flags・AMD RX 6400・3 leg）**: **同一jar対照（arm A を2回）が 4,255 画素（0.4617%）相違**、**arm A vs PR#6 が 4,180 画素（0.4536%）相違** ＝
+  **scene の run 間ばらつきの方が大きい**ので、この scene では dedup は**絵を変えていない**。同時に「この scene だけでは PR#6 を受入できない」ことも意味する。
+  無効化を入れた **arm C（jar `f4e7f09d31aad04609742eca`）** は exit 0・`validationClean=true`・`validationMessageCount=0`・**`stateSkipsViewport=5800 stateSkipsScissor=5800 stateSkipsDepthBias=5048`**（＝最適化は維持）。
+- **重要な限界（記録）**: **どの fixture scene も post chain を踏まない**（`postChains=0`）。したがってこの穴は**測定では取れず、構造で塞ぐしかなかった**。次に post chain を踏む scene を作る価値がある（entity outline の `glowEntities=true` でも `postChains=0` だった）。
+- **着地**: `3870c4ae6`（PR#6 の変更＋無効化を1コミット）。PR #6 は**理由と測定を添えて close**（GitHub の merge バッジより、main に入った事実と根拠を残す方を選んだ）。**arm A/B/C の jar は `.celtium-work/pr6-arm{A,B,C}.jar` に pin 済み。**
+- **同時に着地した他担当**: `534a34066`（perf-ring・**upload ring slot 4→8**。`uploadRingPressureWaits` **66→7**・deferred 待ち 82→23 ms・pressure wait/copy 0.036→0.0095 ms を**仕事量で正規化して**主張。**copy 数が 1831 vs 733 と違うため frame 時間差はこの変更に帰属しないと本人が明記**）、`7fbea6150`（glyph-fix・task-65 の merge 後ベースライン `24bd28fd…`・16,114文字・移管表）。
 ## 0.371 **round 178: 分割の実行計画書 `docs/refactoring-plan.md` を単一の計画として採用**
 
 - **経緯**: リポジトリ直下に未追跡の `REFACTORING_PLAN.md`（424行）が作成されていた。ユーザ指示「**vulkanterraingpubackend を分割してみんなで編集したほうがいい**」に対する実行計画で、
