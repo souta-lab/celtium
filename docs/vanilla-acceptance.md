@@ -999,6 +999,42 @@ not support are rejected with the measurement that rejects them.
 | **BH-35 advertisement** (`4fb0b581b`) | stub `CeltiumGlStub:2315`, leg `r174` | `GL_VERSION` = `"3.0.0 Celtium"`, observed in the leg as `[Kirino Core]: OpenGL version: 3.0.0 Celtium`; the commit's reasoning table is in `docs/scope-and-limits.md` 2.1 | **accepted for the advertised string**; the GLSL `1.20` and the both-GPU advertised/unbacked agreement are **the Lead's measurements on their Intel leg and I have not independently re-taken them** - recorded as reported, not verified |
 | **BH-35's limit** | legs `r174`, `r42-split` | legacy traffic still arrives: `CELTIUM_DRAWARRAYS glDrawArraysCalls=256 drawn=252 vertices=912732 empty=0 refused=4 …` | **the 4.6 lie is gone, the legacy traffic is not** - removing the advertisement does not remove the calls that reach the stub |
 
+## 6l. Round-25 independent acceptance: the texture-copy fix on Intel UHD 630 (second GPU)
+
+Commit `85db342a4`: `TextureCopyService`'s per-destination reuse set was keyed on `host.frameId()`, which only advances
+on the world render path, so a menu screen's per-frame `glCopyTexSubImage2D` of the 256x256 panorama viewport was
+answered from the first readback. The key is now the present serial. Verified independently on the **other GPU**, with
+the pre-fix pair as the control - this is acceptance, not repetition.
+
+| leg pair (Intel UHD 630, 1920x1080, `menuHoldTicks=400`, dumps at ticks 20 and 380) | jar / fixture | `textureCopyReadbacks` | `textureCopyReadbackMillis` | **column-profile NCC at dx=0** | `menuDumpPanoramaTimer` |
+|---|---|---|---|---|---|
+| **pre-fix (control)** `acc-intel-panorama-pre-t20/pre-t380` | `543745fbe076f15d` / `6ee2eb580015f94e` (pinned) | **1 / 1** | 9 / 9 | **0.9800** (row dy=0 0.9997) - structure did **not** move | field absent in this older fixture |
+| **post-fix** `acc-intel-panorama-post-t20/post-t380` | `6ec7fba942862972` / `0f2e904f5ceb9b63` | **466 / 395** | 333 / 383 | **0.5421** (row dy=0 0.9770) - structure **moved** | 217.38 -> 735.50, **delta 518.1** |
+
+**The falsification attempt failed to falsify.** The prediction was: if the NCC stays ~0.9 on Intel while the timers
+advanced by several hundred, the Lead's attribution is wrong. Measured instead: the pre-fix pair is frozen
+(**0.9800**) and the post-fix pair moves (**0.5421**) on Intel exactly as on AMD (0.906 -> 0.573), with the readback
+count going **1 -> 466/395**. The mechanism - a reuse set that never cleared while a screen was up - is confirmed on
+the second GPU, and the picture verdict is the profile correlation, not a pixel count.
+
+**Cost sanity, checked rather than assumed.** (a) **The world path gained nothing**: a plain terrain leg on the same
+shape reads `textureCopyReadbacks=0`, `textureCopyReadbackMillis=0`, `textureCopiesServed=0`,
+`textureCopiesRefused=0`, `lastTextureCopyRefusal=[none]` **both pre- and post-fix** (jars `543745fbe076f15d` and
+`c0e4d65dff8ea269`), so the reuse set still collapses same-present repeats and no readback moved into the world path.
+(b) Refusals stay at zero in the menu legs too (`textureCopiesRefused=0`, `lastTextureCopyRefusal=[none]`).
+(c) **The readback's price is GPU-dependent and that is a finding**: Intel pays **0.7-1.0 ms** per synchronous readback
+(333 ms over 466; 383 ms over 395), while the Lead's AMD menu run pays **~23.8 ms** (1143 ms over 48) - the same fix
+costs about 25x more per readback on AMD than on Intel. (d) `validationMessageCount` is **not reported** in this leg
+shape (the field is absent from the JSON), so this row does not claim it is 0 - it is unmeasured here. (e) Frame
+intervals, honestly: Intel menu p50/p95 is 106.6/189.9 (t20) and 78.0/384.8 (t380) post-fix against 49.2/175.1 and
+76.4/171.0 pre-fix, so the t20 pair is slower at p50; the per-readback cost above is the measured part of that, and
+the rest is not attributed here.
+
+**Verdicts in these legs**: the post-fix menu legs read `FAILED_PRESENTED_IMAGE` with "no picture was requested for
+scene=terrain stage=world" - the menu leg shape never requests the world stage's picture, so this is the leg shape's
+verdict and not a menu failure; the pre-fix legs (older fixture) read `UNCALIBRATED_PRESENTED_IMAGE`. Neither is a
+picture verdict on the menu, and the menu picture verdict here is the NCC pair.
+
 ## 7. Instruments and artifacts
 
 Reused, not added: `scripts/cpu-contract/vanilla_stage_compare.py`, `compare_jei_pair.py`, the
