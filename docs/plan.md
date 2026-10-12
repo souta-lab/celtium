@@ -393,6 +393,16 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.403 **round 204: R5 完了・R3b 完了・R4 前半完了・PR 6件マージ（すべて build 緑）**
+
+- **R5 完了**（`69949b736`）: pair clear の **bookkeeping は registry**（`pairClearedFrame`/`notePairCleared`/`pairClearContentIdentity` ✓）、**policy は backend**（pair の identity 衝突 ✓）。4 field 撤去・3 call site と2代入を委譲 ✓・拒否経路は不変 ✓。
+- **R3b 完了**（`6e7c262c7`）: 4つの font 入口を委譲化 ✓・backend が `FontRunState`（15値 ✓）と `RunSink`（旧 flush の apply/restore＋`submitImmediateBatch` ✓）を実装 ✓・拒否 run は保持して再提示 ✓。
+- **R4 前半完了**（`a4b65da28`）: `TerrainRenderer.java` が **region arena 群・failed-upload ledger・`sectionsLeftUnbuilt`（BH-25 の証拠 ✓）・`resourcesFor`/`indexArena`/`resourcesIfPresent`/`releaseAll`** を所有 ✓。nested `RegionResources`/`PendingMesh` も移動 ✓。**R4 後半**（`render`/`uploadRegion`/`verifyUpload`/`recordRenderPass`/`bindVertexBuffer`/`writeUniforms`/`celtium$tryIndirectBatch` ＋ failed-upload 再 build 規則）は sky-draws へ委譲 ✓（interface 3点 ✓・**build を段ごとに** ✓）。
+- **PR 6件を全部マージ** ✓（#30 light cache・#31 B16 font acceptance・#32 B23 block dispatch・#33 fog null guard・#34 pre-recorded present blit・#35 parallel atlas stitch）→ **マージ後 build 緑** ✓・**open PR 0** ✓。
+- **refactoring plan は docs/ に戻した** ✓（`75a8a8006`）: 未完成を history に移して完成に見せることをやめた ✓。R8 が着地するまで docs/ ✓。
+- **方法の教訓（3件・すべて実際に失敗して得た）**: ①**行範囲マップは測定時のリビジョンでしか有効でない** → テキストにアンカー ✓ ②**複数行シグネチャの置換は下から順に**（挿入後の再検索は自分の挿入物に当たる ✗）③**段ごとに build**（コンパイル不能な段は全 unit を止める ✗）。
+- **残り**: **R4 後半**（sky-draws ✓）／**R2**（acceptance へ設計判断を依頼 ✓ — 「クラスが counter を所有」か「domain ごとの狭い host interface」か ✓、R6 着地により `SubmissionStatistics` は **scheduler を読む**必要 ✓）／**R7** root／**R8** 整理 ✓。
+
 ## 0.402 **round 203: R3a・R5・R6 を配線完了（build 緑）。R3b は丁寧な一括置換が必要と判明**
 
 - **配線完了（build 緑 ✓）**: **R3a** `ModelGeometryCache`（`665a099b8`・10 field 撤去・builder/teardown/borrow/表示を委譲 ✓）、**R5 完了**（`b3708bcd1`・pair handle・identity/census・`framebufferReplacing` ✓、10 field 撤去 ✓）、**R6** `FrameSubmissionScheduler`（`4d9e8528a`・slot/sequence/退役規則/counter ✓、`FRAME_SLOTS` は別名 ✓、Vulkan 呼び出しは backend に残置 ✓）。
