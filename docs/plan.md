@@ -307,6 +307,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.330 **round 137: buttonList fallback で最初の gate を通過 — 次の gate は「Celeritas 画面の row list に option button が無い」**
+
+- **実装（Lead・`f972ef381`）**: chain が `optionsRowList` 不在時に **`buttonList`/`field_146292_n` へ fallback**（build 緑）。
+- **測定（`r129-e`・fallback 入り・`scene=videoSettings`＋`videoSettingsOption=RENDER_CLOUDS`・150 s）**:
+  ```
+  videoSettingsChainScreen = org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen
+  videoSettingsChain       = no option button could be located in the screen's row list
+  videoSettingsRowNames    = none
+  guiScreenClassAtCapture  = org.taumc.celeritas.impl.gui.CeleritasVideoOptionsScreen
+  ```
+  ＝**最初の gate（`optionsRowList` 不在）は通過**（`no optionsRowList` の報告は消えた）。**次の gate は `videoSettingsRowNames=none`**
+  ＝**Celeritas 画面の `buttonList` に option 行が入っていない**（行は `GuiButton` ではない）。
+- **原因（構造）**: Celeritas/Sodium 型の画面は行を **`ControlElement`** として**自前の widget container**（Sodium の `OptionListWidget` 相当）に持ち、
+  `GuiScreen.buttonList`（`GuiButton` 専用）には入れない。＝**次に読むべきは Celeritas 画面自身の widget container の field**。
+- **次の1点**: `CeleritasVideoOptionsScreen` の field を原典（upstream-baseline）で確認し、**その container から `ControlElement` を拾う経路**を chain に足す
+  （`videoSettingsRowNames` が「none」でなく実際の行名を返すことが、次に進んだ証拠）。
+- **進捗の記録**: goal (e) の fixture 側は **「2つ目の gate まで到達」**（`optionsRowList` → `buttonList` → **Celeritas 自前 container**）。
+  各段で**失敗メッセージがどの gate で止まったかを名指しする**ので、次に読むべき field が artifact から決まる。
+
 ## 0.329 **round 135: Celeritas 画面の widget 構造を確認 — `optionsRowList` ではなく自前の `OptionListWidget`/`ControlElement` を使う**
 
 - **原典確認（Lead・upstream-baseline の `CeleritasVideoOptionsScreen` ＋ Sodium の GUI 構造）**:
