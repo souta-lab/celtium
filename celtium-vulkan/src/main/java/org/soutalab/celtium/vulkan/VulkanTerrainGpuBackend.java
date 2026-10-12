@@ -1097,6 +1097,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     private int lazyMirrorSupplies;
     private int lazyMirrorFailures;
+    /**
+     * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
+     * that failed. A texture the game allocated empty (a framebuffer attachment, say) carries no pixels for the supply
+     * to read, fails the same way every bind, and cost 1,183 retries in one leg - the serial is the "new content"
+     * signal, so the attempt is worth repeating only when a write actually arrived.
+     */
+    private int lazyMirrorRetrySkips;
+    /** The stub write serial seen at the last lazy-supply attempt per GL id; a retry runs only when it moves. */
+    private final java.util.Map<Integer, Long> lazySupplySerials = new java.util.HashMap<Integer, Long>();
     private String lastLazyMirrorFailure = "none";
     /** Texture lifecycle: reallocations seen, and how often the sampled atlas/light map had to be re-established. */
     private int glTextureDeletions;
@@ -3220,6 +3229,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     public void onGlTextureReallocated(int glTextureId, int width, int height) {
         this.glTextureDeletions++;
+        // A reallocated id is a new identity: the lazy supply owes it a fresh attempt whatever the last serial was.
+        this.lazySupplySerials.remove(Integer.valueOf(glTextureId));
         boolean sameSize = width > 0 && height > 0 && this.textureRegistry != null
                 && this.textureRegistry.hasEntry(glTextureId, width, height);
         if (sameSize) {
@@ -3592,6 +3603,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " presentResult=[" + this.lastPresentResult + "]"
                     + " lazyMirrorSupplies=" + this.lazyMirrorSupplies
                     + " lazyMirrorFailures=" + this.lazyMirrorFailures
+                    + " lazyMirrorRetrySkips=" + this.lazyMirrorRetrySkips
                     + " prepareDescriptorFailures=" + this.prepareDescriptorFailures
                     + " noPassRefusals=" + this.prepareNoPassRefusals
                     + " noPassFrames=" + this.prepareNoPassFirstFrame + ".." + this.prepareNoPassLastFrame
@@ -3651,6 +3663,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         System.out.println("[Celtium] CELTIUM_GLESS_INVALIDATE kept=" + kept + " glTexture=" + glTextureId
                 + " atlasGlId=" + this.atlasSourceGlId + " lightmapGlId=" + this.lightmapSourceGlId
                 + " lazySupply=" + this.lazyMirrorSupplies + "/" + this.lazyMirrorFailures
+                + "/" + this.lazyMirrorRetrySkips
                 + " partialRefusals=" + this.partialMirrorRefusals + " partialCompleted=" + this.partialMirrorsCompleted
                 + (this.textureRegistry == null ? " registry=none"
                         : " retainedAnnouncements=" + this.textureRegistry.retainedAnnouncements()
@@ -5430,6 +5443,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // measured as 801 format-5 refusals per run, all reading "the mirror for texture N has never received its
             // full content" - while the fix was the same full upload that was already written here.
             if (boundTexture != 0 && (existing == null || !existing.hasFullContent())) {
+                // One attempt per content change, not one per bind: a texture that failed because the stub holds no
+                // pixels for it fails identically on every subsequent bind, and one such texture cost 1,183 retries
+                // in a 400-tick leg (each attempt also paying textureSize's bind + two parameter queries). The stub's
+                // level-0 write serial is the change signal: it moves on every upload or sub-image write, so a retry
+                // is due exactly when new content actually arrived.
+                long writeSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                        .textureUploadSerial(boundTexture, 0);
+                Long lastAttempt = this.lazySupplySerials.get(Integer.valueOf(boundTexture));
+                if (lastAttempt != null && lastAttempt.longValue() == writeSerial) {
+                    this.lazyMirrorRetrySkips++;
+                } else {
+                this.lazySupplySerials.put(Integer.valueOf(boundTexture), Long.valueOf(writeSerial));
                 int[] size = textureSize(boundTexture);
                 if (size[0] > 0 && size[1] > 0) {
                     try {
@@ -5445,6 +5470,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         this.lazyMirrorFailures++;
                         this.lastLazyMirrorFailure = boundTexture + ": " + error;
                     }
+                }
                 }
             }
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
