@@ -340,7 +340,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long currentGroupLightGeneration;
     /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
     /** Set once the counter summary has been printed, so a second world teardown does not repeat it. */
-    private boolean celtium$summaryPrinted;
+    /** The verification line's output contract, whose ownership moved to {@link BackendReport} in plan R1c. */
+    private final BackendReport report = new BackendReport();
 
     /** Presents seen, so the summary has a trigger on a path that runs while a GUI screen is open. */
     private int celtium$presentCount;
@@ -9063,11 +9064,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void celtium$printVerificationSummary(String trigger, boolean snapshot) {
-        if (this.celtium$summaryPrinted && snapshot) {
-            return;
-        }
-        this.celtium$summaryPrinted = true;
-        System.out.println("[Celtium] CELTIUM_VERIFY via=" + trigger + " " + this.verificationSummary());
+        // The guard and the line's shape live in BackendReport now; the counter text is still this class's.
+        this.report.printSummary(trigger, this.verificationSummary(), snapshot);
     }
 
     private void celtium$releaseWorldResources() {
