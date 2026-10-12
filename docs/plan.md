@@ -395,6 +395,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.418 **round 213: パノラマの copy 経路を2アームで分離（blit 経路と順序を棄却）**
+
+- **対照実験（同一 fixture・同一 scene・同一 camera・同一 jar `ad2a834a12e87324`・AMD）**: 基準アーム `r212-panenq-enq`（native blit・`textureCopyBlits=288 textureCopyReadbacks=1`）と対照アーム `r212-panhost-host`（`-Dceltium.vulkan.nativeTextureCopy=false`・**`textureCopyBlits=0 textureCopyReadbacks=240`**）は、**menu dump がほぼ同一**（distinct=30301/30499・mean=(160,161,166) 両方）。⇒ **native blit 経路は原因ではない**（`blitRectangleFrom` の矩形・行順という説明を棄却）。host 経路は読みの前後に `waitForIdle()` を挟む**完全同期**なので、**「blit が blur quad より後に走る」という順序の説明も棄却**（同じ絵になるため）。
+- **clear の事実**: `CELTIUM_CLEAR_LATCH route=pair boundIdentity=… colour=(1.0,1.0,1.0,0.0) mask=0x4100` ＝**ゲーム自身の clear は白・alpha 0**。⇒ copy の `opaque`（source の alpha）は**ゲームの clear を映しており、面の被覆の証拠にならない**（§0.417 の訂正を実測で確定）。`gameClearAttribution=[latchedForFrame=339,routedToPairs=441]`・`offTargetPairClears=[default-pair=0,chain-pair=17]`。
+- **残る共有部分（両アームで同じ）**: ①面が 256×256 窓を覆い切っているか（`GL_PROJECTION` の `gluPerspective(120,1,0.05,10)` と回転の鏡映）②blur quad と最終合成 quad が mirror をどうサンプルするか。`CELTIUM_GROUP_VIEWPORT gl=0,0 256x256 clipped=0,824 256x256` ✓・描画先＝読み先（`passImage=readImage=lastDrawnImage`）✓・`perspective` の鏡映は原典どおり（`f=1/tan(fov/2)`・`m[0]=f/aspect`・`m[5]=f`・`m[10]=(far+near)/(near-far)`・`m[11]=-1`・`m[14]=2·far·near/(near-far)`）✓ までは確認済み。
+- **次の計器（画像であって帯ではない）**: copy が読む 256×256 の**source 矩形**と、7回目の copy 後の**destination mirror**を bounded に PNG で落とす（名前・単位・上限を報告に書く）。帯（`CELTIUM_TEX_COPY_SERVED … bands=`）は host 経路の最初の3回に限られ、`present=1`（ロード画面）を写していた＝**steady-state のパノラマはまだ画像で見ていない**。
+
 ## 0.417 **round 212: 世界の terrain が消えていた（adoption が owner を再配線していなかった）＋ instance の重複 jar が leg を無効化していた**
 
 - **ユーザー報告（panorama／操作／視点／ロード画面）を測ろうとして、まず leg が1枚も絵を出さないことに当たった。** 最初の原因は**測定側**:

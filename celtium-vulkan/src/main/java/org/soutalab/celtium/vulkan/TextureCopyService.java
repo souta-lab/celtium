@@ -437,10 +437,38 @@ public final class TextureCopyService {
                 }
             }
             int count = Math.max(1, pixels.length);
+            // Where in the rectangle the content is, not only whether there is any: the panorama's faces cover the
+            // whole 256x256 viewport in vanilla, so a rectangle that is dark in one band and bright in another says
+            // the draw landed somewhere else than the read, or that the image was cleared after the draw. Eight bands
+            // of 32 rows each, in the read's own row order, so it compares with CELTIUM_GROUP_VIEWPORT's clipped
+            // rectangle (`clipped=0,824 256x256`) without a second run.
+            StringBuilder bands = new StringBuilder();
+            int bandRows = Math.max(1, height / 8);
+            for (int band = 0; band < 8; band++) {
+                long br = 0L, bg = 0L, bb = 0L;
+                int n = 0;
+                for (int row = band * bandRows; row < Math.min((band + 1) * bandRows, height); row++) {
+                    for (int column = 0; column < width; column++) {
+                        int index = row * width + column;
+                        if (index >= pixels.length) {
+                            break;
+                        }
+                        int pixel = pixels[index];
+                        br += (pixel >> 16) & 0xFF;
+                        bg += (pixel >> 8) & 0xFF;
+                        bb += pixel & 0xFF;
+                        n++;
+                    }
+                }
+                if (n > 0) {
+                    bands.append(band == 0 ? "" : " ").append(br / n).append("/").append(bg / n).append("/").append(bb / n);
+                }
+            }
             System.out.println("[Celtium] CELTIUM_TEX_COPY_SERVED dest=" + destName + " level=" + level
                     + " destOffset=" + xoffset + "," + yoffset + " source=" + x + "," + y + " " + width + "x" + height
                     + " readFbo=" + readFbo + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
                     + " opaque=" + opaque + "/" + pixels.length + " served=" + (this.textureCopiesServed + 1)
+                    + " bands=" + bands
                     // The frame and the image this copy read, so it can be put against CELTIUM_DRAW_SITE in the same
                     // frame: the faces draw (DRAW_SITE #1, target=1941007851) and this line reads white, and neither
                     // carried a frame or a handle before, which left ordering unanswerable.
