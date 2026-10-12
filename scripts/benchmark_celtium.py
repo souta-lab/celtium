@@ -88,7 +88,48 @@ COMPILE_ONLY_JARS = [
     LIBS / "com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar",
 ]
 
-CELTIUM_JAR = ROOT / "forge122/build/libs/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar"
+# The development version was rebranded from `2.5.12-celtium.0.1.0-dev.1` to `0.0.2-alpha-dev`, and the old build
+# output stayed in `forge122/build/libs`. A recipe that names the old file - or globs the directory and takes the
+# last match, because the old name sorts after every `0.0.2` one - then measures a build from before the rename,
+# and nothing in the numbers says so: the record still reads "Celtium".
+#
+# That trap fired: a loading-screen leg was launched from the documented recipe with the 13:08 jar, and its missing
+# `loading` stage was read as "the hook does not fire" while `celtium$dumpLoadingFrame` was simply not in the jar
+# (the leg's `celtium-loading.jar` was byte-identical to `celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar`).
+# So the jar is resolved from the build output by name family and mtime, every candidate is printed, and a
+# pre-rebrand or intermediate candidate is named as ignored instead of being silently passed over.
+PRE_REBRAND_VERSION = "2.5.12-celtium.0.1.0-dev.1"
+
+
+def resolve_celtium_jar():
+    """The Celtium jar to measure: the newest real artifact in ``forge122/build/libs``.
+
+    Intermediates (``*-reobf.jar``, ``*-dev-dev.jar``) and pre-rebrand names are excluded by name, the rest are
+    ordered by mtime. The selection is printed because a benchmark's first question is which bytes ran, and the
+    answer must be in the log even when the run is killed before `pin_jar` records it.
+    """
+    candidates = sorted((ROOT / "forge122/build/libs").glob("celtium-forge-mc1.12.2-*.jar"),
+                        key=lambda path: path.stat().st_mtime, reverse=True)
+    usable = [path for path in candidates
+              if PRE_REBRAND_VERSION not in path.name
+              and not path.name.endswith(("-reobf.jar", "-dev-dev.jar"))]
+    if not usable:
+        found = ", ".join(path.name for path in candidates) or "nothing"
+        raise SystemExit("no measurable celtium-forge jar in forge122/build/libs (found: %s); run "
+                         "scripts/build.sh first" % found)
+    chosen = usable[0]
+    print("Celtium jar under test: %s (%.2f MB, built %s)"
+          % (chosen.name, chosen.stat().st_size / 1e6,
+             time.strftime("%H:%M:%S", time.localtime(chosen.stat().st_mtime))))
+    for other in usable[1:]:
+        print("    also present, older: %s" % other.name)
+    for old in candidates:
+        if old not in usable:
+            print("    ignored (pre-rebrand or intermediate): %s" % old.name)
+    return chosen
+
+
+CELTIUM_JAR = resolve_celtium_jar()
 BASELINE_JAR = (ROOT / ".celtium-work/upstream-baseline/forge122/build/libs/"
                        "celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar")
 

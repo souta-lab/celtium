@@ -47,8 +47,8 @@ GD="$PWD/.celtium-work/runtime/<your-run-name>"
 timeout 360 python3 scripts/prism_validation.py \
   /home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha \
   --output .celtium-work/<your-run-name>.json --game-dir "$GD" \
-  --mod build-1122/build/libs/2.5.12-celtium.0.1.0-dev.1/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar \
-  --mod forge122/build/libs/celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar \
+  --mod build-1122/build/libs/0.0.2-alpha-dev/celtium-forge-mc1.12.2-0.0.2-alpha-dev.jar \
+  --mod forge122/build/libs/celtium-validation-client-0.0.2-alpha-dev.jar \
   --library .celtium-work/runtime/celtium-headless-interop/test-libraries/lwjgl-vulkan-3.4.1.jar \
   --jvm-arg=-Dceltium.vulkan.glless=true --jvm-arg=-Dceltium.vulkan.validation=true \
   --jvm-arg=-Dceltium.vulkan.presentReadback=true --jvm-arg=-Dceltium.validation.dumpPresentedImage=true \

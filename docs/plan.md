@@ -37,13 +37,14 @@
 | **GUI batch の matrix 跨ぎ統合（PR#2）** | **着地（`d1f0042b4`）** | 軸並行 modelView をコピー中に適用（**頂点shaderと bit 一致**）。回転は matrix-keyed 経路に残す |
 | **0.0.2-alpha** | **公開済み** | `celtium-forge-mc1.12.2-0.0.2-alpha.jar`・2,594,729 bytes・SHA-256 `c2b69d03…b94471fc`・package verifier `verified: true`。**開発版は `0.0.2-alpha-dev`（Celeritas 上流番号を除去）** |
 | **BH-03/04/23/34** | **解決済み** | 各1コミット・一旗対照・両脚 clean（`9982ac634` が列挙） |
-| **BH-09（scissor）** | **修正着地・受入未取得** | `218ea2120`。**3 leg + 原典で「どの scene も clip していない」を確定**：vanilla は `glScissor`/`GL_SCISSOR_TEST` を**一切呼ばない**（原典で出現0）・唯一の発行元は `VulkanDrawContext.enableScissor` で呼び手は `ScrollableFrame.render` のみ・**`canScrollVertical` が立つ時だけ**。`scissorCalls`/`scissorToggles` が判定子 |
-| BH 全体 | **解決済み 27 / 未解決 9** | 未解決は BH-14, 17, 18, 20, 21, 24, 26, 33, 35（`docs/history/2026-10-11-code-bughunt.md` 冒頭に状態） |
-| **パノラマ** | **所有者確定・未修正** | 白の出所は **id 8 の mirror**（splash の白 256×256 `DynamicTexture`・`CELTIUM_UPLOAD_CALLER id=8 … first=0xffffffff`）。**id 8 は一度も invalidate されない**（9/10/12/16 には出る）。`forgetTexture(8)` は発火し entry も消えるが、**名前再利用後に `int[]` で再充填される**。判定子は `splashSourcedGroups` |
-| **ロード画面** | **機序訂正済み・未修正** | **GL-less では `SplashProgress.start()` が cancel** され、`:294/:353/:416` の3サイトは**実行されない**（census の旧数値は**フォントのもの**）。走るのは **Tessellator 経路**で幾何は即時経路に届いている。**必要なのは splash 段階の presented dump 契約**（既存 switch はどれもロード窓に届かない） |
+| **BH-09（scissor）** | **修正着地・受入未取得** | `218ea2120`。**原典で「vanilla は `glScissor`/`GL_SCISSOR_TEST` を一切呼ばない」を確定**（出現0）・唯一の発行元は `VulkanDrawContext.enableScissor`・呼び手は `ScrollableFrame.render` のみ・**`canScrollVertical` が立つ時だけ**。`scissorCalls`/`scissorToggles` が判定子。**leg 側の注意**: `r154-bh09` は `scissorCalls` 計器より前の jar なので**この脚にカウンタが無いこと＝0 ではない**。カウンタを持つ脚は `r157/r158/r160-bh09`・`guiscale2-leg`・`ownerfix-menu`・`splashdrop*`・`bh18b-amd/intel`・`r162-release`・`loading-leg` で、いずれも `scissorCalls=0`（ただし**リストが overflow する条件を踏んだ脚はまだ無い**） |
+| BH 全体 | **解決済み 27 / 未解決 9（うち1件は受入条件が未取得）** | 未解決は BH-14, 17, **18（実装修正済・本文が要求する合成入力の確認が未取得）**, 20, 21, 24, 26, **33（UI側は「有効に見せない」で着地・fade 自体は未移植）**, 35（測定済・広告契約を裁定済み）（`docs/history/2026-10-11-code-bughunt.md` 冒頭に状態） |
+| **パノラマ** | **修正着地・受入未取得（測定は前進）** | 白の出所は **id 8 の mirror**（splash の白 256×256 `DynamicTexture`・`CELTIUM_UPLOAD_CALLER id=8 … first=0xffffffff`）。`59441d6bb` が splash 由来 upload を id で記録し、**splash upload が無かった最初のフレームで `forgetTexture`** する。**現行ツリーの leg（`bh18b-amd`/`bh18b-intel`）で `splashCanvasInvalidations=1` を実測＝破棄は実際に走る**。**`splashSourcedGroups` は旧定義の脚で 239** だったが、その脚（`splashdrop*`）は HEAD `5a8ee96af` で**計器より前**。menu-hold の判定 leg は**まだ無い**。`mirrorSourceById` を `forgetTexture` で消す契約修正は dirty（texture-mirror） |
+| **ロード画面** | **未表示（機序と到達性は確定・次の一手は描画先の追跡）** | **GL-less では `SplashProgress.start()` が cancel** され `:294/:353/:416` は実行されない。走るのは Tessellator 経路。**順序を原典で確定**: `Minecraft.startGame` 内で `beginMinecraftLoading`(preInit)=`:514` → `SplashProgress.drawVanillaScreen`=`:517` → `finishMinecraftLoading`(init)=`:588`＝**init での latch は遅すぎた**（fixture をコンストラクタ latch に変更）。隔離は1脚で確定: `CELTIUM_SPLASH_HOOK drawSplashScreen=true`（mixin 適用）＋ `fixture instanceSet=true`（到達）。**受入の絵**: `loading` stage の dump は client tick 0 で取得できたが **1280x720・全白 (255,255,255)・distinct=1**（＝ロード画面の幾何が presented frame に届いていない）。次は `CELTIUM_DRAW_SITE … passImage=` と `offTargetPerTarget` で描画先を追う。**注意**: 直前の1脚は**旧名 jar**（`2.5.12-celtium.0.1.0-dev.1`、`celtium$dumpLoadingFrame` 無し）で走っており**無効**だった（下の「成果物バージョンの罠」） |
 | **GUI 文字の暗転** | **現行ツリーでは再現せず（`172b5ab93`）** | ユーザ crop は1行目がアトラスモデルと**画素完全一致**、2行目も `colorCode[7]`/`[23]` で厳密。**影パス漏れ説は反証**。実差は quad 単位の 24/196 セル欠落だが、§7 tooltip 0/2718・fast path on/off 両方 0 |
 | **性能（ユーザの実プロファイル）** | **優先順の根拠** | 358 frame/20 s・frame mean 55.9・p50 34.1・p95 331.8・p99 358.9・worst 384.6 ms。**≥50 ms の 64 frame（17.9 %）が wall time の 50 %**。スパイクの `gameRenderer` 318.6 ms のうち**約 246 ms/frame が未帰属**。`gui` は**定数 ~13.7 ms/frame**（スパイク源ではない） |
 | **bridge 経路（`glless=false`）** | **本機で deadlock** | 最初の world frame で確定的（baseline 3 leg）。**GL-less 既定なので公開物は晒されない**が、比較 arm としては使えない |
+| **成果物バージョンの罠（stale jar）** | **根因を除去（このround）** | rebrand で開発版が `0.0.2-alpha-dev` になった後も **`build-1122/build/libs/2.5.12-celtium.0.1.0-dev.1/` と `forge122/build/libs/celtium-forge-…-2.5.12-….jar` が残っており**、**旧パスを `cp` する補助スクリプト／旧パスを書いた手順書が、古いjarでlegを走らせる**。実害: ロード画面の1脚が 13:08 の jar（`celtium-loading.jar` の sha256 が旧 `2.5.12-…jar` と**完全一致**）で走り、`celtium$dumpLoadingFrame` が入っていないのに「hook が発火しない」と読まれた。**対策**: `scripts/benchmark_celtium.py` が build 出力から**名前族とmtimeで解決し候補を全部印字**（旧名・中間物は `ignored` として名指し）、旧 build 出力を削除、`docs/runtime-validation.md`/2つの handoff のレシピを現行パスへ訂正（§0.365） |
 | 未了 | — | **パノラマ・ロード画面・BH 9件・BH-09 受入・Intel 受入・mod cohort（HEI は world 到達のみ）・shader 対応（E）** |
 
 **この節が現在の受入状況である。** 個別の受入根拠は下の §0.1〜§0.92 にある（新しい節ほど新しい実測）。
@@ -385,6 +386,37 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
 - **未確立（その2）**: `lead-warm3`（jar `c6e7a8058c3fd511`・19:53・同 shape）は **warm 275 sample で p50 24.0 / p95 105.6 / p99 207.4 ms**、
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
+
+## 0.365 **round 172: 成果物バージョンの罠（stale jar）を根因から除去。BH-18 は未受入と判定し直し、パノラマの破棄が実測で走ることを確認**
+
+- **復帰**: goal は `disarmed` だった（revision 30）。**objective を変更せず** `resume` して `armed`（revision 31）。未 push の2 commit（`5a8ee96af` BH-20・`59441d6bb` パノラマ）を `origin/main` へ push。
+- **旧名 jar の罠（このroundの主眼）**: rebrand（`b4d3f5279`）後も `build-1122/build/libs/2.5.12-celtium.0.1.0-dev.1/` と
+  `forge122/build/libs/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar` が残っていた。**旧名は `0.0.2` より後ろにソートされる**ので、
+  ディレクトリを glob して末尾を採る／旧パスを直書きする補助スクリプトは**古い jar を選ぶ**。
+  - **実害（証拠）**: `loading-leg`（14:20 起動）の `celtium-loading.jar` は sha256 `283a4a5a…` で、**旧 `celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar` と完全一致**。
+    `javap` で **`celtium$dumpLoadingFrame` が存在しない**ことを確認＝その脚は hook を積んでいない。**「hook が発火しない」という読みは無効**。
+  - **対策**: `scripts/benchmark_celtium.py` の `CELTIUM_JAR` 直書き（`:91`）をやめ、`resolve_celtium_jar()` が build 出力を**名前族と mtime**で解決し、
+    **採用jar・他候補・無視した旧名/中間物を全部印字**する。旧 build 出力（6ファイル）を削除。`docs/runtime-validation.md`・`docs/handoff-2026-10-10-next-model.md`・
+    `docs/handoff-vanilla-completion.md` のレシピを現行パスへ訂正し、**「レシピに版を直書きしない・lock JSON の `mods[].sha256` を報告に載せる」**を明記。
+  - **sky-draws も独立に同じ罠を検出**（自分の leg スクリプトを修正済み・以降の測定は jar `3aaeec1334eac580`）。
+- **パノラマ: 「破棄が走るか」は決着**: `59441d6bb` の計器を持つ**現行ツリーの leg**（`bh18b-amd`・`bh18b-intel`、前者は `git.head=1fd58540b` 相当の dirty ツリー）で
+  **`splashCanvasInvalidations=1` / `splashSourcedGroups=1`** を実測。**破棄は実際に走っている**。一方 `splashSourcedGroups=239` を出していた `splashdrop*` の3脚は
+  HEAD `5a8ee96af`＝**この計器より前の jar**なので、239 は旧定義の値。**menu-hold の判定 leg はまだ無い**（次: 現行 jar で menu-hold 1脚）。
+- **ロード画面: 順序と到達性が確定**（sky-draws）: `Minecraft.startGame` 内で preInit=`beginMinecraftLoading`(**`:514`**) → `SplashProgress.drawVanillaScreen`(**`:517`**) →
+  init=`finishMinecraftLoading`(**`:588`**)＝**init での latch は splash より後**。fixture の latch をコンストラクタへ移し、1脚で
+  `CELTIUM_SPLASH_HOOK drawSplashScreen=true` ＋ `fixture instanceSet=true alreadyRequested=false dumpEnabled=true` を確認（**mixin は適用され、fixture にも届く**）。
+  取得できた `loading` stage の presented dump は **1280x720・全白 (255,255,255)・distinct=1**＝**ロード画面の幾何が presented frame に届いていない**。次は `passImage=`/`offTargetPerTarget` で描画先を追う。
+- **BH-18 は「受入済み」ではない**（裁定）: perf-ring の leg は実 surface で **AMD/Intel とも提示値＝要求値・`validationMessageCount=0`** だが、BH-18 本文の
+  「修正後の確認」は **`min=max=2` / `max=0` / OPAQUE 無し / TRANSFER_DST 無し / 単一 `VK_FORMAT_UNDEFINED` という合成入力**での契約確認を要求している。
+  実 surface はどれも分岐を踏まない（extent 指定・maxImageCount unlimited）ので**未測定**。加えて**実装に穴が1つ残っている**:
+  `VulkanSwapchain.java:1195-1203` は「B8G8R8A8/R8G8B8A8 が無い」場合に `formats.get(0).format()` を採るため、**surface が `VK_FORMAT_UNDEFINED` 1件だけを返すと
+  `imageFormat=VK_FORMAT_UNDEFINED` で作成に進む**（不正）。perf-ring へ「UNDEFINED を採用しない＋合成入力 harness（GPU不要・実装本体の選択関数を駆動）」として差し戻した。
+- **BH-35 の契約を裁定**: goal 本文が「汎用 GL→Vulkan 変換器・GL 全体のエミュレーションを作らない」と明記しているので、**647 名を no-op で吸収しない**という perf-ring の停止判断は正しい。
+  契約は「**ゲーム本体と現在の mod cohort にある GL 版/拡張ゲートを列挙し、その全てを通す最小値を広告する**」。`GL_VERSION` と `GLSL` は別々に決め、
+  拡張は解釈するものだけ名乗る。no-op に入れてよいのは「状態を持たず pixels を変えない legacy 呼び出し」だけで、**描画経路に乗る名前は吸収しない**。
+- **確定した「バグではない」もの**: `CELTIUM_DRAWARRAYS refused=4` は**全て `RenderGlobal.func_174976_a:1375`（sky）**で、`calls=4` 以降 `refused=4` のまま固定＝**最初のフレームで投影が未 seed のときの拒否**。
+  拒否は正しい選択（identity 投影で描かない）で、以後 `drawn` は伸びる。count を欠落と読まない。
+- **このroundの他**: `build-1122/buildSrc/.kotlin/` を `.gitignore` に追加（未追跡のビルドキャッシュが commit 対象に見えていた）。
 
 ## 0.364 **round 171: レジストリの名前キー・キャッシュに穴 — `forgetTexture` が `mirrorSourceById` を消していない（Lead の発見・texture-mirror へ配布）**
 

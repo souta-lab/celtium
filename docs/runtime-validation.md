@@ -28,11 +28,20 @@ The fixed fixture is a separate test mod. Install it only into the fresh test co
 python3 scripts/prism_validation.py "$CELTIUM_INSTANCE" \
   --output local/celtium-validation-lock.json \
   --game-dir local/celtium-validation-game \
-  --mod build-1122/build/libs/2.5.12-celtium.0.1.0-dev.1/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar \
-  --mod forge122/build/libs/celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar \
+  --mod build-1122/build/libs/0.0.2-alpha-dev/celtium-forge-mc1.12.2-0.0.2-alpha-dev.jar \
+  --mod forge122/build/libs/celtium-validation-client-0.0.2-alpha-dev.jar \
   --run --validate --duration 90 --headless \
   --render-node /dev/dri/by-path/pci-0000:03:00.0-render --require-gpu 'RX 6400'
 ```
+
+**Resolve the jars from the build output, do not paste a version into the recipe.** The development version was rebranded
+from `2.5.12-celtium.0.1.0-dev.1` to `0.0.2-alpha-dev`, and the old artifacts stayed in `build-1122/build/libs/` and
+`forge122/build/libs/`; the old name also sorts *after* every `0.0.2` one, so a glob that takes the last match picks the
+pre-rebrand build. A leg launched that way runs different bytes than the tree it claims to test, and nothing in the
+numbers says so. That is not hypothetical - a loading-screen leg was taken on the 13:08 jar through an older copy of this
+recipe, and its absent `loading` stage was read as "the hook does not fire" while `celtium$dumpLoadingFrame` was simply
+not in the jar. `scripts/benchmark_celtium.py` now resolves the newest real artifact by name family and mtime and prints
+every candidate; use the same rule, and quote the `mods[].sha256` of the lock JSON in the report so the bytes are named.
 
 The agreed development preference is headless execution. `--headless` starts a private Sway/Xwayland compositor with a 1280 × 720 virtual output and an explicit GPU render node. It uses a separate temporary runtime directory, no desktop configuration or input backend, and null OpenAL output. It stops its own compositor after the client exits. Sway, swaymsg and Xwayland must be installed. Select the render node appropriate to the machine; the path above is this PC's RX 6400, not a portable device identifier. A startup failure does not fall back to the visible desktop. `--require-gpu` rejects a passing fixture on the wrong GPU. The client screenshot is saved directly from its FBO, including in headless mode.
 

@@ -1,5 +1,9 @@
 .gradle
 build/
+# The Gradle build directory itself is ignored, but a Kotlin plugin's incremental-compile cache lives in
+# `<module>/buildSrc/.kotlin/`, whose path component is not `build`, so it stayed untracked and visible as a
+# candidate commit.
+.kotlin/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
