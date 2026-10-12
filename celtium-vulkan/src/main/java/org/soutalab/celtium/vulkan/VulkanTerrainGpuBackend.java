@@ -6971,6 +6971,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 // rather than by symptom, and that is the round-232 suspicion stated as a fact.
                                 GllessFrameTarget handles = offTargetTarget();
                                 Long publishedSix = this.publishedFrameImages.get(Integer.valueOf(6));
+                                System.out.println("[Celtium] CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
+                                        + " publishedName6=" + (publishedSix == null ? "none"
+                                                : "0x" + Long.toHexString(publishedSix.longValue()))
+                                        + " chainPair=" + (handles == null ? "none"
+                                                : "0x" + Long.toHexString(handles.chainPairColorImage()))
+                                        + " publishedIsLivePair=" + (publishedSix != null && handles != null
+                                                && publishedSix.longValue() == handles.chainPairColorImage()));
                                 record("CELTIUM_SPLASH_HANDLES present=" + this.celtium$presentCount
                                         + " publishedName6=" + (publishedSix == null ? "none"
                                                 : "0x" + Long.toHexString(publishedSix.longValue()))
