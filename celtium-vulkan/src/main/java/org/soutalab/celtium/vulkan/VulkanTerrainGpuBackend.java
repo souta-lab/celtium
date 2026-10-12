@@ -1118,7 +1118,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * shared flag: a late watchdog must be able to tell "my wait is still running" from "a later wait is running now"
      * (audit A05).
      */
-    private long deviceWaitToken;
     private long deviceWaitFinishedToken = -1L;
     private final Object deviceWaitLock = new Object();
     /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
@@ -1136,6 +1135,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * plan moves those in R5 rather than now.
      */
     private final PublishedFrameTextures publishedTextures = new PublishedFrameTextures();
+
+    /** The submission domain's counters (refactoring plan R2). */
+    private final SubmissionStatistics submissionStatistics = new SubmissionStatistics();
 
     /** The target domain's counters (refactoring plan R2). */
     private final TargetStatistics targetStatistics = new TargetStatistics();
@@ -1539,7 +1541,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long orderingFlushDroppedBatches;
     private String lastOrderingFlushFailure = "none";
     /** Where the latch was set from, so a report names the origin instead of only the state (task-60). */
-    private String stallOrigin = "none";
     /**
      * True from the moment a framebuffer replacement is announced until the shared images match the new size again.
      * <p>
@@ -1581,23 +1582,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 where = frame.getClassName() + '.' + frame.getMethodName() + ':' + frame.getLineNumber();
                 break;
             }
-            this.stallOrigin = where + " via " + site;
+            this.submissionStatistics.setStallOrigin(where + " via " + site);
             System.out.println("[Celtium] CELTIUM_STALL site=" + where + " latchSite=" + site
                     + " target=" + this.targetWidth + "x"
                     + this.targetHeight + " frameId=" + this.frameId + " frameTargetNull=" + (this.frameTarget == null)
                     + " presentSkipReason=[" + this.presentSkipReason + "]");
         }
-        this.stalledStops++;
+        this.submissionStatistics.noteStalledStops();
     }
-    private int stalledStops;
-    private int stalledTeardownSkips;
     /** Inject a wait failure after this many waits; 0 disables. See the comment in waitForIdle. */
     private static final int FAIL_IDLE_AFTER = Integer.getInteger("celtium.vulkan.failIdleAfter", 0).intValue();
-    private int idleWaits;
     /** Windows abandoned because the device stalled; the batches they held are lost and counted. */
-    private int stalledGeometryDrops;
-    private int stalledGeometryDroppedBatches;
-    private int injectedIdleFailures;
     /** One-shot count for the injected device-lost fence result. */
     private int injectedDeviceLosses;
     /** Caps the env-combine report so a hurt mob does not log every frame. */
@@ -1858,11 +1853,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private VulkanFrameArena frameArena;
     /** Groups whose arena slice could not be handed out, so they allocated their own buffers: the bounded fallback. */
-    private long frameArenaFallbackGroups;
     /** CPU time spent in the frame's own fence wait: the serialisation OPT-08's second step (two frames in flight) targets. */
-    private long frameFenceWaitMillis;
-    private long frameFenceWaitWorstMillis;
-    private long frameFenceWaitCount;
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
     /**
@@ -2184,7 +2175,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long frameId;
     private long countersFrameId = -1;
     private long flushCount;
-    private long retiredFlushes;
     private int lastReportedOutOfDate = -1;
     private int lastReportedAcquireOutOfDate = -1;
     private int lastReportedDirectRefreshes = -1;
@@ -2347,7 +2337,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean frameSubmitReachedQueue;
     /** Times a present skipped the bridge semaphore pair because its done signal was still outstanding. */
     /** Times the frame-close submission (the second producer of the done semaphore) ran. */
-    private int signalOnlySubmissions;
     private int emptyFrameReleases;
 
     /**
@@ -7003,11 +6992,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             for (ImmediateGroup group : this.immediateGroups) {
                 dropped += group.batches;
             }
-            this.stalledGeometryDrops++;
-            this.stalledGeometryDroppedBatches += dropped;
-            if (this.stalledGeometryDrops <= 3) {
+            this.submissionStatistics.noteStalledGeometryDrops();
+            this.submissionStatistics.addStalledGeometryDroppedBatches(dropped);
+            if (this.submissionStatistics.stalledGeometryDrops() <= 3) {
                 record("GPU stalled: dropping " + dropped + " accepted immediate batches (total "
-                        + this.stalledGeometryDroppedBatches + ")");
+                        + this.submissionStatistics.stalledGeometryDroppedBatches() + ")");
             }
             this.immediateGroups.clear();
             this.pendingImmediateIndices = 0;
@@ -7822,10 +7811,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Adds one frame fence wait's duration to the totals, so the frame's own serialisation is a number. */
     private void celtium$recordFrameWait(long startedNanos) {
         long millis = (System.nanoTime() - startedNanos) / 1_000_000L;
-        this.frameFenceWaitMillis += millis;
-        this.frameFenceWaitCount++;
-        if (millis > this.frameFenceWaitWorstMillis) {
-            this.frameFenceWaitWorstMillis = millis;
+        this.submissionStatistics.addFrameFenceWaitMillis(millis);
+        this.submissionStatistics.noteFrameFenceWaitCount();
+        if (millis > this.submissionStatistics.frameFenceWaitWorstMillis()) {
+            this.submissionStatistics.setFrameFenceWaitWorstMillis(millis);
         }
     }
 
@@ -7845,7 +7834,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (borrowed != null) {
             return borrowed;
         }
-        this.frameArenaFallbackGroups++;
+        this.submissionStatistics.noteFrameArenaFallbackGroups();
         return new VulkanDynamicMesh(this.context);
     }
 
@@ -8096,15 +8085,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " bootstrapSubmitWaitWorstMillis=" + VulkanContext.bootstrapSubmitWaitWorstMillis
                 + " " + this.context.uploadBatchSummary()
                 + " " + (this.frameArena == null ? "frameArena=not-created" : this.frameArena.describe())
-                + " frameArenaFallbackGroups=" + this.frameArenaFallbackGroups
+                + " frameArenaFallbackGroups=" + this.submissionStatistics.frameArenaFallbackGroups()
                 + " frameSlots=" + FRAME_SLOTS + " frameSlotReuseWaits=" + this.scheduler.slotReuseWaits()
                 + " slotPolls=" + this.scheduler.slotPolls() + " slotPollConfirms=" + this.scheduler.slotPollConfirms()
                 + " slotWaitConfirms=" + this.scheduler.slotWaitConfirms()
                 + " submitSequence=" + this.scheduler.submitSequence()
                 + " completedSubmitSequence=" + this.scheduler.completedSubmitSequence()
-                + " frameFenceWaitMillis=" + this.frameFenceWaitMillis
-                + " frameFenceWaitCount=" + this.frameFenceWaitCount
-                + " frameFenceWaitWorstMillis=" + this.frameFenceWaitWorstMillis
+                + " frameFenceWaitMillis=" + this.submissionStatistics.frameFenceWaitMillis()
+                + " frameFenceWaitCount=" + this.submissionStatistics.frameFenceWaitCount()
+                + " frameFenceWaitWorstMillis=" + this.submissionStatistics.frameFenceWaitWorstMillis()
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
@@ -8122,15 +8111,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                                 Math.min(120, this.lastUnflushedTargetFailure.length())))
                 + " submitTimeouts=" + VulkanContext.submitTimeouts
                 + " gpuStalled=" + this.gpuStalled
-                + " deviceWaitToken=" + this.deviceWaitToken
-                + " stalledGeometryDrops=" + this.stalledGeometryDrops
-                + " stalledGeometryDroppedBatches=" + this.stalledGeometryDroppedBatches
-                + " stallOrigin=" + (this.stallOrigin == null ? "none" : this.stallOrigin.replace(' ', '_'))
+                + " deviceWaitToken=" + this.submissionStatistics.deviceWaitToken()
+                + " stalledGeometryDrops=" + this.submissionStatistics.stalledGeometryDrops()
+                + " stalledGeometryDroppedBatches=" + this.submissionStatistics.stalledGeometryDroppedBatches()
+                + " stallOrigin=" + (this.submissionStatistics.stallOrigin() == null ? "none" : this.submissionStatistics.stallOrigin().replace(' ', '_'))
                 + " windowFlushFailures=" + this.targetStatistics.windowFlushFailures()
                 // Printed, not just counted: a zero that never reaches the artifact is an absence rather than a
                 // measurement, and this number is the one that says whether the frame-close producer (the second
                 // producer of the done semaphore) ran at all - the path the per-image change could have broken.
-                + " signalOnlySubmissions=" + this.signalOnlySubmissions
+                + " signalOnlySubmissions=" + this.submissionStatistics.signalOnlySubmissions()
                 + " windowFlushFailureFrame=" + this.targetStatistics.windowFlushFailureFrame()
                 + " windowFlushDroppedBatches=" + this.targetStatistics.windowFlushDroppedBatches()
                 + " groupViewportSets=" + this.groupViewportSets
@@ -8384,7 +8373,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + (this.textureRegistry != null ? this.textureRegistry.createdByAnnouncement() : 0)
                 + " swapchainOutOfDate=" + (this.swapchain != null ? (this.swapchain.outOfDate() ? 1 : 0) : -1)
                 + " acquireOutOfDate=" + (this.swapchain != null ? this.swapchain.acquireOutOfDate() : -1)
-                + " retiredFlushes=" + this.retiredFlushes + " retire=" + VulkanRetireQueue.describe()
+                + " retiredFlushes=" + this.submissionStatistics.retiredFlushes() + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + this.lastFrameAccepted + " lastFrameDrawn=" + this.lastFrameDrawn
                 + " immediateTaken=" + this.immediateTaken + " immediateFlushes=" + this.immediateFlushes
                 + " immediateGroupsClosed=" + this.immediateGroupsClosed
@@ -8395,7 +8384,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " textureRefusalsBeforeAccept=" + this.textureStats.textureRefusalsBeforeAccept()
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
-                + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
+                + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.submissionStatistics.stalledStops()
                 + " publishedFrameTexturesCreated=" + this.publishedTextures.created()
                 + " publishedFrameTexturesUnpublished=" + this.publishedTextures.unpublished()
                 // The attach-side rule's counter: a published name that stands for the image the pass attaches is kept
@@ -8411,12 +8400,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // different outcomes and only the counter says which happened.
                 + " staleGroupDescriptorsRebuilt=" + this.staleGroupDescriptorsRebuilt
                 + " staleGroupRefusals=" + this.staleGroupRefusals
-                + " stalledTeardownSkips=" + this.stalledTeardownSkips
-                + " idleWaits=" + this.idleWaits + " injectedIdleFailures=" + this.injectedIdleFailures
+                + " stalledTeardownSkips=" + this.submissionStatistics.stalledTeardownSkips()
+                + " idleWaits=" + this.submissionStatistics.idleWaits() + " injectedIdleFailures=" + this.submissionStatistics.injectedIdleFailures()
                 // A timed-out fence wait is retried before the latch: a resize or a swapchain rebuild produces transient
                 // timeouts, and latching on the first one stopped the renderer for the session (measured on the
                 // world-resize leg). Both the retries and the timeouts are reported so the two are told apart.
-                + " idleWaitTimeouts=" + this.idleWaitTimeouts + " idleWaitRetries=" + this.idleWaitRetries
+                + " idleWaitTimeouts=" + this.submissionStatistics.idleWaitTimeouts() + " idleWaitRetries=" + this.submissionStatistics.idleWaitRetries()
                 + " terrainPasses=" + this.terrainStatistics.terrainPasses() + " immediateOnlyPasses=" + this.terrainStatistics.immediateOnlyPasses()
                 + " worldPassBoundaryFlushes=" + this.terrainStatistics.worldPassBoundaryFlushes()
                 // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
@@ -8546,7 +8535,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
                 + " identityPairs=[" + org.soutalab.celtium.vulkan.GllessFrameTarget.identityPairCensus() + "]"
                 + " presentMode=[" + VulkanSwapchain.presentModeSummary()
-                + " rebuilds=" + this.presentModeRebuilds + "]"
+                + " rebuilds=" + this.submissionStatistics.presentModeRebuilds() + "]"
                 + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
                 + " fences=" + VulkanContext.quarantinedResourceCounts()[1] + "]"
                 + " matrixChannels=persp:" + this.perspectiveCalls + ",frustum:" + this.frustumCalls
@@ -8893,7 +8882,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.frameArena != null) {
             this.frameArena.delete();
             this.frameArena = null;
-            this.frameArenaFallbackGroups = 0L;
+            this.submissionStatistics.setFrameArenaFallbackGroups(0L);
         }
         record("world teardown: terrain resources released, the window device and swapchain are kept");
     }
@@ -8903,7 +8892,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
             // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
-            this.stalledTeardownSkips++;
+            this.submissionStatistics.noteStalledTeardownSkips();
             return;
         }
         // Nothing may be released while a submission is still reading it: the audit reproduced
@@ -10083,7 +10072,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * needs to present calls this instead, so the probe is only a probe.
      */
     /** Swapchains dropped because the VSync option changed (task-56), so the rebuild is a number, not a claim. */
-    private int presentModeRebuilds;
 
     private boolean ensureSwapchain() {
         // The VSync option changed since this swapchain was built (task-56): the present mode is a creation parameter,
@@ -10097,7 +10085,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " previous=[" + this.swapchain.presentModeSummary() + "]");
             this.swapchain.delete();
             this.swapchain = null;
-            this.presentModeRebuilds++;
+            this.submissionStatistics.notePresentModeRebuilds();
         }
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
         // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
@@ -12453,7 +12441,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.scheduler.noteSlotReuseWait(this.frameSlot);
             if (!waitForSlot(this.frameSlot)) {
                 this.noteStalled();
-                this.stalledStops++;
+                this.submissionStatistics.noteStalledStops();
                 record("gpu stalled: frame slot " + this.frameSlot + " did not complete; drawing is refused from here");
                 throw new IllegalStateException("pending frame slot command buffer did not complete");
             }
@@ -12471,7 +12459,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // frame has certainly completed.
                 int drained = VulkanRetireQueue.flush();
                 if (drained > 0) {
-                    this.retiredFlushes += drained;
+                    this.submissionStatistics.addRetiredFlushes(drained);
                 }
             }
             // The confirmed submissions' timestamps are readable now; the availability bit keeps whatever is still
@@ -13278,7 +13266,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // per-image change made consumeDone wait on whichever done semaphore was recorded, and this is the producer
         // whose pairing that could break. Two legs were green without this path firing at all, which is a leg about
         // the other path - the counter is what turns that into evidence either way.
-        this.signalOnlySubmissions++;
+        this.submissionStatistics.noteSignalOnlySubmissions();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
             LongBuffer waitSemaphores = stack.mallocLong(1);
@@ -13456,7 +13444,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
             // It reports rather than throws: the exception reached Minecraft's render loop and killed the client on the
             // crash screen, which the idle-failure injection measured as exit 255 with no report at all.
-            this.stalledTeardownSkips++;
+            this.submissionStatistics.noteStalledTeardownSkips();
             record("not releasing resources after a stall: " + reason);
             return false;
         }
@@ -13464,7 +13452,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
         synchronized (this.deviceWaitLock) {
             // This call's wait returned: answer its own token so a late watchdog for it cannot call it a stall.
-            this.deviceWaitFinishedToken = this.deviceWaitToken;
+            this.deviceWaitFinishedToken = this.submissionStatistics.deviceWaitToken();
         }
         if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
             this.noteStalled();
@@ -13499,7 +13487,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // refuse to release resources. Each call takes the next token and only the watchdog holding the current one
         // may report; the wait's completion sets the token to "finished", so a late watchdog finds its own call
         // already answered.
-        long token = ++this.deviceWaitToken;
+        this.submissionStatistics.noteDeviceWaitToken();
+        long token = this.submissionStatistics.deviceWaitToken();
         Thread watchdog = new Thread(() -> {
             try {
                 Thread.sleep(IDLE_TIMEOUT_NANOS / 1_000_000L);
@@ -13507,7 +13496,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 return;
             }
             synchronized (this.deviceWaitLock) {
-                if (this.deviceWaitToken != token || this.deviceWaitFinishedToken == token) {
+                if (this.submissionStatistics.deviceWaitToken() != token || this.deviceWaitFinishedToken == token) {
                     // Either a later wait has taken over (this watchdog is stale) or this call's wait already
                     // returned. Neither is a stall, and saying so is the whole point of the token.
                     return;
@@ -13562,20 +13551,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // the rest of the session - measured on the world-resize leg, where `stalledStops=1` after the resize
                 // left `presentedImageFramesAtCapture=0` and no picture. The wait is retried a bounded number of times
                 // (per wait, not per session) before the latch, and both are counted.
-                this.idleWaitTimeouts++;
+                this.submissionStatistics.noteIdleWaitTimeouts();
                 int retries = 0;
                 while (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT && retries < IDLE_WAIT_RETRIES) {
                     retries++;
-                    this.idleWaitRetries++;
+                    this.submissionStatistics.noteIdleWaitRetries();
                     record("waitForSlot(" + slot + "): the fence did not signal within "
                             + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s; retry " + retries + " of "
                             + IDLE_WAIT_RETRIES + " before treating the device as stalled (timeouts="
-                            + this.idleWaitTimeouts + ")");
+                            + this.submissionStatistics.idleWaitTimeouts() + ")");
                     result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
                 }
             }
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
-                this.idleWaitTimeouts++;
+                this.submissionStatistics.noteIdleWaitTimeouts();
                 this.noteStalled();
                 this.frameTarget.abandonFrame("frame slot fence timed out");
                 return false;
@@ -13662,7 +13651,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // all - the same statement the drain used to establish, reached here through the watermark.
             int drained = VulkanRetireQueue.flush();
             if (drained > 0) {
-                this.retiredFlushes += drained;
+                this.submissionStatistics.addRetiredFlushes(drained);
             }
         }
     }
@@ -13678,8 +13667,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // result here and a real latency test to be kept apart. It fires after a configured number of waits, not on the
         // first: failing the first wait stalls before the renderer exists, which is a start-up question rather than the
         // steady-state one this audit item describes, and the earlier run showed exactly that as a start-up abort.
-        if (FAIL_IDLE_AFTER > 0 && ++this.idleWaits >= FAIL_IDLE_AFTER) {
-            this.injectedIdleFailures++;
+        this.submissionStatistics.noteIdleWait();
+        if (FAIL_IDLE_AFTER > 0 && this.submissionStatistics.idleWaits() >= FAIL_IDLE_AFTER) {
+            this.submissionStatistics.noteInjectedIdleFailures();
             this.noteStalled();
             // Nothing was submitted, so the frame's semaphores are never consumed. Leaving the frame open made the
             // caller's endFrame() wait in the GL write-back for a Vulkan signal that cannot come: the injected idle
@@ -13709,8 +13699,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * {@code idleWaitTimeouts}/{@code idleWaitRetries} so the report says which of the two happened.
      */
     private static final int IDLE_WAIT_RETRIES = 3;
-    private int idleWaitTimeouts;
-    private int idleWaitRetries;
     /** The game's main framebuffer's own size, reported on its bind; 0 until it has been reported. */
     private int mainFramebufferWidth;
     private int mainFramebufferHeight;
