@@ -39,6 +39,16 @@ non-answer this project has already recorded once. What it does show is that the
 HEI in it: the run's own debug log names `HadEnoughItems_1.12.2-4.31.2.jar` and the `jei` modid, so the
 harness picked the jar up rather than ignoring it.
 
+**What HEI's item list actually exercises, read from its own rendering path** (so the leg is judged against a
+named expectation rather than "it looked fine"): the ingredient list is a **batched renderer**
+(`IngredientListBatchRenderer` feeding `ItemStackFastRenderer`), and its `render` splits the ingredients into
+**3d items with `GlStateManager.enableLighting()` and 2d items with `disableLighting()`**, drawing the 3d group
+first, then the 2d group, then the overlays (stack counts) after `disableAlpha`. That is **the same
+light-state contract the hotbar-item darkening was fixed on**, so this leg is a direct test of it: a wrong
+lighting state shows up as 3d blocks too dark or 2d items wrongly lit, and the user's separate report of GUI
+text darkening is plausibly the same family. The stack-count overlay is a second contract - it is drawn with
+the font path after `disableAlpha`, so it also exercises the font work in flight.
+
 What the leg has to show before this row can be called verified is unchanged: the game reaches the world with
 HEI loaded, the item list, search bar and tooltips draw natively, and the run is `validationMessageCount=0`
 with the picture gate's own verdict quoted. A leg that merely starts is not acceptance - and neither is one
