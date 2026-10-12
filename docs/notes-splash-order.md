@@ -89,3 +89,22 @@ user's session runs Cleanroom's splash code, whose textures have to be identifie
   dump gate. Its whole purpose is that an image-order dump read as a picture is a false defect.
 * Announcement mirrors are dumped under the GL name they were announced with (`this.encodeLabel`), not as
   `mirror-gl-1-...`: the sixty-four 256x256 canvases of a splash leg were previously indistinguishable by name.
+
+## Round 236 close-out: the loading screen has no defect
+
+* **The panorama chain is menu-only.** `renderSkybox` (`GuiMainMenu.java:513`), `drawPanorama` (`:388`) and
+  `rotateAndBlurSkybox` (`:478`) have exactly one caller each, and all of them are inside `GuiMainMenu`
+  (`:549 -> :513 -> :517 -> :518-524`, the blur seven times). The loading screen therefore never draws the
+  full-screen stretch quad; the 256x256 box is the chain's own viewport, seen at a present that happened
+  before the chain finished. Leg `r212-splash-splashblur` (`-Dceltium.vulkan.mirrorDrawLog=400`) shows the
+  chain running in the same frame: `groupTexture=21` eight times with twelve vertices each, i.e. three blur
+  quads per copy, plus the faces at `groupTexture=46..51`.
+* **The white first frame is the game's own loop**: it draws its framebuffer, swaps (the frame image holds
+  the game's white clear), and only then draws the composite into the window. A GL client shows the same
+  picture at that instant, so this is not a lost draw and not a deferral of ours.
+* **The logo is Mojang's, not Cleanroom's** - the round-235 prose called it "Cleanroom" while its own
+  transcription read `MOOЯNAƎJƆ`, i.e. an upside-down MOJANG. `mirror-gl8-256x256-l0-*.png` is mojang.png the
+  right way round.
+* The fixture runs the vanilla path (`MinecraftMixin` injects `Minecraft.drawSplashScreen`, whose caller is
+  `SplashProgress.drawVanillaScreen`), and `config/splash.properties` has `enabled=true`, `background=0xFFFFFF`,
+  `bar=0xCB3D35`. Nothing in that configuration explains a white screen beyond the timing above.
