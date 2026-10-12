@@ -307,6 +307,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.337 **round 144: controller 経路が動いた（`videoSettingsChainSource=controller pages`）— 次の gate は「finder が Option 形の行を読めない」**
+
+- **実装の経緯（Lead・3段）**:
+  1. `controller` → `pages` → `getOptions()` を平坦化する経路を実装（`fa33b4927`）→ **null を黙って返していた**ので段を名指しする診断を追加（`85d1e3c59`）。
+  2. 診断 leg で **`videoSettingsChainSource` が無い**＝経路に到達していないと判明。原因は **`GuiScreen` が必ず `buttonList` を持つ**ため、
+     **Celeritas 画面のそれは非 null だが空**で、`list == null` チェックが発火しなかったこと。**空リストを欠落と同様に扱う**修正（`e7c28c2fe`）。
+  3. **測定（`r137-e`）**: **`videoSettingsChainSource = controller pages`** ＝**controller 経路が走り、リストを返した**。
+- **次の gate（正確に名指しされた）**: `videoSettingsRowNames = none` ＋ `videoSettingsChain = no option button could be located in the screen's row list`
+  ＝**finder と行名リーダーが `Option` 形の行を読めない**（`GuiButton` の `displayString`/`id` を前提にしている）。
+  ＝**次は finder/row-name を「`Option`（`getName()`）と `GuiButton`（`displayString`）の両方」に対応させ、押す操作を control の action に切り替える**。
+- **進捗の証拠が artifact に出るようになった**: `videoSettingsChainSource` が
+  **`controller pages`（成功）/ 各失敗段の理由**を返すため、次の leg は「どの段か」を名指しする。
+- **fixture 側の gate は4段になった**: `optionsRowList`（通過）→ `buttonList`（通過・空の扱いを修正）→ **controller 到達（通過・本ラウンド）** →
+  **行の読み取り（Option 形・次の実装）**。
+
 ## 0.336 **round 143: セッション引き継ぎ — goal (e) の fixture traversal は「挿入点確定・未実装」、他は受入済み**
 
 - **このセッションで受入まで到達したもの（ユーザー報告 7 件 + 構造/性能）**:
