@@ -6956,6 +6956,32 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 }
                                 VulkanGlTexture.dumpStageImage("splash-p" + this.celtium$presentCount, rgba,
                                         this.targetWidth, this.targetHeight);
+                                // The pair as well, in the same dump: the splash draws into its own Framebuffer,
+                                // whose identity routes to the chain pair, and the composite only carries that image
+                                // into the frame image. Two images, two dumps, so "the logo never landed in the pair"
+                                // and "it landed and the composite lost it" are told apart by looking.
+                                GllessFrameTarget gllessSplash = offTargetTarget();
+                                if (gllessSplash != null && gllessSplash.chainPairColorImage() != 0L) {
+                                    int[] pair = celtium$readImageRectangle(gllessSplash.chainPairColorImage(), 0, 0,
+                                            this.targetWidth, this.targetHeight);
+                                    if (pair != null) {
+                                        java.nio.ByteBuffer pairRgba = org.lwjgl.system.MemoryUtil.memAlloc(
+                                                this.targetWidth * this.targetHeight * 4);
+                                        try {
+                                            for (int index = 0; index < pair.length; index++) {
+                                                int value = pair[index];
+                                                pairRgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                                                pairRgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                                                pairRgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                                                pairRgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                                            }
+                                            VulkanGlTexture.dumpStageImage("splash-pair-p" + this.celtium$presentCount,
+                                                    pairRgba, this.targetWidth, this.targetHeight);
+                                        } finally {
+                                            org.lwjgl.system.MemoryUtil.memFree(pairRgba);
+                                        }
+                                    }
+                                }
                                 record("splash-time frame image dumped at present " + this.celtium$presentCount
                                         + " (CELTIUM_SPLASH_PROBE)");
                             } finally {

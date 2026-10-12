@@ -101,8 +101,38 @@ public class TextureUtilMixin {
                             .append(" <- ");
                 }
                 int first = data != null && data.length > 0 ? data[0] : 0;
+                // The pixels themselves, when the caller asked for one name in particular: "the game uploaded white",
+                // "our path filled white" and "the mirror never got the upload" are the same mirror line otherwise, and
+                // first= alone is one texel. Unit: the game's own int[] as this hook received it (ARGB, the packing
+                // TextureUtil hands to glTexSubImage2D as GL_BGRA/GL_UNSIGNED_INT_8_8_8_8_REV). Limit: a bounded sample
+                // of the array - up to 4096 pixels, evenly strided - so a 1080p upload cannot cost a scan per call.
+                String pixels = "";
+                if (nameScoped && data != null && data.length > 0) {
+                    long r = 0L;
+                    long g = 0L;
+                    long b = 0L;
+                    long a = 0L;
+                    int sampled = 0;
+                    int white = 0;
+                    int stride = Math.max(1, data.length / 4096);
+                    for (int index = 0; index < data.length; index += stride) {
+                        int value = data[index];
+                        r += (value >> 16) & 0xFF;
+                        g += (value >> 8) & 0xFF;
+                        b += value & 0xFF;
+                        a += (value >>> 24) & 0xFF;
+                        if ((value & 0x00FFFFFF) == 0x00FFFFFF) {
+                            white++;
+                        }
+                        sampled++;
+                    }
+                    pixels = " sampled=" + sampled + " mean=(" + (r / sampled) + "," + (g / sampled) + ","
+                            + (b / sampled) + "," + (a / sampled) + ") white=" + white + "/" + sampled
+                            + " px0=0x" + Integer.toHexString(data[0]) + " last=0x"
+                            + Integer.toHexString(data[data.length - 1]);
+                }
                 System.out.println("[Celtium] CELTIUM_UPLOAD_CALLER id=" + glTextureId + " " + width + "x" + height
-                        + " first=0x" + Integer.toHexString(first) + " callers=[" + caller + "]");
+                        + " first=0x" + Integer.toHexString(first) + pixels + " callers=[" + caller + "]");
             }
             // A full upload allocates this id's content from scratch, which is what a resource reload, a re-stitch or a
             // reused id all look like from here. The size goes along so a same-size write is treated as the content

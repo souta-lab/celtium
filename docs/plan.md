@@ -395,6 +395,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.430 **round 231: splash の「ゲーム側データ」は正しいと確定（upload の画素 census）。loss は我々側の合成/配置に絞られた**
+
+- **新計器**: `TextureUtilMixin` の名前単位 census に**画素 census**を追加 ✓（`-Dceltium.vulkan.uploadCallerId=<name>` のときだけ・4096 点を等間隔サンプル・ARGB のまま `mean=(r,g,b,a) white=n/N px0/last` を印字 ✓）。あわせて splash probe を拡張し、**frame image と chain pair の両方**を同じ瞬間に dump するようにした ✓（pair 側は present 0 では未 adopt のため今回は出ず ⇒ 次は present 1..3 に移す ✓）。
+- **実測（leg `r212-splash-splash2`・AMD）**: `CELTIUM_UPLOAD_CALLER id=8 256x256 sampled=4096 mean=(237,235,235,255) white=3745/4096 px0=0xffffffff last=0xffffffff callers=[TextureUtil.func_110988_a <- DynamicTexture.func_110564_a:35 <- DynamicTexture.<init>:18 <- Minecraft.func_180510_a:889 <- SplashProgress.drawVanillaScreen:1051]` ✓ ＝ **アップロードされた配列は「白背景＋中央のロゴ」**（白が 91.4%、残りがロゴの暗色 ✓ 平均 (237,235,235) ✓）✓ ⇒ **ゲーム側のデータは正しい** ✓。mirror census も `source=announced-int[]`・全不透明・先頭白で一致 ✓ ⇒ **capture も mirror も正常** ✓。
+- **既存ログからの確定（新しい leg 不要だった）**: `CELTIUM_FBO_TEXTURE_PUBLISHED name=6 identity=0x47869b33 route=chain-pair image=… size=1920x1080` ✓ ＝ **splash の FBO は publication を持つ** ⇒ round 168 の「mirror が無いので白」は**現行木では棄却** ✓。`CELTIUM_MIRROR_DRAW groupTexture=6 … mirrorSource=published-image@1920x1080 target=0 batches=1` ＝ **合成 quad は frame image へ** ✓。`groupTexture=8 … target=1200003891`（= **0x47869B33** ＝ splash FBO の identity ✓）`batches=2` ＝ **ロゴは splash FBO へ 2 batch**（全面 quad ＋ 中央 256×256 quad ✓）。
+- **帰結**: 「ゲームの画素が白い」「mirror が無い」の両方が棄却され、**ロゴが frame image に届かない**のは (a) 中央 quad の配置（ortho/行列）か (b) pair→frame image の合成経路のどちらか ✓。frame image は splash 期に **黒**（probe ✓）で、presented は**白**（合成が白背景を書く ✓）なので、**ロゴだけが落ちている** ✓。
+- **次の一手**: splash probe の pair dump を present 1..3 に移し、**pair にロゴがあるか**を画像で見る ✓（あれば合成側、なければ中央 quad の配置側）✓。あわせて `GUI 文字の暗転` 行と同様、`ortho` の継承値（`scratchZero` の残り3 builder）を splash 経路にも当てて切り分ける ✓。
+
 ## 0.429 **round 230: splash の白は「game の FBO 内容が frame image に届かない」側 — present は frame image しか blit しない（task-75）／名前単位 upload census と splash probe を追加**
 
 - **新計器2つ**: (a) `-Dceltium.vulkan.uploadCallerId=<gl name>` ⇒ `CELTIUM_UPLOAD_CALLER` を**その名前だけ 200 行まで**無制限化 ✓（既定 off・通常は 16 行）✓。(b) `CELTIUM_SPLASH_PROBE` ⇒ present 0..2 の最初の window で **frame image 全体 1920×1080 を dump**（`stage-splash-p<N>-1920x1080.png`）✓。
