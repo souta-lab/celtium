@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.381 **round 171: 条件 (c) の再検証（既存計器で再走）— 訂正: この計器は既に存在しており、私が書いたものは重複だった**
+
+- **訂正（私の誤り）**: round 171 で私は `.celtium-work/compositor_capture.sh` / `compositor_check.py` を書き「新しい計器」として記録しようとしたが、**条件 (c) は既に充足済みで計器も存在する**: `scripts/compositor_capture.py`（番号付き PNG＋shutter 時刻/PID/window tree/hash の JSON 記録）＋ `scripts/compositor_capture_report.py`（capture を renderer の**番号付き** presented frame に画素・時刻で束縛し、differing 画素数と最大チャネル差を報告）。証拠は `docs/compositor-output-capture-2026-10-11.md`（marker frame-20 ↔ capture 0035、実 scene frame-100 ↔ capture 0066、いずれも **0/921600 画素差**）。**`scripts/` を先に読むべきだった**（AGENTS.md の「既存計器を先に読む」規則を私が破った）。
+- **私の scratch script の位置づけ**: 使い捨ての再確認用で、**計器ではない**。今後の再走は既存の `compositor_capture.py` に `-Dceltium.vulkan.frameDumpDir=<dir>` を付けて走らせ、`compositor_capture_report.py --captures … --frames …` で束縛する。
+- **round 171 の再確認（scratch script、現在の jar・1920x1080・`menuHoldTicks=400`・AMD）**: 78 shots と presented dump を比較し **mean|d| = 0.000**（`early` stage の frame ↔ `shot-063`）＝ **現行 build でも compositor 出力は presented frame とピクセル一致**。一致したのは `early` のみで、`world`/`gui` とは同サイズ shot が窓内に無く未比較（限界として残す）。
+- **未測定は依然 scanout のみ**（DRM master 無し・非 root では測れない、と §7 に記録済み）。resize 中の一致も未測定。
+
 ## 0.380 **round 169/170: 「ロード画面」は2経路に見えたが同一根因だった（splash も world load も自作 Framebuffer 経由）。§0.378 の修正が両方を閉じる**
 
 - **原典の行単位確認（splash, sky-draws）**: `Minecraft.drawSplashScreen` の読みは全部正しい — `:963` `new Framebuffer(...)`・`:964` `bindFramebuffer(false)`・`:976-977` ロゴ `DynamicTexture`・`:995-998` **全面 quad（4頂点すべて `tex(0,0)`・白）**・`:1003` 中央 256×256 ロゴ・`:1006` unbind・`:1007` `framebufferRender`。注意: FBO と `framebufferRender` は `scaledW*i × scaledH*i`、全面 quad は `displayWidth/Height`。
