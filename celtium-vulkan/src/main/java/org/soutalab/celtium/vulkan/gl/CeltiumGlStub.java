@@ -496,21 +496,34 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The serial every filed level write takes its number from; see {@link TexCapture#serial}. */
     private final java.util.concurrent.atomic.AtomicLong texUploadSerial =
             new java.util.concurrent.atomic.AtomicLong();
-    private final java.util.Set<Long> liveSync = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private final java.util.Set<Integer> liveNames = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private final java.util.Map<Integer, Boolean> enables = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.Map<Integer, Integer> bufferBindings = new java.util.concurrent.ConcurrentHashMap<>();
-    /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. */
-    private final java.util.Map<Long, Integer> textureBindings = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<Long> liveSync = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final java.util.Set<Integer> liveNames = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    /**
+     * The GL state tables are open-addressed primitive maps, not ConcurrentHashMaps: every read and write happens on
+     * the render thread by GL contract (the stub's callbacks are invoked by the backend there, never by a worker),
+     * so the concurrency the CHMs bought was unused - while their per-call cost was real: a {@code Long.valueOf} box
+     * plus the hash probe on every bind and every texture-parameter lookup, ~4.6% of the unbounded leg's warm
+     * samples between {@code ConcurrentHashMap.get}/{@code putVal} and {@code Integer.valueOf}.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectMap<Boolean> enables =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.ints.Int2IntMap bufferBindings =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
+     * of an unbound (unit,target) returns -1 - never a valid GL name. */
+    private final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private int activeTexture;
     /** Recorded image extents: key {@code (textureName << 16) | level}, proxy targets key on a name of -target. */
-    private final java.util.Map<Long, int[]> texLevels = new java.util.concurrent.ConcurrentHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /**
      * Captured uploads in RGBA8, keyed like {@link #texLevels}. A full {@code glTexImage*} publishes a new record, so
      * a reader sees the old image or the new one and never a half-written one; {@code glTexSubImage2D} patches rows
      * of the record that is already there.
      */
-    private final java.util.Map<Long, TexCapture> texCaptures = new java.util.concurrent.ConcurrentHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<TexCapture> texCaptures =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** The capture census {@link #textureCaptureSummary()} reports: full images, patches and refused uploads. */
     private final java.util.concurrent.atomic.AtomicInteger fullCaptures =
             new java.util.concurrent.atomic.AtomicInteger();
@@ -528,8 +541,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile int unpackAlignment = 4;
     private volatile int unpackRowLength;
     private volatile int unpackSkipPixels, unpackSkipRows;
-    private final java.util.Map<Integer, ByteBuffer> bufferStore = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.Map<Integer, Integer> lastBoundOnTarget = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<Integer, ByteBuffer> bufferStore =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private final java.util.List<Callback> ownedTrampolines = new ArrayList<>();
     private long getStringAddress;
     private ByteBuffer getStringBuffer;
@@ -676,7 +689,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static boolean polygonOffsetFillEnabled() {
         CeltiumGlStub stub = installed;
         return stub != null
-                && stub.enables.getOrDefault(Integer.valueOf(GL_POLYGON_OFFSET_FILL), Boolean.FALSE).booleanValue();
+                && Boolean.TRUE.equals(stub.enables.get(GL_POLYGON_OFFSET_FILL));
     }
     // BH-08: the cull capability and the two face constants, spelled here the way this class spells GL_SCISSOR_TEST -
     // it deliberately carries no org.lwjgl.opengl import, so the numbers are named where they are used.
@@ -714,7 +727,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static boolean cullEnabled() {
         CeltiumGlStub stub = installed;
         return stub != null
-                && stub.enables.getOrDefault(Integer.valueOf(GL_CULL_FACE), Boolean.FALSE).booleanValue();
+                && Boolean.TRUE.equals(stub.enables.get(GL_CULL_FACE));
     }
 
     /** {@return the last {@code glCullFace} argument}, or {@code GL_BACK} when it has not been called. */
@@ -763,7 +776,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@return whether GL_BLEND is enabled}, read from the same {@code enables} map glEnable/glDisable write. */
     public static boolean blendEnabled() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.enables.getOrDefault(Integer.valueOf(GL_BLEND), Boolean.FALSE).booleanValue();
+        return stub != null && Boolean.TRUE.equals(stub.enables.get(GL_BLEND));
     }
 
     /** {@return the RGB source factor GL was last given}, or GL's initial {@code ONE} when it was never told. */
@@ -873,7 +886,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     public static boolean scissorTest() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.enables.getOrDefault(Integer.valueOf(GL_SCISSOR_TEST), Boolean.FALSE).booleanValue();
+        return stub != null && Boolean.TRUE.equals(stub.enables.get(GL_SCISSOR_TEST));
     }
 
     /**
@@ -1019,7 +1032,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         CeltiumGlStub stub = installed;
         TexCapture capture = stub == null
                 ? null
-                : stub.texCaptures.get(Long.valueOf(texLevelKey(textureName, level)));
+                : stub.texCaptures.get(texLevelKey(textureName, level));
         if (capture == null) {
             if (outWidthHeight != null && outWidthHeight.length >= 2) {
                 // The extent goes with the pixels: a caller that reuses one array across levels must not read the
@@ -1069,7 +1082,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         CeltiumGlStub stub = installed;
         TexCapture capture = stub == null
                 ? null
-                : stub.texCaptures.get(Long.valueOf(texLevelKey(textureName, level)));
+                : stub.texCaptures.get(texLevelKey(textureName, level));
         return capture == null ? Long.MIN_VALUE : capture.serial;
     }
 
@@ -1078,7 +1091,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return false;
         }
-        TexCapture capture = stub.texCaptures.get(Long.valueOf(texLevelKey(textureName, level)));
+        TexCapture capture = stub.texCaptures.get(texLevelKey(textureName, level));
         return capture != null && capture.gamePixels;
     }
 
@@ -1107,6 +1120,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private CeltiumGlStub() {
+        // -1 is "no binding recorded": texture and buffer names are generated ids and never negative, while 0 is
+        // the GL "unbound" name a caller can legitimately store.
+        this.textureBindings.defaultReturnValue(-1);
     }
 
     // ---- FunctionProvider ------------------------------------------------------------
@@ -1522,19 +1538,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_GET_STRINGI:
                 return stringIndexed((int) a0, (int) a1);
             case SEM_IS_ENABLED:
-                return this.enables.getOrDefault(Integer.valueOf((int) a0), Boolean.FALSE)
-                        .booleanValue() ? 1L : 0L;
+                return Boolean.TRUE.equals(this.enables.get((int) a0)) ? 1L : 0L;
             case SEM_ENABLE:
                 if ((int) a0 == GL_SCISSOR_TEST) {
                     this.scissorToggleCount++;
                 }
-                this.enables.put(Integer.valueOf((int) a0), Boolean.TRUE);
+                this.enables.put((int) a0, Boolean.TRUE);
                 return 0L;
             case SEM_DISABLE:
                 if ((int) a0 == GL_SCISSOR_TEST) {
                     this.scissorToggleCount++;
                 }
-                this.enables.put(Integer.valueOf((int) a0), Boolean.FALSE);
+                this.enables.put((int) a0, Boolean.FALSE);
                 return 0L;
             case SEM_CULL_FACE:
                 this.cullFaceValue = (int) a0;
@@ -1626,16 +1641,16 @@ public final class CeltiumGlStub implements FunctionProvider {
                 getBooleans((int) a0, a1, fn);
                 return 0L;
             case SEM_IS_OBJECT:
-                return this.liveNames.contains(Integer.valueOf((int) a0))
-                        || this.liveSync.contains(Long.valueOf(a0)) ? 1L : 0L;
+                return this.liveNames.contains((int) a0)
+                        || this.liveSync.contains(a0) ? 1L : 0L;
             case SEM_DELETE:
                 delete(fn, c);
                 return 0L;
             case SEM_BIND_BUFFER:
-                this.bufferBindings.put(Integer.valueOf((int) a0), Integer.valueOf((int) a1));
+                this.bufferBindings.put((int) a0, (int) a1);
                 return 0L;
             case SEM_BIND_TEXTURE:
-                this.textureBindings.put(texBindKey((int) a0), Integer.valueOf((int) a1));
+                this.textureBindings.put(texBindKey((int) a0), (int) a1);
                 return 0L;
             case SEM_ACTIVE_TEXTURE:
                 // The unit index, not the raw enum: the getter adds the GL_TEXTURE0 base back, and a stored enum made
@@ -2197,14 +2212,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (fn.ret == R_INT && fn.args.length <= 1 && lastPointerArg(fn) < 0) {
             // Scalar-return form (glCreateShader, glCreateProgram, glGenLists): the id is the return value.
             int scalar = this.nextName.getAndIncrement();
-            this.liveNames.add(Integer.valueOf(scalar));
+            this.liveNames.add(scalar);
             return scalar;
         }
         if (fn.ret == R_LONG) {
             // Sync object (glFenceSync): ids come from the 64-bit space.
             long sync = this.nextSync.getAndIncrement();
-            this.liveSync.add(Long.valueOf(sync));
-            this.liveNames.add(Integer.valueOf((int) sync));
+            this.liveSync.add(sync);
+            this.liveNames.add((int) sync);
             return sync;
         }
         // Array form (glGenTextures, glCreateTextures...): the out[] is the LAST pointer arg; the count is the
@@ -2212,7 +2227,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int outIndex = lastPointerArg(fn);
         if (outIndex < 0) {
             int scalar = this.nextName.getAndIncrement();
-            this.liveNames.add(Integer.valueOf(scalar));
+            this.liveNames.add(scalar);
             return scalar;
         }
         long out = c[outIndex];
@@ -2222,7 +2237,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int n = countFromArgs(fn, c, outIndex);
         for (int i = 0; i < n; i++) {
             int name = this.nextName.getAndIncrement();
-            this.liveNames.add(Integer.valueOf(name));
+            this.liveNames.add(name);
             memPutInt(out + (long) i * 4L, name);
         }
         return 0L;
@@ -2257,7 +2272,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             for (int i = 0; i < count; i++) {
                 int name = memGetInt(names + (long) i * 4L);
-                this.liveNames.remove(Integer.valueOf(name));
+                this.liveNames.remove(name);
                 if (textures) {
                     forgetTexture(name);
                 }
@@ -2266,9 +2281,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (fn.args.length == 1) {
             if (fn.args[0] == A_LONG) {
-                this.liveSync.remove(Long.valueOf(c[0]));
+                this.liveSync.remove(c[0]);
             } else {
-                this.liveNames.remove(Integer.valueOf((int) c[0]));
+                this.liveNames.remove((int) c[0]);
             }
         }
     }
@@ -2284,7 +2299,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private void forgetTexture(int name) {
         for (int level = 0; level < 256; level++) {
-            Long key = Long.valueOf(texLevelKey(name, level));
+            long key = texLevelKey(name, level);
             this.texLevels.remove(key);
             this.texCaptures.remove(key);
         }
@@ -2400,8 +2415,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 memPutInt(out + 12, this.viewportH);
                 return;
             case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
-                Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(0x0DE1)));
-                value = bound == null ? 0 : bound.intValue();
+                int bound = this.textureBindings.get(texBindKey(0x0DE1));
+                value = bound < 0 ? 0 : bound;
                 break;
             }
             case 0x84E0: // GL_ACTIVE_TEXTURE
@@ -2613,8 +2628,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (isProxyTarget(target)) {
             return -target;
         }
-        Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
-        return bound == null ? 0 : bound.intValue();
+        int bound = this.textureBindings.get(texBindKey(target));
+        return bound < 0 ? 0 : bound;
     }
 
     /**
@@ -2626,7 +2641,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (name == 0) {
             return;
         }
-        this.texLevels.put(Long.valueOf(texLevelKey(name, level)), new int[] { width, height, internal });
+        this.texLevels.put(texLevelKey(name, level), new int[] { width, height, internal });
     }
 
     /**
@@ -2639,11 +2654,11 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Writes into the storage {@code glBufferData} allocated, which is what the mirrored meshes are read from. */
     private void bufferSubData(Fn fn, long[] c) {
-        int name = this.bufferBindings.getOrDefault(Integer.valueOf((int) c[0]), Integer.valueOf(0)).intValue();
+        int name = this.bufferBindings.get((int) c[0]);
         long offset = c[1];
         long size = c[2];
         long data = c[3];
-        ByteBuffer storage = this.bufferStore.get(Integer.valueOf(name));
+        ByteBuffer storage = this.bufferStore.get(name);
         if (storage == null || data == 0L || size <= 0 || offset < 0 || offset + size > storage.capacity()) {
             return;
         }
@@ -2767,7 +2782,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         // Publishing a new record instead of rewriting the old one, so a reader polling the level sees one whole image.
-        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)),
+        this.texCaptures.put(texLevelKey(name, level),
                 new TexCapture(width, height, rgba, true, this.texUploadSerial.incrementAndGet()));
         this.fullCaptures.incrementAndGet();
     }
@@ -2794,7 +2809,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small
         // buffer, and a garbage surface is exactly the silently wrong atlas this path exists to prevent.
         MemoryUtil.memSet(memAddress(zeros), 0, bytes);
-        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)),
+        this.texCaptures.put(texLevelKey(name, level),
                 new TexCapture(width, height, zeros, false, this.texUploadSerial.incrementAndGet()));
         this.undefinedExtents.incrementAndGet();
     }
@@ -2829,9 +2844,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         long key = texLevelKey(name, level);
-        TexCapture existing = this.texCaptures.get(Long.valueOf(key));
+        TexCapture existing = this.texCaptures.get(key);
         if (existing == null) {
-            this.texCaptures.put(Long.valueOf(key),
+            this.texCaptures.put(key,
                     new TexCapture(width, height, patch, true, this.texUploadSerial.incrementAndGet()));
             this.subCaptures.incrementAndGet();
             return;
@@ -2961,7 +2976,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The pname's recorded value for a named texture's level - the DSA form of {@link #texLevelParam}. */
     private int texLevelParamForName(int name, int level, int pname) {
-        int[] dims = this.texLevels.get(Long.valueOf(texLevelKey(name, level)));
+        int[] dims = this.texLevels.get(texLevelKey(name, level));
         if (dims == null) {
             return 0;
         }
@@ -2980,7 +2995,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The pname's recorded value for the bound texture's level, or 0 when nothing was uploaded. */
     private int texLevelParam(int target, int level, int pname) {
         int name = uploadTargetName(target);
-        int[] dims = this.texLevels.get(Long.valueOf(texLevelKey(name, level)));
+        int[] dims = this.texLevels.get(texLevelKey(name, level));
         if (dims == null) {
             return 0;
         }
@@ -3015,8 +3030,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if ("glNamedBufferData".equals(fn.name) || "glNamedBufferStorage".equals(fn.name)) {
             return (int) c[0];
         }
-        Integer bound = this.bufferBindings.get(Integer.valueOf((int) c[0]));
-        return bound == null ? 0 : bound.intValue();
+        int bound = this.bufferBindings.get((int) c[0]);
+        return bound < 0 ? 0 : bound;
     }
 
     private void bufferData(Fn fn, long[] c) {
@@ -3031,10 +3046,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         // the address the caller is still writing to, which shows up as geometry built from whatever the old storage
         // happened to hold. Keeping the block makes the address a buffer name returns stable for the name's lifetime,
         // which is the property a persistent mapping needs; a larger request still has to move it.
-        ByteBuffer storage = this.bufferStore.get(Integer.valueOf(name));
+        ByteBuffer storage = this.bufferStore.get(name);
         if (storage == null || storage.capacity() < size) {
             storage = ByteBuffer.allocateDirect((int) size);
-            this.bufferStore.put(Integer.valueOf(name), storage);
+            this.bufferStore.put(name, storage);
         }
         if (data != 0L) {
             ByteBuffer source = MemoryUtil.memByteBuffer(data, (int) size);
@@ -3053,10 +3068,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (fn.name.startsWith("glMapNamedBuffer")) {
             name = (int) c[0];
         } else {
-            Integer bound = this.bufferBindings.get(Integer.valueOf((int) c[0]));
-            name = bound == null ? 0 : bound.intValue();
+            int bound = this.bufferBindings.get((int) c[0]);
+            name = bound;
         }
-        ByteBuffer storage = this.bufferStore.get(Integer.valueOf(name));
+        ByteBuffer storage = this.bufferStore.get(name);
         if (storage == null) {
             // Mapping a buffer with no allocation: GL would fault - an empty block keeps the caller alive while
             // making writes visibly land nowhere.
@@ -3196,7 +3211,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_NEAREST = 0x2600;
 
     /** Recorded values, keyed {@code (textureName << 32) | pname}. Bounded: past the limit the call is counted. */
-    private final Map<Long, Integer> texParams = new java.util.concurrent.ConcurrentHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<Integer> texParams =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     private final java.util.concurrent.atomic.AtomicInteger texParamCalls =
             new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger texParamUnbound =
@@ -3272,12 +3288,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         long key = texParamKey(textureName, pname);
-        if (!this.texParams.containsKey(Long.valueOf(key))
+        if (!this.texParams.containsKey(key)
                 && this.texParams.size() >= TEX_PARAM_RECORD_LIMIT) {
             this.texParamOverflow.incrementAndGet();
             return;
         }
-        this.texParams.put(Long.valueOf(key), Integer.valueOf(value));
+        this.texParams.put(key, Integer.valueOf(value));
         int calls = this.texParamCalls.incrementAndGet();
         if (org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(TEX_PARAM_SHAPES.size(), 24)) {
             String shape = textureName + "/" + pname + "=" + value;
@@ -3297,8 +3313,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             // A proxy target carries no image and binds to nothing; GL accepts the call and it means nothing.
             return;
         }
-        Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
-        celtium$setTextureParameter(bound == null ? 0 : bound.intValue(), pname, value, site);
+        int bound = this.textureBindings.get(texBindKey(target));
+        celtium$setTextureParameter(bound < 0 ? 0 : bound, pname, value, site);
     }
 
     /**
@@ -3360,7 +3376,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         CeltiumGlStub stub = installed;
         if (stub != null && textureName > 0) {
-            Integer recorded = stub.texParams.get(Long.valueOf(texParamKey(textureName, pname)));
+            Integer recorded = stub.texParams.get(texParamKey(textureName, pname));
             if (recorded != null) {
                 return recorded.intValue();
             }
@@ -3389,7 +3405,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || textureName <= 0) {
             return -1;
         }
-        Integer recorded = stub.texParams.get(Long.valueOf(texParamKey(textureName, pname)));
+        Integer recorded = stub.texParams.get(texParamKey(textureName, pname));
         return recorded == null ? -1 : recorded.intValue();
     }
 
@@ -3472,8 +3488,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private void celtium$noteTextureCopy(String name, int target, int level, int xoffset, int yoffset,
                                           int x, int y, int width, int height) {
         this.textureCopyRequests++;
-        Integer dest = this.textureBindings.get(Long.valueOf(texBindKey(target)));
-        int destName = dest == null ? 0 : dest.intValue();
+        int dest = this.textureBindings.get(texBindKey(target));
+        int destName = dest < 0 ? 0 : dest;
         // The source side lives with the frame target, which owns the image the read framebuffer names: ask it for the
         // rectangle, and only a "served" answer skips the refusal below. Both copy entry points funnel through here, so
         // this one call covers glCopyTexImage2D and glCopyTexSubImage2D alike; a foreign framebuffer, a non-zero level
@@ -3587,9 +3603,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             celtium$reportDrawArrays();
             return;
         }
-        Integer boundName = this.bufferBindings.get(Integer.valueOf(GL_ARRAY_BUFFER));
-        int buffer = boundName == null ? 0 : boundName.intValue();
-        ByteBuffer storage = buffer == 0 ? null : this.bufferStore.get(Integer.valueOf(buffer));
+        int boundName = this.bufferBindings.get(GL_ARRAY_BUFFER);
+        int buffer = boundName;
+        ByteBuffer storage = buffer == 0 ? null : this.bufferStore.get(buffer);
         // No array buffer bound means the pointer glVertexPointer was handed is a **client address**, not an offset
         // into GL-owned storage: the vertices are process memory the game wrote, and under a stub there is no GL object
         // to mirror them from. That is the main menu, the loading screen and every GUI-only frame - measured in the
@@ -3605,7 +3621,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         String reason = null;
         if (storage == null && !clientMemory) {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
-        } else if (!this.enables.getOrDefault(Integer.valueOf(GL_VERTEX_ARRAY), Boolean.FALSE).booleanValue()) {
+        } else if (!Boolean.TRUE.equals(this.enables.get(GL_VERTEX_ARRAY))) {
             reason = "GL_VERTEX_ARRAY is not enabled, so no vertex pointer describes this draw";
         } else if (mode != GL_QUADS) {
             reason = "draw mode " + mode + " is not handled (only 7 = GL_QUADS)";
@@ -3743,7 +3759,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                                 + this.vertexPointerStride + " otherArrays=" + celtium$otherArrayNames()
                                 + " v0..v3=[" + vertices + "] "
                                 + celtium$mirroredMatrices(backend)
-                                + " texture2dEnabled=" + this.enables.getOrDefault(Integer.valueOf(GL_TEXTURE_2D), Boolean.FALSE)
+                                + " texture2dEnabled=" + Boolean.TRUE.equals(this.enables.get(GL_TEXTURE_2D))
                                 + " site=[" + celtium$callSite(10) + "]");
                         drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
                                 + this.vertexPointerStride + " format=" + formatId + " buffer=" + buffer
@@ -3807,7 +3823,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int[] caps = { GL_NORMAL_ARRAY, GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY };
         String[] names = { "GL_NORMAL_ARRAY", "GL_COLOR_ARRAY", "GL_TEXTURE_COORD_ARRAY" };
         for (int i = 0; i < caps.length; i++) {
-            if (this.enables.getOrDefault(Integer.valueOf(caps[i]), Boolean.FALSE).booleanValue()) {
+            if (Boolean.TRUE.equals(this.enables.get(caps[i]))) {
                 if (enabled.length() > 0) {
                     enabled.append(", ");
                 }
@@ -3825,13 +3841,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private int celtium$otherArrayMask() {
         int mask = 0;
-        if (this.enables.getOrDefault(Integer.valueOf(GL_NORMAL_ARRAY), Boolean.FALSE).booleanValue()) {
+        if (Boolean.TRUE.equals(this.enables.get(GL_NORMAL_ARRAY))) {
             mask |= 1;
         }
-        if (this.enables.getOrDefault(Integer.valueOf(GL_COLOR_ARRAY), Boolean.FALSE).booleanValue()) {
+        if (Boolean.TRUE.equals(this.enables.get(GL_COLOR_ARRAY))) {
             mask |= 2;
         }
-        if (this.enables.getOrDefault(Integer.valueOf(GL_TEXTURE_COORD_ARRAY), Boolean.FALSE).booleanValue()) {
+        if (Boolean.TRUE.equals(this.enables.get(GL_TEXTURE_COORD_ARRAY))) {
             mask |= 4;
         }
         return mask;
@@ -4310,7 +4326,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * a fogged sky are two different findings, and the frame alone cannot tell them apart.
      */
     private void celtium$noteFogDegradation(TerrainGpuBackend backend, int buffer, int count) {
-        if (!this.enables.getOrDefault(Integer.valueOf(GL_FOG), Boolean.FALSE).booleanValue()
+        if (!Boolean.TRUE.equals(this.enables.get(GL_FOG))
                 || backend.immediateFogAvailable() || SKY_DEGRADED_LINES.getAndDecrement() <= 0) {
             return;
         }
@@ -4449,8 +4465,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             int paramPname = (int) c[1];
             int textureName = 0;
             if (!isProxyTarget(target)) {
-                Integer bound = this.textureBindings.get(Long.valueOf(texBindKey(target)));
-                textureName = bound == null ? 0 : bound.intValue();
+                int bound = this.textureBindings.get(texBindKey(target));
+                textureName = bound < 0 ? 0 : bound;
             }
             int value = textureParameterValue(textureName, paramPname);
             celtium$noteTextureParameterQuery(fn.name, textureName, paramPname, value,
@@ -4480,8 +4496,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (fn.name.startsWith("glGetBufferParameter")) {
             if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
-                Integer bound = this.bufferBindings.get(Integer.valueOf((int) c[0]));
-                ByteBuffer storage = bound == null ? null : this.bufferStore.get(bound);
+                int bound = this.bufferBindings.get((int) c[0]);
+                ByteBuffer storage = bound == 0 ? null : this.bufferStore.get(bound);
                 if ("glGetBufferParameteri64v".equals(fn.name)) {
                     memPutLong(out, storage == null ? 0L : storage.capacity());
                 } else {
