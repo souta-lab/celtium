@@ -387,6 +387,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.370 **round 177: PR #3/#4/#5 を分割前に merge。`upstream` remote 削除、disk 95%→69%、merged main を leg で検証**
+
+- **ユーザ指示**: 「**PR3,4,5は分割前にmergeしとけよー**」「**upstreamを消せ。本家にmergeする気はない。github上もforkではないし**」「**3,4,5mergeできたらdisk容量減らして。vulkan-drainは他agentがやってるので消さないで**」。
+- **私の誤り（記録）**: 最初の `gh pr list` を `-R` なしで叩いたため **upstream の repo（GTNewHorizons/Celeritas）の PR 一覧**を読み、#3 を外部 contributor の CubicChunks PR と誤報告した。
+  **以後 `gh` は必ず `-R souta-lab/celtium` を付ける**。ユーザの指摘で発覚。
+- **merge（`merge/perf-prs` を別 worktree で作成 → clean になってから main へ）**:
+  - **PR #4** `perf/glless-frame-sync`（GL-less で frame semaphore pair を撤去）→ `bb765e408`
+  - **PR #5** `perf/texture-serial`（texture 変更検知を stub の write serial で O(1) 化）→ `f9761c536`
+  - **PR #3** `perf/pass-brackets`（world pass の分解・section-upload bracket・warm window fixture）→ `ba2633a8a`、さらに PR head が進んだ分 `d7a1dd4bd`（churn fixture・dump cadence flag）＋`13c362262`（台帳）→ `7d48f0741`
+  - main への取り込み → `988d1149b`。**GitHub 上で #1〜#5 すべて MERGED**。
+  - 競合は `docs/perf-status.md` の add/add **のみ**（#3 側の「OPT-01 実装済（main）」という新しい判定＋新しい優先順を採用）。ただし採用時に **#3 版に `OPT-33`/`OPT-34` の行が無い**ことを検出したので、`git show :2:` の ours 側から復元して挿入（`queueSubmitCalls`・`TexCapture.serial` の記述もこれで残った）。**`git diff --cached` ではなく「解決後にキーの存在を検査する」形**にしたのが効いた。
+  - 分割（task-63）との衝突を避けるため、**blend-state に `task63-parked`（`02fec9087`）へ、perf-ring に stash へ、proj-channel に `acc99fe3c`（BH-20 受入）へ退避させてから** merge した。**誰の作業も失っていない。**
+- **`upstream` remote 削除**: `989ebf2e`（goal の固定比較基準）と `dad7ef648`（`upstream-baseline` worktree の HEAD）は **`refs/remotes/upstream/*` 経由でしか到達できなかった**ので、削除前に
+  **`pinned/celeritas-989ebf2e` と `pinned/celeritas-nh-main` のタグ**で固定した（削除後の到達性を確認済み）。`gh` も正しく origin を指すようになった。
+- **disk 削減**: 文書化済みの方針（全 run の `validation-process.json` と `logs/celtium-validation.json`、docs が引用する run の `screenshots/` と `logs/latest.log` を残し、`mods/`・`test-libraries/`・`saves/`・`assets/`・`libraries/`・`validation-console.log`・`logs/debug.log` を削除）を適用。
+  **`latest.log` に必要な計器（`CELTIUM_VERIFY`・`CELTIUM_TEX_COPY_SERVED`・`CELTIUM_MIRROR_DRAW`・`scissorCalls`）が残ることを先に確認**してから実行（`validation-console.log` は1本250MB、`logs/` は304MB あった）。
+  結果: `.celtium-work/runtime` **28G → 1.6G**、repo **33G → 6.6G**、**disk 使用 95% → 69%（空き 4.8G → 31G）**。**`celtium-drains`（他 agent の worktree）・`celtium-perf`・`celtium-headless-interop`・`intel-legs`・`jdks`・`gpu-tools`・git worktree は除外**。稼働中(<45分)の run も除外。
+- **merged main の検証**（leg `r162-merged-menu`・jar `583b46d496f99e72e487a810`・AMD RX 6400・glless・menu dump）: **PASSED / `validationClean=true` / `validationMessageCount=0` / exit 0**。
+  - `CELTIUM_TEX_COPY_SERVED dest=21 256x256 readFbo=0 mean=106,118,133 opaque=65536/65536` ＝**パノラマ修正（`bbe0bbe71`＋`aea5fec0c`）が merge を生き延びた**（merge 前 106,119,135 との差は run 間の床）。
+  - 新計器が生きている: `queueSubmitCalls=1437`（PR#4）・`uploadRingPressureWaits=0`（旧 84）・`pipelineBuildRollbacks=0`・`framePassSplit=[frames=98 frame p50=18.7 p95=62.5 worst=427.2]`（PR#3）。
+- **同時に着地した他担当の unit**: `78e1520ef`（私・**`--window-size` が headless output に反映されない** harness 欠陥。`outputMode=854x480` を leg で確認。BH-09 の受入を塞いでいた）、`acc99fe3c`（proj-channel・**BH-20 受入**: fault 注入で `pipelineBuildRollbacks=1`・次 frame 正常描画・`validationMessageCount=0`。受入 leg が「`build()` が transaction の外」という**読解では見つからなかった段**を暴いた）。
 ## 0.369 **round 176: パノラマを両GPUで受入。ロード画面の dump が出ない根因は「最初の present 前は swapchain が無い」こと**
 
 - **パノラマ両GPU受入**（完成条件 (d) の当該項目）:
