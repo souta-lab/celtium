@@ -47,14 +47,17 @@
 | OPT-30 | GPU culling/dispatch | research | 同左 |
 | OPT-31 | mod 受入互換の維持 | 継続 | submitImmediateBatch の Forge API 形状が土台 |
 | OPT-32 | index/vertex locality | 候補 | terrain mesh の post-process cache locality |
+| — | presented-dump PNG 税の帰属 | **確定（計器税）** | held leg の p99≈318-390 spike は `dumpPresentedImage` の定期 PNG 書込み（present %40、render-thread 上）だった。`presentedDumpEvery=0`（本ブランチの flag）で capture dump のみ残した脚は warm p50=16.3 / p95=18.5 / **p99=21.2**・warm slow frame ゼロ。両 flag とも既定 OFF → production 影響なし。**過去 leg の warm p99 は計器税を含む** |
+| — | section churn fixture | **実装済（本ブランチ）** | `churnInterval=N` で in-view ブロックを周期性 dirt↔stone → 19 toggles/leg。単一 section rebuild は chunkUpload p50=0・worst ~9ms = この fixture 規模では安い |
 
 ## 次の優先順（実測根拠順）
 
 1. ~~OPT-18b pre-transform merge~~ — PR #2 (757ec0b4c)。
-2. **`gameRenderer` 残差 / world-pass 分解** — JFR leg (p-jfr1): GC pause 合計 332ms/28s・最大 72ms。`readBackBlock` が world-phase main サンプルの ~45%（presentReadback 診断税・製品では無効）。fixture 分解（warm4/5, INSIDE worst 追加後）: **steady では world≈terrain(4.1)+flush(3.3)+~1ms** — 我々の分が ~85%。spike では world=370 → terrain=110 + flush=51 + ~200ms 未名 → 残りは **chunkUpload（section rebuild upload・未 bracket→bracket 追加済 warm6）+ GC（warm5: 53 pauses/660ms, `Full (System.gc())` 74-87ms×3）+ game-side**。slow-frame の `submitWaitMillis` は累積値で per-frame ではない（読み違い注意）。
+2. ~~`gameRenderer` 残差 / world-pass 分解~~ — 帰属確定: spike は計器税（上段参照）。真の定常数値（skip ブランチ・cadence-0）: frame p50=6.2/worst=12.5、world=5.4=terrain 1.5+flush 0.8+unnamed ~2.9（game renderWorldPass + Celeritas orchestration・1ms-JFR で diffuse）。
 3. ~~OPT-01~~ — cpuSplit flag で既定 off（main）。
-4. ~~warm window 到達 fixture~~ — `-Dceltium.validation.holdUntilTick=600`（commit d0b85f804）。p-warm2: `worldTicksAtEnd=599`, warm n=280, **warm p50=17.0/p95=76.7/p99=385.3** — chunk-build を過ぎても 300-800ms spike が残存。slow-frame 証拠: `submitWaits=450-737 submitWaitMillis=31-99`（細かい bounded poll の連鎖≈100ms/frame）+ 残 ~300ms が unnamed — step-2 の bracket で分解。
-5. **OPT-09 multidraw** or **OPT-10 state merge**（stateKey 差分断の解消は GUI の残半分）。
+4. ~~warm window 到達 fixture~~ — `-Dceltium.validation.holdUntilTick=600`（commit d0b85f804）+ `churnInterval` + `presentedDumpEvery`（d7a1dd4bd）。
+5. **submitImmediateBatchTimed 残 ~4.4%（1ms-JFR 比）の分解** — lightmap 実 upload ~1.9% + vertex copy ~1% + misc。
+6. **ユーザ環境での `-Dceltium.vulkan.passSplit` 計測** — spike 内の unnamed ~200ms が game-side renderWorldPass か GC か（fixture はそこまで辿り切れない）。GC は `-Xlog:gc*` で Full (System.gc()) 68-101ms が periodic に出る。
 
 ## 計器の範囲メモ（今回確認した事実）
 
