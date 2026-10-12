@@ -52,6 +52,23 @@
 | — | presented-dump PNG 税の帰属 | **確定（計器税）** | held leg の p99≈318-390 spike は `dumpPresentedImage` の定期 PNG 書込み（present %40、render-thread 上）だった。`presentedDumpEvery=0`（本ブランチの flag）で capture dump のみ残した脚は warm p50=16.3 / p95=18.5 / **p99=21.2**・warm slow frame ゼロ。両 flag とも既定 OFF → production 影響なし。**過去 leg の warm p99 は計器税を含む** |
 | — | section churn fixture | **実装済（本ブランチ）** | `churnInterval=N` で in-view ブロックを周期性 dirt↔stone → 19 toggles/leg。単一 section rebuild は chunkUpload p50=0・worst ~9ms = この fixture 規模では安い |
 | — | upload ring slots 4→8 | **実装済（`534a34066`・perf-ring）** | `uploadRingPressureWaits` 66→7 — ring 拡張で GPU 待ち解消。本 ledger に欠落していた着陸項目 |
+| — | lazy-supply retry の連続失敗 | **実装済/検証済（PR #8 merged `8c35b4306`）** | `submitImmediateBatch` が full-content 未所持 texture の mirror supply を bind 毎に retry → glTexture=43(未書込の game FBO) が ~3×/frame 失敗 = 1183 失敗/leg・warm submit の 68%。write serial で skip → `lazySupply 0/1183→0/2`・**frameIntervalP95 49.7→18.7ms・p99 62.8→21.7** |
+| — | dispatch 二重確保 + bind-log 洪水 | **実装済/検証済（PR #9 merged `bf086019d`）** | `Boolean.getBoolean("celtium.glstub.trace")` 毎呼出 → static TRACE; legacy path が long[12]×2 確保 → `dispatchArgs` で 1 回; `bindTexture` id 40-60 の無条件 println 3402行/leg → `UNIT_RANGE_LOG_LIMIT=40` budget |
+| — | fixture vsync 押下 | **実装済（PR #10 open）** | GameSettings.enableVsync の field 書込みは backend に届かない → ValidationClient が `VulkanSwapchain.setVSyncRequested` + `Display.setVSyncEnabled` を reflection で両方 push。真の unbounded 定常: **p50=6.91/p95=10.1/p99=15.8ms (RX 6400)** |
+| — | entity gather の per-tick cache | **実装済（PR #11 open）** | `getLoadedEntityList` が全 chunk の entity map + shouldRenderInPass を frame 毎（~2%@145fps）→ (world,totalWorldTime) キーで per-tick cache。mixin の前置 clear() 削除（tick stamp を潰していた）。leg p-egc2: 画像 masked diff 37px=同一・p50 6.91 維持 |
+| — | glyph per-string batching（F3 軽減） | **実装済（PR #12 open）** | 1 quad/glyph の submit 経路（~2µs/glyph・F3 ~15K quad=~30ms）→ capture 層で string 単位 buffer・1 append/segment。順序: 色変化で flush・unicode/debug は per-glyph・intervening draw は backend hook で capture flush。`MODE_CENSUS` int[16]・VERTEX memPut 化・copyVerticesTransformed identity fast path（10.5%）も同居。F3 leg: **p50 43.1→13.8ms・p95 136→28・p99 159→38**。初期版は hook 再帰で timeout → open flag を append 前に閉じて解消。Clean-room 実装 |
+
+## 累積効果（fixture・NOLAVA flat・RX 6400・unbounded で測れる範囲のみ）
+
+| 指標 | 開始時 | 現在 | 倍率 |
+|---|---|---|---|
+| frame render p50（backend 時間軸） | ~9-11ms | **3.5ms** | **~2.5-3×** |
+| frame interval p50（frame-to-frame） | ~16.3-16.7ms（vsync floor 込み） | **6.9-7.1ms** | **~2.4×**（≈60→~145fps 換算） |
+| F3 overlay on の frame interval | 43.1ms | **13.8-32.6ms**（脚分散） | **~1.5-3×** |
+| GUI bracket p50 | ~2-4ms | **0.2ms** | — |
+| submit 当たりの queue packet | 18.6/frame | 9.6/frame | ~2× 減 |
+
+積算の内訳: lazy-supply retry 除去（p95 49.7→18.7）・semaphore pair 撤去（18.6→9.6 submits/frame）・pre-transform merge・texture serial・dispatch/CHM・font string batch（F3 時）・entity tick cache。**実ワールドは fixture より地形・entity・mod が多いので倍率は下がる** — ユーザー実機での計測が残る（fixture は flat 60-64 sections のみ）。
 
 ## 次の優先順（実測根拠順）
 
