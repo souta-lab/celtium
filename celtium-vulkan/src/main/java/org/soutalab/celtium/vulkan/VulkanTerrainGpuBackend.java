@@ -1578,6 +1578,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean pendingFontAlphaTest;
     private float pendingFontAlphaRef;
     private boolean pendingFontActive;
+    /**
+     * The capture-side per-string font buffer's flush, run at the top of {@link #celtium$flushPendingFontBatch}: the
+     * capture accumulates a string's glyphs itself and hands them over in one append, so every point that would
+     * flush this run must first pull in whatever the capture is still holding.
+     */
+    private Runnable fontPreFlush;
+
+    /** Registers the capture's pre-flush hook; invoked with {@code null} to clear it. */
+    public void celtium$setFontPreFlush(Runnable hook) {
+        this.fontPreFlush = hook;
+    }
     /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
     private final float[] pendingFontProjection = new float[16];
     private final float[] pendingFontModelView = new float[16];
@@ -4727,6 +4738,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * submission's own entry flush cannot see it again.
      */
     private void celtium$flushPendingFontBatch(String how) {
+        // The capture's own per-string buffer flushes through the same point as this pending run: whatever is
+        // about to happen - an intervening submission, a boundary, a state change - every glyph the capture is
+        // holding belongs before it, in the run this method is about to submit. Invoked unconditionally: the
+        // capture can hold a segment while the pending run is empty.
+        Runnable hook = this.fontPreFlush;
+        if (hook != null) {
+            try {
+                hook.run();
+            } catch (Throwable ignored) {
+                // A capture-side failure must not take the flush down with it.
+            }
+        }
         if (!this.pendingFontActive) {
             return;
         }

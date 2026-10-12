@@ -71,12 +71,64 @@ public final class CeltiumFontGlyphCapture {
      * gaps between characters. Quads do not join. The census is what says which of the two this path is on - the
      * mode is read from the game's own glBegin, and this file must not assume it.
      */
-    private static final java.util.Map<Integer, Integer> MODE_CENSUS = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The draw-mode census as a flat array: a ConcurrentHashMap.merge ran per glyph and cost ~1us in boxes and
+     * hashing - at F3's ~15K glyphs a frame that alone was worth ~15ms of the 43ms F3 frame. Draw modes are small GL
+     * enums (0..10), so an index beats a hash; modes outside the table still land in {@link #otherModes}.
+     */
+    private static final int[] MODE_COUNTS = new int[16];
+    private static int otherModes;
+    private static final java.util.Map<Integer, Integer> OTHER_MODE_COUNTS = new java.util.HashMap<>();
+
+    /**
+     * The per-string quad buffer: glyphs accumulate here between {@link #endRenderString} flushes and go to the
+     * backend in one {@code celtium$fontAppend} call instead of one call per glyph. Measured on the F3 leg, the
+     * per-glyph call chain - submit, VERTEX pack, append - was ~2us/glyph, ~30ms of the 43ms F3 frame; the buffer
+     * keeps the same vertex bytes and the same strip separators, so downstream nothing about the run changes.
+     * <p>
+     * Ordering is preserved three ways: a colour change flushes before the differently-coloured quad is written; a
+     * unicode or debug-path glyph flushes then takes the per-glyph path itself; and every intervening or boundary
+     * draw reaches it through {@link #flushBufferedQuads}, which the backend invokes from the same place it flushes
+     * its own pending font run ({@code celtium$flushPendingFontBatch}) - a strikethrough quad inside a string is
+     * submitted after the glyphs that came before it and before the ones that come after, exactly as per-glyph
+     * submission ordered it.
+     */
+    private static ByteBuffer bufferedQuads;
+    private static long bufferedQuadsBase;
+    private static int bufferedVertexCount;
+    private static int bufferedQuadCount;
+    private static int bufferedColour = -1;
+    private static boolean bufferedOpen;
+    private static long bufferedFlushes;
+    private static long bufferedFlushQuads;
+    /** The window's family: unicode glyphs always take the per-glyph path, since their texture differs from the
+     * default page's and the buffer must not fold them into the ASCII segment. */
+    private static boolean windowUnicode;
+    /** The backend the pre-flush hook is registered on, so a backend swap re-registers it. */
+    private static Object bufferedHookBackend;
+
+    /** The census in the same `{0:0 1:18 ...}` shape the map printed. */
+    private static String modeCensusSummary() {
+        StringBuilder line = new StringBuilder(96).append('{');
+        for (int i = 0; i < MODE_COUNTS.length; i++) {
+            line.append(i).append(':').append(MODE_COUNTS[i]).append(' ');
+        }
+        if (otherModes > 0) {
+            line.append("other=").append(otherModes).append('=').append(OTHER_MODE_COUNTS).append(' ');
+        }
+        return line.append('}').toString();
+    }
 
 
     /** One glyph's worth of vertices, written per glyph and handed to the backend by address. */
     private static final ByteBuffer VERTEX = ByteBuffer.allocateDirect(STRIDE * MAX_VERTICES)
             .order(ByteOrder.nativeOrder());
+    /**
+     * {@link #VERTEX}'s native base, cached: the buffer is allocated once, so writes through
+     * {@code MemoryUtil.memPutFloat} skip the per-call bounds check {@code ByteBuffer.putFloat} pays - 24 checks per
+     * glyph, ~15K glyphs a frame under F3.
+     */
+    private static final long VERTEX_BASE = MemoryUtil.memAddress(VERTEX);
     /** The isolation probe's buffer: the same four vertices without texture coordinates. */
     private static final ByteBuffer ISOLATED = ByteBuffer.allocateDirect(POSITION_COLOR_STRIDE * MAX_VERTICES)
             .order(ByteOrder.nativeOrder());
@@ -311,6 +363,7 @@ public final class CeltiumFontGlyphCapture {
             bridgeWindows++;
         }
         armed = glless && TerrainGpuBackends.current() != null;
+        windowUnicode = unicode;
         // The startup windows run before a backend exists and before the overlay matrices are installed (identity), so
         // the lines worth having are the armed ones - the glyphs that are actually offered to the renderer. Three of
         // those and three more under the overlay's orthographic projection, which is the state the GUI's text is drawn
@@ -374,6 +427,7 @@ public final class CeltiumFontGlyphCapture {
         defaultWindows++;
         fastGlyphs++;
         armed = true;
+        windowUnicode = false;
         mode = GL_TRIANGLE_STRIP;
         vertexCount = MAX_VERTICES;
         texCoordCount = MAX_VERTICES;
@@ -410,6 +464,109 @@ public final class CeltiumFontGlyphCapture {
     /** Closes it. Called from {@code func_180455_b}'s RETURN injection. */
     public static void endRenderString() {
         renderStringNanos += System.nanoTime() - renderStringStartNanos;
+        flushBufferedQuads(null);
+    }
+
+    /**
+     * Sends the buffered segment to the backend and resets it. Called at every point a per-glyph submission would
+     * have gone out: the end of a string, a colour change, before a non-buffered glyph, and - through the hook the
+     * backend invokes - before any intervening or boundary draw.
+     *
+     * @param backend the caller's backend, looked up when {@code null}
+     */
+    public static void flushBufferedQuads(TerrainGpuBackend backend) {
+        if (!bufferedOpen) {
+            return;
+        }
+        // Closed before the append, not after: the append can reach this method again through the backend's own
+        // pending-run flush (a state-change inside celtium$fontAppend), and a re-entrant call must find nothing.
+        // Measured as the leg that hung: the open flag let the hook re-enter and recurse until the timeout.
+        bufferedOpen = false;
+        if (backend == null) {
+            backend = TerrainGpuBackends.current();
+        }
+        try {
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                boolean taken = vulkan.celtium$fontAppend(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
+                        FORMAT_ID, bufferedQuadsBase, bufferedVertexCount, GL_TRIANGLE_STRIP);
+                if (!taken) {
+                    // The run refused (matrices dirty, a stall, off-main target): submit each stored quad through
+                    // the ordinary path, in order. Quads sit at every sixth vertex past the separators between
+                    // them - [Q][sep][Q][sep][Q] - so the walk is a fixed stride.
+                    for (int k = 0; k < bufferedQuadCount; k++) {
+                        taken |= backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
+                                FORMAT_ID, bufferedQuadsBase + (long) k * 6 * STRIDE, MAX_VERTICES,
+                                GL_TRIANGLE_STRIP);
+                    }
+                }
+                if (taken) {
+                    accepted += bufferedQuadCount;
+                }
+            } else if (backend != null) {
+                for (int k = 0; k < bufferedQuadCount; k++) {
+                    backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
+                            FORMAT_ID, bufferedQuadsBase + (long) k * 6 * STRIDE, MAX_VERTICES,
+                            GL_TRIANGLE_STRIP);
+                }
+            }
+        } catch (Throwable error) {
+            refuse("flush-threw", String.valueOf(error));
+        } finally {
+            bufferedFlushes++;
+            bufferedFlushQuads += bufferedQuadCount;
+            bufferedVertexCount = 0;
+            bufferedQuadCount = 0;
+            bufferedColour = -1;
+        }
+    }
+
+    /** Grows {@link #bufferedQuads} until it can hold {@code bytes}; {@code false} only when allocation fails. */
+    private static boolean ensureBufferedCapacity(int bytes) {
+        ByteBuffer buffer = bufferedQuads;
+        if (buffer == null) {
+            int capacity = Math.max(4096, Integer.highestOneBit(Math.max(1, bytes - 1)) << 1);
+            try {
+                bufferedQuads = ByteBuffer.allocateDirect(capacity).order(ByteOrder.nativeOrder());
+            } catch (OutOfMemoryError e) {
+                return false;
+            }
+            bufferedQuadsBase = MemoryUtil.memAddress(bufferedQuads);
+            return true;
+        }
+        if (buffer.capacity() >= bytes) {
+            return true;
+        }
+        try {
+            int capacity = Integer.highestOneBit(Math.max(buffer.capacity(), bytes - 1)) << 1;
+            ByteBuffer grown = ByteBuffer.allocateDirect(capacity).order(ByteOrder.nativeOrder());
+            MemoryUtil.memCopy(bufferedQuadsBase, MemoryUtil.memAddress(grown), buffer.capacity());
+            bufferedQuads = grown;
+            bufferedQuadsBase = MemoryUtil.memAddress(grown);
+        } catch (OutOfMemoryError e) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Registers the pre-flush hook on this backend, once per backend instance: at every place the backend flushes
+     * its own pending font run - an intervening submission, a boundary, a state change - it invokes this flush
+     * first, so the buffered glyphs land in that same run and keep their submission order against the draw that is
+     * about to happen.
+     */
+    private static void registerBufferedHook(TerrainGpuBackend backend) {
+        if (backend == bufferedHookBackend) {
+            return;
+        }
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$setFontPreFlush(CeltiumFontGlyphCapture::bufferedPreFlush);
+            bufferedHookBackend = backend;
+        }
+    }
+
+    /** The hook's shape: a {@code Runnable} that takes no backend and flushes on the current one. */
+    private static void bufferedPreFlush() {
+        flushBufferedQuads(null);
     }
 
     /** Opens the string bracket. Called from {@code func_175065_a}'s HEAD injection. */
@@ -583,20 +740,72 @@ public final class CeltiumFontGlyphCapture {
                 textureV[i] = 0.0f;
             }
         }
-        VERTEX.clear();
-        for (int i = 0; i < MAX_VERTICES; i++) {
-            // The middle pair exchanged when the winding probe is on: the same four corners with the same texture
-            // coordinates, in an order whose triangles face the other way.
-            int vertex = SWAP_WINDING ? (i == 1 ? 2 : i == 2 ? 1 : i) : i;
-            VERTEX.putFloat(positionX[vertex]);
-            VERTEX.putFloat(positionY[vertex]);
-            VERTEX.putFloat(positionZ[vertex]);
-            VERTEX.putFloat(textureU[vertex]);
-            VERTEX.putFloat(textureV[vertex]);
-            VERTEX.put((byte) red);
-            VERTEX.put((byte) green);
-            VERTEX.put((byte) blue);
-            VERTEX.put((byte) alpha);
+        int packed = red | (green << 8) | (blue << 16) | (alpha << 24);
+        if (!windowUnicode && DEBUG_RGB < 0 && !SCREEN_FILL && !ISOLATE_POSITION_COLOR && !FORCE_QUADS
+                && mode == GL_TRIANGLE_STRIP) {
+            // The buffered path: write the quad - and the strip separator the run inserts between successive glyphs -
+            // into the per-string buffer and return. The submission happens once per segment in flushBufferedQuads.
+            if (bufferedOpen && packed != bufferedColour) {
+                flushBufferedQuads(backend);
+            }
+            int quads = bufferedQuadCount;
+            int needed = (quads == 0 ? MAX_VERTICES : MAX_VERTICES + 2) * STRIDE;
+            if (ensureBufferedCapacity(bufferedVertexCount * STRIDE + needed)) {
+                long base = bufferedQuadsBase + (long) bufferedVertexCount * STRIDE;
+                if (quads > 0) {
+                    // The separator: a copy of the previous glyph's last vertex and a copy of the new glyph's first -
+                    // two zero-area triangles between the glyph strips, exactly what the backend inserts between
+                    // successive appends.
+                    MemoryUtil.memCopy(base - STRIDE, base, STRIDE);
+                    base += STRIDE;
+                    MemoryUtil.memPutFloat(base, positionX[0]);
+                    MemoryUtil.memPutFloat(base + 4, positionY[0]);
+                    MemoryUtil.memPutFloat(base + 8, positionZ[0]);
+                    MemoryUtil.memPutFloat(base + 12, textureU[0]);
+                    MemoryUtil.memPutFloat(base + 16, textureV[0]);
+                    MemoryUtil.memPutInt(base + 20, packed);
+                    base += STRIDE;
+                }
+                for (int i = 0; i < MAX_VERTICES; i++) {
+                    int vertex = SWAP_WINDING ? (i == 1 ? 2 : i == 2 ? 1 : i) : i;
+                    MemoryUtil.memPutFloat(base, positionX[vertex]);
+                    MemoryUtil.memPutFloat(base + 4, positionY[vertex]);
+                    MemoryUtil.memPutFloat(base + 8, positionZ[vertex]);
+                    MemoryUtil.memPutFloat(base + 12, textureU[vertex]);
+                    MemoryUtil.memPutFloat(base + 16, textureV[vertex]);
+                    MemoryUtil.memPutInt(base + 20, packed);
+                    base += STRIDE;
+                }
+                bufferedVertexCount += quads == 0 ? MAX_VERTICES : MAX_VERTICES + 2;
+                bufferedQuadCount++;
+                bufferedOpen = true;
+                bufferedColour = packed;
+                registerBufferedHook(backend);
+                submitted++;
+                MODE_COUNTS[GL_TRIANGLE_STRIP]++;
+                return;
+            }
+            // Capacity could not grow: fall through to the per-glyph path for this quad.
+        }
+        if (bufferedOpen) {
+            // Anything outside the buffered family - a unicode glyph, a debug probe, a QUADS-mode quad - orders
+            // after every buffered glyph: the segment goes out first, then this one takes the per-glyph path.
+            flushBufferedQuads(backend);
+        }
+        {
+            long base = VERTEX_BASE;
+            for (int i = 0; i < MAX_VERTICES; i++) {
+                // The middle pair exchanged when the winding probe is on: the same four corners with the same texture
+                // coordinates, in an order whose triangles face the other way.
+                int vertex = SWAP_WINDING ? (i == 1 ? 2 : i == 2 ? 1 : i) : i;
+                MemoryUtil.memPutFloat(base, positionX[vertex]);
+                MemoryUtil.memPutFloat(base + 4, positionY[vertex]);
+                MemoryUtil.memPutFloat(base + 8, positionZ[vertex]);
+                MemoryUtil.memPutFloat(base + 12, textureU[vertex]);
+                MemoryUtil.memPutFloat(base + 16, textureV[vertex]);
+                MemoryUtil.memPutInt(base + 20, packed);
+                base += STRIDE;
+            }
         }
         int drawMode = FORCE_QUADS ? GL_QUADS : mode;
         int formatId = FORMAT_ID;
@@ -634,7 +843,10 @@ public final class CeltiumFontGlyphCapture {
             }
             vertexAddress = MemoryUtil.memAddress(isolated);
         } else {
-            VERTEX.flip();
+            // clear(), not flip(): the memPut writes do not move the buffer's position, so flip would write
+            // limit=0 and the extent check below would refuse every glyph. clear() restores position=0 with
+            // limit=capacity - the same contract flip produced when putFloat advanced the position.
+            VERTEX.clear();
             if (VERTEX.position() != 0 || VERTEX.limit() != MAX_VERTICES * STRIDE) {
                 refuse("address-extent", "VERTEX wrote " + VERTEX.limit() + " bytes, expected "
                         + (MAX_VERTICES * STRIDE));
@@ -643,7 +855,12 @@ public final class CeltiumFontGlyphCapture {
             vertexAddress = MemoryUtil.memAddress(VERTEX);
         }
         submitted++;
-        MODE_CENSUS.merge(Integer.valueOf(drawMode), Integer.valueOf(1), Integer::sum);
+        if (drawMode >= 0 && drawMode < MODE_COUNTS.length) {
+            MODE_COUNTS[drawMode]++;
+        } else {
+            OTHER_MODE_COUNTS.merge(Integer.valueOf(drawMode), Integer.valueOf(1), Integer::sum);
+            otherModes++;
+        }
         if (MATRIX_PROBE && matrixProbeLines < 12 && (submitted < 4 || submitted % 2000 == 0)) {
             matrixProbeLines++;
             System.out.println("[Celtium] CELTIUM_FONT_GLYPH_MATRIX submitted=" + submitted + " quad=(" + positionX[0]
@@ -834,7 +1051,7 @@ public final class CeltiumFontGlyphCapture {
                 + " renderStringCalls=" + renderStringCalls
                 + " fastGlyphs=" + fastGlyphs
                 + " fontTextureRebinds=" + fontTextureRebinds
-                + " reasons=" + REFUSALS + " modes=" + MODE_CENSUS + " " + batchSummary();
+                + " reasons=" + REFUSALS + " modes=" + modeCensusSummary() + " " + batchSummary();
     }
 
     /**
