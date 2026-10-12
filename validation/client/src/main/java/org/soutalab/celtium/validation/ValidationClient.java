@@ -39,6 +39,19 @@ import java.util.List;
 @Mod(modid = "celtium_validation", name = "Celtium validation fixture", version = "0.1.0", clientSideOnly = true)
 public final class ValidationClient {
     /**
+     * Latches the live fixture at construction, which is the earliest point there is.
+     * <p>
+     * Measured order in {@code Minecraft.startGame}: {@code beginMinecraftLoading} (preInit) at :514, the splash draw
+     * {@code SplashProgress.drawVanillaScreen} at :517, {@code finishMinecraftLoading} (init) at :588. So an
+     * {@code init}-time latch is set *after* the splash has already been drawn - the hook would run, find no instance
+     * and read as "no loading frame", which is the counter-absence trap this project keeps paying for. FML constructs
+     * the mod instance before any of that.
+     */
+    public ValidationClient() {
+        instance = this;
+    }
+
+    /**
      * Time of day pinned for comparison runs: noon by default, so the sun angle cannot drift between runs.
      * <p>
      * {@code -Dceltium.validation.worldTime=<ticks>} overrides it, which is what a night scene needs: the user's
@@ -1535,6 +1548,38 @@ public final class ValidationClient {
     private boolean celtium$interopChecked;
     /** Set once the named-screen knob has been acted on, so the screen is opened once per leg. */
     private boolean celtium$namedScreenOpened;
+    /** The tick the named screen opened and the requested scroll amount, so the scroll runs once, five ticks later. */
+    private int celtium$namedScreenScrollTicks;
+    private int celtium$namedScreenScrollBy;
+    private boolean celtium$namedScreenScrolled;
+
+    /** {@return the screen's GuiSlot, by field type}, or null when it has none. */
+    private static Object celtium$namedScreenSlot(net.minecraft.client.gui.GuiScreen screen) {
+        for (Class<?> type = screen.getClass(); type != null; type = type.getSuperclass()) {
+            for (java.lang.reflect.Field field : type.getDeclaredFields()) {
+                if (net.minecraft.client.gui.GuiSlot.class.isAssignableFrom(field.getType())) {
+                    field.setAccessible(true);
+                    try {
+                        return field.get(screen);
+                    } catch (IllegalAccessException inaccessible) {
+                        return null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** {@return the slot's amountScrolled}, or -1 when it cannot be read. */
+    private static int celtium$namedScreenAmountScrolled(Object slot) {
+        try {
+            java.lang.reflect.Field field = slot.getClass().getField("amountScrolled");
+            field.setAccessible(true);
+            return ((Number) field.get(slot)).intValue();
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            return -1;
+        }
+    }
 
     private boolean celtium$jeiScreen;
     /** Set once the property-driven screenshot at a specific tick has been taken. */
@@ -2575,6 +2620,11 @@ public final class ValidationClient {
     }
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
+        // The splash hook is static (the mixin cannot hold the fixture instance), so the live fixture is latched here,
+        // before any splash frame is drawn - Minecraft.drawSplashScreen runs inside startGame, which is after FML's
+        // init. Without this the hook would silently do nothing and read as "no loading frame", which is exactly the
+        // "a missing counter is not a missing draw" trap.
+        instance = this;
         enabled = Boolean.getBoolean("celtium.validation");
         // The compact vertex format packs the same data into 24 bytes per vertex instead of 32; the fixture can
         // switch it on before the terrain renderer is created so both encodings can be compared from one scene.
@@ -4157,11 +4207,70 @@ public final class ValidationClient {
                     mc.displayGuiScreen(requested);
                     report.addProperty("namedScreenOpened", requested.getClass().getName());
                     report.addProperty("namedScreenOpenedAtTick", worldTicks);
+                    // BH-09's missing piece: vanilla's GuiSlot.drawScreen enables the scissor only when the list is
+                    // *scrollable*, and this instance has few languages and few resource packs - measured as
+                    // scissorCalls=0 / scissorToggles=0 on both screens, with the summary printing. A wheel event
+                    // cannot be synthesised honestly (Mouse.getEventDWheel reads LWJGL's queue, which the fixture does
+                    // not own), so this drives the same method handleMouseInput drives - GuiSlot.scrollBy + the
+                    // amountScrolled bind - and says so in the report. Default is 0 = leave the list alone, so no
+                    // existing leg or calibration key moves.
+                    celtium$namedScreenScrollTicks = worldTicks;
+                    celtium$namedScreenScrollBy =
+                            Integer.getInteger("celtium.validation.scrollList", 0).intValue();
                 } else {
                     report.addProperty("namedScreenOpened", "unknown request: " + screenRequest);
                 }
             } catch (Throwable error) {
                 report.addProperty("namedScreenOpened", "failed: " + error);
+            }
+        }
+        // The list scroll, a few ticks after the named screen opened (a slot list is laid out by then).
+        if (celtium$namedScreenScrollTicks > 0 && !celtium$namedScreenScrolled
+                && worldTicks >= celtium$namedScreenScrollTicks + 5 && mc.currentScreen != null) {
+            celtium$namedScreenScrolled = true;
+            try {
+                Object slot = celtium$namedScreenSlot(mc.currentScreen);
+                if (slot == null) {
+                    report.addProperty("listScroll", "no GuiSlot field found on "
+                            + mc.currentScreen.getClass().getName());
+                } else {
+                    int before = celtium$namedScreenAmountScrolled(slot);
+                    java.lang.reflect.Method scrollBy = null;
+                    for (String name : new String[] {"scrollBy", "func_148132_a"}) {
+                        try {
+                            scrollBy = slot.getClass().getMethod(name, int.class);
+                            break;
+                        } catch (NoSuchMethodException next) {
+                            // Try the SRG name.
+                        }
+                    }
+                    if (scrollBy == null) {
+                        report.addProperty("listScroll", "the GuiSlot has no scrollBy/amountScrolled API");
+                    } else {
+                        scrollBy.setAccessible(true);
+                        scrollBy.invoke(slot, Integer.valueOf(celtium$namedScreenScrollBy));
+                        java.lang.reflect.Method bind = null;
+                        for (String name : new String[] {"bindAmountScrolled", "func_148123_a"}) {
+                            try {
+                                bind = slot.getClass().getMethod(name);
+                                break;
+                            } catch (NoSuchMethodException next) {
+                                // Try the SRG name.
+                            }
+                        }
+                        if (bind != null) {
+                            bind.setAccessible(true);
+                            bind.invoke(slot);
+                        }
+                        int after = celtium$namedScreenAmountScrolled(slot);
+                        report.addProperty("listScroll", "scrolled GuiSlot by " + celtium$namedScreenScrollBy
+                                + " via scrollBy+bindAmountScrolled (the methods handleMouseInput drives; the wheel"
+                                + " event itself cannot be synthesised honestly), amountScrolled "
+                                + before + " -> " + after + " on " + slot.getClass().getName());
+                    }
+                }
+            } catch (Throwable error) {
+                report.addProperty("listScroll", "failed: " + error);
             }
         }
         if (worldTicks >= 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
@@ -5597,6 +5706,43 @@ public final class ValidationClient {
      * world-frame count, and the renderer's presented-frame counter before the present that will write it. The
      * completion - which present actually wrote the file - is observed in {@link #celtium$completePendingDumps()}.
      */
+    /** Latched once, so a splash drawn many times adds one dump rather than one per call. */
+    private static boolean celtium$loadingDumpRequested;
+    /** The live fixture, so the static splash hook can reach the dump request path. */
+    private static ValidationClient instance;
+
+    /**
+     * Requests the presented dump for the loading phase, from the splash hook.
+     * <p>
+     * No existing switch can land in this window: {@code dumpPresentedTick} and {@code screenshotAtTick} are keyed on
+     * world ticks, {@code dumpPresentedMenuTick} needs {@code GuiMainMenu} and a client tick, and the loading phase runs
+     * inside {@code Minecraft.startGame} before the first client tick
+     * ({@code Minecraft.java:517} -> {@code SplashProgress.drawVanillaScreen} -> {@code drawSplashScreen}). Called
+     * reflectively from the mixin on {@code drawSplashScreen}'s RETURN, because the fixture is a separate mod jar.
+     * Off unless {@code -Dceltium.validation.dumpPresentedImage=true}, and once per run.
+     */
+    public static void requestLoadingDump() {
+        // The isolation line: one leg must say whether the hook ran with a live fixture. Printed before every early
+        // return, so "no line at all" (mixin not applied) and "instanceSet=false" (ordering) cannot be confused.
+        System.out.println("[Celtium] CELTIUM_SPLASH_HOOK fixture instanceSet=" + (instance != null)
+                + " alreadyRequested=" + celtium$loadingDumpRequested
+                + " dumpEnabled=" + Boolean.getBoolean("celtium.validation.dumpPresentedImage"));
+        if (celtium$loadingDumpRequested || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            return;
+        }
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null) {
+                return;
+            }
+            celtium$loadingDumpRequested = true;
+            instance.celtium$requestPresentedDump(mc, "loading");
+            instance.report.addProperty("loadingDumpRequestedAtClientTick", Integer.valueOf(instance.celtium$clientTicks));
+        } catch (Throwable error) {
+            // A dump that cannot be requested is a measurement lost, never a frame lost.
+        }
+    }
+
     private PictureEvidence celtium$requestPresentedDump(Minecraft mc, String stage) {
         java.nio.file.Path image = celtium$picturePath(stage, "presented");
         PictureEvidence evidence = new PictureEvidence(stage, SOURCE_PRESENTED_DUMP, image, worldTicks, worldFrames,

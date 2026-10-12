@@ -73,6 +73,36 @@ public class MinecraftMixin {
      * the surface needs; the device and swapchain are created before the framebuffer and the resource load, and the
      * world legs see the same single renderer as before because this is the same latch the tick path uses.
      */
+    /**
+     * Requests the presented dump for the loading phase, from the splash's own return.
+     * <p>
+     * No existing switch can land in this window: the tick-keyed dumps need a world or the main menu, and the loading
+     * phase runs inside {@code Minecraft.startGame} before the first client tick
+     * ({@code Minecraft.java:517} -> {@code SplashProgress.drawVanillaScreen} -> {@code drawSplashScreen}). The fixture
+     * is a separate mod jar, so the call is reflective and silent when it is absent; the stage name is {@code loading}
+     * and the request is latched once inside the fixture.
+     */
+    /**
+     * The control anchor: {@code startGame} runs on every launch, so a leg that shows no splash line at all can be
+     * read as "the mixin did not apply" rather than "the splash method was not reached" - the two have different
+     * fixes and the same silence otherwise.
+     */
+    @Inject(method = "startGame", at = @At("HEAD"), require = 0)
+    private void celtium$splashHookControl(CallbackInfo ci) {
+        System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");
+    }
+
+    @Inject(method = "drawSplashScreen", at = @At("RETURN"), require = 0)
+    private void celtium$dumpLoadingFrame(CallbackInfo ci) {
+        System.out.println("[Celtium] CELTIUM_SPLASH_HOOK drawSplashScreen=true");
+        try {
+            Class<?> fixture = Class.forName("org.soutalab.celtium.validation.ValidationClient");
+            fixture.getMethod("requestLoadingDump").invoke(null);
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException absent) {
+            // No fixture, or one that cannot answer: a measurement lost, never a frame lost.
+        }
+    }
+
     @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
         celtium$windowRendererStage = "createDisplay";
