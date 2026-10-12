@@ -319,6 +319,28 @@ public final class VulkanGlTexture {
      * recorded, so the deepest captured level is the whole answer there.
      */
     private int samplerMaxLod = SAMPLER_MAX_LOD_DEFAULT;
+    /**
+     * BH-23: the mipmap mode the recorded GL minification filter asks for.
+     * <p>
+     * The sampler used to be built with {@code VK_SAMPLER_MIPMAP_MODE_LINEAR} unconditionally, which is right for the
+     * block atlas (GL_NEAREST_MIPMAP_LINEAR) but not for the {@code *_MIPMAP_NEAREST} filters, where GL picks one mip
+     * level instead of blending two. The filter is only read from the record; with nothing recorded the previous
+     * behaviour (LINEAR) stands, so a texture whose parameters the stub never saw is unchanged. The min filter's other
+     * meaning - GL_NEAREST/GL_LINEAR sample level 0 only - is deliberately not turned into a maxLod of 0 here: the
+     * record's GL_TEXTURE_MAX_LEVEL is the authoritative statement about the chain (that is what the atlas and font
+     * measurements use), and deriving it from the filter as well would move textures whose clamp was measured.
+     */
+    private boolean mipmapNearest;
+    /** How many samplers took their minification from the record, and how many used a nearest mipmap mode. */
+    private static final java.util.concurrent.atomic.AtomicLong SAMPLER_MIN_FROM_RECORD =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong SAMPLER_MIPMAP_NEAREST =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** {@return BH-23's census: minification filters that came from the record, and nearest mipmap modes}. */
+    public static String samplerFilterCensus() {
+        return "minFromRecord=" + SAMPLER_MIN_FROM_RECORD.get() + " mipmapNearest=" + SAMPLER_MIPMAP_NEAREST.get();
+    }
     /** The highest reach any sampler in this process was created with, so the census reports what was built. */
     private static int samplerReachObserved = SAMPLER_MAX_LOD_DEFAULT;
 
@@ -1887,12 +1909,22 @@ public final class VulkanGlTexture {
             magNearest = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER) == org.lwjgl.opengl.GL11.GL_NEAREST;
         }
+        boolean mipmapNearest = this.mipmapNearest;
         if (minRecorded) {
             int min = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(glTextureId,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER);
             minNearest = min == org.lwjgl.opengl.GL11.GL_NEAREST
                     || min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST
                     || min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
+            // The mipmap mode is the other half of the same enum: 9984/9985 pick one level (NEAREST), 9986/9987 blend
+            // two (LINEAR). The non-mipmap filters (9728/9729) say nothing about it, so they leave it as it was.
+            if (min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST
+                    || min == org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_NEAREST) {
+                mipmapNearest = true;
+            } else if (min == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR
+                    || min == org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_LINEAR) {
+                mipmapNearest = false;
+            }
         }
         // The sampler's reach, from the game's own GL_TEXTURE_MAX_LEVEL when it was recorded. The stub records every
         // pname except the border colour, and TextureUtil.allocateTextureImpl sets MAX_LEVEL from the texture's
@@ -1908,7 +1940,8 @@ public final class VulkanGlTexture {
         boolean reachChanges = maxLevelRecorded && recordedMaxLevel >= 0
                 && recordedMaxLevel != this.samplerMaxLod;
         if (repeatU == this.wrapRepeatU && repeatV == this.wrapRepeatV
-                && magNearest == this.nearestFilter && minNearest == this.nearestMinFilter && !reachChanges) {
+                && magNearest == this.nearestFilter && minNearest == this.nearestMinFilter
+                && mipmapNearest == this.mipmapNearest && !reachChanges) {
             return;
         }
         String source = "mag=" + (magRecorded ? "record" : "inference") + " min=" + (minRecorded ? "record" : "inference");
@@ -1919,6 +1952,13 @@ public final class VulkanGlTexture {
         this.wrapRepeatV = repeatV;
         this.nearestFilter = magNearest;
         this.nearestMinFilter = minNearest;
+        this.mipmapNearest = mipmapNearest;
+        if (minRecorded) {
+            SAMPLER_MIN_FROM_RECORD.incrementAndGet();
+        }
+        if (mipmapNearest) {
+            SAMPLER_MIPMAP_NEAREST.incrementAndGet();
+        }
         int reachWas = this.samplerMaxLod;
         if (reachChanges) {
             this.samplerMaxLod = Math.max(0, Math.min(recordedMaxLevel, Math.max(1, this.mipLevels) - 1));
@@ -1932,7 +1972,7 @@ public final class VulkanGlTexture {
         System.out.println("[Celtium] CELTIUM_SAMPLER_FILTER glTexture=" + glTextureId + " repeatU=" + repeatU
                 + " repeatV=" + repeatV + " mag=" + (this.nearestFilter ? "NEAREST" : "LINEAR")
                 + " min=" + (this.nearestMinFilter ? "NEAREST" : "LINEAR")
-                + " mipmapMode=LINEAR maxLod=" + this.samplerMaxLod
+                + " mipmapMode=" + (this.mipmapNearest ? "NEAREST" : "LINEAR") + " maxLod=" + this.samplerMaxLod
                 + (reachChanges ? " (maxLod was " + reachWas + ", now from the record's GL_TEXTURE_MAX_LEVEL "
                         + recordedMaxLevel + ")" : "")
                 + " (" + source + "; the sampler was built before the game set it) " + was);
@@ -2208,7 +2248,8 @@ public final class VulkanGlTexture {
                     // the OpenGL reference. NEAREST filters with a linear mipmap mode reproduce that combination.
                     .magFilter(this.nearestFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
                     .minFilter(this.nearestMinFilter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
-                    .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)
+                    .mipmapMode(this.mipmapNearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST
+                            : VK_SAMPLER_MIPMAP_MODE_LINEAR)
                     // The wrap mode of the source GL texture, carried through at mirror creation: a repeating
                     // texture (GUI sprites, item icons) that is clamped here samples its edge texels instead.
                     .addressModeU(this.wrapRepeatU ? VK_SAMPLER_ADDRESS_MODE_REPEAT

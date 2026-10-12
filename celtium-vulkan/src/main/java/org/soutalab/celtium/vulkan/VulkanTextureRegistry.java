@@ -1522,6 +1522,14 @@ public final class VulkanTextureRegistry {
     /** {@return how many 1x1 mirrors the last invalidation left alone}. */
 
 
+    /**
+     * BH-23's measurement control: {@code -Dceltium.vulkan.samplerConfirmEarly=false} restores the pre-fix order, where
+     * the confirmation sat below the announcement block and an announced image that was consumed returned before it. The
+     * two legs' {@code samplerFilters=minFromRecord=} counts are what say whether any texture was actually skipped.
+     */
+    private static final boolean SAMPLER_CONFIRM_EARLY = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.samplerConfirmEarly", "true"));
+
     public VulkanGlTexture get(int glTextureId, boolean nearestFilter) {
         if (glTextureId == 0) {
             return null;
@@ -1533,6 +1541,18 @@ public final class VulkanTextureRegistry {
         if (external != null) {
             HIT_CALLS++;
             return external;
+        }
+        // BH-23's remaining half: the sampler is confirmed *before* any early return, not after them. The confirmation
+        // used to sit below the announcement block, and an announced image that was consumed returns from inside that
+        // block - so a texture served from its announcement on every lookup (an animated sprite re-announced each
+        // frame) could go its whole life without ever re-consulting the parameters the game sets after the upload.
+        // Hoisting it costs one map lookup on a path that already does several, and the method itself returns
+        // immediately when nothing moved.
+        if (SAMPLER_CONFIRM_EARLY) {
+            Entry samplerEntry = this.entries.get(Integer.valueOf(glTextureId));
+            if (samplerEntry != null) {
+                samplerEntry.texture.confirmSamplerStateFromRecord(glTextureId);
+            }
         }
         // The ownership path: when the upload hook has handed over the image this texture is being filled with, and the
         // mirrors are not copying GL's mip levels (which would need the readback), the mirror is built from those pixels.
@@ -1566,12 +1586,11 @@ public final class VulkanTextureRegistry {
         }
         Entry existing = this.entries.get(glTextureId);
         if (existing != null) {
-            // Once per mirror: the sampler is built when the mirror is created, and a texture's wrap parameters are
-            // set by the game *after* the upload that created it (SimpleTexture: image first, then setTextureClamped),
-            // so a sampler built at creation time can hold the default. Re-consulting the record here - the first
-            // lookup, which is a draw, after the upload completed - is what makes the mode the game's rather than
-            // whichever default was in force a moment earlier.
-            existing.texture.confirmSamplerStateFromRecord(glTextureId);
+            // The confirmation runs at the head of this method (BH-23) so the announcement path cannot skip it; with
+            // the measurement control off it runs here instead, which is the pre-fix order.
+            if (!SAMPLER_CONFIRM_EARLY) {
+                existing.texture.confirmSamplerStateFromRecord(glTextureId);
+            }
             if (this.staleIds.remove(Integer.valueOf(glTextureId))) {
                 if (canSkipReadback(glTextureId)) {
                     // The write that made this texture stale announced its pixels, and they are already in this image:
