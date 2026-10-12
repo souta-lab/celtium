@@ -2708,6 +2708,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final String IMMEDIATE_FOG_DISTANCE =
             System.getProperty("celtium.vulkan.immediateFogDistance", "radial").trim().toLowerCase();
+    /** {@link #IMMEDIATE_FOG_DISTANCE} resolved once: the selector ran two String equals per fog-enabled group. */
+    private static final boolean IMMEDIATE_FOG_DISTANCE_PLANAR = "planar".equals(IMMEDIATE_FOG_DISTANCE);
+    private static final boolean IMMEDIATE_FOG_DISTANCE_AUTO = "auto".equals(IMMEDIATE_FOG_DISTANCE);
     /** Bounded, like the other per-run diagnostics: the fog state changes a handful of times per frame. */
     private static final int IMMEDIATE_FOG_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.immediateFogLog", 8).intValue();
@@ -2827,9 +2830,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             mode = 2; // GL_EXP, which is also GlStateManager.FogState's default
         }
         boolean planar;
-        if ("planar".equals(IMMEDIATE_FOG_DISTANCE)) {
+        if (IMMEDIATE_FOG_DISTANCE_PLANAR) {
             planar = true;
-        } else if ("auto".equals(IMMEDIATE_FOG_DISTANCE)) {
+        } else if (IMMEDIATE_FOG_DISTANCE_AUTO) {
             planar = !this.fogRadialRequested;
         } else {
             planar = false; // radial
