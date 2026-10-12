@@ -2511,6 +2511,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * worth and releasing it at the next flush is enough, because a pass only starts after the previous one signalled.
      */
     private final java.util.List<ImmediateGroup> retiredImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
+    /** Scratch for the flush pass's kept groups; compacted back into {@link #immediateGroups} once per pass. */
+    private final java.util.List<ImmediateGroup> keptImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanImmediatePipeline immediatePipeline;
     /** The matrices in force when the pending batches were built; the flush runs a frame later. */
     /**
@@ -13330,14 +13332,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // id4/id9 were accepted and never drawn (windowFlushFailures=64, windowFlushDroppedBatches=9680,
             // drawnByFormat id4=0 id9=0).
             ByteBuffer push = stack.calloc(216);
-            Iterator<ImmediateGroup> iterator = this.immediateGroups.iterator();
-            while (iterator.hasNext()) {
-                ImmediateGroup group = iterator.next();
+            // Compaction rather than iterator.remove(): removing each drawn or retired group shifted the remaining
+            // tail left, so a flush that drew N of M groups cost O(N*M) array moves. The groups that stay are collected
+            // into keptImmediateGroups in order - the draw order is the list order, so order must be preserved - and
+            // the list is rebuilt once at the end. Iterating by index is safe because nothing in the body mutates
+            // immediateGroups; the moves go to retiredImmediateGroups and recordedImmediateGroups.
+            this.keptImmediateGroups.clear();
+            java.util.List<ImmediateGroup> groups = this.immediateGroups;
+            for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+                ImmediateGroup group = groups.get(groupIndex);
                 if (group.target != target) {
                     // Kept for its own pass, and now counted: this is the site the counter's name describes, and
                     // without an increment here a "kept" group and a "dropped" one both read as zero. It counts
                     // keep-events, like the pass-boundary counter counts boundary events, so a group held across
                     // three flushes raises it three times.
+                    this.keptImmediateGroups.add(group);
                     this.immediateStatistics.noteImmediateGroupsKeptForOtherTargets();
                     continue;
                 }
@@ -13346,7 +13355,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // The game's finished-frame composite, sampling the image it is about to be drawn into. Dropped by
                     // name rather than drawn: see SELF_COMPOSITE_SKIP for the measurement that makes this the repair
                     // and celtium$isScreenSelfComposite for the three shapes the same rule had in 2026-10-11.
-                    iterator.remove();
                     this.retiredImmediateGroups.add(group);
                     this.immediateStatistics.noteSelfCompositeSkips();
                     continue;
@@ -13357,7 +13365,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // Recorded against a frame target that has since been destroyed: its pipeline and render pass are
                         // gone, so drawing it would bind the wrong thing. Retired without drawing and counted; the mesh is
                         // freed by the next completion drain, which is safe because this group was never submitted.
-                        iterator.remove();
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleTargetGeneration();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
@@ -13369,7 +13376,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // this would read freed geometry. The target-generation stamp cannot see that: a frame target
                         // survives a world change. Retired without drawing and counted; the mesh is freed by the next
                         // completion drain, which is safe because the group was never submitted.
-                        iterator.remove();
                         this.retiredImmediateGroups.add(group);
                         this.immediateStatistics.noteGroupsStaleWorldEpoch();
                         this.immediateStatistics.noteImmediateGroupsDiscarded();
@@ -13487,7 +13493,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                         + Long.toHexString(currentTexture.key())
                                         + "; the group is refused rather than drawn with a destroyed view");
                             }
-                            iterator.remove();
                             this.retiredImmediateGroups.add(group);
                             this.immediateStatistics.noteImmediateGroupsDiscarded();
                             continue;
@@ -13674,10 +13679,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                             + " groupGeneration=" + (group.stamp == null ? -1 : group.stamp.targetGeneration)
                             + " borrowed=" + (group.stamp != null && group.stamp.meshBorrowed));
                 }
-                iterator.remove();
                 this.pendingImmediateIndices -= mesh.indexCount();
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
             }
+            // Rebuild immediateGroups as only the kept groups, in order. Drawn and retired groups were moved to their
+            // own lists during the pass; what remains in keptImmediateGroups is exactly the other-target groups the
+            // old iterator.remove() would have left behind, in the same order.
+            groups.clear();
+            groups.addAll(this.keptImmediateGroups);
             // Back to the pass's own rectangle: the groups above may have narrowed it, and whatever is drawn after this
             // flush - terrain, another pass, the final blit - expects the target's viewport, not the last GUI batch's.
             if (this.groupViewportNarrowed) {
