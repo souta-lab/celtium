@@ -3554,7 +3554,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The model path creates its own group, so the per-identity texture census has to see it here as well: with the
         // census only at the immediate path's creation site the verification line listed a single identity (the loading
         // screen's) while the world and the GUI stage had both been drawn, which reads as "those stages never ran".
-        celtium$noteTargetStage(target != Long.MIN_VALUE ? target : this.currentGroupTarget, texture, VulkanImmediateFormats.ITEM);
+        if (TARGET_CENSUS_ENABLED) {
+            celtium$noteTargetStage(target != Long.MIN_VALUE ? target : this.currentGroupTarget, texture, VulkanImmediateFormats.ITEM);
+        }
         this.immediateGroups.add(group);
         this.immediateStatistics.noteImmediateGroupsClosed();
         if (target != this.targetRegistry.mainIdentity()) {
@@ -4478,6 +4480,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Distinct identities {@code CELTIUM_TARGET_IMAGE} has reported; see {@link #celtium$noteTargetIdentity}. */
     private static final int TARGET_IMAGE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.targetImageLines", 12).intValue();
+    /**
+     * Whether the per-group target-identity census runs at all: {@code targetStageTextures}/{@code targetStageFormats}
+     * and {@link #tracedTargetIdentities} are read only by the {@code targetStages} verification line and the bounded
+     * {@code CELTIUM_TARGET_IMAGE} census, but the tracking they feed ran two boxed map lookups and two set writes for
+     * every closed group (~3600 groups/frame ≈ 0.5-1.0 ms/frame of pure diagnostic cost). Off by default;
+     * {@code -Dceltium.vulkan.targetCensus=true} or a diagnostics run turns it back on.
+     */
+    private static final boolean TARGET_CENSUS_ENABLED =
+            Boolean.getBoolean("celtium.vulkan.targetCensus") || VulkanDiagnostics.enabled();
     private final java.util.Set<Long> tracedTargetIdentities = new java.util.HashSet<Long>();
     private int targetImageLogs;
     /** Textures and formats seen per render-target identity, for {@code targetStages} in the verification line. */
@@ -8462,10 +8473,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // Both facts are available here and nowhere earlier: the identity the group was accepted under and the
             // texture and format it carries. Noting them at the open was tried and printed nothing, because the open
             // runs on a path that does not always reach a new group.
-            if (celtium$noteTargetIdentity(this.currentGroupTarget)) {
-                celtium$printTargetImage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
+            if (TARGET_CENSUS_ENABLED) {
+                if (celtium$noteTargetIdentity(this.currentGroupTarget)) {
+                    celtium$printTargetImage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
+                }
+                celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             }
-            celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             celtium$reportHudGroup(projection);
             ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
