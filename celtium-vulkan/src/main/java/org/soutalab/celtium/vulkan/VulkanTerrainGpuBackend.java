@@ -6938,7 +6938,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // The splash's own frame image, once, before its first present: the launch splash is a single
                     // colour on screen, and a colour read of the image the present serves is what separates "the
                     // logo quad never reached the image" from "the image is right and the present serves white".
-                    if (!this.splashProbeDone && this.celtium$presentCount <= 2 && this.frameTarget.colorImage() != 0L
+                    if (!this.splashProbeDone && this.celtium$presentCount >= 1 && this.celtium$presentCount <= 3
+                            && this.frameTarget.colorImage() != 0L
                             && System.getProperty("celtium.vulkan.mirrorDump") != null) {
                         this.splashProbeDone = true;
                         int[] whole = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,

@@ -395,6 +395,16 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.431 **round 232: splash のロゴは pair にある（`distinct=35`）。frame image には無い ⇒ 合成が pair の描画より先に走っている（target 跨ぎの ordering）**
+
+- **決定的測定（leg `r212-splash-splash4`・AMD・splash probe を present 1 に移動）**: 同じ瞬間の2枚 —
+  - `stage-splash-p1-1920x1080.png`（**frame image**）= **mean=(255,255,255) distinct=1** ＝ 一様白 ✓
+  - `stage-splash-pair-p1-1920x1080.png`（**chain pair** ＝ splash FBO の描画先）= **mean=(247.1,245.6,245.7) distinct=35** ＝ **白背景＋ロゴが確かに載っている** ✓✓
+  ⇒ **ロゴは pair にあり、frame image に無い** ✓ ＝ 失っているのは**合成（`name=6` の published image を target 0 へ描く quad）**の側 ✓✓（§0.430 の候補 (b) ✓）。
+- **機序（Vulkan の submission order と、この renderer の target 単位 window が噛み合っていない）**: 同一 queue の command buffer 提出は **submission order を尊重**する（[vkQueueSubmit refpage](https://docs.vulkan.org/refpages/latest/refpages/source/vkQueueSubmit.html)・[Fundamentals](https://github.khronos.org/Vulkan-Site/spec/latest/chapters/fundamentals.html)）✓ なので「pair の window を提出してから composite の window を提出する」が順序の primitive ✓。ところがこの renderer は **target ごとに group を持ち、現在の target の group だけを window に描く**（`flushImmediateWindow` の `countGroupsForTarget(currentIdentity())` ✓）ため、**splash FBO（identity 0x47869B33）の group は queue に残ったまま**、直後に current target が 0（window）へ戻って composite の group が先に window 化・提出され得る ✓ ⇒ composite は **pair の clear 直後（白）**を読む ✓✓（frame image が白一様なのはこれと一致 ✓）。pair 側の白は SplashProgress の `glClear`（`background=0xFFFFFF` ✓）✓。
+- **メニューが成立している理由（対照）**: メニューの FBO 内容は *次のフレーム* の合成で読まれ、blit 経路も別（published image 経由 ✓）なので、同じ規則でも1フレーム遅れが「正しく見える」側に倒れる ✓（splash は1フレームだけなので遅れが欠落として現れる ✓）。
+- **次の作業単位（実装）**: **target を跨ぐ ordering flush** — ある target の group を window 化する前に、**先に受理された他 target の pending group をその target の window として描き・提出する** ✓（受理順 = 描画順 = 提出順を保つ ✓）。変更点は `flushImmediateWindow` / `flushPendingBeforeGlDraw` の target 選択と、`immediateGroups` の target ごとの提出順 ✓。検証は (a) splash present 1 の frame image が **distinct>1（ロゴ入り）**になる ✓、(b) menu/world の既存値が不変（menu distinct 79370/mean 107.2/109.8/116.2 ✓・world distinct 2563 ✓）✓。担当 task-76 が同じ問いをコード側から監査中 ✓（`docs/notes-splash-pair-order.md`）。
+
 ## 0.430 **round 231: splash の「ゲーム側データ」は正しいと確定（upload の画素 census）。loss は我々側の合成/配置に絞られた**
 
 - **新計器**: `TextureUtilMixin` の名前単位 census に**画素 census**を追加 ✓（`-Dceltium.vulkan.uploadCallerId=<name>` のときだけ・4096 点を等間隔サンプル・ARGB のまま `mean=(r,g,b,a) white=n/N px0/last` を印字 ✓）。あわせて splash probe を拡張し、**frame image と chain pair の両方**を同じ瞬間に dump するようにした ✓（pair 側は present 0 では未 adopt のため今回は出ず ⇒ 次は present 1..3 に移す ✓）。
