@@ -218,6 +218,20 @@ public final class CeltiumFontGlyphCapture {
     private static long glyphCalls;
     private static long stringNanos;
     private static long stringCalls;
+    /**
+     * The innermost string bracket: {@code FontRenderer.renderString(String, float, float, int, boolean)}, SRG
+     * {@code func_180455_b} - the method that actually holds the per-character loop.
+     * <p>
+     * {@code stringMillis} above brackets {@code drawString(String, float, float, int, boolean)}, and that turned out
+     * to be the wrong scope for the split: {@code renderStringAligned} and other callers reach {@code renderString}
+     * directly, so {@code stringMillis - glyphMillis} measured ~0 (4,533 against 4,546 ms on one leg) and the caller's
+     * own work was not separable. This bracket wraps the loop itself, for every entry point, so
+     * {@code renderStringMillis - glyphMillis} is the caller's work and
+     * {@code glyphMillis - (windowMillis + hookMillis + submitMillis)} is the vanilla glyph body.
+     */
+    private static long renderStringNanos;
+    private static long renderStringCalls;
+    private static long renderStringStartNanos;
     private static long glyphStartNanos;
     private static long stringStartNanos;
     private static long accepted;
@@ -312,6 +326,17 @@ public final class CeltiumFontGlyphCapture {
     /** Closes it. Called from the mixin's RETURN injection, after {@link #closeWindow()}. */
     public static void endGlyph() {
         glyphNanos += System.nanoTime() - glyphStartNanos;
+    }
+
+    /** Opens the per-character loop's bracket. Called from {@code func_180455_b}'s HEAD injection. */
+    public static void beginRenderString() {
+        renderStringStartNanos = System.nanoTime();
+        renderStringCalls++;
+    }
+
+    /** Closes it. Called from {@code func_180455_b}'s RETURN injection. */
+    public static void endRenderString() {
+        renderStringNanos += System.nanoTime() - renderStringStartNanos;
     }
 
     /** Opens the string bracket. Called from {@code func_175065_a}'s HEAD injection. */
@@ -716,6 +741,8 @@ public final class CeltiumFontGlyphCapture {
                 + " glyphMillis=" + (glyphNanos / 1000000L)
                 + " stringMillis=" + (stringNanos / 1000000L)
                 + " stringCalls=" + stringCalls
+                + " renderStringMillis=" + (renderStringNanos / 1000000L)
+                + " renderStringCalls=" + renderStringCalls
                 + " meanSubmitMicros=" + (submitted == 0 ? 0 : submitNanos / submitted / 1000L)
                 + " reasons=" + REFUSALS);
     }
@@ -728,6 +755,8 @@ public final class CeltiumFontGlyphCapture {
                 + " windowMillis=" + (windowNanos / 1000000L) + " hookMillis=" + (hookNanos / 1000000L)
                 + " glyphMillis=" + (glyphNanos / 1000000L) + " glyphCalls=" + glyphCalls
                 + " stringMillis=" + (stringNanos / 1000000L) + " stringCalls=" + stringCalls
+                + " renderStringMillis=" + (renderStringNanos / 1000000L)
+                + " renderStringCalls=" + renderStringCalls
                 + " reasons=" + REFUSALS + " modes=" + MODE_CENSUS + " " + batchSummary();
     }
 

@@ -256,3 +256,34 @@ already holds the value, so the mirror call is a no-op). The unit was stopped be
 measurement is what re-opens it. **Not established**: the cost *per arrival* - the arrivals being per-glyph is
 measured, the nanoseconds are not, and a timer inside the hook is the one instrument not built here because it sits on
 the hottest path in the game.
+
+## The `renderString` bracket: the caller's work is ~0.13 %, so the remainder is vanilla's glyph body
+
+One more injection pair, on `FontRenderer.renderString` itself (SRG **`func_180455_b`**, resolved from the table) -
+the method that holds the per-character loop and that `renderStringAligned` and the styled paths reach directly, which
+is why the outer `drawString` bracket measured `stringMillis - glyphMillis ≈ 0`. Jar
+`2747418bc071642e2ed2fd0352b15bd2`, F3 on, at **1,280,000 glyphs and 3,106 `renderString` calls**:
+
+| bracket | millis over the run | per unit |
+|---|---|---|
+| `renderStringMillis` (the loop, every entry point) | **4,663** | 1.50 ms per string |
+| `glyphMillis` (the vanilla glyph methods) | **4,657** | 3.64 µs per glyph |
+| our capture (`submitMillis` 328 + `windowMillis` 69 + `hookMillis` 223) | **620** | 0.48 µs per glyph |
+| **caller's own work** (`renderStringMillis - glyphMillis`) | **6** | ~2 µs per string |
+| **vanilla glyph body** (`glyphMillis - ours`) | **4,037** | **3.15 µs per glyph** |
+
+**The caller's per-character work is 6 ms of 4,663 - 0.13 %.** The `charmap.indexOf` over a ~200-character table and
+the style/width bookkeeping are not where the F3 text's time goes. The remainder is the **vanilla glyph body**: 3.15
+µs per glyph inside `renderDefaultChar`/`renderUnicodeChar` but outside this capture, which is ~10 Java calls per glyph
+(`bindTexture` through `TextureManager` and nine `GlStateManager` wrappers, each a stub no-op plus our hook) - ~14.5
+ms/frame at the overlay's ~4,600 glyphs/frame.
+
+The pair, same jar, `pinSections=64` on both legs, both `PASSED` with `validationClean=true` and
+`validationMessageCount=0`: cold p50 **177.9 ms (F3 on, 21 samples) against 41.5 ms (off, 74 samples)** - the overlay
+costs **136.4 ms/frame within this pair**.
+
+**What this means for a fast path**: the measured target is ~3.15 µs/glyph of *vanilla* glyph body, reached only by
+bypassing vanilla's per-glyph GL calls (`renderStringAtPos`-level batching). That is a large change with compatibility
+risk - it replaces code paths the game, Forge and mods all go through - and the split above says the *caller* half,
+which a string-level fast path could also remove, is worth ~0.13 %. So the decision is deliberate rather than implied
+by the numbers: the fast path's whole prize is the vanilla glyph body, not the loop.

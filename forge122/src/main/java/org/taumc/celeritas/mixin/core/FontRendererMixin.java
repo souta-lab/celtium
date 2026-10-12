@@ -68,4 +68,23 @@ public abstract class FontRendererMixin {
             CallbackInfoReturnable<Integer> info) {
         CeltiumFontGlyphCapture.endString();
     }
+
+    /**
+     * The innermost bracket: {@code FontRenderer.renderString(String, float, float, int, boolean)}, SRG
+     * {@code func_180455_b} - the method that holds the per-character loop, reached by {@code renderStringAligned} and
+     * the styled paths as well as by {@code drawString}. The outer {@code func_175065_a} bracket measured
+     * {@code stringMillis - glyphMillis} at ~0 because those callers bypass it, so this is the scope that makes the
+     * caller's own work separable: {@code renderStringMillis - glyphMillis}.
+     */
+    @Inject(method = "func_180455_b", at = @At("HEAD"), require = 0)
+    private void celtium$beginRenderString(String text, float x, float y, int color, boolean dropShadow,
+            CallbackInfoReturnable<Integer> info) {
+        CeltiumFontGlyphCapture.beginRenderString();
+    }
+
+    @Inject(method = "func_180455_b", at = @At("RETURN"), require = 0)
+    private void celtium$endRenderString(String text, float x, float y, int color, boolean dropShadow,
+            CallbackInfoReturnable<Integer> info) {
+        CeltiumFontGlyphCapture.endRenderString();
+    }
 }
