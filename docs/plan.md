@@ -411,6 +411,9 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   | B24 | goal/plan/perf 表に撤回済み原因と古い状態が残る | **Lead（私）** | 進行中（本節と以下で同期） |
 - **B24 の同期（この round）**: 監査の項目を上の表に取り込み、**解決済みの BH/監査項目は表から外して `docs/history/` の記録に委ねる**方針を明記（ユーザー指示）。撤回済みの原因（旧「Nether 受入」「hook 死亡」「月 quad 原因説」等）を現在の事実として残さない。
 - **並列化の制約**: ユーザー指示により **`pipeline` と `entity-models` は使わない**。B01/B02/B14 は SWE2 の RenderItem queue なので我々は同ファイルを編集しない。
+- **直列順序（round 185 に確定・担当間の合意）**: `VulkanTerrainGpuBackend.java` は blend-state が**未commitの P0＋計器**で保持中。順序は ①blend-state が着地 → ②B08（`TextureCopyService`）→ ③frame-composite が B10 の**1行**（`ensureFrameTarget` の通知、`postChain != null` のときだけ）→ ④sky-draws が B06（`VulkanTerrainGpuBackend`＋`VulkanHostBuffer`）→ ⑤perf-ring の B03/B04（`beginCommands`）。**待っている担当は着手しない**（sky-draws は B06 の witness 設計のみ先行、frame-composite は `VulkanPostChain` を先行実装）。
+- **B10 の確認（frame-composite・file:line）**: `VulkanPostChain.java:172` が `private final FrameImageTarget frameTarget;` を保持し、`:887-917` の記録時にその固定参照を読む（`:903` の `shaderReadBarrier(commandBuffer, this.frameTarget.colorImage())` を含む）。backend の `ensureFrameTarget` は settle→旧 delete→新 create するので executor は破棄済みハンドルを指し得る ✓ 監査の記述どおり。
+- **B06 の確認（sky-draws）**: `Segment.delete → Arena.free` が即 free/coalesce、`flushUploads` の barrier は「copy 後の TRANSFER_WRITE→read」のみで **prior graphics read → 新 transfer write** と同一 range の copy 間 WAW は別契約。修復は「最後の draw completion まで再利用しない」または prior-read→transfer の明示 dependency。受入は pending terrain draw と同一 section rebuild/sort を重ね、**最終 buffer 内容だけでは受入にしない**。
 
 ## 0.383 **round 179 (P0): loading-fix シリーズが main menu のパノラマを壊した（ユーザー報告・再現済み・インスタンスは rollback 済み）**
 
