@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.396 **round 197: 監査 B11 の2機構を別 commit で実装（未行使であることも明記）**
+
+- **`e73de9907` — still-pending submission 中の slot 再利用**: `VulkanPostChain.java` に `setBoundEpoch[slot]`（その slot を渡した recording 開始時の epoch）と `recordingEpochStart`（`VulkanContext.completedEpoch()` を recording 境界で採取）を追加し、**`vkUpdateDescriptorSets` の直前に `completedEpoch() < boundEpoch + 1` なら拒否**（既存 exhaustion と同じ例外形・何も書かない・**wait 追加なし** ✓）。ticket を epoch にする理由は B05 と同じ測定（recording 中に取れる fence は古い batch のもの・frame 自身の epoch はまだ無い）✓。計器 `postRingOwnershipRefusals`/`postRingOwnershipReuses` ✓。
+  **未行使の明記**: 現 fixture は `postChains=0` なのでこの guard は**一度も発火していない** ✗ → 証人 leg は **glow/post-chain scene**（モラトリウム明け）✓。
+- **`ff29be695` — abandoned recording の slot 漏れ**（round 195 の新規発見・**名前を分離**）: `recordingStartCursor` を recording 境界で捕捉し `recordPasses` を wrapper 化（本体 `celtium$recordPasses`）→ `RuntimeException|Error` で **slot を返却**（`setCursor` 巻き戻し・`setsThisRecording=0`・`setBoundEpoch[slot]=-1`＝捨てた command buffer を読む submission は無い ✓）→ **rethrow** ✓。**B10 の拒否は不変**（unsupplied-input 拒否は slot 取得前なので wrapper は即 return・例外は従来どおり伝播・報告形式も不変 ✓）＝sequencing 不要 ✓。計器 `postRingAbandonedRecordings`/`postRingSlotsReclaimedOnAbandon` ✓、証人は B10 の拒否バースト leg に相乗り ✓。
+- **残**: **B12(a)(b)** は sync 変更（submit wait list が変わる）なので**leg 解禁待ち** ✓（計器は `70872f64c` ✓）。`VulkanPostChain.java` は perf-ring の所有 ✓（B10 の refusal は未変更 ✓）。
+
 ## 0.395 **round 196: R3b `FontBatch` 納品（gap 5点）— 拒否時の glyph 喪失を修正として採る／target witness は意図的な挙動変更**
 
 - **納品**: `FontBatch.java`（新規・backend 未編集・Gradle build/leg なし・単体 `javac -proc:none` exit 0 ✓）。移す field 表（`:1680-1696`・`:1702`・`:1709-1717`・`:1723`・`:4943`）と method 表（`:4863-4941`/`:4952-4954`/`:4959-4973`/`:4975-4988`/`:4990-5003`/`:5010-5074`/`:5077-5088`/`:1705-1707`）、配線点（flush 4箇所 `:4604`/`:4655`/`:5146`/`:8085`・matrix boundary 10箇所・外部2箇所 `CeltiumFontGlyphCapture.java:743/:1247`）を提示 ✓。設計は backend 非参照・15値の `FontRunState` view＋`RunSink`（apply/restore は sink 側）✓。**`celtium$fontBatchSummary()` の文字列は1文字も不変** ✓（保持 counter は `celtium$fontRetentionSummary()` に分離 ✓）。
