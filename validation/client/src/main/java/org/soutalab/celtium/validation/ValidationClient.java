@@ -6076,8 +6076,19 @@ public final class ValidationClient {
         if (list == null) {
             list = celtium$fieldValue(screen, new String[] {"buttonList", "field_146292_n"});
         }
+        // The Celeritas screen keeps neither: its rows are Sodium-style Options inside the controller's pages, so the
+        // list handed to the finder is built by flattening those pages' options. Measured: with optionsRowList and
+        // buttonList alone the chain reached "no option button could be located in the screen's row list" with
+        // videoSettingsRowNames=none, and the screen's own field is the controller.
         if (list == null) {
-            report.addProperty("videoSettingsChain", "the captured screen has neither optionsRowList nor a buttonList");
+            list = celtium$vsOptionsFromController(screen);
+            if (list != null) {
+                report.addProperty("videoSettingsChainSource", "controller pages");
+            }
+        }
+        if (list == null) {
+            report.addProperty("videoSettingsChain",
+                    "the captured screen has no optionsRowList, buttonList or controller pages");
             celtium$vsStep = 99;
             return true;
         }
@@ -6307,6 +6318,57 @@ public final class ValidationClient {
      * the evidence chain; anything else pressable is the fallback. {@code GuiOptionsRowList.getListEntry(i)} returns a
      * {@code Row} whose {@code buttonA}/{@code buttonB} are the widgets (read from the sources, not guessed).
      */
+    /**
+     * {@return the Celeritas screen's rows as a flat list of Options}, or null when it has none.
+     * <p>
+     * The Celeritas video options screen is built on Celeritas's own option framework rather than vanilla's
+     * GuiVideoSettings: it holds a {@code controller} whose {@code pages} each expose their options. Flattening
+     * those pages is what gives the existing row finder something to walk, since the rows are not GuiButtons in
+     * {@code buttonList} and there is no {@code optionsRowList} at all.
+     */
+    /** {@return the no-argument method's value on an object}, or null when it cannot be read. */
+    private static Object celtium$invoke(Object target, String name) {
+        if (target == null) {
+            return null;
+        }
+        try {
+            java.lang.reflect.Method method = target.getClass().getMethod(name);
+            method.setAccessible(true);
+            return method.invoke(target);
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            return null;
+        }
+    }
+
+    private static Object celtium$vsOptionsFromController(net.minecraft.client.gui.GuiScreen screen) {
+        Object controller = celtium$fieldValue(screen, new String[] {"controller", "field_146501_g"});
+        if (controller == null) {
+            return null;
+        }
+        Object pages = celtium$fieldValue(controller, new String[] {"pages", "field_146501_h"});
+        if (!(pages instanceof java.util.List)) {
+            return null;
+        }
+        java.util.List<Object> options = new java.util.ArrayList<Object>();
+        for (Object page : (java.util.List<?>) pages) {
+            Object pageOptions = celtium$invoke(page, "getOptions");
+            if (pageOptions instanceof java.util.List) {
+                options.addAll((java.util.List<?>) pageOptions);
+                continue;
+            }
+            Object groups = celtium$invoke(page, "getGroups");
+            if (groups instanceof java.util.List) {
+                for (Object group : (java.util.List<?>) groups) {
+                    Object groupOptions = celtium$invoke(group, "getOptions");
+                    if (groupOptions instanceof java.util.List) {
+                        options.addAll((java.util.List<?>) groupOptions);
+                    }
+                }
+            }
+        }
+        return options.isEmpty() ? null : options;
+    }
+
     private static Object[] celtium$vsFindOptionButton(Object list) {
         return celtium$vsFindOptionButton(list, null);
     }
