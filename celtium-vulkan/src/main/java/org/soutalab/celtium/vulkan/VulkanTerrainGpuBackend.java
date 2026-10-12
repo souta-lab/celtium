@@ -1168,6 +1168,37 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
     private final ModelGeometryCache modelGeometry = new ModelGeometryCache();
+    /**
+     * The pending font run, its boundary rule and the retention queue (refactoring plan R3b). The state view and the
+     * sink are the backend's, because the state they read and the submission they make are its own.
+     */
+    private final FontBatch fontBatch = new FontBatch();
+
+    {
+        this.fontBatch.celtium$setFontRunState(new FontBatch.FontRunState() {
+            @Override public boolean stalled() { return VulkanTerrainGpuBackend.this.gpuStalled; }
+            @Override public boolean matricesDirty() { return VulkanTerrainGpuBackend.this.matricesDirty; }
+            @Override public boolean mainTarget() { return VulkanTerrainGpuBackend.this.targetRegistry.currentIsMain(); }
+            @Override public long targetIdentity() { return VulkanTerrainGpuBackend.this.targetRegistry.currentIdentity(); }
+            @Override public boolean texture2dEnabled() { return VulkanTerrainGpuBackend.this.immediateState.texture2dEnabled(); }
+            @Override public int boundTextureName() { return VulkanTerrainGpuBackend.this.immediateState.boundTextureName(); }
+            @Override public int whiteTextureId() { return VulkanTerrainGpuBackend.this.whiteTextureId(); }
+            @Override public float colorRed() { return VulkanTerrainGpuBackend.this.immediateState.colorRed(); }
+            @Override public float colorGreen() { return VulkanTerrainGpuBackend.this.immediateState.colorGreen(); }
+            @Override public float colorBlue() { return VulkanTerrainGpuBackend.this.immediateState.colorBlue(); }
+            @Override public float colorAlpha() { return VulkanTerrainGpuBackend.this.immediateState.colorAlpha(); }
+            @Override public boolean alphaTestEnabled() { return VulkanTerrainGpuBackend.this.immediateState.alphaTestEnabled(); }
+            @Override public float alphaFuncReference() { return VulkanTerrainGpuBackend.this.immediateState.alphaFuncReference(); }
+            @Override public float[] projection() { return VulkanTerrainGpuBackend.this.glProjection; }
+            @Override public float[] modelView() { return VulkanTerrainGpuBackend.this.glModelView; }
+        });
+        this.fontBatch.celtium$setFontRunSink(new FontBatch.RunSink() {
+            @Override public boolean submit(FontBatch.Run run) {
+                return VulkanTerrainGpuBackend.this.celtium$submitFontRun(run);
+            }
+        });
+    }
+
 
     /** The frame slots, their completion epochs and the retirement rules (refactoring plan R6). */
     private final FrameSubmissionScheduler scheduler = new FrameSubmissionScheduler();
@@ -4862,85 +4893,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * @return whether the quad was appended; false means the caller must submit it through the normal path
      */
     public boolean celtium$fontAppend(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
-                                      int vertexCount, int drawMode) {
-        long started = System.nanoTime();
-        try {
-            if (!FONT_BATCHING) {
-                // The one-flag control: with batching off every glyph goes back to its own submitImmediateBatch call,
-                // so a crash or a picture change can be attributed to the coalescing rather than to the tree.
-                return false;
-            }
-            if (vertexAddress == 0L || vertexCount <= 0 || vertexStride <= 0) {
-                return false;
-            }
-            if (this.gpuStalled || this.matricesDirty || !this.targetRegistry.currentIsMain()) {
-                // The normal path owns the capture (matrices, stall handling, target routing); a run is only started
-                // from a state that has already been captured.
-                return false;
-            }
-            int texture = this.immediateState.texture2dEnabled()
-                    ? this.immediateState.boundTextureName() : whiteTextureId();
-            long colourBits = celtium$fontColourBits();
-            boolean alphaTest = this.immediateState.alphaTestEnabled();
-            float alphaRef = this.immediateState.alphaFuncReference();
-            if (this.pendingFontActive
-                    && !celtium$fontRunMatches(formatId, vertexStride, drawMode, texture, colourBits, alphaTest,
-                            alphaRef)) {
-                celtium$flushPendingFontBatch("state-change");
-            }
-            if (!this.pendingFontActive) {
-                this.pendingFontFormat = vertexFormat;
-                this.pendingFontStride = vertexStride;
-                this.pendingFontFormatId = formatId;
-                this.pendingFontDrawMode = drawMode;
-                this.pendingFontTexture = texture;
-                this.pendingFontColorBits = colourBits;
-                this.pendingFontAlphaTest = alphaTest;
-                this.pendingFontAlphaRef = alphaRef;
-                System.arraycopy(this.glProjection, 0, this.pendingFontProjection, 0, 16);
-                System.arraycopy(this.glModelView, 0, this.pendingFontModelView, 0, 16);
-                this.pendingFontBytesUsed = 0;
-                this.pendingFontVertexCount = 0;
-                this.pendingFontActive = true;
-                this.fontBatchesStarted++;
-            }
-            int bytes = vertexCount * vertexStride;
-            // A strip or fan run joins consecutive glyphs: a strip of 4N vertices draws 4N-2 triangles, so the last
-            // vertices of one glyph are connected to the first of the next, and the connecting triangles are the 1-px
-            // bars the user reports in the gaps between characters. The census says this path is on a strip
-            // (modes={5=84822}), so the separator is inserted here: two degenerate vertices - a copy of the previous
-            // glyph's last vertex and a copy of the new glyph's first - make the connecting triangles zero-area, which
-            // rasterizes nothing, and the run still goes out in one call.
-            boolean needsSeparator = this.pendingFontVertexCount > 0
-                    && (drawMode == org.lwjgl.opengl.GL11.GL_TRIANGLE_STRIP
-                            || drawMode == org.lwjgl.opengl.GL11.GL_TRIANGLE_FAN);
-            int separatorBytes = needsSeparator ? 2 * vertexStride : 0;
-            celtium$ensurePendingFontCapacity(this.pendingFontBytesUsed + separatorBytes + bytes);
-            long base = org.lwjgl.system.MemoryUtil.memAddress(this.pendingFontVertices, 0);
-            if (needsSeparator) {
-                long previousVertex = base + this.pendingFontBytesUsed - vertexStride;
-                org.lwjgl.system.MemoryUtil.memCopy(previousVertex, base + this.pendingFontBytesUsed, vertexStride);
-                org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, base + this.pendingFontBytesUsed + vertexStride,
-                        vertexStride);
-                this.pendingFontBytesUsed += separatorBytes;
-                this.pendingFontVertexCount += 2;
-                this.fontStripSeparators++;
-            }
-            long destination = base + this.pendingFontBytesUsed;
-            // Copied, not aliased: the font's buffer is refilled for the next glyph.
-            org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, destination, bytes);
-            this.pendingFontBytesUsed += bytes;
-            this.pendingFontVertexCount += vertexCount;
-            this.fontQuadsAppended++;
-            return true;
-        } catch (RuntimeException | LinkageError error) {
-            this.immediateLastRefusal = "the font run could not take a quad: " + error;
-            return false;
-        } finally {
-            this.fontAppendNanos += System.nanoTime() - started;
-        }
+            int vertexCount, int drawMode) {
+        // The pending run, its boundary rule and the retention queue moved to FontBatch (R3b).
+        return this.fontBatch.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
+                drawMode);
     }
-
     private long fontAppendNanos;
 
     /**
@@ -4950,13 +4907,38 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * on: garbled menu button labels, a rotated splash and block-like copyright text). Flushing before the change is
      * applied keeps every quad with the matrices it was written for.
      */
-    private void celtium$fontMatrixBoundary() {
-        celtium$flushPendingFontBatch("state-change");
+    private boolean celtium$submitFontRun(FontBatch.Run run) {
+        int savedTexture = this.immediateState.boundTextureName();
+        boolean savedTexture2d = this.immediateState.texture2dEnabled();
+        boolean savedAlphaTest = this.immediateState.alphaTestEnabled();
+        float savedAlphaRef = this.immediateState.alphaFuncReference();
+        float[] savedProjection = this.glProjection.clone();
+        float[] savedModelView = this.glModelView.clone();
+        try {
+            this.immediateState.texture2dEnabled(true);
+            this.immediateState.bindTexture(run.texture);
+            this.immediateState.alphaTestEnabled(run.alphaTest);
+            this.immediateState.alphaFuncReference(run.alphaRef);
+            System.arraycopy(run.projection, 0, this.glProjection, 0, 16);
+            System.arraycopy(run.modelView, 0, this.glModelView, 0, 16);
+            submitImmediateBatch(run.format, run.stride, run.formatId, run.address, run.vertexCount, run.drawMode);
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.immediateLastRefusal = "the coalesced font run could not be submitted: " + error;
+            return false;
+        } finally {
+            this.immediateState.texture2dEnabled(savedTexture2d);
+            this.immediateState.bindTexture(savedTexture);
+            this.immediateState.alphaTestEnabled(savedAlphaTest);
+            this.immediateState.alphaFuncReference(savedAlphaRef);
+            System.arraycopy(savedProjection, 0, this.glProjection, 0, 16);
+            System.arraycopy(savedModelView, 0, this.glModelView, 0, 16);
+        }
     }
 
-
-
-    /** The current colour as the four float bits, packed into one long: the run's colour witness. */
+    private void celtium$fontMatrixBoundary() {
+        this.fontBatch.celtium$fontMatrixBoundary();
+    }
     private long celtium$fontColourBits() {
         // Packed as four bytes, not as float bit patterns: the first version shifted each 32-bit pattern by 48/32/16/0
         // and masked the low 16 bits, which for ordinary colours (1.0f = 0x3F800000, 0.25f, 0.0f) is zero - the
@@ -5009,85 +4991,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * submission's own entry flush cannot see it again.
      */
     private void celtium$flushPendingFontBatch(String how) {
-        // The capture's own per-string buffer flushes through the same point as this pending run: whatever is
-        // about to happen - an intervening submission, a boundary, a state change - every glyph the capture is
-        // holding belongs before it, in the run this method is about to submit. Invoked unconditionally: the
-        // capture can hold a segment while the pending run is empty.
-        Runnable hook = this.fontPreFlush;
-        if (hook != null) {
-            try {
-                hook.run();
-            } catch (Throwable ignored) {
-                // A capture-side failure must not take the flush down with it.
-            }
-        }
-        if (!this.pendingFontActive) {
-            return;
-        }
-        Object format = this.pendingFontFormat;
-        int stride = this.pendingFontStride;
-        int formatId = this.pendingFontFormatId;
-        int drawMode = this.pendingFontDrawMode;
-        int count = this.pendingFontVertexCount;
-        long address = org.lwjgl.system.MemoryUtil.memAddress(this.pendingFontVertices, 0);
-        // The state the run was appended under. `submitImmediateBatch` captures the bound texture and the matrices at
-        // submission time, so a run flushed at an intervening submission used to be drawn with the *intervening* draw's
-        // texture and transform. That is the measured garbling: the menu's button labels, the rotated splash text and the
-        // copyright line came out as blocks while runs flushed at a boundary - the footer text, drawn last with nothing
-        // after it - stayed legible. The recorded state is applied around the submission and restored afterwards.
-        int runTexture = this.pendingFontTexture;
-        boolean runAlphaTest = this.pendingFontAlphaTest;
-        float runAlphaRef = this.pendingFontAlphaRef;
-        this.pendingFontActive = false;
-        this.pendingFontBytesUsed = 0;
-        this.pendingFontVertexCount = 0;
-        if ("intervening".equals(how)) {
-            this.fontBatchesFlushedIntervening++;
-        } else if ("boundary".equals(how)) {
-            this.fontBatchesFlushedBoundary++;
-        } else {
-            this.fontBatchesFlushedStateChange++;
-        }
-        int savedTexture = this.immediateState.boundTextureName();
-        boolean savedTexture2d = this.immediateState.texture2dEnabled();
-        boolean savedAlphaTest = this.immediateState.alphaTestEnabled();
-        float savedAlphaRef = this.immediateState.alphaFuncReference();
-        float[] savedProjection = this.glProjection.clone();
-        float[] savedModelView = this.glModelView.clone();
-        try {
-            this.immediateState.texture2dEnabled(true);
-            this.immediateState.bindTexture(runTexture);
-            this.immediateState.alphaTestEnabled(runAlphaTest);
-            this.immediateState.alphaFuncReference(runAlphaRef);
-            System.arraycopy(this.pendingFontProjection, 0, this.glProjection, 0, 16);
-            System.arraycopy(this.pendingFontModelView, 0, this.glModelView, 0, 16);
-            submitImmediateBatch(format, stride, formatId, address, count, drawMode);
-        } catch (RuntimeException | LinkageError error) {
-            this.immediateLastRefusal = "the coalesced font run could not be submitted: " + error;
-        } finally {
-            this.immediateState.texture2dEnabled(savedTexture2d);
-            this.immediateState.bindTexture(savedTexture);
-            this.immediateState.alphaTestEnabled(savedAlphaTest);
-            this.immediateState.alphaFuncReference(savedAlphaRef);
-            System.arraycopy(savedProjection, 0, this.glProjection, 0, 16);
-            System.arraycopy(savedModelView, 0, this.glModelView, 0, 16);
-        }
+        this.fontBatch.celtium$flushPendingFontBatch(how);
     }
-
-    /** The font batching's own census, for the report: how much was coalesced and how each run went out. */
     public String celtium$fontBatchSummary() {
-        return "fontRunsStarted=" + this.fontBatchesStarted
-                + " fontQuadsAppended=" + this.fontQuadsAppended
-                // The strip separators, counted where the run is built and reported here: the counter existed and was
-                // incremented at :4211 with no reporting site, so a run could not say whether the degenerate-vertex
-                // insertion had happened at all - the same "instrument that cannot be read" shape the plan records.
-                + " fontStripSeparators=" + this.fontStripSeparators
-                + " flushedIntervening=" + this.fontBatchesFlushedIntervening
-                + " flushedBoundary=" + this.fontBatchesFlushedBoundary
-                + " flushedStateChange=" + this.fontBatchesFlushedStateChange
-                + " appendMillis=" + (this.fontAppendNanos / 1000000L);
+        return this.fontBatch.celtium$fontBatchSummary();
     }
-
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
     }
