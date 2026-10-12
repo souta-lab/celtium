@@ -537,6 +537,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.concurrent.atomic.AtomicInteger unconvertedUploads =
             new java.util.concurrent.atomic.AtomicInteger();
     /**
+     * Patches whose converted bytes were row-for-row identical to the captured surface. Each is an upload the
+     * caller asked for that changed nothing - the lightmap's per-frame DynamicTexture update is the regular one -
+     * so skipping the serial bump keeps the descriptor the GPU side already holds instead of forcing a re-supply
+     * of identical pixels.
+     */
+    private final java.util.concurrent.atomic.AtomicInteger identicalPatches =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /**
      * The unpack state {@code glPixelStorei} set. Conversion reads rows where GL would read them: assuming tight rows
      * while the game asked for a row length or a row skip would store a sheared image instead of a missing one.
      */
@@ -1119,6 +1127,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         return "texture capture: levels=" + stub.texCaptures.size()
                 + " full=" + stub.fullCaptures.get()
                 + " patches=" + stub.subCaptures.get()
+                + " identicalPatches=" + stub.identicalPatches.get()
                 + " undefined=" + stub.undefinedExtents.get()
                 + " unconverted=" + stub.unconvertedUploads.get()
                 + " bytes=" + bytes;
@@ -2981,6 +2990,27 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int destinationStride = existing.width * 4;
         int sourceStride = width * 4;
+        // OPT-21: an upload that does not change the pixels must not change the serial either - the serial is
+        // what makes the GPU side re-supply, and a re-supply of identical bytes is pure cost. The row compare
+        // runs on the same absolute positions the copy below uses, so "identical" is exactly what GL itself
+        // would conclude from the pair (existing surface, this patch). The gamePixels guard keeps an
+        // all-zero first patch on an undefined surface from being "identical" - GL did write pixels there,
+        // and the flag/serial are what downstream readers use to tell the surface is defined.
+        boolean identical = existing.gamePixels;
+        for (int row = 0; identical && row < height; row++) {
+            int dst = (y + row) * destinationStride + x * 4;
+            int src = row * sourceStride;
+            for (int i = 0; i < sourceStride; i++) {
+                if (existing.data.get(dst + i) != patch.get(src + i)) {
+                    identical = false;
+                    break;
+                }
+            }
+        }
+        if (identical) {
+            this.identicalPatches.incrementAndGet();
+            return;
+        }
         for (int row = 0; row < height; row++) {
             // Absolute and whole-row, so the record's own position never moves under a concurrent reader.
             existing.data.put((y + row) * destinationStride + x * 4, patch, row * sourceStride, sourceStride);
