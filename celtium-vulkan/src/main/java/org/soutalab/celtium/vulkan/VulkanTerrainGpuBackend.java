@@ -11413,6 +11413,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (image == 0L) {
             return celtium$refuseTextureCopy("read framebuffer " + readFbo + " is not an image this renderer owns");
         }
+        // The source rectangle is checked against the image it will be read from, because the mapping below depends on
+        // the image's height: GL's copy y counts from the bottom of the framebuffer while a Vulkan image's rows count
+        // from the top. An out-of-range rectangle is refused by name rather than clamped, since a clamped read is a
+        // silently different picture. Every image `celtium$ownedReadImage` returns - the frame image, the chain pair
+        // and the default pair - is the target's size, which is what `targetWidth`/`targetHeight` carry.
+        int sourceImageHeight = this.targetHeight;
+        if (x < 0 || y < 0 || x + width > this.targetWidth || y + height > sourceImageHeight) {
+            return celtium$refuseTextureCopy("the source rectangle " + x + "," + y + " " + width + "x" + height
+                    + " is not inside the " + this.targetWidth + "x" + sourceImageHeight + " image");
+        }
         // The frame's first request for this destination rectangle pays for the readback; the rest are answered from it.
         long copyKey = (((long) destName) << 32) ^ (((long) level) << 28) ^ (((long) xoffset) << 20)
                 ^ (((long) yoffset) << 12) ^ (((long) x) << 8) ^ (((long) y) << 4) ^ (((long) width) << 2)
@@ -11735,6 +11745,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Bounded lines of the copy's caller census; a normal run prints nothing. */
     private int celtium$copyCallerLogs;
 
+    /** Reverses a {@code width x height} rectangle's row order in place; the copy's GL-to-Vulkan row mapping. */
+    private static void celtium$reverseRows(int[] pixels, int width, int height) {
+        for (int top = 0, bottom = height - 1; top < bottom; top++, bottom--) {
+            int first = top * width;
+            int last = bottom * width;
+            for (int column = 0; column < width; column++) {
+                int swap = pixels[first + column];
+                pixels[first + column] = pixels[last + column];
+                pixels[last + column] = swap;
+            }
+        }
+    }
+
     /** {@return how many of the read pixels are not pure white}; a mean cannot tell that apart. */
     private static int celtium$countNonWhite(int[] pixels) {
         int count = 0;
@@ -11796,7 +11819,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
             copy.get(0).imageSubresource().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
                     .mipLevel(0).baseArrayLayer(0).layerCount(1);
-            copy.get(0).imageOffset().set(x, y, 0);
+            // GL's copy `y` counts from the *bottom* of the read framebuffer; a Vulkan image's rows count from the top.
+            // Passing `y` straight through read the top rows - the cleared ones - which is measured as
+            // `CELTIUM_TEX_COPY_SERVED dest=21 256x256 readFbo=0 mean=255,255,255 opaque=0/65536 nonWhite=0` while the
+            // panorama's faces were in the bottom 256 rows of the same image (GuiMainMenu.renderSkybox draws them under
+            // `GlStateManager.viewport(0, 0, 256, 256)`). The rows GL asks for start `height - y - height` from the top.
+            copy.get(0).imageOffset().set(x, this.targetHeight - y - height, 0);
             copy.get(0).imageExtent().set(width, height, 1);
             org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toTransfer =
                     org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
@@ -11851,6 +11879,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 pixels[pixel] = (a << 24) | (r << 16) | (g << 8) | b;
             }
             org.lwjgl.vulkan.VK10.vkUnmapMemory(this.context.device(), memory);
+            // GL writes framebuffer row (counted from the bottom) `y + i` into destination row `yoffset + i`, and a
+            // mirror's row 0 is its texture's first row - the same order every `glTexImage2D` int[] upload arrives in.
+            // The mirror's rows are therefore the image's rows read *upwards* from `y`, which is the reverse of the
+            // buffer the copy above produced. Without this the destination gets the source upside down: the right rows
+            // in the wrong order, which a mean cannot see and a crop can.
+            celtium$reverseRows(pixels, width, height);
             return pixels;
         } catch (RuntimeException | LinkageError error) {
             record("texture copy readback failed: " + describe(error));
