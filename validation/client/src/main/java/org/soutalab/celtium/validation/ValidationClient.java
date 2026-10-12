@@ -7203,17 +7203,21 @@ public final class ValidationClient {
             Object[] args = new Object[types.length];
             for (int i = 0; i < types.length; i++) {
                 Class<?> type = types[i];
-                if (i == 0 || i == 1) {
-                    args[i] = type == float.class ? Float.valueOf(cx) : type == int.class ? Integer.valueOf(cx) : Double.valueOf(cx);
+                // By type, not by position: measured, the element's signature is
+                // mouseClicked(InteractionContext, double, double, int) - a coordinate-shaped value handed to the
+                // InteractionContext parameter is what produced "argument type mismatch".
+                if (type == double.class || type == Double.class) {
+                    args[i] = Double.valueOf(i == 0 ? cx : i == 1 ? cy : 0.0D);
+                } else if (type == float.class || type == Float.class) {
+                    args[i] = Float.valueOf(i == 0 ? cx : i == 1 ? cy : 0.0F);
                 } else if (type == int.class || type == Integer.class) {
-                    args[i] = Integer.valueOf(i == 2 ? 0 : 0);
-                } else if (type == boolean.class) {
+                    args[i] = Integer.valueOf(0);
+                } else if (type == boolean.class || type == Boolean.class) {
                     args[i] = Boolean.FALSE;
-                } else if (type == float.class) {
-                    args[i] = Float.valueOf(0.0F);
-                } else if (type == double.class) {
-                    args[i] = Double.valueOf(0.0D);
                 } else {
+                    // A reference parameter (the framework's InteractionContext): null is the only value this can
+                    // build without knowing its constructor, and it is recorded when the call fails so the next
+                    // attempt knows which parameter needed a real instance.
                     args[i] = null;
                 }
             }
@@ -7238,7 +7242,32 @@ public final class ValidationClient {
                 }
                 signature.append(types[i].getName());
             }
-            return signature.append(") threw ").append(failed).toString();
+            signature.append(") threw ").append(failed);
+            // A reference parameter was passed as null: name how it can be built, so the next attempt does not guess.
+            // Measured: the element's first parameter is the framework's InteractionContext and the call reached the
+            // method and threw inside it.
+            for (int i = 0; i < types.length; i++) {
+                Class<?> parameterType = types[i];
+                if (parameterType.isPrimitive()) {
+                    continue;
+                }
+                signature.append("; arg").append(i).append(' ').append(parameterType.getSimpleName()).append(" needs an instance: constructors=");
+                for (java.lang.reflect.Constructor<?> constructor : parameterType.getConstructors()) {
+                    signature.append('(');
+                    for (Class<?> parameter : constructor.getParameterTypes()) {
+                        signature.append(parameter.getSimpleName()).append(' ');
+                    }
+                    signature.append(')');
+                }
+                signature.append(" staticFactories=");
+                for (java.lang.reflect.Method method : parameterType.getMethods()) {
+                    if (java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                            && parameterType.isAssignableFrom(method.getReturnType())) {
+                        signature.append(method.getName()).append('/').append(method.getParameterCount()).append(' ');
+                    }
+                }
+            }
+            return signature.toString();
         }
     }
 
