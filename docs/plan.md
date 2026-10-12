@@ -393,6 +393,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.404 **round 205: R3b の回帰修正・R8 第1〜2バッチ・R2 stage 1〜2（build 緑）**
+
+- **R3b の回帰を修正**（`9fe0e84d4`）: R3b 配線後、**検証行が backend の死んだ font field を読み 0 を印字する**状態だった ✗（`fontStripSeparators`/`fontRunsStarted`/`fontQuadsAppended` ✓）→ `FontBatch` の accessor を読む形に修正 ✓（**field 名・順序は不変** ✓）。**これは leg まで気づかれなかった種類の欠陥**で、抽出後に「値を誰が持つか」を必ず確認する必要がある ✓。
+- **R8 第1バッチ**（`ba5554fd0`）: **宣言のみの private field 22個**を削除 ✓（全ファイルで出現1回＝宣言だけ ✓、**build が証明** ✓）。内訳: R3b 後の font 一式・R6 後の `slotPending`・`readbackFrom`・off-target offer 診断・`pendingImmediate`・`texturedImmediatePipeline`（frame-composite のリスト ✓）・`GAME_CLEAR_LATCH_PROPERTY` ほか ✓。
+- **R8 第2バッチ**（`143dc8883`）: **宣言のみの private メソッド 9個**を削除 ✓（`verifyUpload` 含む＝**呼び手ゼロ** ✓、`currentDrawableWidth/Height`・`describeWithStack`・`fullTargetViewportKey`・`pushMatrixInto`・`pushMatrixColumnsInto`・`regionTranslation`・`snapshotGlState` ✓）。未使用 import は **0** ✓。
+- **R2 stage 1（Font）**（`58f1c4933`）: acceptance の裁定（**所有者が既にある counter は読む・移さない・重複させない** ✓）に従い `FontStatistics` が **fragment を所有** ✓（counter は `FontBatch` から ✓）。line は `fontStats.run0()` を呼ぶ ✓（名前・順序は不変 ✓）。
+- **R2 stage 2（Model）**（`0bc1b411c`）: `ModelStatistics` が **3 fragment** ✓（mesh table/quads/failure は `ModelGeometryCache` から ✓、draw census は **static の理由で引数** ✓）。line は `texMatrixGroups` と display-list 式が間に挟まるため **3箇所に分けて splice** ✓。
+- **R2 残り stage（順序・acceptance の表 ✓）**: Texture（11 counter ✓・read-through 先: `TextureCopyService`/`VulkanTextureRegistry`/`VulkanImmediateTexturePipeline`/`VulkanGlTexture` ✓）／Terrain（20 ✓）／Target（26 ✓）／Submission（17 ✓・**scheduler から読む** ✓）／Immediate（99・最後 ✓）。**各 stage 後に build** ✓、`verify_line_check.py` と leg の `CELTIUM_VERIFY` が受入 ✓（baseline は byte-exact ✓）。
+- **R4 後半**: sky-draws が backend の所有権を持ち、`bindVertexBuffer` → `writeUniforms` → `celtium$tryIndirectBatch` → `recordRenderPass` → `uploadRegion` → `render` の順（1メソッド1ビルド ✓）。**`verifyUpload` は削除済み**（呼び手ゼロ ✓）。
+- **R7**: frame-composite が設計を書く（R4 後半後 ✓）。root が持つべきは (a) window 生涯（device/instance/swapchain/registry ✓）(b) world 生涯（terrain pass/model mesh/region ✓）(c) frame 生涯（`FrameCoordinator`: acquire→record→submit→present ✓）で、`celtium$isWindowBackend()`/`adoptTerrainState` の cast 群を interface メソッドへ ✓。
+- **R8 残り**: `replaceBoundaryDrops` と `postAcceptDroppedGroups` の二重計上（**唯一 leg が要る候補** ✓）、`framebufferColorTextures` を指す古いコメント ✓、`publishedFrameTextures*` 系の二重表示 ✓。
+
 ## 0.403 **round 204: R5 完了・R3b 完了・R4 前半完了・PR 6件マージ（すべて build 緑）**
 
 - **R5 完了**（`69949b736`）: pair clear の **bookkeeping は registry**（`pairClearedFrame`/`notePairCleared`/`pairClearContentIdentity` ✓）、**policy は backend**（pair の identity 衝突 ✓）。4 field 撤去・3 call site と2代入を委譲 ✓・拒否経路は不変 ✓。
