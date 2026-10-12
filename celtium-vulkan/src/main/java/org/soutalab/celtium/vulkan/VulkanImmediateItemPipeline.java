@@ -145,8 +145,17 @@ public final class VulkanImmediateItemPipeline {
         }
         VulkanImmediateItemPipeline result = new VulkanImmediateItemPipeline(context, renderPass, colorBlend,
                 depthTest, depthWrite, cull, depthCompareOp, lit);
-        result.createPipelineLayout();
-        result.createPipeline();
+        // BH-20: same transaction as the textured family - a failure in the pipeline stage used to leave the
+        // descriptor set layout and the pipeline layout behind, since the half-built object is never returned and
+        // never deleted.
+        try {
+            result.createPipelineLayout();
+            result.createPipeline();
+        } catch (RuntimeException | LinkageError error) {
+            VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.incrementAndGet();
+            result.delete();
+            throw error;
+        }
         return result;
     }
 

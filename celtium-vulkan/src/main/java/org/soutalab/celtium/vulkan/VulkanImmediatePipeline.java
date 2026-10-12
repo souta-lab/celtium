@@ -119,8 +119,19 @@ public final class VulkanImmediatePipeline {
         }
         VulkanImmediatePipeline result = new VulkanImmediatePipeline(context, renderPass, colorBlend,
                 depthTest, depthWrite, cull, lines, depthCompareOp);
-        result.createPipelineLayout();
-        result.createPipeline();
+        // BH-20: the two stages are one transaction. createPipeline() can throw after the layout exists - a shader
+        // module that will not compile, a vkCreateGraphicsPipelines refusal - and the layout handles then had no owner
+        // left to release them, because the object is never returned and its delete() is therefore never called. The
+        // rollback releases exactly what the stages created (delete() null-checks each handle), which is what makes
+        // "created equals destroyed" true when a native constructor fails partway.
+        try {
+            result.createPipelineLayout();
+            result.createPipeline();
+        } catch (RuntimeException | LinkageError error) {
+            VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.incrementAndGet();
+            result.delete();
+            throw error;
+        }
         return result;
     }
 

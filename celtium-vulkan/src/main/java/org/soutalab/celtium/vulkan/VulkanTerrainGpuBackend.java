@@ -2301,6 +2301,22 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long lastDrawnFrame = -1L;
     private long lastDrawnEpoch = -1L;
 
+    /** Ids a delete has forgotten, so a stale upload cannot silently recreate their mirror. */
+    private final java.util.Set<Integer> forgottenByDelete = new java.util.HashSet<Integer>();
+    /** Uploads refused because the splash re-announced a texture a delete had already forgotten. */
+    private int staleSplashUploadRefusals;
+
+    /** {@return whether the announcing call came from the splash's own draw path}. */
+    private static boolean celtium$callerIsSplash() {
+        for (StackTraceElement frame : new Throwable().getStackTrace()) {
+            String name = frame.getClassName();
+            if (name.contains("SplashProgress") || name.contains("drawSplashScreen")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Format-2 groups sampling a mirror filled by the int[] announcement path (the splash's own canvas). */
     private long splashSourcedGroups;
 
@@ -2919,6 +2935,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (pixels == null || glTextureId == 0 || width <= 0 || height <= 0 || pixels.length < width * height) {
             return;
         }
+        // The panorama's owner fix. The vanilla splash screen's white 256x256 canvas was uploaded for GL id 8 by
+        // `Minecraft.drawSplashScreen <- SplashProgress.drawVanillaScreen`, and when that texture is deleted the
+        // always-forget path removes the mirror - but an int[] upload that follows the delete recreated it, so the
+        // skybox's faces kept sampling white (`CELTIUM_UPLOAD_CALLER id=8 first=0xffffffff`, `mirrorSource=
+        // announced-int[]@256x256`, `splashSourcedGroups` non-zero, `CELTIUM_TEX_COPY_SERVED … mean=255,255,255`).
+        // An upload from the splash path for an id a delete has already forgotten is that stale announcement: it is
+        // refused and counted instead of re-filling the mirror. Any other upload clears the forgotten mark, so a
+        // legitimate re-creation of the same id is unaffected.
+        if (this.forgottenByDelete.contains(Integer.valueOf(glTextureId))) {
+            if (celtium$callerIsSplash()) {
+                this.staleSplashUploadRefusals++;
+                if (this.staleSplashUploadRefusals <= 4) {
+                    record("refused a stale splash upload for GL texture " + glTextureId + " (" + width + "x" + height
+                            + "): a delete already forgot that id, so this announcement would recreate its mirror"
+                            + " (total " + this.staleSplashUploadRefusals + ")");
+                }
+                return;
+            }
+            this.forgottenByDelete.remove(Integer.valueOf(glTextureId));
+        }
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
         }
@@ -3173,6 +3209,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (this.textureRegistry != null) {
             this.textureRegistry.forgetTexture(glTextureId);
         }
+        // Remembered so a later upload for a deleted id can be told from a re-creation (see announceDynamicTexture).
+        this.forgottenByDelete.add(Integer.valueOf(glTextureId));
         if (this.atlasTexture != null && glTextureId == this.atlasSourceGlId) {
             this.atlasTexture = null;
             this.atlasSourceGlId = 0;
@@ -7848,6 +7886,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " splashSourcedGroups=" + this.splashSourcedGroups
+                + " staleSplashUploadRefusals=" + this.staleSplashUploadRefusals
                 + " immediateDrawSiteLogged=" + this.immediateDrawSiteLogged
                 + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
                 + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
@@ -8024,6 +8063,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
                 + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
                 + " descriptorSets=" + this.descriptorSetCensus()
+                // BH-20's census, beside the descriptor sets it shares a lifetime with: how many pipeline builds failed
+                // after a stage had created handles and were rolled back rather than leaked. Zero on a normal leg is
+                // expected; the injected-failure leg is what distinguishes "nothing failed" from "not wired".
+                + " pipelineBuildRollbacks=" + VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.get()
                 + " inPlaceRefreshes=" + (this.textureRegistry != null ? this.textureRegistry.inPlaceRefreshes() : 0)
                 + " mirroredTextures=" + (this.textureRegistry != null ? this.textureRegistry.mirrorCount() : 0)
                 + " externalImages=[" + (this.textureRegistry != null

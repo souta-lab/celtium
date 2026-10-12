@@ -337,6 +337,13 @@ public final class VulkanImmediateTexturePipeline {
      * device-lost class failure, not a missing draw, so this counter is the honest alternative to binding it.
      */
     public static long ZERO_VIEW_REFUSALS;
+    /**
+     * BH-20's counter: pipeline builds that failed after a stage had already created handles, and were rolled back
+     * instead of leaked. A leg reads it beside the created/destroyed census: zero means either nothing failed or the
+     * rollback is not wired, and the injected-failure leg is what tells the two apart.
+     */
+    public static final java.util.concurrent.atomic.AtomicLong BUILD_ROLLBACKS =
+            new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * The other side of the atlas-binding question: which images the registry is handing out.
