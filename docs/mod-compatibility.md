@@ -27,8 +27,16 @@ pages, scroll, animation) and the same rendering paths, but the build Cleanroom 
 was fetched for a first look (`jei_1.12.2-4.16.5.1026.jar` from `maven.blamejared.com`), and JEI's own 1.12.2
 issue tracker is dominated by OptiFine conflicts rather than by anything a renderer can fix.
 
-**Status**: neither is installed in the harness cohort yet. The verified set below is still the whole of what
-the current runs load, and this section states an intention with its source rather than a result.
+**Status (2026-10-12)**: **HEI 4.31.2 is installed** in the Prism instance
+(`HadEnoughItems_1.12.2-4.31.2.jar`, 890,976 bytes, `mcmod.info` modid `jei`, name "Had Enough Items", authors
+mezz and Rongmario), fetched from `maven.cleanroommc.com/mezz/jei/4.31.2/jei-4.31.2.jar` — the coordinate the
+project's own README gives for developers. The JEI jar fetched earlier was removed rather than kept beside it,
+because two mods with modid `jei` in one instance is a conflict, not a comparison.
+
+The first acceptance leg with HEI in the cohort is running (`r142-hei`); what it has to show before this row
+can be called verified is that the game reaches the world with HEI loaded, that the item list, search bar and
+tooltips draw natively, and that the run is `validationMessageCount=0` with the picture gate's own verdict
+quoted. A leg that merely starts is not acceptance - the objective says so in as many words.
 
 ## What is actually verified today
 
