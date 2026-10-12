@@ -218,6 +218,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Passes identity 0 (the window) drew before the game's own framebuffer was adopted, and the bounded log of them. */
     private int windowDrawsBeforeAdoption;
     private int windowDrawLogs;
+    /** Loading-phase windows whose submission was marked as the frame the present may take (see the window close path). */
+    private int windowFramesMarkedPresentable;
     private int pairClearRefusalLogs;
     private String lastPairClearRefusal = "none";
     /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
@@ -7197,6 +7199,17 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     this.passSubmissions++;
                     this.immediateWindows++;
                     this.immediateWindowsThisFrame++;
+                    // Who owns "a frame reached the queue": for a window that drew the window's own picture in a
+                    // phase with no frame lifecycle - the splash and loading screens - that window IS the frame, and
+                    // the submission just made is what the present takes. Without this the present skipped every
+                    // loading frame with "no completed frame waiting" until a world or menu frame submit happened,
+                    // which is the measured white phase at startup (the picture was in the frame image the whole
+                    // time). The frame submit path stays the owner for real frames: this fires only for identity 0
+                    // (the window) and only before a main framebuffer is adopted.
+                    if (identity == 0L && this.mainTargetIdentity == Long.MIN_VALUE) {
+                        this.lastFrameReachedQueue = true;
+                        this.windowFramesMarkedPresentable++;
+                    }
                     if (offTarget) {
                         this.offTargetDrawnByTarget.merge(identity, 1, Integer::sum);
                         this.offTargetCopiedBack++; // completed bridge return, not an empty offscreen copy
@@ -8489,6 +8502,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // and did not get. Without the second number the rule's effect is inferred from a picture.
                 + " pairClearsRefusedOtherIdentity=" + this.pairClearsRefusedOtherIdentity
                 + " windowDrawsBeforeAdoption=" + this.windowDrawsBeforeAdoption
+                + " windowFramesMarkedPresentable=" + this.windowFramesMarkedPresentable
                 + " lastPairClearRefusal=[" + this.lastPairClearRefusal + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
