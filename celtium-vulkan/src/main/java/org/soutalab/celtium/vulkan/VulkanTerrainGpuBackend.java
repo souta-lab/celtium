@@ -87,10 +87,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final Reference2ReferenceMap<ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers = new Reference2ReferenceOpenHashMap<>();
     private final Reference2ReferenceMap<ChunkPrimitiveType, Integer> sharedIndexPrimitives = new Reference2ReferenceOpenHashMap<>();
 
-    private VulkanUniformBuffer uniforms;
-    private long uniformStride;
-    private int uniformBlocks;
-    private long uniformWriteCursor;
 
     private FrameImageTarget frameTarget;
     /** Standalone frame-compatible render pass for UI-only frames - only used when no terrain pass has run. */
@@ -240,7 +236,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private int command0Logged;
     private int verticesLogged;
-    private boolean uniformsLogged;
     private long readbackBuffer;
     /** One slot per remembered draw; 32 covers a frame's visible sections at a typical render distance. */
     private static final int READBACK_SLOTS = 32;
@@ -401,12 +396,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         .reduce(1, MathUtil::lcm);
         this.uniformAlignment = Math.max(MIN_UNIFORM_ALIGNMENT,
                 Integer.highestOneBit(Math.max(MIN_UNIFORM_ALIGNMENT, this.alignmentFromDevice())));
-        this.uniformStride = align(UNIFORM_BYTES, this.uniformAlignment);
+        this.terrain.setUniformStride(align(UNIFORM_BYTES, this.uniformAlignment));
         createCommandResources();
     
         this.terrain.setStatistics(this.terrainStatistics);
         this.terrain.setContext(this.context);
         this.terrain.setDiagnostics(this::record);
+        this.terrain.setFogService(this.fogService);
 }
 
     /**
@@ -1937,8 +1933,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * BLOCK family, so a difference can be pinned to one pipeline at a time.
      */
     /** Additive mip bias; 0.0 is GL parity. Swept to separate the chain's content from the shader's LOD. */
-    private static final float MIP_BIAS_ADD =
-            Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
     private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", VulkanImmediateFormats.DEFAULT_ACCEPTED);
 
@@ -7870,7 +7864,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " frameFenceWaitCount=" + this.submissionStatistics.frameFenceWaitCount()
                 + " frameFenceWaitWorstMillis=" + this.submissionStatistics.frameFenceWaitWorstMillis()
                 + " " + VulkanHostBuffer.allocationSummary()
-                + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
+                + " uniform" + (this.terrain.uniforms() == null ? "=none" : this.terrain.uniforms().growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " splashSourcedGroups=" + this.targetStatistics.splashSourcedGroups()
@@ -8647,9 +8641,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.sharedIndexBuffers.clear();
         this.sharedIndexPrimitives.clear();
-        if (this.uniforms != null) {
-            this.uniforms.delete();
-            this.uniforms = null;
+        if (this.terrain.uniforms() != null) {
+            this.terrain.uniforms().delete();
+            this.terrain.releaseUniforms();
         }
         // OPT-05: the frame arena's buffers are released here, not left for the next world. Every group that held a
         // slice has been retired above (this path runs after a wait for device idle that succeeded), so nothing the
@@ -8720,9 +8714,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         this.sharedIndexBuffers.clear();
         this.sharedIndexPrimitives.clear();
-        if (this.uniforms != null) {
-            this.uniforms.delete();
-            this.uniforms = null;
+        if (this.terrain.uniforms() != null) {
+            this.terrain.uniforms().delete();
+            this.terrain.releaseUniforms();
         }
         if (this.postChain != null) {
             this.postChain.delete();
@@ -9148,7 +9142,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " size=" + this.lightmapTexture.width() + "x" + this.lightmapTexture.height()
                     + " atlas=" + this.atlasTexture.width() + "x" + this.atlasTexture.height());
         }
-        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.uniforms.buffer(), this.uniforms.size());
+        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size());
 
         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
 
@@ -9223,7 +9217,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.readbackOffset = (long) batch.baseVertex(0) * this.commonVertexStride;
                 this.readbackRegion = resources;
             }
-            long uniformOffset = writeUniforms(region, pass, camera);
+            long uniformOffset = this.terrain.writeUniforms(region, pass, camera);
             pipeline.bindDescriptors(this.commandBuffer, uniformOffset);
             if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
                 // Which pipeline and descriptor set the draw will actually use, next to the views the backend handed
@@ -9700,99 +9694,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         return override != 0 ? override : captured;
     }
 
-    private long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {
-        long offset = this.uniformWriteCursor;
-        this.uniformWriteCursor += this.uniformStride;
-        if (this.uniformWriteCursor > this.uniforms.size()) {
-            // This must not happen: render() reserves an upper bound before recording, and growth replaces the
-            // buffer that descriptors recorded earlier in this pass already point at. Reported loudly rather than
-            // growing silently, so a missed reservation shows up as a defect instead of as wrong terrain.
-            record("uniform buffer grew during recording: " + this.uniformWriteCursor + " > " + this.uniforms.size()
-                    + " (descriptors bound earlier in this pass may be stale)");
-            this.uniforms.ensureCapacity(this.uniformWriteCursor);
-            this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
-        }
-
-        ByteBuffer block = this.uniforms.mapped();
-        int base = (int) offset;
-
-        block.putFloat(base + 0, (region.getOriginX() - camera.intX) - camera.fracX);
-        block.putFloat(base + 4, (region.getOriginY() - camera.intY) - camera.fracY);
-        block.putFloat(base + 8, (region.getOriginZ() - camera.intZ) - camera.fracZ);
-        block.putFloat(base + 12, 0.0f);
-
-        float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
-        if (!uniformsLogged) {
-            uniformsLogged = true;
-            // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
-            System.out.println("[Celtium] CELTIUM_FOG fogColor=" + java.util.Arrays.toString(fogColor)
-                    + " start=" + (this.fogService != null ? this.fogService.getFogStart() : 0.0f)
-                    + " end=" + (this.fogService != null ? this.fogService.getFogEnd() : 0.0f)
-                    + " density=" + (this.fogService != null ? this.fogService.getFogDensity() : 0.0f)
-                    + " shape=" + (this.fogService != null ? this.fogService.getFogShapeIndex() : -1)
-                    + " glFogMode=" + fogMode() + " cutoff=" + (this.fogService != null ? this.fogService.getFogCutoff() : 0.0f)
-                    + " regionOffset=(" + ((region.getOriginX() - camera.intX) - camera.fracX) + ","
-                    + ((region.getOriginY() - camera.intY) - camera.fracY) + ","
-                    + ((region.getOriginZ() - camera.intZ) - camera.fracZ) + ")");
-        }
-        block.putFloat(base + 16, fogColor != null && fogColor.length > 0 ? fogColor[0] : 0.0f);
-        block.putFloat(base + 20, fogColor != null && fogColor.length > 1 ? fogColor[1] : 0.0f);
-        block.putFloat(base + 24, fogColor != null && fogColor.length > 2 ? fogColor[2] : 0.0f);
-        block.putFloat(base + 28, fogColor != null && fogColor.length > 3 ? fogColor[3] : 0.0f);
-
-        block.putFloat(base + 32, this.fogService != null ? this.fogService.getFogDensity() : 0.0f);
-        block.putFloat(base + 36, this.fogService != null ? this.fogService.getFogStart() : 0.0f);
-        block.putFloat(base + 40, this.fogService != null ? this.fogService.getFogEnd() : 0.0f);
-        // Additive atlas LOD shift. The per-material bias already travels in the vertex, so parity needs 0 here.
-        // 0.0 is exact OpenGL parity. The property exists so the shader's level-of-detail can be swept against the
-        // reference: the mirrored chain measures 5.60% while a shallow clamp measures 0.16%, and the question is whether
-        // that difference is the chain's content or the LOD the shader asks for.
-        block.putFloat(base + 44, MIP_BIAS_ADD);
-        block.putInt(base + 48, fogMode());
-        block.putInt(base + 52, this.fogService != null ? this.fogService.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL);
-        block.putInt(base + 56, pass.supportsFragmentDiscard() ? 1 : 0);
-        // Chunk fade is a separate feature that the Vulkan path does not port yet; 0 keeps the GL default look.
-        block.putInt(base + 60, 0);
-        block.putFloat(base + 64, 0.0f);
-        block.putFloat(base + 68, 0.0f);
-        block.putFloat(base + 72, 0.0f);
-        block.putFloat(base + 76, 0.0f);
-
-        return offset;
-    }
 
     /**
      * The shader's fog mode selector: 0 = none, 1 = exp2, 2 = exp, 3 = smooth/linear. Derived from the GL fog
      * state, which is what the OpenGL backend's {@code GLStateManagerFogService} reads as well.
      */
-    private static int fogMode() {
-        if (VulkanFogMirror.hasValue()) {
-            // No GL query on this path: the game pushed GlStateManager.fogState (the same source the GL fog service
-            // reads). The query below stays as the fallback for a caller that has not pushed yet.
-            int mirrored = VulkanFogMirror.enabled() ? VulkanFogMirror.mode() : 0;
-            if (mirrored == 0) {
-                return 0;
-            }
-            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP2) {
-                return 1;
-            }
-            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP) {
-                return 2;
-            }
-            return 3;
-        }
-        if (!org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_FOG)) {
-            return 0;
-        }
-        int mode = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_FOG_MODE);
-        if (mode == org.lwjgl.opengl.GL11.GL_EXP2) {
-            return 1;
-        }
-        if (mode == org.lwjgl.opengl.GL11.GL_EXP) {
-            return 2;
-        }
-        return 3;
-    }
 
 
 
@@ -12223,7 +12129,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 vkCmdResetQueryPool(this.commandBuffer, this.timestampPool, 0, TIMESTAMP_SLOTS);
             }
         }
-        this.uniformWriteCursor = 0;
+        this.terrain.resetUniformWriteCursor();
         // The reset above leaves every piece of dynamic state undefined, so the dedup trackers go to their never-
         // matching sentinels: the first group in this buffer emits whatever it needs, whatever it is.
         this.passVpX = this.passVpY = this.passVpW = this.passVpH = -1;
@@ -13479,16 +13385,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     private void ensureUniformCapacity(int regions) {
         int blocks = Math.max(16, regions + 1);
-        long required = blocks * this.uniformStride;
-        if (this.uniforms != null && this.uniforms.size() >= required) {
+        long required = blocks * this.terrain.uniformStride();
+        if (this.terrain.uniforms() != null && this.terrain.uniforms().size() >= required) {
             return;
         }
-        if (this.uniforms == null) {
-            this.uniforms = new VulkanUniformBuffer(this.context, required);
+        if (this.terrain.uniforms() == null) {
+            this.terrain.ensureUniformCapacity(this.context, required);
         } else {
-            this.uniforms.ensureCapacity(required);
+            this.terrain.uniforms().ensureCapacity(required);
         }
-        this.uniformBlocks = blocks;
+        this.terrain.setUniformBlocks(blocks);
     }
 
     private int alignmentFromDevice() {

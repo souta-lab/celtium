@@ -6,6 +6,8 @@ import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltSectionMeshParts;
 import org.lwjgl.vulkan.VK10;
+import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
+import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
 import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;
 import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType;
@@ -488,5 +490,174 @@ public final class TerrainRenderer {
             return false;
         }
     }
+
+
+    // ---------------------------------------------------------------- uniforms (R4)
+
+    /** The uniform ring the pass writes its per-region blocks into, and how far it has been written. */
+    /** The fog service the uniform block reads its colour and distances from. */
+    private FogService fogService;
+
+    /** Gives the class the fog service the game installed. */
+    void setFogService(FogService fogService) {
+        this.fogService = fogService;
+    }
+
+    /** {@return the uniform ring, which the pass reserves against before recording}. */
+    VulkanUniformBuffer uniforms() {
+        return this.uniforms;
+    }
+
+    /** {@return the stride of one uniform block}. */
+    long uniformStride() {
+        return this.uniformStride;
+    }
+
+    /** Sets how many uniform blocks the ring holds, after a growth. */
+    void setUniformBlocks(int blocks) {
+        this.uniformBlocks = blocks;
+    }
+
+    /** {@return how many uniform blocks the ring holds}. */
+    int uniformBlocks() {
+        return this.uniformBlocks;
+    }
+
+    /** {@return how far the ring has been written this pass}. */
+    long uniformWriteCursor() {
+        return this.uniformWriteCursor;
+    }
+
+    /** {@return whether the fog line has been printed this run}. */
+    boolean uniformsLogged() {
+        return this.uniformsLogged;
+    }
+
+    private VulkanUniformBuffer uniforms;
+    private long uniformStride;
+    private int uniformBlocks;
+    private long uniformWriteCursor;
+    private boolean uniformsLogged;
+    private static final float MIP_BIAS_ADD =
+            Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
+
+    static int fogMode() {
+        if (VulkanFogMirror.hasValue()) {
+            // No GL query on this path: the game pushed GlStateManager.fogState (the same source the GL fog service
+            // reads). The query below stays as the fallback for a caller that has not pushed yet.
+            int mirrored = VulkanFogMirror.enabled() ? VulkanFogMirror.mode() : 0;
+            if (mirrored == 0) {
+                return 0;
+            }
+            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP2) {
+                return 1;
+            }
+            if (mirrored == org.lwjgl.opengl.GL11.GL_EXP) {
+                return 2;
+            }
+            return 3;
+        }
+        if (!org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_FOG)) {
+            return 0;
+        }
+        int mode = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_FOG_MODE);
+        if (mode == org.lwjgl.opengl.GL11.GL_EXP2) {
+            return 1;
+        }
+        if (mode == org.lwjgl.opengl.GL11.GL_EXP) {
+            return 2;
+        }
+        return 3;
+    }
+
+    long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {
+        long offset = this.uniformWriteCursor;
+        this.uniformWriteCursor += this.uniformStride;
+        if (this.uniformWriteCursor > this.uniforms.size()) {
+            // This must not happen: render() reserves an upper bound before recording, and growth replaces the
+            // buffer that descriptors recorded earlier in this pass already point at. Reported loudly rather than
+            // growing silently, so a missed reservation shows up as a defect instead of as wrong terrain.
+            record("uniform buffer grew during recording: " + this.uniformWriteCursor + " > " + this.uniforms.size()
+                    + " (descriptors bound earlier in this pass may be stale)");
+            this.uniforms.ensureCapacity(this.uniformWriteCursor);
+            this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
+        }
+
+        ByteBuffer block = this.uniforms.mapped();
+        int base = (int) offset;
+
+        block.putFloat(base + 0, (region.getOriginX() - camera.intX) - camera.fracX);
+        block.putFloat(base + 4, (region.getOriginY() - camera.intY) - camera.fracY);
+        block.putFloat(base + 8, (region.getOriginZ() - camera.intZ) - camera.fracZ);
+        block.putFloat(base + 12, 0.0f);
+
+        float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
+        if (!uniformsLogged) {
+            uniformsLogged = true;
+            // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
+            System.out.println("[Celtium] CELTIUM_FOG fogColor=" + java.util.Arrays.toString(fogColor)
+                    + " start=" + (this.fogService != null ? this.fogService.getFogStart() : 0.0f)
+                    + " end=" + (this.fogService != null ? this.fogService.getFogEnd() : 0.0f)
+                    + " density=" + (this.fogService != null ? this.fogService.getFogDensity() : 0.0f)
+                    + " shape=" + (this.fogService != null ? this.fogService.getFogShapeIndex() : -1)
+                    + " glFogMode=" + fogMode() + " cutoff=" + (this.fogService != null ? this.fogService.getFogCutoff() : 0.0f)
+                    + " regionOffset=(" + ((region.getOriginX() - camera.intX) - camera.fracX) + ","
+                    + ((region.getOriginY() - camera.intY) - camera.fracY) + ","
+                    + ((region.getOriginZ() - camera.intZ) - camera.fracZ) + ")");
+        }
+        block.putFloat(base + 16, fogColor != null && fogColor.length > 0 ? fogColor[0] : 0.0f);
+        block.putFloat(base + 20, fogColor != null && fogColor.length > 1 ? fogColor[1] : 0.0f);
+        block.putFloat(base + 24, fogColor != null && fogColor.length > 2 ? fogColor[2] : 0.0f);
+        block.putFloat(base + 28, fogColor != null && fogColor.length > 3 ? fogColor[3] : 0.0f);
+
+        block.putFloat(base + 32, this.fogService != null ? this.fogService.getFogDensity() : 0.0f);
+        block.putFloat(base + 36, this.fogService != null ? this.fogService.getFogStart() : 0.0f);
+        block.putFloat(base + 40, this.fogService != null ? this.fogService.getFogEnd() : 0.0f);
+        // Additive atlas LOD shift. The per-material bias already travels in the vertex, so parity needs 0 here.
+        // 0.0 is exact OpenGL parity. The property exists so the shader's level-of-detail can be swept against the
+        // reference: the mirrored chain measures 5.60% while a shallow clamp measures 0.16%, and the question is whether
+        // that difference is the chain's content or the LOD the shader asks for.
+        block.putFloat(base + 44, MIP_BIAS_ADD);
+        block.putInt(base + 48, fogMode());
+        block.putInt(base + 52, this.fogService != null ? this.fogService.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL);
+        block.putInt(base + 56, pass.supportsFragmentDiscard() ? 1 : 0);
+        // Chunk fade is a separate feature that the Vulkan path does not port yet; 0 keeps the GL default look.
+        block.putInt(base + 60, 0);
+        block.putFloat(base + 64, 0.0f);
+        block.putFloat(base + 68, 0.0f);
+        block.putFloat(base + 72, 0.0f);
+        block.putFloat(base + 76, 0.0f);
+
+        return offset;
+    }
+
+    /** Sets the stride of one uniform block, computed from the device's alignment. */
+    void setUniformStride(long stride) {
+        this.uniformStride = stride;
+    }
+
+    /** Resets the write cursor, which the pass does before it records. */
+    void resetUniformWriteCursor() {
+        this.uniformWriteCursor = 0;
+    }
+
+    /** Releases the uniform ring, if it exists. */
+    void releaseUniforms() {
+        if (this.uniforms != null) {
+            this.uniforms.delete();
+            this.uniforms = null;
+        }
+    }
+
+    /** Creates or grows the uniform ring so it holds at least the required bytes. */
+    void ensureUniformCapacity(VulkanContext context, long required) {
+        if (this.uniforms == null) {
+            this.uniforms = new VulkanUniformBuffer(context, required);
+        } else {
+            this.uniforms.ensureCapacity(required);
+        }
+        this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
+    }
+
 
 }
