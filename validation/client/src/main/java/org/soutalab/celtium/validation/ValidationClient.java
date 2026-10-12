@@ -6082,9 +6082,8 @@ public final class ValidationClient {
         // videoSettingsRowNames=none, and the screen's own field is the controller.
         if (list == null) {
             list = celtium$vsOptionsFromController(screen);
-            if (list != null) {
-                report.addProperty("videoSettingsChainSource", "controller pages");
-            }
+            report.addProperty("videoSettingsChainSource", list != null ? "controller pages"
+                    : celtium$vsControllerStep);
         }
         if (list == null) {
             report.addProperty("videoSettingsChain",
@@ -6326,6 +6325,9 @@ public final class ValidationClient {
      * those pages is what gives the existing row finder something to walk, since the rows are not GuiButtons in
      * {@code buttonList} and there is no {@code optionsRowList} at all.
      */
+    /** Why the controller path produced no rows, so a leg says which step failed instead of just null. */
+    private static String celtium$vsControllerStep = "not attempted";
+
     /** {@return the no-argument method's value on an object}, or null when it cannot be read. */
     private static Object celtium$invoke(Object target, String name) {
         if (target == null) {
@@ -6343,10 +6345,12 @@ public final class ValidationClient {
     private static Object celtium$vsOptionsFromController(net.minecraft.client.gui.GuiScreen screen) {
         Object controller = celtium$fieldValue(screen, new String[] {"controller", "field_146501_g"});
         if (controller == null) {
+            celtium$vsControllerStep = "no controller field on " + screen.getClass().getName();
             return null;
         }
         Object pages = celtium$fieldValue(controller, new String[] {"pages", "field_146501_h"});
         if (!(pages instanceof java.util.List)) {
+            celtium$vsControllerStep = "controller has no pages list (" + controller.getClass().getName() + ")";
             return null;
         }
         java.util.List<Object> options = new java.util.ArrayList<Object>();
@@ -6366,7 +6370,14 @@ public final class ValidationClient {
                 }
             }
         }
-        return options.isEmpty() ? null : options;
+        if (options.isEmpty()) {
+            celtium$vsControllerStep = "controller pages hold no options (" + ((java.util.List<?>) pages).size()
+                    + " pages)";
+            return null;
+        }
+        celtium$vsControllerStep = "controller pages (" + ((java.util.List<?>) pages).size() + " pages, "
+                + options.size() + " options)";
+        return options;
     }
 
     private static Object[] celtium$vsFindOptionButton(Object list) {
