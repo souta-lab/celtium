@@ -174,9 +174,31 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Groups refused because their texture wrapper had moved and no rebuild was available for their pipeline. */
     private int staleGroupRefusals;
     /**
+     * The serial of the frame a once-per-frame latch belongs to.
+     * <p>
+     * Deliberately not {@code frameId}. That counter advances on the world render path, and a GUI screen skips it, so
+     * during the main menu or the loading screen it stands still - and every latch keyed on it ("clear the pair once
+     * per frame", "answer the next copy from this frame's readback") became once per <em>screen session</em> instead.
+     * Measured (round 166, the main menu): the panorama's off-target pair was cleared on the first screen frame and
+     * never again, so each present's cube faces were drawn over the previous present's, and the game's per-frame
+     * 256x256 copy of that viewport was answered from the first readback (`textureCopiesServed=1953`,
+     * `textureCopyReadbacks=1`). Both made the panorama unable to move cleanly.
+     * <p>
+     * The present serial is the frame notion that holds for a screen as well: a world frame presents exactly once, so
+     * the two counters advance together while a world renders, and a screen - which presents without advancing
+     * {@code frameId} - advances this one.
+     */
+    private long celtium$frameSerial() {
+        return this.celtium$presentCount;
+    }
+
+    /**
      * The frame in which each pair's images have been cleared, so the clear happens once per frame and not per
      * window. One per pair: two pairs are two images, and a frame that cleared one of them says nothing about the
      * other - which is exactly the mistake that would make the second window of a frame erase the first's work.
+     * <p>
+     * Keyed on {@link #celtium$frameSerial()}: a screen's frame counts too (see that method for what keying on
+     * {@code frameId} measured on the menu).
      */
     private long defaultPairClearedFrame = -1L;
     private long chainPairClearedFrame = -1L;
@@ -1283,6 +1305,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private long lastDrawnOffTargetIdentity;
     private long lastDrawnOffTargetFrame = -1L;
+    /**
+     * The present that last accepted a batch for {@link #lastDrawnOffTargetIdentity}, which is what "this frame" means
+     * for a read that resolves through the last drawn target: {@code frameId} does not advance while a screen is up,
+     * so a test against it stayed true for a whole screen session. See {@link #celtium$frameSerial()}.
+     */
+    private long lastDrawnOffTargetPresent = -1L;
 
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     private boolean gpuStalled;
@@ -5787,6 +5815,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (this.currentRenderTarget != 0L) {
                     this.lastDrawnOffTargetIdentity = this.currentRenderTarget;
                     this.lastDrawnOffTargetFrame = this.frameId;
+                    this.lastDrawnOffTargetPresent = celtium$frameSerial();
                 }
             }
 
@@ -7560,7 +7589,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // initialLayout GENERAL - which is VUID-vkCmdBeginRenderPass-initialLayout-00900 unless the image is
                     // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
                     celtium$transitionPublishedFrameTextures(true);
-                    if (!offTarget.chainPairAcquired() || this.chainPairClearedFrame != this.frameId) {
+                    if (!offTarget.chainPairAcquired() || this.chainPairClearedFrame != celtium$frameSerial()) {
                         // Outside the pass, which is where the clear and its first-use barrier belong, and once per
                         // frame: the game clears a framebuffer when it binds it, and clearing per window would erase
                         // what an earlier window of the same frame already drew there. The acquire state is asked of
@@ -7575,7 +7604,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         } else {
                             offTarget.clearChainPair(this.commandBuffer);
                         }
-                        this.chainPairClearedFrame = this.frameId;
+                        this.chainPairClearedFrame = celtium$frameSerial();
                         this.chainPairClears++;
                         // Order against the faces' own pass: the copy reads this pair and the faces drew into it, so
                         // a clear that lands after their DRAW_SITE is what leaves the copy white.
@@ -7607,9 +7636,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
                     // No hand-back here: the published image is the chain pair's, and this pass attaches the default
                     // pair. Transitioning the published image is the sampling site's job, below.
-                    if (!offTarget.offTargetAcquired() || this.defaultPairClearedFrame != this.frameId) {
+                    if (!offTarget.offTargetAcquired() || this.defaultPairClearedFrame != celtium$frameSerial()) {
                         offTarget.clearOffTarget(this.commandBuffer);
-                        this.defaultPairClearedFrame = this.frameId;
+                        this.defaultPairClearedFrame = celtium$frameSerial();
                         this.defaultPairClears++;
                     }
                     framebuffer = ensureOffTargetFramebuffer(renderPass);
@@ -10929,7 +10958,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         System.out.println("[Celtium] CELTIUM_OUTLINE_INPUT frame=" + this.frameId
                 + " identity=" + identity + " texture=" + (reported == null ? -1L : reported[0])
                 + " size=" + (reported == null ? "?" : reported[1] + "x" + reported[2])
-                + " clearedThisFrame=" + (this.chainPairClearedFrame == this.frameId)
+                + " clearedThisFrame=" + (this.chainPairClearedFrame == celtium$frameSerial())
                 + " chainPairClears=" + this.chainPairClears
                 + " boundIdentity=" + this.currentFramebufferIdentity
                 + " boundIsMain=" + this.currentRenderTargetIsMain
@@ -11005,13 +11034,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // Before anything in this submission clears, attaches or samples the image: the previous frame's composite
         // may have left it in SHADER_READ_ONLY, and both the clear and the chain declare GENERAL.
         this.celtium$syncPublishedChainOutput(glless.chainPairColorImage());
-        if (!glless.chainPairAcquired() || this.chainPairClearedFrame != this.frameId) {
+        if (!glless.chainPairAcquired() || this.chainPairClearedFrame != celtium$frameSerial()) {
             if (glless.chainPairNeedsSelfTest()) {
                 record(glless.chainPairSelfTest(this.commandBuffer));
             } else {
                 glless.clearChainPair(this.commandBuffer);
             }
-            this.chainPairClearedFrame = this.frameId;
+            this.chainPairClearedFrame = celtium$frameSerial();
             this.chainPairClears++;
             celtium$noteChainPairClear("sync-published-chain-output");
         }
@@ -11589,6 +11618,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         @Override
         public long lastDrawnOffTargetFrame() {
             return VulkanTerrainGpuBackend.this.lastDrawnOffTargetFrame;
+        }
+
+        @Override
+        public long lastDrawnOffTargetPresent() {
+            return VulkanTerrainGpuBackend.this.lastDrawnOffTargetPresent;
         }
 
         @Override

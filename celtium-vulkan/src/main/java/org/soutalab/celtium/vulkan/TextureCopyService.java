@@ -87,6 +87,16 @@ public final class TextureCopyService {
 
         long lastDrawnOffTargetFrame();
 
+        /**
+         * {@return the present that last accepted a batch for {@link #lastDrawnOffTargetIdentity}}.
+         * <p>
+         * The read resolution's last resort asks "was this target drawn in the frame the copy is about", and for a
+         * screen that is the present, not {@link #frameId()} (which a screen does not advance - see
+         * {@link #presentSerial()}). Comparing a present against a frame id would never match, so the backend records
+         * both and this is the one the decision uses.
+         */
+        long lastDrawnOffTargetPresent();
+
         long lastDrawnImage();
 
         long lastDrawnFrame();
@@ -422,7 +432,8 @@ public final class TextureCopyService {
                 glless.ensureOffTarget(this.host.targetWidth(), this.host.targetHeight());
                 return glless.offTargetColorImage();
             }
-            if (this.host.lastDrawnOffTargetIdentity() != 0L && this.host.lastDrawnOffTargetFrame() == this.host.frameId()) {
+            if (this.host.lastDrawnOffTargetIdentity() != 0L
+                    && this.host.lastDrawnOffTargetPresent() == this.host.presentSerial()) {
                 // The copy reads name 0 and the default pair is bound, but this frame's non-main content was drawn
                 // into this identity's pair: that image is what the copy is of. Measured on the menu, where the
                 // panorama's faces go to the chain pair and the read otherwise found uniform white.
