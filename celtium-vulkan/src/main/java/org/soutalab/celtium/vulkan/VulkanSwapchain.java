@@ -1358,7 +1358,6 @@ public final class VulkanSwapchain {
      * {@code -1} at the comparison, because the sentinel is a specific bit pattern and the next reader should not
      * have to know that a signed -1 means {@code 0xFFFFFFFF} here.
      */
-    private static final long SURFACE_EXTENT_UNSPECIFIED = 0xFFFFFFFFL;
 
     /**
      * {@return one line saying what the surface offered and what was requested, so a leg can reconcile the two}.

@@ -196,7 +196,6 @@ public final class VulkanContext {
     /** Device-wide waits at teardown that did not confirm idle, so quarantined resources were deliberately held. */
     public static int deviceIdleFailures;
     /** Command buffers whose queue wait failed and whose command buffer was therefore quarantined instead of freed. */
-    private int quarantinedQueueWaitBuffers;
     /** Command buffers and fences whose submission timed out: never freed while the queue may still own them. */
     private final java.util.Set<VkCommandBuffer> quarantinedCommandBuffers = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<Long> quarantinedFences = java.util.concurrent.ConcurrentHashMap.newKeySet();

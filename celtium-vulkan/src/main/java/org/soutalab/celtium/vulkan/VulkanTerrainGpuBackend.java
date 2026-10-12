@@ -395,7 +395,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private static final boolean FORCE_NO_TIMESTAMPS = Boolean.getBoolean("celtium.vulkan.forceNoTimestamps");
     private final Reference2ReferenceMap<TerrainRenderPass, Long> passTimings = new Reference2ReferenceOpenHashMap<>();
-    private boolean uploadVerified;
     private int beforeAfterLogged;
     private int readbackSlots;
     private long readbackOffset;
