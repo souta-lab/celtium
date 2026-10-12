@@ -393,6 +393,22 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.388 **round 189: ビルドを止めて refactoring を一括で進める（ユーザー指示）— R1c 着地と6 unit の並列執筆**
+
+- **ユーザー指示**: 「一旦ビルドなどの壁時間がかかる行動をやめて refactor を完全にやって。ビルドはそれから」。→ **この期間は build/leg を回さず、plan §9.1 の分担（巨大 backend の単一ライターは Lead／他担当は新規独立ファイルと設計）で進める**。配線は Lead が一括で行い、**最後にまとめて build と受入**。
+- **R1c 第1段 着地（`c216f2e3f`）**: `BackendReport`（35行）が**検証行の出力契約**を所有 — once-per-snapshot ガードと `[Celtium] CELTIUM_VERIFY via=<trigger> <summary>` の構築を**一箇所**に。カウンタ本体は backend に残す（plan §6.1 の「287 field を読む accessor/snapshot 案」を**採らない**）。build 緑・`CELTIUM_CPU_CONTRACT PASS` を着地時に確認済み ✓。
+- **6 unit を並列で執筆中（新規ファイルのみ・backend は編集しない・build もしない）**:
+  | unit | 新クラス | 担当 |
+  |---|---|---|
+  | R2 | domain 別 statistics（terrain/immediate/texture/target/submission/model/font、**検証行の field 名と順序は不変**） | acceptance |
+  | R3a | `ModelGeometryCache`（generation／借用／invalidate／world teardown） | weather-water |
+  | R3b | `FontBatch`（先行 glyph の close・target 別 queue・abort 再 queue） | glyph-fix |
+  | R4 | `TerrainRenderer`（region 資源・upload・ordered draw。Celeritas CPU 側は二重実装しない） | sky-draws |
+  | R5 | `RenderTargetRegistry`（main/default/chain/post の実 image・alias/layout/clear の一意化） | frame-composite |
+  | R6 | `FrameSubmissionScheduler`（slot／deferred／present／回収の対応。**B05 の slot-retire をここに一本化**） | perf-ring |
+- **各担当への要求**: 新ファイルのみ・backend を触らない・build しない・leg を回さない。返答に**移動すべき backend の field/method と行番号の一覧**を付ける（Lead の配線が推測なしで済むように）。plan の記述と現コードが食い違う点は申告。
+- **配線は Lead が一括**。全クラスが揃った時点で `scripts/build.sh` ＋ `TextureContractCheck` ＋ 検証行の書式差分＋（必要なら）menu/world leg を**まとめて1回**回す。
+
 ## 0.387 **round 188: R1b 配線完了と出口 leg、B05 の GPU 再現、build 赤の即修復**
 
 - **R1b 完了（`9cfd09b37`）**: `PublishedFrameTextures`（169行）が census を所有し、backend の約30呼び出しが委譲。**検証行のフィールド名・順序は不変**（backend に残る旧識別子は文字列リテラルとコメントのみ ✓）。`scripts/cpu-contract/TextureContractCheck.java` → **`CELTIUM_CPU_CONTRACT PASS`** ✓（plan §7.1）。
