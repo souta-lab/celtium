@@ -8282,6 +8282,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void uploadMeshes(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results, Runnable graphUpdateTrigger) {
+        // "chunkUpload" inside "world": the section rebuild uploads are the last unnamed part of a world-pass
+        // spike - the terrain submit, the window flush and the present already have brackets, and what is left is
+        // the mesh-copy + endCommands path this call holds.
+        FramePassTimings.begin("chunkUpload");
+        try {
+            celtium$uploadMeshesPass(results, graphUpdateTrigger);
+        } finally {
+            FramePassTimings.end("chunkUpload");
+        }
+    }
+
+    private void celtium$uploadMeshesPass(Collection<ChunkJobResult.Success<? extends ChunkTaskOutput>> results,
+            Runnable graphUpdateTrigger) {
         Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = new Reference2ReferenceOpenHashMap<>();
         for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
             ChunkTaskOutput output = holder.output();

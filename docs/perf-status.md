@@ -51,7 +51,7 @@
 ## 次の優先順（実測根拠順）
 
 1. ~~OPT-18b pre-transform merge~~ — PR #2 (757ec0b4c)。
-2. **`gameRenderer` 残差 / world-pass 分解** — JFR leg (p-jfr1): GC pause 合計 332ms/28s・最大 72ms（worst window 140ms/s）→ GC は spike の一部だが単独説明不可。`readBackBlock` が world-phase main サンプルの ~45%（presentReadback 診断税・製品では無効）。fixture では `FramePassTimings` が `world` bracket に spike の ~90% を割当て（worst 368/411ms）、residual ≤31ms — **fixture の spike は world pass 内**。world 内訳を分ける `present`/`flush` INSIDE bracket を追加（本ブランチ・計器）。
+2. **`gameRenderer` 残差 / world-pass 分解** — JFR leg (p-jfr1): GC pause 合計 332ms/28s・最大 72ms。`readBackBlock` が world-phase main サンプルの ~45%（presentReadback 診断税・製品では無効）。fixture 分解（warm4/5, INSIDE worst 追加後）: **steady では world≈terrain(4.1)+flush(3.3)+~1ms** — 我々の分が ~85%。spike では world=370 → terrain=110 + flush=51 + ~200ms 未名 → 残りは **chunkUpload（section rebuild upload・未 bracket→bracket 追加済 warm6）+ GC（warm5: 53 pauses/660ms, `Full (System.gc())` 74-87ms×3）+ game-side**。slow-frame の `submitWaitMillis` は累積値で per-frame ではない（読み違い注意）。
 3. ~~OPT-01~~ — cpuSplit flag で既定 off（main）。
 4. ~~warm window 到達 fixture~~ — `-Dceltium.validation.holdUntilTick=600`（commit d0b85f804）。p-warm2: `worldTicksAtEnd=599`, warm n=280, **warm p50=17.0/p95=76.7/p99=385.3** — chunk-build を過ぎても 300-800ms spike が残存。slow-frame 証拠: `submitWaits=450-737 submitWaitMillis=31-99`（細かい bounded poll の連鎖≈100ms/frame）+ 残 ~300ms が unnamed — step-2 の bracket で分解。
 5. **OPT-09 multidraw** or **OPT-10 state merge**（stateKey 差分断の解消は GUI の残半分）。

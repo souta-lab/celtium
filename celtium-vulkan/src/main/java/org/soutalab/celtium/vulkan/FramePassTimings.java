@@ -34,7 +34,7 @@ public final class FramePassTimings {
      * pass is the renderer's own present/composite/window-flush chain against the game's renderWorldPass work. These
      * two brackets name it.
      */
-    private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain"};
+    private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload"};
 
     private static final int CAPACITY = 512;
 
