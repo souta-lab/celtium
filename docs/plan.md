@@ -339,6 +339,32 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.363 **round 170: PR#1・PR#2 をマージし 0.0.2-alpha を公開。ユーザ指示でパノラマ・ロード画面・残BHを最優先化**
+
+- **PR#1 マージ（`c2595aa9f`）**: "perf: remove render-thread GPU drains"。**GPU待ち0** の成果＝
+  `frameIntervalP50/P95/P99` **18.6/28.0/333 → 15.7/22.5/326 ms**・**errors 0・VUID 0**・**`celtium-validation.png` が baseline と完全一致**。
+  **CI の失敗はインフラ**（runner に存在しない `.celtium-work/...` を実行しようとしていた）でコードの失敗ではない。
+  **副作用として判明**: **bridge 経路（`glless=false`）は本機で最初の world frame に確定的に deadlock**（baseline 3 leg）。
+- **PR#2 マージ（`d1f0042b4`）**: "perf: merge GUI-class immediate batches across matrix pushes"。
+  `copyVerticesTransformed` が **軸並行 modelView をコピー中に適用**し、**頂点shaderと bit 一致**する（off-axis が厳密に0・normal を持たない format のみ）。
+  **回転は matrix-keyed 経路に残す**という明示的な拒否条件つき。＝**`gui` self 5.36 s に対する直接の手**。
+- **0.0.2-alpha 公開**: `v0.0.2-alpha`・`celtium-forge-mc1.12.2-0.0.2-alpha.jar`・**2,594,729 bytes**・
+  SHA-256 `c2b69d0319073b6f06f38c2868a71b3ce363d4a9fb0054b7e5162f40b94471fc`・**prerelease**・
+  **package verifier `verified: true` / `errors: []`**。**ユーザの instance に導入済み**（sha256 一致を確認）。
+  **リリース jar の受入 leg**: **flag なしで `CELTIUM_GLLESS stub GL provider installed`・`window hinted GLFW_NO_API`**・`worldTicksAtEnd=241` ＝
+  **既定 GL-less が公開 jar で成立**。
+- **開発版のリブランド**: `2.5.12-celtium.0.1.0-dev.1` → **`0.0.2-alpha-dev`**（`2.5.12` は Celeritas 上流の番号で、fork が他人のリリースのパッチを名乗っていた）。
+- **ユーザ指示による最優先（本ラウンドで担当へ配布済み）**:
+  | 対象 | 担当 | 与えた内容 |
+  |---|---|---|
+  | **パノラマ** | **fog-path** | 所有者は確定（**id 8 の mirror＝splash の白 `DynamicTexture`・invalidate されない**）。修正と `splashSourcedGroups`→0 の受入 |
+  | **ロード画面** | **sky-draws** | GL-less では `SplashProgress.start()` が cancel され **3サイトは実行されない**・走るのは Tessellator 経路。**必要なのは splash 段階の dump 契約**（既存 switch はどれも届かない） |
+  | **BH-20/21/24** | **proj-channel** | BH-20 は契約が既存（census）・BH-21 は分類が無いので先に census・BH-24 は BH-20 の transaction の別面 |
+  | **BH-14/17/26** | **frame-composite** | **欠けている契約を名指し**（target identity key・GUI の実測・recording token の pending/confirmed） |
+  | **BH-18/35** | **pipelines** | surface capabilities からの導出・広告と backed の一致 |
+- **共通の注意として各担当へ渡したこと**: **カウンタを読む前に `CELTIUM_VERIFY` 行の有無を確認**（trigger に届かない leg は「0」ではなく「不在」）・
+  **`glless=false` は deadlock するので比較は GL-less 既定で取る**。
+
 ## 0.362 **round 169: scissor 発行の条件が確定 — `ScrollableFrame` が「スクロール可能な時だけ」clip する**
 
 - **原典で確定した連鎖**:
