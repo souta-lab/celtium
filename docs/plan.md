@@ -339,6 +339,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.354 **round 161: BH-09 の受入は GUI scene でも 0（`lineBatchesNarrowed=0`）— 「経路を exercise していない」ことを計器が自分で示した**
+
+- **測定（`r153-bh09`・`scene=videoSettings` ＋ `keepGui=true`）**: `CELTIUM_VERIFY via=frame 120` は印字され（計器は正常）、
+  **`scissorCapturedGroups=0`・`scissorLateCapturedGroups=0`・`lineBatchesNarrowed=0`**。
+  ＝**この leg も scissor 経路に触れていない**（`lineBatchesNarrowed=0` がそれを名指しする）。
+- **重要な副産物**: **`lineBatchesNarrowed` が「その leg が経路を exercise したか」の判定子として機能する**。
+  ＝**受入を読む前にこれを先に見る**という手順が、この2 leg で確立した（「経路を exercise していない緑の leg は受入ではない」の実装形）。
+- **`lineBatchesNarrowed=215` を出した leg の構成は、現在ディスク上の artifact からは読めない**（runtime 配下に残っていない）。
+  ＝**構成を再発見する必要がある**（推測で leg を打たない）。
+- **移譲**: **`sky-draws`（BH-09 の担当）** に「scissor が実際に live な構成を1つ見つけ、`scissorCapturedGroups > 0` または
+  `scissorLateCapturedGroups > 0` を `-Dceltium.vulkan.groupScissor=false` の一旗対照と同一 jar で示す」ことを依頼済み。
+  候補は Celeritas 画面のスクロール list・menu-hold でその画面を出してスクロールした構成。**`mods[].sha256` で同一 build を証明**することも明記。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地（`218ea2120`）・計器修正着地（3 trigger）・受入は leg 待ち**。
+
 ## 0.353 **round 160: BH-09 の計器は動いた（`CELTIUM_VERIFY via=frame 120`）— ただし terrain scene は scissor を使わないので受入は GUI scene で取る**
 
 - **計器の修正が効いた**: `638529520`・`d3d4f0a81` の3 trigger により、**leg `r152-bh09` で `CELTIUM_VERIFY via=frame 120` が印字**された
