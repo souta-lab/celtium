@@ -193,6 +193,16 @@ public final class TextureCopyService {
     private int textureCopyWindowAlphaCopies;
     /** Copies served in the present the copy is in, so a probe can name "the last one of a frame" and "the first". */
     private int copiesThisPresent;
+    /**
+     * Every call into the copy in this present, including the ones the cache answers without a readback.
+     * <p>
+     * It exists because the question "what does the cube's face test its depth against" cannot be asked at the
+     * readback: the readback happens once per frame, right after the cube, and the blur's own depth write lands after
+     * it. The last call of a frame is the moment the next frame's cube will inherit, so the two ends of one frame
+     * have to be read separately - a single sample at the readback cannot tell "the depth is 1.0 when the cube draws"
+     * from "the depth is 1.0 after the cube and 0.75 before the next one".
+     */
+    private int copyCallsThisPresent;
 
     /** How many native blits were declined because the window's alpha rule cannot be expressed by a blit. */
     private int textureCopyWindowAlphaBlitsDeclined;
@@ -367,6 +377,7 @@ public final class TextureCopyService {
         if (this.textureCopyPresent != this.host.presentSerial()) {
             this.textureCopyPresent = this.host.presentSerial();
             this.copiesThisPresent = 0;
+            this.copyCallsThisPresent = 0;
             this.textureCopiesServedThisFrame.clear();
             this.textureCopiesServedThisPresent = 0;
             if (this.textureCopiesServedLastPresent > this.textureCopiesServedPeakPerPresent) {
@@ -444,6 +455,56 @@ public final class TextureCopyService {
             return refuseTextureCopy("the GPU did not confirm the draws before the copy completed");
         }
         this.copiesThisPresent++;
+        this.copyCallsThisPresent++;
+        // The depth the *next* frame's cube will test against, read at the last copy call of this present (after the
+        // seven blurs), beside the value at the first call (right after this frame's cube). Both ends of one frame in
+        // one line: "the cube is depth-rejected by the previous frame's blur depth" and "the depth is 1.0 when the
+        // cube draws" are the two explanations round 224 could not separate with a single sample.
+        if (VulkanGlTexture.mirrorDumpConfigured() && this.host.frameTarget() != null
+                && this.host.frameTarget().depthImage() != 0L
+                && this.host.presentSerial() >= 100 && this.host.presentSerial() <= 102
+                && (this.copyCallsThisPresent == 1 || this.copyCallsThisPresent == 7)) {
+            int depthFormat = VulkanDepthFormat.chosen();
+            float[] box = readDepthRectangle(this.host.frameTarget().depthImage(), 0, 0, 256, 256, depthFormat);
+            if (box != null) {
+                float min = Float.MAX_VALUE;
+                int atOne = 0;
+                for (float value : box) {
+                    min = Math.min(min, value);
+                    if (value >= 0.999F) {
+                        atOne++;
+                    }
+                }
+                System.out.println("[Celtium] CELTIUM_DEPTH_END present=" + this.host.presentSerial()
+                        + " call=" + this.copyCallsThisPresent + " min=" + depth3(min)
+                        + " atOne=" + atOne + "/" + box.length);
+                // The colour box at the same two ends, so the cube's own contribution is a mask rather than an
+                // inference: the box after the blurs (call 7) is the state the next frame's cube inherits, and the box
+                // at call 1 of the next frame is the same box after that cube. Their difference *is* the cube's
+                // coverage - and whether the region the probe showed unpainted is unpainted by the cube or painted by
+                // something else is exactly what a two-end diff decides.
+                for (int band : new int[] {0, this.host.targetHeight() - 256}) {
+                    int[] colorBox = readImageRectangle(this.host.frameTarget().colorImage(), 0, band, 256, 256);
+                    if (colorBox == null) {
+                        continue;
+                    }
+                    java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(256 * 256 * 4);
+                    try {
+                        for (int index = 0; index < colorBox.length; index++) {
+                            int value = colorBox[index];
+                            rgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                            rgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                            rgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                            rgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                        }
+                        VulkanGlTexture.dumpStageImage("boxend-" + band + "-p" + this.host.presentSerial() + "-c"
+                                + this.copyCallsThisPresent, rgba, 256, 256);
+                    } finally {
+                        org.lwjgl.system.MemoryUtil.memFree(rgba);
+                    }
+                }
+            }
+        }
         long readbackStartedNanos = System.nanoTime();
         int[] pixels = readImageRectangle(image, x, y, width, height);
         this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;

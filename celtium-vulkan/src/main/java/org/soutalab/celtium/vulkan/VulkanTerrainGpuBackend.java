@@ -6022,7 +6022,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // clip-space position, and the rotations that reached the mirror since the camera boundary. Nothing else is
             // added, and with the switch off none of it is even computed.
             String chain = "";
-            if ((group.formatId == 6 || group.formatId == 7) && this.worldPassActive) {
+            // The panorama's faces get the same per-vertex clip-space numbers the sky family gets, because the question
+            // left after round 225 is exactly "with these matrices, where do the four corners actually land": the six
+            // faces' model-views are six distinct orthonormal matrices with a translation of 0.008, their union has to
+            // cover the viewport for a camera inside the cube, and the box they paint is 0.9% of its pixels per frame.
+            // The clip values are the renderer's own arithmetic on the group's own matrices, so they separate "the
+            // matrices are not what the draw uses" from "the matrices are wrong".
+            boolean panoramaChain = group.formatId == 2 && group.texture >= 46 && group.texture <= 51
+                    && !this.worldPassActive;
+            if (((group.formatId == 6 || group.formatId == 7) && this.worldPassActive) || panoramaChain) {
                 chain = " mv=" + matrixText(modelView)
                         + " verts=[" + positions + "]"
                         + " uv=[" + uvs + "]"
@@ -6871,6 +6879,45 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.frameSubmitReachedQueue = false;
                     this.frameTarget.beginFrame();
                     opened = true;
+                    // The box *before* this window's draws, once, so the cube's own coverage is a measured mask rather
+                    // than an inference. The copy path reads the same box right after the cube (one readback per frame
+                    // is what the menu makes), so the two reads bracket exactly the cube's quads: everything the
+                    // difference marks is what the cube painted, and everything it does not mark is what the cube
+                    // leaves to whatever the previous frame left there. Bounded to one present and to identity 0.
+                    if (!this.boxPreProbeDone && this.frameId == 0L && this.targetRegistry.currentIdentity() == 0L
+                            && this.frameTarget.colorImage() != 0L
+                            && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
+                            && System.getProperty("celtium.vulkan.mirrorDump") != null
+                            && this.celtium$presentCount >= 100) {
+                        this.boxPreProbeDone = true;
+                        // Both ends of the picture's vertical axis: the panorama's own NDC y is positive in the
+                        // renderer's arithmetic (0.25..3.12 for the six faces) while the image is in GL texture order
+                        // (row 0 is the picture's bottom) and the copy reads rows 0..256. If the cube lands in the
+                        // other half, the box the copy reads is never repainted by it - which is what the 0.9%
+                        // measurement says - and the two dumps are what tells those two apart.
+                        for (int band : new int[] {0, this.targetHeight - 256}) {
+                        int[] box = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, band, 256, 256);
+                        if (box != null) {
+                            java.nio.ByteBuffer rgba =
+                                    org.lwjgl.system.MemoryUtil.memAlloc(256 * 256 * 4);
+                            try {
+                                for (int index = 0; index < box.length; index++) {
+                                    int value = box[index];
+                                    rgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                                    rgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                                    rgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                                    rgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                                }
+                                VulkanGlTexture.dumpStageImage("boxpre-" + band + "-p" + this.celtium$presentCount,
+                                        rgba, 256, 256);
+                                record("box-before-the-cube dumped at present " + this.celtium$presentCount
+                                        + " band=" + band + " (CELTIUM_BOX_PRE)");
+                            } finally {
+                                org.lwjgl.system.MemoryUtil.memFree(rgba);
+                            }
+                        }
+                        }
+                    }
                     this.windowOpen = true;
                     beginCommands();
                     try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -7710,8 +7757,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " lightmapFull=" + (this.lightmapTexture != null && this.lightmapTexture.hasFullContent())
                         + " groupTexFull=" + this.groupTextureFull());
             }
+            // The panorama's six faces, in full and in order, because their *union* is the contract: vanilla's
+            // drawPanorama rotates one base matrix by 90/180/-90 degrees about y (k=1..3) and by +/-90 about x
+            // (k=4..5) inside a push/pop per face, and the camera sits inside the cube, so the six panels tile the
+            // 256x256 viewport between them. Measured (round 224, leg r212-panbounds2-boxprobe): the box they paint is
+            // about two thirds covered with one straight edge missing, which is the shape of a *missing neighbour*
+            // rather than of a wrong projection - and the group bounds of one jitter all fall in one NDC quadrant
+            // (groups 3..8, x <= -0.08, y >= 0.25), which six distinct panel orientations cannot do. The matrices say
+            // whether the k rotations reached the group at all. Bounded to the first six panorama groups of the run,
+            // which are the six faces of the first jitter.
+            boolean panoramaFace = this.currentGroupTexture >= 46 && this.currentGroupTexture <= 51
+                    && this.worldPassActive == false;
             if (this.immediateStatistics.immediateGroupsClosed() == 400 || this.immediateStatistics.immediateGroupsClosed() == 1500
-                    || this.immediateStatistics.immediateGroupsClosed() == 4000 || this.immediateStatistics.immediateGroupsClosed() == 8000) {
+                    || this.immediateStatistics.immediateGroupsClosed() == 4000 || this.immediateStatistics.immediateGroupsClosed() == 8000
+                    || (panoramaFace && this.panoramaMatrixLogged < 6)) {
+                if (panoramaFace && this.panoramaMatrixLogged < 6) {
+                    this.panoramaMatrixLogged++;
+                }
                 // A late group, in full: the first eight groups belong to the loading screen and say nothing about the
                 // matrices the frame itself is drawn with, which is what a picture made only of the clear colour
                 // needs to be judged against.
@@ -9862,6 +9924,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int lightCoordLogged;
     /** How many immediate groups have printed their matrices. */
     private int immediateMatrixLogged;
+
+    /** Panorama faces whose full matrices have been printed, bounded to the six of the first jitter (round 225). */
+    private int panoramaMatrixLogged;
+
+    /** Whether the once-per-run box-before-the-cube dump has been taken (round 225's coverage mask). */
+    private boolean boxPreProbeDone;
     private String lastGroupDepthRow = "";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
