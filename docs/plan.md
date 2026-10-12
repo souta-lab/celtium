@@ -2,6 +2,11 @@
 
 > **影対応の後続計画:** [shader-plan.md](shader-plan.md)。**フルVK化＋主要modのshaderless対応が完了してから着手する。** この計画を理由に現在の本体実装を中断・前倒ししない。
 
+> **構造分割の実行計画:** [refactoring-plan.md](refactoring-plan.md)（2026-10-12 作成・ユーザ指示「vulkanterraingpubackend を分割してみんなで編集したほうがいい」に対する単一の分割計画）。
+> **この文書が構造の実行方法を、`docs/plan.md`（本ファイル）が現在状態・受入・優先順を管理する。分割の受入状況をもう一つ作らない。**
+> 実行順は R0→R1a（task-63 `TextureCopyService`）→R1b（task-64 `PublishedFrameTextures`）→R1c（task-65 `BackendReport`）→R2…で、
+> **R1c の package-private 拡大は暫定境界であり恒久の責任境界にしない**（§6.1）。**backend を編集できるのは常に1人**（§9.1）。
+
 > **描画backendの決定（2026-10-10）:** Vulkan直結を維持する。SDL GPUへの全面移行は行わない。Angelicaはshader変換・model/TESR/文字のbatch化・状態と資源寿命の設計/試験を部品ごとに比較する。現在のGL除去と主要mod対応を優先し、影の実装は上記gateを満たしてから。汎用GLエミュレーションを新たな主backendにしない。
 
 > goal: `goal-780c63c7-acf3-4426-80dc-6c99d30d8627`（live API で revision 27 / phase active / activation armed / roundsStarted 103 / maxGoalRounds 1000 を確認。**旧 `goal-0d07c3b5-…` revision 27 の記載は監査 17.2 で不一致と指摘され、この行を live 値へ同期した**）。
@@ -387,6 +392,20 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.371 **round 178: 分割の実行計画書 `docs/refactoring-plan.md` を単一の計画として採用**
+
+- **経緯**: リポジトリ直下に未追跡の `REFACTORING_PLAN.md`（424行）が作成されていた。ユーザ指示「**vulkanterraingpubackend を分割してみんなで編集したほうがいい**」に対する実行計画で、
+  読取点（`0a8b8d253`・`46854aa9`・`7d48f0741` = PR統合後 main）・14,106行の backend・差分再計数・既存の良い分離の保持・目標構造（`VulkanRenderer`/`TerrainRenderer`/`ImmediateRenderer`/`ModelGeometryCache`/`FontBatch`/
+  `CapturedRenderState`/`RenderTargetRegistry`/`PublishedFrameTextures`/`TextureCopyService`/`VanillaPostProcessor`/`FrameCoordinator`/`FrameSubmissionScheduler`）・守る契約（state snapshot、group移動、command完了、target/alias/layout、copy、thread寿命）・
+  **移行順 R0→R8**・検証3分類・停止条件を定めている。
+- **私の判断**: **別名の分割計画を増やさない**ため、`docs/refactoring-plan.md` へ移し、`docs/plan.md` の冒頭から参照させる。**状態・受入・優先順は本ファイル（plan.md）が持ち、refactoring-plan は構造の実行方法だけを持つ**（受入表を二重に作らない）。
+- **本書が私の §0.367 の task-63/64/65 を前提に据えている**ことを確認（「別の新クラスでやり直さない」）。段階 R1a/R1b/R1c がそれに対応する。
+- **計画書による私の設計への訂正（採用する）**:
+  1. **§6.1: task-65 の「287 private field を package-private にして `BackendReport` が backend を丸ごと読む」形は恒久の責任境界にしない。** R1c は**書式互換のための暫定移動**とし、**暫定 visibility 拡張には使用者と R2〜R7 での撤去先を記録**する。最終形は「domain ごとの statistics を domain と一緒に移し、report はその snapshot を組み合わせる」。
+  2. **§5.5: `TextureCopyService.Host` が backend の多数の field を読むのは暫定境界**。R1a は**既存動作の抽出まで**とし、`ReadSource`（image/view/extent/layout/generation/content version）への狭窄と **native GPU copy/blit 化（OPT-26/27）は後続の別変更**。**「抽出で同じ画」を「vanilla と完全一致」と読み替えない**。同一 frame の同一要求の再利用は **frame ID と rectangle が同じだから**ではなく **producer の内容 version** で判定する。
+  3. **§9.2 の停止条件**をそのまま受入条件に使う: 新 class が旧 backend の全 field へ依存し writer も旧 class に残り撤去先が定まらない段階は**着地させない**。accepted geometry の lost/重複、別 target の group 削除、借用資源の破棄、新しい validation エラー、picture gate 失敗、全量 wait の再導入、二重実装も同じ。
+  4. **§9.1: 主担当の dirty を stash/reset/rebase/clean しない**（このroundで私は退避を**本人に依頼する**形を守った）。
+- **このroundの他の状態**: `main` = `d19105200`（origin 同期・未追跡は本計画書のみ）・jar `583b46d496f99e72e487a810`・disk 69%（前roundの削減後）・GPU スロットは空き。担当は blend-state（task-63）・perf-ring（Goal B）・proj-channel（BH-20 再受入→BH-21）が稼働中。
 ## 0.370 **round 177: PR #3/#4/#5 を分割前に merge。`upstream` remote 削除、disk 95%→69%、merged main を leg で検証**
 
 - **ユーザ指示**: 「**PR3,4,5は分割前にmergeしとけよー**」「**upstreamを消せ。本家にmergeする気はない。github上もforkではないし**」「**3,4,5mergeできたらdisk容量減らして。vulkan-drainは他agentがやってるので消さないで**」。
