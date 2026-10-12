@@ -1142,6 +1142,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private final java.util.Set<Integer> mainFramebufferColorNames = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>());
     private int framebufferCensusLogs;
+    /**
+     * The identity of {@code Minecraft.framebuffer}, as the game's own field reports it on every bind.
+     * <p>
+     * The field is the fact: {@code mc.getFramebuffer() == bound} is false for the framebuffer the splash runs under,
+     * because the game has not adopted that object yet, while {@code mc.framebuffer} names it from {@code createDisplay}
+     * onwards ({@code Minecraft.java:507}). The mixin reports it on every framebuffer bind, so the census knows which
+     * identity is the game's own before that framebuffer is ever bound itself - and the same answer arrives later
+     * through the adopt path, which is why this is a fact the census records rather than a second flag beside it.
+     */
+    private long gameFramebufferIdentity = Long.MIN_VALUE;
     private int framebufferColorTextureReports;
     private int framebufferColorTextureLog;
     /** Distinct framebuffer identities the game has bound, for the bounded census the routing rule is read against. */
@@ -4291,6 +4301,29 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * framebuffer - be routed to the right image, and what lets the game's composite find that image by the texture
      * name it binds.
      */
+    /**
+     * Records which identity the game's own framebuffer field names, and its colour attachment.
+     * <p>
+     * Called by {@code FramebufferMixin} on every framebuffer bind, with {@code mc.framebuffer}'s identity and colour
+     * texture name. That is what makes the splash's pass route to the frame image: the identity the game's own field
+     * names is main even before it is adopted, and the routing rule is keyed on the identity.
+     */
+    public void celtium$noteGameFramebuffer(long identity, int colorTexture) {
+        if (identity == 0L) {
+            return;
+        }
+        this.gameFramebufferIdentity = identity;
+        this.framebufferIdentityIsMain.put(Long.valueOf(identity), Boolean.TRUE);
+        if (colorTexture != 0) {
+            this.mainFramebufferColorNames.add(Integer.valueOf(colorTexture));
+        }
+    }
+
+    /** {@return the identity the game's own framebuffer field names}, or {@code MIN_VALUE} when none was reported. */
+    public long celtium$gameFramebufferIdentity() {
+        return this.gameFramebufferIdentity;
+    }
+
     @Override
     public void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
         if (colorTexture == 0 || width <= 0 || height <= 0) {
@@ -4362,7 +4395,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         long[] reported = framebufferColorTexture(identity);
         int width = reported == null || reported[1] <= 0 ? this.targetWidth : (int) reported[1];
         int height = reported == null || reported[2] <= 0 ? this.targetHeight : (int) reported[2];
-        boolean isMain = identity == this.mainTargetIdentity
+        boolean isMain = identity == this.mainTargetIdentity || identity == this.gameFramebufferIdentity
                 || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(identity)))
                 || this.mainFramebufferColorNames.contains(Integer.valueOf(glTextureName));
         String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
@@ -4372,6 +4405,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + Long.toHexString(identity) + " isMain=" + isMain + " route=" + route
                     + " boundAsMain=" + this.framebufferIdentityIsMain.get(Long.valueOf(identity))
                     + " adoptedMain=0x" + Long.toHexString(this.mainTargetIdentity)
+                    + " gameField=0x" + Long.toHexString(this.gameFramebufferIdentity)
                     + " adoptedMainName=" + framebufferColorTextureName(this.mainTargetIdentity)
                     + " mainNames=" + this.mainFramebufferColorNames);
         }

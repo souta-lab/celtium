@@ -86,6 +86,23 @@ public abstract class FramebufferMixin {
             // which image stands for its pixels.
             backend.bindFramebufferColorTexture(identity, self.framebufferTexture,
                     self.framebufferTextureWidth, self.framebufferTextureHeight);
+            // Which object the game's own framebuffer field names, reported on every bind rather than only when that
+            // object is the one being bound: during the loading phase the splash binds its own framebuffer, and
+            // `mc.getFramebuffer() == self` is false for the game's own one until it is adopted - so asking that
+            // question at that moment answers "not main" for the framebuffer the game itself calls its own, and its
+            // white clear then lands on the chain pair the logo was drawn into (measured: CELTIUM_FBO_CENSUS
+            // name=23 identity=0x512b5e2 boundAsMain=false, and the presented loading frame stayed one colour).
+            // The field is the fact, and the census is the one place that answers main-ness.
+            if (mc != null && backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
+                // The game's own framebuffer object, read through its accessor (the field itself is private): what
+                // matters is that it is asked on every bind, so the answer arrives while the splash's own framebuffer
+                // is the one being bound.
+                net.minecraft.client.shader.Framebuffer game = mc.getFramebuffer();
+                if (game != null) {
+                    ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$noteGameFramebuffer(
+                            System.identityHashCode(game), game.framebufferTexture);
+                }
+            }
         }
     }
     /**
