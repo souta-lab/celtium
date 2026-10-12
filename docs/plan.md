@@ -393,6 +393,18 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.400 **round 201: 残る配線の仕様を確定（次 round で機械適用）— 現状は build 未検証のまま保持**
+
+- **R5 の残り4項目の仕様**（配線表は §0.389 と frame-composite の申し送りにあり ✓）:
+  1. **pair framebuffer handle**（`:117-119` `offTargetFramebuffer`/`offTargetFramebufferRenderPass`/`offTargetFramebufferCreations`、`:125-127` `chainPairFramebuffer`/`…RenderPass`/`…Creations`）→ registry が保持し、`ensureOffTargetFramebuffer`/`ensureChainPairFramebuffer` は `registry.framebuffer(slot)` を読む ✓（registry に `framebuffer(ImageSlot)` の holder を足す必要がある ✓）。読みは `:9592-9594` ほか ✓。
+  2. **identity/census**（`:4546/:4550/:4557/:4579-4583`）→ `registry.noteBind(identity, isMain, routeLabel)` ＋ accessor ✓（`currentRenderTarget` reads 36・`currentRenderTargetIsMain` 17・`mainTargetIdentity` 23 ✓）。
+  3. **clear 決定**（`:7977-7980/:7923-7939/:11449`）→ `beginFrame`/`noteClear` ✓（`GllessFrameTarget` の記録は暫定契約として現位置 ✓）。
+  4. **`framebufferReplacing`** → 2 clearer の等価性は証明済み ✓ → `noteReplacementAnnounced()`/`noteReplacementSettled()`（各メソッドの `if (ready)` 出口から ✓）。
+- **R6 の配線**（perf-ring の表 ✓）: slot 群・poll 系・ledger 表示を scheduler へ ✓（ledger 本体は `VulkanContext` に残す ✓、`mayResetSlot(slot, epoch, completedEpoch)` で完了 sequence を受ける ✓）。
+- **R3a/R3b の配線**（各申し送りの表 ✓）: model cache は field＋8 call site ✓、FontBatch は `FontRunState`/`RunSink` 実装＋6＋10＋外部2 call site ✓。
+- **順序の根拠**: 依存のないものから（pair handle → identity → clear → replacing → R6 → R3a → R3b）✓。**`final` field の初期化はテキスト順**なので、新 field は互いを参照しない形で追加する ✓（現在の追加分はすべて自己完結 ✓）。
+- **検証は依然 未実施**（モラトリウム ✓）: 全配線後に ①build ②CPU 契約3本（`TextureContractCheck`/`FontBatchContractCheck`/`verify_line_check.py`）③menu/world leg ✓。
+
 ## 0.399 **round 200: R2 配線 65/69 適用（backend 14,493→14,116行）。共有3行は run 分割を担当へ差し戻し**
 
 - **適用（`b4100886b`）**: 永続化したマップを読む**スクリプト**（`scripts/refactor/apply-r2-wiring.py`）で**行範囲を一括置換** ✓。**dry-run で先にレビュー**（69行解析・65適用・4スキップ ✓）。7つの statistics field を追加 ✓。**backend は 14,493 → 14,116 行（−377）** ✓＝bottleneck だったファイルで抽出が目に見える形に ✓。
