@@ -178,3 +178,42 @@ The legs did not do the same amount of work (copies 11,116 against 9,614/10,302)
 The copy phase (0.91-1.32 ms per frame for 6-6.8 MB) is real data movement and only shrinks if the game stages less.
 Everything else this unit owns inside the bracket is now below 0.2 ms per frame; the largest remaining named items -
 terrain 5.5 and chunkUpload 3.8 - are in the backend, which another unit holds.
+
+---
+
+# Addendum 2026-10-12 (3): is the staging time inside `chunkUpload`? (read, not measured)
+
+Question from the lead: does the `chunkUpload` bracket enclose the upload/staging calls that `uploadPhaseMicros` times,
+or are the two additive? Answered by reading the call chain, no new counter:
+
+- bracket opens at `VulkanTerrainGpuBackend.java:8618` (`FramePassTimings.begin("chunkUpload")`), closes at `:8622`,
+  wrapping `celtium$uploadMeshesPass` at `:8625`;
+- inside it, `celtium$uploadMeshesPass` calls `uploadRegion(...)` at `:8645`; `uploadRegion` is defined at `:9096` and
+  stages the mesh at `:9235` (`resources.vertexArena.write(...)`);
+- `VulkanArena.write` (`VulkanArena.java:262` and `:328`) calls `VulkanBuffer.write` (`VulkanBuffer.java:87`), which
+  calls `VulkanContext.uploadToBuffer(...)` - the method whose `reserve`/`copy` phases the counters time.
+
+So the chunk-mesh part of the staging time is **nested inside the 3.8 ms `chunkUpload` bracket, not additive with it**.
+What is *not* nested is the rest of the staging traffic: the same counters also cover texture staging
+(`VulkanGlTexture`) and uniform/dynamic-mesh writes, which happen outside `chunkUpload`. The counters therefore bound
+that bracket from the inside without being subtractable from it:
+
+- `chunkUpload` 3.8 ms contains the mesh part of staging (a subset of the 1.23 ms/frame phase total) plus meshing and
+  bookkeeping inside `uploadMeshes` that no counter of ours names;
+- the remainder of the 1.23 ms (texture and uniform staging) is outside `chunkUpload` and additive with `world`.
+
+Conclusion for the next unit: a new counter inside `chunkUpload` is not needed to know whether the two numbers
+overlap - they partially do - but the *mesh-versus-texture split of staging*, and the meshing/bookkeeping part of
+`uploadMeshes`, need one counter each on the backend side, which that file's owner would add.
+
+# Addendum 2026-10-12 (4): a measurement-condition note for the next (g) leg (not re-taken)
+
+The user's own unbounded run reports `frameInterval p50` of about **7.6-8.0 ms** (PR #16's clean/scratch legs), which is
+at the reference arm's 9.07 ms, while this record's fixture-driven candidate arm reports **35-40 ms**. The arms are
+therefore not measuring the same quantity even when the renderer is the same: the fixture drives the camera, pins
+sections and the world time, forces the GUI scale and runs its own per-frame bookkeeping, and the candidate's arm
+carries the client tick at ~1.1 ticks per frame (see the tick addendum).
+
+The next (g) leg must separate "renderer" from "fixture-driven work": either a leg without the fixture's pinning, or
+both arms reported with the fixture's own cost named. Until then the only honest cross-arm statement stays the one in
+this record's first section, and no multiplier is claimed.
