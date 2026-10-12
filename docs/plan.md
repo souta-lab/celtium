@@ -395,6 +395,12 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.424 **round 222: copy が mirror に書いた画素を初めて画像で見た — 前フレームの**合成結果**（版表示の文字）だった**
+
+- **計器を1つ配線（既存 helper の呼び出しのみ）**: `VulkanGlTexture.dumpMirrorPixels(int,ByteBuffer,w,h)`（texture-mirror が着地 ✓）を **copy 経路から呼ぶ**ようにした ✓（`TextureCopyService` の `announceFullPixels` 成功直後・`VulkanGlTexture.mirrorDumpConfigured()` で gate ✓・ARGB→RGBA8 は `readImageRectangle` の pack の逆 ✓・上限/命名/既定 off は既存と同じ ✓）。これで **copy が mirror に書いた矩形が PNG になる** ✓（従来の dump は announce/upload 経路のみで gl-21 が出なかった ✓）。
+- **実測（leg `r212-panmirror-cube`・host アーム・jar `8750c1f5ed3a40ad`・AMD）**: `mirror-gl21-256x256-n0..n99.png` が100枚 ✓。**最後の n99（sha256 `17b3b231c283b974…`）の中身は「Minecraft 1.12.2 / MCP 9.42 / Cleanroom 0.6.13-alpha」という版表示の文字＋パノラマの切片** ✓ ＝ copy が読んだのは **frame image の左下 256×256＝前フレームの最終合成結果** ✓（版表示は `drawScreen` が panorama より後に描く ✓）。
+- **確定**: **そのフレームで `drawPanorama` が描いた cube は copy の時点で image に載っていない** ✓（前フレームの文字が見えている＝ copy はそれより前に serve されている ✓）。`hasPendingImmediateWork` の flush は**記録はするが submit がフレーム末尾まで遅れている**可能性が残る ✓ — 次の一手は `flushPendingBeforeGlDraw` の末尾が **submit まで行くか**（`scheduler.submit`／`celtium$submitDeferred`）を読み、submit されていないなら copy の前に submit を強制すること。
+
 ## 0.423 **round 221: ロード画面の白は「ロゴ texture の mirror が白」で説明できる（原典で確定）**
 
 - **原典（`.celtium-work/mc-sources/net/minecraft/client/Minecraft.java:1003-1027`）**: `drawSplashScreen` は自作 `Framebuffer(scaledWidth*i, scaledHeight*i, true)` を `bindFramebuffer(false)` し、`ortho(0,w,h,0,1000,3000)` ＋ `translate(0,0,-2000)` の下で **①全画面 quad（`POSITION_TEX_COLOR`・色 (255,255,255,255)・tex は4頂点とも (0,0)＝ロゴ texture の1テクセルを全面に伸ばす）** → **②`this.draw((w-256)/2,(h-256)/2, 0,0, 256,256, 255,255,255,255)`＝中央 256×256 のロゴ quad（同じ `POSITION_TEX_COLOR`）** を描き、`unbindFramebuffer()` → `framebufferRender(w,h)` で FBO の colour texture を window へ合成 ✓。

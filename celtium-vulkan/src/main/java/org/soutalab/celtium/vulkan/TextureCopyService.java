@@ -514,6 +514,29 @@ public final class TextureCopyService {
             return refuseTextureCopy("the destination mirror refused the pixels: "
                     + registry.lastFailure());
         }
+        // What the copy just put into the mirror, as an image, when the bounded mirror dump is enabled: the mirror's own
+        // dump sites sit on the announce/upload paths and never see a copy-filled mirror (measured: 411 PNGs in one
+        // leg, none of them the panorama's gl-21), so the one rectangle that matters could not be looked at.
+        // Unit: the copy's own RGBA8 pixels (ARGB ints unpacked as r=(p>>16)&0xFF, g=(p>>8)&0xFF, b=p&0xFF,
+        // a=(p>>>24)&0xFF - the packing readImageRectangle uses, so this is the inverse of that read). Limit: the
+        // helper's own MIRROR_DUMP_MAX_PIXELS and one file per call, named mirror-gl<dest>-<w>x<h>-n<k>.png; the
+        // pixels are the *source* rectangle, which for the panorama is the whole 256x256 level 0. Off by default.
+        if (VulkanGlTexture.mirrorDumpConfigured()) {
+            java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(width * height * 4);
+            try {
+                int count = Math.min(pixels.length, width * height);
+                for (int pixel = 0; pixel < count; pixel++) {
+                    int value = pixels[pixel];
+                    rgba.put(pixel * 4, (byte) ((value >> 16) & 0xFF));
+                    rgba.put(pixel * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                    rgba.put(pixel * 4 + 2, (byte) (value & 0xFF));
+                    rgba.put(pixel * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                }
+                VulkanGlTexture.dumpMirrorPixels(destName, rgba, width, height);
+            } finally {
+                org.lwjgl.system.MemoryUtil.memFree(rgba);
+            }
+        }
         this.textureCopiesServedThisFrame.put(copyKey, Long.valueOf(copyMarker));
         this.textureCopiesServed++;
         this.textureCopiesServedLastPresent++;

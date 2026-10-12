@@ -2543,6 +2543,32 @@ public final class VulkanGlTexture {
     }
 
     /** {@return whether this GL name is one the dump was asked for}, so a per-frame light map cannot flood the log. */
+    /**
+     * Dumps a mirror's level 0 as RGBA8 to {@code MIRROR_DUMP_DIR}, under the same gate, limit and counter as the
+     * announce/upload sites - for the mirrors those sites never see. The copy path fills its destination through
+     * {@code VulkanTextureRegistry.announceFullPixels}, which reaches neither {@code dumpSourcePixels} nor the
+     * device-side dump, so the panorama's 256x256 viewport (GL name 21) was the one mirror that could not be dumped
+     * (measured: 411 PNGs written, none of them gl-21). Unit: RGBA8 pixels of the mirror's level 0. Limit: skipped
+     * when {@code width*height > MIRROR_DUMP_MAX_PIXELS}; one file per call, named {@code mirror-gl<id>-<W>x<H>-n<k>.png}
+     * with the counter in the name so successive fills are kept apart. Off unless {@code -Dceltium.vulkan.mirrorDump}
+     * is set; on the native-blit arm the host-side pixels can be stale, so this is evidence on the host arm only.
+     */
+    public static void dumpMirrorPixels(int glTextureId, java.nio.ByteBuffer rgba, int width, int height) {
+        if (!mirrorDumpWanted(glTextureId) || rgba == null || width <= 0 || height <= 0
+                || (long) width * height > MIRROR_DUMP_MAX_PIXELS) {
+            return;
+        }
+        System.out.println("[Celtium] CELTIUM_SRC glTexture=" + glTextureId + " owned=true size=" + width + "x" + height
+                + " " + pixelSummary(rgba, width, height));
+        writePng(rgba, width, height, new java.io.File(MIRROR_DUMP_DIR,
+                "mirror-gl" + glTextureId + "-" + width + "x" + height + "-n" + (mirrorDumpsWritten++) + ".png"));
+    }
+
+    /** {@return whether the bounded mirror dump was asked for at all}, so a caller can skip building the pixels. */
+    public static boolean mirrorDumpConfigured() {
+        return MIRROR_DUMP_DIR != null && !MIRROR_DUMP_DIR.isEmpty();
+    }
+
     private static boolean mirrorDumpWanted(int glTextureId) {
         if (MIRROR_DUMP_DIR == null || MIRROR_DUMP_DIR.isEmpty()) {
             return false;
