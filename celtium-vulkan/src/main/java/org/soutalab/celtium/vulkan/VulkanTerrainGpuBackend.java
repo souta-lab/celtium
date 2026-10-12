@@ -11028,6 +11028,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
 
         @Override
+        public boolean hasPendingImmediateWork() {
+            // The group being filled counts: the panorama copies a rectangle it drew into in the same call sequence,
+            // so the draw is in this group and not in a queued one when the copy asks whether anything is pending.
+            return VulkanTerrainGpuBackend.this.currentGroupUsed
+                    || !VulkanTerrainGpuBackend.this.immediateGroups.isEmpty();
+        }
+
+        @Override
         public int recordedImmediateGroupCount() {
             return VulkanTerrainGpuBackend.this.recordedImmediateGroups.size();
         }

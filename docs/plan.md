@@ -395,6 +395,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.420 **round 215: パノラマの copy が読む矩形は「前フレームのメニュー勾配」だった（flip 修正後の実測）**
+
+- **alpha の契約を修正（`640a1984a`）**: 我々の window image は GL の **default framebuffer** そのもの。GL では default framebuffer に alpha ビットが無いのが普通で、clear の alpha は観測不能・読み出しは常に 1（[Khronos の説明](https://community.khronos.org/t/questions-to-help-clarify-fragment-to-framebuffer-process/107715)・[glReadPixels の挙動](https://community.khronos.org/t/weird-glreadpixels-behavior/105416)・[ANGLE は `kEmulatedAlphaValue = 1` でエミュレート](https://github.com/google/angle/blob/c880f15d/src/renderer/vulkan/FramebufferVk.cpp)）。ゲームは `(1,1,1,0)` で clear し、その 0 が copy で panorama の DynamicTexture に運ばれ、**SRC_ALPHA で合成する blur／最終合成 quad が何も描かなくなっていた**。frame target の clear の alpha を 1 に固定 → 実測 `CELTIUM_MIRROR_SOURCE id=21` が **`opaque=0/65536` → `opaque=65536/65536`** ✓（copy 自身のサンプルも 0 → 65536）。**ただし絵は grey のまま**（distinct=6736・mean=(170,170,170)）。
+- **次の実測（host 経路・`nativeTextureCopy=false`・`r212-panhost-steady2`/`-pending`）**: copy の矩形を **steady-state で初めて読んだ**（`served=274,554` のサンプル）。結果は**毎 present 同一の滑らかな勾配 `bands=226…253`・`opaque=0`** ＝ **メニューの `drawGradientRect` が描いた前フレームの最終画像**で、**cube の内容は1ピクセルも無い**。`CELTIUM_REFUSALS_BY_FORMAT {}`・`refusals=0` なので**拒否ではない**。
+- **commit 契約の穴を1つ塞いだ（このコミット）**: copy の flush ガードが `immediateGroupCount() > 0`（＝**queued group のみ**）で、**まだ詰めている最中の group** を数えていなかった。`Host.hasPendingImmediateWork()`（`currentGroupUsed || !immediateGroups.isEmpty()`）を追加して両方のガードを置き換え ✓。**ただし同じ leg で bands は変化せず**（226…253 のまま）＝**cube の描画が copy の時点で image に載っていない**という結論は変わらない。
+- **未確定（次）**: ①cube の 384 quad がどの window/時点で image に書かれるか（copy の時点で `windowsThisFrame` と `currentGroupBatches` を同じ行に出す）②copy 要求が実際に serve される時刻（GL 呼び出しと同期か、window 境界へ遅延か）。**画素は `band` と `firstPixels` で読める**ようにしてある（host 経路のみ・上限: 最初の3回＋readback 40回ごと）。
+
 ## 0.419 **round 214: サブフレーム viewport の y 反転を除去（パノラマの切片が正しい位置へ）＋ copy の2経路を同じ規約に揃えた**
 
 - **真因（並行セッションの診断 `docs/diagnosis-r213-user-visual-breakage.md` を自分で照合して確定）**: 共有 frame image は **GL texture order（memory row 0 = 絵の下端）**で、`VulkanSwapchain` が present 時に**一度だけ** read-back-to-front blit で反転する。したがって GL の viewport `(x, y_bottom, w, h)` は image の行 `y_bottom..y_bottom+h` に**そのまま**対応する。`celtium$setGroupViewport` は `y = targetHeight - yBottom1` と反転しており、**全画面矩形では不変なので全frame legを素通りし、サブフレーム矩形だけで壊れていた**（同関数内の scissor 経路は既に「No y flip」へ修正済みで、反転した矩形と非反転の box を交差させていた）。

@@ -113,6 +113,18 @@ public final class TextureCopyService {
 
         int immediateGroupCount();
 
+        /**
+         * {@return whether any immediate work is pending, including the group still being filled}.
+         * <p>
+         * {@link #immediateGroupCount()} counts only the groups already queued for a window. The main menu's panorama
+         * offers its cube quads and then issues the copy that reads them back in the same breath
+         * ({@code GuiMainMenu.renderSkybox -> drawPanorama -> rotateAndBlurSkybox}), so at the copy those quads are
+         * still in the group being filled - a guard that asked only the queued count skipped the flush entirely and the
+         * copy read the image *before* the draws it is a copy of. Measured (round 215, run r212-panhost-steady2): the
+         * copy's rectangle was the menu's grey gradient at every present (bands 226..253, opaque=0) and never the cube.
+         */
+        boolean hasPendingImmediateWork();
+
         int recordedImmediateGroupCount();
 
         int currentGroupBatches();
@@ -370,7 +382,7 @@ public final class TextureCopyService {
                 // The faces' window first, and no wait: the queue runs the blit after the draws that filled the
                 // source and before the draws that sample the mirror, which is the ordering the host path got from
                 // waiting for the device to go idle.
-                if (this.host.immediateGroupCount() > 0) {
+                if (this.host.hasPendingImmediateWork()) {
                     this.host.flushPendingBeforeGlDraw();
                 }
                 VkCommandBuffer commands = this.host.context().beginCommands();
@@ -403,7 +415,7 @@ public final class TextureCopyService {
         // What the game drew into that image is still queued as groups: submitting them is what makes the read the
         // frame the copy is about. flushPendingBeforeGlDraw draws into an open pass if there is one, otherwise it opens
         // and completes an immediate window, which is the same ordering boundary the game's own draw calls use.
-        if (this.host.immediateGroupCount() > 0) {
+        if (this.host.hasPendingImmediateWork()) {
             this.host.flushPendingBeforeGlDraw();
         }
         if (!this.host.waitForIdle()) {
