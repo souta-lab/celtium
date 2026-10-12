@@ -128,6 +128,36 @@ final class PublishedFrameTextures {
         this.republished++;
     }
 
+    /** {@return whether any name is published}. */
+    boolean isEmptyPublished() {
+        return this.published.isEmpty();
+    }
+
+    /** {@return the published entries, for the prune passes that walk them}. */
+    java.util.Set<Map.Entry<Integer, VulkanGlTexture>> publishedEntries() {
+        return this.published.entrySet();
+    }
+
+    int created() {
+        return this.created;
+    }
+
+    int unpublished() {
+        return this.unpublished;
+    }
+
+    int skippedForAttach() {
+        return this.skippedForAttach;
+    }
+
+    int stalePruned() {
+        return this.stalePruned;
+    }
+
+    int republished() {
+        return this.republished;
+    }
+
     /** {@return the publication counters in the order the verification line prints them}. */
     String summary() {
         return "publishedFrameTexturesCreated=" + this.created

@@ -149,8 +149,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             new java.util.HashMap<Integer, VulkanGlTexture>();
     /** The image each published frame texture name stands for, so a recreated pair can be told from the same one. */
     private final java.util.Map<Integer, Long> publishedFrameImages = new java.util.HashMap<Integer, Long>();
-    private int publishedFrameTexturesCreated;
-    private int publishedFrameTexturesUnpublished;
     /**
      * The colour image the render pass being begun attaches, recorded when the framebuffer is chosen.
      * <p>
@@ -164,11 +162,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private long passAttachedColorImage;
     /** How many published names the attach-side rule kept out of the sampling transition. */
-    private int publishedFrameTexturesSkippedForAttach;
     /** How many published names were dropped because their image was no longer the pair's live image. */
-    private int publishedFrameTexturesStalePruned;
     /** How many published names were re-pointed at the pair's new image instead of being dropped. */
-    private int publishedFrameTexturesRepublished;
     /** Groups whose sampled texture wrapper had been replaced between prepare and draw, and were re-prepared. */
     private int staleGroupDescriptorsRebuilt;
     /** Groups refused because their texture wrapper had moved and no rebuild was available for their pipeline. */
@@ -1166,9 +1161,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** How often the camera seed was skipped because there is no context to read it from. */
     private int cameraSetupSeedsSkipped;
     /** identity -> {colour texture name, texture width, texture height}, reported at each framebuffer bind. */
-    private final java.util.Map<Long, long[]> framebufferColorTextures = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The publication census, whose ownership moved to {@link PublishedFrameTextures} in refactoring plan R1b: the
+     * framebuffer-identity to colour-texture map, the GL-name to published-texture map and the counters. Which image a
+     * name stands for is still decided here, because that reads the frame target and the off-target pairs, and the
+     * plan moves those in R5 rather than now.
+     */
+    private final PublishedFrameTextures publishedTextures = new PublishedFrameTextures();
+
+    // The colour-texture census lives in publishedTextures (refactoring plan R1b).
     /** Names the sampling side resolved through the framebuffer census, and the bounded log of them. */
-    private int framebufferColorTexturesPublished;
     private int framebufferColorTextureLogs;
     /**
      * Which framebuffer identities were bound as the game's main one.
@@ -4411,12 +4413,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     @Override
     public void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
+        this.publishedTextures.bindColorTexture(framebufferIdentity, colorTexture, width, height);
         if (colorTexture == 0 || width <= 0 || height <= 0) {
-            this.framebufferColorTextures.remove(Long.valueOf(framebufferIdentity));
             return;
         }
-        this.framebufferColorTextures.put(Long.valueOf(framebufferIdentity),
-                new long[] { colorTexture, width, height });
         if (framebufferIdentity == this.mainTargetIdentity && width > 0 && height > 0) {
             // The game's main framebuffer's own size, which is what the frame target must be: the GL viewport is set per
             // framebuffer bind, so sizing the target from it can adopt an off-target's extent (the loading screen's own
@@ -4438,7 +4438,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** The colour texture recorded for a framebuffer identity as {texture, width, height}, or null. */
     private long[] framebufferColorTexture(long identity) {
-        return this.framebufferColorTextures.get(Long.valueOf(identity));
+        return this.publishedTextures.colorTexture(identity);
     }
 
     /** {@return the framebuffer identity whose colour attachment carries this GL texture name}, or {@code MIN_VALUE}. */
@@ -4446,13 +4446,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (glTextureName == 0) {
             return Long.MIN_VALUE;
         }
-        for (java.util.Map.Entry<Long, long[]> entry : this.framebufferColorTextures.entrySet()) {
-            long[] reported = entry.getValue();
-            if (reported != null && reported[0] == glTextureName) {
-                return entry.getKey().longValue();
-            }
-        }
-        return Long.MIN_VALUE;
+        return this.publishedTextures.identityForColorTexture(glTextureName);
     }
 
     /**
@@ -4522,7 +4516,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         celtium$publishFrameTexture(glTextureName, image, view, width, height);
-        this.framebufferColorTexturesPublished++;
+        this.publishedTextures.noteColorTexturePublished();
         if (this.framebufferColorTextureLogs < 8) {
             this.framebufferColorTextureLogs++;
             System.out.println("[Celtium] CELTIUM_FBO_TEXTURE_PUBLISHED name=" + glTextureName
@@ -8630,16 +8624,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
                 + " gpuStalled=" + this.gpuStalled + " stalledStops=" + this.stalledStops
-                + " publishedFrameTexturesCreated=" + this.publishedFrameTexturesCreated
-                + " publishedFrameTexturesUnpublished=" + this.publishedFrameTexturesUnpublished
+                + " publishedFrameTexturesCreated=" + this.publishedTextures.created()
+                + " publishedFrameTexturesUnpublished=" + this.publishedTextures.unpublished()
                 // The attach-side rule's counter: a published name that stands for the image the pass attaches is kept
                 // out of the sampling-side transition, which is the VUID-00900 fix. It must be visible, because a rule
                 // that silently stops transitioning an image is indistinguishable from one that forgot to.
-                + " publishedFrameTexturesSkippedForAttach=" + this.publishedFrameTexturesSkippedForAttach
+                + " publishedFrameTexturesSkippedForAttach=" + this.publishedTextures.skippedForAttach()
                 // A name whose image was recreated under it is unpublished at the point of use: a barrier on the freed
                 // handle was measured as a validation error followed by a SIGSEGV inside libvulkan_radeon.
-                + " publishedFrameTexturesStalePruned=" + this.publishedFrameTexturesStalePruned
-                + " publishedFrameTexturesRepublished=" + this.publishedFrameTexturesRepublished
+                + " publishedFrameTexturesStalePruned=" + this.publishedTextures.stalePruned()
+                + " publishedFrameTexturesRepublished=" + this.publishedTextures.republished()
                 // A group that outlived its texture wrapper: the descriptor is rebuilt from the current wrapper, or the
                 // group is refused. Both are counted because "the picture lost a batch" and "the device was lost" are
                 // different outcomes and only the counter says which happened.
@@ -11507,7 +11501,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (glTextureName == 0 || image == 0L || width <= 0 || height <= 0) {
             return;
         }
-        VulkanGlTexture current = this.publishedFrameTextures.get(Integer.valueOf(glTextureName));
+        VulkanGlTexture current = this.publishedTextures.published(glTextureName);
         if (current != null && this.publishedFrameImages.get(Integer.valueOf(glTextureName)) != null
                 && this.publishedFrameImages.get(Integer.valueOf(glTextureName)).longValue() == image) {
             return;
@@ -11519,9 +11513,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (published == null) {
             return;
         }
-        this.publishedFrameTextures.put(Integer.valueOf(glTextureName), published);
+        this.publishedTextures.putPublished(glTextureName, published);
         this.publishedFrameImages.put(Integer.valueOf(glTextureName), Long.valueOf(image));
-        this.publishedFrameTexturesCreated++;
+        this.publishedTextures.noteCreated();
     }
 
     /**
@@ -11533,14 +11527,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * missing, and its absence is the VUID-vkCmdDraw-None-09600 the vsync leg reported at vkQueueSubmit.
      */
     private void celtium$transitionPublishedFrameTextures(boolean general) {
-        if (this.publishedFrameTextures.isEmpty() || this.commandBuffer == null) {
+        if (this.publishedTextures.isEmptyPublished() || this.commandBuffer == null) {
             return;
         }
         celtium$pruneStalePublishedNames();
-        if (this.publishedFrameTextures.isEmpty()) {
+        if (this.publishedTextures.isEmptyPublished()) {
             return;
         }
-        for (java.util.Map.Entry<Integer, VulkanGlTexture> entry : this.publishedFrameTextures.entrySet()) {
+        for (java.util.Map.Entry<Integer, VulkanGlTexture> entry : this.publishedTextures.publishedEntries()) {
             // The sampling side must not move the image this pass is about to attach: the pass declares GENERAL for
             // attachment 0, and the transition to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass is
             // VUID-vkCmdBeginRenderPass-initialLayout-00900. The attach-side hand-back (the `true` direction) already
@@ -11549,8 +11543,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (!general && this.passAttachedColorImage != 0L) {
                 Long image = this.publishedFrameImages.get(entry.getKey());
                 if (image != null && image.longValue() == this.passAttachedColorImage) {
-                    this.publishedFrameTexturesSkippedForAttach++;
-                    if (this.publishedFrameTexturesSkippedForAttach == 1) {
+                    this.publishedTextures.noteSkippedForAttach();
+                    if (this.publishedTextures.skippedForAttach() == 1) {
                         record("published name " + entry.getKey() + " stands for the image this pass attaches (0x"
                                 + Long.toHexString(this.passAttachedColorImage) + "); the sampling-side transition"
                                 + " would leave it in SHADER_READ_ONLY under a pass that declares GENERAL, so it is"
@@ -11580,7 +11574,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * use, so a recreated pair cannot be sampled through a name that still points at the old image.
      */
     private void celtium$pruneStalePublishedNames() {
-        if (this.publishedFrameTextures.isEmpty()) {
+        if (this.publishedTextures.isEmptyPublished()) {
             return;
         }
         GllessFrameTarget offTarget = offTargetTarget();
@@ -11591,7 +11585,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         }
         long live = offTarget.chainPairColorImage();
         java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =
-                this.publishedFrameTextures.entrySet().iterator();
+                this.publishedTextures.publishedEntries().iterator();
         while (iterator.hasNext()) {
             java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
             Long image = this.publishedFrameImages.get(entry.getKey());
@@ -11615,7 +11609,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (republished != null) {
                     entry.setValue(republished);
                     this.publishedFrameImages.put(entry.getKey(), Long.valueOf(live));
-                    this.publishedFrameTexturesRepublished++;
+                    this.publishedTextures.noteRepublished();
                     continue;
                 }
             }
@@ -11623,9 +11617,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // point the name at, so it is dropped rather than left naming freed memory.
             celtium$registry().unpublishExternalImage(entry.getKey().intValue());
             this.publishedFrameImages.remove(entry.getKey());
-            this.publishedFrameTexturesUnpublished++;
-            this.publishedFrameTexturesStalePruned++;
-            if (this.publishedFrameTexturesStalePruned == 1) {
+            this.publishedTextures.noteUnpublished();
+            this.publishedTextures.noteStalePruned();
+            if (this.publishedTextures.stalePruned() == 1) {
                 record("published name " + entry.getKey() + " named image 0x"
                         + (image == null ? "unknown" : Long.toHexString(image.longValue()))
                         + " which is no longer the pair's image (0x" + Long.toHexString(live)
@@ -11640,12 +11634,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // memory, so they are unpublished and dropped here - the same rule the outline's own name follows below. This
         // runs before the early return that only looks at the outline's wrapper, because the other names are published
         // even when the outline never adopted anything (the vanilla loading screen's framebuffer is the measured case).
-        if (!this.publishedFrameTextures.isEmpty()) {
+        if (!this.publishedTextures.isEmptyPublished()) {
             GllessFrameTarget liveTarget = offTargetTarget();
             long liveImage = liveTarget == null ? 0L : liveTarget.chainPairColorImage();
             long liveView = liveTarget == null ? 0L : liveTarget.chainPairColorView();
             java.util.Iterator<java.util.Map.Entry<Integer, VulkanGlTexture>> iterator =
-                    this.publishedFrameTextures.entrySet().iterator();
+                    this.publishedTextures.publishedEntries().iterator();
             while (iterator.hasNext()) {
                 java.util.Map.Entry<Integer, VulkanGlTexture> entry = iterator.next();
                 Long image = this.publishedFrameImages.get(entry.getKey());
@@ -11665,13 +11659,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     if (republished != null) {
                         entry.setValue(republished);
                         this.publishedFrameImages.put(entry.getKey(), Long.valueOf(liveImage));
-                        this.publishedFrameTexturesRepublished++;
+                        this.publishedTextures.noteRepublished();
                         continue;
                     }
                 }
                 celtium$registry().unpublishExternalImage(entry.getKey().intValue());
                 this.publishedFrameImages.remove(entry.getKey());
-                this.publishedFrameTexturesUnpublished++;
+                this.publishedTextures.noteUnpublished();
                 iterator.remove();
             }
         }
