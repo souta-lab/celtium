@@ -86,7 +86,12 @@ public class TextureUtilMixin {
                     break;
                 }
             }
-            if (celtium$uploadCallerLogs < 16) {
+            // A name-scoped, practically unlimited mode, for the question the bounded census cannot answer: which
+            // uploads of ONE GL name carry which pixels. The splash's logo is the measured case - "the game uploaded
+            // white" and "our path filled white" are the same mirror line, and only the sequence of first= values for
+            // that name separates them. `-Dceltium.vulkan.uploadCallerId=<gl name>`; off by default.
+            boolean nameScoped = glTextureId == org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.uploadCallerId();
+            if (nameScoped ? celtium$uploadCallerLogs < 200 : celtium$uploadCallerLogs < 16) {
                 celtium$uploadCallerLogs++;
                 StackTraceElement[] frames = stack;
                 StringBuilder caller = new StringBuilder();

@@ -395,6 +395,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.429 **round 230: splash の白は「game の FBO 内容が frame image に届かない」側 — present は frame image しか blit しない（task-75）／名前単位 upload census と splash probe を追加**
+
+- **新計器2つ**: (a) `-Dceltium.vulkan.uploadCallerId=<gl name>` ⇒ `CELTIUM_UPLOAD_CALLER` を**その名前だけ 200 行まで**無制限化 ✓（既定 off・通常は 16 行）✓。(b) `CELTIUM_SPLASH_PROBE` ⇒ present 0..2 の最初の window で **frame image 全体 1920×1080 を dump**（`stage-splash-p<N>-1920x1080.png`）✓。
+- **実測（leg `r212-splash-splash`・AMD・jar 上記 dirty 木）**: `CELTIUM_UPLOAD_CALLER id=8 256x256 first=0xffffffff callers=[TextureUtil.func_110988_a <- DynamicTexture.func_110564_a:35 <- DynamicTexture.<init>:18 <- Minecraft.func_180510_a:889 <- SplashProgress.drawVanillaScreen:1051]` が**1本だけ** ✓（＝ロゴの upload は1回・入口はフック済み ✓。`first` は先頭 texel のみで、ロゴ PNG の (0,0) の色は**未検証** ✓ — 仮定で白/透明を決めない ✓）。**splash probe は mean=(0,0,0) distinct=1** ✓ ＝ その時点の frame image は**黒**（＝まだ splash の描画が載っていない ✓）。
+- **task-75 の独立監査（`docs/notes-splash-present.md`）が決定的**: **present が blit するのは `frameTarget.colorImage()` だけ** ✓（`VulkanTerrainGpuBackend.java:5088`）⇒ 「frame image はロゴを持つのに present が白を出す」は **ruled out** ✓。splash の書き込み（`new Framebuffer(w,h,true)` への全面 quad ＋ 中央ロゴ quad ＋ `framebufferRender`）は **非0 identity＝chain pair** に行き、composite は default pair に行くので、**splash の絵は frame image に届かない** ✓（＝コード上はこれが期待状態 ✓）。readback が「未完成/未書き込みの画像」を読む経路も ruled out ✓（dump は present 内部・blit 記録の後 ✓ `VulkanSwapchain.java:168-190`/`:227`）。
+- **帰結**: presented が白いのは **frame image が白だから**で、その白は splash 自身ではなく**合成経路**（game の FBO → published texture → frame image の blit）が配っている ✓ — つまり **`Minecraft.drawSplashScreen` の FBO の colour texture に mirror/publication が無い**という round 168 の候補（重複 jar を含む leg の測定で**現行木の根拠ではなかった** ✓）を、**有効 leg で再測定する**必要がある ✓。
+- **次の一手（1 leg）**: splash probe を **present 時点**（splash の描画後）に移して frame image の内容を確定し、同時にその FBO の colour texture の `CELTIUM_MIRROR_SOURCE`/`CELTIUM_FBO_TEXTURE_PUBLISHED` を読む ✓ ⇒ 「mirror が無い（no-entry）＝白」か「mirror はあるが内容が白」かを分離 ✓。
+
 ## 0.428 **round 229: 起動 splash の白を「最初に present される frame」として特定（mirror が wrap default の白・原典の upload 経路も確定）**
 
 - **測定**: `celtium-presented-loading-*.png` は **mean=(255,255,255) distinct=1** ✓ で、`.identity.json` は **`presentedFrame=1`**（＝**最初に提示された frame** ✓、`requestedAtTick=0`・`worldFrames=0` ✓）。同じ leg の `early` dump は `presentedFrame=5` で**既に world の絵**（TNT 床・空・雲 ✓ 目視 ✓）なので、**白いのは splash の最初の frame** ✓。

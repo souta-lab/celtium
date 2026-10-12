@@ -6935,6 +6935,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // is what the menu makes), so the two reads bracket exactly the cube's quads: everything the
                     // difference marks is what the cube painted, and everything it does not mark is what the cube
                     // leaves to whatever the previous frame left there. Bounded to one present and to identity 0.
+                    // The splash's own frame image, once, before its first present: the launch splash is a single
+                    // colour on screen, and a colour read of the image the present serves is what separates "the
+                    // logo quad never reached the image" from "the image is right and the present serves white".
+                    if (!this.splashProbeDone && this.celtium$presentCount <= 2 && this.frameTarget.colorImage() != 0L
+                            && System.getProperty("celtium.vulkan.mirrorDump") != null) {
+                        this.splashProbeDone = true;
+                        int[] whole = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+                                this.targetWidth, this.targetHeight);
+                        if (whole != null) {
+                            java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(
+                                    this.targetWidth * this.targetHeight * 4);
+                            try {
+                                for (int index = 0; index < whole.length; index++) {
+                                    int value = whole[index];
+                                    rgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                                    rgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                                    rgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                                    rgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                                }
+                                VulkanGlTexture.dumpStageImage("splash-p" + this.celtium$presentCount, rgba,
+                                        this.targetWidth, this.targetHeight);
+                                record("splash-time frame image dumped at present " + this.celtium$presentCount
+                                        + " (CELTIUM_SPLASH_PROBE)");
+                            } finally {
+                                org.lwjgl.system.MemoryUtil.memFree(rgba);
+                            }
+                        }
+                    }
                     if (!this.boxPreProbeDone && this.frameId == 0L && this.targetRegistry.currentIdentity() == 0L
                             && this.frameTarget.colorImage() != 0L
                             && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()
@@ -9981,6 +10009,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Whether the once-per-run box-before-the-cube dump has been taken (round 225's coverage mask). */
     private boolean boxPreProbeDone;
+
+    /** The GL name whose uploads {@code CELTIUM_UPLOAD_CALLER} reports without the sixteen-line bound, or -1. */
+    public static int uploadCallerId() {
+        return Integer.getInteger("celtium.vulkan.uploadCallerId", -1).intValue();
+    }
+
+    /** Whether the splash-time frame-image dump has been taken (round 230). */
+    private boolean splashProbeDone;
     private String lastGroupDepthRow = "";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
