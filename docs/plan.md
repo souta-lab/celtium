@@ -339,6 +339,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.361 **round 168: 原典が決着 — vanilla は scissor を一切使わない。scissor の発行元は Celeritas 自身の UI**
+
+- **原典の検索（決定的）**: `forge122/build/rfg/minecraft-src/java/net/minecraft/` 全体で **`GL_SCISSOR_TEST` の出現 0・`glScissor` の出現 0**。
+  ＝**vanilla 1.12.2 の GUI は scissor を一切使わない**。Forge javadoc の "GL_SCISSOR is enabled for anything that is rendered outside of the view box" は
+  **Forge の `GuiScrollingList`／mod 側の作法**を指すもので、**vanilla の `GuiSlot` は scissor ではなく「描かない」ことで clip する**。
+- **では誰が発行するか**: **Celeritas 自身の UI**。stub のコメント（`CeltiumGlStub.java:218`）が既に名指ししている
+  ＝ *"BH-09: Celeritas' own UI clips with GL11.glScissor directly (VintageDrawContext.enableScissor)"*。
+- **帰結（これまでの7 leg が0だった理由が説明できる）**: **言語画面・リソースパック画面は原理的に scissor を発行しない**
+  （vanilla が使わないのだから `scissorCalls=0` は当然）。**scene の選択自体が誤っていた**。
+  ＝**`scene=videoSettings`（Celeritas 画面）が正しい対象**で、**そのリストをスクロールさせた時**に `VintageDrawContext.enableScissor` が呼ばれる。
+- **次の一手（具体的・これで決まる）**: **Celeritas 画面のオプションリストをスクロールさせる**。
+  `CeleritasVideoOptionsController` が `optionPageScrollBarOffset`/`tabFrameScrollBarOffset` を持つ＝**自前のスクロール状態**なので、
+  `GuiSlot` ではなく**その画面自身のスクロール経路**を叩く（`mouseClickMove` 相当 or ホイール入力を画面へ渡す）。
+  **`scissorCalls` を先に読み**、非0 を確認してから `lineBatchesNarrowed` → 捕捉カウンタ → 一旗対照。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地・計器4 trigger 着地・fixture knob 着地・
+  「vanilla は scissor を使わない」を原典で確定**・**受入は Celeritas 画面をスクロールさせる fixture 待ち**。
+  **8 leg を費やしたが、最後の2 leg で「対象 scene の選択が誤っていた」ことを測定と原典の両方で示せた**。
+
 ## 0.360 **round 167: リソースパック画面でも `scissorCalls=0` — 原因は「リストがスクロールしない」ことと確定**
 
 - **測定（`r158-bh09`・`-Dceltium.validation.screen=resourcepacks`）**: **`namedScreenOpened = net.minecraft.client.gui.GuiScreenResourcePacks`** で
