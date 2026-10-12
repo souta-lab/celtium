@@ -1757,6 +1757,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Lines of {@code CELTIUM_DRAW_SITE}, the draw-moment companion of {@code CELTIUM_IMMEDIATE_ENQ}. */
     private static final int DRAW_SITE_LIMIT =
             Integer.getInteger("celtium.vulkan.drawSiteLines", 16).intValue();
+    /** First frame {@code CELTIUM_DRAW_SITE} reports, so a world-frame draw site is reachable with a bounded line count. */
+    private static final long DRAW_SITE_MIN_FRAME =
+            Long.getLong("celtium.vulkan.drawSiteMinFrame", 0L).longValue();
+    /** Lines of {@code CELTIUM_WINDOW_DRAW}, the identity -> image line. */
+    private static final int WINDOW_DRAW_LIMIT =
+            Integer.getInteger("celtium.vulkan.windowDrawLines", 6).intValue();
+    /** First frame {@code CELTIUM_WINDOW_DRAW} reports, for the same reason as {@link #DRAW_SITE_MIN_FRAME}. */
+    private static final long WINDOW_DRAW_MIN_FRAME =
+            Long.getLong("celtium.vulkan.windowDrawMinFrame", 0L).longValue();
     private int crossPassComparisonsSkipped;
     private boolean mirrorMidSetup;
     private int midSetupComparisonsSkipped;
@@ -7900,7 +7909,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // the image the window's draws land in is the image the copy reads, and a label that says "frame" while the
         // pass attaches something else is exactly that mismatch. Printed beside the frame image's current handle and
         // the chain pair's, so it compares with the copy's own readImage= without another leg.
-        if (windowIdentity && this.windowDrawLogs < 6) {
+        // The identity -> image line, bounded by a property and filterable by frame. The fixed six lines were all spent
+        // on frame 0, so a question about a world frame (`which image does the HUD stage's identity attach?`) could not
+        // be asked with the instrument that answers it. Same shape as CELTIUM_GROUP_BOUNDS's groupBoundsMinFrame, which
+        // was added for exactly this reason.
+        if (windowIdentity && this.windowDrawLogs < WINDOW_DRAW_LIMIT && this.frameId >= WINDOW_DRAW_MIN_FRAME) {
             this.windowDrawLogs++;
             System.out.println("[Celtium] CELTIUM_WINDOW_DRAW identity=0 image=frame"
                     + " phase=" + (this.targetRegistry.mainIdentity() == Long.MIN_VALUE ? "before-adoption" : "adopted")
@@ -8329,6 +8342,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // enable bit. acceptance measured 0 groups with the break overlay present, so one of these is false
                 // and the pair says which without another round of guessing.
                 + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCallCount()
+                // Every bracket's open count, enabled or not: an empty framePassSplit cannot say whether a bracket
+                // ran, and the missing HUD turns on exactly that (GuiIngameMixin's `gui` bracket against a HUD that may
+                // never be drawn).
+                + " passBegins=[" + FramePassTimings.passBeginCallsSummary() + "]"
                 + " framePassSplit=[" + FramePassTimings.summary() + "]"
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
@@ -11300,7 +11317,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " hotbarBand=" + celtium$patchMean(this.frameTarget.colorImage(),
                                 Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32)
                         + " pairCentre=" + (celtium$livePairImage() == 0L ? "none"
-                                : celtium$patchMean(celtium$livePairImage(), 928, 516, 64));
+                                : celtium$patchMean(celtium$livePairImage(), 928, 516, 64))
+                        // The same hotbar band in the chain pair. The teammate's round-240 census puts the HUD family
+                        // on its own target identity, not on the frame image's; if that identity routes to the pair,
+                        // the HUD is in the pair and the present serves the frame image - a routing fault, not a lost
+                        // draw. Pixels, not bounds: the bounds reader collapses these groups to NDC (0,0), so its
+                        // geometry evidence cannot answer this.
+                        + " pairHotbarBand=" + (celtium$livePairImage() == 0L ? "none"
+                                : celtium$patchMean(celtium$livePairImage(),
+                                        Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32))
+                        // And the default pair, which the routing table sends a non-main, non-zero identity's draws to.
+                        // The HUD's stage carries an identity of its own in this leg, and that identity's image has to be
+                        // looked at directly: the chain pair was checked and holds the world, so the default pair is the
+                        // remaining candidate - it is black in the splash legs, and nothing presents it.
+                        + " defaultPairHotbarBand=" + (offTargetTarget() == null
+                                || offTargetTarget().offTargetColorImage() == 0L ? "none"
+                                : celtium$patchMean(offTargetTarget().offTargetColorImage(),
+                                        Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32));
                 System.out.println("[Celtium] " + presentLine);
                 record(presentLine);
             }
@@ -12965,6 +12998,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.drawnByFormat[group.formatId] += batches;
                 }
                 if (ENQ_ALL_GROUPS && (ENQ_FORMAT < 0 || ENQ_FORMAT == group.formatId)
+                        && this.frameId >= DRAW_SITE_MIN_FRAME
                         && this.immediateStatistics.immediateDrawSiteLogged() < DRAW_SITE_LIMIT) {
                     // Where this group was drawn, not only that it was: the three sites test against different depth
                     // contents, so "drawn" and "in the picture" are different questions and this is the line that
