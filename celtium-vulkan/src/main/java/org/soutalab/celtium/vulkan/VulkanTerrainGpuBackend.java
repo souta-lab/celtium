@@ -4633,12 +4633,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // "main=true pair=chain-pair" - a label that named an image no main-identity draw goes to. The rule and this
         // separation live in GllessFrameTarget.routeLabelForBinding.
         // BH-14: the census is fed here because this is the one place the routing rule is applied to a live bind.
-        org.soutalab.celtium.vulkan.GllessFrameTarget.noteIdentityForCensus(targetIdentity, isMain);
-        if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
-            record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
-                    + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
-                    + " pair=" + pairOfOffTargetIdentity(targetIdentity)
-                    + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
+        if (TARGET_CENSUS_ENABLED) {
+            org.soutalab.celtium.vulkan.GllessFrameTarget.noteIdentityForCensus(targetIdentity, isMain);
+            if (this.framebufferBindCensus.size() < 12 && this.framebufferBindCensus.add(Long.valueOf(targetIdentity))) {
+                record("framebuffer bind: identity=0x" + Long.toHexString(targetIdentity) + " main=" + isMain
+                        + " route=" + GllessFrameTarget.routeLabelForBinding(targetIdentity, isMain)
+                        + " pair=" + pairOfOffTargetIdentity(targetIdentity)
+                        + " (distinct identities so far " + this.framebufferBindCensus.size() + ")");
+            }
         }
     }
 
