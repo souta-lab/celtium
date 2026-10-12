@@ -306,6 +306,27 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.318 **round 124: 自分の測定の誤りを訂正 — 到達数は「印刷行数」ではなく `bindsOnUnit0`（1,628,711 / 1,280,000 glyph）＝hook は glyph ごとに走る**
+
+- **glyph-fix の反証（正しい）**: 私が数えた **248 は bounded な `CELTIUM_UNIT_BIND` の「印刷行数」**であり、
+  **到達数は同 line が持つ `bindsOnUnit0`**。実測は:
+  | leg | glyph windows | `bindsOnUnit0` |
+  |---|---|---|
+  | `f3split`（F3 on） | **1,280,000** | **1,628,711** |
+  | `f3perf-on`（F3 on） | **1,020,000** | **1,011,627** |
+  ＝**到達は glyph 数とほぼ 1:1**。**我々の hook は glyph ごとに走っている**。
+- **なぜ二つの読みが食い違ったか（記録）**: vanilla の per-unit cache が short-circuit するのは **stub に届く `GL11.glBindTexture`** であり、
+  **我々の mixin は `func_179144_i` の method HEAD に注入**されているため **cache hit でも hook は走る**。
+  ＝**「hook は texture が変わったときだけ走る」は stub については真、hook については偽**（別サイト）。
+  ＝**私の「stop」は誤読に基づいていた**。hook 内の skip は vanilla の filter の二重適用ではなく、**我々自身の冗長仕事の除去**。
+- **対応**: glyph-fix に**unit を再開して着地させる**よう送付済み（`bindWouldChangeNothing(glTextureId)` で mirror 呼び出し前に return・
+  `bindShortCircuits` を frame counter の隣に出力・**safety 引数を commit message に**・同一 jar の F3 on/off pair に `pinSections`）。
+  併せて **`bindTextureCalls`/`immediateStateCalls` の reporting line** も同 unit で（leg ごとに連鎖の大きさが見えるように＝私が今犯した誤りの再発防止）。
+- **未確立（正直に）**: **到達が glyph ごとであることは測定済み**、**到達あたりのコストは未測定**
+  （最hot な hook に timer を入れる必要があり glyph-fix は意図的に作っていない）。**3.17 µs のうち連鎖が何割かは未確定**。
+- **教訓（記録）**: **bounded な印字行数を「到達数」と読まない**（`CELTIUM_*_SUMMARY` や counter の値そのものを読む）。
+  ＝「counter の不在は描画の不在ではない」と同じ族の誤りを、私がまた犯した。
+
 ## 0.317 **round 123: bind 到達回数を測定 — **248 回 / 1,280,000 glyph**＝bind 経路は実質到達していない。3.17 µs/glyph は vanilla の per-character 仕事**
 
 - **測定（Lead・既存 leg `f3split` の `CELTIUM_UNIT_BIND` を数える・新しい leg 不要）**:
