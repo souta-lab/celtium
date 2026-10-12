@@ -6930,6 +6930,86 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     this.frameSubmitReachedQueue = false;
                     this.frameTarget.beginFrame();
                     opened = true;
+                    // What the pair held when the composite sampled it. The composite's own group was drawn in an
+                    // earlier window of this frame, so this boundary is the first point after that draw that is not
+                    // inside a render pass; a pair that is already the game's picture here means the sample had the
+                    // right source, and a pair that is still blank here means the composite read it before the game's
+                    // draws landed - two different faults with the same present-time picture.
+                    // The frame image at each of the first windows of frame 0, beside the marker clear at the head of
+                    // its pass in the same run: "the composite wrote the white it sampled" and "a later window painted
+                    // white over it" are the same final picture, and only the per-window state tells them apart.
+                    if (FRAME_CLEAR_MARK && this.frameId == 0L && this.frameBoundaryProbes < 8
+                            && this.frameTarget.colorImage() != 0L) {
+                        this.frameBoundaryProbes++;
+                        int[] framePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+                                this.targetWidth, this.targetHeight);
+                        if (framePixels != null) {
+                            String frameLine = "CELTIUM_FRAME_AT_WINDOW frame=" + this.frameId
+                                    + " afterWindows=" + this.immediateStatistics.immediateWindowsThisFrame()
+                                    + " windows=" + this.immediateStatistics.immediateWindows()
+                                    + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
+                                    + " " + celtium$regionSignature(framePixels, this.targetWidth, this.targetHeight);
+                            System.out.println("[Celtium] " + frameLine);
+                            record(frameLine);
+                        }
+                    }
+                    // Every window of frame 0, the centre of the frame image and of the pair, but only the changes are
+                    // printed: the splash redraws its framebuffer many times in one presented frame, and the presented
+                    // picture is whatever the last of those left. A state trace says which window whitened a frame
+                    // image that already held the game's picture, which no single end-of-frame dump can.
+                    if (FRAME_CLEAR_MARK && this.frameId == 0L && this.targetWidth > 1024 && this.targetHeight > 1024
+                            && this.splashFlipLogs < 240) {
+                        long pairImage = celtium$livePairImage();
+                        String frameCentre = celtium$patchMean(this.frameTarget.colorImage(), 928, 516, 64);
+                        String pairCentre = pairImage == 0L ? "none" : celtium$patchMean(pairImage, 928, 516, 64);
+                        if (!frameCentre.equals(this.lastFrameCentre) || !pairCentre.equals(this.lastPairCentre)) {
+                            this.lastFrameCentre = frameCentre;
+                            this.lastPairCentre = pairCentre;
+                            this.splashFlipLogs++;
+                            String flipLine = "CELTIUM_SPLASH_FLIP frame=" + this.frameId
+                                    + " afterWindows=" + this.immediateStatistics.immediateWindowsThisFrame()
+                                    + " windows=" + this.immediateStatistics.immediateWindows()
+                                    + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
+                                    + " frameCentre=" + frameCentre + " pairCentre=" + pairCentre;
+                            System.out.println("[Celtium] " + flipLine);
+                            record(flipLine);
+                        }
+                    }
+                    if (this.splashPairAfterCompositeArmed && !this.splashPairAfterCompositeDone) {
+                        this.splashPairAfterCompositeDone = true;
+                        GllessFrameTarget compositePair = offTargetTarget();
+                        if (compositePair != null && compositePair.chainPairColorImage() != 0L) {
+                            int[] compositePairPixels = celtium$readImageRectangle(compositePair.chainPairColorImage(),
+                                    0, 0, this.targetWidth, this.targetHeight);
+                            if (compositePairPixels != null) {
+                                String signature = celtium$regionSignature(compositePairPixels, this.targetWidth,
+                                        this.targetHeight);
+                                String line = "CELTIUM_SPLASH_PAIRPOST present=" + this.celtium$presentCount
+                                        + " windows=" + this.immediateStatistics.immediateWindows()
+                                        + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
+                                        + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
+                                        + " pairImage=0x" + Long.toHexString(compositePair.chainPairColorImage())
+                                        + " " + signature;
+                                System.out.println("[Celtium] " + line);
+                                record(line);
+                                java.nio.ByteBuffer pairPostRgba = org.lwjgl.system.MemoryUtil.memAlloc(
+                                        this.targetWidth * this.targetHeight * 4);
+                                try {
+                                    for (int index = 0; index < compositePairPixels.length; index++) {
+                                        int value = compositePairPixels[index];
+                                        pairPostRgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                                        pairPostRgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                                        pairPostRgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                                        pairPostRgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                                    }
+                                    VulkanGlTexture.dumpStageImage("splash-pairpost-p" + this.celtium$presentCount,
+                                            pairPostRgba, this.targetWidth, this.targetHeight);
+                                } finally {
+                                    org.lwjgl.system.MemoryUtil.memFree(pairPostRgba);
+                                }
+                            }
+                        }
+                    }
                     // The box *before* this window's draws, once, so the cube's own coverage is a measured mask rather
                     // than an inference. The copy path reads the same box right after the cube (one readback per frame
                     // is what the menu makes), so the two reads bracket exactly the cube's quads: everything the
@@ -6938,10 +7018,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // The splash's own frame image, once, before its first present: the launch splash is a single
                     // colour on screen, and a colour read of the image the present serves is what separates "the
                     // logo quad never reached the image" from "the image is right and the present serves white".
-                    if (!this.splashProbeDone && this.celtium$presentCount >= 1
+                    if (this.splashProbeCount < 3 && this.celtium$presentCount >= 1
                             && this.frameTarget.colorImage() != 0L
                             && System.getProperty("celtium.vulkan.mirrorDump") != null) {
-                        this.splashProbeDone = true;
+                        this.splashProbeCount++;
                         int[] whole = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
                                 this.targetWidth, this.targetHeight);
                         if (whole != null) {
@@ -7825,11 +7905,67 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " frameSerial=" + celtium$frameSerial() + " windowsThisFrame="
                     + this.immediateStatistics.immediateWindowsThisFrame());
         }
+        // A measured marker, not a mode: the pair is cleared to magenta at the head of the frame's own window, once per
+        // frame, just before the pass that draws the composite which samples it. The loading screen's composite paints
+        // a flat white field although the pair holds the game's picture, the descriptor is rebuilt from the registry's
+        // current wrapper at the draw and the geometry's texture coordinates span 0..1 - so what is left to separate is
+        // "the draw reads the pair and its sample is white" from "the draw reads some other image". Magenta in the
+        // frame image says the pair is the source. Recorded outside the pass, with the barrier the sampling draw needs.
+        if (windowIdentity && PAIR_PROBE_CLEAR && this.pairProbeClearFrame != this.frameId) {
+            long probePair = celtium$livePairImage();
+            if (probePair != 0L) {
+                this.pairProbeClearFrame = this.frameId;
+                org.lwjgl.vulkan.VkClearColorValue probeColour =
+                        org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+                probeColour.float32(0, 1.0f);
+                probeColour.float32(1, 0.0f);
+                probeColour.float32(2, 1.0f);
+                probeColour.float32(3, 1.0f);
+                org.lwjgl.vulkan.VkImageSubresourceRange probeRange =
+                        org.lwjgl.vulkan.VkImageSubresourceRange.calloc(stack)
+                                .aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+                vkCmdClearColorImage(this.commandBuffer, probePair, VK_IMAGE_LAYOUT_GENERAL, probeColour, probeRange);
+                org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer probeBarrier =
+                        org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
+                probeBarrier.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                        .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                        .image(probePair).subresourceRange(probeRange);
+                vkCmdPipelineBarrier(this.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, null, null, probeBarrier);
+                String probeLine = "CELTIUM_PAIR_PROBE_CLEAR frame=" + this.frameId
+                        + " pairImage=0x" + Long.toHexString(probePair) + " colour=magenta";
+                System.out.println("[Celtium] " + probeLine);
+                record(probeLine);
+            }
+        }
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
         setViewportAndScissor(stack);
+        // A measured marker, not a mode. The loading screen's frame image is uniform white, and on an image that is
+        // already white "the composite wrote the white it sampled" and "nothing in the frame's pass wrote at all" are
+        // the same picture. Clearing the frame image to a colour no game draw uses, at the head of the frame's own
+        // pass, separates them: the marker still there at the end of the frame means every draw of that pass was lost,
+        // and a white field means the composite's own sample was white. Once per frame, gated like the other probes.
+        if (windowIdentity && FRAME_CLEAR_MARK && this.frameClearMarkFrame != this.frameId) {
+            this.frameClearMarkFrame = this.frameId;
+            org.lwjgl.vulkan.VkClearAttachment.Buffer markAttachment =
+                    org.lwjgl.vulkan.VkClearAttachment.calloc(1, stack);
+            markAttachment.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).colorAttachment(0);
+            markAttachment.get(0).clearValue().color().float32(0, 0.0f);
+            markAttachment.get(0).clearValue().color().float32(1, 1.0f);
+            markAttachment.get(0).clearValue().color().float32(2, 0.0f);
+            markAttachment.get(0).clearValue().color().float32(3, 1.0f);
+            org.lwjgl.vulkan.VkClearRect.Buffer markRect = org.lwjgl.vulkan.VkClearRect.calloc(1, stack);
+            markRect.get(0).rect().offset().set(0, 0);
+            markRect.get(0).rect().extent().set(this.targetWidth, this.targetHeight);
+            markRect.get(0).baseArrayLayer(0).layerCount(1);
+            vkCmdClearAttachments(this.commandBuffer, markAttachment, markRect);
+        }
         if (!this.targetRegistry.currentIsMain()) {
             this.offTargetPassGroupsByTarget.merge(this.targetRegistry.currentIdentity(), countGroupsForTarget(this.targetRegistry.currentIdentity()),
                     Integer::sum);
@@ -8789,6 +8925,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * push constants - is exercised inside the frame that the validation harness already checks.
      */
     private final boolean uiTestEnabled = Boolean.getBoolean("celtium.vulkan.uiTest");
+
+    /**
+     * Whether the frame image is marked with a green field at the head of the frame's own pass, so "a draw that wrote
+     * white" and "no draw that reached the image" are distinguishable on an image that starts white.
+     * {@code -Dceltium.vulkan.frameClearMark=true}; a measurement switch, never a mode.
+     */
+    private static final boolean FRAME_CLEAR_MARK = Boolean.getBoolean("celtium.vulkan.frameClearMark");
+    /** The frame whose marker clear has been recorded, so the mark is once per frame. */
+    private long frameClearMarkFrame = -1L;
+    /** Frame-image readbacks taken at window boundaries in the marked run; bounded to the frame's first windows. */
+    private int frameBoundaryProbes;
+    /**
+     * Whether every textured group's descriptor is rebuilt at the draw from the registry's current wrapper.
+     * {@code -Dceltium.vulkan.rebuildDescriptors=true}; separates the set the prepare wrote from the set the draw binds.
+     */
+    private static final boolean REBUILD_DESCRIPTORS_AT_DRAW =
+            Boolean.getBoolean("celtium.vulkan.rebuildDescriptors");
+    /**
+     * Whether each of the first presents reports the frame image's and the pair's centre patch.
+     * {@code -Dceltium.vulkan.presentPatch=true}; the present is the only point that says what the frame serves.
+     */
+    private static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
+    private int presentPatchLogs;
+    /**
+     * Whether the chain pair is cleared to magenta at the head of the frame's own window, once per frame.
+     * {@code -Dceltium.vulkan.pairProbeClear=true}; a measurement switch that makes the pair unmistakable to the draw
+     * that samples it, never a mode.
+     */
+    private static final boolean PAIR_PROBE_CLEAR = Boolean.getBoolean("celtium.vulkan.pairProbeClear");
+    private long pairProbeClearFrame = -1L;
+    /** The last traced centre colours, so the per-window trace prints changes rather than every window. */
+    private String lastFrameCentre = "";
+    private String lastPairCentre = "";
+    /** Lines the flip trace has written; bounded so a scene that never settles cannot fill the log. */
+    private int splashFlipLogs;
     private VulkanUiPipeline uiPipeline;
     private VulkanDynamicMesh uiMesh;
 
@@ -10093,8 +10264,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return Integer.getInteger("celtium.vulkan.uploadCallerId", -1).intValue();
     }
 
-    /** Whether the splash-time frame-image dump has been taken (round 230). */
-    private boolean splashProbeDone;
+    /** How many of the splash's first presents have had their frame image (and the pair) dumped. */
+    private int splashProbeCount;
+
+    /**
+     * The pair readback at the composite: armed when a group samples a published frame texture, taken at the first
+     * window boundary after it. The present-time dumps read the pair long after the composite sampled it, so they
+     * cannot say whether the pair already held the game's picture when the sample ran.
+     */
+    private boolean splashPairAfterCompositeArmed;
+    private boolean splashPairAfterCompositeDone;
     private String lastGroupDepthRow = "";
     /** One-shot: the state the model path is told about depth. */
     private boolean modelStateLogged;
@@ -10699,6 +10878,143 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * The first four vertices of a group's mesh, as the floats the shader will read.
+     * <p>
+     * A quad that covers the framebuffer and samples a picture the pair holds can still paint one colour: what decides
+     * which texel each fragment reads is the vertex's own texture coordinates, and a quad whose four UVs are equal -
+     * or outside {@code 0..1} on a clamped sampler - is exactly the "uniform white with the picture in the source"
+     * case. The mesh copies vertices verbatim at the captured stride and declares no attribute offsets of its own
+     * ({@code Layout(stride, 0, -1, -1, -1, -1)}), so the floats are printed as they lie rather than at a guessed
+     * offset: six floats cover position, texture coordinates and colour of every layout this path carries.
+     */
+    private static String celtium$meshVertexPreview(VulkanDynamicMesh mesh) {
+        if (mesh == null || mesh.isEmpty()) {
+            return "none";
+        }
+        long base = mesh.vertexAddress();
+        int stride = mesh.layout() == null ? 0 : mesh.layout().stride;
+        int count = mesh.vertexCount();
+        if (base == 0L || stride < 24 || count <= 0) {
+            return "stride=" + stride + " count=" + count;
+        }
+        StringBuilder preview = new StringBuilder("stride=").append(stride).append(" count=").append(count)
+                .append(" v={");
+        int shown = Math.min(4, count);
+        for (int i = 0; i < shown; i++) {
+            if (i > 0) {
+                preview.append(' ');
+            }
+            for (int k = 0; k < 6; k++) {
+                if (k > 0) {
+                    preview.append(',');
+                }
+                preview.append(round3(org.lwjgl.system.MemoryUtil.memGetFloat(base + (long) i * stride + k * 4L)));
+            }
+            // The colour attribute is four unsigned bytes at 20, and the shader multiplies the texel by it: read as a
+            // float it prints as 0.0 for both 0x00000000 and 0xFFFFFFFF, which is exactly the difference between a
+            // fragment that keeps the texture and one that is multiplied to black.
+            preview.append("/0x").append(Integer.toHexString(
+                    org.lwjgl.system.MemoryUtil.memGetInt(base + (long) i * stride + 20L)));
+        }
+        return preview.append('}').toString();
+    }
+
+    /**
+     * The centre and the corner of a read-back rectangle as numbers.
+     * <p>
+     * The splash's logo is centred and dark on a white field, so a centre well below the corner is the picture and a
+     * centre equal to the corner is a blank image. Reported beside the readback so "the pair is blank when the
+     * composite samples it" and "the composite lost a picture the pair held" are told apart by numbers rather than by
+     * a picture someone has to look at.
+     */
+    private static String celtium$regionSignature(int[] pixels, int width, int height) {
+        if (pixels == null || width <= 0 || height <= 0 || pixels.length < width * height) {
+            return "signature=none";
+        }
+        long centreR = 0L;
+        long centreG = 0L;
+        long centreB = 0L;
+        long cornerR = 0L;
+        long cornerG = 0L;
+        long cornerB = 0L;
+        long centreCount = 0L;
+        long cornerCount = 0L;
+        long dark = 0L;
+        int centreX = width / 2;
+        int centreY = height / 2;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int value = pixels[y * width + x];
+                int red = (value >> 16) & 0xFF;
+                int green = (value >> 8) & 0xFF;
+                int blue = value & 0xFF;
+                if (Math.abs(x - centreX) < 256 && Math.abs(y - centreY) < 256) {
+                    centreR += red;
+                    centreG += green;
+                    centreB += blue;
+                    centreCount++;
+                }
+                if (x < 64 && y < 64) {
+                    cornerR += red;
+                    cornerG += green;
+                    cornerB += blue;
+                    cornerCount++;
+                }
+                if ((red + green + blue) / 3 < 200) {
+                    dark++;
+                }
+            }
+        }
+        return "centreRgb=(" + (centreCount == 0 ? -1 : centreR / centreCount) + ","
+                + (centreCount == 0 ? -1 : centreG / centreCount) + ","
+                + (centreCount == 0 ? -1 : centreB / centreCount) + ")"
+                + " cornerRgb=(" + (cornerCount == 0 ? -1 : cornerR / cornerCount) + ","
+                + (cornerCount == 0 ? -1 : cornerG / cornerCount) + ","
+                + (cornerCount == 0 ? -1 : cornerB / cornerCount) + ")"
+                + " darkPixels=" + dark;
+    }
+
+    /**
+     * The mean colour of a small rectangle of an image, as {@code (r,g,b)}, read back through the copy path.
+     * <p>
+     * A patch rather than the whole frame: the question is only whether a region holds the game's picture or a flat
+     * field, and 64x64 answers it at a cost a per-window trace can pay. The rectangle is the one the splash's logo
+     * occupies, so a flat white patch is "no logo" and a dark patch is "logo".
+     */
+    private String celtium$patchMean(long image, int x, int y, int size) {
+        if (image == 0L) {
+            return "none";
+        }
+        int[] pixels = celtium$readImageRectangle(image, x, y, size, size);
+        if (pixels == null || pixels.length < size * size) {
+            return "unreadable";
+        }
+        long red = 0L;
+        long green = 0L;
+        long blue = 0L;
+        for (int index = 0; index < size * size; index++) {
+            int value = pixels[index];
+            red += (value >> 16) & 0xFF;
+            green += (value >> 8) & 0xFF;
+            blue += value & 0xFF;
+        }
+        long count = (long) size * size;
+        return "(" + (red / count) + "," + (green / count) + "," + (blue / count) + ")";
+    }
+
+    /** {@return the chain pair's live colour image handle, or 0 when this is not the GL-less target}. */
+    private long celtium$livePairImage() {
+        GllessFrameTarget live = offTargetTarget();
+        return live == null ? 0L : live.chainPairColorImage();
+    }
+
+    /** {@return the chain pair's live colour view, the pair the published frame textures stand for}. */
+    private long celtium$livePairView() {
+        GllessFrameTarget live = offTargetTarget();
+        return live == null ? 0L : live.chainPairColorView();
+    }
+
+    /**
      * Moves every published frame texture to the layout its next use needs.
      * <p>
      * Two uses alternate on the same image: the pass that draws the game's framebuffer into the pair attaches it, which
@@ -10957,10 +11273,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // present's restore barrier asked for newLayout=UNDEFINED). Content is not claimed by saying GENERAL here -
             // a fresh image has none either way, and the next frame's acquire barrier is what gives it a layout it can
             // be drawn into.
+            // What the present is about to serve, and what the pair held for it: the loading screen's frame image is a
+            // flat white field while the pair holds the game's picture, and the question is whether that is already
+            // true when the frame is presented or whether the image is whitened after the composite. The patch is the
+            // logo's own region, so a flat value is "no picture" and a dark one is "picture".
+            if (PRESENT_PATCH_TRACE && this.presentPatchLogs < 8 && this.targetWidth > 1024 && this.targetHeight > 1024) {
+                this.presentPatchLogs++;
+                String presentLine = "CELTIUM_PRESENT_PATCH present=" + (this.framePresentedFromVulkan + 1)
+                        + " frame=" + this.frameId
+                        + " windows=" + this.immediateStatistics.immediateWindows()
+                        + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
+                        + " frameCentre=" + celtium$patchMean(this.frameTarget.colorImage(), 928, 516, 64)
+                        + " pairCentre=" + (celtium$livePairImage() == 0L ? "none"
+                                : celtium$patchMean(celtium$livePairImage(), 928, 516, 64));
+                System.out.println("[Celtium] " + presentLine);
+                record(presentLine);
+            }
             this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
                     presentSourceLayout, this.targetWidth, this.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
-                    org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
-            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+                    org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
             this.presentAttempts++;
             this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();
@@ -12367,6 +12698,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     if (source.startsWith("announced-int[]") && this.targetStatistics.splashSourcedGroups() < Integer.MAX_VALUE) {
                         this.targetStatistics.noteSplashSourcedGroups();
                     }
+                    // A group that samples a published frame texture reads the chain pair through the renderer's own
+                    // wrapper. What the pair held *at that draw* is the one fact the present-time dumps cannot give:
+                    // they read it many windows later, after the game has drawn the framebuffer again. This arms a
+                    // single readback at the next window boundary, which is the earliest point outside a render pass.
+                    if (source.startsWith("published-image")) {
+                        this.splashPairAfterCompositeArmed = true;
+                    }
                 }
                 if (group.formatId == 2 && this.mirrorDrawLogs < MIRROR_DRAW_LOG_LIMIT) {
                     this.mirrorDrawLogs++;
@@ -12378,7 +12716,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                             + " resolvedSize=" + (bound == null ? "none" : bound.width() + "x" + bound.height())
                             + " descriptor=0x" + Long.toHexString(prepared.descriptor)
                             + " mirrorSource=" + celtium$registry().celtium$mirrorSourceFor(group.texture)
-                            + " target=" + group.target + " batches=" + group.batches);
+                            + " target=" + group.target + " batches=" + group.batches
+                            // The view the descriptor samples, against the view the live pair has, and whether the
+                            // wrapper stands for that pair at all. A group whose key is current can still hold a view
+                            // of another image - `standsFor` is the only fact that separates "samples the pair" from
+                            // "samples something that happens to be white", which is the loading screen's open
+                            // question. `drawnSoFar` orders this draw against the pass clear and the other passes.
+                            + " view=0x" + Long.toHexString(bound == null ? 0L : bound.view())
+                            + " pairView=0x" + Long.toHexString(celtium$livePairView())
+                            + " pairImage=0x" + Long.toHexString(celtium$livePairImage())
+                            + " standsForLivePair=" + (bound != null && celtium$livePairImage() != 0L
+                                    && bound.standsFor(celtium$livePairImage(), celtium$livePairView(),
+                                            this.targetWidth, this.targetHeight))
+                            + " layout=" + (bound == null ? -1 : bound.foreignLayout())
+                            + " uvRange=" + celtium$meshVertexPreview(mesh)
+                            + " fog=" + (group.fog == null ? "none"
+                                    : ("mode=" + (int) group.fog[0] + ",colour=" + round3(group.fog[4]) + ","
+                                            + round3(group.fog[5]) + "," + round3(group.fog[6]) + ",start="
+                                            + round3(group.fog[2]) + ",end=" + round3(group.fog[3])))
+                            + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
+                            + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame());
                 }
                 // A group can outlive the texture it was prepared with: the wrapper is retired when the renderer replaces
                 // the image (measured: glTexture=22 unpublished at frame 0, moments after the group was enqueued), and the
@@ -12387,7 +12744,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // and the descriptor rebuilt when its key (view + generation) has moved.
                 if (prepared.textureKey != 0L && group.texture != 0) {
                     VulkanGlTexture currentTexture = celtium$registry().get(group.texture);
-                    if (currentTexture != null && currentTexture.key() != prepared.textureKey) {
+                    // A measurement switch, never a mode: rebuild every textured group's descriptor at the draw from the
+                    // wrapper the registry resolves now. A group whose key is unchanged can still hold a set written
+                    // against handles that have since moved, and this is the one-jar way to tell "the descriptor the
+                    // draw binds" from "the descriptor the prepare built" without reading a set's contents, which
+                    // Vulkan has no API for.
+                    boolean forced = REBUILD_DESCRIPTORS_AT_DRAW
+                            && prepared.pipeline instanceof VulkanImmediateTexturePipeline;
+                    if (currentTexture != null && (forced || currentTexture.key() != prepared.textureKey)) {
                         // The rebuild has to know which family the group belongs to. The textured family needs only its
                         // own texture; a lit ITEM group - the model path's batch - declares a second binding for the
                         // light map, so rebuilding it with the one-texture call would produce a set the pipeline cannot
