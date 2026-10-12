@@ -2516,14 +2516,35 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /**
      * Which builders clear the shared scratch before writing it, from {@code -Dceltium.vulkan.scratchZero} as a comma
-     * list of {@code ortho}, {@code perspective}, {@code frustum} and {@code glu}. Every one of them defaults to on,
-     * because each of the four writes only its own elements and a GL projection that is not written completely
-     * inherits whatever the previous builder left - measured: the main menu's panorama was divided by
-     * {@code w = -x + y - 0.101z + 1} because {@code gluPerspective} kept the GUI ortho's [12], [13] and [15].
+     * list of {@code ortho}, {@code perspective}, {@code frustum} and {@code glu}.
      * <p>
-     * The property exists for one bisect: zeroing all four turned every presented frame black (round 226) while the
-     * frame image still held a picture, so one of the four has a consumer that depends on the inherited values, and
-     * narrowing the list with one jar is how that consumer gets named. It is an instrument, not a supported mode.
+     * <b>Both directions of the inheritance are measured now; only one of them is in the default.</b> A perspective
+     * built after an ortho kept the ortho's {@code [12]}, {@code [13]} and {@code [15]} - the main menu's panorama was
+     * divided by {@code w = -x + y - 0.101z + 1} (round 226, jar f9d64a91e) - and, in the other direction, an
+     * <b>ortho</b> built after a perspective keeps its {@code [11] = -1}: a GL projection's {@code [11]} is the z term
+     * of <em>w</em>, which is -1 for a perspective and 0 for an orthographic projection, so the GUI's ortho came out
+     * with {@code w = 1 - z}. Every GUI vertex is a pre-transformed quad in GUI space with {@code z} around -2000
+     * (OPT-18b bakes the model-view into the vertices and records an identity model-view), so the divide collapsed each
+     * quad to the screen centre: measured on leg r212-world-hud20/21 (jar 5d83e1df6482d825), every one of frame 130's
+     * 23 HUD groups reports {@code ndc x[-0.00..0.00] y[-0.00..0.00]} with a correct ortho
+     * ({@code m00=0.005 m11=-0.008}), the vignette's vertices {@code [0,240,-2090; 427,240,-2090; 427,0,-2090;
+     * 0,0,-2090]} all clip to {@code (0,0,0.5,2091)} - {@code cw = 2091 = 1 - z} - and leg r212-world-hud19's
+     * per-window readbacks of frame 130 show the frame image's hotbar band and crosshair patch unchanged across all
+     * seven windows, so the draws rasterised nothing. The captured matrix confirms both halves at once: the remap in
+     * {@code closeCurrentImmediateGroup} turns the inherited {@code [11] = -1} into {@code m22 = -0.501} and
+     * {@code m32 = -0.5}, which is what the bounds line printed.
+     * <p>
+     * The property remains the bisect instrument: {@code frustum} and {@code glu} are deliberately not in the default,
+     * because zeroing all four turned every presented frame black in round 226 and neither has been measured to need
+     * it. <b>{@code ortho} is also not in the default</b>, for the same reason and by this round's own measurement:
+     * {@code -Dceltium.vulkan.scratchZero=perspective,ortho} repairs the collapse - measured on leg r212-world-hud23
+     * (jar 578fbee77c33d8f4), where the HUD's groups then carry {@code proj=[m00=0.005 m11=-0.008 m22=0.0 m32=-0.5]}
+     * instead of {@code m22=-0.501}, and frame 130's window 5 changes the frame image's hotbar band from the world's
+     * colour {@code (109,23,22)} to the hotbar's own {@code (66,54,41)} with the crosshair patch following it - but the
+     * presented image then becomes a single black colour ({@code presentedDistinctColours=1 presentedMean=0.0},
+     * leg r212-world-hud22/23). That black is the next defect and it is exposed rather than caused by the repair: the
+     * same full-screen GUI-stage draws that the collapse was silently discarding now reach the image. It is not yet
+     * named, so the default keeps the world picture that the tree has today.
      */
     private static boolean scratchZeroWanted(String builder) {
         String list = System.getProperty("celtium.vulkan.scratchZero", "perspective");
@@ -6292,7 +6313,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // matrices are not what the draw uses" from "the matrices are wrong".
             boolean panoramaChain = group.formatId == 2 && group.texture >= 46 && group.texture <= 51
                     && !this.worldPassActive;
-            if (((group.formatId == 6 || group.formatId == 7) && this.worldPassActive) || panoramaChain) {
+            if (((group.formatId == 6 || group.formatId == 7) && this.worldPassActive) || panoramaChain
+                    || (GROUP_BOUNDS_GUI_ONLY && FramePassTimings.guiSectionActive())) {
+                // The GUI-only filter is added to this condition as well as to the entry: the HUD's groups are
+                // format 6/7/2 with worldPass=false, so the world-pass branch never printed their model-view or their
+                // vertices - and those are the two fields that say whether a quad measured at NDC (0,0) collapsed
+                // because its vertices are one point or because its model-view is degenerate. Measured on leg
+                // r212-world-hud20: all 23 of the frame's HUD groups report ndc x[-0.00..0.00] y[-0.00..0.00] with a
+                // correct ortho (m00=0.005 m11=-0.008), and nothing in that line said which of the two it was.
                 chain = " mv=" + matrixText(modelView)
                         + " verts=[" + positions + "]"
                         + " uv=[" + uvs + "]"
