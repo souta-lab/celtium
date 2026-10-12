@@ -16,7 +16,7 @@ public class SplashProgressMixin {
 
     @Inject(method = "start", at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$skipSplashUnderGlless(CallbackInfo ci) {
-        if (Boolean.getBoolean("celtium.vulkan.glless")) {
+        if (!"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"))) {
             System.out.println("[Celtium] CELTIUM_GLLESS splash progress skipped (no shared GL context)");
             ci.cancel();
         }

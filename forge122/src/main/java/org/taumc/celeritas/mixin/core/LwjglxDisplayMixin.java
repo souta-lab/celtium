@@ -28,7 +28,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class LwjglxDisplayMixin {
 
     private static boolean celtium$gllessEnabled() {
-        return Boolean.getBoolean("celtium.vulkan.glless");
+        // GL-less is the default now, not an opt-in: the objective requires a normal frame to need no GL context at
+        // all, and a correctness property that only holds when a lab flag is set is not a property. The GL bridge is
+        // still reachable as an explicit opt-out for comparison runs, which is what -Dceltium.vulkan.glless=false is.
+        return !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glless"));
     }
 
     private static void celtium$glfwHint(int hint, int value) {
