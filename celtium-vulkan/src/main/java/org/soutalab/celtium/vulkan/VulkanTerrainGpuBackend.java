@@ -1130,6 +1130,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * {@code bindFramebuffer(identity, isMain)} immediately before the census call - so the two facts travel together.
      */
     private final java.util.Map<Long, Boolean> framebufferIdentityIsMain = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The colour texture names the game's own framebuffer reports, which is what identifies main-ness by attachment.
+     * <p>
+     * The object comparison ({@code mc.getFramebuffer() == bound}) is what the mixin can offer, and it is false for
+     * the main framebuffer while the game is still starting up - the measured case is the splash, where the identity
+     * whose colour texture is the game's own framebuffer routed to a pair and that pass's white clear wiped the logo.
+     * A framebuffer's colour texture name is stable for the run, so the names a main bind ever reported are kept here
+     * and an identity whose attachment is one of them is main. Re-read at adoption too, because the census for the
+     * adopted identity is filled by the same bind that reports it.
+     */
+    private final java.util.Set<Integer> mainFramebufferColorNames = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>());
+    private int framebufferCensusLogs;
     private int framebufferColorTextureReports;
     private int framebufferColorTextureLog;
     /** Distinct framebuffer identities the game has bound, for the bounded census the routing rule is read against. */
@@ -4351,8 +4363,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         int width = reported == null || reported[1] <= 0 ? this.targetWidth : (int) reported[1];
         int height = reported == null || reported[2] <= 0 ? this.targetHeight : (int) reported[2];
         boolean isMain = identity == this.mainTargetIdentity
-                || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(identity)));
+                || Boolean.TRUE.equals(this.framebufferIdentityIsMain.get(Long.valueOf(identity)))
+                || this.mainFramebufferColorNames.contains(Integer.valueOf(glTextureName));
         String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
+        if (this.framebufferCensusLogs < 12) {
+            this.framebufferCensusLogs++;
+            System.out.println("[Celtium] CELTIUM_FBO_CENSUS name=" + glTextureName + " identity=0x"
+                    + Long.toHexString(identity) + " isMain=" + isMain + " route=" + route
+                    + " boundAsMain=" + this.framebufferIdentityIsMain.get(Long.valueOf(identity))
+                    + " adoptedMain=0x" + Long.toHexString(this.mainTargetIdentity)
+                    + " adoptedMainName=" + framebufferColorTextureName(this.mainTargetIdentity)
+                    + " mainNames=" + this.mainFramebufferColorNames);
+        }
         long image;
         long view;
         if ("frame-image".equals(route)) {
@@ -4420,6 +4442,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.currentRenderTarget = targetIdentity;
         this.currentRenderTargetIsMain = isMain;
         if (isMain) {
+            int mainName = framebufferColorTextureName(targetIdentity);
+            if (mainName != 0) {
+                this.mainFramebufferColorNames.add(Integer.valueOf(mainName));
+            }
             // The main pass flushes with no target filter, so it has to know which identity "main" means: without this it drew
             // every pending group, including the ones offered for another framebuffer, which is why the off-target pass found
             // an empty queue every time (246 offered, 0 at pass time).
