@@ -307,6 +307,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.332 **round 139: 行の在処を確定 — `CeleritasVideoOptionsController.pages`（`List<OptionPage>`）を辿る必要がある**
+
+- **原典確認（Lead・upstream-baseline）**: `CeleritasVideoOptionsController` の field は
+  ```java
+  private final List<OptionPage> pages = new ArrayList<>();
+  private final AtomicReference<Integer> tabFrameScrollBarOffset = new AtomicReference<>(0);
+  private final AtomicReference<Integer> optionPageScrollBarOffset = new AtomicReference<>(0);
+  ```
+  ＝**行は `pages`（`OptionPage` のリスト）**にあり、`OptionPage` → groups → options → **control**（`ControlElement`）という**多段の構造**。
+  Sodium 側の同型構造も確認済み（`OptionListWidget` が `ControlElement` を並べ、`CyclingControl` は enum を巡回・`SliderControl`/`TickBoxControl` が同階層）。
+- **fixture に必要な実装（前ラウンドの2行 fallback より大きい・明細化する）**:
+  1. `screen.controller`（`field` 名は原典で確認）を取得
+  2. `controller.pages` を走査 → 各 `OptionPage` の groups → options
+  3. **`RENDER_CLOUDS`/clouds に対応する option** を見つける（Sodium の Quality page に `options.renderClouds` がある＝構造で確認済み）
+  4. **その control の action を呼ぶ**（`GuiButton.mousePressed` ではない＝**control 自身の入力処理**。`CyclingControl` は値を1つ進める）
+  5. 値の変化を `GameSettings.renderClouds` 側で確認し、`saveOptions()` する
+- **`videoSettingsRowNames` が実際の行名を返すこと**が次の進捗の証拠（今は `none`）。
+- **現状**: goal (e) の fixture は**3段の gate の3段目**（`controller` → `pages` → 行）に到達。
+  **各段の失敗メッセージがどの gate かを名指しする**ので、次の実装対象は artifact から決まる。
+
 ## 0.331 **round 138: 読むべき field が確定 — `CeleritasVideoOptionsScreen` は `controller`（`CeleritasVideoOptionsController`）に行を持つ**
 
 - **原典確認（Lead・upstream-baseline の `CeleritasVideoOptionsScreen`）**:
