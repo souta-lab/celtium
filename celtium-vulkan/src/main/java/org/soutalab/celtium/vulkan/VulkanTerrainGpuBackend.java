@@ -520,6 +520,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " pre-world presents, the numbering starts with the world");
             this.framePresentedFromVulkan = 0;
         }
+        // Every owner that was handed a window-time value during the construction has to be handed the world's here.
+        // The owners were built when there was no world: `createForWindow` passes a null configuration and a null fog
+        // service, so their stride is the placeholder 1, and re-wiring only the backend's own fields left them at it.
+        // The measured effect (round 212, scene=terrain, camera x=0.5 y=12 z=0.5 yaw=180 pitch=20): the vertex arena
+        // was built with stride 1, the first region upload threw a NullPointerException with no message, two region
+        // uploads were skipped (`regionUploadFailures=2 sectionsLeftUnbuilt=2`), `lastDraw=0 lastSections=0`, and the
+        // presented world was 132 distinct colours of sky with no terrain against the calibrated reference's 1535 and
+        // nonBackgroundFraction 0.73. This is the "one fact, two owners" shape the refactoring plan is about: the value
+        // was updated in one place and read from another.
+        this.terrain.setConfiguration(this.configuration);
+        this.terrain.setFogService(this.fogService);
+        this.terrain.setVertexStride(this.commonVertexStride);
         install();
         record("the world renderer adopted the window-time backend: configuration=" + (configuration != null)
                 + " regions=" + (regionManager != null) + " fog=" + (fogService != null)
@@ -1174,6 +1186,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             @Override public float alphaFuncReference() { return VulkanTerrainGpuBackend.this.immediateState.alphaFuncReference(); }
             @Override public float[] projection() { return VulkanTerrainGpuBackend.this.glProjection; }
             @Override public float[] modelView() { return VulkanTerrainGpuBackend.this.glModelView; }
+            // The draw state the batch path reads at *submit* time and the coalesced run key has to see at *append*
+            // time (task-66): a run held across a state change is submitted under the state the second pass has, not
+            // the one the first quad was appended with. Vanilla's tooltip is the measured case - Forge brackets it
+            // with disableDepth()/enableDepth(), the shadow pass is inside that bracket and the main pass outside it -
+            // so a run that spanned it drew one of the two passes with the wrong depth state and 585 of 797 shadow
+            // pixels lost their main stroke (73.4 % against the reference's 0). The font run key asks these instead.
+            @Override public boolean depthTestEnabled() { return VulkanTerrainGpuBackend.this.immediateState.depthTestEnabled(); }
+            @Override public boolean depthWriteEnabled() { return VulkanTerrainGpuBackend.this.immediateState.depthMask(); }
+            @Override public boolean blendEnabled() { return VulkanTerrainGpuBackend.this.immediateState.blendEnabled(); }
+            @Override public boolean cullEnabled() { return VulkanTerrainGpuBackend.this.immediateState.cullEnabled(); }
+            @Override public int colorMask() { return VulkanTerrainGpuBackend.this.immediateState.colorMask(); }
+            @Override public long scissorKey() {
+                if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()
+                        || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled()) {
+                    return 0L;
+                }
+                return ((long) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorX() << 48)
+                        | ((long) (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorY() & 0xFFFF) << 32)
+                        | ((long) (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorWidth() & 0xFFFF) << 16)
+                        | (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorHeight() & 0xFFFF);
+            }
         });
         this.fontBatch.celtium$setFontRunSink(new FontBatch.RunSink() {
             @Override public boolean submit(FontBatch.Run run) {
@@ -8381,6 +8414,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             } catch (RuntimeException error) {
                 this.regionUploadFailures++;
                 this.lastRegionUploadFailure = String.valueOf(error);
+                if (this.regionUploadFailures <= 3) {
+                    // A NullPointerException with an empty message names nothing, and this path's failure is the one that
+                    // leaves the world as sky: the site is recorded, bounded, rather than left to be rediscovered by a
+                    // leg that only shows the missing terrain.
+                    StringBuilder site = new StringBuilder();
+                    StackTraceElement[] frames = error.getStackTrace();
+                    for (int frame = 0; frame < Math.min(4, frames.length); frame++) {
+                        site.append(frame == 0 ? " at " : " <- ").append(frames[frame]);
+                    }
+                    record("region upload failed and was skipped: " + error + site
+                            + " (regionUploadFailures=" + this.regionUploadFailures
+                            + ", terrainVertexStride=" + this.terrain.vertexStride() + ")");
+                }
                 // BH-25: name every section of the failed region, so the caller leaves them un-committed instead of
                 // marking them built. Swallowing the exception alone left the section's metadata, build token and
                 // lastBuiltFrame advanced with no geometry on the GPU, and nothing rebuilds a section that reads as

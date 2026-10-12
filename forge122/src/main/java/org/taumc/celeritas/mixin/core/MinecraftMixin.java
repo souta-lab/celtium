@@ -106,9 +106,26 @@ public class MinecraftMixin {
             Class<?> fixture = Class.forName("org.soutalab.celtium.validation.ValidationClient");
             fixture.getMethod("requestLoadingDump").invoke(null);
         } catch (ReflectiveOperationException | LinkageError | RuntimeException absent) {
-            // No fixture, or one that cannot answer: a measurement lost, never a frame lost.
+            // No fixture, or one that cannot answer: a measurement lost, never a frame lost - but the *reason* is
+            // printed, bounded. "The fixture is absent" and "the fixture is present and the call failed" are different
+            // findings with different fixes, and swallowing the exception made them look the same: a round of legs ran
+            // with the splash line present and the fixture's own line missing, and nothing in the log said why.
+            if (celtium$splashHookFailures < 3) {
+                celtium$splashHookFailures++;
+                System.out.println("[Celtium] CELTIUM_SPLASH_HOOK fixture call failed: "
+                        + absent.getClass().getName() + ": " + absent.getMessage());
+                Throwable cause = absent.getCause();
+                if (cause != null) {
+                    System.out.println("[Celtium] CELTIUM_SPLASH_HOOK fixture call cause: "
+                            + cause.getClass().getName() + ": " + cause.getMessage());
+                }
+            }
         }
     }
+
+    /** Bounded lines for {@link #celtium$dumpLoadingFrame}'s failure path. */
+    @Unique
+    private static int celtium$splashHookFailures;
 
     @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
