@@ -98,6 +98,10 @@ def main(argv):
     parser.add_argument("--search-box", default="950,655,1270,712", help="x0,y0,x1,y1 of the search box")
     parser.add_argument("--overlay", default="950,100,1280,640", help="x0,y0,x1,y1 of the item-list strip")
     parser.add_argument("--icon", type=int, default=48, help="icon square in pixels (16 GUI px at scale 3)")
+    parser.add_argument("--slot-colour", default="139,139,139",
+                        help="the slot background the grid must be made of; the fill table is suppressed when the"
+                             " panel's modal colour is not this, because a right-looking fill over the wrong"
+                             " rectangle is worse than no number")
     parser.add_argument("--crops", help="directory to write the tooltip/search/overlay crops into")
     args = parser.parse_args(argv)
 
@@ -105,16 +109,26 @@ def main(argv):
     panel = tuple(int(v) for v in args.panel.split(","))
     search = tuple(int(v) for v in args.search_box.split(","))
     overlay = tuple(int(v) for v in args.overlay.split(","))
+    expected_slot = tuple(int(v) for v in args.slot_colour.split(","))
 
     print(f"{args.label}: {args.frame} size={image.size}")
+    panel_pixels = image.load()
+    panel_colours = Counter(panel_pixels[x, y] for y in range(panel[1], panel[3])
+                            for x in range(panel[0], panel[2]))
+    modal, modal_count = panel_colours.most_common(1)[0]
+    modal_fraction = modal_count / float(sum(panel_colours.values()))
     grid = detect_grid(image, panel, args.icon)
     if grid is None:
-        print("  slot grid: not detected in the panel - the fill numbers would be over the wrong squares")
+        print("  slot grid: not detected in the panel - no fill numbers reported")
+    elif modal != expected_slot:
+        print(f"  slot grid: suppressed - the panel's modal colour is {modal} ({modal_fraction:.2f} of the panel),"
+              f" not the slot background {expected_slot}; this screen's layout is not a slot grid, and a fill"
+              f" fraction over the wrong squares would read like a measurement")
     else:
         origin_x, origin_y, pitch, cols, rows = grid
         fills = cell_fill(image, origin_x, origin_y, pitch, cols, rows, args.icon)
         print(f"  slot grid: origin=({origin_x},{origin_y}) pitch={pitch} cols={cols} rows={rows}"
-              f" -> slots measured={len(fills)}")
+              f" slotColour={modal} ({modal_fraction:.2f} of the panel) -> slots measured={len(fills)}")
         if fills:
             print(f"  cell fill: min={min(fills):.3f} median={statistics.median(fills):.3f}"
                   f" max={max(fills):.3f} mean={statistics.mean(fills):.3f}")

@@ -62,6 +62,8 @@ with the picture gate's own verdict quoted. A leg that merely starts is not acce
 that never got the slot.
 
 **Measured 2026-10-12 (reference half; owner gui-text, record `docs/history/2026-10-12-hei-acceptance.md`).**
+**Still not acceptance: this row stays "HEI loads, and the reference picture is established" until the candidate
+leg exists** - the reference says what the mod's screens should look like, not what Celtium draws.
 Four reference legs were taken with upstream Celeritas `d12425eaaf184e79` (jar sha256
 `d12425ea…`), the same HEI 4.31.2 jar and fixture `c39840d62e3695e9`, scene `jeiScreen`+`keepInventoryScreen`
 with `pinSections=64` at tick 200, all `validationClean=true` and `validationMessageCount=0`, all
