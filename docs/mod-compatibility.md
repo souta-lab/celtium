@@ -61,6 +61,40 @@ HEI loaded, the item list, search bar and tooltips draw natively, and the run is
 with the picture gate's own verdict quoted. A leg that merely starts is not acceptance - and neither is one
 that never got the slot.
 
+**Measured 2026-10-12 (reference half; owner gui-text, record `docs/history/2026-10-12-hei-acceptance.md`).**
+Four reference legs were taken with upstream Celeritas `d12425eaaf184e79` (jar sha256
+`d12425ea…`), the same HEI 4.31.2 jar and fixture `c39840d62e3695e9`, scene `jeiScreen`+`keepInventoryScreen`
+with `pinSections=64` at tick 200, all `validationClean=true` and `validationMessageCount=0`, all
+`UNCALIBRATED_PRESENTED_IMAGE` (correct: the JEI/HEI screen variant has no calibration key - the fixture says
+so with `fixtureUncalibrated`). What they establish on the reference side:
+
+* **the item list draws with isometric icons**: the cell fill fraction (pixels differing from the icon
+  square's modal colour) reads `min=0.234 median=0.781 max=0.848` over the detected 9x7 slot grid
+  (`origin=(378,213) pitch=54`, i.e. 18 GUI px at scale 3) - the ~0.7-0.85 band an isometric icon occupies,
+  against the ~1.0 a flat texture would give;
+* **the search box filters and the picture shows it**: with `jeiFilterText=diamond` through the mod's public
+  API `IIngredientFilter.setFilterText`, the mod reports `visible=13 filtered=13 filterText="diamond"`
+  (from `visible=60 filtered=908 filterText=""`), the search field carries 801 pure-white text pixels against
+  0 without the filter, and the item-list strip drops from 8988 to 1042 distinct colours;
+* **the tooltip is drawn** (the grid's own "Gold Ore" at `(660,315)-(820,355)`, the region
+  `compare_jei_pair.py` uses);
+* **the screen transitions run**: `jeiScreenOpenedAtTick=31`, `jeiRecipeOpened=true` at 41 through the mod's
+  own API (`IRecipesGui.showCategories`), `screenshotAtTickScreen=mezz.jei.gui.recipes.RecipesGui` on the
+  recipe leg and `none` on the cycle leg, i.e. inventory -> HEI -> back.
+
+Two corrections the measurements force on this file and on the fixture's own description: **`jeiScreen` opens
+`net.minecraft.client.gui.inventory.GuiContainerCreative`, not `GuiInventory`** (the fixture's world is
+CREATIVE), and **a keystroke cannot be delivered to HEI's search field from a fixture** - characters sent
+through the screen's own `keyTyped` leave the mod's filter at `keyboardFocus=false filterText=""`, because the
+mod reads the LWJGL keyboard event rather than the method's arguments. The filter is therefore driven through
+the mod's API and the artifact names that path (`jeiFilterTextPath`) rather than presenting it as a keystroke.
+
+**The candidate half is not taken yet, deliberately**: the candidate jar available while these legs ran
+contained an unlanded `TextureCopyService` extraction (another worker's WIP, touching exactly the texture-copy
+path HEI's icons and tooltips use), so a leg on it could not separate HEI's drawing from the WIP. The candidate
+must be taken on a clean tree with the same fixture and flags, and compared with `compare_jei_pair.py` plus the
+cell-fill table; until then **this row stays "loads and the reference is established", not "verified"**.
+
 ## What is actually verified today
 
 Measured on the runs cited in `docs/plan.md` and `docs/scope-and-limits.md`; the mod set is what the harness puts in the
