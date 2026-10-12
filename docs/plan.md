@@ -307,6 +307,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.326 **round 132: `scene=videoSettings` の定義を原典で確認 — `VIDEO_SETTINGS("videoSettings", true, true)`＋較正は **guiScale=3・固定 pose** 前提**
+
+- **コード確認（Lead）**: `ValidationClient` の scene 列挙は **`VIDEO_SETTINGS("videoSettings", true, true)`**（`:356`・**2つの真偽値＝GUI 保持と entity 捕捉**）。
+  較正 gate（`celtium$videoSettingsGate()` `:1123`）が要求する条件:
+  **`scene=videoSettings` at x=0.5 y=12.0 z=0.5 yaw=180 pitch=20・1280x720・`guiScale=3`**、
+  world frame は `screenshots/celtium-validation-world.png`、GUI frame は `screenshots/celtium-validation.png`、
+  **画面は `GuiVideoSettings`**（GL bridge の参照 run 2本 `scene-floors/video-a`・`video-b`）。
+  ＝**gate 自身が「別の guiScale の run は uncalibrated として報告する」と明記**している。
+- **Lead の `r123-e` が field を出さなかった理由の候補（次の確認点）**: 私の leg は `pinSections` と `videoSettingsOption` は渡したが、
+  **scene の pose/guiScale 前提を満たしているかを確認していない**（scene 定義が自動で設定するのか、flag が要るのか）。
+  ＝**推測で flag を足さず**、`celtium$videoSettingsGate` が読む field（`guiScale`・pose・`videoSettingsOption` の chain 前提）を
+  **原典で確認してから leg を打ち直す**。
+- **この round の規律（3回の同型失敗の後に確定）**: **leg を打つ前に、その scene の定義（enum の真偽値・gate の較正条件・必要な pose/scale）を原典で読む**。
+  ＝resize（`resizeAtTick`・`resizeViaCompositor`）と video-settings で同じ形の失敗を繰り返しているので、**手順として固定する**。
+
 ## 0.325 **round 131: goal (e) の leg を取得したが report に video-settings の field が出ていない（受入は未取得）**
 
 - **測定（Lead の `r123-e`・`scene=videoSettings`＋`videoSettingsOption=RENDER_CLOUDS`＋`pinSections=60`＋`dumpPresentedImage`・150 s）**:
