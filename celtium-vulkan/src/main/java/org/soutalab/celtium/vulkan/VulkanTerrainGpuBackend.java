@@ -1251,12 +1251,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int unflushedTargetPassFailures;
     private String lastUnflushedTargetFailure = "none";
 
-    /** Bounded lines for the copy's read resolution (see celtium$ownedReadImage). */
-    private static final int READ_RESOLVE_LOG_LIMIT =
-            Integer.getInteger("celtium.vulkan.readResolveLog", 6).intValue();
-    private int readResolveLogs;
-    /** Reads that resolved through the frame's last non-main draw target rather than the bound target (panorama). */
-    private int readResolvedFromLastDrawnTarget;
 
     /**
      * The last non-main, non-zero identity a batch was accepted for in this frame (panorama read resolution).
@@ -7921,7 +7915,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " frameFenceWaitWorstMillis=" + this.frameFenceWaitWorstMillis
                 + " " + VulkanHostBuffer.allocationSummary()
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
-                + " readResolvedFromLastDrawnTarget=" + this.readResolvedFromLastDrawnTarget
+                + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " splashSourcedGroups=" + this.splashSourcedGroups
                 + " splashCanvasInvalidations=" + this.splashCanvasInvalidations
@@ -8166,12 +8160,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " imageUploadsSkipped="
                 + (this.textureRegistry != null ? this.textureRegistry.imageUploadsSkipped() : 0)
                 + " announcedUploads=" + this.announcedUploads + " animatedImageFills=" + this.animatedImageFills
-                + " textureCopiesServed=" + this.textureCopiesServed
-                + " textureCopiesRefused=" + this.textureCopiesRefused
-                + " textureCopiesReusedInFrame=" + this.textureCopiesReusedInFrame
-                + " textureCopyReadbacks=" + this.textureCopyReadbacks
-                + " textureCopyReadbackMillis=" + (this.textureCopyReadbackNanos / 1000000L)
-                + " lastTextureCopyRefusal=[" + this.lastTextureCopyRefusal + "]"
+                + " textureCopiesServed=" + this.textureCopyService.textureCopiesServed()
+                + " textureCopiesRefused=" + this.textureCopyService.textureCopiesRefused()
+                + " textureCopiesReusedInFrame=" + this.textureCopyService.textureCopiesReusedInFrame()
+                + " textureCopyReadbacks=" + this.textureCopyService.textureCopyReadbacks()
+                + " textureCopyReadbackMillis=" + (this.textureCopyService.textureCopyReadbackNanos() / 1000000L)
+                + " lastTextureCopyRefusal=[" + this.textureCopyService.lastTextureCopyRefusal() + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.directMirrorFromAnnouncement
                 + " dynamicTextureFills=" + this.dynamicTextureFills
@@ -11384,26 +11378,18 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     // the frame image the present path blits from. Nothing else is served: a read of a framebuffer this renderer does
     // not own (a mod's own FBO) stays a refusal rather than reading whatever happens to be bound.
 
-    /** Copy requests served from an owned image, and those refused, with the reason of the last refusal. */
-    private int textureCopiesServed;
-    private int textureCopiesRefused;
-    /** How many served copies have printed their rectangle's statistics (bounded, for the picture question). */
-    private int textureCopySamples;
     /** How many chain-time image dumps have been written (bounded; see {@code celtium$dumpImagesAtChainTime}). */
     private int chainFrameDumps;
+
     /**
-     * The frame the served-copy set belongs to, and the destination rectangles already served in it.
+     * The texture-copy path, extracted (task-63 / R1a). Every counter the summary reads lives in the service and is
+     * read back through its accessors, so the summary's strings are unchanged while the state has one owner.
      * <p>
-     * The menu asks for the same rectangle seven times per frame; one readback answers all seven, and this set is what
-     * makes that a decision rather than a repeated cost. Cleared whenever the frame changes.
+     * The service's {@code Host} surface is the temporary boundary the plan records: it exposes the backend fields the
+     * copy path reads today, and the follow-up (OPT-26/27) narrows it to a {@code ReadSource} - image/view, extent,
+     * layout, generation and a content version - plus the explicit ordering operations.
      */
-    private long textureCopyFrame = -1L;
-    private final java.util.Set<Long> textureCopiesServedThisFrame = new java.util.HashSet<Long>();
-    private int textureCopiesReusedInFrame;
-    /** Readback submissions the copy path actually made, and the wall time they took. */
-    private int textureCopyReadbacks;
-    private long textureCopyReadbackNanos;
-    private String lastTextureCopyRefusal = "none";
+    private final TextureCopyService textureCopyService = new TextureCopyService(new CopyHost());
 
     /**
      * Serves one {@code glCopyTexImage2D}/{@code glCopyTexSubImage2D} from an image this renderer owns.
@@ -11438,138 +11424,155 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
             int x, int y, int width, int height, int readFbo) {
-        if (destName == 0 || width <= 0 || height <= 0) {
-            return celtium$refuseTextureCopy("invalid arguments: dest=" + destName + " " + width + "x" + height);
+        // Thin delegate: the copy path lives in TextureCopyService, and this signature is what the GL-less stub calls.
+        return this.textureCopyService.serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
+                readFbo);
+    }
+
+    /**
+     * The backend side of {@link TextureCopyService.Host}: one method per fact the copy path reads.
+     * <p>
+     * Non-static so it reads the backend's own state, and every method is either a direct field read or the same call
+     * the copy path made before the extraction - so the surface can be checked by reading it rather than by diffing the
+     * moved code. Nothing here writes backend state; the four operations (flush, idle wait, diagnostics, registry) are
+     * the copy's own ordering and reporting needs. This is the temporary boundary the refactoring plan records: the
+     * follow-up narrows it to a ReadSource (image/view, extent, layout, generation, content version).
+     */
+    private final class CopyHost implements TextureCopyService.Host {
+        @Override
+        public VulkanContext context() {
+            return VulkanTerrainGpuBackend.this.context;
         }
-        // Which caller issues the copy: the panorama's is GuiMainMenu.renderSkybox (after its 64 cubes are drawn), and
-        // a splash/loading copy would come before every draw - measured, the copy served at frame 0 runs with
-        // lastDrawnFrame=-1, so the two cannot be told apart by the counters alone. Bounded, the BH-06 pattern.
-        if (this.celtium$copyCallerLogs < 4) {
-            this.celtium$copyCallerLogs++;
-            StackTraceElement[] frames = Thread.currentThread().getStackTrace();
-            StringBuilder caller = new StringBuilder();
-            for (int i = 2; i < Math.min(frames.length, 16); i++) {
-                caller.append(frames[i].getClassName().replaceAll(".*\\.", "")).append('.')
-                        .append(frames[i].getMethodName()).append(':').append(frames[i].getLineNumber()).append(" <- ");
-            }
-            System.out.println("[Celtium] CELTIUM_COPY_CALLER dest=" + destName + " " + width + "x" + height
-                    + " frame=" + this.frameId
-                    // What the flush would see, so which of its two early returns fired is a fact: an empty queue
-                    // means the cubes' offers arrive after this copy, a busy window means it must wait instead.
-                    + " windowBusy=" + this.immediateWindowBusy
-                    + " groups=" + this.immediateGroups.size()
-                    + " recorded=" + this.recordedImmediateGroups.size()
-                    + " groupBatches=" + this.currentGroupBatches
-                    + " callers=[" + caller + "]");
+
+        @Override
+        public FrameImageTarget frameTarget() {
+            return VulkanTerrainGpuBackend.this.frameTarget;
         }
-        if (level != 0) {
-            // The mirror's patch path carries level 0 only (announceFullPixels walks data[level] from 0 and stops at the
-            // first absent level), so a copy into a higher level is named rather than written to level 0 as if it were
-            // the same image. No measured caller does this: the panorama copies into level 0.
-            return celtium$refuseTextureCopy("level " + level + " (the mirror's patch path serves level 0)");
+
+        @Override
+        public GllessFrameTarget offTargetTarget() {
+            return VulkanTerrainGpuBackend.this.offTargetTarget();
         }
-        long image = celtium$ownedReadImage(readFbo);
-        if (image == 0L) {
-            return celtium$refuseTextureCopy("read framebuffer " + readFbo + " is not an image this renderer owns");
+
+        @Override
+        public int targetWidth() {
+            return VulkanTerrainGpuBackend.this.targetWidth;
         }
-        // The source rectangle is checked against the image it will be read from, because the mapping below depends on
-        // the image's height: GL's copy y counts from the bottom of the framebuffer while a Vulkan image's rows count
-        // from the top. An out-of-range rectangle is refused by name rather than clamped, since a clamped read is a
-        // silently different picture. Every image `celtium$ownedReadImage` returns - the frame image, the chain pair
-        // and the default pair - is the target's size, which is what `targetWidth`/`targetHeight` carry.
-        int sourceImageHeight = this.targetHeight;
-        if (x < 0 || y < 0 || x + width > this.targetWidth || y + height > sourceImageHeight) {
-            return celtium$refuseTextureCopy("the source rectangle " + x + "," + y + " " + width + "x" + height
-                    + " is not inside the " + this.targetWidth + "x" + sourceImageHeight + " image");
+
+        @Override
+        public int targetHeight() {
+            return VulkanTerrainGpuBackend.this.targetHeight;
         }
-        // The frame's first request for this destination rectangle pays for the readback; the rest are answered from it.
-        long copyKey = (((long) destName) << 32) ^ (((long) level) << 28) ^ (((long) xoffset) << 20)
-                ^ (((long) yoffset) << 12) ^ (((long) x) << 8) ^ (((long) y) << 4) ^ (((long) width) << 2)
-                ^ ((long) height);
-        if (this.textureCopyFrame != this.frameId) {
-            this.textureCopyFrame = this.frameId;
-            this.textureCopiesServedThisFrame.clear();
+
+        @Override
+        public long frameId() {
+            return VulkanTerrainGpuBackend.this.frameId;
         }
-        if (this.textureCopyFrame == this.frameId && this.textureCopiesServedThisFrame.contains(Long.valueOf(copyKey))) {
-            this.textureCopiesReusedInFrame++;
-            this.textureCopiesServed++;
-            return "served";
+
+        @Override
+        public long mainTargetIdentity() {
+            return VulkanTerrainGpuBackend.this.mainTargetIdentity;
         }
-        // What the game drew into that image is still queued as groups: submitting them is what makes the read the
-        // frame the copy is about. flushPendingBeforeGlDraw draws into an open pass if there is one, otherwise it opens
-        // and completes an immediate window, which is the same ordering boundary the game's own draw calls use.
-        if (!this.immediateGroups.isEmpty()) {
-            flushPendingBeforeGlDraw();
+
+        @Override
+        public int framebufferColorTextureName(long identity) {
+            return VulkanTerrainGpuBackend.this.framebufferColorTextureName(identity);
         }
-        if (!waitForIdle()) {
-            return celtium$refuseTextureCopy("the GPU did not confirm the draws before the copy completed");
+
+        @Override
+        public long currentRenderTarget() {
+            return VulkanTerrainGpuBackend.this.currentRenderTarget;
         }
-        long readbackStartedNanos = System.nanoTime();
-        int[] pixels = celtium$readImageRectangle(image, x, y, width, height);
-        this.textureCopyReadbackNanos += System.nanoTime() - readbackStartedNanos;
-        this.textureCopyReadbacks++;
-        if (pixels == null) {
-            return celtium$refuseTextureCopy("the rectangle read of the owned image failed");
+
+        @Override
+        public boolean currentRenderTargetIsMain() {
+            return VulkanTerrainGpuBackend.this.currentRenderTargetIsMain;
         }
-        if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
+
+        @Override
+        public long lastDrawnOffTargetIdentity() {
+            return VulkanTerrainGpuBackend.this.lastDrawnOffTargetIdentity;
         }
-        int[][] levels = new int[1][];
-        levels[0] = pixels;
-        if (this.textureCopySamples < 3) {
-            // What the copy actually served, bounded to three lines: the mean and the opaque fraction of the rectangle
-            // are what tell "the source image holds the accumulated panorama" from "it holds a cleared surface", which
-            // the destination mirror's own census cannot (it reports the mirror's state at creation, not per copy).
-            this.textureCopySamples++;
-            long red = 0L;
-            long green = 0L;
-            long blue = 0L;
-            int opaque = 0;
-            for (int pixel : pixels) {
-                red += (pixel >> 16) & 0xFF;
-                green += (pixel >> 8) & 0xFF;
-                blue += pixel & 0xFF;
-                if (((pixel >>> 24) & 0xFF) >= 0x80) {
-                    opaque++;
-                }
-            }
-            int count = Math.max(1, pixels.length);
-            System.out.println("[Celtium] CELTIUM_TEX_COPY_SERVED dest=" + destName + " level=" + level
-                    + " destOffset=" + xoffset + "," + yoffset + " source=" + x + "," + y + " " + width + "x" + height
-                    + " readFbo=" + readFbo + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
-                    + " opaque=" + opaque + "/" + pixels.length + " served=" + (this.textureCopiesServed + 1)
-                    // The frame and the image this copy read, so it can be put against CELTIUM_DRAW_SITE in the same
-                    // frame: the faces draw (DRAW_SITE #1, target=1941007851) and this line reads white, and neither
-                    // carried a frame or a handle before, which left ordering unanswerable.
-                    + " frame=" + this.frameId + " readImage=0x" + Long.toHexString(image)
-                    // The completion fact: whether the image the copy reads is the one the last recorded group went
-                    // into, and whether any submission has been confirmed complete since that group was recorded. If
-                    // the handles and the frame match and no completion has happened since, the copy is reading an
-                    // image whose producing pass is still in flight - a commit-contract question, not a clear one.
-                    + " lastDrawnImage=0x" + Long.toHexString(this.lastDrawnImage)
-                    + " lastDrawnFrame=" + this.lastDrawnFrame
-                    + " drawnThisFrame=" + (this.lastDrawnFrame == this.frameId)
-                    + " lastDrawnEpoch=" + this.lastDrawnEpoch
-                    + " completedEpochNow=" + VulkanContext.completedEpoch()
-                    + " completionsSinceDraw=" + (VulkanContext.completedEpoch() - this.lastDrawnEpoch)
-                    + " passAttached=0x" + Long.toHexString(this.passAttachedColorImage)
-                    + " passSubmissions=" + this.passSubmissions
-                    + " windowsThisFrame=" + this.immediateWindowsThisFrame
-                    // A mean cannot tell "all white" from "a few white pixels": the first four pixels and the count of
-                    // non-white ones say which, and that separates "the pass never reached this image" from "the
-                    // readback is reading a different target".
-                    + " firstPixels=[" + Integer.toHexString(pixels[0]) + "," + Integer.toHexString(pixels[1])
-                    + "," + Integer.toHexString(pixels[2]) + "," + Integer.toHexString(pixels[3]) + "]"
-                    + " nonWhite=" + celtium$countNonWhite(pixels));
+
+        @Override
+        public long lastDrawnOffTargetFrame() {
+            return VulkanTerrainGpuBackend.this.lastDrawnOffTargetFrame;
         }
-        boolean applied = this.textureRegistry.announceFullPixels(destName, levels, width, height, xoffset, yoffset);
-        if (!applied) {
-            return celtium$refuseTextureCopy("the destination mirror refused the pixels: "
-                    + this.textureRegistry.lastFailure());
+
+        @Override
+        public long lastDrawnImage() {
+            return VulkanTerrainGpuBackend.this.lastDrawnImage;
         }
-        this.textureCopiesServedThisFrame.add(Long.valueOf(copyKey));
-        this.textureCopiesServed++;
-        return "served";
+
+        @Override
+        public long lastDrawnFrame() {
+            return VulkanTerrainGpuBackend.this.lastDrawnFrame;
+        }
+
+        @Override
+        public long lastDrawnEpoch() {
+            return VulkanTerrainGpuBackend.this.lastDrawnEpoch;
+        }
+
+        @Override
+        public long passAttachedColorImage() {
+            return VulkanTerrainGpuBackend.this.passAttachedColorImage;
+        }
+
+        @Override
+        public int passSubmissions() {
+            return VulkanTerrainGpuBackend.this.passSubmissions;
+        }
+
+        @Override
+        public int immediateWindowsThisFrame() {
+            return VulkanTerrainGpuBackend.this.immediateWindowsThisFrame;
+        }
+
+        @Override
+        public boolean immediateWindowBusy() {
+            return VulkanTerrainGpuBackend.this.immediateWindowBusy;
+        }
+
+        @Override
+        public int immediateGroupCount() {
+            return VulkanTerrainGpuBackend.this.immediateGroups.size();
+        }
+
+        @Override
+        public int recordedImmediateGroupCount() {
+            return VulkanTerrainGpuBackend.this.recordedImmediateGroups.size();
+        }
+
+        @Override
+        public int currentGroupBatches() {
+            return VulkanTerrainGpuBackend.this.currentGroupBatches;
+        }
+
+        @Override
+        public VulkanTextureRegistry registry() {
+            return VulkanTerrainGpuBackend.this.celtium$registry();
+        }
+
+        @Override
+        public void flushPendingBeforeGlDraw() {
+            VulkanTerrainGpuBackend.this.flushPendingBeforeGlDraw();
+        }
+
+        @Override
+        public boolean waitForIdle() {
+            return VulkanTerrainGpuBackend.this.waitForIdle();
+        }
+
+        @Override
+        public void record(String diagnostic) {
+            VulkanTerrainGpuBackend.this.record(diagnostic);
+        }
+
+        @Override
+        public String describe(Throwable error) {
+            return VulkanTerrainGpuBackend.describe(error);
+        }
     }
 
     /**
@@ -11698,97 +11701,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** {@return the image a copy's read framebuffer names, or 0 when this renderer does not own it}. */
-    private long celtium$ownedReadImage(int readFbo) {
-        GllessFrameTarget glless = offTargetTarget();
-        // The routing decision, printed bounded: which facts the read resolved from and which image it chose. The
-        // panorama copy reads GL name 0 while the cube faces were offered for a non-zero identity, and uniform white
-        // is what a read of the wrong image looks like, so the inputs have to be in the log rather than inferred.
-        if (this.readResolveLogs < READ_RESOLVE_LOG_LIMIT) {
-            this.readResolveLogs++;
-            System.out.println("[Celtium] CELTIUM_READ_RESOLVE readFbo=" + readFbo
-                    + " mainIdentity=" + this.mainTargetIdentity
-                    + " mainColorName=" + framebufferColorTextureName(this.mainTargetIdentity)
-                    + " currentTarget=" + this.currentRenderTarget
-                    + " currentIsMain=" + this.currentRenderTargetIsMain
-                    + " frameImage=" + (this.frameTarget == null ? 0L : this.frameTarget.colorImage())
-                    + " defaultPair=" + (glless == null ? 0L : glless.offTargetColorImage())
-                    + " chainPair=" + (glless == null ? 0L : glless.chainPairColorImage()));
-        }
-        // The read framebuffer's GL name against the main framebuffer's own recorded GL name - not against the object
-        // identity, which is a different number space and made this branch unreachable. Measured: Minecraft's main
-        // framebuffer is the default one in this configuration (its bind reports GL name 0), its draws are routed to the
-        // frame image, and the panorama copy reads from GL name 0 - so resolving name 0 to the default pair read an image
-        // the cube faces never wrote and returned uniform white (`CELTIUM_TEX_COPY_SERVED … mean=255,255,255`).
-        if (this.frameTarget != null && this.mainTargetIdentity != Long.MIN_VALUE
-                && framebufferColorTextureName(this.mainTargetIdentity) == readFbo) {
-            return this.frameTarget.colorImage();
-        }
-        // The name comparison above can only fire when the game's main framebuffer is the one whose colour texture the
-        // bind census recorded, and the copy's read name is an FBO name while that census carries a texture name. The
-        // routing is the fact that does not depend on either: when the main framebuffer is what is bound, its draws went
-        // to the frame image, so a read from GL name 0 is a read of the frame image.
-        if (readFbo == 0 && this.currentRenderTargetIsMain && this.frameTarget != null) {
-            return this.frameTarget.colorImage();
-        }
-        if (readFbo == 0 && glless != null) {
-            // GL name 0 with a target bound that is not the main framebuffer: the name is not the fact that decides
-            // where the draws went - the routing is. The game's own framebuffer carries a non-zero identity and a GL
-            // name the stub records as 0, and the panorama's cube faces are offered for exactly that identity, so a
-            // read that resolved "name 0 and not main" to the default pair read an image the faces never wrote and
-            // returned uniform white. routeLabelForBinding is the one place the routing rule lives (main -> frame
-            // image, identity 0 -> default pair, every other non-main identity -> chain pair), so the read follows
-            // the same rule the draws did.
-            String route = GllessFrameTarget.routeLabelForBinding(this.currentRenderTarget, this.currentRenderTargetIsMain);
-            if ("chain-pair".equals(route)) {
-                glless.ensureOffTarget(this.targetWidth, this.targetHeight);
-                return glless.chainPairColorImage();
-            }
-            if ("default-pair".equals(route)) {
-                // The symmetric half of the rule above, and its absence is what the panorama measured. The binding is
-                // the default framebuffer (identity 0), whose draws the pass below sends to the default pair - so a
-                // read of GL name 0 is a read of the default pair, and the label the binding already carries says so.
-                // Without this branch the resolution fell through to the accept-time identity, which is a different
-                // fact: `lastDrawnOffTargetIdentity` records which target a batch was *accepted* for (`:5744`), while
-                // `passAttachedColorImage` records which image the pass *attached* (`:7539`/`:7563`). Vanilla's panorama
-                // is the case that separates them - `GuiMainMenu.renderSkybox` unbinds the main framebuffer, draws the
-                // cube faces into it at a 256x256 viewport, and `rotateAndBlurSkybox` then copies 256x256 of it back
-                // into the panorama texture (`GuiMainMenu.java:483`) - and it measured `readFbo=0` with
-                // `passAttached=defaultPair` while `readImage` came back as the chain pair:
-                // `CELTIUM_TEX_COPY_SERVED dest=21 256x256 readFbo=0 mean=255,255,255 opaque=65536/65536 nonWhite=0`.
-                // The gate is therefore the binding's own route, and the last-drawn identity is left as the last
-                // resort below rather than the second guess.
-                this.readResolvedFromLastDrawnTarget++;
-                glless.ensureOffTarget(this.targetWidth, this.targetHeight);
-                return glless.offTargetColorImage();
-            }
-            if (this.lastDrawnOffTargetIdentity != 0L && this.lastDrawnOffTargetFrame == this.frameId) {
-                // The copy reads name 0 and the default pair is bound, but this frame's non-main content was drawn
-                // into this identity's pair: that image is what the copy is of. Measured on the menu, where the
-                // panorama's faces go to the chain pair and the read otherwise found uniform white.
-                this.readResolvedFromLastDrawnTarget++;
-                glless.ensureOffTarget(this.targetWidth, this.targetHeight);
-                // The identity decides which pair, exactly as it does for the draws: routeLabelForBinding sends
-                // identity 0 to the default pair and every other non-main identity to the chain pair. Returning the
-                // chain pair unconditionally read an image the last-drawn identity never wrote - measured on the
-                // menu, where the panorama's faces go to the default pair and this returned the chain pair's
-                // uniform white (`CELTIUM_TEX_COPY_SERVED … mean=255,255,255`, firstPixels all 0xffffffff).
-                if ("chain-pair".equals(GllessFrameTarget.routeLabelForBinding(this.lastDrawnOffTargetIdentity,
-                        false))) {
-                    return glless.chainPairColorImage();
-                }
-                return glless.offTargetColorImage();
-            }
-            glless.ensureOffTarget(this.targetWidth, this.targetHeight);
-            return glless.offTargetColorImage();
-        }
-        return 0L;
-    }
 
-    private String celtium$refuseTextureCopy(String reason) {
-        this.textureCopiesRefused++;
-        this.lastTextureCopyRefusal = reason;
-        return "refused-" + reason;
-    }
+
+
 
     /**
      * {@return rectangle {@code width x height} at {@code x,y} of an owned colour image as ARGB texels}, or null.
@@ -11799,163 +11714,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * goes through {@code VulkanContext.beginCommands}/{@code endCommands}, which waits for the queue before allocating
      * and after submitting: that is the same route the swapchain's own presented-image readback takes.
      */
-    /** Bounded lines of the copy's read facts; a normal run prints nothing. */
-    private int celtium$copyReadLogs;
-    /** Bounded lines of the copy's caller census; a normal run prints nothing. */
-    private int celtium$copyCallerLogs;
-
     /** Reverses a {@code width x height} rectangle's row order in place; the copy's GL-to-Vulkan row mapping. */
-    private static void celtium$reverseRows(int[] pixels, int width, int height) {
-        for (int top = 0, bottom = height - 1; top < bottom; top++, bottom--) {
-            int first = top * width;
-            int last = bottom * width;
-            for (int column = 0; column < width; column++) {
-                int swap = pixels[first + column];
-                pixels[first + column] = pixels[last + column];
-                pixels[last + column] = swap;
-            }
-        }
-    }
+
 
     /** {@return how many of the read pixels are not pure white}; a mean cannot tell that apart. */
-    private static int celtium$countNonWhite(int[] pixels) {
-        int count = 0;
-        for (int pixel : pixels) {
-            if ((pixel & 0xFFFFFF) != 0xFFFFFF) {
-                count++;
-            }
-        }
-        return count;
-    }
+
 
     private int[] celtium$readImageRectangle(long image, int x, int y, int width, int height) {
-        // The copy's own facts, so the white is decided independently of the hold leg's VUID: which image is read,
-        // its extent, the frame, and whether it is the image the current pass attached.
-        if (this.celtium$copyReadLogs < 6) {
-            this.celtium$copyReadLogs++;
-            System.out.println("[Celtium] CELTIUM_COPY_READ image=0x" + Long.toHexString(image)
-                    + " rect=" + x + "," + y + " " + width + "x" + height
-                    + " frame=" + this.frameId
-                    + " passAttached=0x" + Long.toHexString(this.passAttachedColorImage)
-                    + " chainPair=0x" + Long.toHexString(offTargetTarget() == null ? 0L
-                            : offTargetTarget().chainPairColorImage())
-                    + " frameImage=0x" + Long.toHexString(this.frameTarget == null ? 0L
-                            : this.frameTarget.colorImage()));
-        }
-        long buffer = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
-        long memory = org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            long bytes = (long) width * (long) height * 4L;
-            org.lwjgl.vulkan.VkBufferCreateInfo bufferInfo = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
-                    .sType$Default().size(bytes)
-                    .usage(org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-                    .sharingMode(org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE);
-            LongBuffer handle = stack.mallocLong(1);
-            if (org.lwjgl.vulkan.VK10.vkCreateBuffer(this.context.device(), bufferInfo, null, handle)
-                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                return null;
-            }
-            buffer = handle.get(0);
-            org.lwjgl.vulkan.VkMemoryRequirements requirements =
-                    org.lwjgl.vulkan.VkMemoryRequirements.calloc(stack);
-            org.lwjgl.vulkan.VK10.vkGetBufferMemoryRequirements(this.context.device(), buffer, requirements);
-            org.lwjgl.vulkan.VkMemoryAllocateInfo allocate = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
-                    .sType$Default().allocationSize(requirements.size())
-                    .memoryTypeIndex(this.context.memoryTypeIndex(requirements.memoryTypeBits(),
-                            org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                                    | org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            "the texture-copy readback buffer"));
-            if (org.lwjgl.vulkan.VK10.vkAllocateMemory(this.context.device(), allocate, null, handle)
-                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                return null;
-            }
-            memory = handle.get(0);
-            org.lwjgl.vulkan.VK10.vkBindBufferMemory(this.context.device(), buffer, memory, 0);
-
-            VkCommandBuffer commands = this.context.beginCommands();
-            org.lwjgl.vulkan.VkBufferImageCopy.Buffer copy =
-                    org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
-            copy.get(0).bufferOffset(0).bufferRowLength(0).bufferImageHeight(0);
-            copy.get(0).imageSubresource().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
-                    .mipLevel(0).baseArrayLayer(0).layerCount(1);
-            // GL's copy `y` counts from the *bottom* of the read framebuffer; a Vulkan image's rows count from the top.
-            // Passing `y` straight through read the top rows - the cleared ones - which is measured as
-            // `CELTIUM_TEX_COPY_SERVED dest=21 256x256 readFbo=0 mean=255,255,255 opaque=0/65536 nonWhite=0` while the
-            // panorama's faces were in the bottom 256 rows of the same image (GuiMainMenu.renderSkybox draws them under
-            // `GlStateManager.viewport(0, 0, 256, 256)`). The rows GL asks for start `height - y - height` from the top.
-            copy.get(0).imageOffset().set(x, this.targetHeight - y - height, 0);
-            copy.get(0).imageExtent().set(width, height, 1);
-            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer toTransfer =
-                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
-            toTransfer.get(0).sType$Default()
-                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
-                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .image(image)
-                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                            | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_WRITE_BIT)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
-            toTransfer.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
-                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toTransfer);
-            org.lwjgl.vulkan.VK10.vkCmdCopyImageToBuffer(commands, image,
-                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, copy);
-            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer backToGeneral =
-                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack);
-            backToGeneral.get(0).sType$Default()
-                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .image(image)
-                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                            | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_READ_BIT);
-            backToGeneral.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
-                    .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
-            this.context.endCommands(commands);
-
-            org.lwjgl.PointerBuffer mapped = stack.mallocPointer(1);
-            if (org.lwjgl.vulkan.VK10.vkMapMemory(this.context.device(), memory, 0, bytes, 0, mapped)
-                    != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
-                return null;
-            }
-            // The owned colour image is VK_FORMAT_R8G8B8A8_UNORM, so the bytes are R, G, B, A in that order - the ARGB
-            // int the mirror's patch path expects packs R in bits 16..23.
-            int[] pixels = new int[width * height];
-            for (int pixel = 0; pixel < pixels.length; pixel++) {
-                long at = mapped.get(0) + (long) pixel * 4L;
-                int r = MemoryUtil.memGetByte(at) & 0xFF;
-                int g = MemoryUtil.memGetByte(at + 1) & 0xFF;
-                int b = MemoryUtil.memGetByte(at + 2) & 0xFF;
-                int a = MemoryUtil.memGetByte(at + 3) & 0xFF;
-                pixels[pixel] = (a << 24) | (r << 16) | (g << 8) | b;
-            }
-            org.lwjgl.vulkan.VK10.vkUnmapMemory(this.context.device(), memory);
-            // GL writes framebuffer row (counted from the bottom) `y + i` into destination row `yoffset + i`, and a
-            // mirror's row 0 is its texture's first row - the same order every `glTexImage2D` int[] upload arrives in.
-            // The mirror's rows are therefore the image's rows read *upwards* from `y`, which is the reverse of the
-            // buffer the copy above produced. Without this the destination gets the source upside down: the right rows
-            // in the wrong order, which a mean cannot see and a crop can.
-            celtium$reverseRows(pixels, width, height);
-            return pixels;
-        } catch (RuntimeException | LinkageError error) {
-            record("texture copy readback failed: " + describe(error));
-            return null;
-        } finally {
-            if (buffer != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkDestroyBuffer(this.context.device(), buffer, null);
-            }
-            if (memory != org.lwjgl.vulkan.VK10.VK_NULL_HANDLE) {
-                org.lwjgl.vulkan.VK10.vkFreeMemory(this.context.device(), memory, null);
-            }
-        }
+        // Thin delegate, kept because the chain-time dump (celtium$dumpOwnedImage) reads through this name; the
+        // implementation moved to TextureCopyService with the rest of the copy path.
+        return this.textureCopyService.readImageRectangle(image, x, y, width, height);
     }
 
     /** {@return whether a requested presented-image dump has been written}. */
