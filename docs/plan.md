@@ -393,6 +393,14 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.402 **round 203: R3a・R5・R6 を配線完了（build 緑）。R3b は丁寧な一括置換が必要と判明**
+
+- **配線完了（build 緑 ✓）**: **R3a** `ModelGeometryCache`（`665a099b8`・10 field 撤去・builder/teardown/borrow/表示を委譲 ✓）、**R5 完了**（`b3708bcd1`・pair handle・identity/census・`framebufferReplacing` ✓、10 field 撤去 ✓）、**R6** `FrameSubmissionScheduler`（`4d9e8528a`・slot/sequence/退役規則/counter ✓、`FRAME_SLOTS` は別名 ✓、Vulkan 呼び出しは backend に残置 ✓）。
+- **R6 で counter 所有の衝突を解消**: 退避済みの R2 `SubmissionStatistics` が slot counter を主張していたが未配線なので **scheduler が所有** ✓。R2 を復活させる者は**scheduler を読む**形にすること ✓。
+- **R3b は未配線（正直に）**: `FontRunState` view（15値 ✓）と `RunSink` 本体（旧 flush の apply/restore＋`submitImmediateBatch` ✓）は書き上げて理解済み ✓ だが、backend の**4つの font 入口（複数行シグネチャ）を brace-matched で置換**する必要があり、2回試して**旧本体の内側で切れた** ✗ → **一括の丁寧なパス**であって bulk edit ではない ✓（試行は revert 済み ✓、build 緑 ✓）。
+- **残**: R3b 配線 ✓／R5 の pair clear 決定（`pairClearNeeded` の4サイトの意味を読む ✓）／**R4 `TerrainRenderer`（数千行の移動＝未執筆 ✗）**／R7 root／R8 整理 ✓。
+- **方法の教訓（3度目）**: **複数行シグネチャのメソッド置換は、挿入後のテキストに対して再検索すると自分の挿入物に当たる** ✗ → 置換は**下から順に**、または元テキストに対して一括で ✓。
+
 ## 0.401 **round 202: refactoring の現状を確定して history へ（build 緑・CPU 契約 PASS）**
 
 - **build 緑** ✓（`f6347572f`）: R1a/R1b/R1c 配線済み ✓ ＋ R5 の `targetGeneration`/`frameTargetKnown` ✓。**CPU 契約 `CELTIUM_CPU_CONTRACT PASS`** ✓。
