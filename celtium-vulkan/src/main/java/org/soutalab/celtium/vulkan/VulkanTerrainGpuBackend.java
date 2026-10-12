@@ -1731,6 +1731,42 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final long GROUP_BOUNDS_MIN_FRAME =
             Long.getLong("celtium.vulkan.groupBoundsMinFrame", 0L).longValue();
     /**
+     * Whether {@code CELTIUM_GROUP_BOUNDS} reports only the groups created inside the HUD's drawing function.
+     * {@code -Dceltium.vulkan.groupBoundsGuiOnly=true}; see its filter in {@code reportGroupBounds}.
+     */
+    private static final boolean GROUP_BOUNDS_GUI_ONLY =
+            Boolean.getBoolean("celtium.vulkan.groupBoundsGuiOnly");
+    /**
+     * How many frames report the groups created inside the HUD's own drawing function.
+     * <p>
+     * {@code -Dceltium.vulkan.hudCaptureFrames=<n>}, default 0 (off). The missing HUD needed this and no existing line
+     * could answer it: {@code CELTIUM_TARGET_IMAGE} reports one line per <b>distinct identity</b> for the whole run, so
+     * an identity that is bound from the loading phase onwards is reported once, with the texture the loading phase drew
+     * - measured on leg r212-world-hud13, where the line that was read as "the GUI family's identity" (textures 46, 9)
+     * is in fact the vanilla {@code LoadingScreenRenderer}'s own framebuffer (its dirt background and its font) and the
+     * world-phase HUD never appeared in any line. This reports every group created while {@code FramePassTimings}'s
+     * {@code gui} bracket is open - {@code GuiIngameMixin} brackets Forge's {@code func_175180_a} - with the identity,
+     * the routing that identity's draws take, the image that route names, the format, the texture, the batch count, the
+     * captured projection's diagonal and the group's viewport. Those five together separate "the HUD's batches never
+     * arrive", "they arrive under an identity whose route is a pair" and "they arrive at the frame image with a
+     * projection that puts them outside it".
+     */
+    private static final int HUD_CAPTURE_FRAMES =
+            Integer.getInteger("celtium.vulkan.hudCaptureFrames", 0).intValue();
+    /**
+     * First frame {@code CELTIUM_HUD_GROUP} reports, so the bounded budget reaches the world.
+     * <p>
+     * {@code -Dceltium.vulkan.hudCaptureMinFrame=<n>}, default 0. Measured need, first run of the probe (leg
+     * r212-world-hud17, {@code hudCaptureFrames=3}): all three frames were frames 1-3 - the loading phase, where the
+     * HUD's two groups are the vignette alone - so the world's HUD was never reported. Same rule, and the same reason,
+     * as {@code groupBoundsMinFrame}.
+     */
+    private static final long HUD_CAPTURE_MIN_FRAME =
+            Long.getLong("celtium.vulkan.hudCaptureMinFrame", 0L).longValue();
+    /** Frames {@link #HUD_CAPTURE_FRAMES} has already reported, and the last frame it reported. */
+    private int hudCaptureFramesReported;
+    private long hudCaptureLastFrame = -1L;
+    /**
      * Diagnostic only: the rotations the mirror applied since this frame's camera boundary, oldest first.
      * <p>
      * A group's model-view is the camera base times whatever {@code GlStateManager.rotate} calls the pass made on top
@@ -4297,6 +4333,52 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return true;
     }
 
+    /**
+     * Reports one group created inside the HUD's own drawing function; see {@link #HUD_CAPTURE_FRAMES}.
+     * <p>
+     * The identity is the one the group was accepted under, and the route is asked of the same rule the pass will apply
+     * ({@code routeLabelForBinding}), with main-ness answered by the identity map as well as by the live bind: a group
+     * created inside the HUD's bracket has the game's main framebuffer bound, but the census counts an identity that is
+     * the game framebuffer's own object as main even when the object comparison missed it.
+     */
+    private void celtium$reportHudGroup(float[] projection) {
+        if (HUD_CAPTURE_FRAMES <= 0 || !FramePassTimings.guiSectionActive()) {
+            return;
+        }
+        if (this.frameId < HUD_CAPTURE_MIN_FRAME) {
+            return;
+        }
+        if (this.hudCaptureLastFrame != this.frameId) {
+            if (this.hudCaptureFramesReported >= HUD_CAPTURE_FRAMES) {
+                return;
+            }
+            this.hudCaptureLastFrame = this.frameId;
+            this.hudCaptureFramesReported++;
+        }
+        long identity = this.currentGroupTarget;
+        boolean isMain = this.targetRegistry.currentIsMain()
+                || identity == this.gameFramebufferIdentity
+                || identity == this.targetRegistry.mainIdentity();
+        String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
+        GllessFrameTarget target = offTargetTarget();
+        long routed = "frame-image".equals(route) ? (this.frameTarget == null ? 0L : this.frameTarget.colorImage())
+                : "chain-pair".equals(route) ? (target == null ? 0L : target.chainPairColorImage())
+                : "default-pair".equals(route) ? (target == null ? 0L : target.offTargetColorImage()) : 0L;
+        System.out.println("[Celtium] CELTIUM_HUD_GROUP frame=" + this.frameId
+                + " group=" + this.immediateStatistics.immediateGroupsClosed()
+                + " identity=0x" + Long.toHexString(identity)
+                + " isMain=" + isMain + " route=" + route
+                + " image=0x" + Long.toHexString(routed)
+                + " format=" + this.currentGroupFormatId
+                + " texture=" + this.currentGroupTexture
+                + " batches=" + this.currentGroupBatches
+                + " vertices=" + (this.currentImmediateMesh == null ? -1 : this.currentImmediateMesh.vertexCount())
+                + " projDiag=" + round3(projection[0]) + "," + round3(projection[5]) + ","
+                + round3(projection[10]) + "," + round3(projection[14])
+                + " viewport=" + java.util.Arrays.toString(this.currentGroupViewportValues)
+                + " worldPass=" + this.worldPassActive);
+    }
+
     /** Prints the line {@link #celtium$noteTargetIdentity} collected, with the group's texture and format. */
     private void celtium$printTargetImage(long identity, int texture, int formatId) {
         boolean isMain = this.targetRegistry.currentIsMain();
@@ -6109,6 +6191,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // budget has to skip them to reach the frame the question is about.
             return;
         }
+        if (GROUP_BOUNDS_GUI_ONLY && !FramePassTimings.guiSectionActive()) {
+            // {@code -Dceltium.vulkan.groupBoundsGuiOnly=true}: only the groups created inside the HUD's own function.
+            // Measured need (leg r212-world-hud19): the frame under test holds 39 immediate groups of which 23 are the
+            // HUD's, so a bounded budget spent on the frame's first groups answers about the world and never about the
+            // overlay - the same shape of mistake as the loading screen owning every early line.
+            return;
+        }
         int limit = GROUP_BOUNDS_DIAGNOSTICS ? GROUP_BOUNDS_LIMIT : 6;
         if (this.immediateDiagnostics >= limit) {
             return;
@@ -7060,7 +7149,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // The frame image at each of the first windows of frame 0, beside the marker clear at the head of
                     // its pass in the same run: "the composite wrote the white it sampled" and "a later window painted
                     // white over it" are the same final picture, and only the per-window state tells them apart.
-                    if (FRAME_CLEAR_MARK && this.frameId == 0L && this.frameBoundaryProbes < 8
+                    if (((FRAME_CLEAR_MARK && this.frameId == 0L)
+                            || (FRAME_AT_WINDOW_FRAME >= 0L && this.frameId == FRAME_AT_WINDOW_FRAME))
+                            && this.frameBoundaryProbes < FRAME_AT_WINDOW_LINES
                             && this.frameTarget.colorImage() != 0L) {
                         this.frameBoundaryProbes++;
                         int[] framePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
@@ -8242,6 +8333,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 celtium$printTargetImage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             }
             celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
+            celtium$reportHudGroup(projection);
             ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
                     this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
@@ -9083,16 +9175,45 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Frame-image readbacks taken at window boundaries in the marked run; bounded to the frame's first windows. */
     private int frameBoundaryProbes;
     /**
+     * A frame whose window boundaries read the frame image back, without the marker clear frame 0 carries.
+     * <p>
+     * {@code -Dceltium.vulkan.frameAtWindowFrame=<n>}, default -1 (off). The existing per-window readback is gated on
+     * {@code frameClearMark} <b>and</b> {@code frameId == 0}, which is the loading phase - and the question it answers
+     * ("did a draw's pixels reach the frame image, and does something later replace them?") is asked about a world
+     * frame: measured on leg r212-world-hud18, the HUD's 23 groups per frame are created under the main identity with
+     * {@code route=frame-image} and a GUI ortho projection, and the frame image at the present still holds the world at
+     * the picture's bottom, where the hotbar would be. Those two facts together say the draws are recorded into the
+     * frame image's pass and leave no pixels there; the per-window signature is what tells "never written" from
+     * "written and then painted over", which no end-of-frame dump can.
+     */
+    private static final long FRAME_AT_WINDOW_FRAME =
+            Long.getLong("celtium.vulkan.frameAtWindowFrame", -1L).longValue();
+    /** How many window boundaries that frame reports; {@code -Dceltium.vulkan.frameAtWindowLines}, default 8. */
+    private static final int FRAME_AT_WINDOW_LINES =
+            Integer.getInteger("celtium.vulkan.frameAtWindowLines", 8).intValue();
+    /**
      * Whether every textured group's descriptor is rebuilt at the draw from the registry's current wrapper.
      * {@code -Dceltium.vulkan.rebuildDescriptors=true}; separates the set the prepare wrote from the set the draw binds.
      */
     private static final boolean REBUILD_DESCRIPTORS_AT_DRAW =
             Boolean.getBoolean("celtium.vulkan.rebuildDescriptors");
     /**
-     * Whether each of the first presents reports the frame image's and the pair's centre patch.
+     * Whether the first presents report the frame image's and the pair's centre patch.
      * {@code -Dceltium.vulkan.presentPatch=true}; the present is the only point that says what the frame serves.
+     * <p>
+     * Both the count and the first present it reports are properties, because the phase is what the line means and the
+     * default phase was the wrong one: with the count fixed at 8 every band this probe has ever printed came from
+     * {@code frame=0} - the loading screen - where the frame image, the chain pair and the default pair all hold the
+     * same full-screen composite, so "the hotbar band is the world's colour" was measured on a frame that had no hotbar
+     * in any image. {@code -Dceltium.vulkan.presentPatchMinPresent} aims it at the world's own presents.
      */
     private static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
+    /** How many presents report the patch line; {@code -Dceltium.vulkan.presentPatchLines}. */
+    private static final int PRESENT_PATCH_LINES =
+            Integer.getInteger("celtium.vulkan.presentPatchLines", 8).intValue();
+    /** The first present (1-based) that reports it; {@code -Dceltium.vulkan.presentPatchMinPresent}. */
+    private static final int PRESENT_PATCH_MIN_PRESENT =
+            Integer.getInteger("celtium.vulkan.presentPatchMinPresent", 1).intValue();
     private int presentPatchLogs;
     /**
      * Whether the chain pair is cleared to magenta at the head of the frame's own window, once per frame.
@@ -11090,6 +11211,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long centreCount = 0L;
         long cornerCount = 0L;
         long dark = 0L;
+        long hudR = 0L;
+        long hudG = 0L;
+        long hudB = 0L;
+        long hudCount = 0L;
+        long crossR = 0L;
+        long crossG = 0L;
+        long crossB = 0L;
+        long crossCount = 0L;
         int centreX = width / 2;
         int centreY = height / 2;
         for (int y = 0; y < height; y++) {
@@ -11110,6 +11239,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     cornerB += blue;
                     cornerCount++;
                 }
+                // The HUD's two landmarks, in this image's own row order (row 0 is the picture's bottom, which is the
+                // hotbar's row): the hotbar's band, and the crosshair's patch around the picture's centre. They are
+                // what says whether the HUD's recorded draws left pixels here at all - a band that stays the world's
+                // colour across every window of the frame is "never written", and one that takes the hotbar's colours
+                // in one window and the world's again in the next is "written and then painted over".
+                if (y < 32 && Math.abs(x - centreX) < 120) {
+                    hudR += red;
+                    hudG += green;
+                    hudB += blue;
+                    hudCount++;
+                }
+                if (Math.abs(x - centreX) < 8 && Math.abs(y - centreY) < 8) {
+                    crossR += red;
+                    crossG += green;
+                    crossB += blue;
+                    crossCount++;
+                }
                 if ((red + green + blue) / 3 < 200) {
                     dark++;
                 }
@@ -11121,6 +11267,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " cornerRgb=(" + (cornerCount == 0 ? -1 : cornerR / cornerCount) + ","
                 + (cornerCount == 0 ? -1 : cornerG / cornerCount) + ","
                 + (cornerCount == 0 ? -1 : cornerB / cornerCount) + ")"
+                + " hotbarRgb=(" + (hudCount == 0 ? -1 : hudR / hudCount) + ","
+                + (hudCount == 0 ? -1 : hudG / hudCount) + ","
+                + (hudCount == 0 ? -1 : hudB / hudCount) + ")"
+                + " crossRgb=(" + (crossCount == 0 ? -1 : crossR / crossCount) + ","
+                + (crossCount == 0 ? -1 : crossG / crossCount) + ","
+                + (crossCount == 0 ? -1 : crossB / crossCount) + ")"
                 + " darkPixels=" + dark;
     }
 
@@ -11427,7 +11579,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // flat white field while the pair holds the game's picture, and the question is whether that is already
             // true when the frame is presented or whether the image is whitened after the composite. The patch is the
             // logo's own region, so a flat value is "no picture" and a dark one is "picture".
-            if (PRESENT_PATCH_TRACE && this.presentPatchLogs < 8 && this.targetWidth > 512 && this.targetHeight > 512) {
+            if (PRESENT_PATCH_TRACE && this.presentPatchLogs < PRESENT_PATCH_LINES
+                    && this.framePresentedFromVulkan + 1 >= PRESENT_PATCH_MIN_PRESENT
+                    && this.targetWidth > 512 && this.targetHeight > 512) {
                 this.presentPatchLogs++;
                 String presentLine = "CELTIUM_PRESENT_PATCH present=" + (this.framePresentedFromVulkan + 1)
                         + " frame=" + this.frameId
@@ -11437,7 +11591,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // The hotbar's own band, in the frame image the present is about to blit. A flat band means the
                         // GUI stage's draws are not in that image at all; a textured one means they are and the blit or
                         // the swapchain loses them. Two statements, two different fixes.
+                        //
+                        // Row 0 of an owned image is the picture's BOTTOM (the readback is in image order; the present
+                        // flips once), so the hotbar - the bottom of the picture - is y = 0, not y = targetHeight - 32.
+                        // The earlier form read the picture's top: measured on leg r212-world-hud16 at presents 40-47,
+                        // "hotbarBand" was (111,145,207) - the sky - while the pair read (32,23,16). Both labels were
+                        // read as being about the hotbar in the rounds before that.
                         + " hotbarBand=" + celtium$patchMean(this.frameTarget.colorImage(),
+                                Math.max(0, this.targetWidth / 2 - 120), 0, 32)
+                        // The same coordinates on the picture's other end, so the two are told apart in one line.
+                        + " topBand=" + celtium$patchMean(this.frameTarget.colorImage(),
                                 Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32)
                         + " pairCentre=" + (celtium$livePairImage() == 0L ? "none"
                                 : celtium$patchMean(celtium$livePairImage(), 928, 516, 64))
@@ -11448,7 +11611,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         // geometry evidence cannot answer this.
                         + " pairHotbarBand=" + (celtium$livePairImage() == 0L ? "none"
                                 : celtium$patchMean(celtium$livePairImage(),
-                                        Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32))
+                                        Math.max(0, this.targetWidth / 2 - 120), 0, 32))
                         // And the default pair, which the routing table sends a non-main, non-zero identity's draws to.
                         // The HUD's stage carries an identity of its own in this leg, and that identity's image has to be
                         // looked at directly: the chain pair was checked and holds the world, so the default pair is the
@@ -11456,7 +11619,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " defaultPairHotbarBand=" + (offTargetTarget() == null
                                 || offTargetTarget().offTargetColorImage() == 0L ? "none"
                                 : celtium$patchMean(offTargetTarget().offTargetColorImage(),
-                                        Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32));
+                                        Math.max(0, this.targetWidth / 2 - 120), 0, 32));
                 System.out.println("[Celtium] " + presentLine);
                 record(presentLine);
             }

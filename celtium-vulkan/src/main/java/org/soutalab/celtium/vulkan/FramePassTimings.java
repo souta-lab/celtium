@@ -85,15 +85,63 @@ public final class FramePassTimings {
         maybeReport();
     }
 
+    /**
+     * How many times each bracket was opened, counted whether or not the timings are enabled.
+     * <p>
+     * The times themselves are only recorded under {@link #enabled()}, which is off by default, so an empty
+     * {@link #summary()} cannot say whether a bracket ran - and that ambiguity is exactly what the missing HUD needed
+     * settled: `GuiIngameMixin` brackets Forge's {@code GuiIngameForge.func_175180_a} with {@code require = 0}, so a
+     * failed injection and a HUD that is never drawn both leave the timing summary silent. These counts separate them:
+     * a non-zero {@code gui} count with zero identity-0 groups in the frame means the HUD is drawn and its batches are
+     * not captured, and a zero count means the function does not run at all.
+     */
+    private static final long[] BEGIN_CALLS = new long[TOP_LEVEL.length + INSIDE.length];
+
+    /** {@return how many times the bracket for one pass name was opened, enabled or not}. */
+    public static long passBeginCalls(String pass) {
+        int i = indexOf(pass);
+        return i < 0 ? -1L : BEGIN_CALLS[i];
+    }
+
+    /**
+     * Whether the {@code gui} bracket is open right now.
+     * <p>
+     * Kept whether or not the timings are enabled, for the same reason the counts above are: the question it answers
+     * ("is this group being created inside the HUD's own drawing function?") has to be answerable without turning the
+     * timings on. {@code GuiIngameMixin} brackets Forge's {@code func_175180_a} with {@code require = 0}, so an open
+     * bracket plus the group's own identity and projection is what says whether the HUD's batches reach the renderer,
+     * which image they name, and with which matrix they were projected.
+     */
+    public static boolean guiSectionActive() {
+        return guiActive;
+    }
+
+    private static boolean guiActive;
+
+    /** {@return every bracket's open count, as {@code name=count} pairs}, so no name has to be guessed. */
+    public static String passBeginCallsSummary() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < BEGIN_CALLS.length; i++) {
+            if (i > 0) text.append(',');
+            text.append(i < TOP_LEVEL.length ? TOP_LEVEL[i] : INSIDE[i - TOP_LEVEL.length]).append('=')
+                    .append(BEGIN_CALLS[i]);
+        }
+        return text.toString();
+    }
+
     /** Opens a pass bracket. Nested passes are allowed: an inner pass's time stays inside its outer pass. */
     public static void begin(String pass) {
+        int counted = indexOf(pass);
+        if (counted >= 0) BEGIN_CALLS[counted]++;
+        if (counted == GUI_INDEX) guiActive = true;
         if (!enabled()) return;
-        int i = indexOf(pass);
+        int i = counted;
         if (i >= 0) starts[i] = System.nanoTime();
     }
 
     /** Closes a pass bracket and adds its time to the current frame. */
     public static void end(String pass) {
+        if (indexOf(pass) == GUI_INDEX) guiActive = false;
         if (!enabled()) return;
         int i = indexOf(pass);
         if (i < 0 || starts[i] == 0L) return;
@@ -102,6 +150,9 @@ public final class FramePassTimings {
         if (i < TOP_LEVEL.length) currentTopLevel[i] += elapsed;
         else currentInside[i - TOP_LEVEL.length] += elapsed;
     }
+
+    /** The index of {@code gui} in the pass tables, so the flag is set by name rather than by a literal. */
+    private static final int GUI_INDEX = indexOf("gui");
 
     private static int indexOf(String pass) {
         for (int i = 0; i < TOP_LEVEL.length; i++) if (TOP_LEVEL[i].equals(pass)) return i;

@@ -68,3 +68,54 @@ withdrawn because the world-leg distribution it rests on does not reproduce.
 - What the scan *does* support is a weaker statement: **in a majority of the recorded world dumps the bottom-centre
   band is flat**, which is consistent with the HUD being absent in those legs but is not proof, and the exceptions
   must be read individually before any claim about the HUD is made.
+
+---
+
+# Round 242 - code reading: which image the HUD's identity attaches, and which label is true
+
+## 1. Routing table (`VulkanTerrainGpuBackend.java`)
+
+The decision is three-way, not two-way (`:7788-7789`, `:7841`, `:7874`, `:7881`):
+
+- `:7788` `boolean chainIdentity = this.targetRegistry.currentIdentity() != 0L;`
+- `:7789` `GllessFrameTarget offTarget = (this.targetRegistry.currentIsMain() || windowIdentity) ? null : offTargetTarget();`
+
+| identity at the bind | `offTarget` | pass attaches | framebuffer built |
+|---|---|---|---|
+| `== mainIdentity` (isMain true) | null | **`frameTarget.colorImage()`** | `ensureFramebuffer(renderPass)` (`:7881`) |
+| `== 0` **and `windowIdentity` true** | null | **`frameTarget.colorImage()`** | `ensureFramebuffer(renderPass)` (`:7881`) |
+| `== 0` and `windowIdentity` false | default pair | `offTarget.offTargetColorImage()` | `ensureOffTargetFramebuffer` (`:7874`) |
+| any other non-zero non-main | chain pair | `offTarget.chainPairColorImage()` | `ensureChainPairFramebuffer` (`:7841`) |
+
+So identity 0 is **not** unconditionally the default pair: the `windowIdentity` flag puts it on the frame image, which is
+the path the window's own draws take (`CELTIUM_WINDOW_DRAW identity=0 image=frame`).
+
+## 2. The two labels, and which one the attach follows
+
+- `GllessFrameTarget.routeLabelForBinding(identity, isMain)` = `isMain ? "frame-image" : pairLabelForIdentity(identity)`.
+- `GllessFrameTarget.pairLabelForIdentity(identity)` = `identity == 0 ? "default-pair" : "chain-pair"`.
+- The **attach** follows the three-way rule in section 1: `isMain || windowIdentity` -> frame image; identity 0
+  otherwise -> default pair; every other non-zero -> chain pair. So neither label alone is the truth: `pairLabelForIdentity`
+  is the census's `pair=` column and misleads for identity 0 when the window flag is set, and `routeLabelForBinding`
+  is right only because it already special-cases `isMain`. **The true rule is the three-way one at `:7789`.**
+
+## 3. Which identity the HUD stage should carry, from the sources
+
+- `EntityRenderer.java:1140` `this.mc.getFramebuffer().bindFramebuffer(true);` and `:1151`
+  `this.mc.ingameGUI.renderGameOverlay(partialTicks);` - the vanilla order draws the HUD with the game's **main
+  framebuffer** bound, i.e. identity == `mainIdentity`, which per section 1 attaches the **frame image** - the image
+  `celtium$presentFrame` blits from (`:5088`). From the sources alone the HUD therefore *should* reach the presented
+  image.
+- The measurement (HUD family on a third identity) is not determined by this code: something between `:1140` and the
+  HUD's draws rebinds a framebuffer (Forge's `renderGameOverlay` or the fixture), and the backend only records what it
+  is told. **The code cannot answer which identity the HUD actually carries in that leg** - the bind census for that
+  run is the answer, not this reading.
+
+## 4. The one-line instrument
+
+- `CELTIUM_DRAW_SITE` already prints, per drawn group, `target=`, `onMain=`, `passOpen=` at the moment of the draw
+  (now bounded/filtered by `-Dceltium.vulkan.drawSiteLines` and `drawSiteMinFrame`). Running it with the frame filter
+  set to the HUD's first frame answers "which identity, which pass" in one line per group, without a new instrument.
+- `CELTIUM_WINDOW_DRAW identity=0 image=frame` names the identity-to-image mapping for the window bind, so the pair of
+  lines (draw-site `target=` and window-draw `image=`) is what separates "the HUD's identity is not the frame image"
+  from "it is the frame image and the draws are lost later".
