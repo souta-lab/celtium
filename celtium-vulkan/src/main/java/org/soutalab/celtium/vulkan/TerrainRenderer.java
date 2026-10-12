@@ -545,6 +545,11 @@ public final class TerrainRenderer {
     private int uniformBlocks;
     private long uniformWriteCursor;
     private boolean uniformsLogged;
+
+    /** How many region draws have passed, so the fog line can be compared between legs at the same index. */
+    private int fogLogDraws;
+    /** The fog line repeats every this many region draws (plus the first). */
+    private static final int FOG_LOG_EVERY = 200;
     private static final float MIP_BIAS_ADD =
             Float.parseFloat(System.getProperty("celtium.vulkan.mipBiasAdd", "0.0"));
 
@@ -599,10 +604,15 @@ public final class TerrainRenderer {
         block.putFloat(base + 12, 0.0f);
 
         float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
-        if (!uniformsLogged) {
+        // The line is repeated every FOG_LOG_EVERY region draws as well as on the first one, and carries the draw
+        // index. It printed once, which made the two legs' single samples different frames and so incomparable: the
+        // bridge leg read [0.3816, 0.4421, 0.545] and the GL-less leg [0.4786, 0.5544, 0.6834] with no way to tell
+        // whether that was a difference between the backends or between the frames they happened to log.
+        this.fogLogDraws++;
+        if (!uniformsLogged || this.fogLogDraws % FOG_LOG_EVERY == 0) {
             uniformsLogged = true;
             // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
-            System.out.println("[Celtium] CELTIUM_FOG fogColor=" + java.util.Arrays.toString(fogColor)
+            System.out.println("[Celtium] CELTIUM_FOG draw=" + this.fogLogDraws + " fogColor=" + java.util.Arrays.toString(fogColor)
                     + " start=" + (this.fogService != null ? this.fogService.getFogStart() : 0.0f)
                     + " end=" + (this.fogService != null ? this.fogService.getFogEnd() : 0.0f)
                     + " density=" + (this.fogService != null ? this.fogService.getFogDensity() : 0.0f)
