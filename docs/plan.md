@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.412 **round 213: R7 前半完了（`FrameCoordinator`）＋ 後半第1歩（`VulkanRenderer` root・concrete cast 除去）**
+
+- **`FrameCoordinator` 着地**（`064af64cf`）: `submitCommands`（no-arg overload 含む ✓）＋ `submitSignalOnly` ✓ を移動 ✓。slot/sequence/退役規則は **R6 の scheduler** が所有 ✓、coordinator が持つのは**その規則を問い合わせる順序と queue へ渡す唯一の場所** ✓。frame state は renderer が単一所有 ✓（**25メンバの Host** 経由 ✓・呼び戻しなし ✓）。
+- **`VulkanRenderer` root 着地**（本コミット）: ルート interface が **window 時間の面**（`celtium$isWindowBackend`・`celtium$adoptTerrainState` ✓）＋ factory が呼ぶ lifecycle（`install`/`delete` ✓）を宣言 ✓、`TerrainGpuBackend` を extends ✓（game が既に持つ契約 ✓）。**`VulkanTerrainFactory` の `instanceof VulkanTerrainGpuBackend` を `instanceof VulkanRenderer` に置換** ✓＝**concrete cast の除去** ✓（他ファイルに残る `VulkanTerrainGpuBackend` の言及は**コメントのみ** ✓）。
+- **行数**: backend **13,174** ✓（14,493 から −1,319 ✓）／`TerrainRenderer` 1,011 ✓／`FrameCoordinator` 217 ✓。
+- **残り（R7 後半）**: window 生涯（device/instance/swapchain/registry ✓）と world 生涯（terrain/model/region ✓）の分離 ✓ → その後 `render`/`recordRenderPass`（依存40 ✓）が移り backend が facade に ✓。**R8 残り**: `replaceBoundaryDrops` と `postAcceptDroppedGroups` の二重計上（leg が必要な唯一の候補 ✓）。
+
 ## 0.411 **round 212: R7 の `FrameCoordinator` を試作（30エラー残で revert）— 次回のための完全な下ごしらえを記録**
 
 - **試作内容**: `submitCommands(boolean)`（102行 ✓）＋ `submitSignalOnly()`（42行 ✓）を `FrameCoordinator` へ移し、backend の状態は **`Host` interface（18メンバ）** で読む形 ✓（`TerrainRenderer` と同じ「呼び戻さない」契約 ✓）。実測依存は `commandBuffer`・`commandState`・`context`・`fence`・`frameArena`・`frameId`・`frameSlot`・`frameSubmitReachedQueue`・`frameTarget`・`gpuStalled`・`immediateStatistics`・`immediateWindowBusy`・`lastFrameReachedQueue`・`recordedImmediateGroups`・`retiredImmediateGroups`・`scheduler`・`submissionPending`・`submissionStatistics` ✓。
