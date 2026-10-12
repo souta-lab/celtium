@@ -294,7 +294,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     // the Object[] every group used to be.
 
     /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
-    private int targetGeneration;
+    /**
+     * The target/alias/layout/clear census, whose ownership moved to {@link RenderTargetRegistry} in refactoring plan
+     * R5. The generation it keeps is the single counter the immediate groups' stamps also read, so a group's staleness
+     * check and a target replacement cannot disagree.
+     */
+    private final RenderTargetRegistry targetRegistry = new RenderTargetRegistry();
     private int groupsStaleTargetGeneration;
     /**
      * Bumped when a world's resources are released, so a queued group from the previous world can never be drawn.
@@ -625,7 +630,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " groupsRecorded=" + this.recordedImmediateGroups.size()
                 + " groupsRetired=" + this.retiredImmediateGroups.size()
                 + " groupsStaleTargetGeneration=" + this.groupsStaleTargetGeneration
-                + " targetGeneration=" + this.targetGeneration
+                + " targetGeneration=" + this.targetRegistry.generation()
                 + " groupsStaleWorldEpoch=" + this.groupsStaleWorldEpoch
                 + " worldEpoch=" + this.worldEpoch
                 + " groupsDiscardedAtWorldTeardown=" + this.groupsDiscardedAtWorldTeardown
@@ -3676,7 +3681,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         group.viewportValues = this.currentGroupViewportValues;
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
         // must not free it - which is the whole reason the stamp exists.
-        group.stamp = new GroupStamp(this.frameId, this.targetGeneration, true, this.worldEpoch);
+        group.stamp = new GroupStamp(this.frameId, this.targetRegistry.generation(), true, this.worldEpoch);
         this.immediateGroups.add(group);
         this.immediateGroupsClosed++;
         if (target != this.mainTargetIdentity) {
@@ -3728,7 +3733,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     + " recorded=" + this.recordedImmediateGroups.size()
                     + " retired=" + this.retiredImmediateGroups.size()
                     + " staleTargetGeneration=" + this.groupsStaleTargetGeneration
-                    + " targetGeneration=" + this.targetGeneration
+                    + " targetGeneration=" + this.targetRegistry.generation()
                     + " staleWorldEpoch=" + this.groupsStaleWorldEpoch
                     + " worldEpoch=" + this.worldEpoch
                     + " worldTeardownDiscards=" + this.groupsDiscardedAtWorldTeardown
@@ -8199,7 +8204,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             group.polygonOffsetFactor = this.currentGroupPolygonOffsetFactor;
             group.polygonOffsetUnits = this.currentGroupPolygonOffsetUnits;
             celtium$noteFogCaptureDrift(group);
-            group.stamp = new GroupStamp(this.frameId, this.targetGeneration, false, this.worldEpoch);
+            group.stamp = new GroupStamp(this.frameId, this.targetRegistry.generation(), false, this.worldEpoch);
             this.immediateGroups.add(group);
             if (GROUP_BOUNDS_DIAGNOSTICS) {
                 // Off by default: with the switch off this method keeps the "no caller" property it had, and no line
@@ -9231,7 +9236,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameTarget = null;
             // Groups recorded against the old target may still be queued; the generation is what lets the draw refuse them
             // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
-            this.targetGeneration++;
+            this.targetRegistry.noteFrameTargetReplaced();
         }
         destroyCommandResources();
         // Everything the backend owns is released here, not just the terrain half (audit S15): the immediate mesh, the
@@ -12599,7 +12604,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.frameTarget = null;
             // Groups recorded against the old target may still be queued; the generation is what lets the draw refuse them
             // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
-            this.targetGeneration++;
+            this.targetRegistry.noteFrameTargetReplaced();
         }
         try {
             if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isInstalled()) {
@@ -12621,7 +12626,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // otherwise a chain recorded after this point would name freed memory. The generation is the target
             // replacement count, and the executor refuses a recording whose generation moved underneath it.
             if (this.postChain != null) {
-                this.postChain.adoptFrameTarget(this.frameTarget, this.targetGeneration);
+                this.postChain.adoptFrameTarget(this.frameTarget, this.targetRegistry.generation());
             }
             return true;
         } catch (RuntimeException | LinkageError error) {
@@ -13145,7 +13150,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 }
                 if (group.stamp != null) {
                     GroupStamp stamp = group.stamp;
-                    if (stamp.targetGeneration != this.targetGeneration) {
+                    if (stamp.targetGeneration != this.targetRegistry.generation()) {
                         // Recorded against a frame target that has since been destroyed: its pipeline and render pass are
                         // gone, so drawing it would bind the wrong thing. Retired without drawing and counted; the mesh is
                         // freed by the next completion drain, which is safe because this group was never submitted.
