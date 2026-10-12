@@ -100,4 +100,34 @@ public class CeltiumJeiPlugin implements IModPlugin {
             return "unavailable: " + error;
         }
     }
+
+    /**
+     * Sets the mod's ingredient filter through the mod's own public API and {@return what it holds afterwards}.
+     * <p>
+     * This is the second half of the search acceptance, and it exists because the first half was measured not to work
+     * from a fixture: {@code -Dceltium.validation.jeiSearch} delivers characters through {@code GuiScreen.keyTyped} -
+     * the method Minecraft's keyboard loop calls, and the same reflective route the fixture uses for
+     * {@code mouseClicked} - and the mod's filter still reads {@code keyboardFocus=false filterText=""} afterwards,
+     * because the mod's own keyboard handler reads the LWJGL event state and a fixture cannot synthesise a keystroke
+     * honestly. So the filter is set the way the mod offers for another mod to set it
+     * ({@code IIngredientFilter.setFilterText}, the same kind of entry point as the {@code IRecipesGui.showCategories}
+     * call the recipe knob already uses), and the path is named in the artifact beside the state it produced - it is
+     * an API drive, not a keystroke, and the report says which.
+     */
+    public static String setFilterText(String text) {
+        IJeiRuntime jei = runtime;
+        if (jei == null) {
+            return "unavailable: no JEI runtime was handed over";
+        }
+        IIngredientFilter filter = jei.getIngredientFilter();
+        if (filter == null) {
+            return "unavailable: no ingredient filter";
+        }
+        try {
+            filter.setFilterText(text);
+        } catch (RuntimeException | LinkageError error) {
+            return "unavailable: setFilterText failed: " + error;
+        }
+        return listState();
+    }
 }

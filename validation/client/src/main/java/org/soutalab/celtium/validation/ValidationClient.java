@@ -1630,11 +1630,26 @@ public final class ValidationClient {
         }
     }
 
+    /**
+     * {@return the mod's own account of its filter after the text was set through its public API}, or the reason it
+     * could not be set. See the {@code jeiFilterText} knob: this is the API drive, and the report names it as one.
+     */
+    private static String celtium$jeiSetFilterText(String text) {
+        try {
+            Class<?> plugin = Class.forName("org.soutalab.celtium.validation.CeltiumJeiPlugin");
+            return String.valueOf(plugin.getMethod("setFilterText", String.class).invoke(null, text));
+        } catch (ReflectiveOperationException | LinkageError error) {
+            return "unavailable: " + error;
+        }
+    }
+
     private boolean celtium$jeiScreen;
     /** The three once-flags of the {@code jeiSearch} knob: the list's state before, the keystrokes, and the state after. */
     private boolean celtium$jeiSearchBefore;
     private boolean celtium$jeiSearchTyped;
     private boolean celtium$jeiSearchAfter;
+    /** The once-flag of the {@code jeiFilterText} knob: the filter set through the mod's public API. */
+    private boolean celtium$jeiFilterSet;
     /** Set once the property-driven screenshot at a specific tick has been taken. */
     private boolean celtium$tickScreenshotTaken;
     /**
@@ -4417,6 +4432,24 @@ public final class ValidationClient {
                 celtium$jeiSearchAfter = true;
                 report.addProperty("jeiSearchStateAfter", celtium$jeiListState());
             }
+        }
+        // The filter itself, set through the mod's own public API. The keyboard knob above is kept because its result is
+        // a measurement, not a failure to hide: the characters reach the screen's own `keyTyped` and the mod's filter
+        // still reads `keyboardFocus=false filterText=""`, because the mod reads the LWJGL keyboard event rather than
+        // the method's arguments and a fixture cannot synthesise a keystroke honestly. So the filter is set the way the
+        // mod offers for another mod to set it - `IIngredientFilter.setFilterText`, the same shape as the
+        // `IRecipesGui.showCategories` call the recipe knob already uses to open the mod's own screen - and the artifact
+        // names that path beside the state it produced, so an API drive is never read as a keystroke.
+        String jeiFilterText = System.getProperty("celtium.validation.jeiFilterText", "");
+        if (!jeiFilterText.isEmpty() && worldTicks >= 41 && !celtium$jeiFilterSet && mc.currentScreen != null) {
+            celtium$jeiFilterSet = true;
+            report.addProperty("jeiFilterTextPath", "IIngredientFilter.setFilterText, the mod's public API"
+                    + " (not a keystroke: the jeiSearch knob's keyboard route is measured separately and does not"
+                    + " reach the field)");
+            report.addProperty("jeiFilterTextSet", jeiFilterText);
+            report.addProperty("jeiFilterStateBefore", celtium$jeiListState());
+            report.addProperty("jeiFilterStateAfter", celtium$jeiSetFilterText(jeiFilterText));
+            report.addProperty("jeiFilterSetAtTick", Integer.valueOf(worldTicks));
         }
         if (worldTicks >= 34 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
             // The mod's own heavier screen, opened through its public plugin API rather than by simulating input. Guarded
