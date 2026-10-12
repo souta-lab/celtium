@@ -3494,6 +3494,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Borrowed: the mesh belongs to the capture that lent it and is drawn every frame, so the retire path
         // must not free it - which is the whole reason the stamp exists.
         group.stamp = new GroupStamp(this.frameId, (int) this.targetRegistry.generation(), true, this.worldEpoch);
+        // The model path creates its own group, so the per-identity texture census has to see it here as well: with the
+        // census only at the immediate path's creation site the verification line listed a single identity (the loading
+        // screen's) while the world and the GUI stage had both been drawn, which reads as "those stages never ran".
+        celtium$noteTargetStage(target != Long.MIN_VALUE ? target : this.currentGroupTarget, texture, VulkanImmediateFormats.ITEM);
         this.immediateGroups.add(group);
         this.immediateStatistics.noteImmediateGroupsClosed();
         if (target != this.targetRegistry.mainIdentity()) {
@@ -4314,6 +4318,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " frameImage=0x" + Long.toHexString(frameImage)
                 + " chainPair=0x" + Long.toHexString(chainPair)
                 + " defaultPair=0x" + Long.toHexString(defaultPair));
+    }
+
+    /**
+     * Records one group's identity, texture and format for the {@code targetStages} census.
+     * <p>
+     * <b>Measured limit:</b> with this call at both group-creation sites the verification line still listed a single
+     * identity (the loading screen's) on world legs, so the world's and the GUI stage's groups do not come through
+     * either site - the world's terrain sections are drawn by the terrain renderer, not as immediate groups. The
+     * working instrument for this question is {@code CELTIUM_TARGET_IMAGE}, which reported four identities including
+     * the world's and the GUI family's on leg r212-world-hud13. This census is kept for the immediate path only and is
+     * not evidence of absence for anything else.
+     */
+    private void celtium$noteTargetStage(long identity, int texture, int formatId) {
+        // Every texture and format seen under each identity, so the stage an identity carries is readable from one line
+        // even when the HUD's own families arrive long after that identity's first group. This is what places the HUD's
+        // textures relative to the world's on the identity the routing sends to the chain pair.
+        if (this.targetStageTextures.size() >= 16) {
+            return;
+        }
+        java.util.Set<Integer> seenTextures = this.targetStageTextures.get(Long.valueOf(identity));
+        if (seenTextures == null) {
+            seenTextures = new java.util.LinkedHashSet<Integer>();
+            this.targetStageTextures.put(Long.valueOf(identity), seenTextures);
+        }
+        if (seenTextures.size() < 24) {
+            seenTextures.add(Integer.valueOf(texture));
+        }
+        java.util.Set<Integer> seenFormats = this.targetStageFormats.get(Long.valueOf(identity));
+        if (seenFormats == null) {
+            seenFormats = new java.util.LinkedHashSet<Integer>();
+            this.targetStageFormats.put(Long.valueOf(identity), seenFormats);
+        }
+        if (seenFormats.size() < 24) {
+            seenFormats.add(Integer.valueOf(formatId));
+        }
     }
 
     /** {@return each identity seen, its route, and the textures and formats its groups carried}. */
@@ -8202,27 +8241,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (celtium$noteTargetIdentity(this.currentGroupTarget)) {
                 celtium$printTargetImage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             }
-            // Every texture and format seen under each identity, so the stage an identity carries is readable from one
-            // line even when the HUD's own families arrive long after that identity's first group. This is what places
-            // the HUD's textures relative to the world's on the identity the routing sends to the chain pair.
-            if (this.targetStageTextures.size() < 16) {
-                java.util.Set<Integer> seenTextures = this.targetStageTextures.get(Long.valueOf(this.currentGroupTarget));
-                if (seenTextures == null) {
-                    seenTextures = new java.util.LinkedHashSet<Integer>();
-                    this.targetStageTextures.put(Long.valueOf(this.currentGroupTarget), seenTextures);
-                }
-                if (seenTextures.size() < 24) {
-                    seenTextures.add(Integer.valueOf(this.currentGroupTexture));
-                }
-                java.util.Set<Integer> seenFormats = this.targetStageFormats.get(Long.valueOf(this.currentGroupTarget));
-                if (seenFormats == null) {
-                    seenFormats = new java.util.LinkedHashSet<Integer>();
-                    this.targetStageFormats.put(Long.valueOf(this.currentGroupTarget), seenFormats);
-                }
-                if (seenFormats.size() < 24) {
-                    seenFormats.add(Integer.valueOf(this.currentGroupFormatId));
-                }
-            }
+            celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
                     this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
