@@ -6575,6 +6575,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 : java.util.Arrays.equals(this.currentGroupModelView, this.glModelView);
     }
 
+    /**
+     * Reusable state array for {@link #celtium$captureState}: the offer path ran it on every batch (~300/frame),
+     * each call allocating a fresh int[15] that was discarded by the next batch. The array is transient by contract -
+     * the only retained copy is the group's own {@code state.clone()} at group-open - so one scratch buffer serves
+     * every capture. Anything that needs the values past the next offer must clone it, exactly like the group does.
+     */
+    private final int[] celtium$stateScratch = new int[15];
+
     private int[] celtium$captureState() {
         boolean blend = this.immediateState.blendEnabled();
         int source = blend ? glBlendFactorToVk(this.immediateState.blendSrcRgb()) : 0;
@@ -6700,28 +6708,28 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         } else {
             this.alphaTestDisabledGroups++;
         }
-        return new int[] {
-                blend ? 1 : 0,
-                source < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA : source,
-                destination < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destination,
-                this.immediateState.depthTestEnabled() ? 1 : 0,
-                this.immediateState.depthMask() ? 1 : 0,
-                this.immediateState.cullEnabled() ? 1 : 0,
-                Float.floatToIntBits(alphaReference),
-                // The comparison itself rather than a boolean: the glint draws at GL_EQUAL and the held item at
-                // GL_ALWAYS, neither of which a fixed LESS_OR_EQUAL pipeline would pass correctly.
-                this.immediateState.depthFunc(),
-                // Fixed-function lighting: only the normal-carrying formats (8 and 9) can act on it, but it rides the
-                // state key so a lit batch and an unlit batch never share a pipeline - or a group.
-                this.immediateState.lightingEnabled() ? 1 : 0,
-                // ---- appended by BH-07/BH-10/BH-03; the first nine slots above keep their meaning.
-                sourceAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE : sourceAlpha,
-                destinationAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destinationAlpha,
-                writeMask,
-                colorOp,
-                alphaOp,
-                alphaFunction,
-        };
+        int[] state = this.celtium$stateScratch;
+        state[0] = blend ? 1 : 0;
+        state[1] = source < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA : source;
+        state[2] = destination < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destination;
+        state[3] = this.immediateState.depthTestEnabled() ? 1 : 0;
+        state[4] = this.immediateState.depthMask() ? 1 : 0;
+        state[5] = this.immediateState.cullEnabled() ? 1 : 0;
+        state[6] = Float.floatToIntBits(alphaReference);
+        // The comparison itself rather than a boolean: the glint draws at GL_EQUAL and the held item at
+        // GL_ALWAYS, neither of which a fixed LESS_OR_EQUAL pipeline would pass correctly.
+        state[7] = this.immediateState.depthFunc();
+        // Fixed-function lighting: only the normal-carrying formats (8 and 9) can act on it, but it rides the
+        // state key so a lit batch and an unlit batch never share a pipeline - or a group.
+        state[8] = this.immediateState.lightingEnabled() ? 1 : 0;
+        // ---- appended by BH-07/BH-10/BH-03; the first nine slots above keep their meaning.
+        state[9] = sourceAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE : sourceAlpha;
+        state[10] = destinationAlpha < 0 ? org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : destinationAlpha;
+        state[11] = writeMask;
+        state[12] = colorOp;
+        state[13] = alphaOp;
+        state[14] = alphaFunction;
+        return state;
     }
 
     /**
