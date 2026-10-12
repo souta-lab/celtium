@@ -96,10 +96,30 @@ Celtium retains Celeritas' **LGPL-3.0** licensing and upstream history. See [COP
 
 The fixed source reference is [GTNewHorizons/Celeritas at `989ebf2e52ceed052ec112a569e0c1d172095756`](https://github.com/GTNewHorizons/Celeritas/tree/989ebf2e52ceed052ec112a569e0c1d172095756); Celeritas' upstream is [embeddedt/celeritas](https://git.taumc.org/embeddedt/celeritas).
 
-Optimizations derived from [GTNewHorizons/Angelica](https://github.com/GTNewHorizons/Angelica) (**LGPL-3.0**, including its own notices for code adapted from Sodium/Iris, FalseTweaks, Beddium and Mesa) are used with attribution — the design is re-implemented against this renderer's GL-less contract rather than copied; each derived change names its Angelica source in its commit message and code comment:
+## External optimization references
+
+Optimizations are also derived from — or cross-checked against — the following projects. The design is re-implemented against this renderer's GL-less contract rather than copied; **every derived change names its source in the commit message, a code comment at the implementation site, and the pull request description**:
+
+| Project | License | Used/referenced for |
+| --- | --- | --- |
+| [GTNewHorizons/Angelica](https://github.com/GTNewHorizons/Angelica) | LGPL-3.0 (plus its own notices for code adapted from Sodium/Iris, FalseTweaks, Beddium, Mesa) | item mesh cache (PR #21, after [PR #1034](https://github.com/GTNewHorizons/Angelica/pull/1034)); dropped-item render distance (PR #23, after [PR #653](https://github.com/GTNewHorizons/Angelica/commit/6cf119dfee1a2e6cc869a1f138513d659793d542)); candidates: upload arena, TESR mesh keys, instancing |
+| [RaphiMC/ImmediatelyFast](https://github.com/RaphiMC/ImmediatelyFast) | LGPL-3.0 | concept reference: sign/TESR text buffering, framebuffer-switch reduction, immediate-mode batching |
+| [FalsePattern/FalseTweaks](https://github.com/FalsePattern/FalseTweaks) | LGPL-3.0 core — **mixed**: occlusion module is CoFHTweaks-derived and NOT LGPL; packing2d MIT-based; triangulator sorting LGPL-2.1+ | concept reference: multithreaded mipmap generation, texture stitching, animated-texture optimization. The occlusion module is not used |
+| [makamys/Neodymium](https://github.com/makamys/Neodymium) | LGPL-3.0 | concept reference: bounded mesh/VBO reuse, tessellator-state capture |
+| [GTNewHorizons/Hodgepodge](https://github.com/GTNewHorizons/Hodgepodge) | LGPL-3.0 | concept reference: renderer memoization, leak fixes |
+| [embeddedt/ArchaicFix](https://github.com/embeddedt/ArchaicFix) | LGPL-3.0 — **occlusion module excluded** (not LGPL) | concept reference: cache lifetime, world-change freeing |
+| [xCollateral/VulkanMod](https://github.com/xCollateral/VulkanMod) | LGPL-3.0 | closest architecture analogue (Vulkan replaces GL, modern versions): combined render-layer draws (~80% fewer draw calls), upload buffer reuse instead of per-frame buffer recreation, redundant color-clear skipping |
+| [embeddedt/ModernFix](https://github.com/embeddedt/ModernFix) | LGPL-3.0 (config derived from Sodium under LGPL-3.0) | concept reference: dynamic/lazy model loading, faster startup, memory reduction |
+| [embeddedt/VintageFix](https://github.com/embeddedt/VintageFix) | LGPL-3.0 | **1.12.2-native**: ModernFix concepts backported — lazy model loading, FerriteCore-style blockstate/model dedup, texture memory release |
+| [malte0811/FerriteCore](https://github.com/malte0811/FerriteCore) | MIT | concept reference: dedup blockstate property maps, multipart model instances (~200k→1.5k), cached shape internals |
+| [asiekierka/FoamFix](https://github.com/asiekierka/FoamFix) | LGPL-3.0 | **1.12.2-native**: model data dedup, RAM reduction |
+| [LoliKingdom/CensoredASM (LolASM)](https://github.com/LoliKingdom/LoliASM) | LGPL-3.0 | **1.12.2-native**: string dedup, faster init, RAM optimization |
+| [MoePus/Flerovium](https://github.com/MoePus/Flerovium) | LGPL-3.0 | modern (1.21): item render backface culling / fast math / LOD, particle light caching, entity fast math |
+| TexFix (Speiger, 1.12.2) | **All Rights Reserved — not ported** | concept noted only: release CPU-side copies of non-animated texture data after GPU upload |
+| EntityCulling (tr7zw) | **tr7zw Protective License — no derivative distribution** | not used; entity occlusion ideas, if ever pursued, must be implemented independently |
+
+The inventoried candidates per project are kept in [docs/performance_plan.md](docs/performance_plan.md). Porting a listed item means: check the file/module license first (FalseTweaks and ArchaicFix contain non-LGPL islands), re-implement — do not copy code —, then credit in commit, code comment and PR.
 
 - **Item mesh cache** (`RenderItemMixin`, PR #21) — after [Angelica PR #1034, "Optimize in-world item rendering"](https://github.com/GTNewHorizons/Angelica/pull/1034) (VBO caching of held/dropped/GUI item geometry, ~4–6x on item-heavy scenes).
 
-Angelica's other assessed-to-date candidates for this renderer are inventoried in [docs/performance_plan.md](docs/performance_plan.md) (per-frame upload arena, bounded item geometry, instancing, TESR mesh keys, pipeline/constant-buffer reuse, dropped-item render distance).
-
-Current Sodium source under its newer restrictive license is not imported by this project. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.
+Current Sodium source under its newer restrictive license is not imported by this project. Argentum and Smoothfont are all-rights-reserved and are never used as references. Independent optimization work and permitted source reuse must retain their provenance and applicable notices.

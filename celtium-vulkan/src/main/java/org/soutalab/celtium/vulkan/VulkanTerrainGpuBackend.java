@@ -915,6 +915,25 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateTaken;
     /** Total time spent inside submitImmediateBatch, so the hot path's cost is measured rather than asserted. */
     private long immediateSubmitNanos;
+    /**
+     * Baseline at the first offer inside the world pass: menu/startup batches (atlas stitch, model init)
+     * hit the offer path thousands of times while the JIT is still cold, which inflates the cumulative
+     * immediateSubmitAvgNs far above what a steady-state call costs. The world-scoped average below
+     * subtracts the counters at the moment the world pass first activates.
+     */
+    private long immediateSubmitBaselineNanos = -1;
+    private long immediateSubmitBaselineOffered;
+    /** Calls whose body took over 200µs: separates steady per-call cost from spike pollution in the average. */
+    private int immediateSubmitTailCalls;
+    private long immediateSubmitTailNanos;
+    /** Histogram-ish spread: under 5µs / 5-50 / 50-200 / tail, so the average can be read against the mass. */
+    private int immediateSubmitUnder5, immediateSubmit5to50, immediateSubmit50to200;
+    /**
+     * What a tail call carried: a queue flush (immediateFlushes moved), a lazy texture mirror supply
+     * (lazyMirrorSupplies moved), both, or neither (GC pause, JIT deopt, shader compile - the residue).
+     */
+    private int tailCarriedFlush, tailCarriedSupply, tailCarriedBoth, tailCarriedNeither;
+    private int submitFlushesAtEntry, submitSuppliesAtEntry;
     /** Split of the per-batch cost: time inside prepareImmediate (pipeline and descriptor preparation). */
     private long prepareImmediateNanos;
     private int prepareImmediateCalls;
@@ -5165,6 +5184,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // arrives this way.
         if (!this.worldPassActive || !this.worldSnapshotValid) {
             this.outsideWorldPassAccepted++;
+        } else if (this.immediateSubmitBaselineNanos < 0) {
+            this.immediateSubmitBaselineNanos = this.immediateSubmitNanos;
+            this.immediateSubmitBaselineOffered = this.immediateBatchesOffered;
         }
         if (this.gpuStalled) {
             this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
@@ -5181,6 +5203,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             this.immediateOfferedByFormat[formatId]++;
         }
         long submitStart = System.nanoTime();
+        this.submitFlushesAtEntry = this.immediateFlushes;
+        this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
         try {
             boolean taken = submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress,
                     vertexCount, drawMode);
@@ -5192,7 +5216,24 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             }
             return taken;
         } finally {
-            this.immediateSubmitNanos += System.nanoTime() - submitStart;
+            long submitNanos = System.nanoTime() - submitStart;
+            this.immediateSubmitNanos += submitNanos;
+            if (submitNanos > 200_000) {
+                this.immediateSubmitTailCalls++;
+                this.immediateSubmitTailNanos += submitNanos;
+                boolean carriedFlush = this.immediateFlushes != this.submitFlushesAtEntry;
+                boolean carriedSupply = this.lazyMirrorSupplies != this.submitSuppliesAtEntry;
+                if (carriedFlush && carriedSupply) this.tailCarriedBoth++;
+                else if (carriedFlush) this.tailCarriedFlush++;
+                else if (carriedSupply) this.tailCarriedSupply++;
+                else this.tailCarriedNeither++;
+            } else if (submitNanos > 50_000) {
+                this.immediateSubmit50to200++;
+            } else if (submitNanos > 5_000) {
+                this.immediateSubmit5to50++;
+            } else {
+                this.immediateSubmitUnder5++;
+            }
         }
     }
 
@@ -8424,6 +8465,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixCopyMillis=" + (this.matrixCopyNanos / 1000000L)
                 + " captureStateMillis=" + (this.captureStateNanos / 1000000L)
                 + " stateKeyMillis=" + (this.stateKeyNanos / 1000000L)
+                + " " + VulkanImmediateDrawer.indexCacheStats()
                 + " groupDrawCount=" + this.groupDrawCount
                 + " groupDrawMillis=" + (this.groupDrawNanos / 1000000L)
                 + " groupCloneCount=" + this.groupCloneCount
@@ -8711,6 +8753,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " matrixDump[" + (this.matrixDump == null ? "none" : this.matrixDump) + "]"
                 + " immediateSubmitAvgNs=" + (this.immediateBatchesOffered == 0 ? 0
                 : this.immediateSubmitNanos / this.immediateBatchesOffered)
+                + " immediateSubmitWorldAvgNs=" + (this.immediateSubmitBaselineNanos < 0
+                        || this.immediateBatchesOffered <= this.immediateSubmitBaselineOffered ? 0
+                : (this.immediateSubmitNanos - this.immediateSubmitBaselineNanos)
+                        / (this.immediateBatchesOffered - this.immediateSubmitBaselineOffered))
+                + " submitBuckets=[<5us:" + this.immediateSubmitUnder5 + " 5-50:" + this.immediateSubmit5to50
+                + " 50-200:" + this.immediateSubmit50to200 + " >200us:" + this.immediateSubmitTailCalls
+                + " tailMillis=" + (this.immediateSubmitTailNanos / 1000000L) + "]"
+                + " tailCarried=[flush:" + this.tailCarriedFlush + " supply:" + this.tailCarriedSupply
+                + " both:" + this.tailCarriedBoth + " neither:" + this.tailCarriedNeither + "]"
                 // Audit B03/B04: what the descriptor pools did (pools, growths, sets, cached texture keys,
                 // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
                 // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
