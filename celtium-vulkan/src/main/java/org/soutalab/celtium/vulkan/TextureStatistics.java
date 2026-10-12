@@ -63,10 +63,20 @@ public final class TextureStatistics {
         out.append(VulkanGlTexture.samplerFilterCensus());
     }
 
-    /** Run 2, reproducing backend L8491-L8492: descriptorHits descriptorMisses. */
+    /**
+     * Run 2, the head of old L8491-L8492: descriptorHits.
+     * <p>
+     * Split from run 11 because the old L8492 carries this class's descriptorMisses and Immediate's
+     * clearOrderFlushes on the same source line, so no single run could own that line. run 11 is called
+     * immediately after this one.
+     */
     public void appendRun2(StringBuilder out) {
         out.append(" descriptorHits=");
         out.append(VulkanImmediateTexturePipeline.DESCRIPTOR_HITS);
+    }
+
+    /** Run 11, the tail of old L8492: descriptorMisses, emitted between run 2 and Immediate's clearOrderFlushes. */
+    public void appendRun11(StringBuilder out) {
         out.append(" descriptorMisses=");
         out.append(VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES);
     }
