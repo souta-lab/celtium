@@ -2842,6 +2842,16 @@ public final class ValidationClient {
             celtium$menuDumpRequested = true;
             report.addProperty("menuDumpClientTick", Integer.valueOf(celtium$clientTicks));
             report.addProperty("menuDumpWindowSize", mc.displayWidth + "x" + mc.displayHeight);
+            // What drives the panorama's rotation, read rather than inferred: `GuiMainMenu.drawScreen` adds
+            // `partialTicks` to `panoramaTimer` (field_73979_m) and rotates by `-panoramaTimer * 0.1F`
+            // (GuiMainMenu.java:417) plus a pitch of `sin(panoramaTimer/400)*25+20` (:416). Normalized
+            // cross-correlation of two menu legs says the drawn panorama does not move at all (round 166), and these
+            // two numbers split that into "the game never advanced the angle" and "we did not draw the angle it
+            // advanced" - the second of which would be ours to fix.
+            report.addProperty("menuDumpPanoramaTimer",
+                    String.valueOf(celtium$fieldValue(mc.currentScreen,
+                            new String[] {"panoramaTimer", "field_73979_m"})));
+            report.addProperty("menuDumpRenderPartialTicks", Float.toString(mc.getRenderPartialTicks()));
             celtium$requestPresentedDump(mc, "menu");
         }
         try {

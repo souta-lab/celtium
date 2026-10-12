@@ -61,6 +61,19 @@ public final class TextureCopyService {
 
         long frameId();
 
+        /**
+         * {@return the serial of the presented frame}, which is what "this frame" means for the copy reuse set below.
+         * <p>
+         * Deliberately not {@link #frameId()}: that counter advances on the world render path, and a GUI screen skips
+         * it, so during the main menu it stands still. The reuse set is "one readback per frame per destination
+         * rectangle", and keying it on a counter that does not move for a screen turns that into "one readback per
+         * process". Measured (round 166, the menu): the game's per-frame {@code glCopyTexSubImage2D} of the 256x256
+         * panorama viewport was answered from the frame-0 copy, so the panorama never moved even though
+         * {@code panoramaTimer} advanced and {@code GuiMainMenu.java:417} rotated it every frame. A screen presents a
+         * frame too, so the present serial is the counter that means "this frame" for both.
+         */
+        long presentSerial();
+
         long mainTargetIdentity();
 
         /** {@return the GL colour-texture name recorded for one framebuffer identity}, 0 when none. */
@@ -120,12 +133,15 @@ public final class TextureCopyService {
     /** How many served copies have printed their rectangle's statistics (bounded, for the picture question). */
     private int textureCopySamples;
     /**
-     * The frame the served-copy set belongs to, and the destination rectangles already served in it.
+     * The present the served-copy set belongs to, and the destination rectangles already served in it.
      * <p>
      * The menu asks for the same rectangle seven times per frame; one readback answers all seven, and this set is what
-     * makes that a decision rather than a repeated cost. Cleared whenever the frame changes.
+     * makes that a decision rather than a repeated cost. Cleared whenever the present changes - deliberately not
+     * {@code frameId}, which advances on the world render path and therefore does not move while a screen is up: keyed
+     * on it, this set was never cleared during the main menu, and the game's per-frame 256x256 panorama copy was
+     * answered from the first frame's content, so the panorama did not move while {@code panoramaTimer} advanced.
      */
-    private long textureCopyFrame = -1L;
+    private long textureCopyPresent = -1L;
     private final java.util.Set<Long> textureCopiesServedThisFrame = new java.util.HashSet<Long>();
     private int textureCopiesReusedInFrame;
     /** Readback submissions the copy path actually made, and the wall time they took. */
@@ -255,11 +271,14 @@ public final class TextureCopyService {
         long copyKey = (((long) destName) << 32) ^ (((long) level) << 28) ^ (((long) xoffset) << 20)
                 ^ (((long) yoffset) << 12) ^ (((long) x) << 8) ^ (((long) y) << 4) ^ (((long) width) << 2)
                 ^ ((long) height);
-        if (this.textureCopyFrame != this.host.frameId()) {
-            this.textureCopyFrame = this.host.frameId();
+        // The serial is the present's, not frameId's: a screen presents without advancing frameId, and keying on frameId
+        // made this set never clear during the menu, so the panorama's per-frame copy was served from the first frame's
+        // content (round 166 - the reason the main menu's panorama did not move).
+        if (this.textureCopyPresent != this.host.presentSerial()) {
+            this.textureCopyPresent = this.host.presentSerial();
             this.textureCopiesServedThisFrame.clear();
         }
-        if (this.textureCopyFrame == this.host.frameId() && this.textureCopiesServedThisFrame.contains(Long.valueOf(copyKey))) {
+        if (this.textureCopiesServedThisFrame.contains(Long.valueOf(copyKey))) {
             this.textureCopiesReusedInFrame++;
             this.textureCopiesServed++;
             return "served";
@@ -308,7 +327,8 @@ public final class TextureCopyService {
                     // The frame and the image this copy read, so it can be put against CELTIUM_DRAW_SITE in the same
                     // frame: the faces draw (DRAW_SITE #1, target=1941007851) and this line reads white, and neither
                     // carried a frame or a handle before, which left ordering unanswerable.
-                    + " frame=" + this.host.frameId() + " readImage=0x" + Long.toHexString(image)
+                    + " frame=" + this.host.frameId() + " present=" + this.host.presentSerial()
+                    + " readImage=0x" + Long.toHexString(image)
                     // The completion fact: whether the image the copy reads is the one the last recorded group went
                     // into, and whether any submission has been confirmed complete since that group was recorded. If
                     // the handles and the frame match and no completion has happened since, the copy is reading an

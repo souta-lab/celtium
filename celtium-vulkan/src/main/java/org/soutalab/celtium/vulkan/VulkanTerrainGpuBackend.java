@@ -11552,6 +11552,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return VulkanTerrainGpuBackend.this.frameId;
         }
 
+        /**
+         * The present serial, which is the counter the copy reuse set is keyed on: it advances for a screen's frame as
+         * well, where {@link #frameId()} does not (see {@link TextureCopyService.Host#presentSerial()}).
+         */
+        @Override
+        public long presentSerial() {
+            return VulkanTerrainGpuBackend.this.celtium$presentCount;
+        }
+
         @Override
         public long mainTargetIdentity() {
             return VulkanTerrainGpuBackend.this.mainTargetIdentity;
