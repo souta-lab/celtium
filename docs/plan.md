@@ -307,6 +307,36 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.345 **round 152: ユーザの profiler 画像（frame/tick 内訳）— `gui` self 5.36 s（26.8 %）と `gameRenderer` self 6.19 s（31 %）が最大**
+
+- **受領**: `2026-10-12-profile-frame.png`（48,882 bytes）・`2026-10-12-profile-tick.png`（79,076 bytes）
+  ＝`.celtium-work/evidence/user-reports/` に保存。**frame 合計 19,999.36 ms**。
+- **frame の内訳（self 時間に注目・self が「その section 自身が使った時間」）**:
+  | section | total | **self** | 割合 |
+  |---|---|---|---|
+  | **`gameRenderer`** | 17,354.98 ms | **6,187.85 ms** | **86.78 % / self 31 %** |
+  | **`gui`** | 5,697.02 ms | **5,359.15 ms** | **28.49 % / self 26.8 %** |
+  | `root` | 19,998.50 ms | **1,248.31 ms** | self 6.2 % |
+  | `entities`（子 `entities`） | 1,744.67 / 1,658.29 ms | **1,658.29 ms** | 8.29 % |
+  | `terrain` | 1,008.67 ms | **1,008.67 ms** | 5.04 % |
+  | `hand` | 656.30 ms | 656.30 ms | 3.28 % |
+  | `translucent` | 570.68 ms | 570.68 ms | 2.85 % |
+  | `particles` | 368.13 ms | 368.13 ms | 1.84 % |
+  | `sky` | 251.03 ms | 251.03 ms | 1.26 % |
+  | `terrain_setup` / `lightTex` / `destroyProgress` / `clear` / `camera` | 165.61 / 138.90 / 54.23 / 35.30 / 34.35 ms | 同 | 各 0.8 % 以下 |
+  | `chat` / `bossHealth` / `toolHighlight` / `forgeHudText` | 201.83 / 120.60 / 12.76 / 2.68 ms | 同 | `gui` の子は合計 ~337 ms |
+  ＝**`gui` の self 5,359 ms に対し子の合計は約 337 ms**＝**GUI 自身の描画（HUD・widget・即時モード経路）が最大の単一項目**。
+  ＝**`gameRenderer` の self 6,188 ms** も同規模（frame の 31 %）。
+- **tick の内訳**: `tick` 1,276.29 ms（self 19.82）・`level` 1,071.93（self 55.54）・**`blocks` 613.01 ms**
+  （**`getChunk` 533.55 ms・self 266.92**、うち **`getBrightness` self 258.83 ms**、`buildList` 20.72）・
+  `entities` 283.88・`chunkCache` 119.36・`animateTick` 56.03・`keyboard` 41.14・`particles` 33.13・`textures` 25.66。
+  ＝**tick 側の最大は `getBrightness`（258.83 ms self）**。
+- **優先順の更新（ユーザの実データが根拠）**: **(1) `gui` の self 5.36 s**（＝即時モード/GUI 経路。font 刷新は F3 テキストに効いたが
+  **GUI 全体は未着手**）→ **(2) `gameRenderer` の self 6.19 s**（frame 自身の renderer 側）→ **(3) `entities` 1.66 s** →
+  **(4) `terrain` 1.01 s** → **(5) `hand`+`translucent` 1.23 s**。**tick 側は `getBrightness` 258 ms**。
+- **注意**: これは**ユーザの実機・実セッション**の数字であり、**我々の leg の数字と同一視しない**（scene・duration・mod 構成が違う）。
+  **比と順位の根拠として使い、絶対値を我々の受入値として引用しない**。
+
 ## 0.344 **round 151: font レンダラ刷新 前半が着地（glyph-fix `27123e756`）— テキスト経路 −94 %/glyph・cold p50 −74 %**
 
 - **実装**: `FontRendererMixin` が **`func_78266_a`（default page）で自分で glyph を描いて vanilla の本体を cancel**（HEAD/cancellable/require=0）。
