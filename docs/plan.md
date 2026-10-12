@@ -307,6 +307,31 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.344 **round 151: font レンダラ刷新 前半が着地（glyph-fix `27123e756`）— テキスト経路 −94 %/glyph・cold p50 −74 %**
+
+- **実装**: `FontRendererMixin` が **`func_78266_a`（default page）で自分で glyph を描いて vanilla の本体を cancel**（HEAD/cancellable/require=0）。
+  `CeltiumFontGlyphCapture.fastDefaultGlyph` が **4頂点と UV を `renderDefaultChar` と同一の式**（`FontRenderer.java:230-249`）で書き、
+  **既存の `submit()` にそのまま渡す**（format 2・stride 24・mode 5・coalesced run・strip separator・同じ拒否・同じカウンタ）。
+  色は capture が mirror している `GlStateManager.color`（window 経路と同一の出所）。
+  ＝**消えたのは per-glyph の `TextureManager.bindTexture` 連鎖と9個の `GlStateManager` wrapper**。
+- **契約**: unicode は未変更（`func_78277_a` は vanilla のまま）。fast path は unit が sheet を保持していない時だけ再 bind
+  （**1.28M glyph で 93 回**・`fontTextureRebinds`）。**`-Dceltium.font.fastPath=false` が同一 jar の制御**。
+- **受入（同一 jar・F3 on・両 leg `pinSections=64`・両方 PASSED・`validationClean=true`・`validationMessageCount=0`）**:
+  | | fast ON | fast OFF（制御） |
+  |---|---|---|
+  | glyph / string | 1,280,000 / 2,886 | 980,000 / 2,330 |
+  | **`glyphMillis`（vanilla 本体）** | **0**（もう走らない） | 14,280 ms（14.6 µs/glyph） |
+  | **`renderStringMillis`（全テキスト）** | **1,093 ms** | 14,076 ms |
+  | 1 string / 1 glyph | **0.38 ms / 0.85 µs** | 6.04 ms / 14.4 µs |
+  | **cold p50** | **144.7 ms**（23 sample・80 frame） | **550.6 ms**（8 sample・43 frame） |
+  | `fastGlyphs` / `refused` | 1,280,000 / **0** | 0 / **0** |
+  ＝**テキスト経路 −94 %/glyph・cold p50 −74 %**（同 jar・同セッション）。**F3 off（fast on）は p50 72.7 ms** ＝このセッションの overlay 費用 72 ms/frame。
+- **文字が不変である証拠**: 同一テクセル検査で **line1 449/449・line4 104/104・空テクセル 0/896**（vanilla 経路と同値）。
+  1x crop: `fastpath-f3-1x.png` sha256 `35c5c6d2c0e17e45…`・`fastpath-chat-1x.png` `afbadd03aeae0cbc…`・frame `05370807e760358d…`。
+- **未確立（正直に）**: **chat のテクセル検査**（shadow＋scale で F3 の検査が使えず、leg 間 crop 比較は背景差 11.9 % を見るので文字の証拠にならない
+  → **crop と「同じ `func_78266_a` 経路」までを主張**）・**unicode の fast path**（page 変更 bind が要るので未実装）・
+  OPT-18 の layout cache/sign/map・**fast path 自身の内訳**（0.85 µs は配列書きと submit を含む全体）。
+
 ## 0.343 **round 150: ユーザの LagSpike profiler を受領（「絶対に参考にするべき」）— perf-ring が解析中**
 
 - **受領物**: `profiler-2026-10-12_10-49-18(1).lagspikeprofile`
