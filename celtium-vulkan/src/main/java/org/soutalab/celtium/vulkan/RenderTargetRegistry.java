@@ -244,6 +244,46 @@ public final class RenderTargetRegistry {
         return this.targetKnown;
     }
 
+    /** Per pair slot: the framebuffer handle, the render pass it was built for, and how many were created. */
+    private final Map<ImageSlot, long[]> pairFramebuffers = new HashMap<ImageSlot, long[]>();
+
+    /** {@return the pair slot's framebuffer handle, or 0 when it has none}. */
+    public long pairFramebuffer(ImageSlot slot) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        return entry == null ? 0L : entry[0];
+    }
+
+    /** {@return the render pass the slot's framebuffer was built for, or 0}. */
+    public long pairFramebufferRenderPass(ImageSlot slot) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        return entry == null ? 0L : entry[1];
+    }
+
+    /** {@return how many framebuffers were created for the slot}. */
+    public int pairFramebufferCreations(ImageSlot slot) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        return entry == null ? 0 : (int) entry[2];
+    }
+
+    /** Records the framebuffer a slot now has, counting the creation when it replaces a different handle. */
+    public void notePairFramebuffer(ImageSlot slot, long handle, long renderPass) {
+        long[] entry = this.pairFramebuffers.get(slot);
+        if (entry == null) {
+            this.pairFramebuffers.put(slot, new long[] { handle, renderPass, 1L });
+            return;
+        }
+        if (entry[0] != handle) {
+            entry[2]++;
+        }
+        entry[0] = handle;
+        entry[1] = renderPass;
+    }
+
+    /** Forgets the slot's framebuffer, after it has been destroyed. */
+    public void clearPairFramebuffer(ImageSlot slot) {
+        this.pairFramebuffers.remove(slot);
+    }
+
     public long generation() {
         return this.generation;
     }

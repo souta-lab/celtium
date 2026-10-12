@@ -9575,16 +9575,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (glless == null) {
             return 0L;
         }
-        if (this.offTargetFramebuffer != 0 && this.offTargetFramebufferRenderPass == renderPass
+        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR) != 0 && this.targetRegistry.pairFramebufferRenderPass(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR) == renderPass
                 && glless.offTargetMatches(this.targetWidth, this.targetHeight)) {
-            return this.offTargetFramebuffer;
+            return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
         }
         destroyOffTargetFramebuffer();
-        this.offTargetFramebuffer = ensurePairFramebuffer(renderPass, glless.offTargetColorView(),
-                glless.offTargetDepthView(), "off-target");
-        this.offTargetFramebufferRenderPass = renderPass;
-        this.offTargetFramebufferCreations++;
-        return this.offTargetFramebuffer;
+        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR, ensurePairFramebuffer(renderPass, glless.offTargetColorView(),
+                glless.offTargetDepthView(), "off-target"), renderPass);
+        // counted by notePairFramebuffer
+        return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
     }
 
     /**
@@ -9597,16 +9596,15 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         if (glless == null) {
             return 0L;
         }
-        if (this.chainPairFramebuffer != 0 && this.chainPairFramebufferRenderPass == renderPass
+        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) != 0 && this.targetRegistry.pairFramebufferRenderPass(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) == renderPass
                 && glless.chainPairMatches(this.targetWidth, this.targetHeight)) {
-            return this.chainPairFramebuffer;
+            return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
         }
         destroyChainPairFramebuffer();
-        this.chainPairFramebuffer = ensurePairFramebuffer(renderPass, glless.chainPairColorView(),
-                glless.chainPairDepthView(), "chain-pair");
-        this.chainPairFramebufferRenderPass = renderPass;
-        this.chainPairFramebufferCreations++;
-        return this.chainPairFramebuffer;
+        this.targetRegistry.notePairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, ensurePairFramebuffer(renderPass, glless.chainPairColorView(),
+                glless.chainPairDepthView(), "chain-pair"), renderPass);
+        // counted by notePairFramebuffer
+        return this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
     }
 
     /** Builds one framebuffer over a pair's views at the frame's size. */
@@ -9734,18 +9732,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     private void destroyOffTargetFramebuffer() {
-        if (this.offTargetFramebuffer != 0) {
-            vkDestroyFramebuffer(this.context.device(), this.offTargetFramebuffer, null);
-            this.offTargetFramebuffer = 0;
-            this.offTargetFramebufferRenderPass = 0;
+        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR) != 0) {
+            vkDestroyFramebuffer(this.context.device(), this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR), null);
+            this.targetRegistry.clearPairFramebuffer(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR);
         }
     }
 
     private void destroyChainPairFramebuffer() {
-        if (this.chainPairFramebuffer != 0) {
-            vkDestroyFramebuffer(this.context.device(), this.chainPairFramebuffer, null);
-            this.chainPairFramebuffer = 0;
-            this.chainPairFramebufferRenderPass = 0;
+        if (this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) != 0) {
+            vkDestroyFramebuffer(this.context.device(), this.targetRegistry.pairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR), null);
+            this.targetRegistry.clearPairFramebuffer(RenderTargetRegistry.ImageSlot.CHAIN_PAIR);
         }
     }
 
