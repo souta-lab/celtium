@@ -903,6 +903,8 @@ public final class ValidationClient {
      * while the report still said "the requested token matched no row". The label is the fact that was matched.
      */
     private static String celtium$vsMatchedLabel;
+    /** The row object the press acted on, so step 1 reads the same row's value instead of re-finding a vanilla list. */
+    private static Object celtium$vsPressedRow;
     private String celtium$vsOption = "none";
     private String celtium$vsBefore = "none";
     private String celtium$vsAfter = "none";
@@ -6617,6 +6619,7 @@ public final class ValidationClient {
         }
         Object button = found[0];
         Object option = found[1];
+        celtium$vsPressedRow = button == option ? button : null;
         celtium$vsOption = celtium$vsOptionName(option, button);
         celtium$vsBefore = String.valueOf(celtium$fieldValue(button, new String[] {"displayString", "field_146126_j"}));
         celtium$vsFileBefore = celtium$vsOptionsFile(mc);
@@ -6652,6 +6655,7 @@ public final class ValidationClient {
         celtium$vsPressY = y + h / 2;
         // The screen's own mouseClicked, not the widget's method: GuiVideoSettings.mouseClicked forwards to
         // optionsRowList.mouseClicked and to super (the Done button), which is the whole of what a real click does.
+        String sodiumPress = celtium$vsPressSodiumControl(option);
         java.lang.reflect.Method click = celtium$requireMethod(screen.getClass(),
                 new String[] {"mouseClicked", "func_73864_a"}, int.class, int.class, int.class);
         click.setAccessible(true);
@@ -6662,7 +6666,8 @@ public final class ValidationClient {
         release.invoke(screen, Integer.valueOf(celtium$vsPressX), Integer.valueOf(celtium$vsPressY), Integer.valueOf(0));
         report.addProperty("videoSettingsPress",
                 "pressed " + celtium$vsOption + " at " + celtium$vsPressX + "," + celtium$vsPressY
-                        + " through " + screen.getClass().getName() + ".mouseClicked + mouseReleased");
+                        + " through " + screen.getClass().getName() + ".mouseClicked + mouseReleased"
+                        + (sodiumPress == null ? "" : "; " + sodiumPress));
         celtium$vsStep = 0;
         return false;
     }
@@ -6677,7 +6682,16 @@ public final class ValidationClient {
         }
         Object list = celtium$fieldValue(screen, new String[] {"optionsRowList", "field_146501_h"});
         Object[] found = list == null ? null : celtium$vsFindOptionButton(list);
-        if (found != null) {
+        if (celtium$vsPressedRow != null) {
+            // A Sodium-style row: its label carries the value ("options.renderClouds: Fast") and the option itself
+            // answers getValue(). Measured before this: the after value read the vanilla optionsRowList, which this
+            // screen does not have, so the report said After=none and "changed" could not be judged.
+            String label = celtium$vsRowLabel(celtium$vsPressedRow);
+            Object value = celtium$invokeNoArg(celtium$vsPressedRow, new String[] {"getValue"});
+            celtium$vsAfter = label == null ? String.valueOf(value) : label;
+            report.addProperty("videoSettingsOptionValueAfter", value == null ? "no getValue()" : String.valueOf(value));
+            report.addProperty("videoSettingsOptionValueSource", "the pressed row itself");
+        } else if (found != null) {
             celtium$vsAfter = String.valueOf(celtium$fieldValue(found[0], new String[] {"displayString", "field_146126_j"}));
         }
         report.addProperty("videoSettingsOptionAfter", celtium$vsAfter);
@@ -7078,6 +7092,154 @@ public final class ValidationClient {
                     celtium$vsDimInt(dimension, new String[] {"height", "getHeight"})};
         }
         return new int[] {0, 0, 0, 0};
+    }
+
+    /**
+     * Presses a Sodium-style option through its own control element and returns what it did, or null when the row is
+     * not one.
+     * <p>
+     * The row's bounds belong to the {@code ControlElement} that {@code Control.createElement(Dim2i)} builds, not to
+     * the {@code Option} the finder returns - measured: the press landed at 0,0 because an {@code OptionImpl} has no
+     * x/y/width/height fields. The element is created here from the option's own control, with the dimension class
+     * taken from the method's parameter type rather than hardcoded, and clicked at its centre; a CyclingControl
+     * advances its value, which is what the player's click does.
+     */
+    private static String celtium$vsPressSodiumControl(Object option) {
+        Object control = celtium$invokeNoArg(option, new String[] {"getControl"});
+        if (control == null) {
+            return "no getControl() on " + option.getClass().getName();
+        }
+        // The element is created with its own bounds: the click only has to land inside them, and the row's real
+        // bounds are not readable from the Option (measured: the press landed at 0,0 because of exactly that).
+        int x = 0;
+        int y = 0;
+        int w = 240;
+        int h = 18;
+        try {
+            java.lang.reflect.Method create = null;
+            for (java.lang.reflect.Method candidate : control.getClass().getMethods()) {
+                if ("createElement".equals(candidate.getName()) && candidate.getParameterCount() == 1) {
+                    create = candidate;
+                    break;
+                }
+            }
+            if (create == null) {
+                return "no createElement on " + control.getClass().getName();
+            }
+            Class<?> dimensionType = create.getParameterTypes()[0];
+            Object dimension = dimensionType.getConstructor(int.class, int.class, int.class, int.class)
+                    .newInstance(Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(w), Integer.valueOf(h));
+            Object element = create.invoke(control, dimension);
+            if (element == null) {
+                return "createElement returned null";
+            }
+            int cx = x + w / 2;
+            int cy = y + h / 2;
+            // The element's input methods are not the widget's: measured, the CyclingControlElement has no
+            // mouseClicked(int,int,int) at all (NoSuchMethodException named it), because the Sodium-style element API
+            // takes doubles. Both signatures are tried, with arguments of the matching type.
+            String pressMethod = celtium$vsInvokeClick(element, "mouseClicked", cx, cy);
+            if (pressMethod == null) {
+                // Name the element's own input surface instead of guessing again: measured, the CyclingControlElement
+                // has neither mouseClicked(int,int,int) nor mouseClicked(double,double,int), so the next attempt needs
+                // the method it does have rather than a third guess.
+                StringBuilder surface = new StringBuilder();
+                for (java.lang.reflect.Method candidate : element.getClass().getMethods()) {
+                    String name = candidate.getName();
+                    if (name.contains("mouse") || name.contains("click") || name.contains("press")
+                            || name.contains("onPress") || name.contains("keyPressed")) {
+                        if (surface.length() > 0) {
+                            surface.append(',');
+                        }
+                        surface.append(name).append('/').append(candidate.getParameterCount());
+                    }
+                }
+                return "no mouseClicked on " + element.getClass().getName()
+                        + "; its input surface: " + (surface.length() == 0 ? "none" : surface);
+            }
+            String releaseMethod = celtium$vsInvokeClick(element, "mouseReleased", cx, cy);
+            return "control " + control.getClass().getSimpleName() + " element "
+                    + element.getClass().getSimpleName() + " " + pressMethod
+                    + (releaseMethod == null ? " (no mouseReleased)" : " + " + releaseMethod)
+                    + " at " + cx + "," + cy;
+        } catch (ReflectiveOperationException | RuntimeException failed) {
+            return "the control press failed: " + failed;
+        }
+    }
+
+    /**
+     * {@return the signature a click method was invoked with, or null when the element has none}.
+     * <p>
+     * Sodium-style control elements take doubles where the vanilla widget takes ints; measured, the
+     * {@code CyclingControlElement} has no {@code mouseClicked(int,int,int)} and the missing-method error named it.
+     * The int form is tried first so a vanilla-shaped element is unaffected.
+     */
+    private static String celtium$vsInvokeClick(Object element, String name, int cx, int cy) {
+        // Signatures tried in order: the vanilla widget's (int,int,int), then the double form, then whatever arity the
+        // element actually declares - measured, the CyclingControlElement's surface is mouseClicked/4,
+        // mouseScrolled/5, mouseReleased/4, mouseDragged/6, so the arguments are built from the parameter types
+        // (coordinates first, then the button, then zeros/false).
+        java.lang.reflect.Method chosen = null;
+        for (java.lang.reflect.Method candidate : element.getClass().getMethods()) {
+            if (name.equals(candidate.getName()) && candidate.getParameterCount() == 3) {
+                chosen = candidate;
+                break;
+            }
+        }
+        if (chosen == null) {
+            for (java.lang.reflect.Method candidate : element.getClass().getMethods()) {
+                if (name.equals(candidate.getName())) {
+                    chosen = candidate;
+                    break;
+                }
+            }
+        }
+        if (chosen == null) {
+            return null;
+        }
+        try {
+            chosen.setAccessible(true);
+            Class<?>[] types = chosen.getParameterTypes();
+            Object[] args = new Object[types.length];
+            for (int i = 0; i < types.length; i++) {
+                Class<?> type = types[i];
+                if (i == 0 || i == 1) {
+                    args[i] = type == float.class ? Float.valueOf(cx) : type == int.class ? Integer.valueOf(cx) : Double.valueOf(cx);
+                } else if (type == int.class || type == Integer.class) {
+                    args[i] = Integer.valueOf(i == 2 ? 0 : 0);
+                } else if (type == boolean.class) {
+                    args[i] = Boolean.FALSE;
+                } else if (type == float.class) {
+                    args[i] = Float.valueOf(0.0F);
+                } else if (type == double.class) {
+                    args[i] = Double.valueOf(0.0D);
+                } else {
+                    args[i] = null;
+                }
+            }
+            chosen.invoke(element, args);
+            StringBuilder signature = new StringBuilder(name).append('(');
+            for (int i = 0; i < types.length; i++) {
+                if (i > 0) {
+                    signature.append(',');
+                }
+                signature.append(types[i].getSimpleName());
+            }
+            return signature.append(')').toString();
+        } catch (ReflectiveOperationException | RuntimeException failed) {
+            // The parameter types are part of the failure, not just the exception: measured, the 4-argument
+            // mouseClicked was reached and the invocation failed with "argument type mismatch", which cannot be
+            // acted on without knowing what the four types are.
+            StringBuilder signature = new StringBuilder(name).append('(');
+            Class<?>[] types = chosen.getParameterTypes();
+            for (int i = 0; i < types.length; i++) {
+                if (i > 0) {
+                    signature.append(',');
+                }
+                signature.append(types[i].getName());
+            }
+            return signature.append(") threw ").append(failed).toString();
+        }
     }
 
     private static int celtium$vsDimInt(Object dimension, String[] names) {
