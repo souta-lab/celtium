@@ -9386,7 +9386,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the inconsistency, not the validation layer. The picture is unchanged in every one of them
      * (presentedMean=71.302086, fixture PASSED/PASSED).
      */
-    private static final boolean PAIR_STAY_GENERAL = Boolean.getBoolean("celtium.vulkan.pairStayGeneral");
+    /**
+     * Whether the renderer's pair images stay in {@code GENERAL} for sampling instead of transitioning to
+     * {@code SHADER_READ_ONLY_OPTIMAL}. {@code GENERAL} is a legal sampling layout and the layout the pair's own pass
+     * declares, so keeping it removes the transition *and* the mismatch it produced: a descriptor declaring
+     * {@code SHADER_READ_ONLY} over an image the pass then attached expecting {@code GENERAL} was the
+     * {@code VUID-vkCmdDraw-None-09600} the legs kept logging on image {@code 0x37} (the chain pair). Default on;
+     * {@code -Dceltium.vulkan.pairStayGeneral=false} restores the transition. Read with the same default as
+     * {@link VulkanGlTexture}'s constant - one property, one default.
+     */
+    private static final boolean PAIR_STAY_GENERAL =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pairStayGeneral", "true"));
     private static final boolean SELF_COMPOSITE_SKIP =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.skipSelfComposite", "true"));
     /**
