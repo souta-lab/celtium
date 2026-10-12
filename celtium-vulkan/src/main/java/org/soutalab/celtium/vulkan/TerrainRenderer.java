@@ -6,6 +6,10 @@ import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltSectionMeshParts;
 import org.lwjgl.vulkan.VK10;
+import java.nio.ByteBuffer;
+import org.lwjgl.system.MemoryUtil;
+import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType;
+import static org.lwjgl.vulkan.VK10.vkCmdDrawIndexedIndirect;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -267,6 +271,221 @@ public final class TerrainRenderer {
             record("pipeline for " + pass.name() + " failed: " + describe(error));
             this.pipelines.put(pass, null);
             return null;
+        }
+    }
+
+
+    // ---------------------------------------------------------------- indirect batch (R4)
+
+    private static final int INDIRECT_COMMAND_BYTES = 20;
+    private static final boolean TERRAIN_INDIRECT_COMPARE =
+            Boolean.getBoolean("celtium.vulkan.indirectCompare");
+
+    /** The indirect command buffer and how often it had to grow. */
+    /** The pass counters, so a fallback records its draw count where the pass does. */
+    private TerrainStatistics statistics;
+
+    /** Gives the class the pass counters it records into. */
+    void setStatistics(TerrainStatistics statistics) {
+        this.statistics = statistics;
+    }
+
+    private VulkanBuffer indirectBuffer;
+    private long indirectGrowths;
+    private String lastTerrainIndirectFallback;
+
+    private long terrainIndirectOffers;
+    private long terrainIndirectCalls;
+    private long terrainIndirectDraws;
+    private long terrainIndirectFallbacks;
+    private long terrainIndirectClampEvents;
+    private long terrainIndirectCommandDraws;
+    private long terrainIndirectCommandChecksum;
+    private long terrainDirectEquivalentDraws;
+    private long terrainDirectEquivalentChecksum;
+
+    /** {@return terrainIndirectOffers}. */
+    long terrainIndirectOffers() {
+        return this.terrainIndirectOffers;
+    }
+
+    /** {@return terrainIndirectCalls}. */
+    long terrainIndirectCalls() {
+        return this.terrainIndirectCalls;
+    }
+
+    /** {@return terrainIndirectDraws}. */
+    long terrainIndirectDraws() {
+        return this.terrainIndirectDraws;
+    }
+
+    /** {@return terrainIndirectFallbacks}. */
+    long terrainIndirectFallbacks() {
+        return this.terrainIndirectFallbacks;
+    }
+
+    /** {@return terrainIndirectClampEvents}. */
+    long terrainIndirectClampEvents() {
+        return this.terrainIndirectClampEvents;
+    }
+
+    /** {@return terrainIndirectCommandDraws}. */
+    long terrainIndirectCommandDraws() {
+        return this.terrainIndirectCommandDraws;
+    }
+
+    /** {@return terrainIndirectCommandChecksum}. */
+    long terrainIndirectCommandChecksum() {
+        return this.terrainIndirectCommandChecksum;
+    }
+
+    /** {@return terrainDirectEquivalentDraws}. */
+    long terrainDirectEquivalentDraws() {
+        return this.terrainDirectEquivalentDraws;
+    }
+
+    /** {@return terrainDirectEquivalentChecksum}. */
+    long terrainDirectEquivalentChecksum() {
+        return this.terrainDirectEquivalentChecksum;
+    }
+
+    /** Records one fallback to direct draws. */
+    void noteTerrainIndirectFallback() {
+        this.terrainIndirectFallbacks++;
+    }
+
+    /** Records why the indirect path fell back. */
+    void setLastTerrainIndirectFallback(String reason) {
+        this.lastTerrainIndirectFallback = reason;
+    }
+
+    /** {@return why the last indirect batch fell back}. */
+    String lastTerrainIndirectFallback() {
+        return this.lastTerrainIndirectFallback;
+    }
+
+    /** {@return how many times the indirect buffer grew}. */
+    long terrainIndirectGrowths() {
+        return this.indirectGrowths;
+    }
+
+    static long commandHash(long checksum, int indexCount, long firstIndex, int vertexOffset) {
+        checksum = checksum * 1099511628211L + indexCount;
+        checksum = checksum * 1099511628211L + firstIndex;
+        checksum = checksum * 1099511628211L + vertexOffset;
+        return checksum;
+    }
+
+    boolean tryIndirectBatch(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
+            org.lwjgl.system.MemoryStack stack,
+            java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
+            RegionResources resources,
+            VulkanMultiDrawBatch batch, boolean sortedPass,
+            ChunkPrimitiveType primitiveType) {
+        this.terrainIndirectOffers++;
+        if (!context.multiDrawIndirectEnabled()) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "the device was not created with multiDrawIndirect";
+            return false;
+        }
+        // Unsigned, because the limit is a uint32: RADV reports 0xFFFFFFFF ("no small bound"), which reads as -1 as a
+        // signed int and is not a negative draw count. Only a true 0 means "not reported", and then the direct path is
+        // the honest answer.
+        long maxDraws = context.maxDrawIndirectCount() & 0xFFFFFFFFL;
+        if (maxDraws == 0L) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "maxDrawIndirectCount is unknown (0)";
+            return false;
+        }
+        int size = batch.size();
+        if (size <= 0) {
+            return false;
+        }
+        // BH-02's rule, applied to the whole batch this time: one indirect call binds one index buffer, so a batch whose
+        // commands do not all read the same one is drawn directly.
+        boolean regionIndex = sortedPass;
+        if (!regionIndex) {
+            for (int i = 0; i < size; i++) {
+                if (batch.indexByteOffset(i) != 0) {
+                    this.terrainIndirectFallbacks++;
+                    this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
+                    return false;
+                }
+            }
+        }
+        if (regionIndex && resources.indexArena == null) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
+            return false;
+        }
+        int needed = size * INDIRECT_COMMAND_BYTES;
+        if (!this.ensureIndirectBuffer(context, needed)) {
+            this.terrainIndirectFallbacks++;
+            this.lastTerrainIndirectFallback = "the indirect packet buffer could not be created";
+            return false;
+        }
+        this.bindIndexBuffer(commandBuffer, regionIndex ? resources.indexArena.buffer()
+                : sharedIndexBuffers.get(primitiveType));
+        ByteBuffer packets = stack.calloc(needed);
+        for (int i = 0; i < size; i++) {
+            long byteOffset = batch.indexByteOffset(i);
+            packets.putInt(i * INDIRECT_COMMAND_BYTES, batch.elementCount(i));
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 4, 1);
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 8, regionIndex ? (int) (byteOffset / 4) : 0);
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 12, batch.baseVertex(i));
+            // firstInstance stays 0: drawIndirectFirstInstance is enabled only when the device reported it, and this
+            // path never needs anything but 0.
+            packets.putInt(i * INDIRECT_COMMAND_BYTES + 16, 0);
+        }
+        if (TERRAIN_INDIRECT_COMPARE) {
+            // The same enumeration the direct loop would perform, folded into its own counters rather than issued.
+            for (int i = 0; i < size; i++) {
+                long byteOffset = batch.indexByteOffset(i);
+                long directFirstIndex = regionIndex ? (byteOffset / 4) : 0L;
+                this.terrainDirectEquivalentDraws++;
+                this.terrainDirectEquivalentChecksum = commandHash(this.terrainDirectEquivalentChecksum,
+                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
+                this.terrainIndirectCommandDraws++;
+                this.terrainIndirectCommandChecksum = commandHash(this.terrainIndirectCommandChecksum,
+                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
+            }
+        }
+        long address = MemoryUtil.memAddress(packets);
+        int first = 0;
+        while (first < size) {
+            int count = (int) Math.min(maxDraws, (long) (size - first));
+            if (count != size - first) {
+                this.terrainIndirectClampEvents++;
+            }
+            long offsetBytes = (long) first * INDIRECT_COMMAND_BYTES;
+            this.indirectBuffer.write(offsetBytes, address + offsetBytes, count * INDIRECT_COMMAND_BYTES);
+            vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
+                    INDIRECT_COMMAND_BYTES);
+            this.terrainIndirectCalls++;
+            this.terrainIndirectDraws += count;
+            this.statistics.addLastDrawCommands(count);
+            first += count;
+        }
+        return true;
+    }
+
+    boolean ensureIndirectBuffer(VulkanContext context, int bytes) {
+        try {
+            if (this.indirectBuffer != null && this.indirectBuffer.size() >= bytes) {
+                return true;
+            }
+            if (this.indirectBuffer != null) {
+                this.indirectBuffer.delete();
+                this.indirectBuffer = null;
+            }
+            long size = Math.max(bytes, 64L * 1024L);
+            this.indirectBuffer = new VulkanBuffer(context, size,
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+            this.indirectGrowths++;
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            this.lastTerrainIndirectFallback = "indirect buffer: " + describe(error);
+            return false;
         }
     }
 

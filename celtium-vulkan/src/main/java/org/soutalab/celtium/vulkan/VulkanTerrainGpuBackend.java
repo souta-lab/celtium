@@ -81,6 +81,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
 
     /** The terrain pass's region arenas and failed-upload ledger (refactoring plan R4, first half). */
     private final TerrainRenderer terrain = new TerrainRenderer();
+
     private final List<String> diagnostics = new ArrayList<>();
 
     private final Reference2ReferenceMap<ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers = new Reference2ReferenceOpenHashMap<>();
@@ -402,7 +403,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 Integer.highestOneBit(Math.max(MIN_UNIFORM_ALIGNMENT, this.alignmentFromDevice())));
         this.uniformStride = align(UNIFORM_BYTES, this.uniformAlignment);
         createCommandResources();
-    }
+    
+        this.terrain.setStatistics(this.terrainStatistics);
+        this.terrain.setContext(this.context);
+        this.terrain.setDiagnostics(this::record);
+}
 
     /**
      * Creates the instance that exists from window creation, before any world renderer does.
@@ -1379,15 +1384,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private static final boolean TERRAIN_INDIRECT_ENABLED =
             Boolean.getBoolean("celtium.vulkan.indirectTerrain");
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
-    private static final int INDIRECT_COMMAND_BYTES = 20;
     /** The device-side buffer the packets are written into, created on first use and grown when a batch needs more. */
-    private VulkanBuffer terrainIndirectBuffer;
     /** Batches offered to the indirect path, calls recorded, draws carried by them, and clamp events. */
-    private long terrainIndirectOffers;
-    private long terrainIndirectCalls;
-    private long terrainIndirectDraws;
-    private long terrainIndirectGrowths;
-    private long terrainIndirectClampEvents;
     /**
      * The within-leg equivalence check the plan's acceptance needs, and the reason it is a check rather than a picture.
      * <p>
@@ -1398,24 +1396,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * vertexOffset)} per command, same order - and both streams are folded into one checksum each. Equal counts and
      * equal checksums in a single leg is "identical submitted geometry and order" without a cross-boot caveat.
      */
-    private static final boolean TERRAIN_INDIRECT_COMPARE =
-            Boolean.getBoolean("celtium.vulkan.indirectCompare");
-    private long terrainIndirectCommandDraws;
-    private long terrainIndirectCommandChecksum;
-    private long terrainDirectEquivalentDraws;
-    private long terrainDirectEquivalentChecksum;
 
     /** Folds one command's identity into a stream checksum, so order and content are both covered. */
-    private static long celtium$commandHash(long checksum, int indexCount, long firstIndex, int vertexOffset) {
-        checksum = checksum * 1099511628211L + indexCount;
-        checksum = checksum * 1099511628211L + firstIndex;
-        checksum = checksum * 1099511628211L + vertexOffset;
-        return checksum;
-    }
 
     /** Batches that fell back to direct draws, and the last reason (a missing capability or a mixed index source). */
-    private long terrainIndirectFallbacks;
-    private String lastTerrainIndirectFallback = "none";
 
     /** Viewports issued per group; BH-13's counter, so "the rectangle was restored" is readable, not assumed. */
     /**
@@ -2779,116 +2763,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * could not be created. The caller then draws the batch directly, so the fallback is a different way to submit the
      * same geometry rather than a drop.
      */
-    private boolean celtium$tryIndirectBatch(MemoryStack stack, TerrainRenderer.RegionResources resources,
-            VulkanMultiDrawBatch batch, boolean sortedPass,
-            ChunkPrimitiveType primitiveType) {
-        this.terrainIndirectOffers++;
-        if (!this.context.multiDrawIndirectEnabled()) {
-            this.terrainIndirectFallbacks++;
-            this.lastTerrainIndirectFallback = "the device was not created with multiDrawIndirect";
-            return false;
-        }
-        // Unsigned, because the limit is a uint32: RADV reports 0xFFFFFFFF ("no small bound"), which reads as -1 as a
-        // signed int and is not a negative draw count. Only a true 0 means "not reported", and then the direct path is
-        // the honest answer.
-        long maxDraws = this.context.maxDrawIndirectCount() & 0xFFFFFFFFL;
-        if (maxDraws == 0L) {
-            this.terrainIndirectFallbacks++;
-            this.lastTerrainIndirectFallback = "maxDrawIndirectCount is unknown (0)";
-            return false;
-        }
-        int size = batch.size();
-        if (size <= 0) {
-            return false;
-        }
-        // BH-02's rule, applied to the whole batch this time: one indirect call binds one index buffer, so a batch whose
-        // commands do not all read the same one is drawn directly.
-        boolean regionIndex = sortedPass;
-        if (!regionIndex) {
-            for (int i = 0; i < size; i++) {
-                if (batch.indexByteOffset(i) != 0) {
-                    this.terrainIndirectFallbacks++;
-                    this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
-                    return false;
-                }
-            }
-        }
-        if (regionIndex && resources.indexArena == null) {
-            this.terrainIndirectFallbacks++;
-            this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
-            return false;
-        }
-        int needed = size * INDIRECT_COMMAND_BYTES;
-        if (!celtium$ensureIndirectBuffer(needed)) {
-            this.terrainIndirectFallbacks++;
-            this.lastTerrainIndirectFallback = "the indirect packet buffer could not be created";
-            return false;
-        }
-        this.terrain.bindIndexBuffer(this.commandBuffer, regionIndex ? resources.indexArena.buffer()
-                : this.sharedIndexBuffers.get(primitiveType));
-        ByteBuffer packets = stack.calloc(needed);
-        for (int i = 0; i < size; i++) {
-            long byteOffset = batch.indexByteOffset(i);
-            packets.putInt(i * INDIRECT_COMMAND_BYTES, batch.elementCount(i));
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 4, 1);
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 8, regionIndex ? (int) (byteOffset / 4) : 0);
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 12, batch.baseVertex(i));
-            // firstInstance stays 0: drawIndirectFirstInstance is enabled only when the device reported it, and this
-            // path never needs anything but 0.
-            packets.putInt(i * INDIRECT_COMMAND_BYTES + 16, 0);
-        }
-        if (TERRAIN_INDIRECT_COMPARE) {
-            // The same enumeration the direct loop would perform, folded into its own counters rather than issued.
-            for (int i = 0; i < size; i++) {
-                long byteOffset = batch.indexByteOffset(i);
-                long directFirstIndex = regionIndex ? (byteOffset / 4) : 0L;
-                this.terrainDirectEquivalentDraws++;
-                this.terrainDirectEquivalentChecksum = celtium$commandHash(this.terrainDirectEquivalentChecksum,
-                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
-                this.terrainIndirectCommandDraws++;
-                this.terrainIndirectCommandChecksum = celtium$commandHash(this.terrainIndirectCommandChecksum,
-                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
-            }
-        }
-        long address = MemoryUtil.memAddress(packets);
-        int first = 0;
-        while (first < size) {
-            int count = (int) Math.min(maxDraws, (long) (size - first));
-            if (count != size - first) {
-                this.terrainIndirectClampEvents++;
-            }
-            long offsetBytes = (long) first * INDIRECT_COMMAND_BYTES;
-            this.terrainIndirectBuffer.write(offsetBytes, address + offsetBytes, count * INDIRECT_COMMAND_BYTES);
-            vkCmdDrawIndexedIndirect(this.commandBuffer, this.terrainIndirectBuffer.buffer(), offsetBytes, count,
-                    INDIRECT_COMMAND_BYTES);
-            this.terrainIndirectCalls++;
-            this.terrainIndirectDraws += count;
-            this.terrainStatistics.addLastDrawCommands(count);
-            first += count;
-        }
-        return true;
-    }
 
     /** Grows the indirect packet buffer to hold at least {@code bytes}; false when it could not be created. */
-    private boolean celtium$ensureIndirectBuffer(int bytes) {
-        try {
-            if (this.terrainIndirectBuffer != null && this.terrainIndirectBuffer.size() >= bytes) {
-                return true;
-            }
-            if (this.terrainIndirectBuffer != null) {
-                this.terrainIndirectBuffer.delete();
-                this.terrainIndirectBuffer = null;
-            }
-            long size = Math.max(bytes, 64L * 1024L);
-            this.terrainIndirectBuffer = new VulkanBuffer(this.context, size,
-                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-            this.terrainIndirectGrowths++;
-            return true;
-        } catch (RuntimeException | LinkageError error) {
-            this.lastTerrainIndirectFallback = "indirect buffer: " + describe(error);
-            return false;
-        }
-    }
 
     private void celtium$writeFogPush(ImmediateGroup group, ByteBuffer push) {
         float[] fog = group.fog;
@@ -8096,19 +7972,19 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " lastUniformPreparationFailure=" + this.immediateStatistics.lastUniformPreparationFailure()
                 + " regionUploadFailures=" + this.regionUploadFailures
                 + " sectionsLeftUnbuilt=" + this.terrain.sectionsLeftUnbuilt()
-                + " terrainIndirect=[offers=" + this.terrainIndirectOffers
-                + " calls=" + this.terrainIndirectCalls
-                + " draws=" + this.terrainIndirectDraws
-                + " clamps=" + this.terrainIndirectClampEvents
-                + " growths=" + this.terrainIndirectGrowths
-                + " fallbacks=" + this.terrainIndirectFallbacks
-                + " lastFallback=" + this.lastTerrainIndirectFallback.replace(' ', '_') + "]"
-                + " terrainIndirectStream=[indirectDraws=" + this.terrainIndirectCommandDraws
-                + " indirectChecksum=" + Long.toHexString(this.terrainIndirectCommandChecksum)
-                + " directDraws=" + this.terrainDirectEquivalentDraws
-                + " directChecksum=" + Long.toHexString(this.terrainDirectEquivalentChecksum)
-                + " match=" + (this.terrainIndirectCommandDraws == this.terrainDirectEquivalentDraws
-                        && this.terrainIndirectCommandChecksum == this.terrainDirectEquivalentChecksum)
+                + " terrainIndirect=[offers=" + this.terrain.terrainIndirectOffers()
+                + " calls=" + this.terrain.terrainIndirectCalls()
+                + " draws=" + this.terrain.terrainIndirectDraws()
+                + " clamps=" + this.terrain.terrainIndirectClampEvents()
+                + " growths=" + this.terrain.terrainIndirectGrowths()
+                + " fallbacks=" + this.terrain.terrainIndirectFallbacks()
+                + " lastFallback=" + this.terrain.lastTerrainIndirectFallback().replace(' ', '_') + "]"
+                + " terrainIndirectStream=[indirectDraws=" + this.terrain.terrainIndirectCommandDraws()
+                + " indirectChecksum=" + Long.toHexString(this.terrain.terrainIndirectCommandChecksum())
+                + " directDraws=" + this.terrain.terrainDirectEquivalentDraws()
+                + " directChecksum=" + Long.toHexString(this.terrain.terrainDirectEquivalentChecksum())
+                + " match=" + (this.terrain.terrainIndirectCommandDraws() == this.terrain.terrainDirectEquivalentDraws()
+                        && this.terrain.terrainIndirectCommandChecksum() == this.terrain.terrainDirectEquivalentChecksum())
                 + "]"
                 + " " + org.soutalab.celtium.vulkan.VulkanArena.alignmentSummary()
                 + " lastRegionUploadFailure=" + this.lastRegionUploadFailure
@@ -9429,10 +9305,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // is drawn directly with the reason counted. BH-02's rule decides which source that is.
             boolean indirect = false;
             if (TERRAIN_INDIRECT_ENABLED) {
-                indirect = celtium$tryIndirectBatch(stack, resources, batch, sortedPass, primitiveType);
+                indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer, stack, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType);
             } else {
-                this.terrainIndirectFallbacks++;
-                this.lastTerrainIndirectFallback = "the indirect path is off (-Dceltium.vulkan.indirectTerrain)";
+                this.terrain.noteTerrainIndirectFallback();
+                this.terrain.setLastTerrainIndirectFallback("the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
             }
             if (!indirect) {
             for (int command = 0; command < batch.size(); command++) {
