@@ -3531,7 +3531,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
                     + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());
         }
-        ImmediateGroup group = new ImmediateGroup(mesh, projection, modelView,
+        ImmediateGroup group = ImmediateGroup.obtain(mesh, projection, modelView,
                 VulkanImmediateFormats.ITEM, texture, key, state, target);
         group.prepared = prepared;
         group.combineColor = combineColor;
@@ -4723,7 +4723,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 record("frame boundary dropped " + dropped + " accepted immediate batches whose target never got a"
                         + " pass (targets=" + targets + ", total " + this.targetStatistics.unflushedTargetGroupsDropped() + ")");
             }
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
         }
         // Frame boundary: reconcile what the frame that just ended accepted and drew, then start a new one. Everything
@@ -6118,6 +6118,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * Discards every queued group and returns its instance to the pool.
+     * <p>
+     * Only the sites where the group leaves every list at once belong here: a clear that follows an
+     * {@code addAll(immediateGroups)} into the retired list is a reference move, not a death, and recycling there
+     * would hand a still-live group back to the freelist.
+     */
+    private void celtium$discardImmediateGroups() {
+        for (ImmediateGroup group : this.immediateGroups) {
+            ImmediateGroup.recycle(group);
+        }
+        this.immediateGroups.clear();
+    }
+
+    /**
      * Frees the meshes of retired groups whose submissions the sequence watermark has covered.
      * <p>
      * Groups are tagged at retire time with the newest submission that can still name their arena bytes - the
@@ -6143,10 +6157,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // The mesh is held by whoever lent it (the captured model meshes are reused every frame), so retiring
                 // the group must not free it.
                 iterator.remove();
+                ImmediateGroup.recycle(group);
                 continue;
             }
             group.mesh.delete();
             iterator.remove();
+            ImmediateGroup.recycle(group);
         }
     }
 
@@ -7039,7 +7055,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 dropped += group.batches;
             }
             this.immediateStatistics.addPostAcceptDroppedGroups(dropped);
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.replaceBoundaryDrops++;
             if (this.replaceBoundaryDropBatches == 0) {
                 this.replaceBoundaryDropBatches = dropped;
@@ -7093,7 +7109,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 dropped += group.batches;
             }
             this.immediateStatistics.addOrderingFlushDroppedBatches(dropped);
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
             record("ordering flush failed at frame " + this.frameId + ", its " + dropped
                     + " accepted batches were dropped and the next frame retries (orderingFlushFailures="
@@ -7129,7 +7145,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 record("GPU stalled: dropping " + dropped + " accepted immediate batches (total "
                         + this.submissionStatistics.stalledGeometryDroppedBatches() + ")");
             }
-            this.immediateGroups.clear();
+            celtium$discardImmediateGroups();
             this.pendingImmediateIndices = 0;
             return;
         }
