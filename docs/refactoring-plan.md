@@ -6,16 +6,22 @@
 > | stage | state |
 > |---|---|
 > | R0 baseline freeze | done: HEAD/jar/fixture/flags recorded in docs/plan.md |
-> | R1a `TextureCopyService` | done and wired |
-> | R1b `PublishedFrameTextures` | done and wired (census, counters, accessors; `CELTIUM_CPU_CONTRACT PASS`) |
-> | R1c `BackendReport` | done and wired (the verification line's output contract; counters stay in the backend) |
-> | R2 per-domain statistics | **not complete.** Attempted twice: the first application used a line-range map against a file my own earlier wiring had shifted and produced uncompilable code (reverted); the second anchored on the method and produced a clean call sequence, but the seven classes reference backend members they were never given, so they cannot compile without a host interface the plan's section 6.1 warns against inventing in bulk. The classes and the run/line map are parked in `docs/history/refactoring-r2-classes/` (their own directory, not a claim that the stage is done) and `docs/history/2026-10-12-r2-wiring-map.md`; the verification line is back to its own expression, which is what leg records expect. |
-> | R3a `ModelGeometryCache` | **done and wired** (665a099b8): ten fields gone, the builder delegates, the teardown loops, the borrow path and every report read go through the class |
-> | R3b `FontBatch` | class written with a CPU contract check (30 checks, retention proof, summary-key invariance); **not wired.** The `FontRunState` view and the `RunSink` body are written and understood (the sink is the old flush's apply/restore around `submitImmediateBatch`), but replacing the backend's four font entry points needs brace-matched replacement of multi-line signatures, and two attempts cut inside the old bodies. It is a careful single pass, not a bulk edit |
-> | R4 `TerrainRenderer` | delegation list and the three interface points agreed; **not written** |
-> | R5 `RenderTargetRegistry` | **done and wired** (b3708bcd1) except the pair clear decisions, which are not a rename: `celtium$pairClearNeeded` is called from four sites with different arguments and the registry's `noteClear` returns the decision instead of the backend storing a frame serial |
-> | R6 `FrameSubmissionScheduler` | **done and wired** (4d9e8528a): the slots, their sequences, the retirement rules and the counters are the scheduler's, with `FRAME_SLOTS` an alias; the Vulkan calls (command buffers, fences, `waitForSlot`, submit) stay in the backend. The parked R2 `SubmissionStatistics` class claimed these counters, so whoever revives R2 must make it read the scheduler rather than duplicate them |
-> | R7 root/`FrameCoordinator`, R8 cleanup | not started |
+> | R1a `TextureCopyService` | **done and wired** |
+> | R1b `PublishedFrameTextures` | **done and wired** (census, counters, accessors; `CELTIUM_CPU_CONTRACT PASS`) |
+> | R1c `BackendReport` | **done and wired** (the verification line's output contract; counters stay with their owners) |
+> | R2 per-domain statistics | **done, all seven stages** (Font, Model, Texture, Terrain, Target, Submission, Immediate). The line's field names and their order are unchanged in every stage; a counter whose owner already exists is read from that owner and never duplicated, and a map, an array or a piece of frame state is not a counter and does not move. `verify_line_check.py` and a leg's last `CELTIUM_VERIFY` line are the acceptance |
+> | R3a `ModelGeometryCache` | **done and wired** (ten fields gone; builder, teardown, borrow and report reads delegate) |
+> | R3b `FontBatch` | **done and wired** (four font entry points delegate; the backend implements `FontRunState` and `RunSink`; the retention fix has a CPU contract check, and the counters are read from the class after the wiring was found printing zeros) |
+> | R4 `TerrainRenderer` | **first half done** (region arenas, failed-upload ledger, BH-25 counter, `resourcesFor`/`indexArena`/`resourcesIfPresent`/`releaseAll`, `bindVertexBuffer`/`bindIndexBuffer` with the command buffer as a parameter). **Second half open**: `render`, `recordRenderPass`, `uploadRegion`, `writeUniforms` (needs `TerrainUniformSink`), `celtium$tryIndirectBatch` with its buffer and counters, `pipelineFor`, `terrainPipelineForFrame` - measured at 678 lines. `verifyUpload` was deleted because it had no caller |
+> | R5 `RenderTargetRegistry` | **done and wired** (target generation, `frameTargetKnown` latch, pair framebuffer handles, identity/census, `framebufferReplacing`, pair clear bookkeeping - with the policy left in the backend) |
+> | R6 `FrameSubmissionScheduler` | **done and wired** (slots, sequences, retirement rules, counters; `FRAME_SLOTS` is an alias; the Vulkan calls stay in the backend) |
+> | R7 root/`FrameCoordinator` | **not started** - this is where the backend becomes a facade; its remaining size is the sum of the domains not yet moved (immediate ~2,580 method lines, texture ~550, target ~462, frame ~453, plus fields, comments and nested classes) |
+> | R8 cleanup | **partly done**: twenty-two declaration-only fields, nine declaration-only methods and three more fields across three files removed, each proven by the build. Remaining: the stale comment that still names a field the registry owns, the duplicated publication display, and the `replaceBoundaryDrops` / `postAcceptDroppedGroups` double count - the one candidate that needs a leg rather than a build |
+>
+> **On size:** the line count is not this plan's landing condition - the ownership and state contracts are. Each
+> stage above is accepted by its own evidence (a build, the CPU contract checks, the line's byte-exact baseline),
+> and a stage that cannot compile is worse than one not started, which is what the two R2 attempts and three R4
+> attempts each demonstrated.
 >
 > **Method lesson, recorded because it cost two attempts:** a line-range map is only valid for the revision it was
 > measured on. Wiring has to anchor on text, and the tree has to be built before the next stage starts - a stage that
