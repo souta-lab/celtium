@@ -4270,21 +4270,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** The colour texture recorded for a framebuffer identity as {texture, width, height}, or null. */
     /**
-     * Prints, once per distinct render-target identity, which image the routing rule gives it.
+     * Notes a render-target identity the first time a group is offered under it, so the line can be printed with the
+     * group's own texture and format once they are known.
      * <p>
      * The missing HUD needed exactly this and nothing else could answer it: the HUD's batches are accepted and drawn,
      * but which of the renderer's images they land in is decided by the identity the game had bound when they were
-     * offered, and no existing line names that mapping for a frame after frame 0 (`CELTIUM_WINDOW_DRAW` is bounded, and
-     * `pairLabelForIdentity` reports a label the attach does not follow). Bounded to
-     * {@link #TARGET_IMAGE_LOG_LIMIT} distinct identities, printed at the first offer of each, with the three images the
-     * renderer owns beside it so the route can be read against them.
+     * offered, and no existing line names that mapping for a frame after frame 0 (`CELTIUM_WINDOW_DRAW` is bounded,
+     * and `pairLabelForIdentity` reports a label the attach does not follow). Bounded to
+     * {@link #TARGET_IMAGE_LOG_LIMIT} distinct identities. The texture and format are printed because they are what
+     * says which stage an identity carries: the HUD's families are the GUI and font textures, the world's are the
+     * terrain and entity ones.
+     *
+     * @return the identity to print at the next group creation, or {@link Long#MIN_VALUE} when there is nothing to print
      */
-    private void celtium$traceTargetImage(long identity) {
-        if (this.targetImageLogs >= TARGET_IMAGE_LOG_LIMIT || this.tracedTargetIdentities.contains(Long.valueOf(identity))) {
-            return;
+    private boolean celtium$noteTargetIdentity(long identity) {
+        if (identity == Long.MIN_VALUE || this.targetImageLogs >= TARGET_IMAGE_LOG_LIMIT
+                || this.tracedTargetIdentities.contains(Long.valueOf(identity))) {
+            return false;
         }
         this.tracedTargetIdentities.add(Long.valueOf(identity));
         this.targetImageLogs++;
+        return true;
+    }
+
+    /** Prints the line {@link #celtium$noteTargetIdentity} collected, with the group's texture and format. */
+    private void celtium$printTargetImage(long identity, int texture, int formatId) {
         boolean isMain = this.targetRegistry.currentIsMain();
         long[] colourTexture = framebufferColorTexture(identity);
         GllessFrameTarget target = offTargetTarget();
@@ -4297,6 +4307,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 : "default-pair".equals(route) ? defaultPair : 0L;
         System.out.println("[Celtium] CELTIUM_TARGET_IMAGE identity=0x" + Long.toHexString(identity)
                 + " isMain=" + isMain + " route=" + route
+                + " firstTexture=" + texture + " firstFormat=" + formatId
                 + " colourTexture=" + (colourTexture == null || colourTexture.length == 0 ? "none"
                         : Integer.toString((int) colourTexture[0]))
                 + " routedImage=0x" + Long.toHexString(routed)
@@ -4305,12 +4316,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " defaultPair=0x" + Long.toHexString(defaultPair));
     }
 
-    /** Distinct identities {@code CELTIUM_TARGET_IMAGE} has reported; see {@link #celtium$traceTargetImage}. */
+    /** {@return each identity seen, its route, and the textures and formats its groups carried}. */
+    private String celtium$targetStagesSummary() {
+        StringBuilder text = new StringBuilder();
+        for (java.util.Map.Entry<Long, java.util.Set<Integer>> entry : this.targetStageTextures.entrySet()) {
+            long identity = entry.getKey().longValue();
+            if (text.length() > 0) {
+                text.append(' ');
+            }
+            text.append("0x").append(Long.toHexString(identity)).append(':')
+                    .append(GllessFrameTarget.routeLabelForBinding(identity,
+                            identity == this.targetRegistry.mainIdentity()))
+                    .append(":tex=").append(entry.getValue())
+                    .append(":fmt=").append(this.targetStageFormats.get(entry.getKey()));
+        }
+        return text.toString();
+    }
+
+    /** Distinct identities {@code CELTIUM_TARGET_IMAGE} has reported; see {@link #celtium$noteTargetIdentity}. */
     private static final int TARGET_IMAGE_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.targetImageLines", 12).intValue();
     private final java.util.Set<Long> tracedTargetIdentities = new java.util.HashSet<Long>();
     private int targetImageLogs;
-
+    /** Textures and formats seen per render-target identity, for {@code targetStages} in the verification line. */
+    private final java.util.Map<Long, java.util.Set<Integer>> targetStageTextures =
+            new java.util.LinkedHashMap<Long, java.util.Set<Integer>>();
+    private final java.util.Map<Long, java.util.Set<Integer>> targetStageFormats =
+            new java.util.LinkedHashMap<Long, java.util.Set<Integer>>();
     private long[] framebufferColorTexture(long identity) {
         return this.publishedTextures.colorTexture(identity);
     }
@@ -5617,7 +5649,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // second framebuffer was bound were enqueued as main-target work. That is why the off-target pass found an
                 // empty queue every run (audit A10/A32). Resetting the flag keeps the older path consistent as well.
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
-                celtium$traceTargetImage(this.currentGroupTarget);
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupUsed = false;
                 this.currentGroupFog = null;
@@ -5756,7 +5787,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 Integer seen = this.blendPairs.get(pair);
                 this.blendPairs.put(pair, Integer.valueOf(seen == null ? 1 : seen.intValue() + 1));
                 this.currentGroupTarget = this.targetRegistry.currentIdentity();
-                celtium$traceTargetImage(this.currentGroupTarget);
                 this.currentGroupViewport = this.currentViewportKey;
                 this.currentGroupTexMatrix = celtium$textureAffine();
                 // The registry records this group was built against: the fast path asks "is the offer's image
@@ -8166,6 +8196,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                                 && this.textureRegistry.get(this.currentGroupTexture) != null)
                         + " worldPass=" + this.worldPassActive);
             }
+            // Both facts are available here and nowhere earlier: the identity the group was accepted under and the
+            // texture and format it carries. Noting them at the open was tried and printed nothing, because the open
+            // runs on a path that does not always reach a new group.
+            if (celtium$noteTargetIdentity(this.currentGroupTarget)) {
+                celtium$printTargetImage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
+            }
+            // Every texture and format seen under each identity, so the stage an identity carries is readable from one
+            // line even when the HUD's own families arrive long after that identity's first group. This is what places
+            // the HUD's textures relative to the world's on the identity the routing sends to the chain pair.
+            if (this.targetStageTextures.size() < 16) {
+                java.util.Set<Integer> seenTextures = this.targetStageTextures.get(Long.valueOf(this.currentGroupTarget));
+                if (seenTextures == null) {
+                    seenTextures = new java.util.LinkedHashSet<Integer>();
+                    this.targetStageTextures.put(Long.valueOf(this.currentGroupTarget), seenTextures);
+                }
+                if (seenTextures.size() < 24) {
+                    seenTextures.add(Integer.valueOf(this.currentGroupTexture));
+                }
+                java.util.Set<Integer> seenFormats = this.targetStageFormats.get(Long.valueOf(this.currentGroupTarget));
+                if (seenFormats == null) {
+                    seenFormats = new java.util.LinkedHashSet<Integer>();
+                    this.targetStageFormats.put(Long.valueOf(this.currentGroupTarget), seenFormats);
+                }
+                if (seenFormats.size() < 24) {
+                    seenFormats.add(Integer.valueOf(this.currentGroupFormatId));
+                }
+            }
             ImmediateGroup group = new ImmediateGroup(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
                     this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
@@ -8390,6 +8447,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // ran, and the missing HUD turns on exactly that (GuiIngameMixin's `gui` bracket against a HUD that may
                 // never be drawn).
                 + " passBegins=[" + FramePassTimings.passBeginCallsSummary() + "]"
+                // Which textures and formats each identity carried: the stage census the HUD question needs, because an
+                // identity's first group says nothing about the families that arrive later in the frame.
+                + " targetStages=[" + this.celtium$targetStagesSummary() + "]"
                 + " framePassSplit=[" + FramePassTimings.summary() + "]"
                 + " polygonOffsetFillEnabled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetFillEnabled()
                 + " polygonOffsetCalled=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCalled()
