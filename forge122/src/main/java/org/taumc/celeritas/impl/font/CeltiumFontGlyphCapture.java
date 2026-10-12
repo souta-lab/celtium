@@ -332,6 +332,8 @@ public final class CeltiumFontGlyphCapture {
     private static long stringStartNanos;
     private static long accepted;
     private static long refused;
+    /** Individual buffered quads the per-quad fallback could not place anywhere (B16). */
+    private static long refusedQuads;
     private static boolean firstQuadReported;
     private static final Map<String, Integer> REFUSALS = new LinkedHashMap<String, Integer>();
     /**
@@ -670,19 +672,29 @@ public final class CeltiumFontGlyphCapture {
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
                 boolean taken = vulkan.celtium$fontAppend(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
                         FORMAT_ID, bufferedQuadsBase, bufferedVertexCount, GL_TRIANGLE_STRIP);
-                if (!taken) {
+                int takenThisFlush;
+                if (taken) {
+                    takenThisFlush = bufferedQuadCount;
+                } else {
                     // The run refused (matrices dirty, a stall, off-main target): submit each stored quad through
                     // the ordinary path, in order. Quads sit at every sixth vertex past the separators between
-                    // them - [Q][sep][Q][sep][Q] - so the walk is a fixed stride.
+                    // them - [Q][sep][Q][sep][Q] - so the walk is a fixed stride. B16: each quad's own result is
+                    // counted - a refusal under the OR would previously promote the whole flush to accepted.
+                    takenThisFlush = 0;
                     for (int k = 0; k < bufferedQuadCount; k++) {
-                        taken |= backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
+                        if (backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
                                 FORMAT_ID, bufferedQuadsBase + (long) k * 6 * STRIDE, MAX_VERTICES,
-                                GL_TRIANGLE_STRIP);
+                                GL_TRIANGLE_STRIP)) {
+                            takenThisFlush++;
+                        }
+                    }
+                    if (takenThisFlush != bufferedQuadCount) {
+                        refusedQuads += bufferedQuadCount - takenThisFlush;
+                        refuse("flush-quad-refused", "quadCount=" + bufferedQuadCount
+                                + " accepted=" + takenThisFlush);
                     }
                 }
-                if (taken) {
-                    accepted += bufferedQuadCount;
-                }
+                accepted += takenThisFlush;
             } else if (backend != null) {
                 for (int k = 0; k < bufferedQuadCount; k++) {
                     backend.submitImmediateBatch(DefaultVertexFormats.POSITION_TEX_COLOR, STRIDE,
@@ -1224,7 +1236,8 @@ public final class CeltiumFontGlyphCapture {
     public static synchronized String summary() {
         return "windows=" + windows + " defaultWindows=" + defaultWindows + " unicodeWindows=" + unicodeWindows
                 + " bridgeWindows=" + bridgeWindows + " quads=" + quads + " submitted=" + submitted
-                + " accepted=" + accepted + " refused=" + refused + " submitMillis=" + (submitNanos / 1000000L)
+                + " accepted=" + accepted + " refused=" + refused + " refusedQuads=" + refusedQuads
+                + " submitMillis=" + (submitNanos / 1000000L)
                 + " windowMillis=" + (windowNanos / 1000000L) + " hookMillis=" + (hookNanos / 1000000L)
                 + " glyphMillis=" + (glyphNanos / 1000000L) + " glyphCalls=" + glyphCalls
                 + " stringMillis=" + (stringNanos / 1000000L) + " stringCalls=" + stringCalls
