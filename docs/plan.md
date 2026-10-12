@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.394 **round 195: B10 の拒否経路が ring スロットを漏らす（新規発見・B11 の unit で閉じる）／`VulkanPostChain.java` 移譲完了**
+
+- **新規発見（frame-composite の申し送り）**: `recordPasses` は記録の最後（`requireTargetGeneration` :1021）で**例外を投げ得る**（記録中に frame target が置換された場合の意図した拒否 ✓）。一方 ring の会計は**記録開始時**にリセットされ（`:875` `setsThisRecording = 0`・`:292-293` `setRing[32]`/`setCursor`・`:1502-1504` の slot 前進）、**throw した recording が確保した slot は返らない** ✗（`setCursor` は進んだまま・`setsThisRecording` は予算を数えるだけ）。32 slot で **resize 直後に B10 の拒否がまとめて起きる**組み合わせは現実的 → **枯渇し得る** ✓。
+- **裁定**: **B11 の unit で閉じる**（ring の所有者が perf-ring になった以上そちらが自然 ✓）。破棄経路で **`setCursor` を記録開始時の値へ戻す**（または `setsThisRecording` 分巻き戻す）✓。**commit では2つを別名で区別**する: ①**abandoned recording の slot 漏れ**（今回）②**前の submission が pending のまま slot 再利用**（`VUID-vkUpdateDescriptorSets-None-03047`）。どちらも拒否パス・wait 追加なし・leg 不要 ✓。
+- **`VulkanPostChain.java` の移譲完了**: frame-composite は B10（`45a69668a`）完了・**今後編集しない** ✓ と確認、B11 は perf-ring ✓。B10 の受入 leg で変更が要る場合は Lead 経由で順序を決める ✓。
+- **B10 の受入 leg**（spectator ON → resize/fullscreen → effect 切替 → 通常復帰・前後画像・AMD/Intel）は**配線モラトリアム明け**に実施 ✓。
+
 ## 0.393 **round 194: R3a 裁定反映（319行）／B12 計器着地・B11 の所有権移譲／監査 P1 の進行**
 
 - **R3a 反映完了（weather-water）**: `ModelGeometryCache.java` **319行**。`invalidate()` は `modelMeshQuads` に触れなくなり（9091 の world-teardown と同一挙動 ✓）、javadoc に「**今日は呼び手なしの明示 drop 入口**・reload の invalidation は `build()` の generation 駆動（10650/10666）そのもの」と明記 ✓。`borrow`/`meshBorrowed`（貸与規則の述語）・`releaseAfterWorldTeardown`（9091）・`releaseAll`（9169）は **byte-for-byte** ✓。counter の寿命（`modelDraws`/`modelDrawRefusals` static・`modelMissingMeshes` instance）は現状維持 ✓。
