@@ -189,8 +189,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Keyed on {@link #celtium$frameSerial()}: a screen's frame counts too (see that method for what keying on
      * {@code frameId} measured on the menu).
      */
-    private long defaultPairClearedFrame = -1L;
-    private long chainPairClearedFrame = -1L;
     /**
      * Which identity's content each pair holds this frame, which is what the clear-once rule is about.
      * <p>
@@ -201,8 +199,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * drawn into. The rule is now "once per pair per frame <em>per content identity</em>": a different identity's
      * later pass does not clear, and the refusal is counted and named.
      */
-    private long defaultPairContentIdentity = Long.MIN_VALUE;
-    private long chainPairContentIdentity = Long.MIN_VALUE;
     private int pairClearsRefusedOtherIdentity;
     /** Passes identity 0 (the window) drew before the game's own framebuffer was adopted, and the bounded log of them. */
     private int windowDrawsToFrameImage;
@@ -7829,8 +7825,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // initialLayout GENERAL - which is VUID-vkCmdBeginRenderPass-initialLayout-00900 unless the image is
                     // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
                     celtium$transitionPublishedFrameTextures(true);
-                    if (celtium$pairClearNeeded(offTarget.chainPairAcquired(), this.chainPairClearedFrame,
-                            this.chainPairContentIdentity, "chain-pair")) {
+                    if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                            offTarget.chainPairAcquired(),
+                            this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.CHAIN_PAIR),
+                            "chain-pair")) {
                         // Outside the pass, which is where the clear and its first-use barrier belong, and once per
                         // frame per content identity: the game clears a framebuffer when it binds it, and clearing per
                         // window would erase what an earlier window of the same frame already drew there. The acquire
@@ -7845,8 +7843,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         } else {
                             offTarget.clearChainPair(this.commandBuffer);
                         }
-                        this.chainPairClearedFrame = celtium$frameSerial();
-                        this.chainPairContentIdentity = this.targetRegistry.currentIdentity();
+                        this.targetRegistry.notePairCleared(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                                celtium$frameSerial(), this.targetRegistry.currentIdentity());
                         this.chainPairClears++;
                         // Order against the faces' own pass: the copy reads this pair and the faces drew into it, so
                         // a clear that lands after their DRAW_SITE is what leaves the copy white.
@@ -7883,11 +7881,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
                     // No hand-back here: the published image is the chain pair's, and this pass attaches the default
                     // pair. Transitioning the published image is the sampling site's job, below.
-                    if (celtium$pairClearNeeded(offTarget.offTargetAcquired(), this.defaultPairClearedFrame,
-                            this.defaultPairContentIdentity, "default-pair")) {
+                    if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR,
+                            offTarget.offTargetAcquired(),
+                            this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR),
+                            "default-pair")) {
                         offTarget.clearOffTarget(this.commandBuffer);
-                        this.defaultPairClearedFrame = celtium$frameSerial();
-                        this.defaultPairContentIdentity = this.targetRegistry.currentIdentity();
+                        this.targetRegistry.notePairCleared(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR,
+                                celtium$frameSerial(), this.targetRegistry.currentIdentity());
                         this.defaultPairClears++;
                     }
                     framebuffer = ensureOffTargetFramebuffer(renderPass);
@@ -10382,8 +10382,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * @param acquired whether the pair's images exist (a recreated pair is UNDEFINED and must be cleared)
      * @return whether the caller must record the clear
      */
-    private boolean celtium$pairClearNeeded(boolean acquired, long clearedFrame, long contentIdentity, String pair) {
-        if (!acquired || clearedFrame != celtium$frameSerial()) {
+    private boolean celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot slot, boolean acquired,
+            long contentIdentity, String pair) {
+        // The frame each pair was last cleared in is the registry's now; the policy below is the backend's, because it
+        // is the pair's identity collision and not the registry's business which identity may clear it.
+        if (!acquired || this.targetRegistry.pairClearedFrame(slot) != celtium$frameSerial()) {
             return true;
         }
         if (contentIdentity == this.targetRegistry.currentIdentity()) {
@@ -11060,7 +11063,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         System.out.println("[Celtium] CELTIUM_OUTLINE_INPUT frame=" + this.frameId
                 + " identity=" + identity + " texture=" + (reported == null ? -1L : reported[0])
                 + " size=" + (reported == null ? "?" : reported[1] + "x" + reported[2])
-                + " clearedThisFrame=" + (this.chainPairClearedFrame == celtium$frameSerial())
+                + " clearedThisFrame=" + (this.targetRegistry.pairClearedFrame(RenderTargetRegistry.ImageSlot.CHAIN_PAIR)
+                        == celtium$frameSerial())
                 + " chainPairClears=" + this.chainPairClears
                 + " boundIdentity=" + this.currentFramebufferIdentity
                 + " boundIsMain=" + this.targetRegistry.currentIsMain()
@@ -11139,15 +11143,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // The same clear-once contract as the pass sites: this is the post-chain adoption path, and it shares the
         // chain pair with them, so the rule has to be one rule. Stated here because it is the second site of the same
         // shape - it is not a different question that happened to look alike.
-        if (celtium$pairClearNeeded(glless.chainPairAcquired(), this.chainPairClearedFrame,
-                this.chainPairContentIdentity, "chain-pair(sync)")) {
+        if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, glless.chainPairAcquired(),
+                this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.CHAIN_PAIR),
+                "chain-pair(sync)")) {
             if (glless.chainPairNeedsSelfTest()) {
                 record(glless.chainPairSelfTest(this.commandBuffer));
             } else {
                 glless.clearChainPair(this.commandBuffer);
             }
-            this.chainPairClearedFrame = celtium$frameSerial();
-            this.chainPairContentIdentity = this.targetRegistry.currentIdentity();
+            this.targetRegistry.notePairCleared(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                    celtium$frameSerial(), this.targetRegistry.currentIdentity());
             this.chainPairClears++;
             celtium$noteChainPairClear("sync-published-chain-output");
         }

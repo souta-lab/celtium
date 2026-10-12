@@ -460,6 +460,39 @@ public final class RenderTargetRegistry {
         return this.clearCollisions;
     }
 
+    /**
+     * The frame serial each pair was last cleared in, and the identity whose content it then held.
+     * <p>
+     * The pair clear's decision is a policy question - whether this identity may clear a pair that already holds
+     * another identity's content this frame - so the policy stays with the backend, which knows the pair. What moves
+     * here is the bookkeeping it reads and writes: the frame a pair was last cleared in, which used to be two bare
+     * fields on the backend and is the same fact as the slot's clear ownership.
+     */
+    private final Map<ImageSlot, long[]> pairClears = new HashMap<ImageSlot, long[]>();
+
+    /** {@return the frame serial the pair was last cleared in, or a value no frame serial can equal}. */
+    public long pairClearedFrame(ImageSlot slot) {
+        long[] entry = this.pairClears.get(slot);
+        return entry == null ? -1L : entry[0];
+    }
+
+    /** Records that the pair was cleared in this frame, for the given content identity. */
+    public void notePairCleared(ImageSlot slot, long frameSerial, long contentIdentity) {
+        long[] entry = this.pairClears.get(slot);
+        if (entry == null) {
+            this.pairClears.put(slot, new long[] { frameSerial, contentIdentity });
+            return;
+        }
+        entry[0] = frameSerial;
+        entry[1] = contentIdentity;
+    }
+
+    /** {@return the identity whose content the pair held when it was last cleared}. */
+    public long pairClearContentIdentity(ImageSlot slot) {
+        long[] entry = this.pairClears.get(slot);
+        return entry == null ? Long.MIN_VALUE : entry[1];
+    }
+
     private static String hex(long value) {
         return value == Long.MIN_VALUE ? "unset" : "0x" + Long.toHexString(value);
     }
