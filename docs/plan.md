@@ -392,6 +392,24 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.373 **round 180: push constant の境界を実測で確定（2GPU=256B／保証は128B／契約が名乗っていない）。BH-09 の受入は fixture 側で塞がっていた**
+
+- **push constant の検証（他セッションの「256B あるので OPT-03 は恒久的に非問題」への回答）**:
+  - **実測（我々の計器）**: `CELTIUM_DEVICE_CONTRACT` 行（`VulkanContext.java:1659-1670` が `maxPushConstantsSize` と `PUSH_CONSTANT_BYTES_USED=208` を並べて印字）で
+    **AMD RX 6400 も Intel UHD 630 も `maxPushConstantsSize=256 immediatePushBytes=208`**。→ **「この2台では 208B が収まる」は我々自身の測定で確定**（Web の Mesa 検証とも矛盾しない）。
+  - **ただし仕様が保証するのは 128B**（1.0〜1.3。256 は 1.4 から）。我々のコード自身が `VulkanTerrainPipeline.java:929` にそう書いている。**2台が 256 なのは portability の証拠ではない**（goal 仕様5「GPU名ではなく能力で選ぶ・広いVulkan対応GPU向けbaseline」）。
+  - **契約の穴**: `VulkanContext.java:1627` のコメント自身が **"this run does not enforce it, it reports it"** と書いており、契約行の `required=[...]` に push 制限が**入っていない**。208B を要求しているのに選択契約が名乗っていない。`VulkanPostChain.java:550-597` だけが limit で分岐（UBO 逃げ）し、immediate 系には無い。
+  - **対応**: `docs/scope-and-limits.md` §0.1 に**行を追加**（要件・強制箇所・**128B device は未測定**の明記）。契約行に `pushConstants>=208` を足し 208 未満を選択時に名指しで落とす unit を perf-ring へ。**128B 対応そのものは task-29/57 の仕事で、未実装のまま**。
+- **同じ doc の古い記述も修正**: §0.2 が「glless flag は**既定 off**」と書いたままだった（`dd67ed93a` 以降は既定 on）。**0.0.2-alpha release leg `r162-release` の `validation-command.json` に glless flag が1つも無いことを確認**して根拠にした（明示 flag つきの leg とは区別して書いた）。`4d4e66c65`。
+- **BH-09 の受入が塞がっていた真因（renderer ではない）**: leg `r163-bh09-scissor`（640x480・`scene=videoSettings`・`videoSettingsOption=GUI_SCALE`）は
+  **画面は開いている**（`guiScreenCurrent=…CeleritasVideoOptionsScreen`・`guiScreenVerdict=GuiVideoSettings was open at the capture`）のに `scissorCalls=0`。
+  原因は **`videoSettingsChain = "no option button could be located in the screen's row list"`** ＝ **GUI_SCALE 行の押下が成立していない**。GUI scale が 2 のままなので
+  Celeritas のリストが overflow せず、`ScrollableFrame.render` の `canScrollVertical` が立たない＝**scissor が出る条件に入っていない**。
+  さらに **MC の GUI scale は auto** なので、**窓を小さくしても scale が下がるだけで overflow しない**（640x480→scale 2、480x320→scale 1）。
+  → **fixture に直接 knob `-Dceltium.validation.guiScale=<N>` を足す**（option が書くフィールドを設定し、設定したことを report に名指し）方針で gui-stage へ。受入は `scissorCalls>0` ＋ clip の crop。
+- **task-18 の既存確定を再確認**: **GL-less では post chain の seeded 経路（glGetTexImage→chain→fence download→glTexSubImage2D）が動かず `postChains=0`**。
+  したがって **PR#6 で塞いだ `VulkanPostChain` の viewport/scissor 穴は現状の GL-less では到達不能**で、**task-18 が chain を GL-less で動かした時に効く先回りの修正**である（`docs/plan.md` §0.372 に追記すべき関係）。
+- **このroundの割当**: gui-stage → BH-09（fixture knob＋受入）、gui-text → **Goal C（HEI の実画面受入: item 一覧・検索・tooltip・画面遷移、参照 leg と crop/数値）**、perf-ring → 契約行の push 制限＋優先度2の leg。
 ## 0.372 **round 179: PR #6（動的state の dedup）を穴を閉じて着地。ユーザ提示の分割計画を採用**
 
 - **ユーザの指示**: 「**PR6,ポテンシャルあるぞ、普通に。これが可能なら大幅な最適か。**」「**あとAIにリファクタリングプランつくってもらったから分割はこれを参考にして。**」
