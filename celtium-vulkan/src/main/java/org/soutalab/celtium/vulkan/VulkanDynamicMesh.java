@@ -364,6 +364,70 @@ public final class VulkanDynamicMesh {
     }
 
     /**
+     * {@link #copyVertices} plus a position transform applied while appending.
+     * <p>
+     * The caller guarantees the transform is an axis-aligned modelView - diagonal scale plus translation with every
+     * off-axis element exactly zero - and the format carries no normal. For that shape {@code x' = sx*x + tx} is the
+     * same single-precision product the vertex shader computes, the zero terms contributing nothing, so a vertex
+     * transformed here is bit-identical to one the pipeline would have transformed. Anything with rotation would need
+     * the inverse-transpose for normals anyway and can round differently in the last bit: it stays on the
+     * matrix-keyed group rule rather than reaching this method.
+     * <p>
+     * The position is the first attribute in every layout this path sees (pos3f at offset 0), so the transform is a
+     * per-vertex rewrite of the first three floats and nothing else moves.
+     *
+     * @return {@code false} on the same conditions {@link #copyVertices} refuses, plus a missing matrix
+     */
+    public boolean copyVerticesTransformed(long sourceAddress, int stride, int count, int[] indices,
+            float[] modelView) {
+        if (modelView == null || modelView.length < 16) {
+            return false;
+        }
+        if (sourceAddress == 0L || count <= 0 || indices == null || indices.length == 0
+                || stride < 12 || stride > 256) {
+            // A stride under the position's own twelve bytes cannot carry the layout this method exists for.
+            return false;
+        }
+        int baseVertex = this.vertexCount;
+        long addedVertices = (long) stride * count;
+        long requiredVertices = this.vertexBytes + addedVertices;
+        long requiredIndices = this.indexBytes + (long) indices.length * 4;
+        boolean borrowed = this.frameRegion != null;
+        long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
+        long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
+        if (borrowed && this.frameRegion == null) {
+            vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
+        }
+        if (vertexTarget == 0L || indexTarget == 0L) {
+            return false;
+        }
+        // The transform runs inside the copy rather than as a second pass: the position is read from the source and
+        // the attributes after it are copied verbatim. x' = sx*x + tx, y' = sy*y + ty, z' = sz*z + tz are the
+        // diagonal and translation terms of an axis-aligned matrix - every off-axis element is zero, which is what
+        // the caller checks, so each product is the same single-precision value the shader would compute.
+        float sx = modelView[0], sy = modelView[5], sz = modelView[10];
+        float tx = modelView[12], ty = modelView[13], tz = modelView[14];
+        for (int i = 0; i < count; i++) {
+            long source = sourceAddress + (long) i * stride;
+            long target = vertexTarget + (long) i * stride;
+            MemoryUtil.memPutFloat(target, sx * MemoryUtil.memGetFloat(source) + tx);
+            MemoryUtil.memPutFloat(target + 4, sy * MemoryUtil.memGetFloat(source + 4) + ty);
+            MemoryUtil.memPutFloat(target + 8, sz * MemoryUtil.memGetFloat(source + 8) + tz);
+            MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
+        }
+        for (int i = 0; i < indices.length; i++) {
+            MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
+        }
+        this.layout = new Layout(stride, 0, -1, -1, -1, -1);
+        this.vertexBytes = requiredVertices;
+        this.indexBytes = requiredIndices;
+        this.vertexCount += count;
+        this.indexCount += indices.length;
+        sealFrameSlice();
+        return true;
+    }
+
+    /**
      * Issues the batch with 32-bit indices and no vertex offset. The caller binds the pipeline, the descriptor sets
      * and the vertex buffer first, exactly as the terrain path does.
      */
