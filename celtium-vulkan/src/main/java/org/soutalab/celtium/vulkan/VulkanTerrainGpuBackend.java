@@ -4416,7 +4416,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // teardown print, and the overlay trigger needs the Celeritas F3 section to be drawn. One bounded print at a
         // frame every leg reaches makes the counters visible in any leg that runs at all.
         if (this.frameId == 120) {
-            celtium$printVerificationSummary("frame 120");
+            celtium$printVerificationSummary("frame 120", true);
         }
         this.countersFrameId = this.frameId;
         // OPT-05: hand the frame its arena slot, and reclaim one only where GPU completion allows it. Done here
@@ -8621,15 +8621,39 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * about a world, because the frame target survives one.
      */
     /**
-     * Prints the counter summary once, naming what triggered it.
+     * Prints the counter summary once per trigger class, naming what triggered it.
      * <p>
      * It is reachable from the F3 debug list, but that list is only built when the Celeritas section of the overlay
      * is drawn - a leg with the overlay requested printed every counter as absent rather than zero, which is the
      * confusion this whole summary exists to prevent. World teardown is the second trigger, and the frame counter is
      * the third because a fixture that exits without tearing the world down never reaches the second.
+     * <p>
+     * The bounded triggers ({@code frame 120}, {@code present 120}) are <em>snapshots</em> so a leg that dies early
+     * still leaves a counter set to read, and they do not suppress the teardown print: the two are different readings
+     * and an acceptance reads the <em>last</em> {@code CELTIUM_VERIFY} line in the log. Measured (round 166): reading
+     * the {@code present 120} snapshot as the verdict is how {@code scissorCalls=0} was read as "the GUI never
+     * clipped" for three rounds, while in the same run the video options screen opened its list ~90 presents after
+     * that snapshot and did clip - the picture shows the rows cut at the forced viewport and the scrollbar drawn.
      */
-    private void celtium$printVerificationSummary(String trigger) {
-        if (this.celtium$summaryPrinted) {
+    /**
+     * Prints the counter summary now, for a fixture that is about to end the run.
+     * <p>
+     * The other triggers cannot be relied on for the final reading: {@code frame 120} and {@code present 120} are
+     * bounded snapshots a slow leg never reaches (a 640x480 video-settings leg of round 166 reached 86 presents and
+     * printed nothing at all), world teardown is skipped by a fixture that exits with its world still loaded, and a
+     * JVM shutdown hook's output lands after the log has been closed - measured, the hook printed into nothing.
+     * The fixture is the one component that knows the run is ending while the log is still alive, so it asks for the
+     * line through the backend call it already uses for reflection. An acceptance reads the LAST line.
+     *
+     * @return always {@code true}, so a reflective caller can tell "printed" from "no backend"
+     */
+    public boolean printCounterSummaryNow(String trigger) {
+        celtium$printVerificationSummary(trigger, false);
+        return true;
+    }
+
+    private void celtium$printVerificationSummary(String trigger, boolean snapshot) {
+        if (this.celtium$summaryPrinted && snapshot) {
             return;
         }
         this.celtium$summaryPrinted = true;
@@ -8642,7 +8666,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // as absent, which reads exactly like a counter that never fired. World teardown happens at least once per leg
         // (the fixture leaves the world before exiting), so this makes the summary reachable without depending on the
         // overlay, and prints once so a leg that tears down twice does not repeat it.
-        celtium$printVerificationSummary("world teardown");
+        celtium$printVerificationSummary("world teardown", false);
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
         // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
         // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a
@@ -11244,7 +11268,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // print too. Bounded like the others: once per process, at the 120th present.
         this.celtium$presentCount++;
         if (this.celtium$presentCount == 120) {
-            celtium$printVerificationSummary("present 120");
+            celtium$printVerificationSummary("present 120", true);
         }
         // Counted before any condition: the entry counter is what says whether the per-frame call arrives at all, which the
         // attempt counter cannot (it is only reached after the early returns).

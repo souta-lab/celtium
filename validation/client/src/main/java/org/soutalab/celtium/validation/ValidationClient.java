@@ -909,6 +909,32 @@ public final class ValidationClient {
     /** Bounded wait for the screen to become a GuiVideoSettings after the click. */
     private final int celtium$guiWaitTicks = Integer.getInteger("celtium.validation.guiWaitTicks", 20).intValue();
 
+    /**
+     * {@code -Dceltium.validation.frameViewportHeight=<n>} shrinks the GUI frame viewport to {@code n} logical pixels
+     * for as long as the video settings screen is up; 0 (the default) only measures the frame and leaves it alone. The
+     * shrink is re-applied every tick, because {@code TabFrame.buildFrame} builds a new {@code ScrollableFrame} for the
+     * selected tab: a shrink applied once is measured on an object the screen no longer draws.
+     * <p>
+     * BH-09's question - does the product's GUI clip survive the native path - cannot be asked by the window: the
+     * game refuses to scale below a 320x240 logical screen
+     * (`.celtium-work/mc-sources/net/minecraft/client/gui/ScaledResolution.java:30`,
+     * {@code while (this.scaleFactor < i && this.scaledWidth / (this.scaleFactor + 1) >= 320 && ... >= 240)}), and the
+     * Celeritas screen's option viewport is 3/4 of that logical height, 180 px, which is the same order as one page's
+     * rows. The known scene's {@code scissorCalls=0} therefore has to be separated from "the gate was closed", and the
+     * report this knob writes (the frame's own dim, its content dim, the clip rect and the gate flags, before and
+     * after) is what separates them. A non-zero value then makes the clip happen by construction.
+     */
+    private final int celtium$frameViewportHeight =
+            Integer.getInteger("celtium.validation.frameViewportHeight", 0).intValue();
+    /** Whether the frame's natural geometry has been read into the report - once, before any shrink. */
+    private boolean celtium$frameViewportReported;
+    /**
+     * How many times the shrink was applied. More than one means the screen rebuilt its frame tree under the run:
+     * {@code TabFrame.buildFrame} creates a new {@code ScrollableFrame} per selected tab, so a mutation applied once
+     * and then followed by a rebuild is measured on an object the screen no longer draws.
+     */
+    private int celtium$frameViewportApplications;
+
     /** Set by {@link #celtium$resolveScene()} when the configured scene name is not one this fixture drives. */
     private static String celtium$sceneResolutionError = "none";
 
@@ -7086,6 +7112,9 @@ public final class ValidationClient {
             celtium$guiSettingsAtFrames = worldFrames;
             report.addProperty("guiSettingsSeenAtTick", Integer.valueOf(worldTicks));
         }
+        // Every tick the screen is up, from here to the capture, so a frame tree the screen rebuilds under the run is
+        // shrunk again instead of staying natural - and so the frames drawn before the capture carry the clip.
+        celtium$readFrameViewport(mc);
         int layoutTicks = worldTicks - celtium$guiSettingsAtTick;
         int layoutFrames = worldFrames - celtium$guiSettingsAtFrames;
         if (layoutTicks < celtium$guiLayoutTicks || layoutFrames < celtium$guiMinFrames) {
@@ -7121,6 +7150,186 @@ public final class ValidationClient {
         celtium$judgePictures(mc, "at the video settings capture");
         celtium$setStatusFromPictures();
         finish(mc);
+    }
+
+    /**
+     * Reads the scrollable option frame's geometry into the report, and - when
+     * {@code -Dceltium.validation.frameViewportHeight=<n>} asked for it - shrinks its viewport to {@code n} logical
+     * pixels and re-runs the gate {@code ScrollableFrame.setupFrame} decides once, so the scene clips by construction.
+     * <p>
+     * The report separates the two readings the known {@code scissorCalls=0} cannot: the frame's viewport dim and its
+     * content dim decide the gate arithmetically ({@code !dim.canFitDimension(frame.dim) &&
+     * dim.getLimitY() < frame.dim.getLimitY()}), so a run now says whether the clip was unavailable because the content
+     * fit, or because the product never entered the clipping branch with the content that did not. The tab sidebar is a
+     * {@code ScrollableFrame} too, which is why the page's is the one whose own frame is an {@code OptionPageFrame}.
+     */
+    private void celtium$readFrameViewport(Minecraft mc) {
+        Object frame = celtium$findGuiObject(mc.currentScreen,
+                "org.embeddedt.embeddium.impl.gui.frame.ScrollableFrame", "OptionPageFrame", 8);
+        if (frame == null) {
+            if (!this.celtium$frameViewportReported) {
+                this.celtium$frameViewportReported = true;
+                report.addProperty("frameViewportForced", "no option-page ScrollableFrame under "
+                        + (mc.currentScreen == null ? "no screen" : mc.currentScreen.getClass().getName()));
+            }
+            return;
+        }
+        try {
+            Field dimField = celtium$findField(frame.getClass(), new String[] {"dim"});
+            Field contentField = celtium$findField(frame.getClass(), new String[] {"frame"});
+            Field clipField = celtium$findField(frame.getClass(), new String[] {"viewPortDimension"});
+            Field verticalFlag = celtium$findField(frame.getClass(), new String[] {"canScrollVertical"});
+            Field horizontalFlag = celtium$findField(frame.getClass(), new String[] {"canScrollHorizontal"});
+            if (dimField == null || contentField == null || clipField == null) {
+                report.addProperty("frameViewportForced", "the frame's own fields are not where they were: dim="
+                        + (dimField != null) + " frame=" + (contentField != null) + " viewPortDimension="
+                        + (clipField != null));
+                return;
+            }
+            if (!this.celtium$frameViewportReported) {
+                this.celtium$frameViewportReported = true;
+                try {
+                    net.minecraft.client.gui.ScaledResolution scaled =
+                            new net.minecraft.client.gui.ScaledResolution(mc);
+                    report.addProperty("guiScaleAtCapture", "scale=" + scaled.getScaleFactor()
+                            + " scaled=" + scaled.getScaledWidth() + "x" + scaled.getScaledHeight()
+                            + " display=" + mc.displayWidth + "x" + mc.displayHeight);
+                } catch (Throwable error) {
+                    report.addProperty("guiScaleAtCapture", "unreadable: " + error);
+                }
+                report.addProperty("frameViewportClass", frame.getClass().getName());
+                report.addProperty("frameViewportDim", String.valueOf(dimField.get(frame)));
+                report.addProperty("frameContentDim", String.valueOf(
+                        celtium$fieldValue(contentField.get(frame), new String[] {"dim"})));
+                report.addProperty("frameViewportClip", String.valueOf(clipField.get(frame)));
+                report.addProperty("frameViewportGate", celtium$gateText(horizontalFlag, verticalFlag, frame));
+            }
+            if (this.celtium$frameViewportHeight <= 0) {
+                report.addProperty("frameViewportForced", "measured only (frameViewportHeight=0)");
+                return;
+            }
+            Object dim = dimField.get(frame);
+            int height = ((Number) dim.getClass().getMethod("height").invoke(dim)).intValue();
+            if (height == this.celtium$frameViewportHeight && this.celtium$frameViewportApplications > 0) {
+                return;
+            }
+            dimField.set(frame, dim.getClass().getMethod("withHeight", int.class)
+                    .invoke(dim, Integer.valueOf(this.celtium$frameViewportHeight)));
+            // The gate is decided in the constructor, so the shrink has to re-run the same entry point. It is re-run
+            // on every tick rather than once: `TabFrame.buildFrame` builds a new ScrollableFrame for the selected tab,
+            // so a shrink applied once is measured on an object the screen no longer draws. Fresh offset references are
+            // passed on purpose - the run measures the clip, and the page then stays at offset 0 whatever the screen's
+            // own scroll state is.
+            frame.getClass().getMethod("setupFrame", java.util.concurrent.atomic.AtomicReference.class,
+                    java.util.concurrent.atomic.AtomicReference.class).invoke(frame,
+                    new java.util.concurrent.atomic.AtomicReference<Integer>(Integer.valueOf(0)),
+                    new java.util.concurrent.atomic.AtomicReference<Integer>(Integer.valueOf(0)));
+            frame.getClass().getMethod("buildFrame").invoke(frame);
+            this.celtium$frameViewportApplications++;
+            report.addProperty("frameViewportDimForced", String.valueOf(dimField.get(frame)));
+            report.addProperty("frameViewportClipForced", String.valueOf(clipField.get(frame)));
+            report.addProperty("frameViewportGateForced", celtium$gateText(horizontalFlag, verticalFlag, frame));
+            report.addProperty("frameViewportApplications",
+                    Integer.valueOf(this.celtium$frameViewportApplications));
+            report.addProperty("frameViewportForced", "viewport height " + this.celtium$frameViewportHeight + " on "
+                    + frame.getClass().getName() + " (application " + this.celtium$frameViewportApplications + ")");
+        } catch (Throwable error) {
+            report.addProperty("frameViewportForced", "reflection failed: " + error);
+        }
+    }
+
+    /** The two gate flags the scrollable frame reads in {@code render} to decide whether it clips at all. */
+    private static String celtium$gateText(Field horizontalFlag, Field verticalFlag, Object frame)
+            throws IllegalAccessException {
+        return "canScrollHorizontal=" + (horizontalFlag == null ? "?" : horizontalFlag.get(frame))
+                + " canScrollVertical=" + (verticalFlag == null ? "?" : verticalFlag.get(frame));
+    }
+
+    /**
+     * Finds the first object of the named class under {@code root} whose own {@code frame} field has a class name
+     * containing {@code childHint}, walking fields and collection elements.
+     */
+    private static Object celtium$findGuiObject(Object root, String className, String childHint, int maxDepth) {
+        if (root == null) {
+            return null;
+        }
+        java.util.ArrayDeque<Object[]> queue = new java.util.ArrayDeque<Object[]>();
+        java.util.Set<Object> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Object, Boolean>());
+        queue.add(new Object[] {root, Integer.valueOf(0)});
+        seen.add(root);
+        while (!queue.isEmpty()) {
+            Object[] entry = queue.poll();
+            Object current = entry[0];
+            int depth = ((Integer) entry[1]).intValue();
+            if (current.getClass().getName().equals(className) && celtium$frameChildMatches(current, childHint)) {
+                return current;
+            }
+            if (depth >= maxDepth) {
+                continue;
+            }
+            for (Object value : celtium$guiChildren(current)) {
+                if (celtium$isGuiObject(value) && seen.add(value)) {
+                    queue.add(new Object[] {value, Integer.valueOf(depth + 1)});
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean celtium$frameChildMatches(Object frame, String childHint) {
+        if (childHint == null) {
+            return true;
+        }
+        Object content = celtium$fieldValue(frame, new String[] {"frame"});
+        return content != null && content.getClass().getSimpleName().contains(childHint);
+    }
+
+    private static java.util.List<Object> celtium$guiChildren(Object owner) {
+        java.util.List<Object> values = new java.util.ArrayList<Object>();
+        if (owner instanceof Iterable) {
+            for (Object element : (Iterable<?>) owner) {
+                if (element != null) {
+                    values.add(element);
+                }
+            }
+            return values;
+        }
+        if (owner.getClass().isArray() && !owner.getClass().getComponentType().isPrimitive()) {
+            for (Object element : (Object[]) owner) {
+                if (element != null) {
+                    values.add(element);
+                }
+            }
+            return values;
+        }
+        for (Class<?> type = owner.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(owner);
+                    if (value != null) {
+                        values.add(value);
+                    }
+                } catch (Throwable ignored) {
+                    // A field the runtime will not open is not the frame; the walk goes on.
+                }
+            }
+        }
+        return values;
+    }
+
+    /**
+     * Whether a value may be walked into: the mod's own GUI classes, plus the lists and arrays that hold them - a
+     * frame's children are widgets in an {@code ArrayList}, and the list itself is not a GUI class.
+     */
+    private static boolean celtium$isGuiObject(Object value) {
+        String name = value.getClass().getName();
+        return name.startsWith("org.embeddedt.embeddium") || name.startsWith("org.taumc.celeritas")
+                || value instanceof Iterable
+                || (value.getClass().isArray() && !value.getClass().getComponentType().isPrimitive());
     }
 
     /** The open screen's title text, read from its own field: the report says which screen it was, not only its class. */
@@ -8267,6 +8476,31 @@ public final class ValidationClient {
         // the user's lag unmeasured. They are written here instead, so every run that produces a report carries both
         // windows, with their sample counts and the window names beside them.
         celtium$reportFrameIntervals();
+        // The counter summary has to be readable at the end of EVERY leg. The three bounded triggers are not enough:
+        // `frame 120` and `present 120` are snapshots a slow leg never reaches (the r166-bh09-forced3 leg reached 86
+        // presents and printed no CELTIUM_VERIFY line at all), world teardown is skipped by a fixture that exits with
+        // its world still loaded, and a JVM shutdown hook's output lands after the log is closed (measured: the hook
+        // printed nothing). This fixture is the component that knows the run is ending while the log is still alive, so
+        // it asks the backend for the final line here. An acceptance reads the LAST CELTIUM_VERIFY line.
+        report.addProperty("counterSummaryAtEnd",
+                celtium$backendCall("printCounterSummaryNow", new Class<?>[] {String.class}, "fixture end") == null
+                        ? "no Vulkan backend" : "printed");
+        // BH-09's own numbers, in the report rather than only in the log: whether the scene clipped, and what the
+        // rectangle was. Read here for the same reason as the summary above.
+        try {
+            report.addProperty("glScissorCallsAtEnd",
+                    Long.valueOf(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCallCount()));
+            report.addProperty("glScissorTogglesAtEnd",
+                    Long.valueOf(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorToggleCount()));
+            report.addProperty("glScissorCalledAtEnd",
+                    Boolean.valueOf(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCalled()));
+            report.addProperty("glScissorTestAtEnd",
+                    Boolean.valueOf(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorTest()));
+            report.addProperty("glScissorBoxAtEnd",
+                    java.util.Arrays.toString(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorBox()));
+        } catch (Throwable error) {
+            report.addProperty("glScissorCallsAtEnd", "unreadable: " + error);
+        }
         // Test-only GL resources stay alive through their same-frame captures and are released before shutdown.
         if (commandBufferTargets) {
             try {
