@@ -11287,13 +11287,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // flat white field while the pair holds the game's picture, and the question is whether that is already
             // true when the frame is presented or whether the image is whitened after the composite. The patch is the
             // logo's own region, so a flat value is "no picture" and a dark one is "picture".
-            if (PRESENT_PATCH_TRACE && this.presentPatchLogs < 8 && this.targetWidth > 1024 && this.targetHeight > 1024) {
+            if (PRESENT_PATCH_TRACE && this.presentPatchLogs < 8 && this.targetWidth > 512 && this.targetHeight > 512) {
                 this.presentPatchLogs++;
                 String presentLine = "CELTIUM_PRESENT_PATCH present=" + (this.framePresentedFromVulkan + 1)
                         + " frame=" + this.frameId
                         + " windows=" + this.immediateStatistics.immediateWindows()
                         + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
                         + " frameCentre=" + celtium$patchMean(this.frameTarget.colorImage(), 928, 516, 64)
+                        // The hotbar's own band, in the frame image the present is about to blit. A flat band means the
+                        // GUI stage's draws are not in that image at all; a textured one means they are and the blit or
+                        // the swapchain loses them. Two statements, two different fixes.
+                        + " hotbarBand=" + celtium$patchMean(this.frameTarget.colorImage(),
+                                Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32)
                         + " pairCentre=" + (celtium$livePairImage() == 0L ? "none"
                                 : celtium$patchMean(celtium$livePairImage(), 928, 516, 64));
                 System.out.println("[Celtium] " + presentLine);
