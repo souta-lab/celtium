@@ -376,6 +376,21 @@ Angelica の `TesrMeshProvider` / `TesrMeshCache` / `ModelPartBatch` は、entit
 
 **受入**: chat / unicode / F3 / hotbar / potion / boss bar / loading / video settings / JEI の scroll・tooltip・animation、map と sign の更新が成立。CPU / allocation / draw 数、冷えた cache と warm cache の stall を比較する [R05 / R20]。
 
+### OPT-18b: HUD / GUI の即時モードを、参照実装と同じ契約で束ねる（ユーザの profiler が根拠）
+
+- **根拠（ユーザの実プロファイル・2026-10-12）**: `gui` の **self 5,359.15 ms**（frame の 26.8 %）に対し、子の合計は約 337 ms
+  ＝**GUI 自身の描画（HUD・widget・即時モード経路）が最大の単一項目**。`gameRenderer` の self も 6,187.85 ms。
+- **参照実装**: **ImmediatelyFast**（[README](https://github.com/RaphiMC/ImmediatelyFast)）は「immediate mode rendering の性能」を対象に、
+  **Entities・Block entities・Particles・Text rendering・GUI/HUD・他 mod の即時モード**を**カスタム buffer 実装で draw call をバッチし GPU へ効率的に upload** する形で改善し、
+  **HUD rendering で FPS が約 40 % 向上**（1.19.3・IF 1.1.7 の計測・scoreboard/potion/bossbar/chat/extra hearts/full hotbar の構成）と報告している。
+  併せて **`avoid_redundant_framebuffer_switching`**（world の entity/particle/blockentity と HUD で framebuffer 切替を減らす）を持つ。
+- **我々の対応物**: 既に `CeltiumGlStub` の no-op census・`glBegin`/`glEnd` の専用セマンティクス（68/69・site 行）・`submitImmediateBatch`・
+  `immediateGroupsDrawn`/`CELTIUM_GROUP_BOUNDS`・`bindShortCircuits` がある＝**「即時モードを1バッチに束ねる」土台は landing 済み**。
+  ＝**次は「HUD/GUI の即時モードを、頂点列として受け取って coalesced run に載せる」契約**（sky-draws がロード画面で設計したものと同型）。
+- **採らないもの（plan の禁止事項と一致）**: HUD を 20 Hz に落とす・アニメーションを止める・event を frame ごとに発火させない変更。
+- **受入**: 同一 jar・同一 scene で **HUD を含む frame の p50/p95/p99** と **`immediateGroupsDrawn`/`drawSiteLines`/`frameArena`** の前後、
+  `validationMessageCount=0`、**HUD の crop が不変**（文字と widget のテクセル検査）。**ユーザの絶対値は受入値として引用しない**。
+
 ### OPT-19: 見える entity / TESR の CPU 費用を保守的に抑える
 
 - Celeritas の existing visibility を first level に使い、mod の render bounding box、glow / name tag / beacon などの例外を明示する。
