@@ -76,6 +76,40 @@ public final class CeltiumFontGlyphCapture {
      * hashing - at F3's ~15K glyphs a frame that alone was worth ~15ms of the 43ms F3 frame. Draw modes are small GL
      * enums (0..10), so an index beats a hash; modes outside the table still land in {@link #otherModes}.
      */
+    /**
+     * The char->glyph-column lookups vanilla performs per character as {@code String.indexOf} against the font-page
+     * table string and the format-code strings - a linear scan of a ~256-char constant per glyph, ~7% of the F3
+     * leg's warm samples between {@code String.indexOf}/{@code StringUTF16.indexOf}. The tables are compile-time
+     * literals (interned, so identity-keyed is exact), and each one gets a direct-index map built once. Chars outside
+     * the table's character range fall back to the string's own indexOf so a caller can never get a wrong answer.
+     */
+    private static final java.util.IdentityHashMap<String, int[]> CHAR_INDEX_CACHES =
+            new java.util.IdentityHashMap<>();
+
+    /** {@return the index {@code table.indexOf(ch)} would return}, from a per-table direct map. */
+    public static int tableCharIndex(String table, int ch) {
+        int[] cache = CHAR_INDEX_CACHES.get(table);
+        if (cache == null) {
+            char[] chars = table.toCharArray();
+            int hi = 0;
+            for (char c : chars) {
+                if (c >= hi) {
+                    hi = c + 1;
+                }
+            }
+            cache = new int[Math.max(hi, 1)];
+            java.util.Arrays.fill(cache, -1);
+            for (int i = 0; i < chars.length; i++) {
+                if (cache[chars[i]] == -1) {
+                    // indexOf returns the first occurrence - later duplicates must not overwrite it.
+                    cache[chars[i]] = i;
+                }
+            }
+            CHAR_INDEX_CACHES.put(table, cache);
+        }
+        return ch >= 0 && ch < cache.length ? cache[ch] : table.indexOf(ch);
+    }
+
     private static final int[] MODE_COUNTS = new int[16];
     private static int otherModes;
     private static final java.util.Map<Integer, Integer> OTHER_MODE_COUNTS = new java.util.HashMap<>();
@@ -433,57 +467,13 @@ public final class CeltiumFontGlyphCapture {
             if (bufferedOpen && packed != bufferedColour) {
                 flushBufferedQuads(backend);
             }
-            int needed = (bufferedQuadCount == 0 ? MAX_VERTICES : MAX_VERTICES + 2) * STRIDE;
-            if (ensureBufferedCapacity(bufferedVertexCount * STRIDE + needed)) {
-                long base = bufferedQuadsBase + (long) bufferedVertexCount * STRIDE;
-                float x0 = posX + k, x1 = posX - k;
-                float x2 = posX + f - 1.0F + k, x3 = posX + f - 1.0F - k;
-                float u0 = i / 128.0F, u1 = (i + f - 1.0F) / 128.0F;
-                float v0 = j / 128.0F, v1 = (j + 7.99F) / 128.0F;
-                if (bufferedQuadCount > 0) {
-                    // The strip separator: the previous glyph's last vertex, then this glyph's first.
-                    MemoryUtil.memCopy(base - STRIDE, base, STRIDE);
-                    base += STRIDE;
-                    MemoryUtil.memPutFloat(base, x0);
-                    MemoryUtil.memPutFloat(base + 4, posY);
-                    MemoryUtil.memPutFloat(base + 8, 0.0F);
-                    MemoryUtil.memPutFloat(base + 12, u0);
-                    MemoryUtil.memPutFloat(base + 16, v0);
-                    MemoryUtil.memPutInt(base + 20, packed);
-                    base += STRIDE;
-                }
-                MemoryUtil.memPutFloat(base, x0);
-                MemoryUtil.memPutFloat(base + 4, posY);
-                MemoryUtil.memPutFloat(base + 8, 0.0F);
-                MemoryUtil.memPutFloat(base + 12, u0);
-                MemoryUtil.memPutFloat(base + 16, v0);
-                MemoryUtil.memPutInt(base + 20, packed);
-                base += STRIDE;
-                MemoryUtil.memPutFloat(base, x1);
-                MemoryUtil.memPutFloat(base + 4, posY + 7.99F);
-                MemoryUtil.memPutFloat(base + 8, 0.0F);
-                MemoryUtil.memPutFloat(base + 12, u0);
-                MemoryUtil.memPutFloat(base + 16, v1);
-                MemoryUtil.memPutInt(base + 20, packed);
-                base += STRIDE;
-                MemoryUtil.memPutFloat(base, x2);
-                MemoryUtil.memPutFloat(base + 4, posY);
-                MemoryUtil.memPutFloat(base + 8, 0.0F);
-                MemoryUtil.memPutFloat(base + 12, u1);
-                MemoryUtil.memPutFloat(base + 16, v0);
-                MemoryUtil.memPutInt(base + 20, packed);
-                base += STRIDE;
-                MemoryUtil.memPutFloat(base, x3);
-                MemoryUtil.memPutFloat(base + 4, posY + 7.99F);
-                MemoryUtil.memPutFloat(base + 8, 0.0F);
-                MemoryUtil.memPutFloat(base + 12, u1);
-                MemoryUtil.memPutFloat(base + 16, v1);
-                MemoryUtil.memPutInt(base + 20, packed);
-                bufferedVertexCount += bufferedQuadCount == 0 ? MAX_VERTICES : MAX_VERTICES + 2;
-                bufferedQuadCount++;
-                bufferedOpen = true;
-                bufferedColour = packed;
-                registerBufferedHook(backend);
+            float x0 = posX + k, x1 = posX - k;
+            float x2 = posX + f - 1.0F + k, x3 = posX + f - 1.0F - k;
+            float u0 = i / 128.0F, u1 = (i + f - 1.0F) / 128.0F;
+            float v0 = j / 128.0F, v1 = (j + 7.99F) / 128.0F;
+            if (bufferQuad(backend, packed,
+                    x0, posY, u0, v0, x1, posY + 7.99F, u0, v1,
+                    x2, posY, u1, v0, x3, posY + 7.99F, u1, v1)) {
                 submitted++;
                 MODE_COUNTS[GL_TRIANGLE_STRIP]++;
                 armed = false;
@@ -511,6 +501,128 @@ public final class CeltiumFontGlyphCapture {
         armed = false;
         reset();
         return (float) l;
+    }
+
+    /**
+     * One POSITION_TEX_COLOR glyph quad into the per-string segment, with its strip separator when the segment is
+     * not empty.
+     *
+     * @return {@code true} when the quad was buffered; {@code false} only when the segment cannot grow to hold it
+     */
+    private static boolean bufferQuad(TerrainGpuBackend backend, int packed,
+            float x0, float y0, float u0, float v0, float x1, float y1, float u1, float v1,
+            float x2, float y2, float u2, float v2, float x3, float y3, float u3, float v3) {
+        int needed = (bufferedQuadCount == 0 ? MAX_VERTICES : MAX_VERTICES + 2) * STRIDE;
+        if (!ensureBufferedCapacity(bufferedVertexCount * STRIDE + needed)) {
+            return false;
+        }
+        long base = bufferedQuadsBase + (long) bufferedVertexCount * STRIDE;
+        if (bufferedQuadCount > 0) {
+            // The strip separator: the previous glyph's last vertex, then this glyph's first.
+            MemoryUtil.memCopy(base - STRIDE, base, STRIDE);
+            base += STRIDE;
+            emitVertex(base, x0, y0, u0, v0, packed);
+            base += STRIDE;
+        }
+        emitVertex(base, x0, y0, u0, v0, packed);
+        base += STRIDE;
+        emitVertex(base, x1, y1, u1, v1, packed);
+        base += STRIDE;
+        emitVertex(base, x2, y2, u2, v2, packed);
+        base += STRIDE;
+        emitVertex(base, x3, y3, u3, v3, packed);
+        bufferedVertexCount += bufferedQuadCount == 0 ? MAX_VERTICES : MAX_VERTICES + 2;
+        bufferedQuadCount++;
+        bufferedOpen = true;
+        bufferedColour = packed;
+        registerBufferedHook(backend);
+        return true;
+    }
+
+    private static void emitVertex(long base, float x, float y, float u, float v, int packed) {
+        MemoryUtil.memPutFloat(base, x);
+        MemoryUtil.memPutFloat(base + 4, y);
+        MemoryUtil.memPutFloat(base + 8, 0.0F);
+        MemoryUtil.memPutFloat(base + 12, u);
+        MemoryUtil.memPutFloat(base + 16, v);
+        MemoryUtil.memPutInt(base + 20, packed);
+    }
+
+    /**
+     * The unicode-page-0 glyph, drawn by Celtium when {@code unicodeFlag} routes every character through
+     * {@code renderUnicodeChar} ({@code FontRenderer.java:270-299}): ja_jp and {@code forceUnicodeFont} clients take
+     * that path for the whole string, so without this the fast path was a dead letter for them - measured on leg
+     * p-fu at 71.5ms frame p50 with 880K unicode windows and zero fast glyphs.
+     * <p>
+     * The geometry is vanilla's exactly: {@code i = glyphWidth[ch] & 255} (high nibble the left edge, low the
+     * width), {@code f = i>>>4}, {@code f1 = (i&15)+1}, {@code f2 = ch%16*16 + f},
+     * {@code f3 = (ch&255)/16*16}, {@code f4 = f1-f-0.02}, {@code f5 = italic ? 1 : 0}, and the advance
+     * {@code (f1-f)/2+1}. Only page 0 ({@code ch < 256}) is drawn here: pages bind a different texture per 256-char
+     * block, so a wider char falls back to the window path where the page texture binds per glyph.
+     *
+     * @return the advance vanilla would have returned, 0 for a glyph vanilla skips, or -1 to take the window path
+     */
+    public static float fastUnicodeGlyph(byte[] glyphWidth, float posX, float posY, char ch, boolean italic) {
+        TerrainGpuBackend backend = TerrainGpuBackends.current();
+        if (backend == null || glyphWidth == null || ch >= 256) {
+            return -1.0F;
+        }
+        int i = glyphWidth[ch] & 255;
+        if (i == 0) {
+            // Vanilla returns before binding a texture or emitting anything: the advance is zero and so is the draw.
+            return 0.0F;
+        }
+        float f = i >>> 4;
+        float f1 = (i & 15) + 1;
+        float f2 = (float) (ch % 16 * 16) + f;
+        float f3 = (float) ((ch & 255) / 16 * 16);
+        float f4 = f1 - f - 0.02F;
+        float f5 = italic ? 1.0F : 0.0F;
+        windows++;
+        unicodeWindows++;
+        fastGlyphs++;
+        armed = true;
+        windowUnicode = true;
+        mode = GL_TRIANGLE_STRIP;
+        vertexCount = MAX_VERTICES;
+        texCoordCount = MAX_VERTICES;
+        if (DEBUG_RGB < 0 && !SCREEN_FILL && !ISOLATE_POSITION_COLOR && !FORCE_QUADS) {
+            int packed = byteValue(colorRed) | (byteValue(colorGreen) << 8) | (byteValue(colorBlue) << 16)
+                    | (byteValue(colorAlpha) << 24);
+            if (bufferedOpen && packed != bufferedColour) {
+                flushBufferedQuads(backend);
+            }
+            float x0 = posX + f5, y0 = posY, u0 = f2 / 256.0F, v0 = f3 / 256.0F;
+            float x1 = posX - f5, y1 = posY + 7.99F, v1 = (f3 + 15.98F) / 256.0F;
+            float x2 = posX + f4 / 2.0F + f5;
+            float x3 = posX + f4 / 2.0F - f5;
+            float u1 = (f2 + f4) / 256.0F;
+            if (bufferQuad(backend, packed,
+                    x0, y0, u0, v0, x1, y1, u0, v1, x2, y0, u1, v0, x3, y1, u1, v1)) {
+                submitted++;
+                MODE_COUNTS[GL_TRIANGLE_STRIP]++;
+                armed = false;
+                reset();
+                return (f1 - f) / 2.0F + 1.0F;
+            }
+        }
+        {
+            float[] xs = {posX + f5, posX - f5, posX + f4 / 2.0F + f5, posX + f4 / 2.0F - f5};
+            float[] ys = {posY, posY + 7.99F, posY, posY + 7.99F};
+            float[] us = {f2 / 256.0F, f2 / 256.0F, (f2 + f4) / 256.0F, (f2 + f4) / 256.0F};
+            float[] vs = {f3 / 256.0F, (f3 + 15.98F) / 256.0F, f3 / 256.0F, (f3 + 15.98F) / 256.0F};
+            for (int n = 0; n < MAX_VERTICES; n++) {
+                positionX[n] = xs[n];
+                positionY[n] = ys[n];
+                positionZ[n] = 0.0F;
+                textureU[n] = us[n];
+                textureV[n] = vs[n];
+            }
+        }
+        submit();
+        armed = false;
+        reset();
+        return (f1 - f) / 2.0F + 1.0F;
     }
 
     /** Opens the vanilla glyph method's own bracket. Called from the mixin's HEAD injection. */
