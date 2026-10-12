@@ -220,7 +220,7 @@ def main():
     # different file name (to keep two legs on one hash) then gets the instance's jar copied alongside it, and the game
     # dies on a duplicate mod id - which cost fog-path a leg before this line existed.
     ignored_mods = ("celtium-forge-*.jar", "celtium-validation-client-*.jar") + tuple(supplied)
-    for name in ("mods", "config", "resourcepacks"):
+    for name in ("mods", "config", "resourcepacks", "saves"):
         source = source_game / name
         if source.is_dir():
             ignore = shutil.ignore_patterns(*ignored_mods) if name == "mods" else None
