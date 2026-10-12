@@ -23,7 +23,7 @@ public final class TargetStatistics {
     private int unflushedTargetGroupsDropped;
     private int unflushedTargetPassFailures;
     private int windowFlushFailures;
-    private long windowFlushFailureFrame;
+    private long windowFlushFailureFrame = -1L;
     private int windowFlushDroppedBatches;
     private int windowFlushRetainedBatches;
     private int compositePresentRefusals;

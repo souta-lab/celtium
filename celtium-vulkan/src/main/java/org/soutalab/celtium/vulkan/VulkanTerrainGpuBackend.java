@@ -1138,7 +1138,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
-    private java.util.Map<Long, Integer> blendPairs;
+    private java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
     private final int[] postAcceptDroppedByFormat = new int[8];
     private final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
     private final int[] acceptedByFormat = new int[8];

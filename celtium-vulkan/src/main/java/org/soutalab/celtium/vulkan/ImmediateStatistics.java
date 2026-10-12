@@ -111,7 +111,7 @@ public final class ImmediateStatistics {
     private int lastFrameDrawn;
     private String lastTwoArgBlendPair = "none";
     private String lastUniformPreparationFailure = "none";
-    private float mirroredProjectionDelta;
+    private float mirroredProjectionDelta = -1.0f;
     private String particleDescriptorFailureReason;    private long actualFlushWorstNanos;
     private long blendPairs;    private int drawsWithoutCommandBuffer;
     private int frameAccepted;
@@ -120,8 +120,8 @@ public final class ImmediateStatistics {
     private int immediateMaxGroupVertices;
     private int immediateRefusedWindowBudget;
     private int immediateWindowsThisFrame;
-    private float lastAlphaPushReference;
-    private int lastPartialColorMask;
+    private float lastAlphaPushReference = Float.NaN;
+    private int lastPartialColorMask = -1;
     private int perspectiveCalls;
     /** Records one actualFlushes. */
     void noteActualFlushes() {

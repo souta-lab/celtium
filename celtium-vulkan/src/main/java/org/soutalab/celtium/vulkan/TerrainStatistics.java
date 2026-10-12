@@ -23,7 +23,7 @@ public final class TerrainStatistics {
     private int terrainPasses;
     private int immediateOnlyPasses;
     private int worldPassBoundaryFlushes;
-    private long lastTerrainPassFrame;
+    private long lastTerrainPassFrame = -1L;
 
     /** Records a submitted pass. */
     void notePassSubmissions() {
