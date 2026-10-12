@@ -10,8 +10,8 @@ package org.soutalab.celtium.vulkan;
  *
  * <p>Fields are package-private only for the wiring pass; the writers move in with the domain (R3a/R3b/R4/R5/R6)
  * and the visibility narrows then. Expressions that read another class or a helper (VulkanContext, CeltiumGlStub,
- * TextureCopyService, VulkanModelQuadCapture, the *Summary helpers) are left as calls and are listed in the
- * class javadoc of the run that uses them - they are the wiring's decisions, not this class's fields.
+ * TextureCopyService, VulkanModelQuadCapture, the celtium\$* accessors, the *Summary helpers) are left as calls;
+ * they are the wiring's decisions, not this class's fields.
  *
  * <p>Runs, in the line's order:
  * <li>run 0 (backend L8307-L8309): passes skipped errors lastDraw lastSections skipReason</li>
@@ -28,8 +28,6 @@ public final class TerrainStatistics {
     long sectionsLeftUnbuilt;
     /** backend field lastRegionUploadFailure (declared L?). */
     long lastRegionUploadFailure;
-    /** backend field celtium (declared L?). */
-    long celtium;
     /** backend field lastTerrainPassFrame (declared L?). */
     long lastTerrainPassFrame;
     /** backend field lastDrawCommands (declared L257). */

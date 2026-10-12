@@ -10,8 +10,8 @@ package org.soutalab.celtium.vulkan;
  *
  * <p>Fields are package-private only for the wiring pass; the writers move in with the domain (R3a/R3b/R4/R5/R6)
  * and the visibility narrows then. Expressions that read another class or a helper (VulkanContext, CeltiumGlStub,
- * TextureCopyService, VulkanModelQuadCapture, the *Summary helpers) are left as calls and are listed in the
- * class javadoc of the run that uses them - they are the wiring's decisions, not this class's fields.
+ * TextureCopyService, VulkanModelQuadCapture, the celtium\$* accessors, the *Summary helpers) are left as calls;
+ * they are the wiring's decisions, not this class's fields.
  *
  * <p>Runs, in the line's order:
  * <li>run 0 (backend L8320-L8336): bootstrapQueueWaits bootstrapQueueWaitMillis bootstrapQueueWaitWorstMillis bootstrapSubmitWaits bootstrapSubmitWaitMillis bootstrapSubmitWaitWorstMillis frameArenaFallbackGroups frameSlots frameSlotReuseWaits slotPolls slotPollConfirms slotWaitConfirms submitSequence completedSubmitSequence frameFenceWaitMillis frameFenceWaitCount frameFenceWaitWorstMillis</li>
