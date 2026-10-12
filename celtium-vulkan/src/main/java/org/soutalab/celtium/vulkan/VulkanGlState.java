@@ -584,6 +584,13 @@ public final class VulkanGlState {
     /** Its own budget: the bind log filled the shared one first, which suppressed every switch line (BH-06 re-take). */
     private static int unitSwitchLogs;
     private static final int UNIT_LOG_LIMIT = 24;
+    /**
+     * The panorama-id bind log gets its own smaller budget: ids in the 40-60 range were named unconditionally, but
+     * textures 43 and 45 are real content textures that bind ~4 times a frame, and the unbounded line cost 3,402
+     * printlns in a 400-tick leg - several times the cost of the bind it describes.
+     */
+    private static int unitRangeLogs;
+    private static final int UNIT_RANGE_LOG_LIMIT = 40;
 
     /** {@return how many binds arrived on a unit other than 0, against how many on unit 0}. */
     public static String perUnitBindCensus() {
@@ -599,10 +606,14 @@ public final class VulkanGlState {
         } else {
             bindsOnOtherUnits++;
         }
-        // Raised bound plus an unconditional line for the panorama ids (45-49): the first ~22 binds never reached
-        // them, which is the one measurement left between the panorama's mirror and the faces' group.
-        if (unitLogs < 96 || (glTextureId >= 40 && glTextureId <= 60)) {
-            unitLogs++;
+        // Raised bound plus a separately bounded line for the panorama ids (45-49): the first ~22 binds never
+        // reached them, which is the one measurement left between the panorama's mirror and the faces' group.
+        if (unitLogs < 96 || (glTextureId >= 40 && glTextureId <= 60 && unitRangeLogs < UNIT_RANGE_LOG_LIMIT)) {
+            if (glTextureId >= 40 && glTextureId <= 60) {
+                unitRangeLogs++;
+            } else {
+                unitLogs++;
+            }
             System.out.println("[Celtium] CELTIUM_UNIT_BIND bind texture=" + glTextureId
                     + " activeUnit=" + this.activeTextureUnit + " bindsOnUnit0=" + bindsOnUnitZero
                     + " bindsOnOtherUnits=" + bindsOnOtherUnits);
