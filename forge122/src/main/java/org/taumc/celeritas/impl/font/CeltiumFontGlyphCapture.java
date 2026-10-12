@@ -417,12 +417,6 @@ public final class CeltiumFontGlyphCapture {
         int k = italic ? 1 : 0;
         int l = charWidth[ch];
         float f = (float) l - 0.01F;
-        float[] xs = {posX + (float) k, posX - (float) k, posX + f - 1.0F + (float) k, posX + f - 1.0F - (float) k};
-        float[] ys = {posY, posY + 7.99F, posY, posY + 7.99F};
-        float[] us = {(float) i / 128.0F, (float) i / 128.0F, ((float) i + f - 1.0F) / 128.0F,
-                ((float) i + f - 1.0F) / 128.0F};
-        float[] vs = {(float) j / 128.0F, ((float) j + 7.99F) / 128.0F, (float) j / 128.0F,
-                ((float) j + 7.99F) / 128.0F};
         windows++;
         defaultWindows++;
         fastGlyphs++;
@@ -431,12 +425,87 @@ public final class CeltiumFontGlyphCapture {
         mode = GL_TRIANGLE_STRIP;
         vertexCount = MAX_VERTICES;
         texCoordCount = MAX_VERTICES;
-        for (int n = 0; n < MAX_VERTICES; n++) {
-            positionX[n] = xs[n];
-            positionY[n] = ys[n];
-            positionZ[n] = 0.0F;
-            textureU[n] = us[n];
-            textureV[n] = vs[n];
+        // The buffered path writes the quad straight into the segment with no float-array round trip through the
+        // capture arrays - at F3's ~15K glyphs a frame the arrays were a second copy of every vertex.
+        if (DEBUG_RGB < 0 && !SCREEN_FILL && !ISOLATE_POSITION_COLOR && !FORCE_QUADS) {
+            int packed = byteValue(colorRed) | (byteValue(colorGreen) << 8) | (byteValue(colorBlue) << 16)
+                    | (byteValue(colorAlpha) << 24);
+            if (bufferedOpen && packed != bufferedColour) {
+                flushBufferedQuads(backend);
+            }
+            int needed = (bufferedQuadCount == 0 ? MAX_VERTICES : MAX_VERTICES + 2) * STRIDE;
+            if (ensureBufferedCapacity(bufferedVertexCount * STRIDE + needed)) {
+                long base = bufferedQuadsBase + (long) bufferedVertexCount * STRIDE;
+                float x0 = posX + k, x1 = posX - k;
+                float x2 = posX + f - 1.0F + k, x3 = posX + f - 1.0F - k;
+                float u0 = i / 128.0F, u1 = (i + f - 1.0F) / 128.0F;
+                float v0 = j / 128.0F, v1 = (j + 7.99F) / 128.0F;
+                if (bufferedQuadCount > 0) {
+                    // The strip separator: the previous glyph's last vertex, then this glyph's first.
+                    MemoryUtil.memCopy(base - STRIDE, base, STRIDE);
+                    base += STRIDE;
+                    MemoryUtil.memPutFloat(base, x0);
+                    MemoryUtil.memPutFloat(base + 4, posY);
+                    MemoryUtil.memPutFloat(base + 8, 0.0F);
+                    MemoryUtil.memPutFloat(base + 12, u0);
+                    MemoryUtil.memPutFloat(base + 16, v0);
+                    MemoryUtil.memPutInt(base + 20, packed);
+                    base += STRIDE;
+                }
+                MemoryUtil.memPutFloat(base, x0);
+                MemoryUtil.memPutFloat(base + 4, posY);
+                MemoryUtil.memPutFloat(base + 8, 0.0F);
+                MemoryUtil.memPutFloat(base + 12, u0);
+                MemoryUtil.memPutFloat(base + 16, v0);
+                MemoryUtil.memPutInt(base + 20, packed);
+                base += STRIDE;
+                MemoryUtil.memPutFloat(base, x1);
+                MemoryUtil.memPutFloat(base + 4, posY + 7.99F);
+                MemoryUtil.memPutFloat(base + 8, 0.0F);
+                MemoryUtil.memPutFloat(base + 12, u0);
+                MemoryUtil.memPutFloat(base + 16, v1);
+                MemoryUtil.memPutInt(base + 20, packed);
+                base += STRIDE;
+                MemoryUtil.memPutFloat(base, x2);
+                MemoryUtil.memPutFloat(base + 4, posY);
+                MemoryUtil.memPutFloat(base + 8, 0.0F);
+                MemoryUtil.memPutFloat(base + 12, u1);
+                MemoryUtil.memPutFloat(base + 16, v0);
+                MemoryUtil.memPutInt(base + 20, packed);
+                base += STRIDE;
+                MemoryUtil.memPutFloat(base, x3);
+                MemoryUtil.memPutFloat(base + 4, posY + 7.99F);
+                MemoryUtil.memPutFloat(base + 8, 0.0F);
+                MemoryUtil.memPutFloat(base + 12, u1);
+                MemoryUtil.memPutFloat(base + 16, v1);
+                MemoryUtil.memPutInt(base + 20, packed);
+                bufferedVertexCount += bufferedQuadCount == 0 ? MAX_VERTICES : MAX_VERTICES + 2;
+                bufferedQuadCount++;
+                bufferedOpen = true;
+                bufferedColour = packed;
+                registerBufferedHook(backend);
+                submitted++;
+                MODE_COUNTS[GL_TRIANGLE_STRIP]++;
+                armed = false;
+                reset();
+                return (float) l;
+            }
+        }
+        {
+            float[] xs = {posX + (float) k, posX - (float) k, posX + f - 1.0F + (float) k,
+                    posX + f - 1.0F - (float) k};
+            float[] ys = {posY, posY + 7.99F, posY, posY + 7.99F};
+            float[] us = {(float) i / 128.0F, (float) i / 128.0F, ((float) i + f - 1.0F) / 128.0F,
+                    ((float) i + f - 1.0F) / 128.0F};
+            float[] vs = {(float) j / 128.0F, ((float) j + 7.99F) / 128.0F, (float) j / 128.0F,
+                    ((float) j + 7.99F) / 128.0F};
+            for (int n = 0; n < MAX_VERTICES; n++) {
+                positionX[n] = xs[n];
+                positionY[n] = ys[n];
+                positionZ[n] = 0.0F;
+                textureU[n] = us[n];
+                textureV[n] = vs[n];
+            }
         }
         submit();
         armed = false;
