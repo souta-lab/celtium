@@ -307,6 +307,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.341 **round 148: ロード画面が出ない機序が確定（sky-draws）— 欠けているのはテクスチャではなく「幾何」**
+
+- **機序（原典＋既存 census）**: Forge のスプラッシュは **レガシー即時モード**で描いている
+  （`forge122/build/rfg/minecraft-src/java/net/minecraftforge/fml/client/SplashProgress.java` の `glBegin(GL_QUADS)` が **:294/:353/:416**・
+  テクスチャ転送 `glTexSubImage2D` **:820**）＝**LWJGL の `GL11` を直接呼び、`GlStateManager` を通らない**。
+  **GL-less の no-op census がそれを裏づける**: **`glVertex3f=152460`・`glBegin=38115`・`glEnd=38115`**
+  ＝**スプラッシュの四角形はスタブの no-op として捨てられ、draw になっていない**。
+  テクスチャ側は `a86273436` の replay で直っており mirror に存在し得るが、**それを貼る幾何が submit されない**という切り分け。
+- **presented の早期フレームはロード画面ではない**: `guiscale-leg` の early dump は distinct=5515・mode=(155,179,221) で既にワールド/メニュー内容
+  ＝**`dumpPresentedImage` の早期ダンプはロード中のフレームを捕まえていない**（受入脚の設計に効く）。
+- **必要な実装（4段・そのまま実行できる形）**:
+  1. stub の `SEM_BEGIN`/`SEM_END` に **site を出し**、`SplashProgress` の3サイトが実際に来ていることを確認（no-op 件数だけでは site が言えない）
+  2. **上限付き頂点バッファ**で `glBegin(GL_QUADS)` を記録（`glVertex3f`/`glTexCoord2f`/`glColor4f` を蓄積）
+  3. `glEnd` で **1バッチとして `submitImmediateBatch`**（format は POSITION_TEX_COLOR 相当）
+  4. 検証脚は**ロード中の presented dump**（`dumpPresentedTick` をロード中に合わせる）で `validationMessageCount=0`
+- **未着地の理由（sky-draws・記録に値する）**: client-array decode と同じ規模の新機能で、**中途半端に入れると現在動いている経路を落とす**ため、
+  残予算では**壊さずに通せない**と判断して着地させなかった。**受け入れは未達**（脚も未取得）。
+- **他の担当の進行**: `gui-text` を召喚（GUI 文字の暗転）・`sky-draws` に本 unit・`fog-path` にパノラマ・`glyph-fix` に **font レンダラ刷新（OPT-18）**・`perf-ring` に **OPT-08**。
+
 ## 0.340 **round 147: ユーザ報告（2026-10-12 最新）— 残るのは F3 のラグ・ロード画面・パノラマ・GUI 文字の一部が暗くなる**
 
 - **ユーザの言葉（そのまま）**: 「俺が報告した問題のほとんどは治りました。**F3がとてもラグいのはまだ残っています。ロード画面もないです。パノラマもないです。GUI上の文字の一部が暗くなる問題と**」
