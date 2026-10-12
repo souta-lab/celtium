@@ -2847,6 +2847,27 @@ public final class ValidationClient {
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
                 mc.gameSettings.limitFramerate = 260;
                 mc.gameSettings.enableVsync = false;
+                // The field write is not the option-page setter: nothing pushes the request to the Vulkan swapchain,
+                // which stays FIFO and keeps the legs vsync-bound at ~16.3ms whatever this line says. The request
+                // goes through reflection because the celtium-vulkan package does not exist in an upstream-Celeritas
+                // leg, where the GL context owns vsync instead.
+                try {
+                    Class.forName("org.soutalab.celtium.vulkan.VulkanSwapchain")
+                            .getMethod("setVSyncRequested", boolean.class)
+                            .invoke(null, Boolean.valueOf(mc.gameSettings.enableVsync));
+                } catch (Throwable ignored) {
+                    // No Vulkan package in this leg: the GL backend reads the same option at its own point.
+                }
+                // The GL side wants the symmetric call: Display.setVSyncEnabled is what applies the same option on a
+                // real context (Minecraft.java:608), and a field write never reaches it either. Under the stub the
+                // call is a no-op inside a guarded block, so one code path serves both legs.
+                try {
+                    Class.forName("org.lwjgl.opengl.Display")
+                            .getMethod("setVSyncEnabled", boolean.class)
+                            .invoke(null, Boolean.FALSE);
+                } catch (Throwable ignored) {
+                    // No lwjglx Display in this leg: vsync is owned by whoever created the swapchain.
+                }
                 // Overlay ALL is the required fixture phase; do not let a copied setting make the test unreachable.
                 if (commandBufferTargets) mc.gameSettings.hideGUI = false;
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false, WorldType.FLAT);
