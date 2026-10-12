@@ -393,6 +393,13 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.408 **round 209: R2 完了（7/7 stage・build 緑・CPU 契約 PASS）**
+
+- **stage 7（Immediate）完了**（`85149b125`）: 4形状に分けて移動 ✓ — ①**単純 count 70** ②**累算（複合代入）22** ③**値 8** ④**その他 15** ✓（＋共有宣言行で漏れた2 ✓）。**build が名指しした3つの教訓**（同型の罠）: **Map（`blendPairs`）と配列3つ（`acceptedByFormat`/`drawnByFormat`/`postAcceptDroppedByFormat`）は counter ではない** → backend へ返却 ✓／**駐機クラスのリストが不完全**で2つ漏れていた（`immediateRecordedBatches`・`immediateSubmittedBatches` ✓）／**生成した setter/adder の型が field と不一致**（narrowing として検出 ✓）。
+- **R2 の全7 stage 完了** ✓: **Font・Model・Texture・Terrain・Target・Submission・Immediate** ✓。**line の field 名と順序は全 stage で不変** ✓（受入は `verify_line_check.py` と leg の `CELTIUM_VERIFY` ✓・baseline byte-exact ✓）、**CPU 契約 PASS** ✓。
+- **設計の一貫**: counter の所有者が既にある場合は**読むだけ**（`TextureCopyService`・`PublishedFrameTextures`・`VulkanTextureRegistry`・`VulkanImmediateTexturePipeline`・`TerrainRenderer`・`RenderTargetRegistry`・`FrameSubmissionScheduler`・`VulkanContext` ✓）、無い場合のみ移動 ✓。**Map/配列/state は counter ではない**ので移動しない ✓。
+- **残り**: **R4 後半**（`bindVertexBuffer` → `writeUniforms` → `celtium$tryIndirectBatch` → `recordRenderPass` → `uploadRegion` → `render` ✓）／**R7**（root 設計 ✓）／**R8**（古いコメント・二重計上＝leg が必要な唯一の候補 ✓）。
+
 ## 0.407 **round 208: R2 stage 7 第1グループ（immediate 70 counter）着地。残りは「クラスを毎回全体生成」で進める**
 
 - **形状分類（実測）**: immediate の 113 counter は ①**increment＋read のみ = 68** ✓ ②**複合代入 = 22** ③**単純代入（値） = 8** ④**その他 = 15**（引数で渡す・`.field` 参照・書き込みが別形 ✓）に分かれる ✓。前 stage が通ったのは 1 stage あたりの形状が少数だったため ✓。
