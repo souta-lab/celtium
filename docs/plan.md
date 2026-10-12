@@ -40,7 +40,7 @@
 | **BH-09（scissor）** | **修正着地・受入未取得** | `218ea2120`。**原典で「vanilla は `glScissor`/`GL_SCISSOR_TEST` を一切呼ばない」を確定**（出現0）・唯一の発行元は `VulkanDrawContext.enableScissor`・呼び手は `ScrollableFrame.render` のみ・**`canScrollVertical` が立つ時だけ**。`scissorCalls`/`scissorToggles` が判定子。**leg 側の注意**: `r154-bh09` は `scissorCalls` 計器より前の jar なので**この脚にカウンタが無いこと＝0 ではない**。カウンタを持つ脚は `r157/r158/r160-bh09`・`guiscale2-leg`・`ownerfix-menu`・`splashdrop*`・`bh18b-amd/intel`・`r162-release`・`loading-leg` で、いずれも `scissorCalls=0`（ただし**リストが overflow する条件を踏んだ脚はまだ無い**） |
 | BH 全体 | **解決済み 28 / 未解決 8** | **BH-18 解決（`0a8b8d253`・合成入力 harness 全条件 PASS／recreate のみ未測定）**・**BH-35 解決（`4fb0b581b`・広告を列挙で決定し両GPU同一）**。残りは BH-14, 17, 20, 21, 24, 26, **33（UI側は「有効に見せない」で着地・fade 自体は未移植）**（`docs/history/2026-10-11-code-bughunt.md` 冒頭に状態） |
 | **パノラマ** | **受入済み（ユーザ可視・メニュー画像）** | メニュー presented 画像が**ブラー付きパノラマ背景＋ロゴ＋ボタン＋版表示**で描画（sha256 `090d98f7dd60be62…`・21,962色・白1.2%）。計器: `CELTIUM_TEX_COPY_SERVED dest=21 256x256 mean=106,119,135 opaque=65536/65536 nonWhite=65536`（旧: `255,255,255` / `0/65536` / `0`）。2修正 = `bbe0bbe71`（read解決の default-pair 対称分岐）＋`aea5fec0c`（**コピーの Y 反転**）。旧本文: 白の出所は **id 8 の mirror**（splash の白 256×256 `DynamicTexture`・`CELTIUM_UPLOAD_CALLER id=8 … first=0xffffffff`）。`59441d6bb` が splash 由来 upload を id で記録し、**splash upload が無かった最初のフレームで `forgetTexture`** する。**現行ツリーの leg（`bh18b-amd`/`bh18b-intel`）で `splashCanvasInvalidations=1` を実測＝破棄は実際に走る**。**`splashSourcedGroups` は旧定義の脚で 239** だったが、その脚（`splashdrop*`）は HEAD `5a8ee96af` で**計器より前**。menu-hold の判定 leg は**まだ無い**。`mirrorSourceById` を `forgetTexture` で消す契約修正は dirty（texture-mirror） |
-| **ロード画面** | **未表示（機序と到達性は確定・次の一手は描画先の追跡）** | **GL-less では `SplashProgress.start()` が cancel** され `:294/:353/:416` は実行されない。走るのは Tessellator 経路。**順序を原典で確定**: `Minecraft.startGame` 内で `beginMinecraftLoading`(preInit)=`:514` → `SplashProgress.drawVanillaScreen`=`:517` → `finishMinecraftLoading`(init)=`:588`＝**init での latch は遅すぎた**（fixture をコンストラクタ latch に変更）。隔離は1脚で確定: `CELTIUM_SPLASH_HOOK drawSplashScreen=true`（mixin 適用）＋ `fixture instanceSet=true`（到達）。**受入の絵**: `loading` stage の dump は client tick 0 で取得できたが **1280x720・全白 (255,255,255)・distinct=1**（＝ロード画面の幾何が presented frame に届いていない）。次は `CELTIUM_DRAW_SITE … passImage=` と `offTargetPerTarget` で描画先を追う。**注意**: 直前の1脚は**旧名 jar**（`2.5.12-celtium.0.1.0-dev.1`、`celtium$dumpLoadingFrame` 無し）で走っており**無効**だった（下の「成果物バージョンの罠」） |
+| **ロード画面** | **未測定（判定子が壊れていた・修正を着手中）** | **GL-less では `SplashProgress.start()` が cancel** され `:294/:353/:416` は実行されない。走るのは Tessellator 経路。**順序を原典で確定**: `Minecraft.startGame` 内で `beginMinecraftLoading`(preInit)=`:514` → `SplashProgress.drawVanillaScreen`=`:517` → `finishMinecraftLoading`(init)=`:588`＝**init での latch は遅すぎた**（fixture をコンストラクタ latch に変更）。隔離は1脚で確定: `CELTIUM_SPLASH_HOOK drawSplashScreen=true`（mixin 適用）＋ `fixture instanceSet=true`（到達）。**受入の絵**: `loading` stage の dump は client tick 0 で取得できたが **1280x720・全白 (255,255,255)・distinct=1**（＝ロード画面の幾何が presented frame に届いていない）。次は `CELTIUM_DRAW_SITE … passImage=` と `offTargetPerTarget` で描画先を追う。**注意**: 直前の1脚は**旧名 jar**（`2.5.12-celtium.0.1.0-dev.1`、`celtium$dumpLoadingFrame` 無し）で走っており**無効**だった（下の「成果物バージョンの罠」） |
 | **GUI 文字の暗転** | **現行ツリーでは再現せず（`172b5ab93`）** | ユーザ crop は1行目がアトラスモデルと**画素完全一致**、2行目も `colorCode[7]`/`[23]` で厳密。**影パス漏れ説は反証**。実差は quad 単位の 24/196 セル欠落だが、§7 tooltip 0/2718・fast path on/off 両方 0 |
 | **性能（ユーザの実プロファイル）** | **優先順の根拠** | 358 frame/20 s・frame mean 55.9・p50 34.1・p95 331.8・p99 358.9・worst 384.6 ms。**≥50 ms の 64 frame（17.9 %）が wall time の 50 %**。スパイクの `gameRenderer` 318.6 ms のうち**約 246 ms/frame が未帰属**。`gui` は**定数 ~13.7 ms/frame**（スパイク源ではない） |
 | **bridge 経路（`glless=false`）** | **本機で deadlock** | 最初の world frame で確定的（baseline 3 leg）。**GL-less 既定なので公開物は晒されない**が、比較 arm としては使えない |
@@ -387,6 +387,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.369 **round 176: パノラマを両GPUで受入。ロード画面の dump が出ない根因は「最初の present 前は swapchain が無い」こと**
+
+- **パノラマ両GPU受入**（完成条件 (d) の当該項目）:
+  - **AMD RX 6400**: leg `r174-panorama-menu-dump`・jar `31931ee858a43817`・menu 画像 sha256 `090d98f7dd60be62…`・**21,962色**・白1.2%・中心 `(111,115,133)`・PASSED/`validationClean=true`/`validationMessageCount=0`。
+  - **Intel UHD 630**: leg `r162-intel-menu`・jar `8fb40ed4ae9cd8400dc89242`・`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/intel_icd.json`・`--render-node pci-0000:00:02.0-render`・`--require-gpu Intel`・**device `Intel(R) UHD Graphics 630 (CFL GT2)`**・menu 画像 **22,073色**・白1.2%・中心 `(112,116,131)`・左上 `(206,217,249)` / AMD `(207,218,249)`・PASSED/clean/0・exit 0。
+  - **2つの jar は同一ではない**: Intel leg は loading フックを `@At("HEAD")` にした実験版（fixture 側のみの差・描画に影響なし）。この差は下の項目の測定のためで、**描画内容の比較は同一形状**であることを色数と中心色が示す。**厳密な同一 jar での両GPU比較は未取得**として残す。
+- **ロード画面の presented dump が出ない根因（確定）**: `celtium$dumpPresentedImage`（`VulkanTerrainGpuBackend.java:11298-11305`）は
+  ```java
+  if (this.swapchain == null) { return false; }
+  ```
+  で拒否し、`this.swapchain` は present 経路（`:9930` の `VulkanSwapchain.create`）で**遅延生成**される。`drawSplashScreen` の **HEAD ではこの run の present がまだ0回**（`pictureRequested_loading` が `after 0 presented frames` と記録）なので swapchain が無く、要求は拒否されて
+  **PNG が1枚も書かれない**（leg `r162-intel-menu` の `screenshots/` に loading のファイルが無い。`menu`/`early`/`world` はある）。
+  一方 **`drawSplashScreen` の最後の `this.updateDisplay()` が、この run の最初の present** である。したがって **splash のフレームを撮るには「最初の present より前に要求が入り、その最初の present で書かれる」しかない**。
+  **修正**: 要求を拒否せず**保留**し、`VulkanSwapchain.create` の直後に渡す（`return true` で「受理した」と正直に答える）。blend-state へ **task-63 の直後の別 unit** として渡した。
+- **測定契約の欠陥（記録）**: fixture の完了検査は `observed == presentedFramesAtRequest + 1`（`ValidationClient.java:5902`）で、
+  **「要求から present が1回あった」しか検証せず、その1回が splash かどうかを見ていない**。`@At("RETURN")` 版は splash の `updateDisplay()` の**後**に要求するので、書かれるのは**次の（メニューの）フレーム**だった。
+  実測: loading と menu の画像は distinct 21,955 / 21,962・中心色一致・白率一致（パノラマはゆっくり回るのでフレームが違えばバイトは違うが統計は一致）。
+  **したがって「ロード画面が白い」は「メニューの白いパノラマ」を測っていた**（測定アーティファクト）。`stage=loading` はロード画面の判定に使えない。
+- **このroundの着地（私）**: `46854aa95` — `VulkanTextureRegistry.forgetTexture` が `mirrorSourceById` を消す（GL名は再利用されるので、ラベルを残すと `splashSourcedGroups` が次のテクスチャを前の owner の source として数える）。
+- **このroundの割当**: gui-stage → BH-09 受入（scissor が live な scene）、perf-ring → Goal B（通常 frame の支配コストを計器で名指しし1つ消す。出発点の実測を渡した）、acceptance → 上の受入の独立検証と `docs/vanilla-acceptance.md` の更新。
 ## 0.368 **round 175: パノラマがユーザ可視で成立（メニュー画像を実測）。BH-18 / BH-35 完了、Y反転の受入**
 
 - **パノラマ受入（ユーザ優先順1位）**: leg `r174-panorama-menu-dump`（jar `31931ee858a43817e29b5b76`・fixture `9eab548f9c786592`・AMD RX 6400・`menuHoldTicks=60`・`dumpPresentedMenuTick=30`・
