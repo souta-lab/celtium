@@ -506,6 +506,21 @@ public final class FontBatch {
     }
 
     /** The font batching's own census, for the report: how much was coalesced and how each run went out. */
+    /** {@return how many degenerate separator vertices the runs carried}. */
+    public long fontStripSeparators() {
+        return this.stripSeparators;
+    }
+
+    /** {@return how many font runs were started}. */
+    public long fontRunsStarted() {
+        return this.batchesStarted;
+    }
+
+    /** {@return how many quads the runs appended}. */
+    public long fontQuadsAppended() {
+        return this.quadsAppended;
+    }
+
     public String celtium$fontBatchSummary() {
         return "fontRunsStarted=" + this.batchesStarted
                 + " fontQuadsAppended=" + this.quadsAppended

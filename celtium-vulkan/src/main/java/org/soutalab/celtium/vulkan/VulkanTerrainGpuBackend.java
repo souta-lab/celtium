@@ -1710,19 +1710,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             System.getProperty("celtium.font.batching", "true"));
 
     /** The run's vertices, owned by this backend and grown as needed; the font's own buffer is copied into it. */
-    private java.nio.ByteBuffer pendingFontVertices;
-    private int pendingFontBytesUsed;
-    private int pendingFontVertexCount;
-    private Object pendingFontFormat;
-    private int pendingFontStride;
-    private int pendingFontFormatId;
-    private int pendingFontDrawMode;
     /** The cheap state witnesses a run was started with: a change in any of them flushes it through the normal path. */
-    private int pendingFontTexture = -1;
-    private long pendingFontColorBits;
-    private boolean pendingFontAlphaTest;
-    private float pendingFontAlphaRef;
-    private boolean pendingFontActive;
     /**
      * The capture-side per-string font buffer's flush, run at the top of {@link #celtium$flushPendingFontBatch}: the
      * capture accumulates a string's glyphs itself and hands them over in one append, so every point that would
@@ -1735,21 +1723,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.fontPreFlush = hook;
     }
     /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
-    private final float[] pendingFontProjection = new float[16];
-    private final float[] pendingFontModelView = new float[16];
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
-    private int fontBatchesFlushedIntervening;
-    private int fontBatchesFlushedBoundary;
-    private int fontBatchesFlushedStateChange;
     /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
-    private long fontQuadsAppended;
-    private long fontBatchesStarted;
     private long fontAppendMillis;
     /**
      * Degenerate separator vertices inserted between glyphs of a strip run (see {@code celtium$fontAppend}): the
      * joining triangles a strip would otherwise draw between consecutive glyphs are the user-visible bars.
      */
-    private long fontStripSeparators;
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     private static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
@@ -4936,51 +4916,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private void celtium$fontMatrixBoundary() {
         this.fontBatch.celtium$fontMatrixBoundary();
     }
-    private long celtium$fontColourBits() {
-        // Packed as four bytes, not as float bit patterns: the first version shifted each 32-bit pattern by 48/32/16/0
-        // and masked the low 16 bits, which for ordinary colours (1.0f = 0x3F800000, 0.25f, 0.0f) is zero - the
-        // witness was 0 for almost every colour, so runs merged across colour changes, including the shadow pass and
-        // its light pass. The quantised byte is what the vertex data carries anyway.
-        return ((long) celtium$colourByte(this.immediateState.colorRed()) << 24)
-                | ((long) celtium$colourByte(this.immediateState.colorGreen()) << 16)
-                | ((long) celtium$colourByte(this.immediateState.colorBlue()) << 8)
-                | celtium$colourByte(this.immediateState.colorAlpha());
-    }
 
     private static int celtium$colourByte(float value) {
         int quantised = Math.round(value * 255.0f);
         return quantised < 0 ? 0 : Math.min(quantised, 255);
     }
 
-    private boolean celtium$fontRunMatches(int formatId, int stride, int drawMode, int texture, long colourBits,
-                                           boolean alphaTest, float alphaRef) {
-        // The matrix pair is part of the witness, exactly as it is for the normal path's group key (see the
-        // projection/modelView comparison in the append path): a run that spans a matrix change is drawn with one
-        // matrix for all of its quads. Leaving it out was measured as the garbled menu - the button labels, the rotated
-        // splash text and the copyright line came out as blocks while the unscaled footer text stayed legible, because
-        // the scaled and rotated draws were merged into a run opened under a different transform.
-        return this.pendingFontFormatId == formatId && this.pendingFontStride == stride
-                && this.pendingFontDrawMode == drawMode && this.pendingFontTexture == texture
-                && this.pendingFontColorBits == colourBits && this.pendingFontAlphaTest == alphaTest
-                && Float.compare(this.pendingFontAlphaRef, alphaRef) == 0
-                && java.util.Arrays.equals(this.pendingFontProjection, this.glProjection)
-                && java.util.Arrays.equals(this.pendingFontModelView, this.glModelView);
-    }
 
-    private void celtium$ensurePendingFontCapacity(int bytes) {
-        java.nio.ByteBuffer buffer = this.pendingFontVertices;
-        if (buffer != null && buffer.capacity() >= bytes) {
-            return;
-        }
-        int capacity = Math.max(4096, Integer.highestOneBit(Math.max(1, bytes)) * 2);
-        java.nio.ByteBuffer grown = org.lwjgl.system.MemoryUtil.memAlloc(capacity);
-        if (buffer != null) {
-            org.lwjgl.system.MemoryUtil.memCopy(org.lwjgl.system.MemoryUtil.memAddress(buffer, 0),
-                    org.lwjgl.system.MemoryUtil.memAddress(grown, 0), this.pendingFontBytesUsed);
-            org.lwjgl.system.MemoryUtil.memFree(buffer);
-        }
-        this.pendingFontVertices = grown;
-    }
 
     /**
      * Sends the pending run out through the normal submission path, and counts how it went: an intervening submission,
@@ -8616,9 +8558,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // shutdown hook, and a leg whose fixture exits early loses it - measured: the font-strip2 leg has no
                 // CELTIUM_FONT_GLYPH_SUMMARY line at all, so the counter that says the degenerate vertices were
                 // inserted was unreadable exactly in the leg that needed it. This line is written during the run.
-                + " fontStripSeparators=" + this.fontStripSeparators
-                + " fontRunsStarted=" + this.fontBatchesStarted
-                + " fontQuadsAppended=" + this.fontQuadsAppended
+                + " fontStripSeparators=" + this.fontBatch.fontStripSeparators()
+                + " fontRunsStarted=" + this.fontBatch.fontRunsStarted()
+                + " fontQuadsAppended=" + this.fontBatch.fontQuadsAppended()
                 // The bind chain, in the summary rather than only in the bounded CELTIUM_UNIT_BIND lines: the arrivals
                 // (bindTextureCalls = forwards, bindShortCircuits = the ones the hook skipped) against every mirror call
                 // (immediateStateCalls). Reading the bounded print lines as arrivals is the mistake this line exists to
