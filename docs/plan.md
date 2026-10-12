@@ -339,6 +339,26 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.362 **round 169: scissor 発行の条件が確定 — `ScrollableFrame` が「スクロール可能な時だけ」clip する**
+
+- **原典で確定した連鎖**:
+  1. **`GL_SCISSOR_TEST`/`glScissor` を呼ぶ唯一の場所は `VintageDrawContext.enableScissor`**（`forge122/.../gui/VintageDrawContext.java:143-150`）。
+  2. **その呼び手は1つだけ**: **`ScrollableFrame.render`**（`common/.../gui/frame/ScrollableFrame.java:126`）。
+  3. **`ScrollableFrame` は Celeritas 画面で実際に使われている**: `Tab.from(page, …)` がページの frame を `ScrollableFrame` にし、
+     `TabFrame:146` が `sidebarFrame = ScrollableFrame.createBuilder(…)` を作る。
+  4. **しかし `enableScissor` は条件付き**: `if (this.canScrollHorizontal || this.canScrollVertical)` の内側だけ。
+     `canScrollVertical` は **frame の内容が viewport より高い時**に立つ（`:44-57`）。**else 側は clip せずに `super.render`**。
+- **帰結（`scissorCalls=0` の説明）**: **Celeritas 画面は開いているが、その内容が viewport に収まっている**ため
+  `canScrollVertical=false` → **`enableScissor` が呼ばれない**。＝**scene を「溢れさせる」必要がある**。
+- **次の一手（具体的・1変数）**: **内容が溢れるように scene を作る** ＝ **guiScale を上げる**（較正は `guiScale=3`）か **window を小さくする**。
+  その後 **`scissorCalls` を最初に読み**、非0 なら `lineBatchesNarrowed` → `scissorCapturedGroups`/`scissorLateCapturedGroups` → `-Dceltium.vulkan.groupScissor=false` 対照。
+- **注意（記録）**: 私の `resizeTo=854x480`＋`resizeAtTick=60`＋`resizeViaCompositor=true` の leg（`r159-bh09`）は
+  **`glfwWindowSizeAtEnd=854x480` で resize は成立**したが **`CELTIUM_VERIFY` が出ずカウンタ未取得**
+  ＝**resize 脚では summary trigger に到達していない**（別の trigger が必要かもしれない）。**この leg は測定として使えない**。
+- **BH-09 の状態（正確に・解決済みとは書かない）**: **機構特定・修正着地・計器4 trigger 着地・fixture knob 着地・
+  「vanilla は scissor を使わない」確定・「scissor は ScrollableFrame が溢れた時だけ発行」確定**・
+  **受入は「溢れる scene」の leg 待ち**。**9 leg を費やしたが、各 leg は計器か原典が理由を示した**。
+
 ## 0.361 **round 168: 原典が決着 — vanilla は scissor を一切使わない。scissor の発行元は Celeritas 自身の UI**
 
 - **原典の検索（決定的）**: `forge122/build/rfg/minecraft-src/java/net/minecraft/` 全体で **`GL_SCISSOR_TEST` の出現 0・`glScissor` の出現 0**。
