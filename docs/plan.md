@@ -307,6 +307,21 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.338 **round 145: 次の実装点を原典で確定 — finder は `id`/`field_146127_k`（GuiButton 形）で照合しており、`Option` 形には `getName()` 経路が要る**
+
+- **コード確認（Lead）**: `celtium$vsFindOptionButton` は候補を走査して
+  **`celtium$fieldValue(candidate, {"id", "field_146127_k"})` が要求 id と一致するか**で選ぶ（`:6310` 付近）＝**`GuiButton` 形の前提**。
+  ＝**`Option` 形の行は `id` を持たない**ため一致せず、`videoSettingsRowNames=none` と「no option button could be located」になる（前ラウンドの測定と一致）。
+- **必要な実装（次 unit・2箇所）**:
+  1. **finder**: 候補が `id` を持たない場合に **`getName()`（Component → `getString()`/`getUnformattedText()`）**で名前を読み、
+     既存の token 照合（clouds/graphics/ao/particles）に載せる。
+  2. **row-names**: 同じく `getName()` 経路を足し、`videoSettingsRowNames` に**実際の行名**を出す（`none` が消えることが進捗の証拠）。
+  3. **押す操作**: `Option` には `GuiButton.mousePressed` が無いので、**`getControl().createElement(dim)` が返す `ControlElement` の action** を呼ぶ
+     （`CyclingControl` は値を1つ進める）。
+- **受入（その後）**: 同一 leg で 4 phase（`partialColorMaskGroups` 506→368→復元→GUI scale の `REQUIRES_RENDERER_RELOAD` 行）。
+- **fixture 側の gate（5段）**: `optionsRowList`（通過）→ `buttonList`（通過）→ **controller 到達（通過）** →
+  **行の読み取り（`Option` 形・本ラウンドで実装点確定）** → 押す操作（control action）。
+
 ## 0.337 **round 144: controller 経路が動いた（`videoSettingsChainSource=controller pages`）— 次の gate は「finder が Option 形の行を読めない」**
 
 - **実装の経緯（Lead・3段）**:
