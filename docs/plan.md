@@ -307,6 +307,25 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.348 **round 155: 未解決 BH 13件を担当へ移譲（`docs/history/2026-10-11-code-bughunt.md` 冒頭に解決状況を明記）**
+
+- **`docs/history/2026-10-11-code-bughunt.md` の冒頭に解決状況を書いた**（`d4da099db`）:
+  **解決済み23件を列挙**・**BH-09 は部分なので解決済みと書かない**・**未解決13件を担当へ移譲済みと明記**・
+  **本文は起票時の記述であり現在の状態ではない**と明示（古い段落を生きた欠陥として読ませない）。
+- **移譲（5担当・13件）**:
+  | 担当 | BH | 契約 |
+  |---|---|---|
+  | **blend-state** | **BH-03・04・23・34** | alpha test の参照値と比較関数／immediate batch key の colour 半分／sampler の再照会／`glTexEnvf` の float bit 列 |
+  | **frame-composite** | **BH-14・17・26** | 非 main FBO の chain identity（site 地図は plan §0.299/303/306）／208 byte push constant と 128 byte 経路／所有 image の layout と初回 clear |
+  | **pipelines** | **BH-18・35** | swapchain 引数を surface capabilities から導出／広告する GL4.6・GLSL4.60 と backed な symbol の一致 |
+  | **proj-channel** | **BH-20・21・24** | 途中失敗の handle 回収／world destroy の資源 delete／UniformBuffer の grow の所有順序 |
+  | **sky-draws** | **BH-09・33** | **`scissorCapturedGroups=0` を >0 にする**（受入は counter）／chunk fade-in の設定と uniform の一致 |
+- **各担当への共通指示**: 原典を先に読む・失敗ゲートは測定で反証するまで証拠・counter の不在を描画の不在と読まない・
+  **1件1コミット＋その受入**・名指しされていない契約が要るなら**最後の緑コミットで止めて名指しする**・報告は日本語で短く。
+- **注意して渡した点**: BH-14 は既存の site 地図から始める（再構築させない）・BH-17 は OPT-03 の全部を待たず GUI が実際に何を要るかを測る・
+  BH-26 は「未submit の破棄で layout が戻らない」という寿命契約・BH-21/20/24 は create/grow/destroy の同じ契約の3面なので一緒に取る・
+  BH-09 は「counter が動くこと」が受入（絵ではない）。
+
 ## 0.347 **round 154: BH-01..37 の到達状況（`docs/history/2026-10-11-code-bughunt.md` の37件）**
 
 - **P1 は 23 件**（BH-01..07・09・10・12..19・21・24・25・26・27・37）、**P2 は 14 件**（BH-08・11・20・22・23・28..36）。
