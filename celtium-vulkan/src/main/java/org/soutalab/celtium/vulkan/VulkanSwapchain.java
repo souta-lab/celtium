@@ -79,6 +79,20 @@ public final class VulkanSwapchain {
      */
     private long[] acquireSemaphores;
     private int acquireSemaphoreCursor;
+    /**
+     * Which image each acquire semaphore was last handed to, and the acquire count at which it happened (audit B12).
+     * <p>
+     * The semaphore is chosen by cursor <em>before</em> the acquire, because the acquire takes it as an argument, so
+     * the code cannot index it by the image it will return. What it can do is remember the pairing: after an acquire
+     * returns image {@code i} using semaphore {@code s}, this records that {@code s} belongs to {@code i}. A semaphore
+     * whose image has not been acquired again is a semaphore whose previous signal the presentation engine has not
+     * necessarily consumed, and handing it to another acquire is the reuse the spec forbids. The table is
+     * diagnostic-only for now: it counts the hazard instead of asserting it away, so a leg says whether this machine
+     * reaches it before any synchronisation is changed.
+     */
+    private long[] acquireSemaphoreOwnerImage;
+    private long acquireSemaphoreReusesWhileOwned;
+    private long acquiresRecorded;
     /** One render-finished semaphore per image, paired with the acquire ones: the presentation waits on these. */
     private long[] renderFinishedSemaphores;
     /** Times the render-finished pool was rebuilt because the swapchain's image count changed. */
@@ -827,6 +841,7 @@ public final class VulkanSwapchain {
                 return "present image: vkAcquireNextImageKHR returned " + result;
             }
             long image = this.images[index.get(0)];
+            celtium$noteAcquireOwner(stack, acquire, index.get(0));
             if (renderFinished == VK_NULL_HANDLE) {
                 renderFinished = renderFinishedFor(stack, index.get(0));
                 if (renderFinished == VK_NULL_HANDLE) {
@@ -1000,6 +1015,52 @@ public final class VulkanSwapchain {
                     () -> vkDestroySemaphore(this.context.device(), retired, null));
             return;
         }
+    }
+
+    /**
+     * Records which image the acquire semaphore was handed to, and counts a reuse that the ownership table says is
+     * still owned (audit B12). One counter, no behaviour change: the point is to make the hazard visible in a leg
+     * rather than to assume either that it happens or that it does not.
+     */
+    private void celtium$noteAcquireOwner(MemoryStack stack, long semaphore, int imageIndex) {
+        this.acquiresRecorded++;
+        if (this.acquireSemaphores == null || semaphore == VK_NULL_HANDLE) {
+            return;
+        }
+        int slot = -1;
+        for (int i = 0; i < this.acquireSemaphores.length; i++) {
+            if (this.acquireSemaphores[i] == semaphore) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            return;
+        }
+        if (this.acquireSemaphoreOwnerImage == null) {
+            this.acquireSemaphoreOwnerImage = new long[this.acquireSemaphores.length];
+            java.util.Arrays.fill(this.acquireSemaphoreOwnerImage, -1L);
+        }
+        // A semaphore still owned by an image that has not been re-acquired is the reuse the spec forbids.
+        if (this.acquireSemaphoreOwnerImage[slot] >= 0L && this.acquireSemaphoreOwnerImage[slot] != imageIndex) {
+            this.acquireSemaphoreReusesWhileOwned++;
+        }
+        this.acquireSemaphoreOwnerImage[slot] = imageIndex;
+    }
+
+    /** {@return the acquire-semaphore ownership census}, for the present trace and the report. */
+    public String acquireOwnershipSummary() {
+        int owned = 0;
+        if (this.acquireSemaphoreOwnerImage != null) {
+            for (int i = 0; i < this.acquireSemaphoreOwnerImage.length; i++) {
+                if (this.acquireSemaphoreOwnerImage[i] >= 0L) {
+                    owned++;
+                }
+            }
+        }
+        return "acquires=" + this.acquiresRecorded + " acquireSemaphoresOwned=" + owned
+                + " acquireSemaphoreReusesWhileOwned=" + this.acquireSemaphoreReusesWhileOwned
+                + " acquireCursor=" + this.acquireSemaphoreCursor;
     }
 
     private long acquireSemaphore(MemoryStack stack) {
