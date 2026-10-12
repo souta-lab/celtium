@@ -823,7 +823,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 value.float32(0, rgba[0]);
                 value.float32(1, rgba[1]);
                 value.float32(2, rgba[2]);
-                value.float32(3, rgba[3]);
+                // Alpha 1 whatever the game's clear colour says, because this image *is* the default framebuffer.
+                // GL's default framebuffer normally has no alpha bits, so the alpha a clear writes there is not
+                // observable and every read of it - a copy into a texture, a shader sampling the FBO colour texture -
+                // yields 1. Measured on the main menu (round 215): the game clears with (1,1,1,0), this image kept
+                // alpha 0, `glCopyTexSubImage2D` carried that 0 into the panorama's DynamicTexture, and the blur and
+                // final composite quads there blend with SRC_ALPHA - so they drew nothing at all and the menu's
+                // background stayed the cleared white instead of the panorama (menu dump mean=(169,168,169) with the
+                // cube visible only where it was drawn directly, against the accepted (98,102,96)).
+                value.float32(3, 1.0f);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
                 org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, this.colorImage, COLOR_RENDER_LAYOUT,
                         value, range);
