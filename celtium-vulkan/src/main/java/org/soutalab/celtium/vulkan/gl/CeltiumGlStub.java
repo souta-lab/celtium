@@ -493,6 +493,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final Map<String, Callback> trampolines = new HashMap<>();
     private final java.util.concurrent.atomic.AtomicInteger nextName = new java.util.concurrent.atomic.AtomicInteger(1);
     private final java.util.concurrent.atomic.AtomicLong nextSync = new java.util.concurrent.atomic.AtomicLong(1);
+    /** The serial every filed level write takes its number from; see {@link TexCapture#serial}. */
+    private final java.util.concurrent.atomic.AtomicLong texUploadSerial =
+            new java.util.concurrent.atomic.AtomicLong();
     private final java.util.Set<Long> liveSync = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<Integer> liveNames = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Map<Integer, Boolean> enables = new java.util.concurrent.ConcurrentHashMap<>();
@@ -1050,6 +1053,26 @@ public final class CeltiumGlStub implements FunctionProvider {
      * @param textureName the GL texture name
      * @param level       the mip level
      */
+    /**
+     * {@return the write serial the level's captured record carries, or {@link Long#MIN_VALUE} when no record
+     * exists at all}
+     * <p>
+     * {@link TexCapture#serial} documents the numbering. Two calls that answer the same number mean the level's
+     * pixels are exactly what they were at the first call, which is all a mirror needs to decide an upload would
+     * be a no-op. {@link Long#MIN_VALUE} never collides with a real serial - real numbers start at 1 - so a level
+     * with no record reads as "unknown" rather than "unchanged".
+     *
+     * @param textureName the GL texture name
+     * @param level       the mip level
+     */
+    public static long textureUploadSerial(int textureName, int level) {
+        CeltiumGlStub stub = installed;
+        TexCapture capture = stub == null
+                ? null
+                : stub.texCaptures.get(Long.valueOf(texLevelKey(textureName, level)));
+        return capture == null ? Long.MIN_VALUE : capture.serial;
+    }
+
     public static boolean textureLevelHasGamePixels(int textureName, int level) {
         CeltiumGlStub stub = installed;
         if (stub == null) {
@@ -2627,12 +2650,24 @@ public final class CeltiumGlStub implements FunctionProvider {
          * volatile because the game thread writes it while a reader may be polling the record.
          */
         volatile boolean gamePixels;
+        /**
+         * The write number the level reached when this record's bytes became true.
+         * <p>
+         * Every write the stub files - a full image, an undefined level, a patch - takes the next number from
+         * {@link CeltiumGlStub#texUploadSerial}; a record is assigned its number at construction and an in-place patch
+         * bumps the number on the record it rewrote. A consumer that holds the number it last mirrored can answer "did
+         * the game touch this level since" in O(1) - the alternative the mirrors used before was an FNV pass over
+         * every byte of the level on every ask, which is what the per-batch light-map upload measured against.
+         * Volatile for the same reason {@link #gamePixels} is.
+         */
+        volatile long serial;
 
-        TexCapture(int width, int height, ByteBuffer data, boolean gamePixels) {
+        TexCapture(int width, int height, ByteBuffer data, boolean gamePixels, long serial) {
             this.width = width;
             this.height = height;
             this.data = data;
             this.gamePixels = gamePixels;
+            this.serial = serial;
         }
     }
 
@@ -2676,7 +2711,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         // Publishing a new record instead of rewriting the old one, so a reader polling the level sees one whole image.
-        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, rgba, true));
+        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)),
+                new TexCapture(width, height, rgba, true, this.texUploadSerial.incrementAndGet()));
         this.fullCaptures.incrementAndGet();
     }
 
@@ -2702,7 +2738,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small
         // buffer, and a garbage surface is exactly the silently wrong atlas this path exists to prevent.
         MemoryUtil.memSet(memAddress(zeros), 0, bytes);
-        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)), new TexCapture(width, height, zeros, false));
+        this.texCaptures.put(Long.valueOf(texLevelKey(name, level)),
+                new TexCapture(width, height, zeros, false, this.texUploadSerial.incrementAndGet()));
         this.undefinedExtents.incrementAndGet();
     }
 
@@ -2738,7 +2775,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         long key = texLevelKey(name, level);
         TexCapture existing = this.texCaptures.get(Long.valueOf(key));
         if (existing == null) {
-            this.texCaptures.put(Long.valueOf(key), new TexCapture(width, height, patch, true));
+            this.texCaptures.put(Long.valueOf(key),
+                    new TexCapture(width, height, patch, true, this.texUploadSerial.incrementAndGet()));
             this.subCaptures.incrementAndGet();
             return;
         }
@@ -2754,7 +2792,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         // The surface now holds game bytes even when it started as an undefined allocation: the level is what GL has
         // (undefined elsewhere, this patch here), so a mirror may be built from it. Set after the copy, so a reader
-        // that sees the flag also sees the rows.
+        // that sees the flag also sees the rows. The serial bumps at the same point for the same reason: a consumer
+        // that sees the new number is guaranteed the rows it belongs to are visible.
+        existing.serial = this.texUploadSerial.incrementAndGet();
         existing.gamePixels = true;
         this.subCaptures.incrementAndGet();
     }
