@@ -1532,6 +1532,21 @@ public final class VulkanContext {
                         continue;
                     }
                 }
+                // The push-constant budget is part of the device contract, and it is checked here so a device that
+                // cannot carry it is *passed over at selection* with its own number rather than failing later inside
+                // pipeline creation. Vulkan guarantees only 128 bytes (1.0-1.3; 256 from 1.4), and the renderer spends
+                // PUSH_CONSTANT_BYTES_USED per immediate draw: a 128-byte device is not "supported" - the capability
+                // branch that would move the payload to a UBO (task-29/57) does not exist yet - so it is skipped
+                // rather than selected and then refused.
+                int candidatePushLimit = properties.properties().limits().maxPushConstantsSize();
+                if (candidatePushLimit < PUSH_CONSTANT_BYTES_USED) {
+                    if (this.skippedForPushConstants == null) {
+                        this.skippedForPushConstants = new ArrayList<String>();
+                    }
+                    this.skippedForPushConstants.add(properties.properties().deviceNameString()
+                            + "(maxPushConstantsSize=" + candidatePushLimit + " < " + PUSH_CONSTANT_BYTES_USED + ")");
+                    continue;
+                }
                 this.physicalDevice = candidate;
                 // Register it with the depth-format contract here, where a device first exists: the terrain pipeline and
                 // the render-pass builder are static callers that need a depth format whether or not a frame target
@@ -1544,9 +1559,14 @@ public final class VulkanContext {
                 break;
             }
             if (this.physicalDevice == null) {
-                String skipped = this.skippedForInteropExtensions == null ? ""
+                String skipped = (this.skippedForInteropExtensions == null ? ""
                         : " Candidates skipped for lacking the interop fd extensions: "
-                                + String.join(", ", this.skippedForInteropExtensions) + ".";
+                                + String.join(", ", this.skippedForInteropExtensions) + ".")
+                        + (this.skippedForPushConstants == null ? ""
+                                : " Candidates skipped for a push-constant budget below " + PUSH_CONSTANT_BYTES_USED
+                                        + " bytes: " + String.join(", ", this.skippedForPushConstants)
+                                        + " (the immediate draws spend that much and the UBO fallback is not"
+                                        + " implemented).");
                 throw new IllegalStateException(openGl == null
                         ? "No Vulkan physical device satisfies the requirements (no OpenGL identity to match against, which"
                                 + " is the no-bridge case)." + skipped
@@ -1588,6 +1608,8 @@ public final class VulkanContext {
 
     /** Devices passed over because the interop path requires the fd-sharing extensions and they lack them. */
     private List<String> skippedForInteropExtensions;
+    /** Candidates passed over because their push-constant limit cannot carry what the renderer spends per draw. */
+    private List<String> skippedForPushConstants;
     /** The extensions the chosen device advertised, kept until the contract line can be printed with the queue. */
     private Set<String> advertisedDeviceExtensions;
     /** The device extensions this context actually enabled, named in the contract line rather than implied. */
@@ -1658,6 +1680,9 @@ public final class VulkanContext {
                 + "(0x" + Integer.toHexString(depthFormat) + ")"
                 + " samples=" + REQUIRED_SAMPLES);
         int pushConstantLimit = properties.limits().maxPushConstantsSize();
+        // The requirement is named, not assumed: the number comes from the same constant the pipeline layouts
+        // spend, so the contract line and the code cannot drift apart.
+        required.add("pushConstants>=" + PUSH_CONSTANT_BYTES_USED);
         System.out.println("[Celtium] CELTIUM_DEVICE_CONTRACT name=\"" + this.deviceName + "\" uuid=" + this.deviceUuid
                 + " deviceType=" + properties.deviceType()
                 + " apiVersion=" + VK_VERSION_MAJOR(properties.apiVersion()) + "."
@@ -1675,7 +1700,9 @@ public final class VulkanContext {
                 + " externalSemaphoreFd=" + extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)
                 + " swapchain=" + extensions.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME) + "]"
                 + (this.skippedForInteropExtensions == null ? ""
-                        : " skippedForInteropExtensions=[" + String.join(", ", this.skippedForInteropExtensions) + "]"));
+                        : " skippedForInteropExtensions=[" + String.join(", ", this.skippedForInteropExtensions) + "]")
+                + (this.skippedForPushConstants == null ? ""
+                        : " skippedForPushConstants=[" + String.join(", ", this.skippedForPushConstants) + "]"));
         reportDriverInfo(stack);
     }
 
