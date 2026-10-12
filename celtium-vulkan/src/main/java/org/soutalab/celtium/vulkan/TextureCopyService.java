@@ -466,6 +466,14 @@ public final class TextureCopyService {
         if (readFbo == 0 && this.host.currentRenderTargetIsMain() && this.host.frameTarget() != null) {
             return this.host.frameTarget().colorImage();
         }
+        if (readFbo == 0 && "frame-image".equals(GllessFrameTarget.routeLabelForBinding(
+                this.host.currentRenderTarget(), this.host.currentRenderTargetIsMain())) && this.host.frameTarget() != null) {
+            // The window's own image, which is where a name-0 bind's draws went (identity 0 is the window in every
+            // phase). The routing rule is asked rather than the name compared, so the read and the draws answer the
+            // same question: the menu's skybox draws its faces with name 0 bound and copies from name 0, and reading a
+            // different image than the faces were drawn into is what made the presented menu flat and washed out.
+            return this.host.frameTarget().colorImage();
+        }
         if (readFbo == 0 && glless != null) {
             // GL name 0 with a target bound that is not the main framebuffer: the name is not the fact that decides
             // where the draws went - the routing is. The game's own framebuffer carries a non-zero identity and a GL

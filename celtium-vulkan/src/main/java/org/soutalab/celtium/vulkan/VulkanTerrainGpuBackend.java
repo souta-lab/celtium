@@ -216,7 +216,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private long chainPairContentIdentity = Long.MIN_VALUE;
     private int pairClearsRefusedOtherIdentity;
     /** Passes identity 0 (the window) drew before the game's own framebuffer was adopted, and the bounded log of them. */
-    private int windowDrawsBeforeAdoption;
+    private int windowDrawsToFrameImage;
     private int windowDrawLogs;
     /** Loading-phase windows whose submission was marked as the frame the present may take (see the window close path). */
     private int windowFramesMarkedPresentable;
@@ -7802,28 +7802,26 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // chain pair, which is the image the post chain adopts. That split is the fix for the shared pair: the chain
         // used to read an image the composite had just painted a copy of the whole scene into. It is a routing rule
         // and not a skip rule: both streams are still drawn, each into an image of its own.
-        // Identity 0 is the window (GL name 0 is the default framebuffer), and before the game's own framebuffer has
-        // been adopted - the splash and loading phases - the window's draws ARE the picture the present takes, so they
-        // land in the frame image. Measured: `Minecraft.drawSplashScreen` draws its own framebuffer (name 6 -> the
-        // chain pair, where the logo lands), unbinds to name 0, and then draws the composite quad that samples name 6
-        // with name 0 bound - so with identity 0 routed to the default pair the composite landed in an image the
-        // present never takes and the window showed the frame image's white clear. Once a main framebuffer IS adopted
-        // (menu, world) identity 0 keeps the default pair it has always written: there its draws are the game's
-        // finished-frame composites, and routing them into the frame image overdraws the world - the earlier attempt
-        // that produced presentedDistinctColours=1. This is a phase fact, not a rectangle.
-        boolean windowBeforeAdoption = this.currentRenderTarget == 0L && this.mainTargetIdentity == Long.MIN_VALUE;
-        if (windowBeforeAdoption) {
-            this.windowDrawsBeforeAdoption++;
+        // Identity 0 is the window (GL name 0 is the default framebuffer), so its draws go to the frame image in every
+        // phase - the loading screen's composite, the main menu's skybox faces and the world's finished-frame
+        // composite alike. The earlier phase test sent them to a pair once a main framebuffer was adopted, and that
+        // made the window's picture and the picture a name-0 copy reads two different images: measured on the menu,
+        // the panorama's faces were drawn into the frame image while the copy that feeds the blur still read the pair,
+        // and the presented menu came out flat and washed out (distinct 96k -> 21k, top mean (164,167,177) ->
+        // (203,201,198)). One image for the window in both directions is vanilla's own semantics.
+        boolean windowIdentity = this.currentRenderTarget == 0L;
+        if (windowIdentity) {
+            this.windowDrawsToFrameImage++;
             if (this.windowDrawLogs < 4) {
                 this.windowDrawLogs++;
-                System.out.println("[Celtium] CELTIUM_WINDOW_DRAW identity=0 phase=before-adoption image=frame"
+                System.out.println("[Celtium] CELTIUM_WINDOW_DRAW identity=0 image=frame"
+                        + " phase=" + (this.mainTargetIdentity == Long.MIN_VALUE ? "before-adoption" : "adopted")
                         + " frameSerial=" + celtium$frameSerial() + " windowsThisFrame="
                         + this.immediateWindowsThisFrame);
             }
         }
         boolean chainIdentity = this.currentRenderTarget != 0L;
-        GllessFrameTarget offTarget = (this.currentRenderTargetIsMain || windowBeforeAdoption) ? null
-                : offTargetTarget();
+        GllessFrameTarget offTarget = (this.currentRenderTargetIsMain || windowIdentity) ? null : offTargetTarget();
         // The image this pass attaches, so the sampling-side transition below can leave it alone. Default is the frame
         // image, which is what both the plain path and the fallback path attach.
         this.passAttachedColorImage = this.frameTarget.colorImage();
@@ -8504,7 +8502,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // The pair clear-once contract: applied clears against the clears a second identity's pass asked for
                 // and did not get. Without the second number the rule's effect is inferred from a picture.
                 + " pairClearsRefusedOtherIdentity=" + this.pairClearsRefusedOtherIdentity
-                + " windowDrawsBeforeAdoption=" + this.windowDrawsBeforeAdoption
+                + " windowDrawsToFrameImage=" + this.windowDrawsToFrameImage
                 + " windowFramesMarkedPresentable=" + this.windowFramesMarkedPresentable
                 + " lastPairClearRefusal=[" + this.lastPairClearRefusal + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")

@@ -1113,7 +1113,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * @return "frame-image", "default-pair" or "chain-pair"
      */
     public static String routeLabelForBinding(long identity, boolean isMain) {
-        return isMain ? "frame-image" : pairLabelForIdentity(identity);
+        // Identity 0 is the window (GL name 0 is the default framebuffer), so its draws go to the frame image in every
+        // phase. Routing it to a pair instead made the window's own picture and the picture a name-0 copy reads two
+        // different images: measured on the main menu, the panorama's faces were drawn into the frame image while the
+        // copy that feeds the blur still read the pair, and the presented menu came out washed out and flat
+        // (presentedDistinctColours 96k -> 21k, top mean (164,167,177) -> (203,201,198)). One image for the window in
+        // both directions is vanilla's own semantics and removes the phase dependence the earlier rule had.
+        return isMain || identity == 0L ? "frame-image" : pairLabelForIdentity(identity);
     }
 
     /**
