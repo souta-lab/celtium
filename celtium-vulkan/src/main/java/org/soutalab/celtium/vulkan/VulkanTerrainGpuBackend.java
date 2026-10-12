@@ -1169,6 +1169,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
     private final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
+    /** The frame slots, their completion epochs and the retirement rules (refactoring plan R6). */
+    private final FrameSubmissionScheduler scheduler = new FrameSubmissionScheduler();
+
     // The colour-texture census lives in publishedTextures (refactoring plan R1b).
     /** Names the sampling side resolved through the framebuffer census, and the bounded log of them. */
     private int framebufferColorTextureLogs;
@@ -6237,7 +6240,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         java.util.Iterator<ImmediateGroup> iterator = this.retiredImmediateGroups.iterator();
         while (iterator.hasNext()) {
             ImmediateGroup group = iterator.next();
-            if (group.retireSequence > this.completedSubmitSequence) {
+            if (group.retireSequence > this.scheduler.completedSubmitSequence()) {
                 // Its submission is still in flight; the mesh stays until the watermark covers it.
                 continue;
             }
@@ -7310,7 +7313,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     }
                     return;
                 } catch (RuntimeException | LinkageError error) {
-                    if (this.frameSubmitReachedQueue || this.slotPending[this.frameSlot] || this.gpuStalled) {
+                    if (this.frameSubmitReachedQueue || this.scheduler.isPending(this.frameSlot) || this.gpuStalled) {
                         this.noteStalled(); // no reset/retire/GL fallback while the GPU may own these resources
                         throw error;
                     }
@@ -8324,11 +8327,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " " + this.context.uploadBatchSummary()
                 + " " + (this.frameArena == null ? "frameArena=not-created" : this.frameArena.describe())
                 + " frameArenaFallbackGroups=" + this.frameArenaFallbackGroups
-                + " frameSlots=" + FRAME_SLOTS + " frameSlotReuseWaits=" + this.slotReuseWaits
-                + " slotPolls=" + this.slotPolls + " slotPollConfirms=" + this.slotPollConfirms
-                + " slotWaitConfirms=" + this.slotWaitConfirms
-                + " submitSequence=" + this.submitSequence
-                + " completedSubmitSequence=" + this.completedSubmitSequence
+                + " frameSlots=" + FRAME_SLOTS + " frameSlotReuseWaits=" + this.scheduler.slotReuseWaits()
+                + " slotPolls=" + this.scheduler.slotPolls() + " slotPollConfirms=" + this.scheduler.slotPollConfirms()
+                + " slotWaitConfirms=" + this.scheduler.slotWaitConfirms()
+                + " submitSequence=" + this.scheduler.submitSequence()
+                + " completedSubmitSequence=" + this.scheduler.completedSubmitSequence()
                 + " frameFenceWaitMillis=" + this.frameFenceWaitMillis
                 + " frameFenceWaitCount=" + this.frameFenceWaitCount
                 + " frameFenceWaitWorstMillis=" + this.frameFenceWaitWorstMillis
@@ -11018,7 +11021,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // GL is already holding the image or would wait on a signal that never comes: abandon rather than
                 // leave the frame half-closed.
                 this.frameTarget.abandonFrame("post chain submission refused");
-                if (!this.slotPending[this.frameSlot] && !this.gpuStalled && this.commandState.recording()) {
+                if (!this.scheduler.isPending(this.frameSlot) && !this.gpuStalled && this.commandState.recording()) {
                     // The recording the submission never made has to be closed: beginCommands() refuses to open a
                     // second recording on the same command buffer ("nested begin on backend command buffer"), so
                     // leaving the state at "recording" wedges every later terrain/immediate/chain recording
@@ -12596,7 +12599,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * the structure the next step (removing the wait before present) needs: with two slots the CPU can record the next
      * frame into a buffer no submission is reading, which is impossible with one.
      */
-    private static final int FRAME_SLOTS = 4;
+    /** The frame slots, owned by the scheduler (refactoring plan R6). */
+    private static final int FRAME_SLOTS = FrameSubmissionScheduler.FRAME_SLOTS;
     private final VkCommandBuffer[] slotCommandBuffers = new VkCommandBuffer[FRAME_SLOTS];
     private final long[] slotFences = new long[FRAME_SLOTS];
     private final boolean[] slotPending = new boolean[FRAME_SLOTS];
@@ -12704,7 +12708,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.slotFences[slot] != 0) {
                 vkDestroyFence(this.context.device(), this.slotFences[slot], null);
                 this.slotFences[slot] = 0;
-                this.slotPending[slot] = false;
+                this.scheduler.releaseOnSlotReset(slot);
             }
             this.slotCommandBuffers[slot] = null;
             this.slotCommandStates[slot] = null;
@@ -12729,11 +12733,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         this.commandBuffer = this.slotCommandBuffers[this.frameSlot];
         this.fence = this.slotFences[this.frameSlot];
         this.commandState = this.slotCommandStates[this.frameSlot];
-        if (this.slotPending[this.frameSlot]) {
+        if (this.scheduler.isPending(this.frameSlot)) {
             // This slot's own previous submission is still in flight: only this one blocks the reset below. Every
             // submission older than it has completed by the queue's own ordering, which is what the sequence watermark
             // records after a successful wait.
-            this.slotReuseWaits++;
+            this.scheduler.noteSlotReuseWait(this.frameSlot);
             if (!waitForSlot(this.frameSlot)) {
                 this.noteStalled();
                 this.stalledStops++;
@@ -12747,7 +12751,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // wait that used to sit here is the stall this branch removes: it stopped the render thread on every
             // begin until the whole device was idle again.
             int confirmed = celtium$pollCompletedSlots();
-            if (confirmed > 0 && this.completedSubmitSequence >= this.submitSequence) {
+            if (confirmed > 0 && this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
                 this.submissionPending = false;
                 // Nothing is in flight: the same "device genuinely idle" statement the drain used to establish, so
                 // the retire queue may flush here (audit S12) and any off-target copy recorded for the previous
@@ -13681,7 +13685,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             if (this.frameArena != null) {
                 // The sequence increments a few lines below, where the slot's own record is armed; the value this
                 // submission will take is the current one plus one.
-                this.frameArena.submitted(this.frameId, this.submitSequence + 1);
+                this.frameArena.submitted(this.frameId, this.scheduler.submitSequence() + 1);
             }
             // The queue accepted this submission, so the layouts the recording declared into it are now the truth
             // every wrapper of those images shares. A refused submit throws before this line, leaving the recording
@@ -13692,14 +13696,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // OPT-08: the submission belongs to a slot and carries a sequence. The slot's fence is what makes its
             // buffer reusable, and the sequence watermark is what releases the resources this submission still names -
             // not "some wait succeeded", which is what a single-frame renderer could get away with.
-            this.slotPending[this.frameSlot] = true;
-            this.slotSubmitSequence[this.frameSlot] = ++this.submitSequence;
+            this.scheduler.noteSubmitted(this.frameSlot);
             this.commandState.submitted();
             for (ImmediateGroup group : this.recordedImmediateGroups) {
                 this.immediateSubmittedBatches += group.batches;
                 // This submission is the newest one that can still name the group's arena bytes: its mesh may be
                 // freed exactly when the watermark covers this sequence and not before.
-                group.retireSequence = this.submitSequence;
+                group.retireSequence = this.scheduler.submitSequence();
                 this.retiredImmediateGroups.add(group);
             }
             this.recordedImmediateGroups.clear();
@@ -13772,7 +13775,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // the deferred bookkeeping (arena epochs, retired groups, the retire queue) can run before the callers free
         // the resources it covers.
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            if (this.slotPending[slot]) {
+            if (this.scheduler.isPending(slot)) {
                 celtium$noteSlotConfirmed(slot, false);
             }
         }
@@ -13826,7 +13829,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * what the sequence watermark records for the resource lists below.
      */
     private boolean waitForSlot(int slot) {
-        if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.slotPending[slot]) {
+        if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
             return true;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -13881,7 +13884,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 this.frameTarget.abandonFrame("frame slot fence failed: " + result);
                 return false;
             }
-            this.slotWaitConfirms++;
+            this.scheduler.noteSlotWait(true);
             celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
             return true;
         }
@@ -13896,16 +13899,16 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * "nothing is in flight anymore" statement the retire queue needs.
      */
     private int celtium$pollCompletedSlots() {
-        this.slotPolls++;
+        this.scheduler.notePoll(false);
         int confirmed = 0;
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            if (!this.slotPending[slot] || this.slotFences[slot] == 0) {
+            if (!this.scheduler.isPending(slot) || this.slotFences[slot] == 0) {
                 continue;
             }
             int status = vkGetFenceStatus(this.context.device(), this.slotFences[slot]);
             if (status == org.lwjgl.vulkan.VK10.VK_SUCCESS) {
                 confirmed++;
-                this.slotPollConfirms++;
+                this.scheduler.notePollConfirmation();
                 celtium$noteSlotConfirmed(slot, false);
             } else if (status == org.lwjgl.vulkan.VK10.VK_NOT_READY) {
                 // Still in flight: the next user of this slot pays the bounded wait, not this thread.
@@ -13913,7 +13916,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 // Completion-equivalent for pending purposes: nothing will ever run, and the resources the
                 // submission named are as free as they will ever get.
                 confirmed++;
-                this.slotPollConfirms++;
+                this.scheduler.notePollConfirmation();
                 celtium$noteSlotConfirmed(slot, true);
             } else {
                 record("pollCompletedSlots: vkGetFenceStatus returned " + status + " for slot " + slot);
@@ -13928,15 +13931,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * resource gated on its sequence may be released.
      */
     private void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
-        this.slotPending[slot] = false;
-        if (this.slotSubmitSequence[slot] > this.completedSubmitSequence) {
-            // Queue order: this submission's completion implies every earlier one finished too.
-            this.completedSubmitSequence = this.slotSubmitSequence[slot];
-        }
+        this.scheduler.noteCompleted(slot, this.scheduler.slotSubmitSequence(slot));
+        // Queue order: this submission's completion implies every earlier one finished too, and the
+        // scheduler's noteCompleted records exactly that.
         if (this.slotCommandStates[slot].state() == VulkanCommandBufferState.State.PENDING) {
             this.slotCommandStates[slot].completed();
         }
-        if (this.completedSubmitSequence >= this.submitSequence) {
+        if (this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
             this.submissionPending = false;
         }
         VulkanContext.noteCompletionConfirmed(lostDevice);
@@ -13949,10 +13950,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      */
     private void celtium$onSubmissionConfirmed() {
         if (this.frameArena != null) {
-            this.frameArena.completed(VulkanContext.completedEpoch(), this.completedSubmitSequence);
+            this.frameArena.completed(VulkanContext.completedEpoch(), this.scheduler.completedSubmitSequence());
         }
         releaseRetiredImmediateGroups();
-        if (this.completedSubmitSequence >= this.submitSequence
+        if (this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()
                 && this.immediateGroups.isEmpty() && this.currentImmediateMesh == null) {
             // The retire queue has no per-submission tagging, so it may only flush when nothing is in flight at
             // all - the same statement the drain used to establish, reached here through the watermark.
@@ -13987,11 +13988,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // the recovery paths) need "the GPU has finished everything submitted". Each slot's own fence carries the
         // bounded wait; the single-fence tail the old shape kept here was the same wait the slot loop already does.
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            if (this.slotPending[slot] && !waitForSlot(slot)) {
+            if (this.scheduler.isPending(slot) && !waitForSlot(slot)) {
                 return false;
             }
         }
-        if (this.completedSubmitSequence >= this.submitSequence) {
+        if (this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()) {
             this.submissionPending = false;
         }
         return true;

@@ -192,6 +192,31 @@ public final class FrameSubmissionScheduler {
         }
     }
 
+    /** Records one slot whose fence poll confirmed completion, without counting another poll. */
+    public void notePollConfirmation() {
+        this.slotPollConfirms++;
+    }
+
+    /** {@return how many slots were reused before their completion, each paying a bounded wait}. */
+    public long slotReuseWaits() {
+        return this.slotReuseWaits;
+    }
+
+    /** {@return how many polls of the slots were made}. */
+    public long slotPolls() {
+        return this.slotPolls;
+    }
+
+    /** {@return how many slot polls confirmed completion}. */
+    public long slotPollConfirms() {
+        return this.slotPollConfirms;
+    }
+
+    /** {@return how many blocking per-slot waits confirmed completion}. */
+    public long slotWaitConfirms() {
+        return this.slotWaitConfirms;
+    }
+
     /** Records a blocking per-slot wait and whether it confirmed completion. */
     public void noteSlotWait(boolean confirmed) {
         if (confirmed) {
