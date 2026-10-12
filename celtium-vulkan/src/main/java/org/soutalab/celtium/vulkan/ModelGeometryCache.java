@@ -54,6 +54,11 @@ public final class ModelGeometryCache {
     }
 
     /** {@return how many replays asked for a list this cache has no mesh for}. */
+    /** Records a model list that had no mesh to draw, which the borrow path names one by one. */
+    public void noteMissingMesh() {
+        this.modelMissingMeshes++;
+    }
+
     public int modelMissingMeshes() {
         return this.modelMissingMeshes;
     }
