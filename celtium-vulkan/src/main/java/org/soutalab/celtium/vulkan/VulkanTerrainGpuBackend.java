@@ -200,14 +200,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * drawn into. The rule is now "once per pair per frame <em>per content identity</em>": a different identity's
      * later pass does not clear, and the refusal is counted and named.
      */
-    private int pairClearsRefusedOtherIdentity;
     /** Passes identity 0 (the window) drew before the game's own framebuffer was adopted, and the bounded log of them. */
-    private int windowDrawsToFrameImage;
     private int windowDrawLogs;
     /** Loading-phase windows whose submission was marked as the frame the present may take (see the window close path). */
-    private int windowFramesMarkedPresentable;
     private int pairClearRefusalLogs;
-    private String lastPairClearRefusal = "none";
     /** Clears recorded per pair; the attribution counters are separate and name the pair per identity. */
     private int defaultPairClears;
     private int chainPairClears;
@@ -218,7 +214,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * frame image must not see them). Both are reported by {@code takeTimingSummary}, and the first few are printed as
      * {@code CELTIUM_CLEAR_LATCH} lines with the values they carried.
      */
-    private int gameClearsLatchedForFrame;
     private int gameClearsRoutedToPairs;
     private int gameClearLatchLog;
     private static final int GAME_CLEAR_LATCH_LINES =
@@ -1003,19 +998,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private boolean worldSnapshotValid;
     private int snapshotCaptures;
     private int snapshotServedCaptures;
-    private int outsideWorldPassRefusals;
-    private int outsideWorldPassAccepted;
     /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     private final int[] acceptedByFormat = new int[VulkanImmediateFormats.COUNT];
     /** The identity of the main framebuffer, so an unfiltered flush can mean "main" rather than "everything". */
     /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
-    private int offTargetTargetsCreated;
-    private int offTargetDrawn;
     /** Batches offered for an off-target target, which is not the same as batches taken for one. */
-    private int offTargetOffered;
     /** Batches accepted for an off-target target - the one that is evidence. */
-    private int offTargetAccepted;
     /** Batches refused because the mirror they need has only ever received a partial write. */
     private int partialMirrorRefusals;
     /** Composites offered while the default framebuffer was bound, taken into the shared image instead of refused. */
@@ -1147,6 +1136,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * plan moves those in R5 rather than now.
      */
     private final PublishedFrameTextures publishedTextures = new PublishedFrameTextures();
+
+    /** The target domain's counters (refactoring plan R2). */
+    private final TargetStatistics targetStatistics = new TargetStatistics();
 
     /** The terrain domain's counters (refactoring plan R2). */
     private final TerrainStatistics terrainStatistics = new TerrainStatistics();
@@ -1309,12 +1301,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
     /** Set while an off-target pass records, so the shared draw path binds that pass's pipeline. */
-    private int offTargetCopiedBack;
     /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
 
     private final java.util.Map<Long, java.util.concurrent.atomic.AtomicInteger> offTargetBatchesByTarget =
             new java.util.HashMap<Long, java.util.concurrent.atomic.AtomicInteger>();
-    private int offTargetRefusals;
     /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
     /** Announces that carried the size from the game instead of asking OpenGL for it. */
     /** Whether the game has set a colour yet, i.e. whether the state mirror's colour can be trusted. */
@@ -1366,7 +1356,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Map<Long, Integer> flushEntryGroupsByTarget = new java.util.HashMap<Long, Integer>();
     private final java.util.Map<Long, Integer> flushEntryPassesByTarget = new java.util.HashMap<Long, Integer>();
     /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
-    private int drainedOtherTargetPasses;
 
     /** {@return one line per target whose groups were dropped at a frame boundary}, or "none". */
     private String unflushedTargetDropSummary() {
@@ -1397,9 +1386,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Groups dropped because no pass could draw their target, and passes that failed (BH-15). */
-    private int unflushedTargetGroupsDropped;
     private int unflushedTargetGroupsDroppedLogged;
-    private int unflushedTargetPassFailures;
     private String lastUnflushedTargetFailure = "none";
 
 
@@ -1427,9 +1414,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * Window flushes that threw, and the batches they had to drop. Bounded to the frame they happened in since
      * task-60: the count and the text are what let a reader tell a refused window from a device that stopped.
      */
-    private int windowFlushFailures;
-    private long windowFlushFailureFrame = -1L;
-    private long windowFlushDroppedBatches;
     /**
      * OPT-09/BH-36: the terrain indirect path, off until asked for with {@code -Dceltium.vulkan.indirectTerrain=true}.
      * <p>
@@ -1545,7 +1529,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
      * loss column in the per-format histogram to show it. Paired with {@link #windowFlushDroppedBatches}: a group is
      * either drawn, or retained here, or counted as dropped there.
      */
-    private long windowFlushRetainedBatches;
     private String lastWindowFlushFailure = "none";
     /**
      * Ordering flushes that threw ({@code flushPendingBeforeGlDraw}'s catch), with their text and the batches they had
@@ -2298,7 +2281,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** CPU time of the same handoffs, so wall minus CPU says how much of it is blocking in a native call. */
     private long actualFlushCpuNanos;
     private int clearOrderFlushes;
-    private int compositePresentRefusals;
     private int frameAccepted;
     private int frameDrawn;
     private int lastFrameAccepted;
@@ -2462,7 +2444,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Whether the splash uploaded anything in the current frame; the first frame without one ends the splash. */
     private boolean splashUploadsThisFrame;
     /** Splash canvases whose mirrors were dropped at the end of the splash. */
-    private int splashCanvasInvalidations;
 
     /** {@return whether the announcing call came from the splash's own draw path}. */
     private static boolean celtium$callerIsSplash() {
@@ -2476,7 +2457,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     }
 
     /** Format-2 groups sampling a mirror filled by the int[] announcement path (the splash's own canvas). */
-    private long splashSourcedGroups;
 
     /** Bounded lines of {@code CELTIUM_MIRROR_DRAW} (the panorama's descriptor/mirror line). */
     private static final int MIRROR_DRAW_LOG_LIMIT =
@@ -2516,7 +2496,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     /** Groups left in the queue because they belong to another render target (audit A32). */
     private int immediateGroupsKeptForOtherTargets;
     /** Off-target passes not begun because their target had no pending geometry. */
-    private int offTargetPassesSkippedEmpty;
     /** Groups enqueued with a target other than the main one (audit A10). */
     private int groupsEnqueuedForOtherTargets;
     /** Batches accepted while a framebuffer other than the main one was bound (audit A10). */
@@ -2527,7 +2506,6 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
     private final java.util.Map<String, Integer> offTargetRefusalsByReason =
             new java.util.LinkedHashMap<String, Integer>();
     /** Pending groups destined for a target that is not the main one, and where they were seen to disappear. */
-    private int otherTargetGroupsAtMainFlush;
     private int otherTargetGroupsDiscarded;
     private int otherTargetGroupsFlushedByWindow;
     /** Groups seen at pass time and drawing passes, per target; the offers come from offTargetBatchesByTarget. */
@@ -4646,14 +4624,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 dropped += group.batches;
                 targets.add(Long.valueOf(group.target));
             }
-            this.unflushedTargetGroupsDropped += dropped;
+            this.targetStatistics.addUnflushedTargetGroupsDropped(dropped);
             for (Long target : targets) {
                 this.unflushedTargetDroppedByTarget.merge(target, Integer.valueOf(1), Integer::sum);
             }
-            if (this.unflushedTargetGroupsDropped <= this.unflushedTargetGroupsDroppedLogged + 3) {
+            if (this.targetStatistics.unflushedTargetGroupsDropped() <= this.unflushedTargetGroupsDroppedLogged + 3) {
                 this.unflushedTargetGroupsDroppedLogged++;
                 record("frame boundary dropped " + dropped + " accepted immediate batches whose target never got a"
-                        + " pass (targets=" + targets + ", total " + this.unflushedTargetGroupsDropped + ")");
+                        + " pass (targets=" + targets + ", total " + this.targetStatistics.unflushedTargetGroupsDropped() + ")");
             }
             this.immediateGroups.clear();
             this.pendingImmediateIndices = 0;
@@ -4995,7 +4973,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // exactly as it holds the world projection inside it. So it is taken, and the counter says how much of the frame
         // arrives this way.
         if (!this.worldPassActive || !this.worldSnapshotValid) {
-            this.outsideWorldPassAccepted++;
+            this.targetStatistics.noteOutsideWorldPassAccepted();
         } else if (this.immediateSubmitBaselineNanos < 0) {
             this.immediateSubmitBaselineNanos = this.immediateSubmitNanos;
             this.immediateSubmitBaselineOffered = this.immediateBatchesOffered;
@@ -5006,7 +4984,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return false;
         }
         if (!this.targetRegistry.currentIsMain()) {
-            this.offTargetOffered++;
+            this.targetStatistics.noteOffTargetOffered();
             this.offTargetBatchesByTarget.computeIfAbsent(this.targetRegistry.currentIdentity(),
                     ignored -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
         }
@@ -5949,9 +5927,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // device that has genuinely stopped - and that path is the wait timeout, which still latches. A
                     // window flush that throws is bounded to the window it belongs to: its batches are dropped and
                     // counted, the frame is abandoned, and the next frame tries again.
-                    this.windowFlushFailures++;
+                    this.targetStatistics.noteWindowFlushFailures();
                     this.lastWindowFlushFailure = describeWithOrigin(error);
-                    this.windowFlushFailureFrame = this.frameId;
+                    this.targetStatistics.setWindowFlushFailureFrame(this.frameId);
                     // Retained, not dropped. The frame is abandoned, so a group whose recording already sits in the
                     // abandoned command buffer has to be recorded again - and the abort branch's own contract is the
                     // pattern: take the recording's counters back off, add its indices back, and put it at the front of
@@ -5970,13 +5948,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     for (ImmediateGroup group : this.immediateGroups) {
                         retained += group.batches;
                     }
-                    this.windowFlushRetainedBatches += retained;
+                    this.targetStatistics.addWindowFlushRetainedBatches(retained);
                     // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
                     // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
                     this.frameTarget.abandonFrame("immediate window submit failure");
                     record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
                             + "); retained " + retained + " accepted batches, none dropped, the next frame retries"
-                            + " (windowFlushFailures=" + this.windowFlushFailures + ")");
+                            + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
                 }
             }
             if (this.immediateBatchesOffered % 500 == 0 && VulkanDiagnostics.enabled()) {
@@ -6006,7 +5984,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (!this.targetRegistry.currentIsMain()) {
                     // Accepted for a framebuffer that is not the main one: this is the count that means the content is being
                     // drawn by Vulkan into one of the game's own targets, as opposed to merely offered to it.
-                    this.offTargetAccepted++;
+                    this.targetStatistics.noteOffTargetAccepted();
                 }
                 // Printed incrementally rather than only in the end-of-run report, because a run that times out has no report and
                 // still has evidence: the arrival census proved that on a partial Intel run carrying 674,500 uploads. The
@@ -7112,11 +7090,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // (the window) and only before a main framebuffer is adopted.
                     if (identity == 0L && this.targetRegistry.mainIdentity() == Long.MIN_VALUE) {
                         this.lastFrameReachedQueue = true;
-                        this.windowFramesMarkedPresentable++;
+                        this.targetStatistics.noteWindowFramesMarkedPresentable();
                     }
                     if (offTarget) {
                         this.offTargetDrawnByTarget.merge(identity, 1, Integer::sum);
-                        this.offTargetCopiedBack++; // completed bridge return, not an empty offscreen copy
+                        this.targetStatistics.noteOffTargetCopiedBack(); // completed bridge return, not an empty offscreen copy
                         if (this.textureRegistry != null) {
                             int fbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
                             int source = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
@@ -7169,9 +7147,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         // The window's groups are dropped and counted, the frame is abandoned, and the next frame
                         // tries again. gpuStalled stays reachable from the wait-timeout paths, which is where a
                         // device that has genuinely stopped is detected, and stallOrigin names that origin separately.
-                        this.windowFlushFailures++;
+                        this.targetStatistics.noteWindowFlushFailures();
                         this.lastWindowFlushFailure = describeWithOrigin(error);
-                        this.windowFlushFailureFrame = this.frameId;
+                        this.targetStatistics.setWindowFlushFailureFrame(this.frameId);
                         // Retained, not dropped, and this is the site the measurement actually reaches: the abort
                         // branch above has already taken the recording's counters off and re-queued it, so everything
                         // still queued here is a group that has not been drawn. Clearing it is what erased every
@@ -7182,12 +7160,12 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                         for (ImmediateGroup group : this.immediateGroups) {
                             retained += group.batches;
                         }
-                        this.windowFlushRetainedBatches += retained;
+                        this.targetStatistics.addWindowFlushRetainedBatches(retained);
                         this.frameTarget.abandonFrame("accepted geometry retained");
                         record("window flush failed twice at frame " + this.frameId + " ("
                                 + this.lastWindowFlushFailure + "); retained " + retained
                                 + " accepted batches, none dropped, the next frame retries (windowFlushFailures="
-                                + this.windowFlushFailures + ")");
+                                + this.targetStatistics.windowFlushFailures() + ")");
                         return;
                     }
                     this.immediateRetryCount++;
@@ -7686,7 +7664,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
         // (203,201,198)). One image for the window in both directions is vanilla's own semantics.
         boolean windowIdentity = this.targetRegistry.currentIdentity() == 0L;
         if (windowIdentity) {
-            this.windowDrawsToFrameImage++;
+            this.targetStatistics.noteWindowDrawsToFrameImage();
         }
         boolean chainIdentity = this.targetRegistry.currentIdentity() != 0L;
         GllessFrameTarget offTarget = (this.targetRegistry.currentIsMain() || windowIdentity) ? null : offTargetTarget();
@@ -8131,14 +8109,14 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " uniform" + (this.uniforms == null ? "=none" : this.uniforms.growthSummary())
                 + " readResolvedFromLastDrawnTarget=" + this.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
-                + " splashSourcedGroups=" + this.splashSourcedGroups
-                + " splashCanvasInvalidations=" + this.splashCanvasInvalidations
+                + " splashSourcedGroups=" + this.targetStatistics.splashSourcedGroups()
+                + " splashCanvasInvalidations=" + this.targetStatistics.splashCanvasInvalidations()
                 + " immediateDrawSiteLogged=" + this.immediateDrawSiteLogged
-                + " unflushedTargetGroupsDropped=" + this.unflushedTargetGroupsDropped
+                + " unflushedTargetGroupsDropped=" + this.targetStatistics.unflushedTargetGroupsDropped()
                 + " unflushedTargetDropTargets=[" + unflushedTargetDropSummary() + "]"
-                + " drainedOtherTargetPasses=" + this.drainedOtherTargetPasses
+                + " drainedOtherTargetPasses=" + this.targetStatistics.drainedOtherTargetPasses()
                 + " flushEntries=[" + flushEntrySummary() + "]"
-                + " unflushedTargetPassFailures=" + this.unflushedTargetPassFailures
+                + " unflushedTargetPassFailures=" + this.targetStatistics.unflushedTargetPassFailures()
                 + " lastUnflushedTargetFailure=" + (this.lastUnflushedTargetFailure == null ? "none"
                         : this.lastUnflushedTargetFailure.replace(' ', '_').substring(0,
                                 Math.min(120, this.lastUnflushedTargetFailure.length())))
@@ -8148,13 +8126,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " stalledGeometryDrops=" + this.stalledGeometryDrops
                 + " stalledGeometryDroppedBatches=" + this.stalledGeometryDroppedBatches
                 + " stallOrigin=" + (this.stallOrigin == null ? "none" : this.stallOrigin.replace(' ', '_'))
-                + " windowFlushFailures=" + this.windowFlushFailures
+                + " windowFlushFailures=" + this.targetStatistics.windowFlushFailures()
                 // Printed, not just counted: a zero that never reaches the artifact is an absence rather than a
                 // measurement, and this number is the one that says whether the frame-close producer (the second
                 // producer of the done semaphore) ran at all - the path the per-image change could have broken.
                 + " signalOnlySubmissions=" + this.signalOnlySubmissions
-                + " windowFlushFailureFrame=" + this.windowFlushFailureFrame
-                + " windowFlushDroppedBatches=" + this.windowFlushDroppedBatches
+                + " windowFlushFailureFrame=" + this.targetStatistics.windowFlushFailureFrame()
+                + " windowFlushDroppedBatches=" + this.targetStatistics.windowFlushDroppedBatches()
                 + " groupViewportSets=" + this.groupViewportSets
                 + " stateSkipsViewport=" + this.stateSkipsViewport
                 + " stateSkipsScissor=" + this.stateSkipsScissor
@@ -8205,7 +8183,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " samplerFilters=" + VulkanGlTexture.samplerFilterCensus()
                 + " lastAlphaPushRef=" + round3(this.lastAlphaPushReference)
                 + " alphaReferenceValues=" + alphaReferenceValueSummary()
-                + " windowFlushRetainedBatches=" + this.windowFlushRetainedBatches
+                + " windowFlushRetainedBatches=" + this.targetStatistics.windowFlushRetainedBatches()
                 + " lastWindowFlushFailure=" + (this.lastWindowFlushFailure == null ? "none"
                         : this.lastWindowFlushFailure.replace(' ', '_').substring(0,
                                 Math.min(200, this.lastWindowFlushFailure.length())))
@@ -8283,20 +8261,20 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " prepBranchMillis=" + (this.prepBranchNanos / 1000000L)
                 + " descriptorHits=" + VulkanImmediateTexturePipeline.DESCRIPTOR_HITS
                 + " descriptorMisses=" + VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + this.clearOrderFlushes
-                + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.offTargetTargetsCreated
+                + " offTargetByTarget=[" + this.offTargetSummary() + "] offTargetTargets=" + this.targetStatistics.offTargetTargetsCreated()
                 + " refusedBeforeAppend=" + this.refusedBeforeAppend
                 + " partialMirrorRefusals=" + this.partialMirrorRefusals
                 + " partialMirrorsCompleted=" + this.partialMirrorsCompleted
-                + " offTargetPassesSkippedEmpty=" + this.offTargetPassesSkippedEmpty
+                + " offTargetPassesSkippedEmpty=" + this.targetStatistics.offTargetPassesSkippedEmpty()
                 + " offTargetPerTarget=[" + offTargetPerTarget() + "]"
                 + " offTargetPairs=[" + frameTargetPairSummary() + "]"
                 + " offTargetPairClears=[default-pair=" + this.defaultPairClears
                 + ",chain-pair=" + this.chainPairClears + "]"
-                + " gameClearAttribution=[latchedForFrame=" + this.gameClearsLatchedForFrame
+                + " gameClearAttribution=[latchedForFrame=" + this.targetStatistics.gameClearsLatchedForFrame()
                 + ",routedToPairs=" + this.gameClearsRoutedToPairs + "]"
                 + " offTargetPairFramebuffers=[default-pair=" + this.targetRegistry.pairFramebufferCreations(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR)
                 + ",chain-pair=" + this.targetRegistry.pairFramebufferCreations(RenderTargetRegistry.ImageSlot.CHAIN_PAIR) + "]"
-                + " otherTargetGroups=[atMainFlush=" + this.otherTargetGroupsAtMainFlush
+                + " otherTargetGroups=[atMainFlush=" + this.targetStatistics.otherTargetGroupsAtMainFlush()
                 + ",discarded=" + this.otherTargetGroupsDiscarded
                 + ",windowFlush=" + this.otherTargetGroupsFlushedByWindow
                 + ",enqueuedForOtherTargets=" + this.groupsEnqueuedForOtherTargets
@@ -8311,9 +8289,9 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " drawsWithoutCommandBuffer=" + this.drawsWithoutCommandBuffer
                 + " offTargetRefusals=" + (this.offTargetRefusalsByReason.isEmpty()
                         ? "none" : this.offTargetRefusalsByReason.toString())
-                + " offTargetOffered=" + this.offTargetOffered + " offTargetAccepted=" + this.offTargetAccepted
-                + " offTargetDrawn=" + this.offTargetDrawn + " offTargetCopiedBack=" + this.offTargetCopiedBack
-                + " outsideWorldPassAccepted=" + this.outsideWorldPassAccepted + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals + " compositePresentRefusals=" + this.compositePresentRefusals
+                + " offTargetOffered=" + this.targetStatistics.offTargetOffered() + " offTargetAccepted=" + this.targetStatistics.offTargetAccepted()
+                + " offTargetDrawn=" + this.targetStatistics.offTargetDrawn() + " offTargetCopiedBack=" + this.targetStatistics.offTargetCopiedBack()
+                + " outsideWorldPassAccepted=" + this.targetStatistics.outsideWorldPassAccepted() + " outsideWorldPassRefusals=" + this.targetStatistics.outsideWorldPassRefusals() + " compositePresentRefusals=" + this.targetStatistics.compositePresentRefusals()
                 + " descriptorSets=" + this.descriptorSetCensus()
                 // BH-20's census, beside the descriptor sets it shares a lifetime with: how many pipeline builds failed
                 // after a stage had created handles and were rolled back rather than leaked. Zero on a normal leg is
@@ -8394,10 +8372,10 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " lastTextureCopyRefusal=[" + this.textureCopyService.lastTextureCopyRefusal() + "]"
                 // The pair clear-once contract: applied clears against the clears a second identity's pass asked for
                 // and did not get. Without the second number the rule's effect is inferred from a picture.
-                + " pairClearsRefusedOtherIdentity=" + this.pairClearsRefusedOtherIdentity
-                + " windowDrawsToFrameImage=" + this.windowDrawsToFrameImage
-                + " windowFramesMarkedPresentable=" + this.windowFramesMarkedPresentable
-                + " lastPairClearRefusal=[" + this.lastPairClearRefusal + "]"
+                + " pairClearsRefusedOtherIdentity=" + this.targetStatistics.pairClearsRefusedOtherIdentity()
+                + " windowDrawsToFrameImage=" + this.targetStatistics.windowDrawsToFrameImage()
+                + " windowFramesMarkedPresentable=" + this.targetStatistics.windowFramesMarkedPresentable()
+                + " lastPairClearRefusal=[" + this.targetStatistics.lastPairClearRefusal() + "]"
                 + " " + (this.postChain != null ? this.postChain.status() : "postChains=0 postPasses=0")
                 + " directMirrorFromAnnouncement=" + this.textureStats.directMirrorFromAnnouncement()
                 + " dynamicTextureFills=" + this.textureStats.dynamicTextureFills()
@@ -8412,8 +8390,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 + " immediateGroupsClosed=" + this.immediateGroupsClosed
                 + " immediateMaxGroupVertices=" + this.immediateMaxGroupVertices
                 + " immediateRefusal=" + celtium$refusalText().replace(' ', '_')
-                + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.outsideWorldPassRefusals
-                + " offTargetRefusals=" + this.offTargetRefusals
+                + " snapshotCaptures=" + this.snapshotCaptures + " snapshotServed=" + this.snapshotServedCaptures + " outsideWorldPassRefusals=" + this.targetStatistics.outsideWorldPassRefusals()
+                + " offTargetRefusals=" + this.targetStatistics.offTargetRefusals()
                 + " textureRefusalsBeforeAccept=" + this.textureStats.textureRefusalsBeforeAccept()
                 + " postAcceptDroppedGroups=" + this.postAcceptDroppedGroups
                 + " particleDescriptorRefusals=" + this.particleDescriptorRefusals
@@ -9830,7 +9808,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             return;
         }
         glless.noteGameClear(mask, rgba[0], rgba[1], rgba[2], rgba[3], depth);
-        this.gameClearsLatchedForFrame++;
+        this.targetStatistics.noteGameClearsLatchedForFrame();
         celtium$reportGameClearLatch("frame", mask, rgba, depth);
     }
 
@@ -10225,13 +10203,13 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
             // The ordinary repeat: this identity already had its clear this frame.
             return false;
         }
-        this.pairClearsRefusedOtherIdentity++;
-        this.lastPairClearRefusal = pair + ": identity 0x" + Long.toHexString(this.targetRegistry.currentIdentity())
+        this.targetStatistics.notePairClearsRefusedOtherIdentity();
+        this.targetStatistics.setLastPairClearRefusal(pair + ": identity 0x" + Long.toHexString(this.targetRegistry.currentIdentity())
                 + " would have cleared a pair holding identity 0x" + Long.toHexString(contentIdentity)
-                + "'s content (frame serial " + celtium$frameSerial() + ")";
+                + "'s content (frame serial " + celtium$frameSerial() + ")");
         if (this.pairClearRefusalLogs < 6) {
             this.pairClearRefusalLogs++;
-            System.out.println("[Celtium] CELTIUM_PAIR_CLEAR_REFUSED " + this.lastPairClearRefusal);
+            System.out.println("[Celtium] CELTIUM_PAIR_CLEAR_REFUSED " + this.targetStatistics.lastPairClearRefusal());
         }
         return false;
     }
@@ -11219,11 +11197,11 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                 if (this.textureRegistry != null) {
                     this.textureRegistry.forgetTexture(id.intValue());
                 }
-                this.splashCanvasInvalidations++;
+                this.targetStatistics.noteSplashCanvasInvalidations();
             }
-            if (this.splashCanvasInvalidations <= 8) {
+            if (this.targetStatistics.splashCanvasInvalidations() <= 8) {
                 record("splash ended: dropped " + this.splashCanvasIds.size() + " splash canvas mirror(s) "
-                        + this.splashCanvasIds + " (total " + this.splashCanvasInvalidations + ")");
+                        + this.splashCanvasIds + " (total " + this.targetStatistics.splashCanvasInvalidations() + ")");
             }
             this.splashCanvasIds.clear();
         }
@@ -12701,8 +12679,8 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // SplashProgress.drawVanillaScreen - a 256x256 white canvas - so this counter is what says how
                     // much of the GUI's traffic is sampling the splash's leftover rather than the panorama's sheets.
                     String source = celtium$registry().celtium$mirrorSourceFor(group.texture);
-                    if (source.startsWith("announced-int[]") && this.splashSourcedGroups < Integer.MAX_VALUE) {
-                        this.splashSourcedGroups++;
+                    if (source.startsWith("announced-int[]") && this.targetStatistics.splashSourcedGroups() < Integer.MAX_VALUE) {
+                        this.targetStatistics.noteSplashSourcedGroups();
                     }
                 }
                 if (group.formatId == 2 && this.mirrorDrawLogs < MIRROR_DRAW_LOG_LIMIT) {
@@ -12901,7 +12879,7 @@ public final class VulkanTerrainGpuBackend implements org.embeddedt.embeddium.im
                     // zero, which is the inverse of "a missing counter is not a missing draw": here it invited
                     // "nothing off-target was drawn" from a number that could never move. It counts the groups whose
                     // target is not the main identity as they are drawn, which is what its name says.
-                    this.offTargetDrawn++;
+                    this.targetStatistics.noteOffTargetDrawn();
                 }
                 this.immediateFlushes++;
                 this.frameDrawn++;
