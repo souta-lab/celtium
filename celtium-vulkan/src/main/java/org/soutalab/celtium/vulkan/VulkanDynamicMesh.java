@@ -407,6 +407,12 @@ public final class VulkanDynamicMesh {
         // the caller checks, so each product is the same single-precision value the shader would compute.
         float sx = modelView[0], sy = modelView[5], sz = modelView[10];
         float tx = modelView[12], ty = modelView[13], tz = modelView[14];
+        if (sx == 1.0f && tx == 0.0f && sy == 1.0f && ty == 0.0f && sz == 1.0f && tz == 0.0f) {
+            // The dominant pre-transformed case: GUI text rides this path on an identity modelView, where the
+            // per-vertex multiply-add produced x*1+0 verbatim - the same bytes a straight copy writes, at a tenth of
+            // the cost (10.5% of the F3 leg's warm samples were this loop on identity quads).
+            MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
+        } else {
         for (int i = 0; i < count; i++) {
             long source = sourceAddress + (long) i * stride;
             long target = vertexTarget + (long) i * stride;
@@ -414,6 +420,7 @@ public final class VulkanDynamicMesh {
             MemoryUtil.memPutFloat(target + 4, sy * MemoryUtil.memGetFloat(source + 4) + ty);
             MemoryUtil.memPutFloat(target + 8, sz * MemoryUtil.memGetFloat(source + 8) + tz);
             MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
+        }
         }
         for (int i = 0; i < indices.length; i++) {
             MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
