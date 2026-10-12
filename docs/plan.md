@@ -307,6 +307,55 @@ scanout そのもの（条件 (c) の compositor 出力到達は §0.123 で充�
   cold は 40 sample で p50 **44.1 ms** だった。現行 jar の cold p50 **151.4 ms** との差は **jar 差か leg flag 差（`captureCondition=sections`・
   `captureDeadlineTick=4000`・resize 無し）か**を分離していない＝**回帰と主張しない**。分離実験は同じ jar で flag を替えた 2 leg。
 
+## 0.347 **round 154: BH-01..37 の到達状況（`docs/history/2026-10-11-code-bughunt.md` の37件）**
+
+- **P1 は 23 件**（BH-01..07・09・10・12..19・21・24・25・26・27・37）、**P2 は 14 件**（BH-08・11・20・22・23・28..36）。
+- **着地・受入済み（plan の各 round 記録が根拠）**:
+  | BH | 内容 | 根拠 |
+  |---|---|---|
+  | BH-01 | 地形アリーナ容量と stride | **受入済み**（記録） |
+  | BH-02 | 透明地形の index offset 0 誤認 | sorted pass の index-source 規則として着地 |
+  | BH-05 | lighting を group 生成時に捕捉 | **着地**（BH-37 と同時に記録） |
+  | BH-06 | texture unit ごとの bind 保持 | per-unit `boundTextureByUnit` として着地 |
+  | BH-07 | separate blend の alpha factor | **着地**（round 29-32・BH-10 と同時） |
+  | BH-08 | immediate の cull state | **着地**（round 29-32） |
+  | BH-09 | scissor 無視 | **部分**（`lineBatchesNarrowed=215` 着地。`scissorCapturedGroups=0` は plan の `>0` を満たさず**未了**） |
+  | BH-10 | color mask 無視（Fancy 雲） | **受入済み**（506 対 368 partialColorMaskGroups・159 group が zero mask） |
+  | BH-11 | polygon offset 無視 | **着地**（`polygonOffsetCalls`・`immediateDepthBiasedGroups`） |
+  | BH-12 | 2px 選択線の拒否 | **受入済み**（narrowed 総数 215） |
+  | BH-13 | viewport 復元 | **受入済み** |
+  | BH-15 | off-target 失敗の置換 | **安全な半分を着地** |
+  | BH-16 | clear の target/mask/色/順序 | **着地**（drop 規則が frame 自身の clear を落としていた件を修正） |
+  | BH-19 | present 可能性の事前確認 | **受入済み** |
+  | BH-22 | descriptor の退役 | **着地**（退役＋census） |
+  | BH-25 | region upload 失敗の握りつぶし | **受入済み**（`failedSections()`） |
+  | BH-27 | mesh upload/present の queue 待機 | **着地**（OPT-07(b) `uploadSubmitWaitsAtEnd` 31343→6910） |
+  | BH-28 | immediate group ごとの buffer 確保 | **着地**（OPT-05 `hostBuffersCreated=6` for 8316 groups） |
+  | BH-29 | format 8/9/10 の normal 未使用 | **受入済み**（night/day） |
+  | BH-30 | item/block/particle の world fog | **受入済み**（one-flag 対照） |
+  | BH-32 | atlas sampler の maxLOD 4 固定 | **着地**（`CELTIUM_ATLAS_SAMPLER maxLod=`） |
+  | BH-36 | multidraw の command ごと分解 | **着地**（OPT-09・1086 indirect call が 17,651 draw＝16.3:1） |
+  | BH-37 | 一括 sample transition が直後の attach も変える | **既存ルールで被覆** |
+- **未了（明示）**:
+  | BH | 内容 | 状態 |
+  |---|---|---|
+  | **BH-03** | alpha test の参照値 | **stub property は着地・検証 leg 未了** |
+  | **BH-04** | immediate batch key の colour/texture matrix/fog | **colour 半分が未了**（accept 時 vs flush 時の状態クラスとして記録） |
+  | **BH-09** | scissor | **`scissorCapturedGroups=0` が plan の `>0` を満たさない** |
+  | **BH-14** | 非 main FBO の chain image 共有 | **未着手**（site 地図と one-pass cut は記録済み） |
+  | **BH-17** | 通常 GUI の 208 byte push constant | **未着手**（OPT-03 が前提） |
+  | **BH-18** | swapchain 作成引数 | **未着手**（明示的に open として記録） |
+  | **BH-21** | world destroy の資源 delete | **担当記録あり・着地記録なし** |
+  | **BH-23** | sampler state の再照会 | **未着手** |
+  | **BH-34** | `glTexEnvf` の float bit 列 | **未着手** |
+  | **BH-35** | GL4.6/GLSL4.60 の広告 | **census 着地・strict-symbols leg 未了** |
+  | **BH-20** | native constructor 途中失敗の回収 | **plan に記載なし＝未対応** |
+  | **BH-24** | UniformBuffer の grow | **plan に記載なし＝未対応** |
+  | **BH-26** | 所有 image の layout/初回 clear | **plan に記載なし＝未対応** |
+  | **BH-33** | chunk fade-in の設定 | **plan に記載なし＝未対応** |
+- **集計（この記録時点）**: **37件中 23件が着地または受入済み**、**BH-09 は部分**、**13件が未了**（うち4件は plan に記載が無く**未対応**）。
+  ＝**未了の P1 は BH-03・04・09・14・17・18・21・23・24・26 の10件**、**未了の P2 は BH-20・33・34・35 の4件**（BH-09 は部分なので P1 の未了に数える）。
+
 ## 0.346 **round 153: ロード画面の診断を訂正（blend-state の測定）— `glBegin` 機構は誤り・census の数字はフォントのもの**
 
 - **訂正（前ラウンドの記録は誤り・名指しで直す）**:
