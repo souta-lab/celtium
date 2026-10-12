@@ -6067,9 +6067,17 @@ public final class ValidationClient {
         net.minecraft.client.gui.GuiScreen screen = mc.currentScreen;
         report.addProperty("videoSettingsChainScreen", screen.getClass().getName());
         report.addProperty("videoSettingsChainTitle", celtium$guiScreenTitle(mc));
+        // Vanilla's GuiVideoSettings carries optionsRowList; the Celeritas screen is built on Celeritas's own option
+        // framework (tabs, pages, groups, controls as ControlElements) and keeps its widgets in the plain GuiScreen
+        // buttonList instead, so the chain reads that as the fallback. Measured: with optionsRowList alone the chain
+        // stopped at "the captured screen has no optionsRowList to press" on a leg whose guiScreenClassAtCapture was
+        // CeleritasVideoOptionsScreen.
         Object list = celtium$fieldValue(screen, new String[] {"optionsRowList", "field_146501_h"});
         if (list == null) {
-            report.addProperty("videoSettingsChain", "the captured screen has no optionsRowList to press");
+            list = celtium$fieldValue(screen, new String[] {"buttonList", "field_146292_n"});
+        }
+        if (list == null) {
+            report.addProperty("videoSettingsChain", "the captured screen has neither optionsRowList nor a buttonList");
             celtium$vsStep = 99;
             return true;
         }
